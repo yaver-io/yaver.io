@@ -500,8 +500,19 @@ export default function DashboardPage() {
       await relayReadyPromiseRef.current;
     }
 
+    const tunnelUrls = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+          ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+        ]
+          .map((url) => String(url || "").trim())
+          .filter(Boolean),
+      ),
+    );
+
     try {
-      await agentClient.connect(device.host, device.port, token, device.id);
+      await agentClient.connect(device.host, device.port, token, device.id, { tunnelUrls });
       setConnectDiagnostics(agentClient.lastConnectDiagnostics);
       try { setAgentInfo(await agentClient.getInfo()); } catch {}
       try { setRunners(await agentClient.getRunners()); } catch {}
@@ -519,7 +530,7 @@ export default function DashboardPage() {
             convexSiteUrl: CONVEX_URL,
           });
           if (recovered.ok) {
-            await agentClient.connect(device.host, device.port, token, device.id);
+            await agentClient.connect(device.host, device.port, token, device.id, { tunnelUrls });
             setConnectError(null);
             setConnectDiagnostics(agentClient.lastConnectDiagnostics);
             try { setAgentInfo(await agentClient.getInfo()); } catch {}

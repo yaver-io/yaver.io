@@ -218,7 +218,7 @@ export interface ReauthAttemptDiagnostic {
 }
 
 export interface ConnectAttemptDiagnostic {
-  path: "relay" | "direct";
+  path: "relay" | "tunnel" | "direct";
   relayId?: string;
   ok: boolean;
   status?: number;
@@ -775,6 +775,8 @@ class AgentClient {
   private deviceId: string | null = null;
   private relayServers: RelayServer[] = [];
   private activeRelayUrl: string | null = null;
+  private tunnelCandidates: string[] = [];
+  private activeTunnelUrl: string | null = null;
   private _connectionState: ConnectionState = "disconnected";
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private _lastConnectDiagnostics: ConnectAttemptDiagnostic[] = [];
@@ -821,12 +823,20 @@ class AgentClient {
 
   // ── Connection lifecycle ───────────────────────────────────────────
 
-  async connect(host: string, port: number, token: string, deviceId?: string): Promise<void> {
+  async connect(
+    host: string,
+    port: number,
+    token: string,
+    deviceId?: string,
+    opts?: { tunnelUrls?: string[] },
+  ): Promise<void> {
     this.host = host;
     this.port = port;
     this.token = token;
     this.deviceId = deviceId ?? null;
     this.activeRelayUrl = null;
+    this.activeTunnelUrl = null;
+    this.tunnelCandidates = Array.from(new Set((opts?.tunnelUrls || []).map((url) => String(url || "").trim()).filter(Boolean)));
     this.reconnectAttempt = 0;
 
     this.setupNetworkListeners();
@@ -842,6 +852,8 @@ class AgentClient {
     this.token = null;
     this.deviceId = null;
     this.activeRelayUrl = null;
+    this.activeTunnelUrl = null;
+    this.tunnelCandidates = [];
   }
 
   /**
@@ -1756,6 +1768,9 @@ class AgentClient {
     if (this.activeRelayUrl && this.deviceId) {
       return `${this.activeRelayUrl}/d/${this.deviceId}`;
     }
+    if (this.activeTunnelUrl) {
+      return this.activeTunnelUrl.replace(/\/+$/, "");
+    }
     return `http://${this.host}:${this.port}`;
   }
 
@@ -2044,7 +2059,7 @@ class AgentClient {
     url: string,
     headers: Record<string, string>,
     timeoutMs: number,
-    path: "relay" | "direct",
+    path: "relay" | "tunnel" | "direct",
     relayId?: string,
   ): Promise<ConnectAttemptDiagnostic> {
     const started = Date.now();
@@ -2084,6 +2099,7 @@ class AgentClient {
   private async attemptConnect(): Promise<void> {
     this.setConnectionState("connecting");
     this.activeRelayUrl = null;
+    this.activeTunnelUrl = null;
     const diagnostics: ConnectAttemptDiagnostic[] = [];
     try {
       let connected = false;
@@ -2111,12 +2127,36 @@ class AgentClient {
       }
 
       // 2. Try direct connection as fallback
+      if (!connected && this.tunnelCandidates.length > 0) {
+        for (const tunnelUrl of this.tunnelCandidates) {
+          const diag = await this.probeHealth(
+            tunnelUrl.replace(/\/+$/, ""),
+            this.authHeaders,
+            8000,
+            "tunnel",
+          );
+          diagnostics.push(diag);
+          if (diag.ok) {
+            this.activeRelayUrl = null;
+            this.activeRelayPassword = null;
+            this.activeTunnelUrl = tunnelUrl.replace(/\/+$/, "");
+            connected = true;
+            console.log("[AgentClient] Tunnel connection succeeded via", tunnelUrl);
+            break;
+          }
+          console.log("[AgentClient] Tunnel", tunnelUrl, "failed:", diag.error || diag.status);
+        }
+      }
+
+      // 3. Try direct connection as fallback
       if (!connected) {
         const directUrl = `http://${this.host}:${this.port}`;
         const diag = await this.probeHealth(directUrl, this.authHeaders, 5000, "direct");
         diagnostics.push(diag);
         if (diag.ok) {
           this.activeRelayUrl = null;
+          this.activeRelayPassword = null;
+          this.activeTunnelUrl = null;
           connected = true;
           console.log("[AgentClient] Direct connection succeeded");
         } else {
@@ -2133,7 +2173,7 @@ class AgentClient {
         if (authExpired) {
           throw new Error("Agent reached, but its Convex session is expired — run `yaver auth` on the remote device");
         }
-        throw new Error("Could not reach agent (direct or via relay)");
+        throw new Error("Could not reach agent (direct, tunnel, or relay)");
       }
 
       this.reconnectAttempt = 0;
