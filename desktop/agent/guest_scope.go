@@ -67,9 +67,11 @@ var guestFullAllowedPrefixes = []string{
 	"/vibing",
 	"/shared-storage/",
 	// Shared-machine deploy surface (doctor + script templates +
-	// actual run). Scoped by allowedProjects in the handler — the
-	// vault stays invisible to the guest; only stdout streams back.
+	// actual run + history). Scoped by allowedProjects in the handler;
+	// run history is guest-filtered so one guest cannot see another
+	// guest's deploys.
 	"/deploy/ship",
+	"/deploy/runs",
 	"/deploy/templates",
 	"/deploy/generate",
 	"/doctor/build",
@@ -100,6 +102,7 @@ var guestFeedbackOnlyAllowedPrefixes = []string{
 // The handler enforces allowedProjects on top of this allow-list.
 var guestDeployAllowedPrefixes = []string{
 	"/deploy/ship",
+	"/deploy/runs", // list + detail; filtered to the guest's own runs
 	"/deploy/templates",
 	"/deploy/generate", // read-only preview
 	"/doctor/build",

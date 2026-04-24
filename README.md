@@ -1137,6 +1137,28 @@ injected into the subprocess env (never into the script source),
 and only stdout/stderr stream back over SSE. Security model in
 [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md#12-guest-triggered-deploys-post-deployship).
 
+Ship to multiple stores at once:
+
+```bash
+yaver deploy ship --app mobile --targets testflight,playstore
+```
+
+Runs both in parallel, per-line prefixes `[testflight]` / `[playstore]`
+so the merged output stays readable, prints a `── composite summary ──`
+at the end. Exits with the worst per-target code (i.e. fails iff any
+target fails).
+
+Past runs are queryable:
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/deploy/runs
+curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/deploy/runs/<id>
+```
+
+In-memory ring buffer, last 100 runs. Each run stores who
+triggered it, what target, exit code, duration, and the last ~8 KB
+of stdout/stderr. Guests only see their own runs.
+
 Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
 
 ## Container Sandbox (Optional)

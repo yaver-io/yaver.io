@@ -445,17 +445,75 @@ Owner runs target the local daemon by default; `--machine <id>`
 routes the call through the existing peer-proxy to another device
 the same user owns.
 
-### Remaining follow-ups
+### Composite targets (parallel multi-target deploy)
 
-- **Composite targets**: single command to deploy mobile to both
-  TestFlight and Play Store with parallel execution + merged status.
-  Today: generate two scripts, `bash a.sh & bash b.sh & wait`.
-- **Per-project concurrency cap**: currently a guest can kick off
-  multiple parallel `/deploy/ship` calls. The host's build tooling
-  will serialize at the filesystem layer (xcodebuild, gradle) but
-  a queue with fair scheduling would be friendlier.
-- **Run history + idempotency**: replay last N runs, resumable
-  artifact uploads. For now a run is a one-shot stream.
+```bash
+yaver deploy ship --app mobile --targets testflight,playstore
+```
+
+The CLI fans out per-target SSE streams in parallel against
+`/deploy/ship`. Output is line-prefixed with `[target]` so you can
+tell the two streams apart on a shared terminal. The final
+`── composite summary ──` block shows per-target success/failure,
+and the overall exit code is the max of per-target codes (i.e.
+the call fails iff any target fails).
+
+There's no server-side "bulk" endpoint yet — the fan-out is purely
+client-side. That keeps the existing per-run concurrency limiter,
+history, and guest project gating working unchanged. A composite
+run just shows up as N rows in `/deploy/runs`.
+
+### Per-caller concurrency cap
+
+`/deploy/ship` now bounces callers at a per-identity cap before
+doing any other work:
+
+| Identity | Cap | Behaviour when at cap |
+|---|---|---|
+| Owner | 8 concurrent deploys | `429 Too Many Requests` |
+| Guest | 2 concurrent deploys per guest userID | `429 Too Many Requests` |
+
+Response body on 429: `{"error": "deploy concurrency cap reached …", "cap": N}`. xcodebuild and gradle would serialize at the filesystem
+layer anyway, but this stops a misbehaving guest from CPU-burning
+the host with dozens of parallel spawns.
+
+Tune the numbers in `desktop/agent/deploy_run_support.go::deployShipLimits`.
+
+### Run history (`/deploy/runs`)
+
+```
+GET /deploy/runs[?limit=N]   → { runs: [ DeployRun, ... ], count }
+GET /deploy/runs/{id}        → DeployRun (includes last ~8 KB of output)
+```
+
+- Ring buffer of the last 100 runs (configurable in
+  `deploy_history.go::NewDeployHistory`).
+- Each `DeployRun` carries `id`, `app`, `target`, `stack`, `path`,
+  `requested_by`, `is_guest`, `started_at`, `finished_at`,
+  `duration_ms`, `exit_code`, `ok`, `in_progress`, and (detail
+  endpoint only) `output_tail`.
+- List responses elide `output_tail` so a list of 100 runs doesn't
+  push a megabyte across the wire.
+- Every `/deploy/ship` event stream now carries `id` in both `meta`
+  and `exit` payloads, so clients can correlate a live stream with
+  its future history entry.
+- Guest filter: guests only see runs they themselves initiated.
+  Others' runs return 404 — indistinguishable from "unknown",
+  deliberately.
+
+### Remaining follow-ups (smaller)
+
+- **Durable history**: ring buffer is per-process. Agent restart
+  = empty history. Write `~/.yaver/deploys/<id>/` to disk if you
+  want runs to survive reboots.
+- **Server-side composite endpoint**: today's composite is a
+  client-side fan-out. Moving it server-side (e.g.
+  `POST /deploy/ship` accepting `targets: [...]` and multiplexing
+  events into one SSE stream) would be cheaper for mobile clients
+  that don't want N parallel connections open.
+- **Idempotent resume**: a failed TestFlight upload after a 30-min
+  archive is a drag. Detect "same commit + same version" and skip
+  the archive step on retry.
 
 ---
 
@@ -472,6 +530,13 @@ the same user owns.
 | `desktop/agent/deploy_script_gen.go` | Script generator + template catalogue |
 | `desktop/agent/deploy_script_http.go` | `/doctor/build`, `/deploy/templates`, `/deploy/generate` |
 | `desktop/agent/deploy_script_gen_test.go` | Generator + doctor tests |
+| `desktop/agent/deploy_run.go` | `/deploy/ship` handler — generates + spawns + streams |
+| `desktop/agent/deploy_run_support.go` | Concurrency limiter + `/deploy/runs` handlers |
+| `desktop/agent/deploy_history.go` | `DeployHistory` ring buffer + output-tail capture |
+| `desktop/agent/deploy_history_test.go` | History + limiter + endpoint tests |
+| `desktop/agent/deploy_run_test.go` | `/deploy/ship` end-to-end + scope + env-whitelist tests |
+| `desktop/agent/deploy_ship_cmd.go` | `yaver deploy ship` CLI (single + composite fan-out) |
+| `desktop/agent/guest_scope.go` | `GuestScopeDeploy` tier + allow-lists |
 | `scripts/deploy-testflight.sh` | TestFlight deploy, vault-aware |
 | `scripts/deploy-playstore.sh` | Play Store deploy, vault-aware |
 | `scripts/deploy-web.sh` | Cloudflare deploy, vault-aware |

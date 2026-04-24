@@ -1290,11 +1290,31 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 - Timeouts: default 20 min, max 60 min. SIGKILL on timeout.
 - Invite flow: `yaver guests invite friend@example.com --scope=deploy --projects=mobile`.
 
-### Follow-up work (still not yet shipped)
+### Composite targets (parallel multi-target deploy)
 
-- **Composite targets**: single command to deploy mobile to both TestFlight and Play Store, with parallel execution + merged status. Today: generate two scripts, `bash a.sh & bash b.sh & wait`.
-- **Run history + replay**: persist the last N `/deploy/ship` runs (metadata + stdout ring buffer) so mobile/web UIs can show a history tab and retry a failed run.
-- **Per-guest concurrency cap**: a malicious guest could today kick off parallel deploys. xcodebuild + gradle serialize at the filesystem layer so damage is bounded, but a fair-queue would be friendlier.
+- CLI: `yaver deploy ship --app mobile --targets testflight,playstore` fans out per-target SSE streams in parallel. Output is line-prefixed with `[target]`. Overall exit = max of per-target exit codes. Composite runs also print a `── composite summary ──` block at the end.
+- No server-side change: the client posts one `/deploy/ship` per target. This keeps the per-run concurrency limiter + history + guest project gating working unchanged; a composite run just shows up as N entries in `/deploy/runs`.
+
+### Run history + replay (`/deploy/runs`)
+
+- `desktop/agent/deploy_history.go::DeployHistory` — in-memory ring buffer, default 100 runs, per-run output tail capped at 8 KB.
+- `GET /deploy/runs[?limit=N]` — list, most-recent-first. `OutputTail` elided to keep the response small.
+- `GET /deploy/runs/{id}` — one run including `OutputTail` (last ~8 KB of stdout+stderr).
+- Guest filter: guests only see runs they initiated (`RequestedBy == guestUserID`). Other users' runs return 404 — indistinguishable from "unknown", deliberately, so the absence itself leaks nothing.
+- Every `/deploy/ship` event now carries the new `id` field in both `meta` and `exit` events so a client can correlate a live stream with the eventual history entry.
+- Guest scope `GuestScopeDeploy` + `GuestScopeFull` both have `/deploy/runs` in their allow-list; the filter at the handler layer is what hides other guests' runs.
+
+### Per-guest concurrency cap
+
+- `desktop/agent/deploy_run_support.go::deployLimiter` — `sync.Map[key]int` counter.
+- Defaults: owner cap = 8 concurrent deploys, guest cap = 2 per guest userID. Defined in `deployShipLimits`.
+- Acquired before any other work in `handleDeployShip`; released on return. A caller at the cap gets `429 Too Many Requests` with `{error, cap}`.
+- This stops a misbehaving guest from kicking off dozens of parallel xcodebuild runs. xcodebuild + gradle do serialize at the filesystem layer so data integrity isn't the issue — it's the CPU/disk floor, which the cap now protects.
+
+### Remaining follow-ups (smaller)
+
+- **Durable run history** — today the ring buffer is per-process. Agent restart = empty history. Write to `~/.yaver/deploys/<id>/` on disk if you want runs to survive reboots.
+- **Server-side composite endpoint** — today composite is a client-side fan-out. Moving it server-side (e.g. `POST /deploy/ship` accepting `targets: [...]`) would merge events into one stream and be cheaper for mobile clients that don't want N WebSocket-like connections open.
 
 ## Container Sandbox (Optional Task Isolation)
 

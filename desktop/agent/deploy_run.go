@@ -111,6 +111,26 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	// Guest vs. owner gating.
 	isGuest := r.Header.Get("X-Yaver-Guest") == "true"
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
+
+	// Per-caller concurrency cap. Owner has a global (per-agent) cap
+	// too so a runaway script can't spawn 50 xcodebuilds; the guest
+	// cap is tighter because each guest gets their own key.
+	limiter := s.ensureDeployLimiter()
+	limiterKey := "owner"
+	maxInFlight := deployShipLimits.Owner
+	if isGuest {
+		limiterKey = "guest:" + guestUID
+		maxInFlight = deployShipLimits.Guest
+	}
+	if !limiter.tryAcquire(limiterKey, maxInFlight) {
+		jsonReply(w, http.StatusTooManyRequests, map[string]interface{}{
+			"error": "deploy concurrency cap reached — wait for an in-flight run to finish",
+			"cap":   maxInFlight,
+		})
+		return
+	}
+	defer limiter.release(limiterKey)
+
 	if isGuest {
 		// Guests cannot override stack/path — only the workspace manifest
 		// decides where the code lives.
@@ -235,7 +255,26 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	startedAt := time.Now()
+
+	// Record this run in the in-memory history so /deploy/runs can
+	// show it later. We stamp owner vs. guest identity too so a
+	// guest's /deploy/runs listing only shows their own deploys.
+	requestedBy := "owner"
+	if isGuest {
+		requestedBy = guestUID
+	}
+	historyRun := s.ensureDeployHistory().Start(DeployRun{
+		App:         body.App,
+		Target:      body.Target,
+		Stack:       stack,
+		Path:        path,
+		RequestedBy: requestedBy,
+		IsGuest:     isGuest,
+		StartedAt:   startedAt.UnixMilli(),
+	})
+
 	writeEvent("meta", map[string]interface{}{
+		"id":         historyRun.ID,
 		"app":        body.App,
 		"target":     body.Target,
 		"stack":      stack,
@@ -263,6 +302,7 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var wg sync.WaitGroup
+	hist := s.ensureDeployHistory()
 	streamPipe := func(label string, rd io.Reader) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(rd)
@@ -270,10 +310,15 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		// noisy xcodebuild output).
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
+			text := scanner.Text()
 			writeEvent("line", map[string]string{
 				"stream": label,
-				"text":   scanner.Text(),
+				"text":   text,
 			})
+			// Capture into the run's output-tail ring buffer so
+			// /deploy/runs/{id} can replay the last ~8 KB after the
+			// stream closes.
+			hist.Append(historyRun.ID, text)
 		}
 	}
 	wg.Add(2)
@@ -293,7 +338,9 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	duration := time.Since(startedAt)
+	hist.Finish(historyRun.ID, exitCode)
 	writeEvent("exit", map[string]interface{}{
+		"id":          historyRun.ID,
 		"code":        exitCode,
 		"duration_ms": duration.Milliseconds(),
 		"ok":          exitCode == 0,

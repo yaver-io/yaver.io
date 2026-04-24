@@ -49,6 +49,11 @@ type HTTPServer struct {
 	todolistMgr        *TodoListManager
 	sessionAuditor     *SessionAuditor
 	guestConfigMgr     *GuestConfigManager
+	// Deploy history (in-memory ring buffer of recent /deploy/ship runs)
+	// and per-caller concurrency limiter. Both are always live — lazy
+	// allocation happens on first use via the ensureDeploy* helpers.
+	deployHistory *DeployHistory
+	deployLimiter *deployLimiter
 	containerRunner    *ContainerRunner     // nil if Docker not available
 	containerizeGuests bool                 // run guest tasks in containers
 	containerizeHost   bool                 // run host tasks in containers
@@ -953,6 +958,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
 	mux.HandleFunc("/deploy/generate", s.auth(s.handleDeployGenerate))
 	mux.HandleFunc("/deploy/ship", s.auth(s.handleDeployShip))
+	mux.HandleFunc("/deploy/runs", s.auth(s.handleDeployRuns))
+	mux.HandleFunc("/deploy/runs/", s.auth(s.handleDeployRunDetail))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))

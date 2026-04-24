@@ -1,0 +1,139 @@
+package main
+
+// deploy_run_support.go — supporting pieces for /deploy/ship:
+//
+//   1. deployLimiter — per-user in-flight cap so a misbehaving guest
+//      can't kick off dozens of parallel xcodebuild runs. Owner calls
+//      use the empty-string key and get a higher cap.
+//   2. HTTP handlers for /deploy/runs (list) and /deploy/runs/{id}
+//      (detail). Guest-aware: a guest only sees their own runs.
+//   3. ensureDeployHistory / ensureDeployLimiter — lazy init so a
+//      server built in a test doesn't have to remember to allocate
+//      them.
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// deployShipLimits is the default concurrency cap table.
+var deployShipLimits = struct {
+	Owner int
+	Guest int
+}{Owner: 8, Guest: 2}
+
+// deployLimiter tracks per-caller in-flight deploys. "" is the owner.
+type deployLimiter struct {
+	mu       sync.Mutex
+	inFlight map[string]int
+}
+
+func newDeployLimiter() *deployLimiter {
+	return &deployLimiter{inFlight: map[string]int{}}
+}
+
+// tryAcquire atomically increments the counter for key if under max.
+// Returns true on success; false means the caller is at their cap.
+func (l *deployLimiter) tryAcquire(key string, max int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight[key] >= max {
+		return false
+	}
+	l.inFlight[key]++
+	return true
+}
+
+// release decrements. Safe to call if acquire wasn't called (no-op
+// when already at zero — the defer pattern benefits).
+func (l *deployLimiter) release(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.inFlight[key] > 0 {
+		l.inFlight[key]--
+	}
+}
+
+// ensureDeployHistory returns s.deployHistory, creating it on first
+// call. Guards every handler path so tests that build an HTTPServer
+// literal don't need to initialise it manually.
+func (s *HTTPServer) ensureDeployHistory() *DeployHistory {
+	if s.deployHistory == nil {
+		s.deployHistory = NewDeployHistory(100)
+	}
+	return s.deployHistory
+}
+
+func (s *HTTPServer) ensureDeployLimiter() *deployLimiter {
+	if s.deployLimiter == nil {
+		s.deployLimiter = newDeployLimiter()
+	}
+	return s.deployLimiter
+}
+
+// guestFilterForRequest returns ("guestUID") when the caller is a
+// guest and ("") when the caller is the owner. Used by the history
+// endpoints to hide other users' runs.
+func guestFilterForRequest(r *http.Request) string {
+	if r.Header.Get("X-Yaver-Guest") == "true" {
+		return r.Header.Get("X-Yaver-GuestUserID")
+	}
+	return ""
+}
+
+// handleDeployRuns: GET /deploy/runs[?limit=N]
+//
+// Response: { "runs": [ DeployRun, ... ] }
+//
+// Guests only see runs they themselves initiated. Owner sees all.
+func (s *HTTPServer) handleDeployRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	limit := 50
+	if v := strings.TrimSpace(r.URL.Query().Get("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	guestFilter := guestFilterForRequest(r)
+	runs := s.ensureDeployHistory().List(limit, guestFilter)
+	// Elide OutputTail from list responses — the detail endpoint
+	// gives you that. Keeps a `list` cheap and prevents accidental
+	// 8 KB × N blow-ups.
+	for i := range runs {
+		runs[i].OutputTail = ""
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"runs":  runs,
+		"count": len(runs),
+	})
+}
+
+// handleDeployRunDetail: GET /deploy/runs/{id}
+//
+// Returns a single DeployRun including its OutputTail. Guests get
+// 404 for runs they didn't initiate (indistinguishable from absent,
+// deliberately).
+func (s *HTTPServer) handleDeployRunDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/deploy/runs/")
+	id := strings.TrimSpace(path)
+	if id == "" || strings.Contains(id, "/") {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "missing run id"})
+		return
+	}
+	guestFilter := guestFilterForRequest(r)
+	run, ok := s.ensureDeployHistory().Get(id, guestFilter)
+	if !ok {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "run not found"})
+		return
+	}
+	jsonReply(w, http.StatusOK, run)
+}
