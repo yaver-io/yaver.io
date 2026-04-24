@@ -9851,21 +9851,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	// --- Guest Access ---
 	case "guest_invite":
 		var args struct {
-			Email    string   `json:"email"`
-			Scope    string   `json:"scope"`
-			Projects []string `json:"projects"`
+			Email     string   `json:"email"`
+			UserID    string   `json:"user_id"`
+			Scope     string   `json:"scope"`
+			DeviceIDs []string `json:"device_ids"`
+			Projects  []string `json:"projects"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		if args.Email == "" {
-			return mcpToolError("email is required")
+		if strings.TrimSpace(args.Email) == "" && strings.TrimSpace(args.UserID) == "" {
+			return mcpToolError("email or user_id is required")
 		}
-		if args.Scope != "" && args.Scope != GuestScopeFull && args.Scope != GuestScopeFeedbackOnly {
-			return mcpToolError("scope must be 'full' or 'feedback-only'")
+		if args.Scope != "" && args.Scope != GuestScopeFull && args.Scope != GuestScopeFeedbackOnly && args.Scope != GuestScopeSDKProject {
+			return mcpToolError("scope must be 'full', 'feedback-only', or 'sdk-project'")
 		}
 		invResult, err := InviteGuestWith(s.convexURL, s.token, InviteGuestOpts{
-			Email:           args.Email,
-			Scope:           args.Scope,
-			AllowedProjects: args.Projects,
+			Email:             args.Email,
+			UserID:            args.UserID,
+			ProposedDeviceIDs: args.DeviceIDs,
+			Scope:             args.Scope,
+			AllowedProjects:   args.Projects,
 		})
 		if err != nil {
 			return mcpToolError(err.Error())
@@ -9883,11 +9887,20 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if scopeShown == "" {
 			scopeShown = GuestScopeFeedbackOnly
 		}
-		msg := fmt.Sprintf("Invitation sent to %s.\nInvite code: %s\nScope: %s\n", args.Email, invResult.InviteCode, scopeShown)
+		target := strings.TrimSpace(args.Email)
+		if target == "" {
+			target = "user_id:" + strings.TrimSpace(args.UserID)
+		}
+		msg := fmt.Sprintf("Invitation sent to %s.\nInvite code: %s\nScope: %s\n", target, invResult.InviteCode, scopeShown)
 		if scopeShown == GuestScopeFeedbackOnly {
 			msg += "Hardened end-user tier — no /tasks, /vibing, /dev, /projects; /info redacted; fix-triggered tasks force-containerized. Re-invite with scope='full' for teammates.\n"
+		} else if scopeShown == GuestScopeSDKProject {
+			msg += "Project-scoped Feedback SDK tier — delegated guest access is limited to the selected projects and device slice.\n"
 		} else {
 			msg += "Full teammate tier — tasks, vibing, dev-server proxy, builds, projects, plus the feedback/voice surface.\n"
+		}
+		if ids := cleanProjectList(args.DeviceIDs); len(ids) > 0 {
+			msg += fmt.Sprintf("Machine narrowing: %s.\n", strings.Join(ids, ", "))
 		}
 		if projs := cleanProjectList(args.Projects); len(projs) > 0 {
 			msg += fmt.Sprintf("Project narrowing: %s (this guest cannot see/fix feedback or run tasks outside these projects).\n", strings.Join(projs, ", "))

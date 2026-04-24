@@ -16,6 +16,7 @@ import * as Clipboard from "expo-clipboard";
 import { useColors } from "../../src/context/ThemeContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import { QuicClient, quicClient } from "../../src/lib/quic";
 import {
   acceptGuestByCode,
   acceptGuestInvitation,
@@ -36,6 +37,56 @@ import {
 // further before accepting.
 
 type Tab = "my-guests" | "join";
+
+function tunnelServersForDevice(device: { id: string; name: string; tunnelUrl?: string; publicEndpoints?: string[] }) {
+  const seen = new Set<string>();
+  const out: Array<{ id: string; url: string; label: string; priority: number }> = [];
+  const add = (url: string, priority: number, label: string) => {
+    const trimmed = url.trim().replace(/\/+$/, "");
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push({ id: `tunnel-${device.id}-${out.length}`, url: trimmed, label, priority });
+  };
+  (device.publicEndpoints ?? []).forEach((url, index) => add(url, index, `${device.name} endpoint #${index + 1}`));
+  if (device.tunnelUrl) add(device.tunnelUrl, out.length, `${device.name} shared tunnel`);
+  return out.length > 0 ? out : undefined;
+}
+
+async function fetchProjectsFromDevice(
+  device: {
+    id: string;
+    name: string;
+    host: string;
+    port: number;
+    lanIps?: string[];
+    tunnelUrl?: string;
+    publicEndpoints?: string[];
+  },
+  token: string,
+): Promise<string[]> {
+  const client = new QuicClient();
+  client.setRelayServers(quicClient.getRelayServers().map((relay) => ({ ...relay })));
+  try {
+    await client.connect(
+      device.host,
+      device.port,
+      token,
+      device.id,
+      device.lanIps,
+      tunnelServersForDevice(device),
+    );
+    const projects = await client.listProjects().catch(() => []);
+    return Array.from(
+      new Set(
+        projects
+          .map((project) => String(project?.name || "").trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  } finally {
+    client.disconnect();
+  }
+}
 
 export default function GuestsScreen() {
   const c = useColors();
@@ -60,13 +111,21 @@ export default function GuestsScreen() {
   const [inviteLookupErr, setInviteLookupErr] = useState<string | null>(null);
   const [inviteProposedDeviceIds, setInviteProposedDeviceIds] = useState<string[]>([]);
   const [inviteScope, setInviteScope] = useState<"full" | "feedback-only" | "sdk-project">("full");
-  const [inviteProjects, setInviteProjects] = useState("");
+  const [inviteProjects, setInviteProjects] = useState<string[]>([]);
+  const [inviteProjectChoices, setInviteProjectChoices] = useState<string[]>([]);
+  const [inviteProjectsLoading, setInviteProjectsLoading] = useState(false);
+  const [inviteProjectsError, setInviteProjectsError] = useState<string | null>(null);
+  const [inviteProjectsSource, setInviteProjectsSource] = useState<string | null>(null);
   const [inviting, setInviting] = useState(false);
   const [lastCode, setLastCode] = useState<string | null>(null);
   const [lastTarget, setLastTarget] = useState<string | null>(null);
 
   // Only show own (non-guest) devices in the picker.
   const ownDevices = useMemo(() => devices.filter((d) => !d.isGuest), [devices]);
+  const inviteSelectedDevices = useMemo(
+    () => ownDevices.filter((d) => inviteProposedDeviceIds.includes(d.id)),
+    [ownDevices, inviteProposedDeviceIds],
+  );
 
   // ─── Join flow (guest side) ──────────────────────────────────
   const [joinCode, setJoinCode] = useState("");
@@ -146,21 +205,20 @@ export default function GuestsScreen() {
     if (!v) return;
     setInviting(true);
     try {
-      const allowedProjects = inviteProjects
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
       const payload =
         inviteKind === "email"
-          ? { email: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects }
-          : { userId: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects };
+          ? { email: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects }
+          : { userId: v, deviceIds: inviteProposedDeviceIds, scope: inviteScope, allowedProjects: inviteProjects };
       const r = await inviteGuest(token, payload);
       setLastCode(r.inviteCode);
       setLastTarget(inviteKind === "email" ? v : inviteLookup?.email || ("user " + v));
       setInviteTarget("");
       setInviteLookup(null);
       setInviteProposedDeviceIds([]);
-      setInviteProjects("");
+      setInviteProjects([]);
+      setInviteProjectChoices([]);
+      setInviteProjectsError(null);
+      setInviteProjectsSource(null);
       loadGuests();
     } catch (e: any) {
       Alert.alert("Invite failed", e?.message || String(e));
@@ -212,6 +270,57 @@ export default function GuestsScreen() {
       prev.includes(deviceId) ? prev.filter((x) => x !== deviceId) : [...prev, deviceId],
     );
   }
+
+  function toggleInviteProject(project: string) {
+    setInviteProjects((prev) =>
+      prev.includes(project) ? prev.filter((item) => item !== project) : [...prev, project],
+    );
+  }
+
+  async function loadInviteProjects() {
+    if (!token || inviteSelectedDevices.length === 0) return;
+    setInviteProjectsLoading(true);
+    setInviteProjectsError(null);
+    setInviteProjectChoices([]);
+    setInviteProjects([]);
+    setInviteProjectsSource(null);
+    try {
+      const settled = await Promise.allSettled(
+        inviteSelectedDevices.map((device) => fetchProjectsFromDevice(device, token)),
+      );
+      const merged = new Set<string>();
+      let successCount = 0;
+      let failureCount = 0;
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          successCount += 1;
+          for (const project of result.value) merged.add(project);
+        } else {
+          failureCount += 1;
+        }
+      }
+      const choices = [...merged].sort((a, b) => a.localeCompare(b));
+      setInviteProjectChoices(choices);
+      setInviteProjectsSource(inviteSelectedDevices.map((device) => device.name).join(", "));
+      if (choices.length === 0) {
+        setInviteProjectsError("No projects were detected on the selected machine(s).");
+      } else if (failureCount > 0 && successCount > 0) {
+        setInviteProjectsError("Loaded projects from some selected machines, but at least one machine did not respond.");
+      } else if (failureCount > 0) {
+        setInviteProjectsError("Could not load projects from the selected machine(s).");
+      }
+    } catch (e: any) {
+      setInviteProjectsError(e?.message || "Failed to load projects");
+    }
+    setInviteProjectsLoading(false);
+  }
+
+  useEffect(() => {
+    setInviteProjects([]);
+    setInviteProjectChoices([]);
+    setInviteProjectsError(null);
+    setInviteProjectsSource(null);
+  }, [inviteProposedDeviceIds.join("|")]);
 
   async function previewCode() {
     if (!token || joinCode.trim().length < 4) return;
@@ -394,9 +503,9 @@ export default function GuestsScreen() {
                 <Text style={{ color: "#ef4444", fontSize: 12 }}>{inviteLookupErr}</Text>
               )}
 
-              <View style={{ gap: 6 }}>
-                <Text style={sectionLabel as any}>Access tier</Text>
-                <View style={{ flexDirection: "row", gap: 8 }}>
+                <View style={{ gap: 6 }}>
+                  <Text style={sectionLabel as any}>Access tier</Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
                   <ChipToggle
                     c={c}
                     label="Yaver full"
@@ -409,25 +518,15 @@ export default function GuestsScreen() {
                     active={inviteScope === "feedback-only"}
                     onPress={() => setInviteScope("feedback-only")}
                   />
+                  <ChipToggle
+                    c={c}
+                    label="SDK project"
+                    active={inviteScope === "sdk-project"}
+                    onPress={() => setInviteScope("sdk-project")}
+                  />
                 </View>
                 <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only.
-                </Text>
-              </View>
-
-              <View style={{ gap: 6 }}>
-                <Text style={sectionLabel as any}>Project scope</Text>
-                <TextInput
-                  value={inviteProjects}
-                  onChangeText={setInviteProjects}
-                  placeholder="optional: sfmg,another-project"
-                  placeholderTextColor={c.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={[inputStyle(c), { fontFamily: "Menlo" }]}
-                />
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>
-                  Optional comma-separated project slugs. Empty means all projects the selected tier allows.
+                  Full = tasks, vibing, projects, remote coding. Feedback SDK = feedback, blackbox, voice only. SDK project = Feedback SDK access narrowed to selected projects.
                 </Text>
               </View>
 
@@ -474,10 +573,68 @@ export default function GuestsScreen() {
                           <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Menlo" }}>
                             {d.id} · {d.os}
                           </Text>
+                          <Text style={{ color: c.textMuted, fontSize: 10 }}>
+                            {inviteProjects.length > 0
+                              ? `Project slice: ${inviteProjects.join(", ")}`
+                              : inviteProjectChoices.length > 0
+                                ? "Projects loaded for this machine. Pick the ones to share below."
+                                : "Load this machine's projects to narrow the share by project."}
+                          </Text>
                         </View>
                       </Pressable>
                     );
                   })}
+                </View>
+              )}
+
+              {inviteSelectedDevices.length > 0 && (
+                <View style={{ gap: 8 }}>
+                  <Text style={sectionLabel as any}>Project slice</Text>
+                  <Pressable
+                    onPress={loadInviteProjects}
+                    disabled={inviteProjectsLoading}
+                    style={[actionBtn(c), {
+                      backgroundColor: c.accent + "15",
+                      borderColor: c.accent,
+                      borderWidth: 1,
+                      opacity: inviteProjectsLoading ? 0.6 : 1,
+                    }]}
+                  >
+                    {inviteProjectsLoading ? (
+                      <ActivityIndicator color={c.accent} />
+                    ) : (
+                      <Text style={{ color: c.accent, fontWeight: "700" }}>
+                        Load projects from selected machine{inviteSelectedDevices.length === 1 ? "" : "s"}
+                      </Text>
+                    )}
+                  </Pressable>
+                  {inviteProjectsSource ? (
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Source: {inviteProjectsSource}
+                    </Text>
+                  ) : null}
+                  {inviteProjectsError ? (
+                    <Text style={{ color: inviteProjectChoices.length > 0 ? "#f59e0b" : "#ef4444", fontSize: 11 }}>
+                      {inviteProjectsError}
+                    </Text>
+                  ) : (
+                    <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                      Selected projects are stored on the invite and enforced as the guest's project slice.
+                    </Text>
+                  )}
+                  {inviteProjectChoices.length > 0 && (
+                    <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                      {inviteProjectChoices.map((project) => (
+                        <ChipToggle
+                          key={project}
+                          c={c}
+                          label={project}
+                          active={inviteProjects.includes(project)}
+                          onPress={() => toggleInviteProject(project)}
+                        />
+                      ))}
+                    </View>
+                  )}
                 </View>
               )}
 

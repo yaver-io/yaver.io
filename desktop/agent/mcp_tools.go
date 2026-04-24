@@ -2052,23 +2052,31 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	guestTools := []map[string]interface{}{
 		{
 			"name":        "guest_invite",
-			"description": "Invite a guest by email to use your machine. Max 5 guests, invitation expires in 2 days. Default scope is 'feedback-only' — the hardened tier for end-users of your app (no /tasks, no /vibing, no dev-server proxy, no project enumeration; /info is redacted; any fix-triggered task runs inside Docker). Use scope='full' for teammate invites that need task / vibing / dev access.",
+			"description": "Invite a guest by email or Yaver user id to use your machine. Max 5 guests, invitation expires in 2 days. Default scope is 'feedback-only' — the hardened tier for end-users of your app (no /tasks, no /vibing, no dev-server proxy, no project enumeration; /info is redacted; any fix-triggered task runs inside Docker). Use scope='full' for teammate invites that need task / vibing / dev access, or scope='sdk-project' for Feedback SDK style project-scoped access.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
-				"required": []string{"email"},
 				"properties": map[string]interface{}{
 					"email": map[string]interface{}{
 						"type":        "string",
-						"description": "Email address of the person to invite",
+						"description": "Email address of the person to invite. Provide either email or user_id.",
+					},
+					"user_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Public Yaver user id of the person to invite. Provide either email or user_id.",
 					},
 					"scope": map[string]interface{}{
 						"type":        "string",
-						"description": "Access tier: 'feedback-only' (default, hardened end-user) or 'full' (classic teammate).",
-						"enum":        []string{"full", "feedback-only"},
+						"description": "Access tier: 'feedback-only' (default, hardened end-user), 'sdk-project' (Feedback SDK style project-scoped access), or 'full' (classic teammate).",
+						"enum":        []string{"full", "feedback-only", "sdk-project"},
+					},
+					"device_ids": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional host device ids to pre-scope the invitation to specific machines. Empty = all host machines.",
+						"items":       map[string]interface{}{"type": "string"},
 					},
 					"projects": map[string]interface{}{
 						"type":        "array",
-						"description": "Narrow this grant to specific project names/slugs on the host. Empty = all. Useful when feedback-only guests should only see Project A, not B/C.",
+						"description": "Narrow this grant to specific project names/slugs on the host. Empty = all. Useful when feedback-only or sdk-project guests should only see Project A, not B/C.",
 						"items":       map[string]interface{}{"type": "string"},
 					},
 				},

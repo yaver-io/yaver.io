@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/use-auth";
 import { useDevices } from "@/lib/use-devices";
-import { agentClient, type GuestConfigEntry } from "@/lib/agent-client";
+import { AgentClient, agentClient, type GuestConfigEntry } from "@/lib/agent-client";
 import {
   acceptGuestByCode,
   acceptGuestInvitation,
@@ -100,6 +100,52 @@ function machineStatusLine(opts: {
   return bits.join(" · ");
 }
 
+function tunnelUrlsForDevice(device: { publicEndpoints?: string[]; tunnelUrl?: string }) {
+  return Array.from(
+    new Set(
+      [
+        ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+        ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+async function fetchProjectsFromDevice(device: {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  publicEndpoints?: string[];
+  tunnelUrl?: string;
+}, token: string): Promise<string[]> {
+  const client = new AgentClient();
+  client.setRelayServers(
+    agentClient.configuredRelayServers.map((relay) => ({ ...relay })),
+  );
+  try {
+    await client.connect(device.host, device.port, token, device.id, {
+      tunnelUrls: tunnelUrlsForDevice(device),
+    });
+    const [projects, workspaceApps] = await Promise.all([
+      client.listProjects().catch(() => []),
+      client.getWorkspaceApps().catch(() => []),
+    ]);
+    return Array.from(
+      new Set(
+        [
+          ...projects.map((project) => String(project?.name || "").trim()),
+          ...workspaceApps.map((app) => String(app?.name || "").trim()),
+        ].filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  } finally {
+    client.disconnect();
+  }
+}
+
 export default function GuestsStatusView() {
   const { token, user } = useAuth();
   const { devices } = useDevices(token);
@@ -115,6 +161,10 @@ export default function GuestsStatusView() {
   const [inviteScope, setInviteScope] = useState<Scope>("feedback-only");
   const [inviteProjects, setInviteProjects] = useState<string[]>([]);
   const [inviteDeviceIds, setInviteDeviceIds] = useState<string[]>([]);
+  const [inviteProjectChoices, setInviteProjectChoices] = useState<string[]>([]);
+  const [inviteProjectsLoading, setInviteProjectsLoading] = useState(false);
+  const [inviteProjectsError, setInviteProjectsError] = useState<string | null>(null);
+  const [inviteProjectsSource, setInviteProjectsSource] = useState<string | null>(null);
   const [inviteLookup, setInviteLookup] = useState<PublicUserLookup | null>(null);
   const [inviteLookupErr, setInviteLookupErr] = useState<string | null>(null);
   const [lastInvite, setLastInvite] = useState<{ code: string; target: string; scope: string } | null>(null);
@@ -217,6 +267,7 @@ export default function GuestsStatusView() {
   }
 
   const ownDevices = devices.filter((d) => !d.isGuest);
+  const inviteSelectedDevices = ownDevices.filter((d) => inviteDeviceIds.includes(d.id));
   const projectChoices = Array.from(new Set(projectOptions)).sort((a, b) => a.localeCompare(b));
   const configByEmail = new Map(guestConfigs.map((cfg) => [cfg.guestEmail, cfg]));
 
@@ -232,6 +283,52 @@ export default function GuestsStatusView() {
     setJoinApprovedDeviceIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   }
 
+  async function loadInviteProjects() {
+    if (!token || inviteSelectedDevices.length === 0) return;
+    setInviteProjectsLoading(true);
+    setInviteProjectsError(null);
+    setInviteProjectChoices([]);
+    setInviteProjects([]);
+    setInviteProjectsSource(null);
+    try {
+      const settled = await Promise.allSettled(
+        inviteSelectedDevices.map((device) => fetchProjectsFromDevice(device, token)),
+      );
+      const merged = new Set<string>();
+      let successCount = 0;
+      let failureCount = 0;
+      for (const result of settled) {
+        if (result.status === "fulfilled") {
+          successCount += 1;
+          for (const project of result.value) merged.add(project);
+        } else {
+          failureCount += 1;
+        }
+      }
+      const choices = [...merged].sort((a, b) => a.localeCompare(b));
+      setInviteProjectChoices(choices);
+      setInviteProjectsSource(inviteSelectedDevices.map((device) => device.name).join(", "));
+      if (choices.length === 0) {
+        setInviteProjectsError("No projects were detected on the selected machine(s).");
+      } else if (failureCount > 0 && successCount > 0) {
+        setInviteProjectsError("Loaded projects from some selected machines, but at least one machine did not respond.");
+      } else if (failureCount > 0) {
+        setInviteProjectsError("Could not load projects from the selected machine(s).");
+      }
+    } catch (e) {
+      setInviteProjectsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setInviteProjectsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setInviteProjects([]);
+    setInviteProjectChoices([]);
+    setInviteProjectsError(null);
+    setInviteProjectsSource(null);
+}, [inviteDeviceIds.join("|")]);
+
   async function handleInvite() {
     if (!token || !inviteTarget.trim()) return;
     setBusy("invite");
@@ -242,6 +339,7 @@ export default function GuestsStatusView() {
         userId: inviteKind === "user-id" ? inviteTarget.trim() : undefined,
         deviceIds: inviteDeviceIds,
         scope: inviteScope,
+        allowedProjects: inviteProjects,
       });
       setLastInvite({
         code: result.inviteCode,
@@ -252,6 +350,9 @@ export default function GuestsStatusView() {
       setInviteLookup(null);
       setInviteProjects([]);
       setInviteDeviceIds([]);
+      setInviteProjectChoices([]);
+      setInviteProjectsError(null);
+      setInviteProjectsSource(null);
       await load();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -429,8 +530,10 @@ export default function GuestsStatusView() {
                     </div>
                     <div className="mt-2 text-surface-500">
                       {inviteProjects.length > 0
-                        ? `Planned runtime slice after connection: ${inviteProjects.join(", ")}`
-                        : "Project slice will be decided later on the connected machine"}
+                        ? `Project slice: ${inviteProjects.join(", ")}`
+                        : inviteProjectChoices.length > 0
+                          ? "Projects loaded for this machine. Pick the ones to share below."
+                          : "Load this machine's projects to narrow the share by project."}
                     </div>
                   </button>
                 ))}
@@ -441,31 +544,53 @@ export default function GuestsStatusView() {
             </div>
           )}
 
-          {projectChoices.length > 0 && (
+          {inviteSelectedDevices.length > 0 && (
             <div className="space-y-2">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Project slice</div>
-              <div className="text-xs text-surface-500">
-                This is applied later as host runtime policy over the connected machine/P2P path. It is not baked into the invite payload.
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void loadInviteProjects()}
+                  disabled={inviteProjectsLoading}
+                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300 disabled:opacity-40"
+                >
+                  {inviteProjectsLoading
+                    ? "Loading projects…"
+                    : `Load projects from selected machine${inviteSelectedDevices.length === 1 ? "" : "s"}`}
+                </button>
+                {inviteProjectsSource ? (
+                  <div className="text-xs text-surface-500">
+                    Source: {inviteProjectsSource}
+                  </div>
+                ) : null}
               </div>
-              <div className="flex flex-wrap gap-2">
-                {projectChoices.map((project) => (
-                  <button
-                    key={project}
-                    type="button"
-                    onClick={() => toggleProject(project)}
-                    className={`border px-2 py-1 text-xs ${
-                      inviteProjects.includes(project)
-                        ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
-                        : "border-surface-700 bg-surface-950 text-surface-400"
-                    }`}
-                  >
-                    {project}
-                  </button>
-                ))}
-              </div>
-              <div className="text-xs text-surface-500">
-                Use this as your planned runtime slice after the guest connects to the selected machine.
-              </div>
+              {inviteProjectsError ? (
+                <div className={`text-xs ${inviteProjectChoices.length > 0 ? "text-amber-300" : "text-red-300"}`}>
+                  {inviteProjectsError}
+                </div>
+              ) : (
+                <div className="text-xs text-surface-500">
+                  Selected projects are saved into the invite and enforced as the guest's project slice.
+                </div>
+              )}
+              {inviteProjectChoices.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {inviteProjectChoices.map((project) => (
+                    <button
+                      key={project}
+                      type="button"
+                      onClick={() => toggleProject(project)}
+                      className={`border px-2 py-1 text-xs ${
+                        inviteProjects.includes(project)
+                          ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
+                          : "border-surface-700 bg-surface-950 text-surface-400"
+                      }`}
+                    >
+                      {project}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           )}
 
