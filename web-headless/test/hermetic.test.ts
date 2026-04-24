@@ -411,15 +411,18 @@ describe("WebClient — Web Reload flow (workspace + surface)", () => {
     const c = new WebClient({ token: "abc", agentBaseUrl: agent.url });
     await c.connect("d1");
 
+    // TS narrows lastWorkspaceQuery to `null` after the reassignment
+    // since it can't prove the mock handler ran. Cast through unknown
+    // — same pattern the file already uses on line 124.
     lastWorkspaceQuery = null;
     const webOnly = await c.getWorkspaceApps("web");
-    expect(lastWorkspaceQuery).toBe("web");
+    expect(lastWorkspaceQuery as unknown as string).toBe("web");
     expect(webOnly.every((a) => a.kind === "web")).toBe(true);
     expect(webOnly.map((a) => a.name).sort()).toEqual(["marketing", "web"]);
 
     lastWorkspaceQuery = null;
     const webAndHybrid = await c.getWorkspaceApps(["web", "hybrid"]);
-    expect(lastWorkspaceQuery).toBe("web,hybrid");
+    expect(lastWorkspaceQuery as unknown as string).toBe("web,hybrid");
     expect(webAndHybrid.map((a) => a.name).sort()).toEqual(["marketing", "mobile", "web"]);
   });
 
