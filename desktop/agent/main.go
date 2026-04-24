@@ -352,6 +352,8 @@ func main() {
 		runOps(os.Args[2:])
 	case "workspace":
 		runWorkspace(os.Args[2:])
+	case "diagnose":
+		runDiagnoseCLI(os.Args[2:])
 	case "managed":
 		runManaged(os.Args[2:])
 	case "2fa", "totp":
@@ -2370,6 +2372,40 @@ func runServe(args []string) {
 	// Disabled by default; the Hetzner bootstrap sets
 	// YAVER_ENABLE_RELAY_SMOKE=1 so only the test box runs it.
 	StartRelayPasswordSmoke()
+
+	// P2P bus — distributed pub/sub for peer presence + live state.
+	// Initialised without the user's Convex userId for now; the
+	// relay-transport resolver looks up userId from the relay
+	// password. Subscribers that need strict user scoping check
+	// Publisher against the local device registry.
+	b := InitBus(ctx, cfg.DeviceID, "")
+	globalLeader = NewLeaderTracker(cfg.DeviceID)
+	globalLeader.WireTo(b)
+
+	// Connect the first available relay as a Tier-2 transport.
+	// Non-fatal if the relay is unreachable — the bus still works
+	// for local pub/sub, and other transports (Phase 2) will cover
+	// remote delivery.
+	if len(cfg.RelayServers) > 0 {
+		primary := cfg.RelayServers[0]
+		if primary.HttpURL != "" {
+			rt := NewRelayBusTransport(primary.HttpURL, primary.Password, cfg.AuthToken, b)
+			rt.Start(ctx)
+			b.RegisterTransport(rt)
+		}
+	}
+
+	// Periodic + event-driven heartbeat. StartPeerHeartbeat emits
+	// one `online` event on boot, then `ping` every minute. The
+	// shutdown handler (wired further down) publishes `offline`.
+	busHostname, _ := os.Hostname()
+	presence := PeerPresence{
+		DeviceID: cfg.DeviceID,
+		Hostname: busHostname,
+		Platform: runtime.GOOS,
+		Version:  version,
+	}
+	StartPeerHeartbeat(ctx, b, presence, 60*time.Second)
 
 	httpServer.scheduler.Start(ctx)
 	httpServer.aclMgr = aclMgr

@@ -54,6 +54,15 @@ type RelayServer struct {
 	exposeMu     sync.RWMutex
 	exposeRoutes map[string]*exposeRoute // subdomain -> route
 	exposeDomain string                  // base domain (e.g. "yaver.io")
+
+	// Per-user bus fanout (see bus.go). Events published by any
+	// agent under userId X are dispatched to every other subscriber
+	// under the same userId. Namespaced per-user — NEVER crosses
+	// user boundaries.
+	busHub      *busHub
+	pwUserIDMu  sync.RWMutex
+	pwUserIDs   map[string]string // password -> userId (short cache)
+	pwUserIDExp map[string]time.Time
 }
 
 type exposeRoute struct {
@@ -80,6 +89,9 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		tunnels:      make(map[string]*agentTunnel),
 		exposeRoutes: make(map[string]*exposeRoute),
 		exposeDomain: exposeDomain,
+		busHub:       newBusHub(),
+		pwUserIDs:    make(map[string]string),
+		pwUserIDExp:  make(map[string]time.Time),
 	}
 	// Initialize bandwidth manager
 	dataDir := os.Getenv("RELAY_DATA_DIR")
@@ -155,24 +167,60 @@ func (s *RelayServer) validatePassword(pw string) bool {
 
 // validatePasswordViaConvex calls the Convex backend to check a per-user relay password.
 func (s *RelayServer) validatePasswordViaConvex(pw string) bool {
+	_, ok := s.validateAndResolveViaConvex(pw)
+	return ok
+}
+
+// validateAndResolveViaConvex returns both the validity and the
+// resolved userId. Same 5-minute cache as validatePassword. Used by
+// the bus to scope fanout per-user without a second Convex round-trip.
+func (s *RelayServer) validateAndResolveViaConvex(pw string) (string, bool) {
 	url := strings.TrimRight(s.convexURL, "/") + "/relay/validate"
 	body, _ := json.Marshal(map[string]string{"password": pw})
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
 	if err != nil {
 		log.Printf("[RELAY] Convex validation error: %v", err)
-		return false
+		return "", false
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		OK bool `json:"ok"`
+		OK     bool   `json:"ok"`
+		UserID string `json:"userId"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		log.Printf("[RELAY] Convex validation parse error: %v", err)
-		return false
+		return "", false
 	}
-	return result.OK
+	return result.UserID, result.OK
+}
+
+// resolveUserIDFromPassword is the cache-aware variant used by bus
+// handlers. Returns "" when Convex is not configured or the password
+// doesn't map to a user (shared-password mode).
+func (s *RelayServer) resolveUserIDFromPassword(pw string) string {
+	if pw == "" || s.convexURL == "" {
+		return ""
+	}
+	s.pwUserIDMu.RLock()
+	if uid, ok := s.pwUserIDs[pw]; ok {
+		if exp, hasExp := s.pwUserIDExp[pw]; hasExp && time.Now().Before(exp) {
+			s.pwUserIDMu.RUnlock()
+			return uid
+		}
+	}
+	s.pwUserIDMu.RUnlock()
+
+	uid, ok := s.validateAndResolveViaConvex(pw)
+	if !ok || uid == "" {
+		return ""
+	}
+	s.pwUserIDMu.Lock()
+	s.pwUserIDs[pw] = uid
+	s.pwUserIDExp[pw] = time.Now().Add(5 * time.Minute)
+	s.pwUserIDMu.Unlock()
+	return uid
 }
 
 // Start runs both the QUIC tunnel listener and the HTTP proxy.
@@ -367,6 +415,11 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	mux.HandleFunc("/admin/set-password", s.handleSetPassword)
 	mux.HandleFunc("/admin/status", s.handleAdminStatus)
 	mux.HandleFunc("/admin/bandwidth", s.handleBandwidthStats)
+	// P2P bus — per-user fanout (see relay/bus.go). Not a broker;
+	// relay holds no topic state, just forwards events.
+	mux.HandleFunc("/bus/publish", s.handleBusPublish)
+	mux.HandleFunc("/bus/subscribe", s.handleBusSubscribe)
+	mux.HandleFunc("/bus/status", s.handleBusStatus)
 	mux.HandleFunc("/d/", s.handleProxy) // /d/{deviceId}/...
 
 	srv := &http.Server{
