@@ -33,11 +33,11 @@ Both packages:
 
 ## Authentication flow (shared by both)
 
-1. Either package can sign in via email/password against Convex:
+1. Both packages support email/password against Convex:
    ```bash
    export YAVER_TOKEN=$(yaver-web-headless sign-in --email=you@example.com --password=... | jq -r .token)
    ```
-   OAuth (Apple / Google / Microsoft) is only usable from the real UIs — headless scripts land on email/password.
+   Today the headless CLIs do not run popup/native OAuth flows; use email/password or inject an existing bearer token.
 2. Export `YAVER_TOKEN` once; every subsequent command picks it up automatically.
 3. `yaver-web-headless whoami` or `yaver-mobile-headless config` both confirm the session.
 

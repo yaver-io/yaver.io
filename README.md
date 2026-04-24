@@ -3,7 +3,7 @@
 [![Tests](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml/badge.svg)](https://github.com/kivanccakmak/yaver.io/actions/workflows/test-suite.yml)
 [![License: AGPL%20v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.en.html)
 
-Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md)
+Docs: [CI setup](CI.md) · [Test SDK](docs/yaver-test-sdk.md) · [Runtime Control Plane](docs/runtime-control-plane.md)
 
 **Build apps and game loops from your phone. Keep the backend and build machine local until you decide otherwise.**
 
@@ -486,7 +486,7 @@ Mode:     bootstrap — waiting for a phone to pair
 Auto-start: ● installed (will run on login/boot)
 ```
 
-The bootstrap HTTP surface only mounts the four endpoints needed to receive a token — `/health`, `/info`, `/auth/pair/{info,submit}`, and `/auth/recover`. Everything else (tasks, vault, exec, dev server) is gated behind a successful pairing.
+The bootstrap HTTP surface only mounts the pairing/recovery endpoints needed to receive a token — `/health`, `/info`, `/auth/pair/{info,session,submit,encrypted}`, and `/auth/recover`. Everything else (tasks, vault, exec, dev server) is gated behind a successful pairing.
 
 ### Two Ways to Pair From the Mobile App
 
@@ -593,12 +593,12 @@ if (process.env.NODE_ENV === 'development') {
 ```tsx
 import { YaverFeedback, FeedbackModal } from 'yaver-feedback-react-native';
 
-// 0.5 is zero-config: no agentUrl, no authToken needed.
-// The SDK ships its own login screen (Apple / Google / GitHub / GitLab /
-// Microsoft via device-code flow, plus email + password) and a remote-
-// machine picker that lists the user's own dev boxes plus guest-shared
-// machines. Works LAN-direct and over Convex/relay off-LAN so Hermes
-// bundle reloads keep working on cell data.
+// Zero-config: no agentUrl, no authToken needed.
+// The SDK ships its own login screen (native Apple on iOS, in-app browser
+// OAuth for Google / GitHub / GitLab / Microsoft, plus email + password)
+// and a machine picker that lists the user's own dev boxes plus guest-
+// shared machines. Works LAN-direct and over Convex/relay off-LAN so
+// Hermes bundle reloads keep working on cell data.
 if (__DEV__) {
   YaverFeedback.init({ trigger: 'shake' });
 }
@@ -1541,6 +1541,8 @@ Yaver Mobile App ──tap "Reload"──► Agent ──SSE push──► Third
 ```
 
 Two modes: `dev` (hot reload from dev server) and `bundle` (rebuild Hermes bytecode + push). Works over both direct LAN and relay connections.
+
+For the full current-state model of auth, re-auth, discovery, reload, vibing, feedback SDK control, and phone sandbox export/promotion, see [docs/runtime-control-plane.md](docs/runtime-control-plane.md).
 
 ## Push to Device — Test Existing RN Apps on Real Hardware
 

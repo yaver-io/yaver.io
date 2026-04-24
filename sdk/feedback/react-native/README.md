@@ -16,7 +16,7 @@ Manual fallback:
 npm install yaver-feedback-react-native
 ```
 
-> **Mobile only.** This SDK targets React Native (iOS + Android). A `yaver-feedback-web` package exists for browser apps but currently expects a bring-your-own auth token — the equivalent in-app sign-in UX (Apple / Google / GitHub / GitLab / Microsoft / email) for the web SDK will land in a future release. Open an issue if you need it sooner.
+> **Mobile only.** This SDK targets React Native (iOS + Android). For browser apps use `yaver-feedback-web`, which now has its own popup OAuth, email auth, login modal, and device picker. The React Native and web SDKs share the same account/device model, but use platform-specific auth UX.
 
 ### Peer dependencies
 
