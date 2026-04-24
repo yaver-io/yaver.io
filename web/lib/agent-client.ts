@@ -317,8 +317,15 @@ export interface Runner {
   name: string;
   installed: boolean;
   active: boolean;
+  isDefault?: boolean;
+  ready?: boolean;
+  authConfigured?: boolean;
+  warning?: string;
+  error?: string;
   models?: string[];
 }
+
+// RunnerBrowserAuthSession is defined below — single source of truth.
 
 export interface RunnerAuthStatusRow {
   id: string;
@@ -880,14 +887,20 @@ export class AgentClient {
 
   // ── Task API ───────────────────────────────────────────────────────
 
-  async sendTask(title: string, description: string): Promise<Task> {
+  async sendTask(title: string, description: string, opts?: { runner?: string; model?: string }): Promise<Task> {
     this.assertConnected();
+    const body: Record<string, unknown> = { title, description, source: "web" };
+    if (opts?.runner) body.runner = opts.runner;
+    if (opts?.model) body.model = opts.model;
     const res = await fetch(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ title, description }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) throw new Error(`Failed to create task: ${res.status}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error || `Failed to create task: ${res.status}`);
+    }
     const data = await res.json();
     return {
       id: data.taskId,
@@ -1164,6 +1177,47 @@ export class AgentClient {
     if (!res.ok) throw new Error(`Failed to get runners: ${res.status}`);
     const data = await res.json();
     return data.runners || [];
+  }
+
+  /**
+   * Kick off remote browser-style auth for a runner on the connected agent
+   * (codex `--device-auth`, claude `auth login --console`). Returns a session
+   * id that callers poll via getRunnerBrowserAuthStatus to grab the URL +
+   * code the user needs to complete in their browser.
+   */
+  async startRunnerBrowserAuth(runner: string): Promise<RunnerBrowserAuthSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/runner-auth/browser/start`, {
+      method: "POST",
+      headers: this.authHeaders,
+      body: JSON.stringify({ runner }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`startRunnerBrowserAuth(${runner}) ${res.status}: ${body || res.statusText}`);
+    }
+    const data = await res.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async getRunnerBrowserAuthStatus(sessionId: string): Promise<RunnerBrowserAuthSession> {
+    this.assertConnected();
+    const url = new URL(`${this.baseUrl}/runner-auth/browser/status`);
+    url.searchParams.set("id", sessionId);
+    const res = await fetch(url.toString(), { headers: this.authHeaders });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`getRunnerBrowserAuthStatus ${res.status}: ${body || res.statusText}`);
+    }
+    const data = await res.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
+    this.assertConnected();
+    const url = new URL(`${this.baseUrl}/runner-auth/browser/cancel`);
+    url.searchParams.set("id", sessionId);
+    await fetch(url.toString(), { method: "POST", headers: this.authHeaders }).catch(() => {});
   }
 
   async getToolchainSyncProfile(): Promise<EnvironmentProfile> {

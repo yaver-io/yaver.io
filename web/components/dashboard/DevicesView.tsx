@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
+import { agentClient, type RunnerBrowserAuthSession } from "@/lib/agent-client";
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -346,6 +347,7 @@ function usePrimaryDeviceId(token: string | null | undefined): {
 export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen, hiddenCount = 0 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [authModal, setAuthModal] = useState<{ deviceId: string; deviceName: string; runner: string } | null>(null);
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
@@ -505,16 +507,42 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                         Coding agents
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {states.map((state) => (
-                          <span
-                            key={`${device.id}:runner:${state.id}`}
-                            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`}
-                            title={runnerChipTitle(state)}
-                          >
-                            <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
-                            {state.label}
-                          </span>
-                        ))}
+                        {states.map((state) => {
+                          const supportsRemoteAuth = state.id === "codex" || state.id === "claude";
+                          const needsAction = state.health !== "ready";
+                          const canAuth = device.online && !device.isGuest && supportsRemoteAuth && needsAction;
+                          const base = `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`;
+                          if (!canAuth) {
+                            return (
+                              <span
+                                key={`${device.id}:runner:${state.id}`}
+                                className={base}
+                                title={runnerChipTitle(state)}
+                              >
+                                <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
+                                {state.label}
+                              </span>
+                            );
+                          }
+                          return (
+                            <button
+                              key={`${device.id}:runner:${state.id}`}
+                              onClick={() =>
+                                setAuthModal({
+                                  deviceId: device.id,
+                                  deviceName: device.name || device.id,
+                                  runner: state.id,
+                                })
+                              }
+                              className={`${base} cursor-pointer hover:brightness-110`}
+                              title={`${runnerChipTitle(state)}\nClick to sign in from this browser.`}
+                            >
+                              <span className={`h-1.5 w-1.5 rounded-full ${runnerChipDotClass(state.health)}`} />
+                              {state.label}
+                              <span className="ml-0.5 text-[10px] opacity-80">· sign in</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -566,6 +594,16 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           })}
         </div>
       )}
+      {authModal ? (
+        <RunnerAuthModal
+          runner={authModal.runner}
+          deviceName={authModal.deviceName}
+          onClose={() => {
+            setAuthModal(null);
+            void onRefresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -708,6 +746,155 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         >
           Hide this device
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Remote "Sign in" modal. Kicks off `codex login --device-auth` (or
+ * `claude auth login --console`) on the connected agent, pulls the
+ * URL + one-time code out of the CLI's stdout, and renders them so the
+ * user can complete the flow in *their* browser on any device — no
+ * SSH, no local env keys, no API key paste.
+ *
+ * Status machine mirrors runnerBrowserAuthSession on the Go side:
+ *   starting → awaiting_browser (url+code filled) → completed | failed | cancelled.
+ */
+function RunnerAuthModal({
+  runner,
+  deviceName,
+  onClose,
+}: {
+  runner: string;
+  deviceName: string;
+  onClose: () => void;
+}) {
+  const [session, setSession] = useState<RunnerBrowserAuthSession | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const startedRef = useRef(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    (async () => {
+      try {
+        const s = await agentClient.startRunnerBrowserAuth(runner);
+        setSession(s);
+      } catch (err) {
+        setStartError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }, [runner]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") return;
+    const iv = setInterval(async () => {
+      try {
+        const s = await agentClient.getRunnerBrowserAuthStatus(session.id);
+        setSession(s);
+      } catch {
+        // keep polling — transient fetch errors are fine
+      }
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [session?.id, session?.status]);
+
+  const terminal = session && ["completed", "failed", "cancelled"].includes(session.status);
+
+  const copyCode = async () => {
+    if (!session?.code) return;
+    try {
+      await navigator.clipboard.writeText(session.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API may be blocked — the code is still visible on screen
+    }
+  };
+
+  const runnerLabel = runner === "codex" ? "OpenAI Codex" : runner === "claude" ? "Claude Code" : runner;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={(e) => { if (e.target === e.currentTarget && terminal) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-surface-800 bg-surface-900 p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-surface-100">Sign in to {runnerLabel}</h3>
+            <p className="text-xs text-surface-500">on <span className="font-mono text-surface-300">{deviceName}</span></p>
+          </div>
+          <button
+            onClick={async () => {
+              if (session && !terminal) { await agentClient.cancelRunnerBrowserAuth(session.id).catch(() => {}); }
+              onClose();
+            }}
+            className="text-surface-500 hover:text-surface-200 text-xl leading-none"
+            aria-label="Close"
+          >×</button>
+        </div>
+
+        {startError ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+            <div className="font-semibold mb-1">Couldn't start sign-in</div>
+            {startError}
+          </div>
+        ) : !session ? (
+          <div className="rounded-lg border border-surface-800 bg-surface-800/40 p-3 text-xs text-surface-400">
+            Starting the sign-in flow on the remote machine…
+          </div>
+        ) : session.status === "completed" ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+            <div className="font-semibold mb-1">✓ Signed in</div>
+            <div className="text-xs text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
+          </div>
+        ) : session.status === "failed" || session.status === "cancelled" ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+            <div className="font-semibold mb-1">{session.status === "cancelled" ? "Cancelled" : "Failed"}</div>
+            <div>{session.error || session.detail || "The CLI exited before sign-in completed."}</div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-surface-400">
+              Complete sign-in from any browser — we triggered <code className="rounded bg-surface-800 px-1.5 py-0.5 font-mono text-surface-200">{runner} login --device-auth</code> on the remote machine.
+            </p>
+            {session.openUrl ? (
+              <a
+                href={session.openUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
+              >
+                ↗ {session.openUrl}
+              </a>
+            ) : (
+              <div className="rounded-lg border border-surface-800 bg-surface-800/30 px-3 py-2.5 text-xs text-surface-500">
+                Waiting for the verification URL from the remote CLI…
+              </div>
+            )}
+            {session.code ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                  Enter this code
+                </div>
+                <button
+                  onClick={copyCode}
+                  className="flex w-full items-center justify-between rounded-lg border border-surface-700 bg-surface-800/60 px-4 py-3 text-left hover:border-surface-600"
+                >
+                  <span className="font-mono text-xl tracking-[0.2em] text-surface-100">{session.code}</span>
+                  <span className="text-[10px] uppercase text-surface-500">{copied ? "copied" : "click to copy"}</span>
+                </button>
+              </div>
+            ) : null}
+            <p className="text-[10px] text-surface-600 leading-relaxed">
+              Device codes are a common phishing target. Never share this code. Once you finish in the browser, this dialog turns green automatically.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

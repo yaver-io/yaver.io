@@ -22,6 +22,7 @@ import {
   validateToken,
   type OAuthProvider,
 } from './auth';
+import { providerLogoSvg, type LogoId } from './providerLogos';
 
 const STYLE_ID = 'yaver-feedback-login-style';
 
@@ -93,7 +94,12 @@ const CSS = `
   text-align: center;
   font-family: inherit;
   transition: background 0.12s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
 }
+.yvr-fb-login-btn > svg { flex-shrink: 0; }
 .yvr-fb-login-btn:hover { background: rgba(255,255,255,0.1); }
 .yvr-fb-login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .yvr-fb-login-btn-primary {
@@ -324,7 +330,7 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
         btn.type = 'button';
         btn.className = 'yvr-fb-login-btn';
         btn.dataset.label = p.id;
-        btn.textContent = p.label;
+        btn.innerHTML = `${providerLogoSvg(p.id as LogoId)}<span>${p.label}</span>`;
         btn.onclick = () => handleOAuth(p.id);
         buttons.appendChild(btn);
       }
@@ -333,7 +339,7 @@ export function openLoginModal(opts: LoginModalOptions = {}): Promise<string> {
         const emailBtn = document.createElement('button');
         emailBtn.type = 'button';
         emailBtn.className = 'yvr-fb-login-btn';
-        emailBtn.textContent = 'Continue with Email';
+        emailBtn.innerHTML = `${providerLogoSvg('email')}<span>Continue with Email</span>`;
         emailBtn.onclick = () => {
           showEmail = true;
           render();
