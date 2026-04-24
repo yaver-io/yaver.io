@@ -118,15 +118,15 @@ function deviceReachabilitySummary(
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
-  if (device.online) return "Fresh heartbeat";
+  if (device.online) return "Recently confirmed by agent";
   if (device.needsAuth) return "Agent session expired; relay recovery may still work";
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
   const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
-  if (age && hasPublicPath) return `No fresh live signal for ${age}; relay or tunnel may still be worth probing`;
-  if (age) return `No fresh live signal for ${age}; no tunnel or public endpoint advertised`;
-  if (hasPublicPath) return "No recent live signal; relay or tunnel may still be worth probing";
-  if (device.host) return "No recent live signal; direct browser access usually needs relay";
-  return "No recent live signal";
+  if (age && hasPublicPath) return `No recent agent signal for ${age}; relay or tunnel may still be worth probing`;
+  if (age) return `No recent agent signal for ${age}; no tunnel or public endpoint advertised`;
+  if (hasPublicPath) return "No recent agent signal; relay or tunnel may still be worth probing";
+  if (device.host) return "No recent agent signal; direct browser access usually needs relay";
+  return "No recent agent signal";
 }
 
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
@@ -328,6 +328,37 @@ interface DeviceRuntimeInfo {
   [k: string]: unknown;
 }
 
+function useDevicePing(device: Device) {
+  const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
+
+  const ping = useCallback(async () => {
+    setPingState({ pinging: true });
+    const relayUrls = agentClient.configuredRelayServers.map((relay) => `${relay.httpUrl}/d/${device.id}`);
+    const directUrl = device.host ? `http://${device.host}:${device.port}` : "";
+    const urls = [...relayUrls, ...(directUrl ? [directUrl] : [])];
+
+    for (const url of urls) {
+      const started = Date.now();
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${url}/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.ok) {
+          setPingState({ pinging: false, ok: true, rttMs: Date.now() - started });
+          return;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    setPingState({ pinging: false, ok: false });
+  }, [device.host, device.id, device.port]);
+
+  return { pingState, ping };
+}
+
 function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | null | undefined) {
   const [info, setInfo] = useState<DeviceRuntimeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -444,7 +475,7 @@ export default function DevicesView({
             <button
               onClick={() => setShowDormantDevices((value) => !value)}
               className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-500/15"
-              title="Reveal stale devices with no heartbeat and no usable public path"
+              title="Reveal stale devices with no recent agent signal and no usable public path"
             >
               {showDormantDevices ? "Hide stale devices" : `Show stale devices (${dormantDevices.length})`}
             </button>
@@ -463,7 +494,7 @@ export default function DevicesView({
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
           {dormantDevices.length > 0 ? (
             <p className="mb-3 text-xs text-amber-300">
-              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent heartbeat and no public path.
+              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden by default because they have no recent agent signal and no public path.
             </p>
           ) : null}
           {signedInEmail ? (
@@ -495,7 +526,7 @@ export default function DevicesView({
           ) : null}
           {!showDormantDevices && dormantDevices.length > 0 ? (
             <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-200">
-              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent heartbeat and no usable relay/tunnel path.
+              {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal and no usable relay/tunnel path.
             </div>
           ) : null}
           {renderedDevices.map((device) => {
@@ -564,7 +595,7 @@ export default function DevicesView({
                       </span>
                     </div>
                     <p className="text-sm text-surface-500">
-                      {devicePlatformLabel(device)} · Last seen {formatLastSeen(device.lastSeen)}
+                      {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
                     </p>
                   </div>
 
@@ -669,7 +700,7 @@ export default function DevicesView({
                     </div>
                   </div>
                 ) : null}
-                {(() => {
+          {(() => {
                   const states = deriveRunnerChipStates(device);
                   if (states.length === 0) return null;
                   return (
@@ -718,6 +749,7 @@ export default function DevicesView({
                   );
                 })()}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <InlinePingButton device={device} />
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
@@ -768,8 +800,29 @@ export default function DevicesView({
   );
 }
 
+function InlinePingButton({ device }: { device: Device }) {
+  const { pingState, ping } = useDevicePing(device);
+  return (
+    <button
+      onClick={() => void ping()}
+      disabled={pingState.pinging}
+      className="inline-flex items-center gap-1.5 rounded-md border border-surface-700 bg-surface-900/60 px-3 py-1.5 text-xs font-semibold text-surface-200 shadow-sm hover:border-surface-600 hover:bg-surface-800 disabled:opacity-50"
+      title="Probe /health via relay first, then direct host"
+    >
+      {pingState.pinging
+        ? "Pinging..."
+        : pingState.ok === true
+          ? `${pingState.rttMs}ms`
+          : pingState.ok === false
+            ? "Unreachable"
+            : "Ping"}
+    </button>
+  );
+}
+
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
+  const { pingState, ping } = useDevicePing(device);
   const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
   const allSharedRunners = device.sharedRunners || [];
   const allGuests = (device.sharedGuests || []).map((g) => g.name || g.email || "").filter(Boolean);
@@ -812,6 +865,22 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
 
   return (
     <div className="mt-3 rounded-lg border border-surface-800 bg-surface-900/40 p-3">
+      <div className="mb-3 flex justify-end">
+        <button
+          onClick={() => void ping()}
+          disabled={pingState.pinging}
+          className="rounded-md border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-600 hover:text-surface-100 disabled:opacity-50"
+          title="Probe /health over relay, tunnel, or direct host"
+        >
+          {pingState.pinging
+            ? "Pinging..."
+            : pingState.ok === true
+              ? `${pingState.rttMs}ms`
+              : pingState.ok === false
+                ? "Unreachable"
+                : "Ping"}
+        </button>
+      </div>
       <div className="grid gap-6 md:grid-cols-2">
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Identity</div>
@@ -834,7 +903,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
           {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
-          {row("Last heartbeat", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
+          {row("Last agent signal", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
           {row("Version", info?.version)}
           {row("Platform", info?.platform || device.platform)}
           {row("Architecture", arch)}
@@ -900,7 +969,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       ) : null}
       {error ? (
         <p className="mt-3 text-[11px] text-surface-600">
-          Runtime info unavailable over LAN ({error}). Reading Convex heartbeat fields only.
+          Runtime info unavailable from the agent transport ({error}). Showing cached registry fields only.
         </p>
       ) : null}
       <div className="mt-3 flex justify-end border-t border-surface-800/60 pt-2">
