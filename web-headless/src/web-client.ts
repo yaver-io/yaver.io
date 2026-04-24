@@ -387,23 +387,162 @@ export class WebClient {
   }
 
   /** Hand the box a fresh owner session without requiring physical access.
-   *  Mirrors web's reauthAgent. Only works if at least one relay can
-   *  still reach the device. */
+   *  Mirrors web/lib/agent-client.ts::reauthAgent. Drives the agent's
+   *  /auth/recover endpoint directly through the relay (and direct LAN
+   *  as a last resort). Tries `mode: "direct"` first; falls back to
+   *  `mode: "pair"` + /auth/pair/submit for older agents that reject
+   *  direct mode.
+   *
+   *  Note: there is NO Convex /auth/reauth-agent endpoint — the earlier
+   *  implementation that called it always failed with "No matching
+   *  routes found". The real path is agent-side.
+   */
   async reauthAgent(opts: { deviceId: string }): Promise<{
     ok: boolean;
     via?: string;
-    mode?: string;
+    mode?: "direct" | "pair";
     error?: string;
     diagnostics: Array<{ path: string; step: string; ok: boolean; status?: number; error?: string }>;
   }> {
     if (!this.token) throw new Error("reauthAgent: not authed");
-    const payload = {
-      deviceId: opts.deviceId,
-      hostSessionToken: this.token,
-      convexSiteUrl: this.convexUrl,
+    if (this.relayServers.length === 0) {
+      await this.refreshRelayConfig().catch(() => {});
+    }
+
+    const diagnostics: Array<{ path: string; step: string; ok: boolean; status?: number; error?: string }> = [];
+
+    const tryOne = async (
+      pathLabel: string,
+      baseUrl: string,
+      relayPassword?: string,
+    ) => {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      };
+      if (relayPassword) headers["X-Relay-Password"] = relayPassword;
+
+      const fetchTimeout = async (url: string, init: RequestInit, timeoutMs: number) => {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), timeoutMs);
+        try {
+          return await fetch(url, { ...init, signal: ctrl.signal });
+        } finally {
+          clearTimeout(t);
+        }
+      };
+
+      // 1. Direct mode — agent saves the caller's bearer as its new token
+      //    after Convex /devices/owner-by-hardware confirms ownership.
+      const directDiag = { path: pathLabel, step: "direct", ok: false } as {
+        path: string; step: string; ok: boolean; status?: number; error?: string;
+      };
+      try {
+        const res = await fetchTimeout(
+          `${baseUrl}/auth/recover`,
+          { method: "POST", headers, body: JSON.stringify({ mode: "direct" }) },
+          10_000,
+        );
+        directDiag.status = res.status;
+        if (res.ok) {
+          directDiag.ok = true;
+          diagnostics.push(directDiag);
+          return { ok: true as const, mode: "direct" as const, via: pathLabel };
+        }
+        let body: any = null;
+        try { body = await res.clone().json(); } catch { /* */ }
+        directDiag.error = (body && body.error) || `HTTP ${res.status}`;
+        diagnostics.push(directDiag);
+        const msg = String(directDiag.error || "").toLowerCase();
+        const modeUnsupported =
+          (res.status === 400 || res.status === 501) &&
+          (msg.includes("mode must") || msg.includes("direct") || msg.includes("invalid mode"));
+        if (!modeUnsupported) return null;
+      } catch (e: any) {
+        directDiag.error = e?.message || "network error";
+        diagnostics.push(directDiag);
+        return null;
+      }
+
+      // 2. Pair-mode fallback for older agents.
+      const pairDiag = { path: pathLabel, step: "pair", ok: false } as {
+        path: string; step: string; ok: boolean; status?: number; error?: string;
+      };
+      try {
+        const res = await fetchTimeout(
+          `${baseUrl}/auth/recover`,
+          { method: "POST", headers, body: JSON.stringify({ mode: "pair" }) },
+          10_000,
+        );
+        pairDiag.status = res.status;
+        if (!res.ok) {
+          let body: any = null;
+          try { body = await res.clone().json(); } catch { /* */ }
+          pairDiag.error = (body && body.error) || `HTTP ${res.status}`;
+          diagnostics.push(pairDiag);
+          return null;
+        }
+        const pairInfo: any = await res.json();
+        const pairCode = pairInfo?.pairCode;
+        if (!pairCode) {
+          pairDiag.error = "agent did not return pairCode";
+          diagnostics.push(pairDiag);
+          return null;
+        }
+        const submitRes = await fetchTimeout(
+          `${baseUrl}/auth/pair/submit?code=${encodeURIComponent(pairCode)}`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ token: this.token, convexSiteUrl: this.convexUrl }),
+          },
+          10_000,
+        );
+        pairDiag.status = submitRes.status;
+        if (!submitRes.ok) {
+          let body: any = null;
+          try { body = await submitRes.clone().json(); } catch { /* */ }
+          pairDiag.error = (body && body.error) || `pair/submit HTTP ${submitRes.status}`;
+          diagnostics.push(pairDiag);
+          return null;
+        }
+        pairDiag.ok = true;
+        diagnostics.push(pairDiag);
+        return { ok: true as const, mode: "pair" as const, via: pathLabel };
+      } catch (e: any) {
+        pairDiag.error = e?.message || "network error";
+        diagnostics.push(pairDiag);
+        return null;
+      }
     };
-    const res = await this.convexCall("POST", "/auth/reauth-agent", payload);
-    return res;
+
+    // Relays first (priority order).
+    for (const relay of this.relayServers) {
+      const base = `${relay.httpUrl.replace(/\/+$/, "")}/d/${opts.deviceId}`;
+      const result = await tryOne(`relay · ${relay.id}`, base, relay.password || undefined);
+      if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
+    }
+    // Tunnel candidates.
+    for (const tunnelUrl of this.tunnelUrls) {
+      const result = await tryOne(`tunnel`, tunnelUrl.replace(/\/+$/, ""));
+      if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
+    }
+    // Direct LAN last.
+    if (this.directHost) {
+      const protocol = this.directPort === 443 ? "https" : "http";
+      const base = `${protocol}://${this.directHost}:${this.directPort}`;
+      const result = await tryOne("direct", base);
+      if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
+    }
+
+    return {
+      ok: false,
+      error:
+        diagnostics.length === 0
+          ? "no relays configured and no direct path"
+          : "all transports failed",
+      diagnostics,
+    };
   }
 
   disconnect() {
