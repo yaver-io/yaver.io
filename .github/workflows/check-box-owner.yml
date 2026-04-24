@@ -1,0 +1,54 @@
+# Who owns yaver-test-ephemeral? Dump config.json fields (no secrets)
+# and resolve auth_token → userId via Convex /auth/me. Needed to
+# confirm whether the box is paired to the expected account or
+# someone else's (Serhat Fatih Uzun, Batıkan, etc.).
+
+name: Check Box Owner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Identify owner
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          CFG=/home/yaver/.yaver/config.json
+          python3 - <<PY
+          import json
+          d = json.load(open("$CFG"))
+          print("device_id:      ", d.get("device_id"))
+          print("convex_site_url:", d.get("convex_site_url"))
+          print("auth_token set: ", bool(d.get("auth_token")))
+          print("auth_token len: ", len(d.get("auth_token") or ""))
+          PY
+
+          TOKEN=$(python3 -c "import json;print(json.load(open('$CFG'))['auth_token'])")
+          CONVEX=$(python3 -c "import json;print(json.load(open('$CFG'))['convex_site_url'])")
+
+          echo ""
+          echo "== Convex /auth/me with on-disk token =="
+          curl -sS -H "Authorization: Bearer $TOKEN" "$CONVEX/auth/me" | jq '{id, email, fullName}' 2>&1 | head -10
+
+          echo ""
+          echo "== Convex device owner (via /devices/list) =="
+          curl -sS -H "Authorization: Bearer $TOKEN" "$CONVEX/devices/list" \
+            | jq '.devices[] | select(.name=="yaver-test-ephemeral") | {id, name, ownerId, isGuest, hostName, hostEmail}' 2>&1 | head -10
+          REMOTE
