@@ -329,6 +329,7 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	exitCode := 0
+	timedOut := false
 	if waitErr != nil {
 		if ee, ok := waitErr.(*exec.ExitError); ok {
 			exitCode = ee.ExitCode()
@@ -336,14 +337,24 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 			exitCode = -1
 			writeEvent("error", map[string]string{"error": waitErr.Error()})
 		}
+		// Our own enforced timeout is the only reason we expect a
+		// context-deadline. Mark it as such so the classifier emits
+		// `timeout` rather than a generic build_failed.
+		if ctx.Err() == context.DeadlineExceeded {
+			timedOut = true
+			exitCode = -1
+		}
 	}
 	duration := time.Since(startedAt)
-	hist.Finish(historyRun.ID, exitCode)
+	hist.Finish(historyRun.ID, exitCode, timedOut)
+	finalRun, _ := hist.Get(historyRun.ID, "")
 	writeEvent("exit", map[string]interface{}{
 		"id":          historyRun.ID,
 		"code":        exitCode,
 		"duration_ms": duration.Milliseconds(),
-		"ok":          exitCode == 0,
+		"ok":          finalRun.OK, // classifier may have rewritten OK (e.g. already_uploaded)
+		"error_class": string(finalRun.ErrorClass),
+		"timed_out":   timedOut,
 	})
 }
 

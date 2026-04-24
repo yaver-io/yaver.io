@@ -22,6 +22,9 @@ package main
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -32,47 +35,77 @@ import (
 // xcodebuild eat all the agent's RAM.
 const deployOutputTailCap = 8 * 1024
 
+// deployDiskQuotaBytes is the soft cap on ~/.yaver/deploys/. Oldest
+// run directories are evicted until usage drops below this cap. A
+// 20-minute xcodebuild produces a few megabytes of log per run, so
+// 500 MB buys ~100 runs of headroom.
+const deployDiskQuotaBytes = 500 * 1024 * 1024
+
 // DeployRun is one historical entry. Kept flat + JSON-friendly so
 // the endpoint just serializes it verbatim.
 type DeployRun struct {
-	ID           string `json:"id"`
-	App          string `json:"app"`
-	Target       string `json:"target"`
-	Stack        string `json:"stack,omitempty"`
-	Path         string `json:"path,omitempty"`
-	RequestedBy  string `json:"requested_by,omitempty"` // "owner" or guest userID
-	IsGuest      bool   `json:"is_guest,omitempty"`
-	StartedAt    int64  `json:"started_at"`  // unix millis
-	FinishedAt   int64  `json:"finished_at,omitempty"`
-	DurationMs   int64  `json:"duration_ms,omitempty"`
-	ExitCode     int    `json:"exit_code"`
-	OK           bool   `json:"ok,omitempty"`
-	InProgress   bool   `json:"in_progress,omitempty"`
-	OutputTail   string `json:"output_tail,omitempty"` // last ~8KB of stdout+stderr
-	outputBuf    []byte // ring buffer backing OutputTail (internal)
+	ID          string           `json:"id"`
+	App         string           `json:"app"`
+	Target      string           `json:"target"`
+	Stack       string           `json:"stack,omitempty"`
+	Path        string           `json:"path,omitempty"`
+	RequestedBy string           `json:"requested_by,omitempty"` // "owner" or guest userID
+	IsGuest     bool             `json:"is_guest,omitempty"`
+	StartedAt   int64            `json:"started_at"` // unix millis
+	FinishedAt  int64            `json:"finished_at,omitempty"`
+	DurationMs  int64            `json:"duration_ms,omitempty"`
+	ExitCode    int              `json:"exit_code"`
+	OK          bool             `json:"ok,omitempty"`
+	InProgress  bool             `json:"in_progress,omitempty"`
+	OutputTail  string           `json:"output_tail,omitempty"` // last ~8KB of stdout+stderr
+	ErrorClass  DeployErrorClass `json:"error_class,omitempty"` // set by Finish() via classifier
+	TimedOut    bool             `json:"timed_out,omitempty"`
+	LogPath     string           `json:"log_path,omitempty"`    // on-disk full log (server-side; not surfaced to guests)
+	LogBytes    int64            `json:"log_bytes,omitempty"`
+	outputBuf   []byte           // ring buffer backing OutputTail (internal)
+	logFile     *os.File         // open handle during the run
 }
 
 // DeployHistory is a bounded FIFO of DeployRun. Safe for concurrent
 // use; writes cost an O(1) per run plus a mutex hop per output line,
 // which is fine for anything a human hits via `yaver deploy ship`.
 type DeployHistory struct {
-	mu     sync.Mutex
-	runs   []*DeployRun
-	byID   map[string]*DeployRun
-	maxLen int
+	mu      sync.Mutex
+	runs    []*DeployRun
+	byID    map[string]*DeployRun
+	maxLen  int
+	logRoot string // on-disk logs. empty means disk persistence disabled.
 }
 
 // NewDeployHistory builds an empty buffer with room for maxLen
 // entries. Oldest entries drop off the front as new ones arrive.
+// Per-run full-output logs are written to `~/.yaver/deploys/<id>/output.log`
+// for later inspection via /deploy/runs/{id}/output; the in-memory
+// 8 KB tail stays alongside for quick lookups.
 func NewDeployHistory(maxLen int) *DeployHistory {
 	if maxLen <= 0 {
 		maxLen = 100
 	}
-	return &DeployHistory{
+	h := &DeployHistory{
 		runs:   make([]*DeployRun, 0, maxLen),
 		byID:   make(map[string]*DeployRun, maxLen),
 		maxLen: maxLen,
 	}
+	if dir, err := ConfigDir(); err == nil {
+		h.logRoot = filepath.Join(dir, "deploys")
+		if err := os.MkdirAll(h.logRoot, 0700); err != nil {
+			log.Printf("[deploy-history] mkdir %s failed: %v (disk persistence disabled)", h.logRoot, err)
+			h.logRoot = ""
+		}
+	}
+	return h
+}
+
+// LogRoot returns the absolute directory used for on-disk run logs
+// (empty string when disk persistence is disabled — typically only in
+// unit tests that build a DeployHistory without a config dir).
+func (h *DeployHistory) LogRoot() string {
+	return h.logRoot
 }
 
 // NewRunID generates a compact ID (8 random bytes → 16 hex). Unique
@@ -92,7 +125,8 @@ func NewRunID() string {
 }
 
 // Start records a new in-progress run. Returns the stored pointer so
-// the caller can mutate OutputTail / ExitCode later.
+// the caller can mutate OutputTail / ExitCode later. Also opens an
+// on-disk log file at `<logRoot>/<id>/output.log` if logRoot is set.
 func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -104,18 +138,37 @@ func (h *DeployHistory) Start(run DeployRun) *DeployRun {
 	}
 	run.InProgress = true
 	rp := &run
+	if h.logRoot != "" {
+		runDir := filepath.Join(h.logRoot, rp.ID)
+		if err := os.MkdirAll(runDir, 0700); err != nil {
+			log.Printf("[deploy=%s] mkdir %s: %v — full log disabled for this run", rp.ID, runDir, err)
+		} else {
+			logPath := filepath.Join(runDir, "output.log")
+			f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+			if err != nil {
+				log.Printf("[deploy=%s] open %s: %v — full log disabled for this run", rp.ID, logPath, err)
+			} else {
+				rp.logFile = f
+				rp.LogPath = logPath
+			}
+		}
+	}
 	h.runs = append(h.runs, rp)
 	h.byID[rp.ID] = rp
 	if len(h.runs) > h.maxLen {
 		evicted := h.runs[0]
 		delete(h.byID, evicted.ID)
-		// Shift — maxLen is small so O(N) is fine.
+		// Drop the on-disk log too — ring buffer semantics apply.
+		if evicted.LogPath != "" {
+			_ = os.RemoveAll(filepath.Dir(evicted.LogPath))
+		}
 		h.runs = h.runs[1:]
 	}
 	return rp
 }
 
-// Append captures a line into the output-tail ring buffer of the run.
+// Append captures a line into the output-tail ring buffer of the run
+// and also appends it to the on-disk log (if logRoot is enabled).
 // Lines are stored newline-terminated so a joined OutputTail string
 // is human-readable.
 func (h *DeployHistory) Append(id string, text string) {
@@ -134,27 +187,111 @@ func (h *DeployHistory) Append(id string, text string) {
 	}
 	r.outputBuf = append(r.outputBuf, []byte(line)...)
 	if len(r.outputBuf) > deployOutputTailCap {
-		// Trim from the front — last deployOutputTailCap bytes win.
 		r.outputBuf = r.outputBuf[len(r.outputBuf)-deployOutputTailCap:]
 	}
 	r.OutputTail = string(r.outputBuf)
+	if r.logFile != nil {
+		n, err := r.logFile.WriteString(line)
+		if err != nil {
+			log.Printf("[deploy=%s] log write failed: %v", r.ID, err)
+		}
+		r.LogBytes += int64(n)
+	}
 }
 
-// Finish marks a run complete. Safe to call on an already-finished
-// run (idempotent — second call wins).
-func (h *DeployHistory) Finish(id string, exitCode int) {
+// Finish marks a run complete and runs error classification against
+// the captured output tail. Idempotent — a second call wins.
+//
+// The classifier may rewrite OK from false→true for the
+// "already_uploaded" class (TestFlight's "Redundant Binary Upload"
+// is a success masquerading as an error). exitCode is kept as
+// originally reported so a curious operator can still see the raw
+// signal.
+func (h *DeployHistory) Finish(id string, exitCode int, timedOut bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	r, ok := h.byID[id]
 	if !ok {
 		return
 	}
+	if r.logFile != nil {
+		_ = r.logFile.Sync()
+		_ = r.logFile.Close()
+		r.logFile = nil
+	}
 	now := time.Now().UnixMilli()
 	r.FinishedAt = now
 	r.DurationMs = now - r.StartedAt
 	r.ExitCode = exitCode
-	r.OK = exitCode == 0
+	r.TimedOut = timedOut
+	class, treatAsOK := ClassifyDeployOutput(r.OutputTail, exitCode, timedOut)
+	r.ErrorClass = class
+	r.OK = exitCode == 0 || treatAsOK
 	r.InProgress = false
+	// Opportunistic GC: if the on-disk logs are getting chunky, drop
+	// oldest until we're under quota again. Runs on Finish because
+	// that's when we know the final size of the just-closed log.
+	h.gcLogsLocked()
+}
+
+// gcLogsLocked evicts oldest on-disk log dirs until total bytes drop
+// below deployDiskQuotaBytes. Safe to call with the mutex held.
+func (h *DeployHistory) gcLogsLocked() {
+	if h.logRoot == "" {
+		return
+	}
+	type entry struct {
+		path  string
+		mtime time.Time
+		size  int64
+	}
+	var dirs []entry
+	var total int64
+	items, err := os.ReadDir(h.logRoot)
+	if err != nil {
+		return
+	}
+	for _, item := range items {
+		if !item.IsDir() {
+			continue
+		}
+		full := filepath.Join(h.logRoot, item.Name())
+		info, err := item.Info()
+		if err != nil {
+			continue
+		}
+		size := deployLogDirSize(full)
+		dirs = append(dirs, entry{path: full, mtime: info.ModTime(), size: size})
+		total += size
+	}
+	if total <= deployDiskQuotaBytes {
+		return
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].mtime.Before(dirs[j].mtime) })
+	for _, d := range dirs {
+		if total <= deployDiskQuotaBytes {
+			return
+		}
+		if err := os.RemoveAll(d.path); err == nil {
+			total -= d.size
+		}
+	}
+}
+
+// deployLogDirSize sums the size of every regular file under `root`.
+// Suffix-named to avoid clashing with `dirSize` in clean.go.
+func deployLogDirSize(root string) int64 {
+	var total int64
+	_ = filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // List returns up to `limit` runs (most recent first). limit=0 means

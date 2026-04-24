@@ -466,83 +466,142 @@ func runVaultSync(args []string) {
 	}
 
 	vs := openVault()
-	totalAccepted, totalSent := 0, 0
+	var totals VaultSyncReport
+	totals.Peer = fmt.Sprintf("%d peers", len(peers))
 	for _, p := range peers {
-		acc, sent, err := vaultSyncWithPeer(ctx, vs, p)
+		rpt, err := vaultSyncWithPeer(ctx, vs, p)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "  %s: %v\n", p, err)
 			continue
 		}
-		fmt.Printf("  %s: pulled %d, pushed %d\n", p, acc, sent)
-		totalAccepted += acc
-		totalSent += sent
+		fmt.Printf("  %s: pulled %d (superseded-local %d), pushed %d (rejected %d), %s\n",
+			p, rpt.Pulled, rpt.SupersededLocal, rpt.Pushed, rpt.Rejected,
+			time.Duration(rpt.DurationMs*int64(time.Millisecond)).Round(time.Millisecond))
+		totals.Pulled += rpt.Pulled
+		totals.SupersededLocal += rpt.SupersededLocal
+		totals.Pushed += rpt.Pushed
+		totals.Rejected += rpt.Rejected
 	}
-	fmt.Printf("Sync complete: pulled %d, pushed %d across %d peers.\n", totalAccepted, totalSent, len(peers))
+	fmt.Printf("Sync complete: pulled %d, superseded-local %d, pushed %d, rejected %d across %d peers.\n",
+		totals.Pulled, totals.SupersededLocal, totals.Pushed, totals.Rejected, len(peers))
+	if totals.SupersededLocal > 0 || totals.Rejected > 0 {
+		fmt.Fprintln(os.Stderr,
+			"  Note: a non-zero 'superseded-local' or 'rejected' means two devices wrote\n"+
+				"  the same (project, name) around the same time and the loser was silently\n"+
+				"  overwritten by last-writer-wins. If the lost value mattered, reconstruct\n"+
+				"  it from `yaver vault list` history + `yaver vault get`.")
+	}
+}
+
+// VaultSyncReport is the structured per-peer outcome of one sync.
+// Fields:
+//
+//	Peer             — peer deviceID.
+//	Pulled           — how many of the peer's entries we accepted.
+//	SupersededLocal  — within Pulled, how many were newer than a
+//	                   value we already had (i.e. our old value was
+//	                   silently replaced).
+//	Pushed           — how many of our entries the peer accepted.
+//	Rejected         — how many entries we sent that the peer
+//	                   rejected (peer was already as-new-or-newer).
+//	DurationMs       — wall time for the full handshake.
+type VaultSyncReport struct {
+	Peer            string `json:"peer"`
+	Pulled          int    `json:"pulled"`
+	SupersededLocal int    `json:"superseded_local"`
+	Pushed          int    `json:"pushed"`
+	Rejected        int    `json:"rejected"`
+	DurationMs      int64  `json:"duration_ms"`
 }
 
 // vaultSyncWithPeer exchanges digests with the peer agent and applies
-// any newer revisions in each direction. Returns (acceptedFromPeer,
-// sentToPeer, err).
-func vaultSyncWithPeer(ctx context.Context, vs *VaultStore, peerDeviceID string) (int, int, error) {
-	localDigest := vs.Digest()
+// any newer revisions in each direction. Returns a structured report
+// so the caller can surface conflicts (SupersededLocal / Rejected).
+func vaultSyncWithPeer(ctx context.Context, vs *VaultStore, peerDeviceID string) (VaultSyncReport, error) {
+	report := VaultSyncReport{Peer: peerDeviceID}
+	start := time.Now()
 
-	// Pull: ask peer for entries it has that are newer than ours.
+	localDigest := vs.Digest()
+	// Pre-index local UpdatedAt per (project, name) so we can tell
+	// "pulled something we had nothing for" from "pulled something
+	// that overrode an older local value" — the latter is the
+	// potentially-losable case worth surfacing.
+	localHave := make(map[string]int64, len(localDigest))
+	for _, d := range localDigest {
+		localHave[d.Project+"\x00"+d.Name] = d.UpdatedAt
+	}
+
+	// Pull.
 	req := map[string]interface{}{"digest": localDigest}
 	pullStatus, pullBody, err := proxyToDevice(ctx, "vault_sync", peerDeviceID, "POST", "/vault/sync", mustJSON(req))
 	if err != nil {
-		return 0, 0, fmt.Errorf("pull: %w", err)
+		return report, fmt.Errorf("pull: %w", err)
 	}
 	if pullStatus >= 400 {
-		return 0, 0, fmt.Errorf("pull: HTTP %d: %s", pullStatus, strings.TrimSpace(string(pullBody)))
+		return report, fmt.Errorf("pull: HTTP %d: %s", pullStatus, strings.TrimSpace(string(pullBody)))
 	}
 	var pullResp struct {
 		Entries []VaultEntry `json:"entries"`
 	}
 	if err := json.Unmarshal(pullBody, &pullResp); err != nil {
-		return 0, 0, fmt.Errorf("pull: decode: %w", err)
+		return report, fmt.Errorf("pull: decode: %w", err)
 	}
-	accepted := 0
 	for _, e := range pullResp.Entries {
+		prev := localHave[e.Project+"\x00"+e.Name]
 		ok, err := vs.Upsert(e)
-		if err == nil && ok {
-			accepted++
+		if err != nil || !ok {
+			continue
+		}
+		report.Pulled++
+		if prev > 0 && prev < e.UpdatedAt {
+			report.SupersededLocal++
 		}
 	}
 
-	// Push: fetch peer's digest, send our newer entries.
+	// Push: ask for peer's digest, send our newer entries.
 	digStatus, digBody, err := proxyToDevice(ctx, "vault_digest", peerDeviceID, "GET", "/vault/digest", nil)
 	if err != nil {
-		return accepted, 0, fmt.Errorf("digest: %w", err)
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("digest: %w", err)
 	}
 	if digStatus >= 400 {
-		return accepted, 0, fmt.Errorf("digest: HTTP %d: %s", digStatus, strings.TrimSpace(string(digBody)))
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("digest: HTTP %d: %s", digStatus, strings.TrimSpace(string(digBody)))
 	}
 	var digResp struct {
 		Entries []VaultDigestEntry `json:"entries"`
 	}
 	if err := json.Unmarshal(digBody, &digResp); err != nil {
-		return accepted, 0, fmt.Errorf("digest: decode: %w", err)
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("digest: decode: %w", err)
 	}
 	ourNewer := vs.EntriesNewerThan(digResp.Entries)
 	if len(ourNewer) == 0 {
-		return accepted, 0, nil
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, nil
 	}
 	pushReq := map[string]interface{}{"entries": ourNewer}
 	pushStatus, pushBody, err := proxyToDevice(ctx, "vault_push", peerDeviceID, "POST", "/vault/push", mustJSON(pushReq))
 	if err != nil {
-		return accepted, 0, fmt.Errorf("push: %w", err)
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("push: %w", err)
 	}
 	if pushStatus >= 400 {
-		return accepted, 0, fmt.Errorf("push: HTTP %d: %s", pushStatus, strings.TrimSpace(string(pushBody)))
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("push: HTTP %d: %s", pushStatus, strings.TrimSpace(string(pushBody)))
 	}
 	var pushResp struct {
 		Accepted int `json:"accepted"`
 		Rejected int `json:"rejected"`
 	}
 	if err := json.Unmarshal(pushBody, &pushResp); err != nil {
-		return accepted, 0, fmt.Errorf("push: decode: %w", err)
+		report.DurationMs = time.Since(start).Milliseconds()
+		return report, fmt.Errorf("push: decode: %w", err)
 	}
-	return accepted, pushResp.Accepted, nil
+	report.Pushed = pushResp.Accepted
+	report.Rejected = pushResp.Rejected
+	report.DurationMs = time.Since(start).Milliseconds()
+	return report, nil
 }
 
 func mustJSON(v interface{}) []byte {

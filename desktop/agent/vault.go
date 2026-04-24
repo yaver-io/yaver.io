@@ -31,6 +31,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -170,6 +171,14 @@ func NewVaultStoreWithDevice(passphrase, deviceID string) (*VaultStore, error) {
 		path:     vaultPath,
 		deviceID: deviceID,
 		entries:  make(map[string]VaultEntry),
+	}
+
+	// Warn if a stale .tmp from a crashed save sits next to the
+	// vault. We don't auto-delete — a forensic operator may want
+	// to inspect — but loud logging is better than silent confusion.
+	if st, err := os.Stat(vaultPath + ".tmp"); err == nil {
+		log.Printf("[vault] stale %s (size %d, mtime %s) — a previous save likely crashed before commit. Inspect + remove manually once you've confirmed the live vault is OK.",
+			vaultPath+".tmp", st.Size(), st.ModTime().UTC().Format(time.RFC3339))
 	}
 
 	data, err := os.ReadFile(vaultPath)
@@ -538,9 +547,22 @@ func (vs *VaultStore) EnvExport(project string, includeGlobal bool) string {
 	return sb.String()
 }
 
-// persist encrypts and atomically writes the vault to disk.
-// Caller must hold vs.mu write lock.
+// persist encrypts and atomically writes the vault to disk, taking an
+// advisory cross-process file lock on <vault>.lock while the write +
+// rename happens. Without this, two `yaver vault add` invocations in
+// separate terminals each load the current file, make their edit,
+// and save — last save silently wins and drops the other's entry.
+// Caller must hold vs.mu write lock (for in-process protection).
 func (vs *VaultStore) persist() error {
+	lock, err := vaultFileLock(vs.path + ".lock")
+	if err != nil {
+		// Fail soft: in-process mutex is still protecting us, this
+		// just means sibling-process protection is off. Log once so
+		// the issue is visible without blocking the write.
+		log.Printf("[vault] flock(%s) failed: %v — writes are not safe across parallel processes", vs.path+".lock", err)
+	}
+	defer vaultFileUnlock(lock)
+
 	salt := make([]byte, saltLen)
 	existing, err := os.ReadFile(vs.path)
 	if err == nil && len(existing) >= saltLen {

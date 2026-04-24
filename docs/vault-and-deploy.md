@@ -482,30 +482,94 @@ Tune the numbers in `desktop/agent/deploy_run_support.go::deployShipLimits`.
 ### Run history (`/deploy/runs`)
 
 ```
-GET /deploy/runs[?limit=N]   → { runs: [ DeployRun, ... ], count }
-GET /deploy/runs/{id}        → DeployRun (includes last ~8 KB of output)
+GET /deploy/runs[?limit=N]        → { runs: [ DeployRun, ... ], count }
+GET /deploy/runs/{id}             → DeployRun (includes last ~8 KB of output)
+GET /deploy/runs/{id}/output      → text/plain full log (streamed, chunked)
 ```
 
-- Ring buffer of the last 100 runs (configurable in
-  `deploy_history.go::NewDeployHistory`).
+- Ring buffer of the last 100 runs in memory, plus a per-run
+  on-disk log at `~/.yaver/deploys/<id>/output.log`. The in-memory
+  list is fast; the on-disk log is durable across noisy runs and
+  carries the full stdout/stderr beyond the 8 KB tail.
 - Each `DeployRun` carries `id`, `app`, `target`, `stack`, `path`,
   `requested_by`, `is_guest`, `started_at`, `finished_at`,
-  `duration_ms`, `exit_code`, `ok`, `in_progress`, and (detail
-  endpoint only) `output_tail`.
+  `duration_ms`, `exit_code`, `ok`, `in_progress`, `error_class`,
+  `timed_out`, `log_bytes`, and (detail endpoint only)
+  `output_tail`.
+- `log_path` is intentionally stripped from API responses — it
+  contains `$HOME` which is the operator's identity; callers get
+  `log_bytes` instead so a UI can offer "download full log" without
+  learning where the host's home lives.
 - List responses elide `output_tail` so a list of 100 runs doesn't
   push a megabyte across the wire.
-- Every `/deploy/ship` event stream now carries `id` in both `meta`
-  and `exit` payloads, so clients can correlate a live stream with
-  its future history entry.
+- Every `/deploy/ship` event stream carries `id` in both `meta` and
+  `exit` payloads, so clients can correlate a live stream with its
+  future history entry.
+- The `exit` event also carries `error_class` and `timed_out`.
 - Guest filter: guests only see runs they themselves initiated.
   Others' runs return 404 — indistinguishable from "unknown",
   deliberately.
+- GC: on-disk logs drop oldest first once total under
+  `~/.yaver/deploys/` exceeds `deployDiskQuotaBytes` (500 MB
+  default). Ring-buffer eviction also wipes the matching on-disk
+  directory so in-memory + on-disk stay in sync.
+
+### Error classification (`error_class`)
+
+Every finished run is classified with a narrow regex pass over the
+captured output tail. Classes are hints, never authoritative: raw
+`exit_code` + full log stay available for the skeptic.
+
+| Class | When | Rewrite `ok` to true? |
+|---|---|---|
+| `already_uploaded` | Apple's "Redundant Binary Upload" / version-bump errors | **yes** (not a failure — Apple's way of saying "you already shipped this") |
+| `vault_locked` | "wrong passphrase or corrupted vault", missing vault entry | no |
+| `preflight_failed` | The generated script's embedded doctor gate exited non-zero | no |
+| `signing_error` | Code Sign, keystore tampering, missing signing cert | no |
+| `auth_error` | 401 / 403, E401, "authentication failed", "invalid token" | no |
+| `toolchain_missing` | "command not found", "No such file or directory" on a .sh/.gradle/.plist | no |
+| `network_error` | "could not resolve host", TCP connection refused, "i/o timeout" | no |
+| `disk_full` | "No space left on device" | no |
+| `timeout` | Our own context deadline fired (wall clock exceeded) | no |
+| `build_failed` | Non-zero exit with nothing specific matched | no |
+
+Rules are ordered specific → generic; first match wins. Add a new
+class = add a `classifyRule` entry in
+`desktop/agent/deploy_classify.go`.
+
+### `yaver deploy diagnose`
+
+Composite preflight; answers "is this machine set up to ship this
+app to this target?" without actually spawning the build. Bundles:
+
+- Workspace resolution (app found in `yaver.workspace.yaml`; path
+  exists; stack known).
+- `yaver doctor build --target=X --project=Y` (tool versions +
+  secret presence in vault + env).
+
+```bash
+yaver deploy diagnose --app mobile --target testflight
+yaver deploy diagnose --app mobile --target testflight --json  # MCP-friendly
+```
+
+HTTP: `GET /deploy/diagnose?app=X&target=Y` — same payload
+(`DiagnoseReport`). Guests are allowed subject to
+`allowedProjects` (they can pre-flight their own scoped deploy).
+
+### `yaver deploy logs` / `yaver deploy runs`
+
+```bash
+yaver deploy runs [--limit 20] [--machine <deviceId>]    # listing
+yaver deploy logs <run-id>  [--machine <deviceId>]       # full log
+```
+
+`runs` hits `GET /deploy/runs` and renders a compact table
+(`ID APP TARGET STATUS DURATION CLASS BY STARTED`). `logs` streams
+`GET /deploy/runs/{id}/output` and falls back to the in-memory tail
+when disk persistence wasn't active for that run.
 
 ### Remaining follow-ups (smaller)
 
-- **Durable history**: ring buffer is per-process. Agent restart
-  = empty history. Write `~/.yaver/deploys/<id>/` to disk if you
-  want runs to survive reboots.
 - **Server-side composite endpoint**: today's composite is a
   client-side fan-out. Moving it server-side (e.g.
   `POST /deploy/ship` accepting `targets: [...]` and multiplexing
@@ -514,8 +578,69 @@ GET /deploy/runs/{id}        → DeployRun (includes last ~8 KB of output)
 - **Idempotent resume**: a failed TestFlight upload after a 30-min
   archive is a drag. Detect "same commit + same version" and skip
   the archive step on retry.
+- **Webhook on completion**: `userSettings.deployWebhookUrl` could
+  POST `{id, app, target, exit_code, duration_ms, error_class}` so
+  a host owner gets a ping when overnight guest deploys fail.
 
 ---
+
+## 12b. Vault sync conflicts + durability
+
+### Structured sync report
+
+`yaver vault sync` and the underlying `vaultSyncWithPeer` now return
+a structured per-peer report:
+
+```go
+type VaultSyncReport struct {
+    Peer            string
+    Pulled          int   // peer's entries we accepted
+    SupersededLocal int   // within Pulled, entries that overrode
+                          // an older local value (your value was
+                          // silently replaced)
+    Pushed          int   // our entries the peer accepted
+    Rejected        int   // our entries the peer rejected (they
+                          // already had something as-new-or-newer)
+    DurationMs      int64
+}
+```
+
+CLI rendering:
+
+```
+  mac-mini-alice: pulled 3 (superseded-local 1), pushed 0 (rejected 2), 142ms
+  laptop:         pulled 0 (superseded-local 0), pushed 5 (rejected 0), 87ms
+Sync complete: pulled 3, superseded-local 1, pushed 5, rejected 2 across 2 peers.
+```
+
+A non-zero `superseded_local` or `rejected` means two devices wrote
+the same `(project, name)` at around the same time and the loser
+got silently dropped by last-writer-wins. The CLI prints a footer
+hint in that case; UIs should surface the counts prominently.
+
+### Cross-process lock
+
+`~/.yaver/vault.enc.lock` is taken with `flock(LOCK_EX)` on POSIX
+and `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK)` on Windows during every
+`persist()`. Without this, two `yaver vault add` invocations in
+different terminals each loaded the current file, made their edit,
+and saved — last save silently wins and drops the other's entry.
+
+The in-process mutex in `VaultStore` is still the primary path; the
+file lock is belt-and-braces for the cross-process case.
+
+Flock failures log once and fall through (the write still proceeds
+with in-process protection only). This is deliberately fail-soft —
+losing file locking is a weaker guarantee, not an unrecoverable
+state.
+
+### Stale tempfile detection
+
+If `~/.yaver/vault.enc.tmp` exists at open time (because a previous
+save was interrupted after `WriteFile` but before `Rename`), the
+loader logs a loud warning with size + mtime. It does **not**
+auto-delete — a forensic operator may want to decrypt the `.tmp`
+manually. Safe to `rm` once you've confirmed the live vault is OK.
 
 ## 13. Relevant files
 
@@ -531,12 +656,19 @@ GET /deploy/runs/{id}        → DeployRun (includes last ~8 KB of output)
 | `desktop/agent/deploy_script_http.go` | `/doctor/build`, `/deploy/templates`, `/deploy/generate` |
 | `desktop/agent/deploy_script_gen_test.go` | Generator + doctor tests |
 | `desktop/agent/deploy_run.go` | `/deploy/ship` handler — generates + spawns + streams |
-| `desktop/agent/deploy_run_support.go` | Concurrency limiter + `/deploy/runs` handlers |
-| `desktop/agent/deploy_history.go` | `DeployHistory` ring buffer + output-tail capture |
+| `desktop/agent/deploy_run_support.go` | Concurrency limiter + `/deploy/runs` + `/deploy/runs/{id}/output` handlers |
+| `desktop/agent/deploy_history.go` | `DeployHistory` ring buffer + 8 KB tail + per-run on-disk logs + GC |
+| `desktop/agent/deploy_classify.go` | Error classification regexes + `ClassifyDeployOutput` |
+| `desktop/agent/deploy_diagnose.go` | `yaver deploy diagnose` + `/deploy/diagnose` handler |
+| `desktop/agent/deploy_logs_cmd.go` | `yaver deploy logs` + `yaver deploy runs` CLI |
 | `desktop/agent/deploy_history_test.go` | History + limiter + endpoint tests |
+| `desktop/agent/deploy_history_persist_test.go` | On-disk persistence + GC + `/output` endpoint tests |
+| `desktop/agent/deploy_classify_test.go` | Classifier coverage (12 scenarios) |
 | `desktop/agent/deploy_run_test.go` | `/deploy/ship` end-to-end + scope + env-whitelist tests |
 | `desktop/agent/deploy_ship_cmd.go` | `yaver deploy ship` CLI (single + composite fan-out) |
 | `desktop/agent/guest_scope.go` | `GuestScopeDeploy` tier + allow-lists |
+| `desktop/agent/vault_lock_unix.go` / `_windows.go` | Cross-process file lock for vault writes |
+| `desktop/agent/vault_lock_test.go` | File-lock + stale-tmp detection tests |
 | `scripts/deploy-testflight.sh` | TestFlight deploy, vault-aware |
 | `scripts/deploy-playstore.sh` | Play Store deploy, vault-aware |
 | `scripts/deploy-web.sh` | Cloudflare deploy, vault-aware |

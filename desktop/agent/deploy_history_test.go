@@ -52,7 +52,7 @@ func TestDeployHistoryAppendCap(t *testing.T) {
 func TestDeployHistoryFinish(t *testing.T) {
 	h := NewDeployHistory(5)
 	r := h.Start(DeployRun{App: "a", Target: "b"})
-	h.Finish(r.ID, 0)
+	h.Finish(r.ID, 0, false)
 
 	got, _ := h.Get(r.ID, "")
 	if got.InProgress {
@@ -67,7 +67,7 @@ func TestDeployHistoryFinish(t *testing.T) {
 
 	// Non-zero exit flags OK=false.
 	r2 := h.Start(DeployRun{App: "a", Target: "b"})
-	h.Finish(r2.ID, 42)
+	h.Finish(r2.ID, 42, false)
 	got2, _ := h.Get(r2.ID, "")
 	if got2.ExitCode != 42 || got2.OK {
 		t.Errorf("exit=42 should NOT flag OK: %+v", got2)
@@ -137,7 +137,7 @@ func TestDeployRunsEndpoints(t *testing.T) {
 	_ = h.Start(DeployRun{App: "web", Target: "cloudflare", RequestedBy: "owner", IsGuest: false})
 	guestRun := h.Start(DeployRun{App: "web", Target: "cloudflare", RequestedBy: "guest-1", IsGuest: true})
 	h.Append(guestRun.ID, "building...")
-	h.Finish(guestRun.ID, 0)
+	h.Finish(guestRun.ID, 0, false)
 
 	srv := &HTTPServer{deployHistory: h}
 

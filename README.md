@@ -1151,13 +1151,23 @@ target fails).
 Past runs are queryable:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/deploy/runs
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/deploy/runs/<id>
+yaver deploy runs                       # table of recent runs
+yaver deploy logs <run-id>              # full on-disk log of a past run
+yaver deploy diagnose --app mobile --target testflight   # preflight
 ```
 
 In-memory ring buffer, last 100 runs. Each run stores who
 triggered it, what target, exit code, duration, and the last ~8 KB
-of stdout/stderr. Guests only see their own runs.
+of stdout/stderr. The full output is also written to
+`~/.yaver/deploys/<id>/output.log` so `yaver deploy logs <id>` can
+replay the full build, not just the tail. Guests only see their own
+runs.
+
+Failures are auto-classified: `vault_locked`, `toolchain_missing`,
+`auth_error`, `signing_error`, `network_error`, `timeout`,
+`already_uploaded` (which is Apple's way of saying "this build is
+already shipped" — treated as success, not failure), plus generic
+`build_failed` when nothing specific matches.
 
 Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
 

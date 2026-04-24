@@ -967,6 +967,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy/ship", s.auth(s.handleDeployShip))
 	mux.HandleFunc("/deploy/runs", s.auth(s.handleDeployRuns))
 	mux.HandleFunc("/deploy/runs/", s.auth(s.handleDeployRunDetail))
+	mux.HandleFunc("/deploy/diagnose", s.auth(s.handleDeployDiagnose))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))

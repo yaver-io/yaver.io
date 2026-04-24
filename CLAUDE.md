@@ -1,7 +1,17 @@
 # Yaver.io — Claude Code Project Guide
 
 ## Read This First
-- Start with [`AI_ARCH.md`](AI_ARCH.md) before changing auth, bootstrap, relay, mobile discovery, or remote-recovery behavior. It documents the real runtime architecture and the current reboot/unauthenticated recovery path.
+
+**Markdown files can be stale. Code is the source of truth.** This file, [`AI_ARCH.md`](AI_ARCH.md), [`REMOTE_WORKER.md`](REMOTE_WORKER.md), `init.md`, every other `*.md` in this repo — they were accurate on the day they were written and drift every time a handler moves, a route renames, a field gets added. **Never cite `.md` content as evidence that something works or exists.** Before acting on any `.md` claim:
+
+1. **grep the actual code.** If the doc says the agent has `POST /foo/bar`, run `grep -n 'HandleFunc.*"/foo/bar"' desktop/agent/*.go` — routes occasionally exist as handler *functions* without ever being wired to the mux (we shipped `yaver diagnose` with exactly this bug in 1.99.33 and had to chase a 404 through four workflow runs before finding the missing `mux.HandleFunc` line).
+2. **Verify versions.** `yaver --version` (the binary on PATH) vs `/info.version` (the running process) vs `git log --oneline -- <file>` — if these three disagree, the doc is almost certainly describing the version that matches the `.md` author's HEAD, not the one you're about to talk to.
+3. **Re-read the file on disk, not in the doc.** If `CLAUDE.md` says `mobile/sdk-manifest.json` has `hermesBytecodeVersion: 96`, open the file — the other thread may have bumped it while you were writing the previous commit.
+4. **When the doc and the code disagree, the code wins and the doc is the bug.** Fix the `.md` as part of the same change.
+
+Use `.md` files as a starting hint — *"this used to live here, this used to work like that"* — then confirm by reading the code. Especially true for anything under "runtime architecture," endpoint tables, version numbers, and file-path lists.
+
+- Start with [`AI_ARCH.md`](AI_ARCH.md) before changing auth, bootstrap, relay, mobile discovery, or remote-recovery behavior. It documents the real runtime architecture and the current reboot/unauthenticated recovery path — subject to the caveat above.
 
 ## Important Rules
 - **Never push or commit without explicit user permission.**
@@ -1289,6 +1299,23 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 - CLI: `yaver deploy ship --app X --target Y [--machine D]`. SSE stream is pretty-printed to the terminal (`stdout` plain, `stderr` to fd 2, final `✓ deploy ok` or `✗ deploy failed (exit N)`).
 - Timeouts: default 20 min, max 60 min. SIGKILL on timeout.
 - Invite flow: `yaver guests invite friend@example.com --scope=deploy --projects=mobile`.
+
+### Troubleshooting surface (`yaver deploy logs/runs/diagnose`)
+
+- **`yaver deploy runs`** → table of recent runs (ID, app, target, status, duration, error_class, by, started). Hits `GET /deploy/runs`.
+- **`yaver deploy logs <run-id>`** → streams `GET /deploy/runs/{id}/output` (text/plain, chunked). Full log from `~/.yaver/deploys/<id>/output.log`; falls back to the in-memory 8 KB tail when the file is missing. Guest callers only see their own runs.
+- **`yaver deploy diagnose --app X --target Y`** → composite preflight (workspace resolution + path exists + toolchain doctor + vault secret presence). HTTP: `GET /deploy/diagnose?app=X&target=Y`.
+- **Per-run on-disk log**: `~/.yaver/deploys/<id>/output.log`. Directory GC'd on ring-buffer eviction and by total-size quota (`deployDiskQuotaBytes` = 500 MB default; oldest first). The HTTP API strips `log_path` from responses so `$HOME` never leaks to clients; `log_bytes` is exposed instead.
+
+### Error classification (`error_class` on DeployRun + exit SSE event)
+
+`desktop/agent/deploy_classify.go::ClassifyDeployOutput` matches narrow regexes against the captured output tail. First match wins; ordered specific → generic. Classes: `already_uploaded` (rewrites `ok` to true — TestFlight's "Redundant Binary Upload"), `vault_locked`, `preflight_failed`, `signing_error`, `auth_error`, `toolchain_missing`, `network_error`, `disk_full`, `timeout`, `build_failed`. Adding a class = appending a `classifyRule` entry.
+
+### Vault resilience (file lock + stale-tmp detect + sync conflicts)
+
+- **Cross-process file lock**: `~/.yaver/vault.enc.lock` with `flock(LOCK_EX)` on POSIX, `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK)` on Windows. Taken during every `persist()`. Fail-soft: a flock failure logs once and the in-process mutex still protects the write.
+- **Stale `.tmp` detection**: at open time, if `~/.yaver/vault.enc.tmp` exists the loader logs a warning with size + mtime but does not auto-delete. Forensic operators can decrypt or `rm` manually.
+- **Sync conflicts**: `VaultSyncReport` adds `SupersededLocal` (we pulled a newer entry that overrode our older value — yours was silently replaced) and `Rejected` (we pushed but the peer was already as-new-or-newer). `yaver vault sync` prints a footer hint when either is non-zero. Semantics still last-writer-wins by `UpdatedAt`; the counts expose when LWW cost you something.
 
 ### Composite targets (parallel multi-target deploy)
 

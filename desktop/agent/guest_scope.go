@@ -74,6 +74,7 @@ var guestFullAllowedPrefixes = []string{
 	"/deploy/runs",
 	"/deploy/templates",
 	"/deploy/generate",
+	"/deploy/diagnose",
 	"/doctor/build",
 }
 

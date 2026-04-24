@@ -12,7 +12,8 @@ func runDeploy(args []string) {
 		os.Exit(0)
 	}
 
-	// New subcommands: vault-aware shell-script generator + shipper.
+	// New subcommands: vault-aware shell-script generator, shipper,
+	// post-mortem log viewer, list, and preflight diagnose.
 	switch args[0] {
 	case "generate", "gen":
 		runDeployGenerateCmd(args[1:])
@@ -22,6 +23,15 @@ func runDeploy(args []string) {
 		return
 	case "ship":
 		runDeployShipCmd(args[1:])
+		return
+	case "logs", "log":
+		runDeployLogsCmd(args[1:])
+		return
+	case "runs", "history":
+		runDeployRunsCmd(args[1:])
+		return
+	case "diagnose", "check":
+		runDeployDiagnoseCmd(args[1:])
 		return
 	}
 
@@ -150,6 +160,13 @@ func printDeployUsage() {
                                                        the request to X's agent.
   yaver deploy templates                               List supported (stack, target)
                                                        combinations.
+
+  # Post-mortem + pre-flight:
+  yaver deploy runs [--limit N] [--machine D]          Show recent deploy runs.
+  yaver deploy logs <run-id> [--machine D]             Stream the full output of
+                                                       a past run.
+  yaver deploy diagnose --app X --target Y [--json]    Composite preflight:
+                                                       toolchain + vault + paths.
 
   # CI / release automation (existing):
   yaver deploy --file <path>                           Register artifact for P2P transfer
