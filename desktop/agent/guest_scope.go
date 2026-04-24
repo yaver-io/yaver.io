@@ -37,6 +37,12 @@ const (
 	GuestScopeFull          = "full"
 	GuestScopeFeedbackOnly  = "feedback-only"
 	GuestScopeSDKProject    = "sdk-project"
+	// GuestScopeDeploy — narrow tier for shared-machine deploys: the
+	// guest can trigger yaver-managed deploy scripts for projects in
+	// their allowedProjects list, but cannot read code, run tasks, or
+	// touch the vault directly. The script body + vault values stay on
+	// the host; the guest sees only stdout/stderr + exit code.
+	GuestScopeDeploy        = "deploy"
 	guestScopeDefaultLegacy = GuestScopeFull
 )
 
@@ -60,6 +66,13 @@ var guestFullAllowedPrefixes = []string{
 	"/health",
 	"/vibing",
 	"/shared-storage/",
+	// Shared-machine deploy surface (doctor + script templates +
+	// actual run). Scoped by allowedProjects in the handler — the
+	// vault stays invisible to the guest; only stdout streams back.
+	"/deploy/ship",
+	"/deploy/templates",
+	"/deploy/generate",
+	"/doctor/build",
 }
 
 // guestFeedbackOnlyAllowedPrefixes is the hardened end-user surface.
@@ -82,6 +95,18 @@ var guestFeedbackOnlyAllowedPrefixes = []string{
 	"/health",
 }
 
+// guestDeployAllowedPrefixes is the tight shared-machine-deploy surface.
+// Enough to run a scripted deploy for a scoped project, nothing more.
+// The handler enforces allowedProjects on top of this allow-list.
+var guestDeployAllowedPrefixes = []string{
+	"/deploy/ship",
+	"/deploy/templates",
+	"/deploy/generate", // read-only preview
+	"/doctor/build",
+	"/info",
+	"/health",
+}
+
 // guestScopeOrDefault normalizes a cached scope string to one of the two
 // known tiers. An empty or unknown scope maps to the legacy default ("full").
 func guestScopeOrDefault(s string) string {
@@ -90,6 +115,8 @@ func guestScopeOrDefault(s string) string {
 		return GuestScopeFeedbackOnly
 	case GuestScopeSDKProject:
 		return GuestScopeSDKProject
+	case GuestScopeDeploy:
+		return GuestScopeDeploy
 	case GuestScopeFull:
 		return GuestScopeFull
 	default:
@@ -104,6 +131,8 @@ func isGuestAllowedPathForScope(path, scope string) bool {
 	switch guestScopeOrDefault(scope) {
 	case GuestScopeFeedbackOnly, GuestScopeSDKProject:
 		list = guestFeedbackOnlyAllowedPrefixes
+	case GuestScopeDeploy:
+		list = guestDeployAllowedPrefixes
 	}
 	for _, prefix := range list {
 		if strings.HasPrefix(path, prefix) {

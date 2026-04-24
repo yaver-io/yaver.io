@@ -12,13 +12,16 @@ func runDeploy(args []string) {
 		os.Exit(0)
 	}
 
-	// New subcommands: vault-aware shell-script generator.
+	// New subcommands: vault-aware shell-script generator + shipper.
 	switch args[0] {
 	case "generate", "gen":
 		runDeployGenerateCmd(args[1:])
 		return
 	case "templates":
 		runDeployTemplatesCmd()
+		return
+	case "ship":
+		runDeployShipCmd(args[1:])
 		return
 	}
 
@@ -135,11 +138,16 @@ func runDeployGitLab(projectID, branch string) {
 
 func printDeployUsage() {
 	fmt.Print(`Usage:
-  # Script generation (vault-aware, runs on your own machine):
+  # Script generation + shared-machine ship (vault-aware, runs locally):
   yaver deploy generate --app <name> --target <target> [--out <file>]
                                                        Emit a bash deploy script
                                                        that sources secrets from
                                                        the Yaver vault.
+  yaver deploy ship --app <name> --target <target> [--machine <deviceId>]
+                                                       Stream a live deploy via
+                                                       the agent. Local by
+                                                       default; --machine X pipes
+                                                       the request to X's agent.
   yaver deploy templates                               List supported (stack, target)
                                                        combinations.
 
