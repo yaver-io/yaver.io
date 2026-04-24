@@ -18,6 +18,11 @@ const CODING_RUNNER_BOOTSTRAP = [
   { command: "opencode", pkg: "opencode-ai", label: "OpenCode" },
 ];
 
+const MOBILE_TOOL_BOOTSTRAP = [
+  { command: "expo", pkg: "expo", label: "Expo CLI" },
+  { command: "eas", pkg: "eas-cli", label: "EAS CLI" },
+];
+
 function envEnabled(name) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes";
@@ -61,6 +66,27 @@ function installMissingCodingRunners() {
     log(`Installed missing coding runners: ${labels}.`);
   } catch (error) {
     log(`Skipping coding runner bootstrap: ${error.message}`);
+  }
+}
+
+function installMissingMobileTools() {
+  const missing = MOBILE_TOOL_BOOTSTRAP.filter((entry) => !commandExists(entry.command));
+  if (missing.length === 0) {
+    log("Expo and EAS CLIs already exist on PATH.");
+    return;
+  }
+
+  const npmCmd = (process.env.npm_execpath || "npm").trim() || "npm";
+  const packages = missing.map((entry) => entry.pkg);
+  const labels = missing.map((entry) => entry.label).join(", ");
+  try {
+    execSync(
+      `"${npmCmd}" install -g --no-fund --no-audit ${packages.join(" ")}`,
+      { stdio: "inherit" },
+    );
+    log(`Installed missing mobile tools: ${labels}.`);
+  } catch (error) {
+    log(`Skipping mobile tool bootstrap: ${error.message}`);
   }
 }
 
@@ -148,6 +174,10 @@ async function main() {
     log("Provisioned Hermes reload stack for Yaver mobile.");
   } catch (error) {
     log(`Skipping mobile bootstrap: ${error.message}`);
+  }
+
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE_TOOLS")) {
+    installMissingMobileTools();
   }
 
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {

@@ -2608,9 +2608,20 @@ export class AgentClient {
     await fetch(`${this.baseUrl}/dev/stop`, { method: "POST", headers: this.authHeaders });
   }
 
-  async reloadDevServer(): Promise<void> {
+  async reloadDevServer(): Promise<{
+    ok?: boolean;
+    nativeChangesDetected?: boolean;
+    nativeChanges?: Array<{ path?: string; reason?: string }>;
+    changeClass?: string;
+    error?: string;
+  }> {
     this.assertConnected();
-    await fetch(`${this.baseUrl}/dev/reload`, { method: "POST", headers: this.authHeaders });
+    const res = await fetch(`${this.baseUrl}/dev/reload`, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || "Failed to reload dev server");
+    }
+    return data;
   }
 
   get devPreviewUrl(): string | null {

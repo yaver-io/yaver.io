@@ -147,7 +147,8 @@ When they ask to "start", "load", "run", or "hot reload" an app on their phone:
    in the JSON body. If omitted, the current phone remains the default target.
 
 2. The phone automatically detects the dev server and shows a green "Open App" banner.
-   The user taps it and the app loads in a WebView through the P2P channel.
+   For Expo / React Native, the user taps it and Yaver loads the Hermes bundle
+   natively inside the app. Browser/WebView preview is only for actual web projects.
 
 3. NEVER output exp:// URLs, QR codes, or tell the user to open Expo Go.
    NEVER tell the user to run terminal commands on their phone.

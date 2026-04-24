@@ -79,7 +79,28 @@ type RecoveryResponse struct {
 
 // applyRecoveredAuthToken persists a newly recovered auth token and updates
 // in-memory state so the running daemon can recover without requiring manual
-// intervention from the user.
+// intervention from the user. Two load-bearing responsibilities beyond
+// writing the token:
+//
+//   1. Re-resolve ownership. The recovered bearer may belong to a
+//      *different* user than whoever provisioned the agent — e.g. the
+//      developer signed out, signed back in with a different OAuth
+//      provider, or had their session force-rotated. If we leave
+//      s.ownerUserID pointing at the old identity, every subsequent
+//      request from the new session trips the "token belongs to a
+//      different user" check in auth() (httpserver.go ~L1583, 1590) and
+//      the daemon looks completely dead to the app even though the
+//      token itself is valid. We re-validate the new token against
+//      Convex and rebind s.ownerUserID to whatever it actually maps to
+//      before any request can race in.
+//
+//   2. Flush the token cache. auth() caches token→userID decisions in
+//      s.tokenCache for the life of the process. After reauth the old
+//      bearer may still be in there with its (now-stale) userID, guest
+//      grant, or host-share decision. Leaving those entries behind
+//      re-admits revoked sessions and routes the wrong isolation slot.
+//      A full Range+Delete is the safe thing — the cache is small and
+//      the next request repopulates whatever it needs.
 func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 	cfg, _ := LoadConfig()
 	if cfg == nil {
@@ -101,6 +122,24 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 			s.taskMgr.AuthToken = token
 			s.taskMgr.ConvexURL = cfg.ConvexSiteURL
 		}
+		// Rebind ownership. Best-effort — if Convex is unreachable
+		// right now we keep the old ownerUserID and the next heartbeat
+		// will 401→refresh us into a consistent state anyway. The
+		// common case (Convex reachable during a live reauth from the
+		// mobile app or web dashboard) succeeds inline and future
+		// requests immediately see the right identity.
+		if uid, err := ValidateTokenUser(cfg.ConvexSiteURL, token); err == nil {
+			if trimmed := strings.TrimSpace(uid); trimmed != "" {
+				s.ownerUserID = trimmed
+			}
+		}
+		// Invalidate cached token→user decisions so stale bearers
+		// (old owner, old guest grants, old host-share verdicts) can't
+		// short-circuit past the fresh Convex validation.
+		s.tokenCache.Range(func(k, _ interface{}) bool {
+			s.tokenCache.Delete(k)
+			return true
+		})
 	}
 }
 

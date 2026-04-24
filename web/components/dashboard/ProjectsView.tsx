@@ -44,6 +44,20 @@ function getCategory(framework?: string): "mobile" | "web" | "other" {
   return "other";
 }
 
+function previewPlatformForProject(project: Project): "web" | undefined {
+  const fw = (project.framework || "").toLowerCase();
+  if (
+    fw.includes("expo") ||
+    fw.includes("react-native") ||
+    fw.includes("next") ||
+    fw.includes("vite") ||
+    fw === "react"
+  ) {
+    return "web";
+  }
+  return undefined;
+}
+
 export default function ProjectsView({
   onTaskCreated,
   mobileWorkers,
@@ -93,6 +107,7 @@ export default function ProjectsView({
       await agentClient.startDevServer({
         framework: project.framework || "",
         workDir: project.path,
+        platform: previewPlatformForProject(project),
         targetDeviceId: selectedPreviewTarget?.id,
         targetDeviceName: selectedPreviewTarget?.name,
         targetDeviceClass: selectedPreviewTarget?.deviceClass,
@@ -169,7 +184,7 @@ export default function ProjectsView({
             ) : null}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => agentClient.reloadDevServer()} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Reload</button>
+            <button onClick={() => void agentClient.reloadDevServer()} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Refresh Preview</button>
             <button onClick={stopDev} className="px-3 py-1 text-xs rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20">Stop</button>
           </div>
         </div>
@@ -206,7 +221,7 @@ export default function ProjectsView({
             ))}
           </div>
           <div className="text-xs text-surface-500">
-            Hermes preview metadata now tracks the selected real-device worker. Remote load/stream execution comes next.
+            Web UI preview prefers browser/webview flows first. Real-device worker targeting still applies when you need native validation.
           </div>
         </div>
       )}

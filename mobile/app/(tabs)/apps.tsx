@@ -1212,10 +1212,15 @@ export default function AppsScreen() {
   }, [devStatus, handleFlushMobile, handleOpenNative]);
 
   const handleReload = useCallback(async () => {
-    setWebViewLoading(true);
-    await quicClient.reloadDevServer();
-    setWebViewKey(k => k + 1);
-  }, []);
+    const nativeHermes = isHermesMobileFramework(devStatus?.framework);
+    if (!nativeHermes) {
+      setWebViewLoading(true);
+    }
+    await quicClient.reloadDevServer({ mode: nativeHermes ? "bundle" : "dev" });
+    if (!nativeHermes) {
+      setWebViewKey(k => k + 1);
+    }
+  }, [devStatus?.framework]);
 
   const handleRequestScreenshot = useCallback(async () => {
     await quicClient.sendMobileWorkerPreviewCommand("capture_screenshot", {

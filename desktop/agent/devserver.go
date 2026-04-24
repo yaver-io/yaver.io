@@ -830,6 +830,18 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		}
 	}
 
+	if opts.Platform == "web" {
+		log.Printf("[dev:expo] Starting Expo web preview (port %d)", e.port)
+		e.devMode = "web"
+		args := []string{"expo", "start",
+			"--web",
+			"--port", fmt.Sprintf("%d", e.port),
+			"--host", "lan",
+		}
+		readyURL := fmt.Sprintf("http://127.0.0.1:%d", e.port)
+		return e.startProcess(ctx, "npx", args, opts.WorkDir, nil, readyURL)
+	}
+
 	// HERMES-FIRST FLOW: never run `expo run:ios` from dev server start.
 	// Just start Metro with --host lan. The phone uses `/dev/build-native`
 	// to compile a Hermes bundle and load it inside Yaver's container.
@@ -960,8 +972,9 @@ func (e *ExpoDevServer) Reload() error {
 // ─── React Native (bare) Dev Server ────────────────────────────────────
 
 // ReactNativeDevServer handles bare React Native projects (without Expo).
-// Uses `npx react-native start` with Metro bundler, serving the web bundle.
-// For RN projects with react-native-web, this enables hot reload via WebView.
+// Uses `npx react-native start` / Expo web fallback for browser-style preview
+// surfaces only. The first-class mobile path remains Hermes bundle reload
+// inside Yaver, not a WebView.
 type ReactNativeDevServer struct {
 	baseDevServer
 }

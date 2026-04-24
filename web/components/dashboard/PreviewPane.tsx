@@ -65,6 +65,31 @@ function likelyFramework(project: Project): string {
   return "vite";
 }
 
+function isWebPreviewFramework(framework?: string): boolean {
+  const fw = (framework || "").toLowerCase();
+  return (
+    fw.includes("next") ||
+    fw.includes("vite") ||
+    fw === "react" ||
+    fw.includes("expo") ||
+    fw.includes("react-native")
+  );
+}
+
+function previewPlatformForProject(project: Project): "web" | undefined {
+  const fw = likelyFramework(project).toLowerCase();
+  if (
+    fw.includes("next") ||
+    fw.includes("vite") ||
+    fw === "react" ||
+    fw.includes("expo") ||
+    fw.includes("react-native")
+  ) {
+    return "web";
+  }
+  return undefined;
+}
+
 export default function PreviewPane({
   selectedPreviewTarget,
   onSelectPreviewTarget,
@@ -84,6 +109,7 @@ export default function PreviewPane({
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [iframeKey, setIframeKey] = useState(0);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [skinId, setSkinId] = useState<string>("iphone-15");
   const [orientation, setOrientation] = useState<Orientation>("portrait");
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -197,6 +223,7 @@ export default function PreviewPane({
               const ev = JSON.parse(line.slice(6));
               if (ev.type === "reload" || ev.type === "ready") {
                 setIframeKey((k) => k + 1);
+                setReloadNonce((n) => n + 1);
               } else if (ev.type === "line" && typeof ev.text === "string") {
                 setLogLines((prev) => {
                   const next = [...prev, ev.text];
@@ -237,6 +264,17 @@ export default function PreviewPane({
 
   const skin = useMemo(() => DEVICES.find((d) => d.id === skinId) ?? DEVICES[0], [skinId]);
   const previewUrl = agentClient.devPreviewUrl;
+  const previewFrameUrl = useMemo(() => {
+    if (!previewUrl) return null;
+    try {
+      const url = new URL(previewUrl);
+      url.searchParams.set("__preview_reload", String(reloadNonce));
+      return url.toString();
+    } catch {
+      const join = previewUrl.includes("?") ? "&" : "?";
+      return `${previewUrl}${join}__preview_reload=${encodeURIComponent(String(reloadNonce))}`;
+    }
+  }, [previewUrl, reloadNonce]);
 
   const frame = useMemo(() => {
     if (skin.plain) return { width: 0, height: 0 };
@@ -258,10 +296,20 @@ export default function PreviewPane({
     return Math.min(sx, sy, 1);
   }, [skin.plain, frame.width, frame.height, stageSize.w, stageSize.h]);
 
-  const handleReload = useCallback(() => {
+  const handleReload = useCallback(async () => {
+    const framework = (devStatus?.framework || "").toLowerCase();
     setIframeKey((k) => k + 1);
-    agentClient.reloadDevServer();
-  }, []);
+    setReloadNonce((n) => n + 1);
+    if (isWebPreviewFramework(framework)) {
+      try {
+        await agentClient.reloadDevServer();
+      } catch {
+        // Browser preview already got a hard refresh above.
+      }
+      return;
+    }
+    await agentClient.reloadDevServer();
+  }, [devStatus?.framework]);
 
   const handleStop = useCallback(async () => {
     await agentClient.stopDevServer();
@@ -287,6 +335,7 @@ export default function PreviewPane({
         await agentClient.startDevServer({
           framework: likelyFramework(project),
           workDir: project.path,
+          platform: previewPlatformForProject(project),
           targetDeviceId: selectedPreviewTarget?.id,
           targetDeviceName: selectedPreviewTarget?.name,
         });
@@ -336,11 +385,11 @@ export default function PreviewPane({
     ? { width: "100%", height: "100%" }
     : { width: `${(frame as { innerWidth: number }).innerWidth}px`, height: `${(frame as { innerHeight: number }).innerHeight}px` };
 
-  const innerContent = devStatus?.running && previewUrl ? (
+  const innerContent = devStatus?.running && previewFrameUrl ? (
     <iframe
       key={iframeKey}
       ref={iframeRef}
-      src={previewUrl}
+      src={previewFrameUrl}
       className="w-full h-full border-none bg-white"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
     />
@@ -367,10 +416,10 @@ export default function PreviewPane({
         >
           {devStatus?.running
             ? `${frameworkIcon(devStatus.framework)} ${devStatus.framework || "dev"}${devStatus.port ? ` :${devStatus.port}` : ""}`
-            : "hot reload"}
+            : "live preview"}
         </span>
         <span className="flex-1 text-[10px] text-surface-600 font-mono truncate">
-          {devStatus?.running ? devStatus.workDir || previewUrl : "no dev server running"}
+          {devStatus?.running ? devStatus.workDir || previewFrameUrl : "no dev server running"}
         </span>
         {devStatus?.running ? (
           <span className="text-[10px] text-sky-300">
@@ -394,9 +443,9 @@ export default function PreviewPane({
         {devStatus?.running ? (
           <>
             <button
-              onClick={handleReload}
+              onClick={() => void handleReload()}
               className="text-surface-400 hover:text-surface-200 text-sm"
-              title="Reload"
+              title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Reload"}
             >
               &#x21BB;
             </button>

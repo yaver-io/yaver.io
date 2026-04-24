@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.26"
+const version = "1.99.27"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6575,6 +6575,15 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					}
 					if httpServer != nil {
 						httpServer.token = newToken
+						// Flush token→user cache — old bearer entries
+						// reference a revoked token and will make
+						// auth() hand out the wrong routing decision
+						// (owner vs guest vs host-share) until the
+						// old entries age out.
+						httpServer.tokenCache.Range(func(k, _ interface{}) bool {
+							httpServer.tokenCache.Delete(k)
+							return true
+						})
 					}
 					log.Printf("[auth] %s refreshed + rotated (extended 1 year).", label)
 				}

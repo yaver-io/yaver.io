@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type Runner, type Task } from "@/lib/agent-client";
+import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import PreviewPane from "./PreviewPane";
 
@@ -78,6 +78,22 @@ type DeployPreviewSummary = {
   };
 };
 
+type DeployActionKind = "testflight" | "play-internal" | "eas";
+
+function previewPlatformForFramework(framework?: string): "web" | undefined {
+  const fw = (framework || "").toLowerCase();
+  if (
+    fw.includes("expo") ||
+    fw.includes("react-native") ||
+    fw.includes("next") ||
+    fw.includes("vite") ||
+    fw === "react"
+  ) {
+    return "web";
+  }
+  return undefined;
+}
+
 export default function VibeCodingView({
   devices,
   connectedDevice,
@@ -111,6 +127,7 @@ export default function VibeCodingView({
   const [gitCommits, setGitCommits] = useState<GitCommitRow[]>([]);
   const [gitCommitMessage, setGitCommitMessage] = useState("");
   const [providers, setProviders] = useState<GitProviderStatusRow[]>([]);
+  const [machines, setMachines] = useState<MachineInfo[]>([]);
   const [repoBrowserHost, setRepoBrowserHost] = useState<string | null>(null);
   const [providerRepos, setProviderRepos] = useState<GitRemoteRepo[]>([]);
   const [providerSearch, setProviderSearch] = useState("");
@@ -149,6 +166,16 @@ export default function VibeCodingView({
     () => projects.find((project) => project.path === selectedProjectPath) || null,
     [projects, selectedProjectPath],
   );
+  const connectedMachine = useMemo(() => {
+    if (!connectedDevice) return null;
+    const normalize = (value?: string | null) =>
+      String(value || "").trim().toLowerCase().replace(/\.local$/i, "");
+    return (
+      machines.find((machine) => machine.deviceId === connectedDevice.id) ||
+      machines.find((machine) => normalize(machine.name) === normalize(connectedDevice.name)) ||
+      null
+    );
+  }, [connectedDevice, machines]);
   const activeTask = useMemo(
     () => taskList.find((task) => task.id === activeTaskId) || taskList[0] || null,
     [taskList, activeTaskId],
@@ -167,7 +194,7 @@ export default function VibeCodingView({
     let cancelled = false;
     const refresh = async () => {
       try {
-        const [projectRows, runnerRows, tasks, preview, currentDevStatus, git, commits, gitProviders] = await Promise.all([
+        const [projectRows, runnerRows, tasks, preview, currentDevStatus, git, commits, gitProviders, machineInventory] = await Promise.all([
           agentClient.listProjects().catch(() => []),
           agentClient.getRunners().catch(() => []),
           agentClient.listTasks(12).catch(() => []),
@@ -176,6 +203,7 @@ export default function VibeCodingView({
           selectedProjectPath ? agentClient.gitStatus(selectedProjectPath).catch(() => null) : Promise.resolve(null),
           selectedProjectPath ? agentClient.gitLog(selectedProjectPath, 8).catch(() => []) : Promise.resolve([]),
           agentClient.gitProviderStatus().catch(() => []),
+          agentClient.consoleMachines().catch(() => ({ machines: [] })),
         ]);
         if (cancelled) return;
         setProjects(projectRows);
@@ -185,6 +213,7 @@ export default function VibeCodingView({
         setGitStatus(git ?? null);
         setGitCommits(commits || []);
         setProviders(gitProviders || []);
+        setMachines(machineInventory?.machines || []);
         const targets = Array.isArray(preview?.targets) ? preview.targets : [];
         setDeployTargets(targets.map((target: any) => ({ id: String(target.id), name: String(target.name) })));
         setDeployPreviewSummary(
@@ -273,6 +302,7 @@ export default function VibeCodingView({
         prompt: composer.trim(),
         gitStatus,
         deployTargets,
+        machine: connectedMachine,
       }),
       runner: selectedRunner || undefined,
       projectName: selectedProject.name,
@@ -295,6 +325,7 @@ export default function VibeCodingView({
         prompt: composer.trim(),
         gitStatus,
         deployTargets,
+        machine: connectedMachine,
       }),
     );
     setComposer("");
@@ -306,6 +337,7 @@ export default function VibeCodingView({
     await agentClient.startDevServer({
       framework: selectedProject.framework || "",
       workDir: selectedProject.path,
+      platform: previewPlatformForFramework(selectedProject.framework),
       targetDeviceId: selectedPreviewTarget?.id,
       targetDeviceName: selectedPreviewTarget?.name,
       targetDeviceClass: selectedPreviewTarget?.deviceClass,
@@ -321,6 +353,45 @@ export default function VibeCodingView({
     const deployName = result?.target || targetId || "deploy";
     setBusy(`Triggered ${deployName}.`);
     setRefreshNonce((value) => value + 1);
+  }
+
+  async function launchDeployTask(kind: DeployActionKind) {
+    if (!selectedProject) {
+      setBusy("Pick a project first.");
+      return;
+    }
+    const plan = buildDeployTaskPlan({
+      kind,
+      project: selectedProject,
+      machine: connectedMachine,
+      deployTargets,
+      gitStatus,
+    });
+    setBusy(plan.startingLabel);
+    const task = await agentClient.createTask({
+      title: plan.title,
+      description: plan.prompt,
+      runner: selectedRunner || undefined,
+      projectName: selectedProject.name,
+      workDir: selectedProject.path,
+    });
+    setActiveTaskId(task.id);
+    setBusy(plan.startedLabel);
+    setRefreshNonce((value) => value + 1);
+  }
+
+  function prepareDeployPrompt(kind: DeployActionKind) {
+    if (!selectedProject) return;
+    const plan = buildDeployTaskPlan({
+      kind,
+      project: selectedProject,
+      machine: connectedMachine,
+      deployTargets,
+      gitStatus,
+    });
+    setDraftTitle(plan.title);
+    setComposer(plan.userPrompt);
+    setBusy(plan.preparedLabel);
   }
 
   async function autoDetectProviders() {
@@ -484,9 +555,39 @@ export default function VibeCodingView({
     );
   }, [providerRepos, providerSearch]);
 
+  const machineSummary = useMemo(() => {
+    if (!connectedMachine) return null;
+    const caps = connectedMachine.capabilities;
+    return {
+      platform: connectedMachine.platform || connectedMachine.os || "machine",
+      supportsIos: !!caps?.supportsIos,
+      supportsAndroid: !!caps?.supportsAndroid,
+      supportsTestFlight: !!caps?.supportsTestFlight,
+      supportsPlayStore: !!caps?.supportsPlayStore,
+      supportsDocker: !!caps?.supportsDocker,
+      runnerNames: (caps?.runners || [])
+        .filter((runner) => runner.ready)
+        .map((runner) => runner.name),
+      currentWorkDir: connectedMachine.currentWorkDir || "",
+    };
+  }, [connectedMachine]);
+
+  const deployQuickActions = useMemo(
+    () => buildDeployQuickActions(selectedProject, connectedMachine, deployTargets),
+    [selectedProject, connectedMachine, deployTargets],
+  );
+
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-surface-950 text-surface-100">
-      <div className="flex min-w-0 flex-1 flex-col border-r border-surface-800">
+      <div className="w-[46vw] min-w-[380px] max-w-[760px] border-r border-surface-800">
+        <PreviewPane
+          selectedPreviewTarget={selectedPreviewTarget}
+          onSelectPreviewTarget={onSelectPreviewTarget}
+          mobileWorkers={mobileWorkers}
+        />
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-surface-800 bg-surface-900/70 px-4 py-4">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Vibing</span>
@@ -548,8 +649,32 @@ export default function VibeCodingView({
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 xl:grid-cols-[280px,minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 xl:grid-cols-[320px,minmax(0,1fr)]">
           <aside className="flex min-h-0 flex-col gap-2 overflow-auto border-r border-surface-800 bg-surface-900/40 p-3">
+            <section className="rounded-xl border border-surface-800 bg-surface-950/40 px-3 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-400">Remote Machine</div>
+              <div className="mt-2 text-sm font-semibold text-surface-100">{connectedMachine?.name || connectedDevice?.name || "No machine"}</div>
+              <div className="mt-1 text-[11px] text-surface-500">
+                {machineSummary?.platform || "Connect to a machine to see toolchain readiness."}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <MiniPill>{machineSummary?.supportsIos ? "iOS toolchain" : "no iOS toolchain"}</MiniPill>
+                <MiniPill>{machineSummary?.supportsAndroid ? "Android toolchain" : "no Android toolchain"}</MiniPill>
+                <MiniPill>{machineSummary?.supportsTestFlight ? "TestFlight ready" : "TestFlight gated"}</MiniPill>
+                <MiniPill>{machineSummary?.supportsPlayStore ? "Play deploy ready" : "Play deploy gated"}</MiniPill>
+              </div>
+              {machineSummary?.runnerNames?.length ? (
+                <div className="mt-3 text-[11px] text-surface-500">
+                  Ready runners: {machineSummary.runnerNames.join(", ")}
+                </div>
+              ) : null}
+              {machineSummary?.currentWorkDir ? (
+                <div className="mt-2 truncate text-[10px] font-mono text-surface-600">
+                  cwd: {machineSummary.currentWorkDir}
+                </div>
+              ) : null}
+            </section>
+
             <FoldableSection
               sectionKey="projects"
               label={SECTION_LABELS.projects}
@@ -620,7 +745,7 @@ export default function VibeCodingView({
                   disabled={!devStatus?.running}
                   className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
                 >
-                  Hermes Reload
+                  Refresh Preview
                 </button>
                 {deployTargets.map((target) => (
                   <button
@@ -631,6 +756,44 @@ export default function VibeCodingView({
                   >
                     Deploy {target.name}
                   </button>
+                ))}
+              </div>
+              <div className="mt-3 grid gap-2">
+                {deployQuickActions.map((action) => (
+                  <div key={action.kind} className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-surface-100">{action.label}</div>
+                        <div className="mt-1 text-[11px] leading-5 text-surface-500">{action.description}</div>
+                      </div>
+                      <span
+                        className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+                          action.enabled
+                            ? "border border-emerald-500/30 bg-emerald-500/10 text-emerald-100"
+                            : "border border-amber-500/20 bg-amber-500/10 text-amber-100"
+                        }`}
+                      >
+                        {action.enabled ? "ready" : "check host"}
+                      </span>
+                    </div>
+                    <div className="mt-3 text-[11px] text-surface-500">{action.readiness}</div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => void launchDeployTask(action.kind)}
+                        disabled={!selectedProject}
+                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                      >
+                        Run with agent
+                      </button>
+                      <button
+                        onClick={() => prepareDeployPrompt(action.kind)}
+                        disabled={!selectedProject}
+                        className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
+                      >
+                        Draft prompt
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
               {deployPreviewSummary?.warnings && deployPreviewSummary.warnings.length > 0 ? (
@@ -974,9 +1137,16 @@ export default function VibeCodingView({
               />
               <div className="mt-3 flex items-center justify-between gap-3">
                 <div className="text-xs text-surface-500">
-                  Task is scoped to {selectedProject?.name || "the selected project"} and runs on {connectedDevice?.name || "the connected machine"}.
+                  Task is scoped to {selectedProject?.name || "the selected project"} and runs on {connectedMachine?.name || connectedDevice?.name || "the connected machine"}.
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    onClick={() => void agentClient.reloadDevServer()}
+                    disabled={!devStatus?.running}
+                    className="rounded-xl border border-surface-700 bg-surface-950 px-4 py-2 text-sm font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
+                  >
+                    Refresh Preview
+                  </button>
                   <button
                     onClick={() => void continueChatTask()}
                     disabled={!activeTask || !composer.trim()}
@@ -997,14 +1167,6 @@ export default function VibeCodingView({
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="w-[42vw] min-w-[360px] max-w-[720px]">
-        <PreviewPane
-          selectedPreviewTarget={selectedPreviewTarget}
-          onSelectPreviewTarget={onSelectPreviewTarget}
-          mobileWorkers={mobileWorkers}
-        />
       </div>
     </div>
   );
@@ -1047,12 +1209,15 @@ function buildVibeTaskPrompt({
   prompt,
   gitStatus,
   deployTargets,
+  machine,
 }: {
   project: Project;
   prompt: string;
   gitStatus: GitStatusRow | null;
   deployTargets: Array<{ id: string; name: string }>;
+  machine: MachineInfo | null;
 }): string {
+  const machineLines = describeMachineForPrompt(machine);
   const lines = [
     `You are working for a solo developer in project ${project.name}.`,
     `Project path: ${project.path}`,
@@ -1060,6 +1225,7 @@ function buildVibeTaskPrompt({
     gitStatus?.branch ? `Current branch: ${gitStatus.branch}` : "",
     gitStatus ? `Git state: ${gitStatus.clean ? "clean" : "dirty"}, ahead=${gitStatus.ahead || 0}, behind=${gitStatus.behind || 0}, staged=${gitStatus.staged?.length || 0}, modified=${gitStatus.modified?.length || 0}, untracked=${gitStatus.untracked?.length || 0}` : "",
     deployTargets.length > 0 ? `Known deploy targets: ${deployTargets.map((target) => target.name).join(", ")}` : "Known deploy targets: none detected yet",
+    ...machineLines,
     "",
     "Execution contract:",
     "1. Stay inside the selected project unless the task explicitly requires adjacent workspace files.",
@@ -1082,21 +1248,145 @@ function buildVibeContinuationPrompt({
   prompt,
   gitStatus,
   deployTargets,
+  machine,
 }: {
   project: Project | null;
   prompt: string;
   gitStatus: GitStatusRow | null;
   deployTargets: Array<{ id: string; name: string }>;
+  machine: MachineInfo | null;
 }): string {
   const lines = [
     project ? `Continue in project ${project.name} (${project.path}).` : "",
     gitStatus?.branch ? `Current branch: ${gitStatus.branch}` : "",
     deployTargets.length > 0 ? `Deploy targets still available: ${deployTargets.map((target) => target.name).join(", ")}` : "",
+    ...describeMachineForPrompt(machine),
     "Keep the solo-developer flow: sync/rebase if needed, resolve conflicts, finish the git operation cleanly, commit, push, and deploy when the request implies shipping.",
     "",
     prompt,
   ].filter(Boolean);
   return lines.join("\n");
+}
+
+function describeMachineForPrompt(machine: MachineInfo | null): string[] {
+  if (!machine) return [];
+  const caps = machine.capabilities;
+  const readyRunners = (caps?.runners || []).filter((runner) => runner.ready).map((runner) => runner.name);
+  return [
+    `Execution machine: ${machine.name} (${machine.platform || machine.os || "unknown platform"})`,
+    caps
+      ? `Machine capabilities: iOS=${caps.supportsIos ? "yes" : "no"}, Android=${caps.supportsAndroid ? "yes" : "no"}, TestFlight=${caps.supportsTestFlight ? "yes" : "no"}, PlayStore=${caps.supportsPlayStore ? "yes" : "no"}, Docker=${caps.supportsDocker ? "yes" : "no"}`
+      : "",
+    readyRunners.length > 0 ? `Ready coding runners on this machine: ${readyRunners.join(", ")}` : "",
+    machine.currentWorkDir ? `Machine current work dir: ${machine.currentWorkDir}` : "",
+    "Before doing platform-specific release work, verify the host actually has the required signing, CLI auth, team configuration, and build tooling. If something is missing, fix it when feasible or report the exact blocker clearly.",
+  ].filter(Boolean);
+}
+
+function buildDeployQuickActions(
+  project: Project | null,
+  machine: MachineInfo | null,
+  deployTargets: Array<{ id: string; name: string }>,
+): Array<{ kind: DeployActionKind; label: string; description: string; readiness: string; enabled: boolean }> {
+  const caps = machine?.capabilities;
+  const framework = (project?.framework || "").toLowerCase();
+  const projectLooksMobile = framework.includes("expo") || framework.includes("react-native") || framework.includes("flutter") || !project?.framework;
+  const hasEasTarget = deployTargets.some((target) => /eas|expo/i.test(target.name) || /eas|expo/i.test(target.id));
+
+  return [
+    {
+      kind: "testflight",
+      label: "TestFlight",
+      description: "Build, sign, upload, and verify the iOS lane on a machine that can actually handle Apple tooling.",
+      readiness: caps?.supportsTestFlight
+        ? "Connected machine advertises TestFlight-capable iOS tooling."
+        : "Needs a macOS host with Xcode, Apple credentials, signing assets, and team configuration.",
+      enabled: !!caps?.supportsTestFlight && projectLooksMobile,
+    },
+    {
+      kind: "play-internal",
+      label: "Google Play Internal",
+      description: "Ship an Android build to the internal testing track and confirm the upload state.",
+      readiness: caps?.supportsPlayStore
+        ? "Connected machine advertises Android/Play deployment capability."
+        : "Needs Android build tooling, signing config, and Play Console credentials on the host.",
+      enabled: !!caps?.supportsPlayStore && projectLooksMobile,
+    },
+    {
+      kind: "eas",
+      label: "EAS Deploy",
+      description: "Use Expo/EAS from the current machine for updates or builds, depending on what the project supports.",
+      readiness: hasEasTarget
+        ? "Project already exposes an EAS/Expo deploy target."
+        : "Agent will inspect `eas.json`, Expo auth, channels, and build profiles before choosing update vs build.",
+      enabled: (framework.includes("expo") || framework.includes("react-native")) && projectLooksMobile,
+    },
+  ];
+}
+
+function buildDeployTaskPlan({
+  kind,
+  project,
+  machine,
+  deployTargets,
+  gitStatus,
+}: {
+  kind: DeployActionKind;
+  project: Project;
+  machine: MachineInfo | null;
+  deployTargets: Array<{ id: string; name: string }>;
+  gitStatus: GitStatusRow | null;
+}) {
+  const targetLabel =
+    kind === "testflight" ? "TestFlight" : kind === "play-internal" ? "Google Play Internal" : "EAS";
+  const hostLine = machine
+    ? `Run this on ${machine.name} (${machine.platform || machine.os || "unknown platform"}).`
+    : "Run this on the currently connected machine.";
+  const capabilityLine = machine?.capabilities
+    ? `Host capabilities: iOS=${machine.capabilities.supportsIos ? "yes" : "no"}, Android=${machine.capabilities.supportsAndroid ? "yes" : "no"}, TestFlight=${machine.capabilities.supportsTestFlight ? "yes" : "no"}, PlayStore=${machine.capabilities.supportsPlayStore ? "yes" : "no"}.`
+    : "";
+  const deployLine = deployTargets.length > 0
+    ? `Detected deploy targets: ${deployTargets.map((target) => target.name).join(", ")}.`
+    : "No deploy target was auto-detected yet, so inspect the repo and toolchain before you decide the release path.";
+  const branchLine = gitStatus?.branch ? `Current branch: ${gitStatus.branch}.` : "";
+  const dirtyLine = gitStatus
+    ? `Git state: ${gitStatus.clean ? "clean" : "dirty"}, ahead=${gitStatus.ahead || 0}, behind=${gitStatus.behind || 0}.`
+    : "";
+  const platformRequest =
+    kind === "testflight"
+      ? "Prepare and ship this project to TestFlight. Verify Xcode, Apple team selection, signing certificates/profiles, bundle identifiers, and any App Store Connect credentials before building. If the current host cannot do it, explain exactly why."
+      : kind === "play-internal"
+        ? "Prepare and ship this project to Google Play internal testing. Verify Gradle/Android tooling, keystore/signing config, Play Console service credentials, package id, and release track configuration before building. If the current host cannot do it, explain exactly why."
+        : "Prepare and ship this project through Expo/EAS. Decide whether this should be an EAS Update, EAS Build, or EAS Submit flow after inspecting the repo. Verify `eas.json`, channels/profiles, Expo auth, Apple/Google credentials, and any required project secrets before doing the release.";
+
+  const prompt = [
+    `You are shipping project ${project.name} at ${project.path}.`,
+    project.framework ? `Framework: ${project.framework}.` : "",
+    hostLine,
+    capabilityLine,
+    branchLine,
+    dirtyLine,
+    deployLine,
+    "",
+    platformRequest,
+    "Execution contract:",
+    "1. Inspect the repository and the host first. Do not guess whether the machine can sign or submit builds.",
+    "2. If the branch is behind/diverged, fetch and rebase cleanly before release work unless that would be unsafe.",
+    "3. Check all release prerequisites on the host: CLI availability, auth state, signing/team settings, env vars, and project config.",
+    "4. If a prerequisite is missing but fixable from this machine, fix it and continue.",
+    "5. If a prerequisite cannot be fixed here, stop before a broken release and report the exact missing requirement.",
+    "6. If release succeeds, include the artifact/build id/submission state and the next place the user should check.",
+    "7. Trigger preview reload only when it helps validate the shipped change locally first.",
+  ].filter(Boolean).join("\n");
+
+  return {
+    title: `${project.name} — deploy ${targetLabel}`,
+    userPrompt: `Ship this project to ${targetLabel}. Check whether the connected machine is actually capable first, then handle the missing setup or complete the release.`,
+    prompt,
+    startingLabel: `Starting ${targetLabel} workflow…`,
+    startedLabel: `Started ${targetLabel} workflow.`,
+    preparedLabel: `Prepared ${targetLabel} deploy prompt.`,
+  };
 }
 
 function extractOutputText(chunk: string): string {

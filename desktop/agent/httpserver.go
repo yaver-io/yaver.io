@@ -587,7 +587,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/build-native", s.authSDKOrGuest(s.handleBuildNativeBundle))
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
-	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves app bundle in WebView (not sensitive)
+	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves proxied dev content for browser/webview preview surfaces
 	mux.HandleFunc("/unity/test", s.authSDKOrGuest(s.handleUnityTest))
 	mux.HandleFunc("/unity/build", s.authSDKOrGuest(s.handleUnityBuild))
 	mux.HandleFunc("/unity/relaunch", s.authSDKOrGuest(s.handleUnityRelaunch))

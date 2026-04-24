@@ -12,19 +12,25 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
-import { loadApp, onBundleEvent, buildNativeBundleUrl } from "../lib/bundleLoader";
+import { loadApp, onBundleEvent } from "../lib/bundleLoader";
 
 /**
- * Dev Preview — banner + full-screen WebView for previewing apps
- * running through the agent's /dev/* reverse proxy.
+ * Dev Preview.
+ *
+ * Expo / React Native in the Yaver mobile app must stay on the native
+ * Hermes bridge path. WebView is only for browser-style web projects.
  *
  * Flow:
  * 1. Agent starts a dev server (via POST /dev/start or Claude Code task)
  * 2. DevPreview polls /dev/status and detects it
- * 3. Shows a green banner: "expo dev server · Open App"
- * 4. User taps → full-screen WebView loads the app through relay
- * 5. Agent can trigger reload → WebView refreshes
+ * 3. Native mobile projects use "Open in Yaver" + Hermes reload
+ * 4. Web projects open a full-screen WebView through relay
  */
+function isHermesNativeFramework(status: DevServerStatus | null): boolean {
+  const framework = String(status?.framework || "").toLowerCase();
+  return framework.includes("expo") || framework.includes("react-native");
+}
+
 export function DevPreview() {
   const c = useColors();
   const [status, setStatus] = useState<DevServerStatus | null>(null);
@@ -90,9 +96,10 @@ export function DevPreview() {
               try {
                 const event = JSON.parse(line.slice(6));
                 if (event.type === "reload" || event.type === "ready") {
-                  // Force WebView reload
-                  setWebViewKey(k => k + 1);
-                  setLoading(true);
+                  if (!mustUseNativePreview) {
+                    setWebViewKey(k => k + 1);
+                    setLoading(true);
+                  }
                   setLastLogLine("");
                 } else if (event.type === "building") {
                   setLastLogLine(event.message || "Building...");
@@ -112,11 +119,14 @@ export function DevPreview() {
     listenSSE();
 
     return () => controller.abort();
-  }, [status?.running, status?.building]);
+  }, [status?.running, status?.building, status?.framework, status?.devMode]);
 
-  const isNativeMode = status?.devMode === "dev-client";
   const [nativeLoading, setNativeLoading] = useState(false);
   const [lastLogLine, setLastLogLine] = useState<string>("");
+  const mustUseNativePreview =
+    isHermesNativeFramework(status) ||
+    status?.devMode === "dev-client" ||
+    !!status?.building;
 
   // Listen for bundle unload events (user pressed "Back to Yaver")
   useEffect(() => {
@@ -191,10 +201,8 @@ export function DevPreview() {
   }, []);
 
   const handleOpen = useCallback(() => {
-    if (isNativeMode) {
-      // Default: Hermes push (fast, ~10s) — load app inside Yaver on the phone.
-      // This is the main path for Linux / WSL / remote-host iPhone testing.
-      // The "Back to Yaver" overlay is shown natively by AppDelegate
+    if (mustUseNativePreview) {
+      // Expo / React Native on the phone must never degrade to WebView.
       handleRunInYaver();
       return;
     }
@@ -202,25 +210,26 @@ export function DevPreview() {
     setShowPreview(true);
     setLoading(true);
     setWebViewKey(k => k + 1);
-  }, [isNativeMode, handleRunInYaver]);
+  }, [mustUseNativePreview, handleRunInYaver]);
 
   const handleReload = useCallback(async () => {
-    setLoading(true);
-    const ok = await quicClient.reloadDevServer();
+    if (!mustUseNativePreview) {
+      setLoading(true);
+    }
+    const ok = await quicClient.reloadDevServer({ mode: mustUseNativePreview ? "bundle" : "dev" });
     if (!ok) {
       setLoading(false);
       Alert.alert("Reload Failed", "Could not reload — is the dev server still running?");
       return;
     }
-    // SSE "reload" event will trigger WebView key increment.
-    // Fallback: if SSE is not connected (e.g., relay mode), reload directly.
-    if (!showPreview || !status?.running) {
-      setWebViewKey(k => k + 1);
-    } else {
-      // Give SSE 500ms to deliver the reload event, then force reload as fallback
-      setTimeout(() => setWebViewKey(k => k + 1), 500);
+    if (!mustUseNativePreview) {
+      if (!showPreview || !status?.running) {
+        setWebViewKey(k => k + 1);
+      } else {
+        setTimeout(() => setWebViewKey(k => k + 1), 500);
+      }
     }
-  }, [showPreview, status?.running]);
+  }, [mustUseNativePreview, showPreview, status?.running]);
 
   const handleStop = useCallback(async () => {
     Alert.alert("Stop Dev Server", "This will stop the dev server and close the preview.", [
@@ -329,7 +338,7 @@ export function DevPreview() {
             </View>
           </View>
 
-          {isNativeMode || status.building ? (
+          {mustUseNativePreview ? (
             /* Native dev-client mode or building: show controls / build logs */
             <View style={styles.nativeControls}>
               {status.building ? (
