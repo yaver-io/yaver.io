@@ -2615,7 +2615,11 @@ export class AgentClient {
 
   get devPreviewUrl(): string | null {
     if (!this.baseUrl) return null;
-    return `${this.baseUrl}/dev/`;
+    const url = `${this.baseUrl}/dev/`;
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      return `${url}?__rp=${encodeURIComponent(this.activeRelayPassword)}`;
+    }
+    return url;
   }
 
   /** Get the SSE events URL for dev server live reload. */

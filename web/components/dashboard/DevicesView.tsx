@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
-import { agentClient, type RunnerBrowserAuthSession } from "@/lib/agent-client";
+import { agentClient, AgentClient, type RunnerBrowserAuthSession } from "@/lib/agent-client";
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -347,7 +347,7 @@ function usePrimaryDeviceId(token: string | null | undefined): {
 export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen, hiddenCount = 0 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [authModal, setAuthModal] = useState<{ deviceId: string; deviceName: string; runner: string } | null>(null);
+  const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
@@ -529,8 +529,7 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                               key={`${device.id}:runner:${state.id}`}
                               onClick={() =>
                                 setAuthModal({
-                                  deviceId: device.id,
-                                  deviceName: device.name || device.id,
+                                  device,
                                   runner: state.id,
                                 })
                               }
@@ -594,10 +593,11 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           })}
         </div>
       )}
-      {authModal ? (
+      {authModal && token ? (
         <RunnerAuthModal
           runner={authModal.runner}
-          deviceName={authModal.deviceName}
+          device={authModal.device}
+          token={token}
           onClose={() => {
             setAuthModal(null);
             void onRefresh();
@@ -763,37 +763,73 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
  */
 function RunnerAuthModal({
   runner,
-  deviceName,
+  device,
+  token,
   onClose,
 }: {
   runner: string;
-  deviceName: string;
+  device: Device;
+  token: string;
   onClose: () => void;
 }) {
   const [session, setSession] = useState<RunnerBrowserAuthSession | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const [copied, setCopied] = useState(false);
+  // A dedicated AgentClient bound to *this* device. The shared singleton is
+  // scoped to the active workspace (the "Open Workspace" flow) and may be
+  // disconnected — or connected to a different machine — while the user is
+  // on the Devices tab. Creating our own per-modal client means "sign in to
+  // Codex on machine X" never depends on "is machine X currently the chat
+  // target?" and doesn't clobber the workspace connection if there is one.
+  const clientRef = useRef<AgentClient | null>(null);
+  if (clientRef.current === null) {
+    clientRef.current = new AgentClient();
+    // Relay servers + shared relay password live on the workspace singleton
+    // (populated from platformConfig + user settings on dashboard mount).
+    // Reuse them so the modal can reach remote machines too — direct LAN
+    // is never going to work for something like yaver-test-ephemeral.
+    clientRef.current.setRelayServers(
+      agentClient.configuredRelayServers.map((r) => ({ ...r })),
+    );
+  }
+  const deviceName = device.name || device.id;
 
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
+    const client = clientRef.current!;
     (async () => {
       try {
-        const s = await agentClient.startRunnerBrowserAuth(runner);
+        const tunnelUrls = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+              ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+            ]
+              .map((u) => String(u || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+        const s = await client.startRunnerBrowserAuth(runner);
         setSession(s);
       } catch (err) {
         setStartError(err instanceof Error ? err.message : String(err));
       }
     })();
-  }, [runner]);
+    return () => {
+      try { client.disconnect(); } catch { /* tearing down anyway */ }
+    };
+  }, [runner, device.host, device.port, device.id, device.tunnelUrl, token]);
 
   useEffect(() => {
     if (!session) return;
     if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") return;
+    const client = clientRef.current!;
     const iv = setInterval(async () => {
       try {
-        const s = await agentClient.getRunnerBrowserAuthStatus(session.id);
+        const s = await client.getRunnerBrowserAuthStatus(session.id);
         setSession(s);
       } catch {
         // keep polling — transient fetch errors are fine
@@ -830,7 +866,7 @@ function RunnerAuthModal({
           </div>
           <button
             onClick={async () => {
-              if (session && !terminal) { await agentClient.cancelRunnerBrowserAuth(session.id).catch(() => {}); }
+              if (session && !terminal) { await clientRef.current?.cancelRunnerBrowserAuth(session.id).catch(() => {}); }
               onClose();
             }}
             className="text-surface-500 hover:text-surface-200 text-xl leading-none"

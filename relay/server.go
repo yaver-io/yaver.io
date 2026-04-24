@@ -618,8 +618,15 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		forwardPath = "/" + parts[1]
 	}
 
-	// Validate relay password (shared or per-user via Convex)
+	// Validate relay password (shared or per-user via Convex).
+	// Iframes can't set custom headers, so accept `?__rp=<password>` as a
+	// fallback for the web dashboard's dev-server preview. yaver.io is
+	// HTTPS end-to-end so the URL is TLS-protected in transit, and the
+	// relay password is a per-user shared secret — not a user credential.
 	relayPw := r.Header.Get("X-Relay-Password")
+	if relayPw == "" {
+		relayPw = r.URL.Query().Get("__rp")
+	}
 	if !s.validatePassword(relayPw) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -627,6 +634,14 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 			"error": "invalid relay password",
 		})
 		return
+	}
+
+	// Don't leak the password into the agent-side query string.
+	forwardQuery := r.URL.RawQuery
+	if strings.Contains(forwardQuery, "__rp=") {
+		q := r.URL.Query()
+		q.Del("__rp")
+		forwardQuery = q.Encode()
 	}
 
 	// Check bandwidth limit
@@ -685,7 +700,7 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		ID:      fmt.Sprintf("%d", time.Now().UnixNano()),
 		Method:  r.Method,
 		Path:    forwardPath,
-		Query:   r.URL.RawQuery,
+		Query:   forwardQuery,
 		Headers: headers,
 		Body:    body,
 	}

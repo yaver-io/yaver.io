@@ -72,6 +72,7 @@ export const FeedbackModal: React.FC = () => {
   // is our guaranteed UI for bringing the icon back — we surface a
   // small "Show quick icon" row when this is true.
   const [quickIconHidden, setQuickIconHidden] = useState(false);
+  const [runnerAuthModal, setRunnerAuthModal] = useState<string | null>(null);
   // Vibing-input mode: same expand-on-tap pattern as email login.
   // Tap "Vibing" once → the button reveals an input + Send; that lets
   // the user say WHAT they want to vibe on instead of firing a canned
@@ -809,6 +810,41 @@ export const FeedbackModal: React.FC = () => {
                 busy={action === 'capturing'}
               />
 
+              {/* Remote sign-in buttons — trigger codex/claude device-auth
+                  on the selected agent without leaving the app. Opens a
+                  small native modal showing the verification URL + 8-char
+                  code the user enters in any browser. No API keys. */}
+              <View style={runnerAuthRowStyles.container}>
+                <Pressable
+                  onPress={() => setRunnerAuthModal('codex')}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    runnerAuthRowStyles.button,
+                    pressed && runnerAuthRowStyles.buttonPressed,
+                    busy && runnerAuthRowStyles.buttonDisabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remote sign-in Codex"
+                >
+                  <Text style={runnerAuthRowStyles.buttonLabel}>Remote sign-in</Text>
+                  <Text style={runnerAuthRowStyles.buttonName}>Codex</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setRunnerAuthModal('claude')}
+                  disabled={busy}
+                  style={({ pressed }) => [
+                    runnerAuthRowStyles.button,
+                    pressed && runnerAuthRowStyles.buttonPressed,
+                    busy && runnerAuthRowStyles.buttonDisabled,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Remote sign-in Claude"
+                >
+                  <Text style={runnerAuthRowStyles.buttonLabel}>Remote sign-in</Text>
+                  <Text style={runnerAuthRowStyles.buttonName}>Claude</Text>
+                </Pressable>
+              </View>
+
               {progress !== null && (
                 <View style={styles.progressTrack}>
                   <View
@@ -839,6 +875,12 @@ export const FeedbackModal: React.FC = () => {
           </Pressable>
         </Modal>
       )}
+      {runnerAuthModal ? (
+        <RunnerAuthNativeModal
+          runner={runnerAuthModal}
+          onClose={() => setRunnerAuthModal(null)}
+        />
+      ) : null}
     </>
   );
 };
@@ -1193,5 +1235,283 @@ const styles = StyleSheet.create({
   },
   buttonPressed: {
     opacity: 0.7,
+  },
+});
+
+/**
+ * Minimal native modal for the codex/claude remote sign-in flow. Opens
+ * the device-auth session on the connected agent, surfaces the
+ * verification URL + one-time code, polls every 1.5 s, and turns green
+ * the moment the CLI writes its auth.json. No API keys, no SSH.
+ */
+const RunnerAuthNativeModal: React.FC<{
+  runner: string;
+  onClose: () => void;
+}> = ({ runner, onClose }) => {
+  const [session, setSession] = useState<import('./types').RunnerBrowserAuthSession | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    (async () => {
+      try {
+        const s = await YaverFeedback.startRunnerBrowserAuth(runner);
+        setSession(s);
+      } catch (err) {
+        setStartError(err instanceof Error ? err.message : String(err));
+      }
+    })();
+  }, [runner]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (['completed', 'failed', 'cancelled'].includes(session.status)) return;
+    const iv = setInterval(async () => {
+      try {
+        const s = await YaverFeedback.getRunnerBrowserAuthStatus(session.id);
+        setSession(s);
+      } catch {
+        // keep polling
+      }
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [session?.id, session?.status]);
+
+  const terminal = session && ['completed', 'failed', 'cancelled'].includes(session.status);
+  const runnerLabel = runner === 'codex' ? 'OpenAI Codex' : runner === 'claude' ? 'Claude Code' : runner;
+
+  const handleClose = () => {
+    if (session && !terminal) {
+      YaverFeedback.cancelRunnerBrowserAuth(session.id).catch(() => {});
+    }
+    onClose();
+  };
+
+  const copyCode = () => {
+    if (!session?.code) return;
+    try {
+      // Avoid a hard Clipboard dep — host app can polyfill.
+      const Clipboard = require('react-native').Clipboard;
+      if (Clipboard?.setString) {
+        Clipboard.setString(session.code);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }
+    } catch {
+      // best-effort — code is visible on screen regardless
+    }
+  };
+
+  const openUrl = () => {
+    if (!session?.openUrl) return;
+    try {
+      const { Linking } = require('react-native');
+      Linking.openURL(session.openUrl).catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return (
+    <Modal visible={true} transparent animationType="fade" onRequestClose={handleClose}>
+      <View style={runnerAuthModalStyles.overlay}>
+        <View style={runnerAuthModalStyles.card}>
+          <View style={runnerAuthModalStyles.header}>
+            <View style={{ flex: 1 }}>
+              <Text style={runnerAuthModalStyles.title}>Sign in to {runnerLabel}</Text>
+              <Text style={runnerAuthModalStyles.subtitle}>
+                Opens a one-time URL + code. Enter it in any browser.
+              </Text>
+            </View>
+            <Pressable onPress={handleClose} hitSlop={10}>
+              <Text style={runnerAuthModalStyles.close}>×</Text>
+            </Pressable>
+          </View>
+
+          {startError ? (
+            <View style={runnerAuthModalStyles.errorBox}>
+              <Text style={runnerAuthModalStyles.errorTitle}>Couldn't start</Text>
+              <Text style={runnerAuthModalStyles.errorBody}>{startError}</Text>
+            </View>
+          ) : !session ? (
+            <Text style={runnerAuthModalStyles.dim}>
+              Starting the sign-in flow on the remote machine…
+            </Text>
+          ) : session.status === 'completed' ? (
+            <View style={runnerAuthModalStyles.successBox}>
+              <Text style={runnerAuthModalStyles.successTitle}>✓ Signed in</Text>
+              <Text style={runnerAuthModalStyles.successBody}>
+                {session.detail || 'Auth stored on the remote machine.'}
+              </Text>
+            </View>
+          ) : session.status === 'failed' || session.status === 'cancelled' ? (
+            <View style={runnerAuthModalStyles.errorBox}>
+              <Text style={runnerAuthModalStyles.errorTitle}>
+                {session.status === 'cancelled' ? 'Cancelled' : 'Failed'}
+              </Text>
+              <Text style={runnerAuthModalStyles.errorBody}>
+                {session.error || session.detail || 'The CLI exited before sign-in completed.'}
+              </Text>
+            </View>
+          ) : (
+            <View>
+              {session.openUrl ? (
+                <Pressable onPress={openUrl} style={runnerAuthModalStyles.urlBox}>
+                  <Text style={runnerAuthModalStyles.urlText} numberOfLines={2}>
+                    ↗ {session.openUrl}
+                  </Text>
+                </Pressable>
+              ) : (
+                <Text style={runnerAuthModalStyles.dim}>
+                  Waiting for verification URL from the remote CLI…
+                </Text>
+              )}
+              {session.code ? (
+                <View style={{ marginTop: 12 }}>
+                  <Text style={runnerAuthModalStyles.codeLabel}>ENTER THIS CODE</Text>
+                  <Pressable onPress={copyCode} style={runnerAuthModalStyles.codeBox}>
+                    <Text style={runnerAuthModalStyles.codeText}>{session.code}</Text>
+                    <Text style={runnerAuthModalStyles.codeHint}>
+                      {copied ? 'copied' : 'tap to copy'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              <Text style={runnerAuthModalStyles.phishingHint}>
+                Device codes are a common phishing target. Never share this code. This dialog
+                turns green automatically once sign-in completes.
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+const runnerAuthRowStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+    flexWrap: 'wrap',
+  },
+  button: {
+    flexGrow: 1,
+    flexBasis: 0,
+    minWidth: 120,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.22)',
+    backgroundColor: 'rgba(15,23,42,0.6)',
+  },
+  buttonPressed: { opacity: 0.7 },
+  buttonDisabled: { opacity: 0.4 },
+  buttonLabel: {
+    fontSize: 10,
+    color: '#94a3b8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  buttonName: {
+    marginTop: 2,
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#f1f5f9',
+  },
+});
+
+const runnerAuthModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(2,6,23,0.75)',
+    padding: 16,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.18)',
+    padding: 18,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  title: { color: '#f1f5f9', fontSize: 16, fontWeight: '600' },
+  subtitle: { color: '#94a3b8', fontSize: 11, marginTop: 2 },
+  close: { color: '#94a3b8', fontSize: 22, lineHeight: 22, paddingHorizontal: 4 },
+  dim: {
+    color: '#94a3b8',
+    fontSize: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.2)',
+    backgroundColor: 'rgba(15,23,42,0.6)',
+  },
+  errorBox: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(248,113,113,0.35)',
+    backgroundColor: 'rgba(248,113,113,0.1)',
+  },
+  errorTitle: { color: '#fca5a5', fontWeight: '600', marginBottom: 4, fontSize: 13 },
+  errorBody: { color: '#fca5a5', fontSize: 12 },
+  successBox: {
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.35)',
+    backgroundColor: 'rgba(34,197,94,0.1)',
+  },
+  successTitle: { color: '#4ade80', fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  successBody: { color: '#86efac', fontSize: 12 },
+  urlBox: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(99,102,241,0.35)',
+    backgroundColor: 'rgba(99,102,241,0.1)',
+  },
+  urlText: { color: '#c7d2fe', fontSize: 13 },
+  codeLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#94a3b8',
+    letterSpacing: 0.8,
+    marginBottom: 4,
+  },
+  codeBox: {
+    padding: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.22)',
+    backgroundColor: 'rgba(15,23,42,0.8)',
+    alignItems: 'center',
+  },
+  codeText: {
+    color: '#f1f5f9',
+    fontSize: 22,
+    letterSpacing: 6,
+    fontFamily: 'Menlo',
+  },
+  codeHint: { color: '#64748b', fontSize: 10, marginTop: 4, textTransform: 'uppercase' },
+  phishingHint: {
+    color: '#475569',
+    fontSize: 10,
+    marginTop: 12,
+    lineHeight: 14,
   },
 });

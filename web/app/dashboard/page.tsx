@@ -379,6 +379,7 @@ export default function DashboardPage() {
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
+  const [selectedRunner, setSelectedRunner] = useState<string>("");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
@@ -479,6 +480,17 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines]);
+
+  // Keep selectedRunner valid: pick the agent's default if it's installed, else
+  // the first installed runner. Clears when the picker's choice disappears
+  // (e.g. on reconnect to a different host where the runner isn't installed).
+  useEffect(() => {
+    const installed = runners.filter(r => r.installed);
+    if (installed.length === 0) { setSelectedRunner(""); return; }
+    if (selectedRunner && installed.some(r => r.id === selectedRunner)) return;
+    const preferred = installed.find(r => r.isDefault || r.active) || installed[0];
+    setSelectedRunner(preferred.id);
+  }, [runners, selectedRunner]);
 
   useEffect(() => {
     if (!token) { setPendingInvites([]); return; }
@@ -622,7 +634,7 @@ export default function DashboardPage() {
     }
   };
 
-  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setRunners([]); setConnectError(null); };
+  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setRunners([]); setSelectedRunner(""); setConnectError(null); };
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -630,8 +642,15 @@ export default function DashboardPage() {
     setInput(""); setSending(true);
     try {
       if (activeTask?.status === "running") { await agentClient.continueTask(activeTask.id, text); }
-      else { const t = await agentClient.sendTask(text.slice(0, 80), text); setActiveTask(t); setOutputLines([]); setTasks(p => [t, ...p]); }
-    } catch {} setSending(false);
+      else {
+        const t = await agentClient.sendTask(text.slice(0, 80), text, selectedRunner ? { runner: selectedRunner } : undefined);
+        setActiveTask(t); setOutputLines([]); setTasks(p => [t, ...p]);
+      }
+    } catch (err: any) {
+      setConnectError(err?.message || "Failed to send");
+    } finally {
+      setSending(false);
+    }
   };
 
   const selectTask = (t: Task) => { setActiveTask(t); setOutputLines(t.output || []); setActiveTab("chat"); };
@@ -1278,16 +1297,55 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="border-t border-surface-800 bg-surface-900/50 p-3">
-                <form onSubmit={handleSend} className="mx-auto flex max-w-4xl items-end gap-2">
-                  <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                    placeholder={runningTask ? "Follow up..." : "Build me a todo app..."} rows={1}
-                    className="max-h-32 w-full resize-none rounded-lg border border-surface-700 bg-surface-850 px-4 py-2.5 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "42px" }} />
-                  <button type="submit" disabled={!input.trim() || sending}
-                    className="shrink-0 rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
-                    {sending ? "..." : runningTask ? "Send" : "Run"}
-                  </button>
-                </form>
+                <div className="mx-auto flex max-w-4xl flex-col gap-2">
+                  {(() => {
+                    const installed = runners.filter(r => r.installed);
+                    if (installed.length === 0) {
+                      return (
+                        <div className="text-[11px] text-amber-400">
+                          No AI runner installed on this machine. Install one (claude, codex, aider, opencode, ollama) and reconnect.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                        <span className="text-surface-500">Runner:</span>
+                        {installed.map(r => {
+                          const active = r.id === selectedRunner;
+                          const warn = !r.ready && (r.error || r.warning);
+                          return (
+                            <button
+                              key={r.id}
+                              type="button"
+                              onClick={() => setSelectedRunner(r.id)}
+                              title={warn || (r.authConfigured ? `auth: configured` : undefined)}
+                              className={`rounded-full border px-2.5 py-0.5 transition ${
+                                active
+                                  ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
+                                  : warn
+                                    ? "border-amber-500/40 bg-surface-900 text-amber-300 hover:border-amber-400/70"
+                                    : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                              }`}
+                            >
+                              {r.name}
+                              {warn && <span className="ml-1 opacity-60">!</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                  <form onSubmit={handleSend} className="flex items-end gap-2">
+                    <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                      placeholder={runningTask ? "Follow up..." : "Build me a todo app..."} rows={1}
+                      className="max-h-32 w-full resize-none rounded-lg border border-surface-700 bg-surface-850 px-4 py-2.5 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "42px" }} />
+                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0}
+                      className="shrink-0 rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
+                      {sending ? "..." : runningTask ? "Send" : "Run"}
+                    </button>
+                  </form>
+                </div>
               </div>
             </>
           )}
