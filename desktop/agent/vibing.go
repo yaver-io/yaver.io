@@ -923,6 +923,18 @@ func (s *HTTPServer) resolveVibingProjectForRequest(projectPath, projectName, bu
 	if projectPath != "" {
 		return projectPath, projectName
 	}
+
+	// Web-SDK vibing fallbacks. The feedback SDK that ships with a web
+	// app (e.g. carrotbet) only knows its own projectName/appName
+	// (e.g. "carrotbet"). Mobile-project lookup doesn't find web apps,
+	// so we also try the workspace manifest and fall through to
+	// taskMgr.workDir only if no monorepo declaration matches.
+	if strings.TrimSpace(projectName) != "" {
+		if abs, resolvedName := resolveVibingProjectFromWorkspace(s, projectName); abs != "" {
+			return abs, resolvedName
+		}
+	}
+
 	if s != nil && s.taskMgr != nil && strings.TrimSpace(s.taskMgr.workDir) != "" {
 		projectPath = strings.TrimSpace(s.taskMgr.workDir)
 	}
@@ -935,6 +947,42 @@ func (s *HTTPServer) resolveVibingProjectForRequest(projectPath, projectName, bu
 		projectName = DetectProjectInfo(projectPath).Name
 	}
 	return strings.TrimSpace(projectPath), strings.TrimSpace(projectName)
+}
+
+// resolveVibingProjectFromWorkspace looks up projectName against the
+// declarative monorepo manifest. Any app whose name matches (case-
+// insensitive) and whose on-disk directory exists is returned.
+// Returns ("","") when no match — callers fall through to other
+// heuristics. Never errors; a missing / malformed manifest just
+// means "no workspace match."
+func resolveVibingProjectFromWorkspace(s *HTTPServer, projectName string) (string, string) {
+	if s == nil || s.taskMgr == nil {
+		return "", ""
+	}
+	root := s.taskMgr.workDir
+	if root == "" {
+		return "", ""
+	}
+	m, err := LoadWorkspaceManifest(root)
+	if err != nil || m == nil {
+		return "", ""
+	}
+	target := strings.ToLower(strings.TrimSpace(projectName))
+	for i := range m.Apps {
+		app := &m.Apps[i]
+		if strings.ToLower(app.Name) != target {
+			continue
+		}
+		abs := appAbsPath(root, m, app)
+		if abs == "" {
+			continue
+		}
+		if _, statErr := os.Stat(abs); statErr != nil {
+			continue
+		}
+		return abs, app.Name
+	}
+	return "", ""
 }
 
 func (s *HTTPServer) vibingRunnerStatus(projectPath string) (RunnerConfig, RunnerRuntimeStatus, error) {
