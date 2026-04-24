@@ -513,6 +513,7 @@ export default function DashboardPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
+  const previousActiveTabRef = useRef<string | null>(null);
 
   const isConnected = connState === "connected";
 
@@ -610,8 +611,11 @@ export default function DashboardPage() {
   }, [isConnected, connectedDevice?.id]);
 
   useEffect(() => {
+    const justOpenedDevicesTab =
+      activeTab === "devices" && previousActiveTabRef.current !== "devices";
+    previousActiveTabRef.current = activeTab;
+    if (!justOpenedDevicesTab) return;
     if (!token || devices.length === 0) {
-      setProbeStates({});
       return;
     }
     let cancelled = false;
@@ -650,12 +654,10 @@ export default function DashboardPage() {
       setProbeStates(Object.fromEntries(nextEntries));
     };
     void refreshProbes();
-    const interval = setInterval(refreshProbes, 15000);
     return () => {
       cancelled = true;
-      clearInterval(interval);
     };
-  }, [token, devices]);
+  }, [activeTab, token, devices]);
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
