@@ -2356,7 +2356,20 @@ func runServe(args []string) {
 	// every SupervisedGo() ticker gets cancelled cleanly on shutdown.
 	// Must happen before any Start* call below so their Register hits
 	// the real supervisor, not the fallback background-context one.
-	initSupervisor(ctx)
+	sup := initSupervisor(ctx)
+
+	// Beacon file — the external watchdog unit (systemd) reads this
+	// to decide "is the agent alive". Supervisor refreshes it every
+	// watchdog tick as long as no task is stalled.
+	if dir, err := ConfigDir(); err == nil {
+		sup.SetBeaconPath(dir + "/last-healthy")
+	}
+
+	// In-agent relay-password smoke. Replaces the standalone systemd
+	// yaver-smoke-relay-password.timer — now a single-service design.
+	// Disabled by default; the Hetzner bootstrap sets
+	// YAVER_ENABLE_RELAY_SMOKE=1 so only the test box runs it.
+	StartRelayPasswordSmoke()
 
 	httpServer.scheduler.Start(ctx)
 	httpServer.aclMgr = aclMgr

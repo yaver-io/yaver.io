@@ -1,0 +1,30 @@
+[Unit]
+Description=Yaver external watchdog — verify the agent + its beacon are alive
+Documentation=https://github.com/kivanccakmak/yaver.io/blob/main/ci/remote/watchdog/yaver-watchdog.sh
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Set WATCHDOG_RESTART_ON_FAILURE=1 to have the watchdog restart the
+# agent unit on failure. Defaults off — pure observation.
+EnvironmentFile=-/etc/yaver-watchdog.env
+ExecStart=/usr/local/libexec/yaver-watchdog/yaver-watchdog.sh
+TimeoutStartSec=30
+Nice=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

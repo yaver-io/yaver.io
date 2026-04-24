@@ -347,31 +347,115 @@ what `/vault/sync` exists for.
 
 ---
 
-## 12. Guest-triggered deploys (follow-up work)
+## 12. Guest-triggered deploys (`POST /deploy/ship`)
 
-The big missing piece is letting a guest on a shared machine trigger
-a deploy — e.g. you share your Mac mini with a friend, and they run
-`yaver deploy run --app mobile --target testflight` from their laptop
-against your machine. Secrets must stay invisible to the guest; only
-build stdout streams back.
+Shared-machine flow: you share your Mac mini with a friend, and
+they run a TestFlight deploy from their laptop against your
+machine. Secrets stay invisible; only build stdout streams back.
 
-Tracked in `DEPLOY_REMAINED.md` (to add) — approach:
+```bash
+# Host side — one-time invite with the new "deploy" scope + the
+# project the guest is allowed to ship.
+yaver guests invite friend@example.com --scope=deploy --projects=mobile
 
-1. New endpoint `POST /deploy/run`. Owner always allowed; guests
-   with `allowedProjects` covering the requested app allowed.
-2. Endpoint generates the script server-side, spawns bash with the
-   project's vault values injected into the subprocess env (nothing
-   the guest supplies can override vault-stored values).
-3. Streams stdout over SSE to the caller. Guest sees build output
-   only; never the script body (and never the secret values, since
-   scripts use `$VAR` not the raw string).
-4. A new guest-scope tier `deploy` sits between `feedback-only` and
-   `full`: allowed to hit `/feedback`, `/blackbox/*`, `/voice/*`,
-   `/health`, `/info` (redacted), and `/deploy/run` — nothing else.
+# Guest side — once accepted:
+yaver deploy ship --app mobile --target testflight --machine <host-device-id>
+```
 
-Until that ships, the workflow is: owner runs the generated script
-locally; guests need full-scope access (same as today's `yaver guests
-invite --scope=full`) to trigger deploys through the ops `run` verb.
+### Surface
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/deploy/ship` | POST | Generate script server-side, preflight, spawn bash with vault env injected, stream stdout/stderr/exit as SSE. |
+
+Request body:
+
+```json
+{
+  "app": "mobile",
+  "target": "testflight",
+  "stack": "react-native-expo",   // owner-only override
+  "path": "/abs/path",            // owner-only override
+  "timeout_sec": 1800             // default 1200, max 3600
+}
+```
+
+SSE event stream:
+
+```
+event: meta
+data: {"app":"mobile","target":"testflight","stack":"react-native-expo","path":"...","started_at":...,"timeout_s":1200}
+
+event: line
+data: {"stream":"stdout","text":"..."}
+event: line
+data: {"stream":"stderr","text":"..."}
+
+event: exit
+data: {"code":0,"duration_ms":1234567,"ok":true}
+```
+
+### Security envelope
+
+1. **Script source is server-side.** The guest POSTs `{app, target}`
+   — the script body is rendered from a vetted template. Guests
+   cannot inject shell.
+2. **Vault values never appear in responses.** They're injected
+   into the subprocess env (not the script source). Stdout only
+   contains whatever the build commands echo. Templates reference
+   secrets via `$VAR`, not their plaintext value, so the value
+   doesn't end up in a log unless a user explicitly echoes it
+   (which the built-in templates don't).
+3. **`allowedProjects` gates every call.** A guest with
+   `allowedProjects=["web"]` trying to deploy `mobile` gets 403.
+4. **Guests cannot override `stack` or `path`.** Those come from
+   `yaver.workspace.yaml` only. Owner calls may override.
+5. **Guest subprocess env is a whitelist** — `PATH`, `HOME`, `USER`,
+   `LOGNAME`, `SHELL`, `LANG`, `LC_*`, `TMPDIR`, `PWD`, `TERM`,
+   plus vault values for the project. Stray host env vars (e.g.
+   an open shell's `GITHUB_TOKEN`) never cross into the guest's
+   deploy subprocess. Owner deploys still inherit the full parent
+   env so ad-hoc local env vars keep working.
+6. **Time-bounded.** Default 20 min, max 60 min. After that the
+   subprocess is SIGKILL-ed and the stream closes.
+
+### Guest scope tiers
+
+| Scope | `/feedback` | `/blackbox` | `/voice` | `/tasks` | `/vibing` | `/dev/*` | `/deploy/ship` | `/deploy/templates` |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `feedback-only` (default) | ✓ | ✓ | ✓ | — | — | — | — | — |
+| `deploy` (new) | — | — | — | — | — | — | ✓ | ✓ |
+| `full` (teammate) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+`deploy` is the minimum tier a "ship-but-don't-touch-code" friend
+needs. `/info` returns the usual full-scope payload (no redaction)
+for `deploy` guests — they need `voiceInputEnabled` etc. to show a
+sensible build UI — but the host/projects/task-stats fields that
+`feedback-only` hides stay visible.
+
+### CLI
+
+```bash
+yaver deploy ship --app mobile --target testflight
+yaver deploy ship --app mobile --target testflight --machine mac-mini-alice
+yaver deploy ship --app web   --target cloudflare --timeout 900
+```
+
+Owner runs target the local daemon by default; `--machine <id>`
+routes the call through the existing peer-proxy to another device
+the same user owns.
+
+### Remaining follow-ups
+
+- **Composite targets**: single command to deploy mobile to both
+  TestFlight and Play Store with parallel execution + merged status.
+  Today: generate two scripts, `bash a.sh & bash b.sh & wait`.
+- **Per-project concurrency cap**: currently a guest can kick off
+  multiple parallel `/deploy/ship` calls. The host's build tooling
+  will serialize at the filesystem layer (xcodebuild, gradle) but
+  a queue with fair scheduling would be friendlier.
+- **Run history + idempotency**: replay last N runs, resumable
+  artifact uploads. For now a run is a one-shot stream.
 
 ---
 

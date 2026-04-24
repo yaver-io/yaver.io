@@ -148,16 +148,35 @@ if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
   fi
 fi
 
-log "yaver smoke-check systemd units"
-# Lightweight periodic relay-password regression check. Entirely
-# local to this box — no Yaver /schedule budget, no cron. Reports
-# via journalctl; timer fires every 15 min.
-if [ -f /opt/yaver/ci/remote/smoke/install.sh ]; then
-  bash /opt/yaver/ci/remote/smoke/install.sh install || true
-elif [ -f "$(dirname "$0")/smoke/install.sh" ]; then
-  bash "$(dirname "$0")/smoke/install.sh" install || true
+log "yaver external watchdog (systemd)"
+# Single-service design: the agent's in-process TaskSupervisor runs
+# every scheduled tick (heartbeat, scheduler, Convex sync, smoke
+# checks). This watchdog unit is a thin outer loop that only proves
+# the agent itself is alive — checks the process + the beacon file
+# the supervisor refreshes. Superseded ci/remote/smoke/* (the
+# install.sh below removes those units automatically).
+if [ -f /opt/yaver/ci/remote/watchdog/install.sh ]; then
+  bash /opt/yaver/ci/remote/watchdog/install.sh install || true
+elif [ -f "$(dirname "$0")/watchdog/install.sh" ]; then
+  bash "$(dirname "$0")/watchdog/install.sh" install || true
 else
-  echo "!! ci/remote/smoke/install.sh not found — skipping smoke-check install"
+  echo "!! ci/remote/watchdog/install.sh not found — skipping watchdog install"
+fi
+
+log "opt-in: enable in-agent relay-password smoke"
+# The smoke task was a standalone timer; now it's a supervised task
+# inside yaver serve. Gated by an env var so only boxes with explicit
+# YAVER_ENABLE_RELAY_SMOKE=1 hit Convex every 15 min. We set it for
+# yaver-test-ephemeral by design — that box exists to prove the
+# platform works end-to-end.
+install -d -m 0755 /etc/systemd/system/yaver-agent.service.d
+cat > /etc/systemd/system/yaver-agent.service.d/relay-smoke.conf <<'EOF'
+[Service]
+Environment=YAVER_ENABLE_RELAY_SMOKE=1
+EOF
+systemctl daemon-reload
+if systemctl is-active --quiet yaver-agent.service 2>/dev/null; then
+  systemctl restart yaver-agent.service || true
 fi
 
 log "done"

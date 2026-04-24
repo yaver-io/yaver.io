@@ -1,0 +1,89 @@
+# Migrate the persistent yaver-test-ephemeral Hetzner box from the
+# standalone smoke systemd timer to the single-service design:
+#
+#   - Agent runs every scheduled task (heartbeat, scheduler, smoke, …)
+#     inside its own TaskSupervisor.
+#   - `yaver-watchdog.timer` is the only remaining external unit; it
+#     observes the agent + beacon, never triggers tasks.
+#   - `yaver-smoke-relay-password.*` units are removed (the install
+#     script does this automatically).
+#
+# workflow_dispatch-only. Idempotent.
+name: Migrate Hetzner to single-service watchdog
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: migrate-hetzner-to-watchdog
+  cancel-in-progress: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync ci/remote to /opt/yaver
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            ci/remote/ "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/ci/remote/"
+
+      - name: Install watchdog (removes old smoke unit, enables YAVER_ENABLE_RELAY_SMOKE)
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          bash /opt/yaver/ci/remote/watchdog/install.sh install
+
+          # Ensure the in-agent smoke task knows it should run.
+          install -d -m 0755 /etc/systemd/system/yaver-agent.service.d
+          cat > /etc/systemd/system/yaver-agent.service.d/relay-smoke.conf <<'EOF'
+          [Service]
+          Environment=YAVER_ENABLE_RELAY_SMOKE=1
+          EOF
+          systemctl daemon-reload
+
+          # If the agent unit exists, restart it to pick up the new env
+          # and the new binary version. Non-fatal on boxes that run
+          # yaver under a different unit name.
+          systemctl restart yaver-agent.service 2>/dev/null || echo "yaver-agent.service not found — skipping restart"
+          REMOTE
+
+      - name: Verify
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          echo "--- timers ---"
+          systemctl list-timers yaver-watchdog.timer --no-pager || true
+          echo
+          echo "--- watchdog last run ---"
+          journalctl -u yaver-watchdog.service --no-pager -n 20 || true
+          echo
+          echo "--- old smoke unit gone? ---"
+          systemctl list-unit-files yaver-smoke-relay-password.timer 2>&1 | head -5 || true
+          echo
+          echo "--- /self-check (if agent is up) ---"
+          curl -sS --max-time 5 http://127.0.0.1:18080/self-check 2>/dev/null | head -80 || echo "(agent not responding locally, that's OK — watchdog will report)"
+          REMOTE

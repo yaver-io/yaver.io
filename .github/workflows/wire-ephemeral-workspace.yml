@@ -96,13 +96,32 @@ jobs:
           echo "== reloading systemd + restarting agent"
           systemctl daemon-reload || true
 
-          # yaver.service might be a user unit — the `--user` flag switches scope.
-          if systemctl list-units --type=service yaver.service 2>/dev/null | grep -q yaver; then
-            systemctl restart yaver
-            systemctl --no-pager --lines=8 status yaver || true
-          elif command -v sudo >/dev/null && id yaver >/dev/null 2>&1; then
-            sudo -u yaver XDG_RUNTIME_DIR=/run/user/$(id -u yaver) systemctl --user daemon-reload || true
-            sudo -u yaver XDG_RUNTIME_DIR=/run/user/$(id -u yaver) systemctl --user restart yaver || true
+          # yaver.service here is a USER unit (under /home/yaver/.config/...).
+          # A root-level `systemctl restart yaver` silently no-ops against
+          # user units. Drive the user manager explicitly.
+          if id yaver >/dev/null 2>&1; then
+            YAVER_UID=$(id -u yaver)
+            # Ensure `systemctl --user` can reach the user bus. `loginctl
+            # enable-linger` keeps the user manager alive across root logins
+            # so our restart actually takes.
+            loginctl enable-linger yaver 2>/dev/null || true
+
+            runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+              systemctl --user daemon-reload 2>/dev/null || true
+            if ! runuser -u yaver -- env XDG_RUNTIME_DIR="/run/user/$YAVER_UID" \
+                 systemctl --user restart yaver; then
+              echo "!! --user restart failed — falling back to pkill + let Restart=always respawn"
+              # pkill -f matches the full cmdline, so the old `--work-dir=X`
+              # process gets killed; systemd re-exec picks up the new unit
+              # file (with the updated --work-dir).
+              pkill -f "yaver serve" || true
+              sleep 2
+            fi
+
+            echo "== running yaver process cmdline:"
+            pgrep -af "yaver serve" || true
+          else
+            echo "!! user 'yaver' missing — cannot drive --user systemd scope"
           fi
 
           echo "== probing /info after restart"

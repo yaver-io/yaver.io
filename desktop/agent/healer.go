@@ -170,13 +170,21 @@ type TaskSupervisor struct {
 	cancel         context.CancelFunc
 	watchdogPeriod time.Duration
 
+	// Beacon — optional sidecar file path. When set, the watchdog
+	// loop writes a short JSON payload here every tick *iff* no
+	// supervised task is in "stalled" state. Idle/ok/error states
+	// do not block the beacon — only stalls (goroutine is stuck or
+	// blocked beyond the 10× threshold). An external watchdog unit
+	// reads this file to decide "is the agent alive".
+	beaconPath string
+
 	// Test / injection hooks. Unset in prod.
-	nowFn      func() time.Time
-	notifyFn   func(title, body string)
-	onStalled  func(name string)
-	onRecover  func(name string)
-	startOnce  sync.Once
-	stopOnce   sync.Once
+	nowFn     func() time.Time
+	notifyFn  func(title, body string)
+	onStalled func(name string)
+	onRecover func(name string)
+	startOnce sync.Once
+	stopOnce  sync.Once
 }
 
 // NewTaskSupervisor wires a supervisor to a parent context; cancelling it
@@ -469,6 +477,70 @@ func (s *TaskSupervisor) watchdogCheck() {
 				s.onRecover(t.name)
 			}
 		}
+	}
+
+	// After classifying every task, refresh the beacon iff nothing is
+	// currently stalled. The external watchdog polls this file to
+	// decide "is the agent alive" without having to hit the HTTP port.
+	// Intentionally tolerant: "idle" (never ticked yet) and "error"
+	// (transient network failures in convex_state_sync etc.) do NOT
+	// block the beacon — only stalls do.
+	s.maybeWriteBeacon(now)
+}
+
+// SetBeaconPath wires a sidecar "last-healthy" file the supervisor
+// refreshes on each watchdog tick when no task is stalled. Called
+// once at serve startup; passing "" disables the feature.
+func (s *TaskSupervisor) SetBeaconPath(path string) {
+	s.mu.Lock()
+	s.beaconPath = path
+	s.mu.Unlock()
+}
+
+func (s *TaskSupervisor) maybeWriteBeacon(now time.Time) {
+	s.mu.RLock()
+	path := s.beaconPath
+	tasks := make([]*supervisedTask, 0, len(s.tasks))
+	for _, t := range s.tasks {
+		tasks = append(tasks, t)
+	}
+	s.mu.RUnlock()
+	if path == "" {
+		return
+	}
+
+	// Count stalls + gather minimal health summary for the file body.
+	stalled := 0
+	errored := 0
+	for _, t := range tasks {
+		t.mu.RLock()
+		if t.stalled {
+			stalled++
+		}
+		if t.lastErrorText != "" && t.lastOKAt.Before(t.lastErrorAt) {
+			errored++
+		}
+		t.mu.RUnlock()
+	}
+	if stalled > 0 {
+		// Block the beacon refresh. External watchdog will see a stale
+		// timestamp and escalate.
+		return
+	}
+
+	body := fmt.Sprintf(`{"ok":true,"ts":%q,"tasks":%d,"errored":%d}`+"\n",
+		now.UTC().Format(time.RFC3339), len(tasks), errored)
+
+	// Write atomically — temp + rename — so a watchdog racing the
+	// write never sees a half-written file.
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+		log.Printf("[supervisor] beacon write failed: %v", err)
+		return
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		log.Printf("[supervisor] beacon rename failed: %v", err)
+		_ = os.Remove(tmp)
 	}
 }
 

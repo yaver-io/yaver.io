@@ -1277,10 +1277,24 @@ See [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md) for the full referenc
 | `desktop/agent/deploy_script_gen_test.go` | Generator + doctor tests |
 | `docs/vault-and-deploy.md` | End-user reference |
 
-### Follow-up work (not yet shipped)
+### Guest-triggered deploys (`POST /deploy/ship`)
 
-- **Guest-triggered deploys** (`POST /deploy/run`): let a guest on a shared Mac mini trigger `yaver deploy run --app mobile --target testflight` from their laptop. Secrets injected into the subprocess server-side, stdout streamed back over SSE, guest never sees raw values. Needs a new guest scope tier `deploy` between `feedback-only` and `full`.
+Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop against your Mac mini. Secrets stay invisible; only stdout streams back.
+
+- `POST /deploy/ship` body `{app, target, stack?, path?, timeout_sec?}` — generates the vault-aware script server-side, runs `RunBuildDoctor` as preflight, spawns `bash` with vault env injected, streams stdout/stderr + final `exit` event over SSE.
+- New scope tier `GuestScopeDeploy` (see `guest_scope.go`). `guestDeployAllowedPrefixes` is tight: `/deploy/ship`, `/deploy/templates`, `/deploy/generate` (preview), `/doctor/build`, `/info`, `/health`. Nothing else. `GuestScopeFull` also gets the deploy endpoints.
+- Guest cannot override `stack` or `path` — those always come from `yaver.workspace.yaml`. Owner overrides allowed.
+- Guest subprocess env is a whitelist (PATH, HOME, USER, LOGNAME, SHELL, LANG, LC_*, TMPDIR, PWD, TERM) + vault values. Stray host env vars do NOT cross the boundary. Owner deploys inherit full parent env.
+- `GuestCanAccessProject(guestUserID, app)` enforces `allowedProjects` — a guest scoped to `["web"]` can't deploy `mobile`.
+- CLI: `yaver deploy ship --app X --target Y [--machine D]`. SSE stream is pretty-printed to the terminal (`stdout` plain, `stderr` to fd 2, final `✓ deploy ok` or `✗ deploy failed (exit N)`).
+- Timeouts: default 20 min, max 60 min. SIGKILL on timeout.
+- Invite flow: `yaver guests invite friend@example.com --scope=deploy --projects=mobile`.
+
+### Follow-up work (still not yet shipped)
+
 - **Composite targets**: single command to deploy mobile to both TestFlight and Play Store, with parallel execution + merged status. Today: generate two scripts, `bash a.sh & bash b.sh & wait`.
+- **Run history + replay**: persist the last N `/deploy/ship` runs (metadata + stdout ring buffer) so mobile/web UIs can show a history tab and retry a failed run.
+- **Per-guest concurrency cap**: a malicious guest could today kick off parallel deploys. xcodebuild + gradle serialize at the filesystem layer so damage is bounded, but a fair-queue would be friendlier.
 
 ## Container Sandbox (Optional Task Isolation)
 

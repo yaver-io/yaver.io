@@ -1,0 +1,18 @@
+[Unit]
+Description=Run yaver-watchdog every 60 seconds
+Documentation=https://github.com/kivanccakmak/yaver.io/blob/main/ci/remote/watchdog/yaver-watchdog.sh
+
+[Timer]
+# Short cadence because this is the last line of defence if the
+# agent's own supervisor can't rescue itself (deadlocked mutex,
+# SIGKILL, kernel OOM). 60s feels aggressive but the probe is cheap:
+# pgrep + stat + one curl, plus a small randomized delay.
+OnBootSec=30s
+OnUnitActiveSec=60s
+RandomizedDelaySec=15
+AccuracySec=5s
+Persistent=true
+Unit=yaver-watchdog.service
+
+[Install]
+WantedBy=timers.target
