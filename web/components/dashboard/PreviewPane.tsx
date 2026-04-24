@@ -94,12 +94,14 @@ export default function PreviewPane({
   selectedPreviewTarget,
   onSelectPreviewTarget,
   mobileWorkers,
+  preferredProjectPath,
   onReconnect,
   onRepairRelay,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
   mobileWorkers: PreviewTarget[];
+  preferredProjectPath?: string | null;
   onReconnect?: () => Promise<void>;
   onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
 }) {
@@ -624,6 +626,7 @@ export default function PreviewPane({
     <EmptyPhoneState
       projects={mobileProjects.length > 0 ? mobileProjects : webProjects}
       projectsAll={projects}
+      preferredProjectPath={preferredProjectPath}
       onStart={handleStartProject}
       startingPath={startingPath}
       startError={startError}
@@ -985,16 +988,25 @@ export default function PreviewPane({
 function EmptyPhoneState({
   projects,
   projectsAll,
+  preferredProjectPath,
   onStart,
   startingPath,
   startError,
 }: {
   projects: Project[];
   projectsAll: Project[] | null;
+  preferredProjectPath?: string | null;
   onStart: (p: Project) => void;
   startingPath: string | null;
   startError: string | null;
 }) {
+  const orderedProjects = useMemo(() => {
+    if (!preferredProjectPath) return projects;
+    const preferred = projects.find((project) => project.path === preferredProjectPath);
+    if (!preferred) return projects;
+    return [preferred, ...projects.filter((project) => project.path !== preferredProjectPath)];
+  }, [preferredProjectPath, projects]);
+
   return (
     <div className="w-full h-full flex flex-col gap-3 bg-surface-950 text-surface-400 p-4 overflow-auto">
       <div className="text-center mt-2">
@@ -1019,7 +1031,7 @@ function EmptyPhoneState({
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">
-          {projects.slice(0, 6).map((p) => (
+          {orderedProjects.slice(0, 6).map((p) => (
             <button
               key={p.path}
               onClick={() => onStart(p)}
@@ -1027,7 +1039,9 @@ function EmptyPhoneState({
               className={`flex items-center gap-2 rounded border px-2 py-1.5 text-left transition-colors ${
                 startingPath === p.path
                   ? "cursor-wait border-amber-500/30 bg-amber-500/5 text-amber-200"
-                  : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/30 hover:bg-emerald-500/5"
+                  : p.path === preferredProjectPath
+                    ? "border-emerald-500/30 bg-emerald-500/5"
+                    : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/30 hover:bg-emerald-500/5"
               }`}
             >
               <span className="text-sm">{frameworkIcon(p.framework)}</span>

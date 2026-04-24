@@ -21,9 +21,18 @@ import type { Device } from "@/lib/use-devices";
 import { WebAppSelector } from "./WebAppSelector";
 import { WebPreviewFrame } from "./WebPreviewFrame";
 
+interface ProjectRow {
+  name: string;
+  path: string;
+  framework?: string;
+  branch?: string;
+  tags?: string[];
+}
+
 interface Props {
   connectedDevice: Device | null;
   connState: string;
+  preferredProjectPath?: string | null;
   /** Hand the same repair handler the Hot Reload tab uses — POSTs
    *  /settings/repair-relay on Convex, re-syncs the user's password
    *  with the platform default. When present, WebReloadView auto-
@@ -33,11 +42,14 @@ interface Props {
   onReconnect?: () => Promise<void>;
 }
 
-export function WebReloadView({ connectedDevice, connState, onRepairRelay, onReconnect }: Props) {
+export function WebReloadView({ connectedDevice, connState, preferredProjectPath, onRepairRelay, onReconnect }: Props) {
   const [apps, setApps] = useState<WorkspaceAppView[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [projectsLoading, setProjectsLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [selectedApp, setSelectedApp] = useState<string | null>(null);
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(null);
   const [devStatus, setDevStatus] = useState<Awaited<ReturnType<typeof agentClient.getDevServerStatus>>>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -57,27 +69,42 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
     let cancelled = false;
     if (!isConnected) {
       setApps([]);
+      setProjects([]);
       setWorkspaceError(null);
       return;
     }
     setWorkspaceLoading(true);
+    setProjectsLoading(true);
     setWorkspaceError(null);
     (async () => {
       try {
-        const list = await agentClient.getWorkspaceApps("web,hybrid");
+        const [list, scanned] = await Promise.all([
+          agentClient.getWorkspaceApps("web,hybrid"),
+          agentClient.listProjects(),
+        ]);
         if (cancelled) return;
         setApps(list);
+        setProjects(scanned.filter(isWebReloadProject));
         if (list.length === 0)
           setWorkspaceError("No yaver.workspace.yaml found on the connected machine.");
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
         setWorkspaceError(msg);
+        try {
+          const scanned = await agentClient.listProjects();
+          if (!cancelled) setProjects(scanned.filter(isWebReloadProject));
+        } catch {
+          if (!cancelled) setProjects([]);
+        }
         if (/invalid relay password/i.test(msg) && onRepairRelay) {
           void repairRelayThenReconnect("auto");
         }
       } finally {
-        if (!cancelled) setWorkspaceLoading(false);
+        if (!cancelled) {
+          setWorkspaceLoading(false);
+          setProjectsLoading(false);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -99,8 +126,12 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
         }
         // Retry the workspace load now that the password is fresh.
         try {
-          const list = await agentClient.getWorkspaceApps("web,hybrid");
+          const [list, scanned] = await Promise.all([
+            agentClient.getWorkspaceApps("web,hybrid"),
+            agentClient.listProjects(),
+          ]);
           setApps(list);
+          setProjects(scanned.filter(isWebReloadProject));
           setWorkspaceError(list.length === 0 ? "No yaver.workspace.yaml found on the connected machine." : null);
         } catch { /* keep prior error state */ }
       } else {
@@ -143,9 +174,26 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
 
   // Keep selectedApp in sync with activeApp when the user hasn't picked
   // anything yet.
+
+  const activeProject = useMemo(() => {
+    if (!devStatus?.workDir) return null;
+    return projects.find((project) => project.path === devStatus.workDir) ?? null;
+  }, [projects, devStatus?.workDir]);
+
+  const selectedProject = useMemo(() => {
+    if (!selectedProjectPath) return null;
+    return projects.find((project) => project.path === selectedProjectPath) ?? null;
+  }, [projects, selectedProjectPath]);
+
   useEffect(() => {
-    if (!selectedApp && activeApp) setSelectedApp(activeApp);
-  }, [activeApp, selectedApp]);
+    if (!preferredProjectPath) return;
+    if (!projects.some((project) => project.path === preferredProjectPath)) return;
+    setSelectedProjectPath(preferredProjectPath);
+    setSelectedApp(null);
+  }, [preferredProjectPath, projects]);
+
+  const hasWorkspaceApps = apps.length > 0;
+  const useProjectFallback = !hasWorkspaceApps;
 
   // SSE: live dev-server logs. Use EventSource directly since the
   // events endpoint lives on the agent through the relay.
@@ -171,14 +219,24 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
   }, [isConnected]);
 
   const handleStart = async () => {
-    if (!selectedApp) return;
+    if (!selectedApp && !selectedProject) return;
     setStarting(true);
     setStartError(null);
     try {
-      await agentClient.startDevServer({
-        app: selectedApp,
-        surface: "web-reload",
-      });
+      if (useProjectFallback && selectedProject) {
+        await agentClient.startDevServer({
+          framework: selectedProject.framework,
+          workDir: selectedProject.path,
+          projectName: selectedProject.name,
+          platform: "web",
+          surface: "web-reload",
+        });
+      } else if (selectedApp) {
+        await agentClient.startDevServer({
+          app: selectedApp,
+          surface: "web-reload",
+        });
+      }
       // Refresh status immediately; polling will pick up ongoing changes.
       const s = await agentClient.getDevServerStatus();
       setDevStatus(s);
@@ -312,10 +370,10 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
           ) : (
             <button
               onClick={handleStart}
-              disabled={!selectedApp || starting}
+              disabled={(!selectedApp && !selectedProject) || starting}
               className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
             >
-              {starting ? "Starting…" : selectedApp ? `Start ${selectedApp}` : "Pick an app"}
+              {starting ? "Starting…" : selectedApp ? `Start ${selectedApp}` : selectedProject ? `Start ${selectedProject.name}` : "Pick a project"}
             </button>
           )}
         </div>
@@ -384,16 +442,27 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
         <aside className="flex min-h-0 flex-col gap-3">
           <div>
             <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
-              Web apps in workspace
+              {useProjectFallback ? "Projects" : "Web apps in workspace"}
             </p>
-            <WebAppSelector
-              apps={apps}
-              selectedApp={selectedApp}
-              activeApp={activeApp}
-              onSelect={setSelectedApp}
-              loading={workspaceLoading}
-              error={workspaceError}
-            />
+            {useProjectFallback ? (
+              <ScannedProjectSelector
+                projects={projects}
+                selectedProjectPath={selectedProjectPath}
+                activeProjectPath={activeProject?.path ?? null}
+                onSelect={setSelectedProjectPath}
+                loading={projectsLoading}
+                workspaceError={workspaceError}
+              />
+            ) : (
+              <WebAppSelector
+                apps={apps}
+                selectedApp={selectedApp}
+                activeApp={activeApp}
+                onSelect={setSelectedApp}
+                loading={workspaceLoading}
+                error={workspaceError}
+              />
+            )}
           </div>
 
           {devStatus?.running && (
@@ -410,6 +479,111 @@ export function WebReloadView({ connectedDevice, connState, onRepairRelay, onRec
             </div>
           )}
         </aside>
+      </div>
+    </div>
+  );
+}
+
+function isWebReloadProject(project: ProjectRow): boolean {
+  const framework = (project.framework || "").toLowerCase();
+  const tags = (project.tags || []).map((tag) => tag.toLowerCase());
+  return (
+    framework.includes("next") ||
+    framework.includes("vite") ||
+    framework === "react" ||
+    framework.includes("expo") ||
+    framework.includes("flutter") ||
+    framework.includes("astro") ||
+    framework.includes("remix") ||
+    tags.includes("next") ||
+    tags.includes("nextjs") ||
+    tags.includes("vite") ||
+    tags.includes("react") ||
+    tags.includes("expo") ||
+    tags.includes("flutter") ||
+    tags.includes("astro") ||
+    tags.includes("remix")
+  );
+}
+
+function ScannedProjectSelector({
+  projects,
+  selectedProjectPath,
+  activeProjectPath,
+  onSelect,
+  loading,
+  workspaceError,
+}: {
+  projects: ProjectRow[];
+  selectedProjectPath: string | null;
+  activeProjectPath: string | null;
+  onSelect: (path: string) => void;
+  loading?: boolean;
+  workspaceError?: string | null;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-md border border-surface-800 bg-surface-900/40 px-3 py-4 text-[11px] text-surface-500">
+        Scanning projects…
+      </div>
+    );
+  }
+
+  if (projects.length === 0) {
+    return (
+      <div className="rounded-md border border-surface-800 bg-surface-900/40 px-3 py-3 text-[11px] text-surface-500">
+        <p>No web-previewable projects detected on this machine.</p>
+        {workspaceError ? (
+          <p className="mt-2 text-[10px] text-surface-600">{workspaceError}</p>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {workspaceError ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-200/80">
+          {workspaceError}
+        </div>
+      ) : null}
+      <div className="space-y-1">
+        {projects.map((project) => {
+          const isSelected = selectedProjectPath === project.path;
+          const isActive = activeProjectPath === project.path;
+          return (
+            <button
+              key={project.path}
+              onClick={() => onSelect(project.path)}
+              className={`group flex w-full items-center justify-between gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                isSelected
+                  ? "border-indigo-500/40 bg-indigo-500/10"
+                  : "border-surface-800 bg-surface-900/40 hover:border-surface-700 hover:bg-surface-900"
+              }`}
+              title={project.path}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className={`truncate text-xs font-medium ${isSelected ? "text-indigo-200" : "text-surface-100"}`}>
+                    {project.name}
+                  </span>
+                  {isActive ? (
+                    <span className="flex items-center gap-1 text-[10px] text-emerald-300">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      running
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-surface-500">
+                  <span className="rounded bg-surface-800 px-1 py-px uppercase tracking-wide">
+                    {project.framework || "?"}
+                  </span>
+                  <span className="truncate">{project.path}</span>
+                </div>
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );

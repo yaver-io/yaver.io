@@ -159,7 +159,7 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
               <p className="max-w-[280px] text-[11px] text-surface-600">
                 {running
                   ? "Preview will appear here once the compiler finishes."
-                  : "Pick a web app on the right and press Start."}
+                  : "Pick a project on the right and press Start."}
               </p>
             </div>
           )}

@@ -41,6 +41,7 @@ import VibeCodingView from "@/components/dashboard/VibeCodingView";
 import { WebReloadView } from "@/components/dashboard/WebReloadView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView from "@/components/dashboard/DevicesView";
+import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -199,6 +200,30 @@ function formatRunnerChipLabel(runner: string): string {
   if (!cleaned) return cleaned;
   if (cleaned === "claude-code") return "claude";
   return cleaned;
+}
+
+function runnerLabel(runnerId?: string): string {
+  const normalized = formatRunnerChipLabel(String(runnerId || ""));
+  if (normalized === "claude") return "Claude Code";
+  if (normalized === "codex") return "Codex";
+  if (normalized === "opencode") return "OpenCode";
+  return normalized || "Selected runner";
+}
+
+function runnerAuthIssue(runner: Pick<Runner, "id" | "installed" | "ready" | "warning" | "error"> | null | undefined): string | null {
+  if (!runner || !runner.installed || runner.ready !== false) return null;
+  const detail = String(runner.error || runner.warning || "").trim();
+  const lower = detail.toLowerCase();
+  if (
+    lower.includes("auth") ||
+    lower.includes("login") ||
+    lower.includes("sign in") ||
+    lower.includes("oauth") ||
+    lower.includes("not authenticated")
+  ) {
+    return detail || `${runnerLabel(runner.id)} is installed but not authenticated on this machine.`;
+  }
+  return null;
 }
 
 function runnerChipsForDevice(device: Pick<Device, "sharedRunners" | "runners">): string[] {
@@ -503,6 +528,8 @@ export default function DashboardPage() {
   const [reauthMessage, setReauthMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
+  const [preferredSurfaceProjectPath, setPreferredSurfaceProjectPath] = useState<string | null>(null);
+  const [chatRunnerAuthModal, setChatRunnerAuthModal] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }>>({});
   const [probeStates, setProbeStates] = useState<Record<string, DeviceStatusProbe>>({});
   // Primary-device preference — the device auto-connect prefers when the
@@ -855,9 +882,24 @@ export default function DashboardPage() {
 
   const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setConnectError(null); };
 
+  const refreshConnectedRunners = async () => {
+    if (!isConnected) return;
+    try {
+      setRunners(await agentClient.getRunners());
+    } catch {}
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = input.trim(); if (!text || sending) return;
+    const targetRunner = runners.find((r) => r.id === (activeTask?.runnerId || selectedRunner)) || runners.find((r) => r.id === selectedRunner) || null;
+    const authIssue = runnerAuthIssue(targetRunner);
+    if (authIssue) {
+      if (targetRunner && (targetRunner.id === "claude" || targetRunner.id === "codex")) {
+        setChatRunnerAuthModal(targetRunner.id);
+      }
+      return;
+    }
     setInput(""); setSending(true);
     const continuing = activeTask?.status === "running";
     // Optimistic user echo — always push the user bubble + empty assistant placeholder
@@ -967,6 +1009,10 @@ export default function DashboardPage() {
     return next;
   });
   const runningTask = tasks.find(t => t.status === "running");
+  const activeRunnerId = activeTask?.runnerId || selectedRunner;
+  const activeRunnerRow = runners.find((r) => r.id === activeRunnerId) || null;
+  const activeRunnerAuthIssue = runnerAuthIssue(activeRunnerRow);
+  const canStartBrowserRunnerAuth = Boolean(activeRunnerRow && (activeRunnerRow.id === "claude" || activeRunnerRow.id === "codex"));
   const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");
   const dormantDevices = displayDevices.filter((d) => isDormantUnreachableDevice(d));
   const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
@@ -1279,7 +1325,27 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-between gap-2">
+        <div className="mt-auto border-t border-surface-800 p-3 flex items-center justify-end gap-2">
+          <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+            {theme === "dark" ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            )}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="hidden md:flex sticky top-0 z-20 items-center justify-end gap-2 border-b border-surface-800 bg-surface-950/90 px-4 py-2 backdrop-blur">
+          <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:bg-surface-800 hover:text-surface-300" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
+            {theme === "dark" ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            )}
+          </button>
           <button
             onClick={logout}
             className="inline-flex items-center gap-1.5 rounded-md border border-red-500/30 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 transition-colors hover:border-red-400/50 hover:bg-red-500/10 hover:text-red-200"
@@ -1303,19 +1369,7 @@ export default function DashboardPage() {
             </svg>
             <span>Sign Out</span>
           </button>
-          <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
-            {theme === "dark" ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            )}
-          </button>
         </div>
-      </aside>
-
-      {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        {/* No top nav bar — stop-task button moved into the chat composer where it belongs */}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {!isConnected && activeTab === "chat" ? (
@@ -1539,12 +1593,13 @@ export default function DashboardPage() {
           ) : activeTab === "todos" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "builds" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} preferredProjectPath={preferredSurfaceProjectPath} /></div>
           ) : activeTab === "preview" ? (
             <div className="flex-1 min-h-0"><PreviewPane
               selectedPreviewTarget={selectedPreviewTarget}
               onSelectPreviewTarget={handleSelectPreviewTarget}
               mobileWorkers={mobileWorkers}
+              preferredProjectPath={preferredSurfaceProjectPath}
               onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
               onRepairRelay={token ? async () => {
                 const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
@@ -1578,6 +1633,7 @@ export default function DashboardPage() {
               <WebReloadView
                 connectedDevice={connectedDevice}
                 connState={connState}
+                preferredProjectPath={preferredSurfaceProjectPath}
                 onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
                 onRepairRelay={token ? async () => {
                   const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
@@ -1679,7 +1735,10 @@ export default function DashboardPage() {
               />
             </div>
           ) : activeTab === "git" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full"><GitView /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-[1600px] mx-auto w-full"><GitView onOpenSurface={(surface, projectPath) => {
+              setPreferredSurfaceProjectPath(projectPath);
+              setActiveTab(surface);
+            }} /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">
@@ -1693,6 +1752,21 @@ export default function DashboardPage() {
                         {activeTask.costUsd != null && <span className="text-[10px] text-surface-600">${activeTask.costUsd.toFixed(3)}</span>}
                       </div>
                       <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 px-4 py-5">
+                        {activeRunnerAuthIssue ? (
+                          <div className="mx-auto mb-4 max-w-3xl rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-100">
+                            <div className="font-medium">{runnerLabel(activeRunnerId)} needs sign-in on {connectedDevice?.name || "this machine"}</div>
+                            <div className="mt-1 text-xs leading-5 text-amber-200/80">{activeRunnerAuthIssue}</div>
+                            {canStartBrowserRunnerAuth ? (
+                              <button
+                                type="button"
+                                onClick={() => setChatRunnerAuthModal(activeRunnerRow!.id)}
+                                className="mt-3 rounded-xl border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-400/15"
+                              >
+                                Sign in to {runnerLabel(activeRunnerRow?.id)}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {chatMsgs.length === 0 ? (
                           <div className="flex h-full items-center justify-center gap-2 text-[12px] text-surface-600">
                             {activeTask.status === "running" && <span className="h-3 w-3 animate-spin rounded-full border border-surface-500 border-t-transparent" />}
@@ -1732,8 +1806,8 @@ export default function DashboardPage() {
                   )}
                 </div>
               </div>
-              <div className="border-t border-surface-800 bg-surface-900/50 p-3">
-                <div className="mx-auto flex max-w-4xl flex-col gap-2">
+              <div className="border-t border-surface-800 bg-surface-900/50 px-4 py-3">
+                <div className="mx-auto flex max-w-5xl flex-col gap-3">
                   {(() => {
                     const installed = runners.filter(r => r.installed);
                     if (installed.length === 0) {
@@ -1744,48 +1818,223 @@ export default function DashboardPage() {
                       );
                     }
                     return (
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                        <span className="text-surface-500">Runner:</span>
-                        {installed.map(r => {
-                          const active = r.id === selectedRunner;
-                          const warn = !r.ready && (r.error || r.warning);
-                          return (
-                            <button
-                              key={r.id}
-                              type="button"
-                              onClick={() => setSelectedRunner(r.id)}
-                              title={warn || (r.authConfigured ? `auth: configured` : undefined)}
-                              className={`rounded-full border px-2.5 py-0.5 transition ${
-                                active
-                                  ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
-                                  : warn
-                                    ? "border-amber-500/40 bg-surface-900 text-amber-300 hover:border-amber-400/70"
-                                    : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
-                              }`}
-                            >
-                              {r.name}
-                              {warn && <span className="ml-1 opacity-60">!</span>}
-                            </button>
-                          );
-                        })}
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                          <span className="text-surface-500">Runner</span>
+                          {installed.map(r => {
+                            const active = r.id === selectedRunner;
+                            const warn = !r.ready && (r.error || r.warning);
+                            return (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => setSelectedRunner(r.id)}
+                                title={warn || (r.authConfigured ? `auth: configured` : undefined)}
+                                className={`rounded-full border px-2.5 py-1 transition ${
+                                  active
+                                    ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
+                                    : warn
+                                      ? "border-amber-500/40 bg-surface-900 text-amber-300 hover:border-amber-400/70"
+                                      : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                }`}
+                              >
+                                {r.name}
+                                {warn && <span className="ml-1 opacity-60">!</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {activeRunnerId ? (
+                          <div className="text-[11px] text-surface-500">
+                            Active: <span className="text-surface-300">{runnerLabel(activeRunnerId)}</span>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })()}
-                  <form onSubmit={handleSend} className="flex items-end gap-2">
+                  {activeRunnerAuthIssue ? (
+                    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
+                      <span>{runnerLabel(activeRunnerId)} on {connectedDevice?.name || "this machine"} is not authenticated.</span>
+                      {canStartBrowserRunnerAuth ? (
+                        <button
+                          type="button"
+                          onClick={() => setChatRunnerAuthModal(activeRunnerRow!.id)}
+                          className="ml-2 rounded-lg border border-amber-400/30 px-2.5 py-1 font-semibold text-amber-100 hover:bg-amber-400/10"
+                        >
+                          Sign in
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">
                     <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder={activeTask ? "Message..." : "Build me a todo app..."} rows={1}
-                      className="max-h-32 w-full resize-none rounded-lg border border-surface-700 bg-surface-850 px-4 py-2.5 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "42px" }} />
-                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0}
-                      className="shrink-0 rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
+                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Message..." : "Build me a todo app..."} rows={1}
+                      disabled={Boolean(activeRunnerAuthIssue)}
+                      className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "48px" }} />
+                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0 || Boolean(activeRunnerAuthIssue)}
+                      className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
                       {sending ? "..." : activeTask ? "Send" : "Run"}
                     </button>
                   </form>
                 </div>
               </div>
+              {chatRunnerAuthModal ? (
+                <RunnerAuthModal
+                  runner={chatRunnerAuthModal}
+                  deviceName={connectedDevice?.name || connectedDevice?.id || "this machine"}
+                  onClose={() => {
+                    setChatRunnerAuthModal(null);
+                    void refreshConnectedRunners();
+                  }}
+                  onCompleted={() => {
+                    void refreshConnectedRunners();
+                  }}
+                />
+              ) : null}
             </>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RunnerAuthModal({
+  runner,
+  deviceName,
+  onClose,
+  onCompleted,
+}: {
+  runner: string;
+  deviceName: string;
+  onClose: () => void;
+  onCompleted: () => void;
+}) {
+  const [session, setSession] = useState<RunnerBrowserAuthSession | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const startedRef = useRef(false);
+
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    (async () => {
+      try {
+        const started = await agentClient.startRunnerBrowserAuth(runner);
+        setSession(started);
+      } catch (error) {
+        setStartError(error instanceof Error ? error.message : String(error));
+      }
+    })();
+  }, [runner]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (session.status === "completed" || session.status === "failed" || session.status === "cancelled") {
+      if (session.status === "completed") onCompleted();
+      return;
+    }
+    const interval = setInterval(async () => {
+      try {
+        const next = await agentClient.getRunnerBrowserAuthStatus(session.id);
+        setSession(next);
+      } catch {}
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [session, onCompleted]);
+
+  const terminal = session && ["completed", "failed", "cancelled"].includes(session.status);
+
+  const copyCode = async () => {
+    if (!session?.code) return;
+    try {
+      await navigator.clipboard.writeText(session.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {}
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={(event) => { if (event.target === event.currentTarget && terminal) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-xl border border-surface-800 bg-surface-900 p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-surface-100">Sign in to {runnerLabel(runner)}</h3>
+            <p className="text-xs text-surface-500">on <span className="font-mono text-surface-300">{deviceName}</span></p>
+          </div>
+          <button
+            onClick={async () => {
+              if (session && !terminal) {
+                await agentClient.cancelRunnerBrowserAuth(session.id).catch(() => {});
+              }
+              onClose();
+            }}
+            className="text-xl leading-none text-surface-500 hover:text-surface-200"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        {startError ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+            <div className="mb-1 font-semibold">Couldn&apos;t start sign-in</div>
+            {startError}
+          </div>
+        ) : !session ? (
+          <div className="rounded-lg border border-surface-800 bg-surface-800/40 p-3 text-xs text-surface-400">
+            Starting the sign-in flow on the remote machine…
+          </div>
+        ) : session.status === "completed" ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+            <div className="mb-1 font-semibold">Signed in</div>
+            <div className="text-xs text-emerald-300/80">{session.detail || "Auth stored on the remote machine."}</div>
+          </div>
+        ) : session.status === "failed" || session.status === "cancelled" ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+            <div className="mb-1 font-semibold">{session.status === "cancelled" ? "Cancelled" : "Failed"}</div>
+            <div>{session.error || session.detail || "The CLI exited before sign-in completed."}</div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-surface-400">
+              Complete sign-in from any browser. Yaver started the remote {runnerLabel(runner)} login flow on this machine.
+            </p>
+            {session.openUrl ? (
+              <a
+                href={session.openUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block truncate rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-3 py-2.5 text-sm font-medium text-indigo-200 hover:bg-indigo-500/20"
+              >
+                ↗ {session.openUrl}
+              </a>
+            ) : (
+              <div className="rounded-lg border border-surface-800 bg-surface-800/30 px-3 py-2.5 text-xs text-surface-500">
+                Waiting for the verification URL from the remote CLI…
+              </div>
+            )}
+            {session.code ? (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Enter this code</div>
+                <button
+                  onClick={copyCode}
+                  className="flex w-full items-center justify-between rounded-lg border border-surface-700 bg-surface-800/60 px-4 py-3 text-left hover:border-surface-600"
+                >
+                  <span className="font-mono text-xl tracking-[0.2em] text-surface-100">{session.code}</span>
+                  <span className="text-[10px] uppercase text-surface-500">{copied ? "copied" : "click to copy"}</span>
+                </button>
+              </div>
+            ) : null}
+            <p className="text-[10px] leading-relaxed text-surface-600">
+              Once sign-in finishes in the browser, this dialog updates automatically and chat will re-enable on this machine.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

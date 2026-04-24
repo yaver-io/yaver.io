@@ -41,7 +41,13 @@ interface UnityRun {
   command?: string[];
 }
 
-export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId: string) => void }) {
+export default function BuildsView({
+  onTaskCreated,
+  preferredProjectPath,
+}: {
+  onTaskCreated?: (taskId: string) => void;
+  preferredProjectPath?: string | null;
+}) {
   const [builds, setBuilds] = useState<Build[]>([]);
   const [loading, setLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -58,6 +64,11 @@ export default function BuildsView({ onTaskCreated }: { onTaskCreated?: (taskId:
     if (!selectedPath) return;
     void loadPublishConfig(selectedPath);
   }, [selectedPath]);
+  useEffect(() => {
+    if (!preferredProjectPath) return;
+    if (!projects.some((project) => project.path === preferredProjectPath)) return;
+    setSelectedPath(preferredProjectPath);
+  }, [preferredProjectPath, projects]);
 
   async function loadBuilds() {
     setLoading(true);

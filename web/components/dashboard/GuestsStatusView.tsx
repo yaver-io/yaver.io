@@ -454,7 +454,21 @@ export default function GuestsStatusView() {
         </p>
       </div>
 
-      <section className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="space-y-4">
+        {user?.id ? (
+          <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-4">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Your user ID</div>
+            <div className="mt-2 break-all font-mono text-sm text-surface-100">{user.id}</div>
+            <div className="mt-2 text-xs text-surface-500">People can invite you without knowing your email.</div>
+            <button
+              onClick={() => copy(user.id)}
+              className="mt-3 border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300"
+            >
+              Copy User ID
+            </button>
+          </div>
+        ) : null}
+
         <div className="space-y-4 rounded-lg border border-surface-800 bg-surface-900/40 p-4">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -498,7 +512,12 @@ export default function GuestsStatusView() {
 
           {ownDevices.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Machine slice</div>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Machine slice</div>
+                <div className="mt-1 text-xs text-surface-500">
+                  Pick which machines to offer. Leave all unselected to offer every machine. Load projects below only if you want to narrow access further.
+                </div>
+              </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {ownDevices.map((device) => (
                   <button
@@ -528,26 +547,21 @@ export default function GuestsStatusView() {
                         deviceClass: device.deviceClass,
                       })}
                     </div>
-                    <div className="mt-2 text-surface-500">
-                      {inviteProjects.length > 0
-                        ? `Project slice: ${inviteProjects.join(", ")}`
-                        : inviteProjectChoices.length > 0
-                          ? "Projects loaded for this machine. Pick the ones to share below."
-                          : "Load this machine's projects to narrow the share by project."}
-                    </div>
                   </button>
                 ))}
-              </div>
-              <div className="text-xs text-surface-500">
-                Leave every machine unselected to propose all of your machines.
               </div>
             </div>
           )}
 
           {inviteSelectedDevices.length > 0 && (
             <div className="space-y-2">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Project slice</div>
-              <div className="flex items-center gap-3">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-surface-500">Project slice</div>
+                <div className="mt-1 text-xs text-surface-500">
+                  Optional. Load a machine&apos;s repo list if this invite should only see specific projects.
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-surface-800 bg-surface-950/60 p-3">
                 <button
                   type="button"
                   onClick={() => void loadInviteProjects()}
@@ -556,10 +570,10 @@ export default function GuestsStatusView() {
                 >
                   {inviteProjectsLoading
                     ? "Loading projects…"
-                    : `Load projects from selected machine${inviteSelectedDevices.length === 1 ? "" : "s"}`}
+                    : `Load repos from selected machine${inviteSelectedDevices.length === 1 ? "" : "s"}`}
                 </button>
                 {inviteProjectsSource ? (
-                  <div className="text-xs text-surface-500">
+                  <div className="rounded-full border border-surface-700 px-2.5 py-1 text-xs text-surface-400">
                     Source: {inviteProjectsSource}
                   </div>
                 ) : null}
@@ -570,7 +584,7 @@ export default function GuestsStatusView() {
                 </div>
               ) : (
                 <div className="text-xs text-surface-500">
-                  Selected projects are saved into the invite and enforced as the guest's project slice.
+                  Selected repos are saved into the invite and enforced for this guest.
                 </div>
               )}
               {inviteProjectChoices.length > 0 ? (
@@ -594,7 +608,7 @@ export default function GuestsStatusView() {
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-3">
+          <div className="space-y-3">
             <div className="text-xs text-surface-500">
               Invite codes expire in 2 days and work even if the guest signs in with a different OAuth email.
             </div>
@@ -602,48 +616,32 @@ export default function GuestsStatusView() {
               type="button"
               onClick={() => void handleInvite()}
               disabled={busy === "invite" || !inviteTarget.trim()}
-              className="bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              className="w-full whitespace-nowrap bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
             >
               {busy === "invite" ? "Sending…" : "Send Invite"}
             </button>
           </div>
         </div>
 
-        <div className="space-y-4">
-          {user?.id ? (
-            <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-surface-500 font-bold">Your user ID</div>
-              <div className="mt-2 break-all font-mono text-sm text-surface-100">{user.id}</div>
-              <div className="mt-2 text-xs text-surface-500">People can invite you without knowing your email.</div>
+        {lastInvite && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
+            <div className="text-[10px] uppercase tracking-wider text-emerald-300">Latest invite</div>
+            <div className="mt-1 text-sm text-surface-200">{lastInvite.target}</div>
+            <div className="mt-1 text-xs text-surface-500">scope: {lastInvite.scope}</div>
+            <div className="mt-3 font-mono text-3xl font-semibold tracking-[0.3em] text-surface-50">{lastInvite.code}</div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => copy(lastInvite.code)} className="border border-surface-700 bg-surface-950 px-3 py-2 text-xs text-surface-200">
+                Copy Code
+              </button>
               <button
-                onClick={() => copy(user.id)}
-                className="mt-3 border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300"
+                onClick={() => copy(`Your Yaver invite code: ${lastInvite.code}`)}
+                className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-300"
               >
-                Copy User ID
+                Copy Message
               </button>
             </div>
-          ) : null}
-
-          {lastInvite && (
-            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
-              <div className="text-[10px] uppercase tracking-wider text-emerald-300">Latest invite</div>
-              <div className="mt-1 text-sm text-surface-200">{lastInvite.target}</div>
-              <div className="mt-1 text-xs text-surface-500">scope: {lastInvite.scope}</div>
-              <div className="mt-3 font-mono text-3xl font-semibold tracking-[0.3em] text-surface-50">{lastInvite.code}</div>
-              <div className="mt-3 flex gap-2">
-                <button onClick={() => copy(lastInvite.code)} className="border border-surface-700 bg-surface-950 px-3 py-2 text-xs text-surface-200">
-                  Copy Code
-                </button>
-                <button
-                  onClick={() => copy(`Your Yaver invite code: ${lastInvite.code}`)}
-                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs text-indigo-300"
-                >
-                  Copy Message
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded-lg border border-surface-800 bg-surface-900/40 p-4">

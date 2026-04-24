@@ -23,6 +23,7 @@ export interface Task {
   title: string;
   description: string;
   status: TaskStatus;
+  runnerId?: string;
   output: string[];
   resultText?: string;
   costUsd?: number;
@@ -1026,6 +1027,7 @@ export class AgentClient {
       title,
       description,
       status: data.status,
+      runnerId: data.runnerId || opts?.runner,
       output: [],
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1082,6 +1084,7 @@ export class AgentClient {
         title: t.title,
         description: t.description,
         status: t.status,
+        runnerId: t.runnerId || undefined,
         output: typeof t.output === "string" && t.output
           ? t.output.split("\n").filter((l: string) => l)
           : Array.isArray(t.output) ? t.output : [],
@@ -1116,6 +1119,7 @@ export class AgentClient {
       title: t.title,
       description: t.description,
       status: t.status,
+      runnerId: t.runnerId || undefined,
       output: typeof t.output === "string" && t.output
         ? t.output.split("\n").filter((l: string) => l)
         : Array.isArray(t.output) ? t.output : [],
@@ -2704,7 +2708,7 @@ export class AgentClient {
     return data.projects ?? [];
   }
 
-  async getProjectActions(query: string): Promise<{ project: string; path: string; actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string }[] }> {
+  async getProjectActions(query: string): Promise<{ project: string; path: string; actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string; supported?: boolean; reason?: string }[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, { headers: this.authHeaders });
     if (!res.ok) throw new Error("Failed to get project actions");
@@ -2825,6 +2829,7 @@ export class AgentClient {
   async startDevServer(opts: {
     framework?: string;
     workDir?: string;
+    projectName?: string;
     app?: string;      // workspace manifest app name (monorepo)
     surface?: "web-reload" | "hot-reload";
     root?: string;     // workspace root override
