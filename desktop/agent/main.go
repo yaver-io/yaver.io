@@ -502,6 +502,8 @@ Usage:
   yaver repo auth setup <github|gitlab> [--token <pat>]  Save clone + CI auth together
   yaver repo switch <name>  Switch working directory to a project
   yaver repo refresh   Re-run project discovery
+  yaver workspace merge <repo-or-path>...  Merge split repos into a Yaver monorepo with preserved history
+  yaver workspace status   Show monorepo app status from yaver.workspace.yaml
   yaver pipeline --test --deploy <target>  Build → test → deploy in one command
   yaver loop add <spec.yaml>   Register an auto-dev loop from a .loop.yaml
   yaver loop list              List registered loops and their status

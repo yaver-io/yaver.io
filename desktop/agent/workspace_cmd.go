@@ -12,6 +12,7 @@ package main
 //   yaver workspace init --app=<name>        # just one app
 //   yaver workspace list                     # apps declared in the manifest
 //   yaver workspace status                   # per-app on-disk + env + init.md status
+//   yaver workspace merge <repo...>          # merge multiple repos into a Yaver monorepo
 
 import (
 	"fmt"
@@ -32,6 +33,8 @@ func runWorkspace(args []string) {
 		runWorkspaceList(args[1:])
 	case "status":
 		runWorkspaceStatus(args[1:])
+	case "merge":
+		runWorkspaceMerge(args[1:])
 	case "help", "-h", "--help":
 		workspaceUsage()
 	default:
@@ -56,6 +59,10 @@ Usage:
                                              --autoinit prints per-app 'yaver autoinit' commands.
   yaver workspace list                       List apps declared in the manifest.
   yaver workspace status                     Per-app on-disk + env + init.md status.
+  yaver workspace merge [--root <dir>] [--name <workspace>] <repo-or-path>...
+                                             Merge separate git repos into one Yaver monorepo.
+                                             Preserves full git history and writes yaver.workspace.yaml.
+                                             Optional per-source target override: <repo-or-path>=apps/web
 
 Example yaver.workspace.yaml:
 

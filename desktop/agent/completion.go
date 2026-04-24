@@ -31,7 +31,7 @@ _yaver_completions() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    commands="auth signout connect serve logs stop clear-logs restart shutdown ping attach code status devices config relay tunnel set-runner runner-auth mcp email acl tmux exec session vault build expo debug deploy test repo pipeline feedback voice clean cloud discover purge uninstall doctor completion host-share help version"
+    commands="auth signout connect serve logs stop clear-logs restart shutdown ping attach code status devices config relay tunnel set-runner runner-auth mcp email acl tmux exec session vault build expo debug deploy test repo workspace pipeline feedback voice clean cloud discover purge uninstall doctor completion host-share help version"
 
     case "$prev" in
         yaver)
@@ -104,6 +104,10 @@ _yaver_completions() {
             ;;
         repo)
             COMPREPLY=($(compgen -W "list switch refresh current auth" -- "$cur"))
+            return 0
+            ;;
+        workspace)
+            COMPREPLY=($(compgen -W "init list status merge" -- "$cur"))
             return 0
             ;;
         auth)
@@ -253,6 +257,10 @@ _yaver() {
             subcommands=('list:List discovered projects' 'switch:Switch to a project' 'refresh:Re-run project discovery' 'current:Show current project' 'auth:Configure Git provider auth for clone and CI')
             _describe 'subcommand' subcommands
             ;;
+        workspace)
+            subcommands=('init:Wire apps declared in yaver.workspace.yaml' 'list:List workspace apps' 'status:Show per-app workspace status' 'merge:Merge separate repos into a Yaver monorepo')
+            _describe 'subcommand' subcommands
+            ;;
         cloud)
             subcommands=('create:Create cloud machine' 'status:Show status' 'ssh:SSH into machine' 'destroy:Tear down machine')
             _describe 'subcommand' subcommands
@@ -304,6 +312,7 @@ complete -c yaver -n '__fish_use_subcommand' -a 'exec' -d 'Execute remote comman
 complete -c yaver -n '__fish_use_subcommand' -a 'session' -d 'Transfer agent sessions'
 complete -c yaver -n '__fish_use_subcommand' -a 'voice' -d 'Voice AI providers'
 complete -c yaver -n '__fish_use_subcommand' -a 'repo' -d 'Project discovery and Git auth'
+complete -c yaver -n '__fish_use_subcommand' -a 'workspace' -d 'Yaver monorepo workspace commands'
 complete -c yaver -n '__fish_use_subcommand' -a 'clean' -d 'Remove old tasks/logs'
 complete -c yaver -n '__fish_use_subcommand' -a 'discover' -d 'Discover projects'
 complete -c yaver -n '__fish_use_subcommand' -a 'purge' -d 'Complete wipe'
@@ -376,6 +385,12 @@ complete -c yaver -n '__fish_seen_subcommand_from repo' -a 'switch' -d 'Switch t
 complete -c yaver -n '__fish_seen_subcommand_from repo' -a 'refresh' -d 'Re-run project discovery'
 complete -c yaver -n '__fish_seen_subcommand_from repo' -a 'current' -d 'Show current project'
 complete -c yaver -n '__fish_seen_subcommand_from repo' -a 'auth' -d 'Configure Git provider auth'
+
+# workspace subcommands
+complete -c yaver -n '__fish_seen_subcommand_from workspace' -a 'init' -d 'Wire apps declared in yaver.workspace.yaml'
+complete -c yaver -n '__fish_seen_subcommand_from workspace' -a 'list' -d 'List workspace apps'
+complete -c yaver -n '__fish_seen_subcommand_from workspace' -a 'status' -d 'Show workspace app status'
+complete -c yaver -n '__fish_seen_subcommand_from workspace' -a 'merge' -d 'Merge multiple repos into a Yaver monorepo'
 
 # host-share subcommands
 complete -c yaver -n '__fish_seen_subcommand_from host-share' -a 'prepare' -d 'Audit host readiness'
