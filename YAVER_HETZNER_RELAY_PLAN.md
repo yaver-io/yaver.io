@@ -163,3 +163,53 @@ That wrapper should:
    each box.
 
 Writing that script is the first 30-minute block of tomorrow.
+
+---
+
+## Also queued for tomorrow: heartbeat carries auth state
+
+Separate from the relay bring-up, but closely related:
+
+Right now, the *only* way a client finds out "this agent's own Convex
+session has expired" is to probe `/health` over the relay and read the
+`authExpired: true` hint in the body. If the web can't reach the box
+at all (no relay, relay-down, etc.), the UI has no signal — the
+device just shows `online · just now` because the heartbeat is still
+landing.
+
+**Fix:** have the agent's heartbeat payload carry its auth posture and
+identity, and persist both on the `devices` row in Convex. Every
+client (web, mobile, MCP, CLI `yaver devices`) then reads
+authoritative state directly from Convex without ever talking to the
+agent.
+
+Shape (rough — tighten at implementation time):
+
+- Agent-side: heartbeat body gains
+  - `authExpired: bool`
+  - `authValidatedAt: number` (ms of last successful `/auth/validate`
+    against Convex)
+  - `authUserId?: string` (from `/auth/validate` response,
+    cross-checked against the `userId` on the device row)
+  - `authUserEmail?: string` (for human-readable chips)
+- Convex schema (`backend/convex/schema.ts::devices`): optional
+  mirror fields + index on `authExpired` so `listMyDevices` can chip
+  them without full-row loads.
+- Convex mutation (`agentSync.upsertDevice` / `devices.heartbeat`):
+  accept and merge the new fields. Owner check still required — an
+  agent cannot assert it belongs to a user it wasn't paired to.
+- Web device cards + sidebar rows: `authExpired` chip alongside the
+  online dot, so you see "online but needs reauth" before you even
+  click `Open Workspace`. Same on mobile `devices.tsx`.
+- Skip the existing `/health` probe path for this — it keeps working
+  for guests and cross-user callers, but own-user UI should prefer
+  the Convex-mirrored state (faster, one round trip).
+
+Gate: this must respect the Privacy Contract in CLAUDE.md — no
+secrets / tokens in the heartbeat payload, just the boolean + the
+already-published userId and email. Add to
+`convex_privacy_test.go::fieldsWeForbidInAnyConvexPayload` nothing
+new, but double-check nothing richer leaks.
+
+One-session diff size estimate: ~150 LOC agent + ~50 LOC Convex + ~80 LOC
+web/mobile UI. ~45 minutes of focused work.
