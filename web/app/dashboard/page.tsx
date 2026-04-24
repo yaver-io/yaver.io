@@ -799,8 +799,23 @@ export default function DashboardPage() {
           ok: true,
           text: `Re-auth succeeded via ${r.via} (${r.mode}). Refreshing…`,
         });
-        // Agent's next heartbeat clears needsAuth on Convex side.
-        setTimeout(refreshDevices, 2500);
+        // Agent's heartbeat trigger clears needsAuth on Convex side
+        // within ~100 ms (auth_recover.go calls TriggerHeartbeat). The
+        // refresh below picks it up.
+        setTimeout(refreshDevices, 1200);
+        // If this re-auth was for the active workspace, every authed
+        // call we made before (runners, projects, /info) was 401-ing
+        // because the agent could not validate our bearer through
+        // Convex. Refetch them now so chat shows the real runner list,
+        // /projects shows the real projects, and the "no runner
+        // installed" / "no projects detected" copy disappears without
+        // forcing the user to reconnect.
+        if (connectedDevice?.id === d.id) {
+          setTimeout(async () => {
+            try { setRunners(await agentClient.getRunners()); } catch {}
+            try { setAgentInfo(await agentClient.getInfo()); } catch {}
+          }, 1500);
+        }
         setTimeout(() => setReauthMsg((m) => (m?.deviceId === d.id ? null : m)), 6000);
       } else {
         const diagSummary = r.diagnostics
@@ -1164,10 +1179,18 @@ export default function DashboardPage() {
             </div>
             {isConnected && connectedDevice ? (
               (() => {
-                const connectedNeedsAuth = !!connectedDevice.needsAuth && !connectedDevice.isGuest;
-                const connectedIsReauthing = reauthBusy === connectedDevice.id;
+                // Pill state must reflect *live* needsAuth / lastSeen, not
+                // the snapshot we took at connect time. Convex flips
+                // needsAuth=false a few hundred ms after a successful
+                // re-auth (heartbeat trigger) and refreshDevices replays
+                // the row into the devices array — but connectedDevice is
+                // a separate piece of state that never syncs unless we
+                // look it up here.
+                const liveDevice = devices.find((d) => d.id === connectedDevice.id) ?? connectedDevice;
+                const connectedNeedsAuth = !!liveDevice.needsAuth && !liveDevice.isGuest;
+                const connectedIsReauthing = reauthBusy === liveDevice.id;
                 const connectedReauthMsg =
-                  reauthMsg && reauthMsg.deviceId === connectedDevice.id ? reauthMsg : null;
+                  reauthMsg && reauthMsg.deviceId === liveDevice.id ? reauthMsg : null;
                 const pillBorder = connectedNeedsAuth
                   ? "border-amber-500/40 bg-amber-500/10"
                   : "border-emerald-500/30 bg-emerald-500/5";
@@ -1178,18 +1201,18 @@ export default function DashboardPage() {
                   <div className={`rounded-md border ${pillBorder} px-2 py-1.5`}>
                     <div className="flex items-center gap-2">
                       <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
-                      <span className="truncate text-xs font-medium text-surface-100">{connectedDevice.name}</span>
+                      <span className="truncate text-xs font-medium text-surface-100">{liveDevice.name}</span>
                     </div>
                     <div className="mt-1 flex items-center justify-between gap-2">
                       <span className="truncate text-[10px] text-surface-500">
-                        {devicePlatformLabel(connectedDevice)}
+                        {devicePlatformLabel(liveDevice)}
                         {agentInfo ? ` · v${agentInfo.version}` : ""}
                         {connectedNeedsAuth ? " · needs auth" : ""}
                       </span>
                       <div className="flex shrink-0 items-center gap-2">
                         {connectedNeedsAuth ? (
                           <button
-                            onClick={() => reauthDevice(connectedDevice)}
+                            onClick={() => reauthDevice(liveDevice)}
                             disabled={connectedIsReauthing}
                             title="Agent's session token expired — re-auth so /projects, runners, and tasks accept your bearer again"
                             className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"

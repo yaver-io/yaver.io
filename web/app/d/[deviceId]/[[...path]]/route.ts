@@ -115,13 +115,34 @@ async function proxyRelay(
   });
 }
 
+// Tiny script we inject into proxied HTML so client-side routers
+// (expo-router, react-router, next/link, etc.) read pathname "/" or
+// the actual app path — not "/d/<deviceId>/dev/...". Without this
+// strip the iframe shows expo-router's "Unmatched Route" 404 because
+// it tries to render /d/<deviceId>/dev/ as an in-app route.
+//
+// Runs synchronously, before the body parses, so framework bootstrap
+// sees the rewritten URL on first read. URL bar still shows the
+// proxy URL — only document state is rewritten.
+const PATH_REBASE_SCRIPT = `<script>(function(){try{var p=location.pathname;var m=p.match(/^\\/d\\/[^/]+\\/dev(\\/.*)?$/);if(m){var rest=m[1]||'/';history.replaceState(null,'',rest+location.search+location.hash);}}catch(e){}})();</script>`;
+
 function rewritePreviewBody(body: string, contentType: string, deviceId: string): string {
   const prefix = `/d/${encodeURIComponent(deviceId)}/dev`;
   if (/text\/html/i.test(contentType)) {
-    return body.replace(
+    let out = body.replace(
       /\b(src|href|action)=([\"'])\/(?!\/)([^\"']*)\2/gi,
       (_match, attr, quote, path) => `${attr}=${quote}${prefix}/${path}${quote}`,
     );
+    // Inject the path-rebase script right after <head ...> so it
+    // executes before any framework bootstrap that reads
+    // window.location.pathname. Falls back to prepending if there's
+    // no <head> tag in the response.
+    if (/<head[^>]*>/i.test(out)) {
+      out = out.replace(/<head([^>]*)>/i, (_m, attrs) => `<head${attrs}>${PATH_REBASE_SCRIPT}`);
+    } else {
+      out = PATH_REBASE_SCRIPT + out;
+    }
+    return out;
   }
   if (/text\/css/i.test(contentType)) {
     return body.replace(/url\((['"]?)\/(?!\/)([^)'"]*)\1\)/gi, (_match, quote, path) => {
