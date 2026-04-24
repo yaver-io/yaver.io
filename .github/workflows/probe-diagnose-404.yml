@@ -1,0 +1,84 @@
+# Single-purpose probe: why does /diagnose return 404 on the box
+# when /workspace/apps (registered the same way, a couple lines
+# earlier in httpserver.go) returns 200?
+#
+# Dumps:
+#   - every yaver serve process + exe path + --version
+#   - exact HTTP response for /diagnose (headers + body), /workspace,
+#     /workspace/apps, /info — same auth token each time
+#   - stdout from `strings $(which yaver) | grep /diagnose` to prove
+#     or disprove the binary has the route registered
+#
+# One-off: will be deleted once /diagnose is fixed.
+
+name: Probe Diagnose 404
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Probe
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          echo "== yaver processes =="
+          pgrep -af "yaver serve" || true
+          for pid in $(pgrep -f "yaver serve"); do
+            exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo ?)
+            ver=$("$exe" --version 2>/dev/null || echo ?)
+            start=$(awk '{print $22}' /proc/$pid/stat 2>/dev/null || echo ?)
+            echo "  pid=$pid exe=$exe version=$ver stat_starttime=$start"
+          done
+
+          echo "== port 18080 listener =="
+          ss -ltnp 'sport = :18080' || true
+
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" /home/yaver/.yaver/config.json)
+          AGENT="http://127.0.0.1:18080"
+
+          probe() {
+            local method="$1"; shift
+            local path="$1"; shift
+            echo ""
+            echo "=== $method $path ==="
+            if [ "$method" = POST ]; then
+              curl -sS -i -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{}' "$AGENT$path" | head -20
+            else
+              curl -sS -i -H "Authorization: Bearer $TOKEN" "$AGENT$path" | head -20
+            fi
+          }
+
+          probe GET /health
+          probe GET /info
+          probe GET /workspace
+          probe GET /workspace/apps
+          probe POST /diagnose
+          probe GET /diagnose/stream
+
+          echo ""
+          echo "== does /usr/local/bin/yaver contain the diagnose route string? =="
+          strings /usr/local/bin/yaver 2>/dev/null | grep -E '"/diagnose|handleDiagnose' | head -10 || echo "(no matches — route missing from binary?)"
+
+          echo ""
+          echo "== does it contain /workspace (known-good) for comparison? =="
+          strings /usr/local/bin/yaver 2>/dev/null | grep -E '"/workspace/apps|"/workspace"' | head -10 || true
+          REMOTE
