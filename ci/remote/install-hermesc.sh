@@ -41,7 +41,8 @@ log "installing build dependencies (idempotent)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
-  git cmake ninja-build clang python3 build-essential ca-certificates
+  git cmake ninja-build clang python3 build-essential ca-certificates \
+  libicu-dev zlib1g-dev
 
 log "preparing build tree at $BUILD_ROOT"
 mkdir -p "$BUILD_ROOT"
