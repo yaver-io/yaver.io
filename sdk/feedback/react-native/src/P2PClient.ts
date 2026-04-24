@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { FeedbackBundle, TestSession, VoiceCapability } from './types';
+import { FeedbackBundle, RunnerBrowserAuthSession, TestSession, VoiceCapability } from './types';
 
 export interface FeedbackEvent {
   type: string;
@@ -117,10 +117,18 @@ function friendlyReloadError(status: number, body: string): string {
 export class P2PClient {
   private baseUrl: string;
   private authToken: string;
+  /**
+   * Shared relay password. Required when baseUrl points through the
+   * Yaver managed relay (e.g. https://public.yaver.io/d/<deviceId>) —
+   * the relay rejects unauthenticated requests with 401. Attached as
+   * X-Relay-Password on every agent request.
+   */
+  private relayPassword: string;
 
-  constructor(baseUrl: string, authToken: string) {
+  constructor(baseUrl: string, authToken: string, relayPassword: string = '') {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.authToken = authToken;
+    this.relayPassword = relayPassword;
   }
 
   /** Update the base URL (e.g. after re-discovery). */
@@ -131,6 +139,56 @@ export class P2PClient {
   /** Update the auth token. */
   setAuthToken(token: string): void {
     this.authToken = token;
+  }
+
+  /** Update the relay password (used for managed-relay baseUrls). */
+  setRelayPassword(password: string): void {
+    this.relayPassword = password;
+  }
+
+  /** Merge in Authorization + (optional) X-Relay-Password on top of a header block. */
+  private authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+    const h: Record<string, string> = { ...extra };
+    if (this.authToken) h.Authorization = `Bearer ${this.authToken}`;
+    if (this.relayPassword) h['X-Relay-Password'] = this.relayPassword;
+    return h;
+  }
+
+  /**
+   * Start a remote browser-style sign-in for a runner (codex --device-auth
+   * / claude auth login --console). Returns a session id; callers poll
+   * getRunnerBrowserAuthStatus to surface the verification URL + one-time
+   * code. No API keys involved — the CLI writes its own auth.json once
+   * the user completes the flow in any browser.
+   */
+  async startRunnerBrowserAuth(runner: string): Promise<RunnerBrowserAuthSession> {
+    const resp = await fetch(`${this.baseUrl}/runner-auth/browser/start`, {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ runner }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`startRunnerBrowserAuth(${runner}) HTTP ${resp.status}: ${text}`);
+    }
+    const data = await resp.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async getRunnerBrowserAuthStatus(sessionId: string): Promise<RunnerBrowserAuthSession> {
+    const url = `${this.baseUrl}/runner-auth/browser/status?id=${encodeURIComponent(sessionId)}`;
+    const resp = await fetch(url, { headers: this.authHeaders() });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`getRunnerBrowserAuthStatus HTTP ${resp.status}: ${text}`);
+    }
+    const data = await resp.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
+    const url = `${this.baseUrl}/runner-auth/browser/cancel?id=${encodeURIComponent(sessionId)}`;
+    try { await fetch(url, { method: 'POST', headers: this.authHeaders() }); } catch { /* best-effort */ }
   }
 
   /** Health check — returns true if the agent is reachable. */
@@ -682,9 +740,7 @@ export class P2PClient {
   private async request(method: string, path: string): Promise<Response> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-      },
+      headers: this.authHeaders(),
     });
 
     if (!response.ok) {

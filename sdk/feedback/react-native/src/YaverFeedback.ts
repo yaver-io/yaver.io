@@ -422,6 +422,37 @@ export class YaverFeedback {
   }
 
   /**
+   * Trigger remote device-auth for a CLI runner on the selected agent
+   * (codex login --device-auth / claude auth login --console). Returns
+   * the session so the host UI can render the verification URL + code.
+   *
+   * RN UI layer owns the modal (see FeedbackModal's runner sign-in
+   * buttons). This method just proxies into P2PClient — no browser
+   * launch, no API keys, works through the relay with an SDK token
+   * that carries the runner-auth scope.
+   */
+  static async startRunnerBrowserAuth(
+    runner: string,
+  ): Promise<import('./types').RunnerBrowserAuthSession> {
+    if (!p2pClient) {
+      throw new Error('Not connected to any agent. Select a machine first.');
+    }
+    return p2pClient.startRunnerBrowserAuth(runner);
+  }
+
+  static async getRunnerBrowserAuthStatus(
+    sessionId: string,
+  ): Promise<import('./types').RunnerBrowserAuthSession> {
+    if (!p2pClient) throw new Error('Not connected to any agent.');
+    return p2pClient.getRunnerBrowserAuthStatus(sessionId);
+  }
+
+  static async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
+    if (!p2pClient) return;
+    await p2pClient.cancelRunnerBrowserAuth(sessionId);
+  }
+
+  /**
    * Sign out: clear cached token + device, tear down the P2P client. The
    * SDK stays enabled; the next feedback trigger will re-prompt for login.
    */

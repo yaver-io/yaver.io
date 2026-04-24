@@ -1,3 +1,25 @@
+/**
+ * Remote browser-style sign-in session for a coding-agent CLI on the
+ * connected yaver host. Mirrors runnerBrowserAuthSession on the agent
+ * Go side. Progression: starting → awaiting_browser (openUrl + code
+ * filled) → completed | failed | cancelled.
+ */
+export interface RunnerBrowserAuthSession {
+  id: string;
+  runner: string;
+  method: string;
+  status: 'starting' | 'awaiting_browser' | 'completed' | 'failed' | 'cancelled';
+  openUrl?: string;
+  code?: string;
+  detail?: string;
+  authConfigured?: boolean;
+  authSource?: string;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
 export interface FeedbackConfig {
   /** URL of the Yaver agent (e.g. "http://192.168.1.10:18080"). If omitted, auto-discovery is used. */
   agentUrl?: string;

@@ -1089,44 +1089,62 @@ export class YaverFeedback {
       const metaEl = overlay.querySelector<HTMLElement>('#yaver-fb-machine-pill-meta');
       if (!nameEl || !metaEl) return;
       const cfg = YaverFeedback.config;
-      if (!cfg?.preferredDeviceId) {
+      if (!cfg?.preferredDeviceId && !cfg?.agentUrl) {
         nameEl.textContent = 'No machine selected';
         metaEl.textContent = 'Pick one to continue.';
         return;
       }
+      // Start with an optimistic label from whatever we can learn via
+      // Convex /devices/list (only works when the user has a full session
+      // token; SDK tokens return 401 and we fall through).
+      let humanName: string | null = null;
+      let platform: string | null = null;
+      let rowIsOnline: boolean | null = null;
+      let rowNeedsAuth = false;
+      let rowRunnerDown = false;
       try {
         const devices = await YaverFeedback.listAvailableDevices();
         const selected = devices.find((d) => d.deviceId === cfg.preferredDeviceId);
-        if (!selected) {
-          // No UUID exposure — just say we're connecting.
-          nameEl.textContent = 'Connecting…';
-          metaEl.textContent = '';
-          return;
+        if (selected) {
+          const nm = selected.name;
+          humanName = nm && !/^[0-9a-f-]{36}$/i.test(nm) ? nm : null;
+          platform = selected.platform ?? null;
+          rowIsOnline = Boolean((selected as any).isOnline);
+          rowNeedsAuth = Boolean((selected as any).needsAuth);
+          rowRunnerDown = Boolean((selected as any).runnerDown);
         }
-        // Prefer the human-readable name; if the agent never set one,
-        // fall back to its hostname (SDK doesn't ship UUIDs to users).
-        const human = (selected.name && !/^[0-9a-f-]{36}$/i.test(selected.name))
-          ? selected.name
-          : 'Unnamed machine';
-        nameEl.textContent = human;
-        // Status pill: derived from isOnline + needsAuth + runnerDown.
-        // Matches the dashboard's chip semantics.
-        const anyAny = selected as any;
-        const isOnline = Boolean(anyAny.isOnline);
-        const needsAuth = Boolean(anyAny.needsAuth);
-        const runnerDown = Boolean(anyAny.runnerDown);
-        const status = !isOnline
-          ? 'Offline'
-          : needsAuth
-            ? 'Needs re-auth'
-            : runnerDown
-              ? 'Runner down — click to fix'
-              : 'Ready';
-        metaEl.textContent = `${platformDisplay(selected.platform)} · ${status}`;
       } catch {
-        nameEl.textContent = 'Connecting…';
-        metaEl.textContent = '';
+        // ignore — fall through to the agent-direct probe below
       }
+      // /health is public on the agent (no auth needed), so we can always
+      // populate a readable hostname + platform even when the user is
+      // only holding an SDK token and /devices/list is not authorized.
+      if ((!humanName || !platform) && YaverFeedback.client) {
+        try {
+          const info = await YaverFeedback.client.info();
+          if (info) {
+            if (!humanName && info.hostname) humanName = info.hostname;
+            if (!platform && info.platform) platform = info.platform;
+          }
+        } catch {
+          // best effort
+        }
+      }
+      nameEl.textContent = humanName ?? 'Unnamed machine';
+      // Agent status chip.
+      //   - Running & authed  → "Ready"
+      //   - needsAuth         → "Needs re-auth"
+      //   - runnerDown        → "Runner issue — click to fix"
+      //   - /health failed    → "Offline"
+      //   - unknown (SDK-token view, no Convex data) → "Agent reachable" (we
+      //     just called /info successfully, so we know it's alive).
+      let status: string;
+      if (rowIsOnline === false) status = 'Offline';
+      else if (rowNeedsAuth) status = 'Needs re-auth';
+      else if (rowRunnerDown) status = 'Runner issue — click to fix';
+      else if (rowIsOnline === true) status = 'Ready';
+      else status = humanName ? 'Agent reachable' : 'Connecting…';
+      metaEl.textContent = platform ? `${platformDisplay(platform)} · ${status}` : status;
     };
 
     const setView = (next: 'machine' | 'actions') => {
