@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
-import type { Device } from "@/lib/use-devices";
+import React, { useCallback, useEffect, useState } from "react";
+import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
 
 function DeviceIcon({ platform }: { platform: string }) {
@@ -132,6 +132,55 @@ interface DevicesViewProps {
    * the sidebar.
    */
   onOpen?: (device: Device) => void;
+  /** Count of devices hidden via the Hide button — surfaced for the "show all" link. */
+  hiddenCount?: number;
+}
+
+interface DeviceRuntimeInfo {
+  hostname?: string;
+  version?: string;
+  platform?: string;
+  workDir?: string;
+  autoStart?: string;
+  runtime?: Record<string, unknown>;
+  system?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | null | undefined) {
+  const [info, setInfo] = useState<DeviceRuntimeInfo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !token || !device.online) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    // Direct LAN first (best when browser is on the same Wi-Fi) then fall
+    // back to Convex-stored heartbeat fields we already have. We stay on
+    // the agent /info endpoint since that's what the mobile app uses for
+    // the same "everything about this device" view.
+    (async () => {
+      try {
+        const base = `http://${device.host}:${device.port}`;
+        const res = await fetch(`${base}/info`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(3_000),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!cancelled) setInfo(data);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : "fetch failed");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, token, device.id, device.host, device.port, device.online]);
+
+  return { info, error, loading };
 }
 
 /**
@@ -187,8 +236,9 @@ function usePrimaryDeviceId(token: string | null | undefined): {
   return { primaryDeviceId, setPrimaryDevice };
 }
 
-export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen }: DevicesViewProps) {
+export default function DevicesView({ devices, onRefresh, signedInEmail, signedInProvider, token, onOpen, hiddenCount = 0 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   return (
     <div className="mb-6">
       <div className="mb-3 flex items-center justify-between">
@@ -226,6 +276,17 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
           <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 px-4 py-3 text-xs text-amber-100">
             If a machine finishes browser OAuth but still shows stale auth locally, run <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver auth factory-reset</code> on that machine. MCP clients can call <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-100">yaver_auth_factory_reset</code>.
           </div>
+          {hiddenCount > 0 ? (
+            <div className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/40 px-3 py-2 text-xs text-surface-400">
+              <span>{hiddenCount} device{hiddenCount === 1 ? "" : "s"} hidden in this browser.</span>
+              <button
+                onClick={() => unhideAll()}
+                className="text-indigo-400 hover:text-indigo-300"
+              >
+                Show all
+              </button>
+            </div>
+          ) : null}
           {devices.map((device) => {
             const shareSummary = deviceShareSummary(device);
             return (
@@ -304,20 +365,28 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                   </div>
                 ) : null}
                 {shareSummary && shareSummary.guestChips.length > 0 ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
-                      Shared With
-                    </span>
-                    {shareSummary.guestChips.map((guest) => (
-                      <span key={`${device.id}:guest:${guest}`} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-sky-200">
-                        {guest}
-                      </span>
-                    ))}
-                    {shareSummary.guestOverflow > 0 ? (
-                      <span className="rounded border border-surface-700 bg-surface-900 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-surface-300">
-                        +{shareSummary.guestOverflow} more
-                      </span>
-                    ) : null}
+                  <div className="mt-3">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                      Shared with
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {shareSummary.guestChips.map((guest) => (
+                        <span
+                          key={`${device.id}:guest:${guest}`}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-100"
+                        >
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500/30 text-[10px] font-semibold uppercase text-sky-50">
+                            {guest.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "·"}
+                          </span>
+                          <span className="truncate max-w-[12rem]">{guest}</span>
+                        </span>
+                      ))}
+                      {shareSummary.guestOverflow > 0 ? (
+                        <span className="inline-flex items-center rounded-full border border-surface-700 bg-surface-900 px-2.5 py-0.5 text-xs text-surface-400">
+                          +{shareSummary.guestOverflow} more
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                 ) : null}
                 {shareSummary && shareSummary.runnerChips.length > 0 ? (
@@ -343,6 +412,12 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                       Open Workspace
                     </button>
                   ) : null}
+                  <button
+                    onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
+                    className="text-xs text-surface-400 hover:text-surface-200"
+                  >
+                    {expandedId === device.id ? "Hide details" : "Details"}
+                  </button>
                   {!device.isGuest && token ? (
                     <button
                       onClick={async () => {
@@ -357,13 +432,157 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                       {primaryDeviceId === device.id ? "Unset primary" : "Set as primary"}
                     </button>
                   ) : null}
+                  <button
+                    onClick={() => hideDevice(device.id)}
+                    className="ml-auto text-xs text-surface-500 hover:text-red-300"
+                    title="Hide this device from the list (local to this browser — unaffected on other machines)"
+                  >
+                    Hide
+                  </button>
                 </div>
+                {expandedId === device.id ? (
+                  <DeviceDetailsPanel device={device} token={token ?? null} />
+                ) : null}
               </div>
             </div>
             );
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
+  const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
+  const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
+  const allSharedRunners = device.sharedRunners || [];
+  const allGuests = (device.sharedGuests || []).map((g) => g.name || g.email || "").filter(Boolean);
+  const sysUnknown = <span className="text-surface-600">—</span>;
+  // Runtime/system blobs come back from the agent's /info when LAN-reachable.
+  // Accept loose keys since this shape differs between agent versions (cpu,
+  // cpuPct, memory, memUsedPct, uptime, uptimeSec, arch, kernel, ...).
+  const runtime = (info?.runtime || {}) as Record<string, any>;
+  const system = (info?.system || {}) as Record<string, any>;
+  const cpu = system.cpu ?? runtime.cpu ?? info?.cpu;
+  const cpuPct = system.cpuPct ?? runtime.cpuPct ?? info?.cpuPct;
+  const memTotal = system.memTotal ?? runtime.memTotal ?? info?.memTotal;
+  const memUsed = system.memUsed ?? runtime.memUsed ?? info?.memUsed;
+  const arch = system.arch ?? runtime.arch ?? info?.arch;
+  const kernel = system.kernel ?? runtime.kernel ?? info?.kernel;
+  const uptimeSec = system.uptimeSec ?? runtime.uptimeSec ?? info?.uptimeSec;
+  const formatBytes = (n?: number) => {
+    if (!n || n <= 0) return null;
+    const gb = n / (1024 * 1024 * 1024);
+    if (gb >= 1) return `${gb.toFixed(1)} GB`;
+    const mb = n / (1024 * 1024);
+    return `${mb.toFixed(0)} MB`;
+  };
+  const formatUptime = (s?: number) => {
+    if (!s || s <= 0) return null;
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
+  const row = (label: string, value: React.ReactNode) => (
+    <div className="flex items-start justify-between gap-3 py-1 text-xs">
+      <span className="text-surface-500">{label}</span>
+      <span className="text-right text-surface-200">{value || sysUnknown}</span>
+    </div>
+  );
+
+  return (
+    <div className="mt-3 rounded-lg border border-surface-800 bg-surface-900/40 p-3">
+      <div className="grid gap-6 md:grid-cols-2">
+        <div>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Identity</div>
+          {row("Device ID", <span className="font-mono">{device.id}</span>)}
+          {row("Hardware ID", device.hardwareId ? <span className="font-mono">{String(device.hardwareId).slice(0, 16)}…</span> : null)}
+          {row("Host", `${device.host}:${device.port}`)}
+          {row("LAN IPs", device.localIps?.length ? device.localIps.join(", ") : null)}
+          {row("Public endpoints", device.publicEndpoints?.length ? device.publicEndpoints.join(", ") : null)}
+          {row("Tunnel URL", device.tunnelUrl ? <span className="break-all font-mono text-[11px]">{device.tunnelUrl}</span> : null)}
+          {row("Primary key", device.publicKey ? <span className="font-mono">{String(device.publicKey).slice(0, 16)}…</span> : null)}
+          {row("Session binding", device.sessionBinding)}
+          {row("Access scope", device.accessScope)}
+          {row("Priority mode", device.priorityMode)}
+        </div>
+        <div>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
+          {row("Status", device.online ? "Online" : "Offline")}
+          {row("Last heartbeat", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
+          {row("Version", info?.version)}
+          {row("Platform", info?.platform || device.platform)}
+          {row("Architecture", arch)}
+          {row("Kernel", kernel)}
+          {row("CPU cores", cpu)}
+          {row("CPU usage", cpuPct != null ? `${Number(cpuPct).toFixed(0)}%` : null)}
+          {row("Memory used", memUsed ? `${formatBytes(memUsed)} / ${formatBytes(memTotal) ?? "—"}` : formatBytes(memTotal))}
+          {row("Uptime", formatUptime(uptimeSec))}
+          {row("Work dir", info?.workDir)}
+          {row("Auto-start", info?.autoStart)}
+        </div>
+      </div>
+      {(allRunners.length || allSharedRunners.length) ? (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+            Agents / Runners
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {(allRunners.length ? allRunners : allSharedRunners).map((r) => (
+              <span key={`rr:${device.id}:${r}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">
+                {formatRunnerChipLabel(r)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {allGuests.length ? (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+            Shared with
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {allGuests.map((g) => (
+              <span key={`gg:${device.id}:${g}`} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-sky-200">
+                {g}
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {device.sharedProjects?.length || device.sharesAllProjects ? (
+        <div className="mt-3">
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+            Shared projects
+          </div>
+          {device.sharesAllProjects ? (
+            <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">
+              All projects
+            </span>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {(device.sharedProjects || []).map((p) => (
+                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
+                  {p}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+      {loading ? (
+        <p className="mt-3 text-[11px] text-surface-500">Loading runtime info from agent…</p>
+      ) : null}
+      {error ? (
+        <p className="mt-3 text-[11px] text-surface-600">
+          Runtime info unavailable over LAN ({error}). Reading Convex heartbeat fields only.
+        </p>
+      ) : null}
     </div>
   );
 }

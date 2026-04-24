@@ -208,8 +208,69 @@ function collapseDevices(devices: Device[]): Device[] {
   return [...byEndpoint.values()];
 }
 
-export function useDevices(token: string | null): DevicesState {
+const HIDDEN_KEY = "yaver_hidden_device_ids";
+
+function readHiddenIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr.filter((x: any) => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeHiddenIds(ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(HIDDEN_KEY, JSON.stringify([...ids]));
+  } catch {
+    // quota / private-mode — just drop
+  }
+}
+
+export function hideDevice(id: string): void {
+  const ids = readHiddenIds();
+  ids.add(id);
+  writeHiddenIds(ids);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("yaver-hidden-devices-changed"));
+  }
+}
+
+export function unhideDevice(id: string): void {
+  const ids = readHiddenIds();
+  ids.delete(id);
+  writeHiddenIds(ids);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("yaver-hidden-devices-changed"));
+  }
+}
+
+export function unhideAll(): void {
+  writeHiddenIds(new Set());
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("yaver-hidden-devices-changed"));
+  }
+}
+
+export function useDevices(token: string | null): DevicesState & { hiddenIds: Set<string> } {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => readHiddenIds());
+
+  // Re-read hidden set whenever hide/unhide fires (same tab) or the user hit
+  // storage in another tab.
+  useEffect(() => {
+    const onChange = () => setHiddenIds(readHiddenIds());
+    window.addEventListener("yaver-hidden-devices-changed", onChange);
+    window.addEventListener("storage", onChange);
+    return () => {
+      window.removeEventListener("yaver-hidden-devices-changed", onChange);
+      window.removeEventListener("storage", onChange);
+    };
+  }, []);
 
   const refreshDevices = useCallback(async () => {
     if (!token) return;
@@ -289,5 +350,10 @@ export function useDevices(token: string | null): DevicesState {
     return () => clearInterval(iv);
   }, [refreshDevices]);
 
-  return { devices, refreshDevices };
+  // Filter out hidden devices on the consumer side. We keep them in the raw
+  // fetch so the "X hidden — show all" toggle can restore them instantly
+  // without waiting for the next poll.
+  const visible = devices.filter((d) => !hiddenIds.has(d.id));
+
+  return { devices: visible, refreshDevices, hiddenIds };
 }

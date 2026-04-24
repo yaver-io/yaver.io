@@ -368,7 +368,7 @@ function DeviceConnectCard({
 export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, logout } = useAuth();
-  const { devices, refreshDevices } = useDevices(token);
+  const { devices, refreshDevices, hiddenIds } = useDevices(token);
   const { theme, toggle: toggleTheme } = useTheme();
   const router = useRouter();
 
@@ -1256,6 +1256,7 @@ export default function DashboardPage() {
                 signedInProvider={undefined}
                 token={token}
                 onOpen={connectToDevice}
+                hiddenCount={hiddenIds.size}
               />
             </div>
           ) : activeTab === "git" ? (
