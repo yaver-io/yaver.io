@@ -588,6 +588,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves proxied dev content for browser/webview preview surfaces
+	// Monorepo workspace manifest (declarative yaver.workspace.yaml)
+	mux.HandleFunc("/workspace", s.auth(s.handleWorkspace))
+	mux.HandleFunc("/workspace/apps", s.auth(s.handleWorkspaceApps))
 	mux.HandleFunc("/unity/test", s.authSDKOrGuest(s.handleUnityTest))
 	mux.HandleFunc("/unity/build", s.authSDKOrGuest(s.handleUnityBuild))
 	mux.HandleFunc("/unity/relaunch", s.authSDKOrGuest(s.handleUnityRelaunch))
@@ -10080,6 +10083,59 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		args.Op = "scaffold"
 		p, _ := json.Marshal(args)
 		r := opsWorkspaceHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "workspace_web_apps":
+		var args struct {
+			Root string `json:"root,omitempty"`
+			Kind string `json:"kind,omitempty"`
+		}
+		json.Unmarshal(call.Arguments, &args)
+		root := strings.TrimSpace(args.Root)
+		if root == "" && s.taskMgr != nil {
+			root = s.taskMgr.workDir
+		}
+		m, _, err := loadWorkspaceManifestForHTTP(root)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		views := buildAppViews(root, m)
+		kindFilter := strings.TrimSpace(args.Kind)
+		if kindFilter == "" {
+			kindFilter = "web,hybrid"
+		}
+		wanted := map[DevServerKind]bool{}
+		for _, k := range strings.Split(kindFilter, ",") {
+			wanted[DevServerKind(strings.TrimSpace(k))] = true
+		}
+		out := make([]*WorkspaceAppView, 0, len(views))
+		for _, v := range views {
+			if wanted[v.Kind] {
+				out = append(out, v)
+			}
+		}
+		body, _ := json.MarshalIndent(map[string]interface{}{"ok": true, "root": root, "apps": out}, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "web_preview_start":
+		var args opsWebPreviewPayload
+		json.Unmarshal(call.Arguments, &args)
+		args.Action = "start"
+		p, _ := json.Marshal(args)
+		r := opsWebPreviewHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "web_preview_reload":
+		p, _ := json.Marshal(opsWebPreviewPayload{Action: "reload"})
+		r := opsWebPreviewHandler(OpsContext{Server: s, Caller: "owner"}, p)
+		body, _ := json.MarshalIndent(r, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "web_preview_stop":
+		p, _ := json.Marshal(opsWebPreviewPayload{Action: "stop"})
+		r := opsWebPreviewHandler(OpsContext{Server: s, Caller: "owner"}, p)
 		body, _ := json.MarshalIndent(r, "", "  ")
 		return mcpToolResult(string(body))
 

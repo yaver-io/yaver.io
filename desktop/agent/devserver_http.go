@@ -722,7 +722,10 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		Framework         string `json:"framework"` // "expo", "flutter", "vite", "nextjs", "" (auto-detect)
 		WorkDir           string `json:"workDir"`
 		ProjectName       string `json:"projectName,omitempty"`
-		Platform          string `json:"platform"` // "ios", "android", "web"
+		App               string `json:"app,omitempty"`     // workspace app name (monorepo path)
+		Surface           string `json:"surface,omitempty"` // "web-reload" or "hot-reload" — kind gate
+		Root              string `json:"root,omitempty"`    // workspace root override (for monorepo lookup)
+		Platform          string `json:"platform"`          // "ios", "android", "web"
 		Port              int    `json:"port"`
 		Rebuild           bool   `json:"rebuild"` // force rebuild (clear build marker)
 		TargetDeviceID    string `json:"targetDeviceId"`
@@ -732,6 +735,61 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
+	}
+
+	// Monorepo-friendly: resolve `app` to workDir + framework via the
+	// workspace manifest. Explicit workDir always wins. Surface gating
+	// prevents the Web Reload tab from accidentally starting Metro.
+	if strings.TrimSpace(req.App) != "" {
+		root := strings.TrimSpace(req.Root)
+		if root == "" {
+			root = resolveWorkspaceRoot(r, s)
+		}
+		m, _, err := loadWorkspaceManifestForHTTP(root)
+		if err != nil {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("workspace manifest: %s", err.Error()),
+			})
+			return
+		}
+		var matched *WorkspaceApp
+		for i := range m.Apps {
+			if m.Apps[i].Name == req.App {
+				matched = &m.Apps[i]
+				break
+			}
+		}
+		if matched == nil {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("app %q not in workspace manifest", req.App),
+			})
+			return
+		}
+		kind := StackToDevServerKind(matched.Stack)
+		if kind == "" {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("app %q (stack=%q) has no dev server", matched.Name, matched.Stack),
+			})
+			return
+		}
+		if req.Surface == "web-reload" && kind == DevServerKindMobile {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("app %q is mobile-only; not available in Web Reload", matched.Name),
+			})
+			return
+		}
+		if req.Surface == "hot-reload" && kind == DevServerKindWeb {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("app %q is web-only; not available in Hot Reload", matched.Name),
+			})
+			return
+		}
+		if req.WorkDir == "" {
+			req.WorkDir = appAbsPath(root, m, matched)
+		}
+		if req.Framework == "" {
+			req.Framework = StackToFramework(matched.Stack)
+		}
 	}
 
 	resolvedWorkDir, err := s.guestResolveDevWorkDir(r, req.ProjectName, req.WorkDir)

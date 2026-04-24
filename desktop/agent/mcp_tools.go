@@ -2411,6 +2411,45 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{"root": map[string]interface{}{"type": "string"}},
 			},
 		},
+		{
+			"name":        "workspace_web_apps",
+			"description": "Return workspace apps whose stack maps to a web surface (nextjs, vite, flutter, react-native-expo). Used by the Web Reload dashboard tab to populate its app picker.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"root": map[string]interface{}{"type": "string", "description": "Repo root. Defaults to agent CWD."},
+					"kind": map[string]interface{}{"type": "string", "description": "Comma-separated kinds to keep (web,hybrid,mobile). Defaults to web,hybrid."},
+				},
+			},
+		},
+		{
+			"name":        "web_preview_start",
+			"description": "Start a web dev server (Next.js, Vite, Flutter Web, Expo Web) for a named workspace app. Returns the iframe URL to embed.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"app":     map[string]interface{}{"type": "string", "description": "workspace app name"},
+					"workDir": map[string]interface{}{"type": "string", "description": "absolute project path (when app is empty)"},
+					"root":    map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "web_preview_reload",
+			"description": "Trigger a hot reload on the active web dev server.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "web_preview_stop",
+			"description": "Stop the active web dev server.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
 	}
 	tools = append(tools, monorepoWorkspaceTools...)
 

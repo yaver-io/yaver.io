@@ -29,6 +29,7 @@ func (s *guestShareStubDevServer) SupportsHotReload() bool                      
 func (s *guestShareStubDevServer) Reload() error                                  { return nil }
 func (s *guestShareStubDevServer) PreStart(name string, port int, workDir string) {}
 func (s *guestShareStubDevServer) Status() DevServerStatus                        { return s.status }
+func (s *guestShareStubDevServer) Kind() DevServerKind                            { return DevServerKindMobile }
 
 type guestShareFixture struct {
 	baseURL    string

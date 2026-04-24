@@ -48,6 +48,9 @@ type DevServer interface {
 	PreStart(name string, port int, workDir string)
 	// Status returns the current state.
 	Status() DevServerStatus
+	// Kind classifies the dev server as web, mobile, or hybrid.
+	// See devserver_kind.go.
+	Kind() DevServerKind
 }
 
 // DevServerOpts configures a dev server launch.
@@ -62,8 +65,9 @@ type DevServerOpts struct {
 
 // DevServerStatus is the JSON-serializable status of a dev server.
 type DevServerStatus struct {
-	Framework         string `json:"framework"`
-	Running           bool   `json:"running"`
+	Framework         string        `json:"framework"`
+	Kind              DevServerKind `json:"kind,omitempty"`
+	Running           bool          `json:"running"`
 	Building          bool   `json:"building,omitempty"` // true during native compilation (expo run:ios, etc.)
 	Port              int    `json:"port"`
 	BundleURL         string `json:"bundleUrl"`
@@ -413,6 +417,7 @@ func (m *DevServerManager) Status() *DevServerStatus {
 	}
 
 	s := m.active.server.Status()
+	s.Kind = m.active.server.Kind()
 	s.TargetDeviceID = m.active.target.DeviceID
 	s.TargetDeviceName = m.active.target.DeviceName
 	s.TargetDeviceClass = m.active.target.DeviceClass
