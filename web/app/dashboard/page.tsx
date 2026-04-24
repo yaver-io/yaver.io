@@ -5,7 +5,7 @@ import { useDevices, type Device } from "@/lib/use-devices";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import ProjectsView from "@/components/dashboard/ProjectsView";
@@ -536,6 +536,34 @@ export default function DashboardPage() {
   // user has more than one online. Also mirrored onto mobile and CLI via
   // the /settings endpoint so every surface picks the same default.
   const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
+
+  const repairRelay = useCallback(async () => {
+    if (!token) throw new Error("Not signed in");
+    const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body?.error || `repair HTTP ${res.status}`);
+    }
+    const body = await res.json();
+    try {
+      const r = await fetch(`${CONVEX_URL}/config`);
+      let relays: any[] = [];
+      if (r.ok) relays = (await r.json()).relayServers || [];
+      const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
+      if (sr.ok) {
+        const sd = await sr.json();
+        const pw = sd.settings?.relayPassword || sd.relayPassword;
+        if (pw) relays = relays.map((x: any) => ({ ...x, password: pw }));
+      }
+      if (relays.length > 0) agentClient.setRelayServers(relays);
+    } catch {
+      // non-fatal — next connect will re-read
+    }
+    return { repaired: !!body.repaired, reason: body.reason || "" };
+  }, [token]);
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const outputRef = useRef<HTMLDivElement>(null);
@@ -1609,7 +1637,7 @@ export default function DashboardPage() {
           ) : activeTab === "home" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><OverviewView user={user ?? undefined} /></div>
           ) : activeTab === "projects" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><ProjectsView onTaskCreated={onTaskCreated} mobileWorkers={mobileWorkers} selectedPreviewTarget={selectedPreviewTarget} onSelectPreviewTarget={handleSelectPreviewTarget} onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined} onRepairRelay={token ? repairRelay : undefined} /></div>
           ) : activeTab === "vibe" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <VibeCodingView
@@ -1633,32 +1661,7 @@ export default function DashboardPage() {
               mobileWorkers={mobileWorkers}
               preferredProjectPath={preferredSurfaceProjectPath}
               onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
-              onRepairRelay={token ? async () => {
-                const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                });
-                if (!res.ok) {
-                  const body = await res.json().catch(() => ({}));
-                  throw new Error(body?.error || `repair HTTP ${res.status}`);
-                }
-                const body = await res.json();
-                // Re-fetch relay config so agentClient picks up the
-                // freshly-synced password before the next probe.
-                try {
-                  const r = await fetch(`${CONVEX_URL}/config`);
-                  let relays: any[] = [];
-                  if (r.ok) relays = (await r.json()).relayServers || [];
-                  const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
-                  if (sr.ok) {
-                    const sd = await sr.json();
-                    const pw = sd.settings?.relayPassword || sd.relayPassword;
-                    if (pw) relays = relays.map((x: any) => ({ ...x, password: pw }));
-                  }
-                  if (relays.length > 0) agentClient.setRelayServers(relays);
-                } catch { /* non-fatal — next connect will re-read */ }
-                return { repaired: !!body.repaired, reason: body.reason || "" };
-              } : undefined}
+              onRepairRelay={token ? repairRelay : undefined}
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -1667,30 +1670,7 @@ export default function DashboardPage() {
                 connState={connState}
                 preferredProjectPath={preferredSurfaceProjectPath}
                 onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
-                onRepairRelay={token ? async () => {
-                  const res = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                  });
-                  if (!res.ok) {
-                    const body = await res.json().catch(() => ({}));
-                    throw new Error(body?.error || `repair HTTP ${res.status}`);
-                  }
-                  const body = await res.json();
-                  try {
-                    const r = await fetch(`${CONVEX_URL}/config`);
-                    let relays: any[] = [];
-                    if (r.ok) relays = (await r.json()).relayServers || [];
-                    const sr = await fetch(`${CONVEX_URL}/settings`, { headers: { Authorization: `Bearer ${token}` } });
-                    if (sr.ok) {
-                      const sd = await sr.json();
-                      const pw = sd.settings?.relayPassword || sd.relayPassword;
-                      if (pw) relays = relays.map((x: any) => ({ ...x, password: pw }));
-                    }
-                    if (relays.length > 0) agentClient.setRelayServers(relays);
-                  } catch { /* non-fatal — next connect will re-read */ }
-                  return { repaired: !!body.repaired, reason: body.reason || "" };
-                } : undefined}
+                onRepairRelay={token ? repairRelay : undefined}
               />
             </div>
           ) : activeTab === "health" ? (

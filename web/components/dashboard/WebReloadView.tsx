@@ -85,8 +85,13 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
         if (cancelled) return;
         setApps(list);
         setProjects(scanned.filter(isWebReloadProject));
-        if (list.length === 0)
-          setWorkspaceError("No yaver.workspace.yaml found on the connected machine.");
+        if (list.length === 0) {
+          setWorkspaceError(
+            scanned.filter(isWebReloadProject).length > 0
+              ? "No yaver.workspace.yaml found on the connected machine. Showing discovered projects instead."
+              : "No yaver.workspace.yaml found on the connected machine.",
+          );
+        }
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
@@ -132,7 +137,13 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
           ]);
           setApps(list);
           setProjects(scanned.filter(isWebReloadProject));
-          setWorkspaceError(list.length === 0 ? "No yaver.workspace.yaml found on the connected machine." : null);
+          setWorkspaceError(
+            list.length === 0
+              ? (scanned.filter(isWebReloadProject).length > 0
+                ? "No yaver.workspace.yaml found on the connected machine. Showing discovered projects instead."
+                : "No yaver.workspace.yaml found on the connected machine.")
+              : null,
+          );
         } catch { /* keep prior error state */ }
       } else {
         setRelayRepairState("failed");

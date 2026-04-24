@@ -2703,8 +2703,8 @@ export class AgentClient {
   async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; tags?: string[] }[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects`, { headers: this.authHeaders });
-    if (!res.ok) return [];
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to load projects: HTTP ${res.status}`);
     return data.projects ?? [];
   }
 
@@ -2866,12 +2866,10 @@ export class AgentClient {
     const query = kind
       ? `?kind=${encodeURIComponent(Array.isArray(kind) ? kind.join(",") : kind)}`
       : "";
-    try {
-      const res = await fetch(`${this.baseUrl}/workspace/apps${query}`, { headers: this.authHeaders });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data?.apps) ? data.apps : [];
-    } catch { return []; }
+    const res = await fetch(`${this.baseUrl}/workspace/apps${query}`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to load workspace apps: HTTP ${res.status}`);
+    return Array.isArray(data?.apps) ? data.apps : [];
   }
 
   async stopDevServer(): Promise<void> {
@@ -3492,6 +3490,16 @@ export class AgentClient {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ action, confirm: true }),
+    });
+    return res.json();
+  }
+
+  async machineRemove(phrase: string): Promise<any> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/machine/remove`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true, phrase }),
     });
     return res.json();
   }

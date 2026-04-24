@@ -75,8 +75,6 @@ export default function GitView({ onOpenSurface }: Props) {
   const [gitStatus, setGitStatus] = useState<GitStatusRow | null>(null);
   const [gitBranches, setGitBranches] = useState<GitBranchRow[]>([]);
   const [gitCommits, setGitCommits] = useState<GitCommitRow[]>([]);
-  const [gitDiff, setGitDiff] = useState("");
-  const [selectedDiffFile, setSelectedDiffFile] = useState("");
   const [projectActions, setProjectActions] = useState<ProjectAction[]>([]);
 
   const [providers, setProviders] = useState<GitProviderStatusRow[]>([]);
@@ -86,7 +84,6 @@ export default function GitView({ onOpenSurface }: Props) {
   const [providerToken, setProviderToken] = useState("");
   const [manualProvider, setManualProvider] = useState<"github" | "gitlab" | null>(null);
 
-  const [gitCommitMessage, setGitCommitMessage] = useState("");
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
 
@@ -94,15 +91,6 @@ export default function GitView({ onOpenSurface }: Props) {
     () => projects.find((project) => project.path === expandedProjectPath) || null,
     [projects, expandedProjectPath],
   );
-
-  const changedFiles = useMemo(() => {
-    const next = [
-      ...(gitStatus?.staged?.map((item) => ({ path: item.path, kind: "staged" as const })) || []),
-      ...(gitStatus?.modified?.map((item) => ({ path: item.path, kind: "modified" as const })) || []),
-      ...(gitStatus?.untracked?.map((item) => ({ path: item.path, kind: "untracked" as const })) || []),
-    ];
-    return next.filter((item, index) => next.findIndex((candidate) => candidate.path === item.path) === index);
-  }, [gitStatus]);
 
   const filteredProviderRepos = useMemo(() => {
     const needle = providerSearch.trim().toLowerCase();
@@ -125,9 +113,6 @@ export default function GitView({ onOpenSurface }: Props) {
         if (cancelled) return;
         setProjects(projectRows);
         setProviders(gitProviders);
-        if (!expandedProjectPath && projectRows.length > 0) {
-          setExpandedProjectPath(projectRows[0].path);
-        }
       } catch (error) {
         if (!cancelled) setBusy(error instanceof Error ? error.message : String(error));
       }
@@ -143,7 +128,6 @@ export default function GitView({ onOpenSurface }: Props) {
       setGitStatus(null);
       setGitBranches([]);
       setGitCommits([]);
-      setGitDiff("");
       setProjectActions([]);
       return;
     }
@@ -153,7 +137,7 @@ export default function GitView({ onOpenSurface }: Props) {
         const [status, branches, commits, actionsResult] = await Promise.all([
           agentClient.gitStatus(expandedProjectPath).catch(() => null),
           agentClient.gitBranches(expandedProjectPath).catch(() => []),
-          agentClient.gitLog(expandedProjectPath, 12).catch(() => []),
+          agentClient.gitLog(expandedProjectPath, 5).catch(() => []),
           agentClient.getProjectActions(expandedProjectPath).catch(() => ({ actions: [] })),
         ]);
         if (cancelled) return;
@@ -161,14 +145,6 @@ export default function GitView({ onOpenSurface }: Props) {
         setGitBranches(branches);
         setGitCommits(commits);
         setProjectActions(Array.isArray(actionsResult?.actions) ? actionsResult.actions : []);
-
-        const nextFiles = [
-          ...((status?.staged || []).map((item) => item.path)),
-          ...((status?.modified || []).map((item) => item.path)),
-          ...((status?.untracked || []).map((item) => item.path)),
-        ];
-        const firstFile = [...new Set(nextFiles)][0] || "";
-        setSelectedDiffFile((current) => (current && nextFiles.includes(current) ? current : firstFile));
       } catch (error) {
         if (!cancelled) setBusy(error instanceof Error ? error.message : String(error));
       }
@@ -178,26 +154,6 @@ export default function GitView({ onOpenSurface }: Props) {
       cancelled = true;
     };
   }, [expandedProjectPath, refreshNonce]);
-
-  useEffect(() => {
-    if (!expandedProjectPath) {
-      setGitDiff("");
-      return;
-    }
-    let cancelled = false;
-    const loadDiff = async () => {
-      try {
-        const result = await agentClient.gitDiff(expandedProjectPath, selectedDiffFile || undefined);
-        if (!cancelled) setGitDiff(result.diff || "");
-      } catch {
-        if (!cancelled) setGitDiff("");
-      }
-    };
-    void loadDiff();
-    return () => {
-      cancelled = true;
-    };
-  }, [expandedProjectPath, selectedDiffFile, refreshNonce]);
 
   async function autoDetectProviders() {
     setBusy("Detecting git providers from the remote machine…");
@@ -261,35 +217,10 @@ export default function GitView({ onOpenSurface }: Props) {
     setBusy(`Removed ${host}.`);
   }
 
-  async function runGitAction(action: "pull" | "push" | "stash" | "stash-pop" | "commit" | "revert-head") {
+  async function runGitAction(action: "revert-head") {
     if (!expandedProject) return;
     try {
-      if (action === "commit") {
-        if (!gitCommitMessage.trim()) {
-          setBusy("Enter a commit message first.");
-          return;
-        }
-        setBusy(`Committing ${expandedProject.name}…`);
-        const result = await agentClient.gitCommit(expandedProject.path, gitCommitMessage.trim());
-        setGitCommitMessage("");
-        setBusy(result.hash ? `Committed ${result.hash.trim()}.` : result.message || "Committed changes.");
-      } else if (action === "pull") {
-        setBusy(`Pulling ${expandedProject.name}…`);
-        const result = await agentClient.gitPull(expandedProject.path);
-        setBusy(result.message || "Pulled latest changes.");
-      } else if (action === "push") {
-        setBusy(`Pushing ${expandedProject.name}…`);
-        const result = await agentClient.gitPush(expandedProject.path);
-        setBusy(result.message || "Pushed branch.");
-      } else if (action === "stash") {
-        setBusy(`Stashing changes in ${expandedProject.name}…`);
-        const result = await agentClient.gitStash(expandedProject.path);
-        setBusy(result.message || "Stashed changes.");
-      } else if (action === "stash-pop") {
-        setBusy(`Restoring stash in ${expandedProject.name}…`);
-        const result = await agentClient.gitStashPop(expandedProject.path);
-        setBusy(result.message || "Restored stash.");
-      } else if (action === "revert-head") {
+      if (action === "revert-head") {
         const head = gitCommits[0]?.hash;
         if (!head) {
           setBusy("No commit available to revert.");
@@ -384,14 +315,17 @@ export default function GitView({ onOpenSurface }: Props) {
                       <div className="flex flex-wrap gap-2">
                         <StatPill label="ahead" value={status?.ahead || 0} />
                         <StatPill label="behind" value={status?.behind || 0} />
-                        <StatPill label="changes" value={status?.clean ? 0 : changedFiles.length} />
+                        <StatPill
+                          label="changes"
+                          value={(status?.staged?.length || 0) + (status?.modified?.length || 0) + (status?.untracked?.length || 0)}
+                        />
                       </div>
                     </div>
                   </summary>
 
                   {isExpanded ? (
                     <div className="border-t border-surface-800 px-4 pb-4 pt-4">
-                      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.5fr),minmax(340px,1fr)]">
+                      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr),minmax(340px,0.9fr)]">
                         <div className="space-y-4">
                           <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -437,100 +371,15 @@ export default function GitView({ onOpenSurface }: Props) {
                             </div>
                           </div>
 
-                          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr),220px]">
-                            <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
-                              <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Sync With Remote</div>
-                              <div className="flex flex-wrap gap-2">
-                                <PrimaryButton onClick={() => void runGitAction("pull")}>Pull</PrimaryButton>
-                                <PrimaryButton onClick={() => void runGitAction("push")}>Push</PrimaryButton>
-                                <PrimaryButton onClick={() => void runGitAction("stash")}>Stash</PrimaryButton>
-                                <PrimaryButton onClick={() => void runGitAction("stash-pop")}>Pop Stash</PrimaryButton>
-                              </div>
-                              <div className="mt-3 flex gap-2">
-                                <input
-                                  value={gitCommitMessage}
-                                  onChange={(event) => setGitCommitMessage(event.target.value)}
-                                  placeholder="Commit message"
-                                  className="flex-1 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
-                                />
-                                <button
-                                  onClick={() => void runGitAction("commit")}
-                                  disabled={!gitCommitMessage.trim()}
-                                  className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
-                                >
-                                  Commit
-                                </button>
-                              </div>
-                              <div className="mt-3">
-                                <button
-                                  onClick={() => void runGitAction("revert-head")}
-                                  disabled={gitCommits.length === 0}
-                                  className="rounded-xl border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40"
-                                >
-                                  Revert Last
-                                </button>
-                              </div>
-                            </div>
-
-                            <div className="grid gap-3 sm:grid-cols-3 md:grid-cols-1">
-                              <StatCard label="Remote Sync" value={`${status?.ahead || 0}↑ ${status?.behind || 0}↓`} sub="ahead / behind on current branch" />
-                              <StatCard label="Local State" value={status?.clean ? "Clean" : String(changedFiles.length)} sub={status?.clean ? "no local changes" : "changed files on this machine"} />
-                              <StatCard label="Branch" value={status?.branch || project.branch || "none"} sub="active branch" />
-                            </div>
+                          <div className="grid gap-3 sm:grid-cols-3">
+                            <StatCard label="Remote Sync" value={`${status?.ahead || 0}↑ ${status?.behind || 0}↓`} sub="ahead / behind on current branch" />
+                            <StatCard
+                              label="Local State"
+                              value={status?.clean ? "Clean" : String((status?.staged?.length || 0) + (status?.modified?.length || 0) + (status?.untracked?.length || 0))}
+                              sub={status?.clean ? "no local changes" : "changed files on this machine"}
+                            />
+                            <StatCard label="Branch" value={status?.branch || project.branch || "none"} sub="active branch" />
                           </div>
-
-                          <details className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4" open>
-                            <summary className="cursor-pointer list-none">
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Local Changes</div>
-                                  <div className="mt-1 text-sm text-surface-500">Inspect changed files and their diffs only when you need them.</div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2 text-xs text-surface-400">
-                                  <div>staged: {status?.staged?.length || 0}</div>
-                                  <div>modified: {status?.modified?.length || 0}</div>
-                                  <div>untracked: {status?.untracked?.length || 0}</div>
-                                </div>
-                              </div>
-                            </summary>
-
-                            <div className="mt-4 grid gap-3 xl:grid-cols-[280px,minmax(0,1fr)]">
-                              <div className="space-y-2">
-                                {changedFiles.map((file) => (
-                                  <button
-                                    key={file.path}
-                                    onClick={() => setSelectedDiffFile(file.path)}
-                                    className={`w-full rounded-xl border px-3 py-2 text-left text-xs ${
-                                      selectedDiffFile === file.path
-                                        ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-100"
-                                        : "border-surface-800 bg-surface-950/70 text-surface-300 hover:border-surface-700"
-                                    }`}
-                                  >
-                                    <div className="flex items-center justify-between gap-3">
-                                      <span className="block truncate">{file.path}</span>
-                                      <span className="rounded-full border border-surface-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-surface-400">
-                                        {file.kind}
-                                      </span>
-                                    </div>
-                                  </button>
-                                ))}
-                                {changedFiles.length === 0 ? (
-                                  <div className="rounded-xl border border-dashed border-surface-800 bg-surface-950/70 p-3 text-sm text-surface-500">
-                                    Working tree is clean.
-                                  </div>
-                                ) : null}
-                              </div>
-
-                              <div className="rounded-2xl border border-surface-800 bg-[#08111a] p-3">
-                                <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">
-                                  Diff {selectedDiffFile ? `· ${selectedDiffFile}` : ""}
-                                </div>
-                                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-xl border border-surface-800 bg-surface-950/80 p-3 font-mono text-[12px] leading-6 text-surface-200">
-                                  {gitDiff || "No diff to show."}
-                                </pre>
-                              </div>
-                            </div>
-                          </details>
                         </div>
 
                         <div className="space-y-4">
@@ -563,7 +412,10 @@ export default function GitView({ onOpenSurface }: Props) {
                           </div>
 
                           <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
-                            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Recent Commits</div>
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Recent Commits</div>
+                              <MiniPill>last 5</MiniPill>
+                            </div>
                             <div className="space-y-2">
                               {gitCommits.map((commit) => (
                                 <div key={commit.hash} className="rounded-xl border border-surface-800 bg-surface-950/70 p-3">
@@ -578,6 +430,13 @@ export default function GitView({ onOpenSurface }: Props) {
                                   </div>
                                 </div>
                               ))}
+                              <button
+                                onClick={() => void runGitAction("revert-head")}
+                                disabled={gitCommits.length === 0}
+                                className="w-full rounded-xl border border-red-500/30 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                              >
+                                Revert Last Commit
+                              </button>
                               {gitCommits.length === 0 ? (
                                 <div className="rounded-xl border border-dashed border-surface-800 bg-surface-950/70 p-3 text-sm text-surface-500">
                                   No commit history available for this project.
@@ -757,17 +616,6 @@ function StatPill({ label, value }: { label: string; value: string | number }) {
     <span className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-surface-400">
       {label}: {value}
     </span>
-  );
-}
-
-function PrimaryButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className="rounded-xl border border-surface-700 bg-surface-950 px-4 py-2 text-sm font-semibold text-surface-100 hover:border-surface-500"
-    >
-      {children}
-    </button>
   );
 }
 
