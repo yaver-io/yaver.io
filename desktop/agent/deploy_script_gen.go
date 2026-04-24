@@ -64,28 +64,53 @@ INFO_PLIST=$(find . -maxdepth 3 -name Info.plist -path "*/$SCHEME/*" | head -1)
 # Scoped per (app, target) so parallel deploys of different apps
 # don't clobber each other.
 ARCHIVE=/tmp/yaver-deploy-{{.App}}-{{.Target}}.xcarchive
+ARCHIVE_GITFP="$ARCHIVE.gitfp"
 EXPORT_DIR=/tmp/yaver-deploy-{{.App}}-{{.Target}}-export
 EXPORT_OPTIONS=/tmp/yaver-deploy-{{.App}}-{{.Target}}-ExportOptions.plist
 DERIVED=/tmp/yaver-deploy-{{.App}}-{{.Target}}-build
 
 CURRENT_BUILD=$(/usr/libexec/PlistBuddy -c "Print CFBundleVersion" "$INFO_PLIST")
+CURRENT_GIT_SHA=$(git -C "{{.Path}}" rev-parse HEAD 2>/dev/null || echo "nogit")
 
 # Idempotent resume: if an archive already exists for this
-# (app, target), verify its embedded CFBundleVersion matches the
-# project's current value and that it's less than 6 hours old. If
-# both hold, skip xcodebuild archive (the expensive step — 15-20
-# min on real apps) and go straight to export + upload. This turns
-# "the upload hiccuped, try again" from 30 min into 30 seconds.
+# (app, target), verify three things:
+#
+#   1. The embedded ApplicationProperties:CFBundleVersion matches
+#      the project's current CFBundleVersion.
+#   2. The archive mtime is less than 6 hours old.
+#   3. The sidecar .gitfp file records a git HEAD matching the
+#      project's current HEAD. This is the key guard: without it,
+#      "I fixed a bug, I redeployed, Yaver ships the pre-fix
+#      archive because versions still match" is a real failure
+#      mode. The .gitfp pins the archive to the commit it was
+#      built from.
+#
+# If all three hold, skip xcodebuild archive (the expensive step —
+# 15-20 min on real apps) and go straight to export + upload. This
+# turns "the upload hiccuped, try again" from 30 min into 30
+# seconds — safely.
 RESUME=0
 if [ -d "$ARCHIVE" ] && [ -f "$ARCHIVE/Info.plist" ]; then
   ARCH_VER=$(/usr/libexec/PlistBuddy -c "Print ApplicationProperties:CFBundleVersion" "$ARCHIVE/Info.plist" 2>/dev/null || echo "")
   ARCH_MTIME=$(stat -f %m "$ARCHIVE" 2>/dev/null || stat -c %Y "$ARCHIVE" 2>/dev/null || echo 0)
+  ARCH_GIT_SHA=$(cat "$ARCHIVE_GITFP" 2>/dev/null || echo "")
   NOW_TS=$(date +%s)
   AGE_SEC=$(( NOW_TS - ARCH_MTIME ))
   MAX_AGE=$(( 6 * 60 * 60 ))
   if [ -n "$ARCH_VER" ] && [ "$ARCH_VER" = "$CURRENT_BUILD" ] && [ $AGE_SEC -lt $MAX_AGE ]; then
-    echo "⏭  Resuming: existing archive for build $ARCH_VER is $(( AGE_SEC / 60 )) min old — skipping xcodebuild archive."
-    RESUME=1
+    # Version + freshness OK. Now the git check: resume only if the
+    # sidecar matches the current HEAD, OR if both are "nogit" (not
+    # a git repo — don't let the safer path punish non-git projects).
+    if [ -n "$ARCH_GIT_SHA" ] && [ "$ARCH_GIT_SHA" = "$CURRENT_GIT_SHA" ]; then
+      echo "⏭  Resuming: existing archive for build $ARCH_VER is $(( AGE_SEC / 60 )) min old and git=${CURRENT_GIT_SHA:0:8} matches — skipping xcodebuild archive."
+      RESUME=1
+    else
+      if [ -n "$ARCH_GIT_SHA" ]; then
+        echo "↻ Discarding existing archive: built from git=${ARCH_GIT_SHA:0:8} but HEAD is ${CURRENT_GIT_SHA:0:8}. Re-archiving to avoid shipping stale bits."
+      else
+        echo "↻ Discarding existing archive: no .gitfp sidecar. Re-archiving so the uploaded bundle definitely matches HEAD."
+      fi
+    fi
   fi
 fi
 
@@ -93,7 +118,7 @@ if [ $RESUME -eq 0 ]; then
   NEW_BUILD=$((CURRENT_BUILD + 1))
   /usr/libexec/PlistBuddy -c "Set CFBundleVersion $NEW_BUILD" "$INFO_PLIST"
   echo "Build $CURRENT_BUILD → $NEW_BUILD"
-  rm -rf "$ARCHIVE"
+  rm -rf "$ARCHIVE" "$ARCHIVE_GITFP"
   echo "Archiving..."
   xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -configuration Release \
     -archivePath "$ARCHIVE" archive \
@@ -104,6 +129,9 @@ if [ $RESUME -eq 0 ]; then
     -authenticationKeyIssuerID "$APP_STORE_KEY_ISSUER" \
     -derivedDataPath "$DERIVED" 2>&1 | tail -3
   [ -d "$ARCHIVE" ] || { echo "ERROR: archive failed"; exit 1; }
+  # Record the commit the archive was built from so a future
+  # resume can refuse stale bits.
+  echo "$CURRENT_GIT_SHA" > "$ARCHIVE_GITFP"
   EFFECTIVE_BUILD=$NEW_BUILD
 else
   EFFECTIVE_BUILD=$ARCH_VER
@@ -138,8 +166,9 @@ if [ $RC -ne 0 ] && ! echo "$OUT" | grep -q "Redundant Binary Upload"; then
   echo "ERROR: export/upload failed (rc=$RC). Archive kept at $ARCHIVE for resume on the next run."
   exit 1
 fi
-# Success — free disk.
-rm -rf "$ARCHIVE" "$EXPORT_DIR" "$DERIVED" "$EXPORT_OPTIONS"
+# Success — free disk (including the git fingerprint sidecar; a
+# future deploy will write a new one from the next archive).
+rm -rf "$ARCHIVE" "$ARCHIVE_GITFP" "$EXPORT_DIR" "$DERIVED" "$EXPORT_OPTIONS"
 echo "✓ TestFlight build $EFFECTIVE_BUILD uploaded."
 `,
 	},

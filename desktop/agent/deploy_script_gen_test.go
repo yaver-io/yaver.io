@@ -52,8 +52,16 @@ func TestGenerateDeployScriptTestflight(t *testing.T) {
 		"ApplicationProperties:CFBundleVersion",
 		"Resuming: existing archive",
 		"Archive kept at",
-		// After a successful upload the archive is cleaned up.
-		`rm -rf "$ARCHIVE"`,
+		// Commit-SHA fingerprint guard — the key safety net. The
+		// archive is pinned to the commit it was built from so a
+		// resume never ships stale bits from a pre-fix commit.
+		`ARCHIVE_GITFP="$ARCHIVE.gitfp"`,
+		`CURRENT_GIT_SHA=$(git -C "/tmp/mobile" rev-parse HEAD`,
+		`echo "$CURRENT_GIT_SHA" > "$ARCHIVE_GITFP"`,
+		"Discarding existing archive",
+		// After a successful upload the archive AND its fingerprint
+		// sidecar are cleaned up together.
+		`rm -rf "$ARCHIVE" "$ARCHIVE_GITFP"`,
 	} {
 		if !strings.Contains(script, s) {
 			t.Errorf("testflight script missing %q", s)

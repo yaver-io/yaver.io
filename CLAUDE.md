@@ -1316,11 +1316,12 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 - Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:playstore"]`. A sidecar fingerprint at `/tmp/yaver-deploy-<app>-playstore.fp` captures `vc=<versionCode> git=<HEAD sha>` at build time. On rerun the template checks the fingerprint + AAB mtime (< 6 h) and skips `gradle bundleRelease` + versionCode bump when everything matches. Upload success removes the fingerprint; upload failure (or rerun before upload retry) preserves it.
 - Avoids wasted versionCode increments on flaky Play uploads — the same (vc, commit) pair ships across retries. Gradle's incremental build is already cheap for the actual bundling; the real win is the versionCode behavior.
 
-### Idempotent TestFlight upload (resumable archive)
+### Idempotent TestFlight upload (resumable archive + commit-SHA pin)
 
-- Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:testflight"]`. On rerun the shell checks for `/tmp/yaver-deploy-<app>-<target>.xcarchive`; if the embedded `ApplicationProperties:CFBundleVersion` matches the project's current `CFBundleVersion` and the archive is < 6 h old, the 15-20 min xcodebuild archive is skipped and we go straight to export + upload. On failure the archive is deliberately kept; on success it's cleaned up along with the derived-data dir, export dir, and ExportOptions.plist.
+- Template-level change in `deploy_script_gen.go::deployTemplates["react-native-expo:testflight"]`. On rerun the shell checks for `/tmp/yaver-deploy-<app>-<target>.xcarchive` and reuses it only when **all three** hold: (1) the embedded `ApplicationProperties:CFBundleVersion` matches the project's current `CFBundleVersion`, (2) the archive is < 6 h old, and (3) the sidecar `<archive>.gitfp` records a git HEAD matching the project's current HEAD.
+- The git-HEAD check is the key safety net: without it, "fix a bug, redeploy, ship the pre-fix archive because the version still matches" is a real failure mode. Mismatched HEAD → template prints `↻ Discarding existing archive: built from git=<sha8> but HEAD is <sha8>...` and re-archives cleanly. Non-git projects see `nogit` on both sides and still resume correctly.
+- On failure the archive is deliberately kept; on success it's cleaned up along with the sidecar `.gitfp`, the derived-data dir, export dir, and ExportOptions.plist.
 - Scoped temp paths per (app, target) so parallel deploys of different projects stop racing on `/tmp/yaver-deploy.xcarchive`.
-- Only needed for iOS — Android `gradle bundleRelease` is already incremental-friendly at the filesystem layer; Cloudflare / Convex / npm / PyPI deploys are stateless uploads.
 
 ### Completion webhook (`Config.DeployWebhookURL`)
 

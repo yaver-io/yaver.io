@@ -598,13 +598,28 @@ The iOS template is resumable across retries. If a previous run
 archived successfully but the upload failed (Apple transient error,
 network hiccup, TestFlight rate limit), the archive is **kept on
 disk**. The next invocation of `yaver deploy ship --app X --target
-testflight` checks for an existing archive at
-`/tmp/yaver-deploy-<app>-testflight.xcarchive` whose embedded
-`ApplicationProperties:CFBundleVersion` matches the project's
-current `CFBundleVersion` and whose mtime is less than 6 h old.
-If both hold, it prints `⏭ Resuming: existing archive for build N
-is M min old — skipping xcodebuild archive.` and jumps straight to
-the 30-second export + upload phase.
+testflight` checks three things before reusing it:
+
+1. The archive's embedded `ApplicationProperties:CFBundleVersion`
+   matches the project's current `CFBundleVersion`.
+2. The archive mtime is less than 6 h old.
+3. A sidecar file `<archive>.gitfp` records a git HEAD that still
+   matches the project's current HEAD.
+
+The third check is the key safety net. Without it, "I fixed a
+bug, redeployed, Yaver shipped the pre-fix archive because the
+version still matches" is a real failure mode. The `.gitfp`
+sidecar pins the archive to the commit it was built from; a
+mismatched HEAD (or a missing sidecar from an old deploy)
+discards the archive and re-archives cleanly. Projects outside a
+git repo see `nogit` on both sides and still resume correctly.
+
+When all three hold, the template prints `⏭ Resuming: existing
+archive for build N is M min old and git=<sha8> matches —
+skipping xcodebuild archive.` and jumps straight to the 30-second
+export + upload phase. Mismatched git SHAs print the explicit
+`↻ Discarding existing archive: built from git=<sha8> but HEAD is
+<sha8>. Re-archiving to avoid shipping stale bits.`
 
 The template also scopes archive + export + derived-data + export-
 options-plist paths per `(app, target)` so parallel deploys of
@@ -800,17 +815,13 @@ falls back to the global `deploy_webhook_on`.
 
 ### Remaining follow-ups
 
-- **Idempotent resume for Play Store**: today only TestFlight has
-  the archive-resume heuristic. Android AABs could get the same
-  "skip rebuild if versionCode + source hash unchanged" guard,
-  but gradle's own incremental build does most of the heavy lift
-  already.
 - **Webhook receiver kit**: a tiny standalone Go binary (plus JS
   npm package) with a single `Verify()` call would save downstream
   users from hand-rolling the timestamp + HMAC check.
-- **Bundle fingerprint in resume**: archive matching currently
-  keys only on `(CFBundleVersion, mtime)`. A commit-SHA check
-  would refuse to resume an archive built from different source.
+- **Resume observability**: currently the resume / discard
+  decision is logged to stdout only. Emitting a dedicated
+  `resume` SSE event (with the reason) would let UIs render
+  "resumed from last attempt" badges explicitly.
 
 ---
 
