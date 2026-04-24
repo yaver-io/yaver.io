@@ -1143,10 +1143,12 @@ Ship to multiple stores at once:
 yaver deploy ship --app mobile --targets testflight,playstore
 ```
 
-Runs both in parallel, per-line prefixes `[testflight]` / `[playstore]`
-so the merged output stays readable, prints a `── composite summary ──`
-at the end. Exits with the worst per-target code (i.e. fails iff any
-target fails).
+One request, server-side fan-out. Preflight runs for every target
+upfront — the whole composite is rejected atomically if anything is
+missing. Events from per-target goroutines multiplex into a single
+SSE stream with a `target` field; the CLI demuxes them with
+`[testflight]` / `[playstore]` prefixes, prints a `── composite
+summary ──` at the end, and exits with the worst per-target code.
 
 Past runs are queryable:
 

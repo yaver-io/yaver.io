@@ -1332,10 +1332,17 @@ Shared-machine deploy flow — e.g. friend triggers TestFlight from his laptop a
 - **Stale `.tmp` detection**: at open time, if `~/.yaver/vault.enc.tmp` exists the loader logs a warning with size + mtime but does not auto-delete. Forensic operators can decrypt or `rm` manually.
 - **Sync conflicts**: `VaultSyncReport` adds `SupersededLocal` (we pulled a newer entry that overrode our older value — yours was silently replaced) and `Rejected` (we pushed but the peer was already as-new-or-newer). `yaver vault sync` prints a footer hint when either is non-zero. Semantics still last-writer-wins by `UpdatedAt`; the counts expose when LWW cost you something.
 
-### Composite targets (parallel multi-target deploy)
+### Per-target webhook filters (`DeployWebhookOnByTarget`)
 
-- CLI: `yaver deploy ship --app mobile --targets testflight,playstore` fans out per-target SSE streams in parallel. Output is line-prefixed with `[target]`. Overall exit = max of per-target exit codes. Composite runs also print a `── composite summary ──` block at the end.
-- No server-side change: the client posts one `/deploy/ship` per target. This keeps the per-run concurrency limiter + history + guest project gating working unchanged; a composite run just shows up as N entries in `/deploy/runs`.
+`Config.DeployWebhookOnByTarget map[target]string` overrides the global `DeployWebhookOn`. Lookup precedence: per-target → global → `"all"`. Example config: `{"testflight": "failure", "cloudflare": "all"}`. Targets not in the map fall through. See `deploy_webhook.go::FireDeployWebhook` for the resolution order and `deploy_composite_test.go::TestDeployWebhookPerTargetFilter` for the contract.
+
+### Composite targets (server-side fan-out)
+
+- `POST /deploy/ship` body may carry either `target: "..."` (single) or `targets: ["testflight", "playstore"]` (plural). Server runs preflight for every target upfront — if any fails, returns 409 before opening the SSE stream. Otherwise spawns one goroutine per target, multiplexes their events into one SSE stream with a `target` field on every `meta`/`line`/`exit` event. Terminates with a `composite` event carrying `{all_ok, any_failure, summary: [{target, id, ok, code, error_class, duration_ms}, ...]}`.
+- CLI: `yaver deploy ship --app mobile --targets testflight,playstore` sends one request with `targets: [...]`, demuxes by `target`, prefixes printed lines with `[target]`, and renders the composite summary as a footer. Overall exit = worst per-target code.
+- SSE writer is mutex-protected (`sseWriter` type in `deploy_run.go`) — overlapping writes never corrupt SSE framing.
+- Each target still: consumes its own concurrency slot, shows up as its own `/deploy/runs` row, fires its own completion webhook. Composite is purely a transport-layer fan-out.
+- Helpers: `normaliseTargetList` (dedup + trim + plural-overrides-singular), `resolveDeployStackPath` (workspace manifest lookup), `runOneDeployTarget` (per-target lifecycle).
 
 ### Run history + replay (`/deploy/runs`)
 

@@ -56,6 +56,13 @@ type Config struct {
 	// their acceptable drift window + whose HMAC doesn't recompute.
 	// Empty = no signing (deploy_webhook_url still works).
 	DeployWebhookSecret string `json:"deploy_webhook_secret,omitempty"`
+	// DeployWebhookOnByTarget overrides DeployWebhookOn on a per-target
+	// basis. e.g. {"testflight": "failure", "cloudflare": "all"} fires
+	// the webhook only on testflight failures + every cloudflare
+	// result. Targets absent from the map fall back to DeployWebhookOn
+	// (or "all" when that's also empty). Values same as
+	// DeployWebhookOn: "all", "success", "failure".
+	DeployWebhookOnByTarget map[string]string `json:"deploy_webhook_on_by_target,omitempty"`
 	RateLimit                     *RateLimitConfig         `json:"rate_limit,omitempty"`
 
 	// Machine-level monitors (disk-health, peer heartbeat)

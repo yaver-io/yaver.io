@@ -3,10 +3,11 @@ package main
 // deploy_run.go — POST /deploy/ship: execute the vault-aware deploy
 // script for an (app, target) on the host, streaming stdout + stderr
 // to the caller via SSE. Named "ship" to disambiguate from the older
-// /deploy/run release-pipeline endpoint in deploy_pipeline.go. Designed for shared-machine flows where a
-// trusted guest (with a matching allowedProjects grant) triggers a
-// TestFlight / Play Store / Cloudflare deploy from their own laptop
-// against someone else's Mac mini.
+// /deploy/run release-pipeline endpoint in deploy_pipeline.go.
+// Designed for shared-machine flows where a trusted guest (with a
+// matching allowedProjects grant) triggers a TestFlight / Play
+// Store / Cloudflare deploy from their own laptop against someone
+// else's Mac mini.
 //
 // Security envelope:
 //
@@ -30,6 +31,14 @@ package main
 //    being visible to whatever command the template runs.
 //  - Runs are time-bounded; default 20 min, configurable via the
 //    body's `timeout_sec` (capped at 60 min).
+//
+// Composite targets: POST body may carry `targets: [...]` (plural)
+// for a server-side fan-out. All targets run in parallel behind a
+// single SSE stream, each event tagged with its `target`. Preflight
+// runs upfront for every target; if any fails we 409 before the
+// stream opens. Each target still counts against the concurrency
+// limiter, still gets its own DeployRun entry, and still fires the
+// completion webhook independently.
 
 import (
 	"bufio"
@@ -46,8 +55,8 @@ import (
 	"time"
 )
 
-// deployShipDefaultTimeoutSec is how long a single /deploy/run can live
-// without an explicit override.
+// deployShipDefaultTimeoutSec is how long a single /deploy/ship can
+// live without an explicit override.
 const (
 	deployShipDefaultTimeoutSec = 20 * 60
 	deployShipMaxTimeoutSec     = 60 * 60
@@ -69,22 +78,42 @@ var safeSystemEnvKeys = map[string]bool{
 }
 
 type deployShipRequest struct {
-	App        string `json:"app"`
-	Target     string `json:"target"`
-	Stack      string `json:"stack,omitempty"` // owner-only
-	Path       string `json:"path,omitempty"`  // owner-only
-	TimeoutSec int    `json:"timeout_sec,omitempty"`
+	App        string   `json:"app"`
+	Target     string   `json:"target,omitempty"`  // single — legacy / simple path
+	Targets    []string `json:"targets,omitempty"` // composite — if non-empty, Target is ignored
+	Stack      string   `json:"stack,omitempty"`   // owner-only
+	Path       string   `json:"path,omitempty"`    // owner-only
+	TimeoutSec int      `json:"timeout_sec,omitempty"`
+}
+
+// targetPlan bundles everything prepared for one target before we
+// open the SSE stream. Pre-computed on the main goroutine so that a
+// preflight-or-tempfile failure still lets us 409 cleanly.
+type targetPlan struct {
+	target     string
+	stack      string
+	path       string
+	script     string
+	scriptPath string
+	historyID  string
+	historyRun *DeployRun
 }
 
 // handleDeployShip streams a /deploy/ship run as SSE.
 //
-// Body: {app, target, stack?, path?, timeout_sec?}
+// Body (single): {app, target, stack?, path?, timeout_sec?}
+// Body (composite): {app, targets: [...], stack?, path?, timeout_sec?}
+//
 // Response stream events:
 //
-//	event: meta    — { app, target, stack, path, started_at }
-//	event: line    — { stream: "stdout"|"stderr", text: "..." }
-//	event: exit    — { code, duration_ms, ok }
-//	event: error   — { error: "..." }
+//	event: meta       — { id, app, target, stack, path, started_at, timeout_s }
+//	event: line       — { id, target, stream: "stdout"|"stderr", text: "..." }
+//	event: exit       — { id, target, code, duration_ms, ok, error_class, timed_out }
+//	event: error      — { target?, error: "..." }
+//	event: composite  — (composite only) { summary: [{target, id, ok, code, error_class}, ...] }
+//
+// Single-target callers can ignore the composite event and the
+// target field.
 func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
@@ -102,19 +131,25 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.App = strings.TrimSpace(body.App)
-	body.Target = strings.TrimSpace(body.Target)
-	if body.App == "" || body.Target == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "app and target are required"})
+
+	// Resolve the target list: explicit Targets wins; else fall back
+	// to Target; else error. Dedup + trim so `targets:["x","x"]` or
+	// whitespace doesn't get us to spawn two of the same thing.
+	targets := normaliseTargetList(body.Targets, body.Target)
+	if body.App == "" || len(targets) == 0 {
+		jsonReply(w, http.StatusBadRequest, map[string]string{
+			"error": "app and (target OR targets) are required",
+		})
 		return
 	}
 
-	// Guest vs. owner gating.
 	isGuest := r.Header.Get("X-Yaver-Guest") == "true"
 	guestUID := r.Header.Get("X-Yaver-GuestUserID")
 
-	// Per-caller concurrency cap. Owner has a global (per-agent) cap
-	// too so a runaway script can't spawn 50 xcodebuilds; the guest
-	// cap is tighter because each guest gets their own key.
+	// Per-caller concurrency cap: every target in a composite counts
+	// individually, because each spawns its own bash + xcodebuild.
+	// Acquire all up front; roll back if any fails so we never leak
+	// a half-acquired state.
 	limiter := s.ensureDeployLimiter()
 	limiterKey := "owner"
 	maxInFlight := deployShipLimits.Owner
@@ -122,14 +157,25 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		limiterKey = "guest:" + guestUID
 		maxInFlight = deployShipLimits.Guest
 	}
-	if !limiter.tryAcquire(limiterKey, maxInFlight) {
-		jsonReply(w, http.StatusTooManyRequests, map[string]interface{}{
-			"error": "deploy concurrency cap reached — wait for an in-flight run to finish",
-			"cap":   maxInFlight,
-		})
-		return
+	acquired := 0
+	for i := 0; i < len(targets); i++ {
+		if !limiter.tryAcquire(limiterKey, maxInFlight) {
+			for j := 0; j < acquired; j++ {
+				limiter.release(limiterKey)
+			}
+			jsonReply(w, http.StatusTooManyRequests, map[string]interface{}{
+				"error": "deploy concurrency cap reached — wait for an in-flight run to finish",
+				"cap":   maxInFlight,
+			})
+			return
+		}
+		acquired++
 	}
-	defer limiter.release(limiterKey)
+	defer func() {
+		for j := 0; j < acquired; j++ {
+			limiter.release(limiterKey)
+		}
+	}()
 
 	if isGuest {
 		// Guests cannot override stack/path — only the workspace manifest
@@ -148,89 +194,103 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve stack + path. Owner may override; guest always uses manifest.
-	stack := body.Stack
-	path := body.Path
-	var workspaceRoot string
-	if stack == "" || path == "" {
-		ms, mp, root := resolveAppFromWorkspaceFull(body.App)
-		if stack == "" {
-			stack = ms
-		}
-		if path == "" {
-			path = mp
-		}
-		workspaceRoot = root
-	}
-	if stack == "" || path == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{
-			"error": "could not resolve stack and path from workspace manifest — declare the app in yaver.workspace.yaml or pass --stack --path (owner only)",
-		})
-		return
-	}
-	// Manifest paths are relative to the workspace root; everything
-	// else is relative to cwd. Anchor the path to an absolute one so
-	// the subprocess's Dir is unambiguous.
-	if !filepath.IsAbs(path) {
-		base := workspaceRoot
-		if base == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				base = cwd
-			}
-		}
-		path = filepath.Join(base, path)
-	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-
-	// Generate the script.
-	script, err := GenerateDeployScript(DeployScriptSpec{
-		App:    body.App,
-		Stack:  stack,
-		Target: body.Target,
-		Path:   path,
-	})
+	// Resolve stack + path (shared across all targets of the same app).
+	stack, path, err := resolveDeployStackPath(body.App, body.Stack, body.Path)
 	if err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
 
-	// Preflight — refuse to spawn if the toolchain is broken. This
-	// mirrors the gate embedded in the script itself but surfaces as
-	// a nice 409 with structured details before we open the stream.
-	preflight, err := RunBuildDoctor(body.Target, body.App, s.vaultStore)
-	if err == nil && !preflight.OK {
-		jsonReply(w, http.StatusConflict, map[string]interface{}{
-			"error":    "preflight failed — install missing tools / secrets first",
-			"doctor":   preflight,
+	// Preflight + script generation for every target. If any fails we
+	// 409 BEFORE opening the SSE stream — the whole composite is
+	// rejected atomically, nothing runs partially.
+	plans := make([]*targetPlan, 0, len(targets))
+	cleanupPlans := func() {
+		for _, p := range plans {
+			if p != nil && p.scriptPath != "" {
+				_ = os.Remove(p.scriptPath)
+			}
+		}
+	}
+	for _, tgt := range targets {
+		// Preflight — refuse to spawn if the toolchain is broken.
+		preflight, perr := RunBuildDoctor(tgt, body.App, s.vaultStore)
+		if perr == nil && !preflight.OK {
+			cleanupPlans()
+			jsonReply(w, http.StatusConflict, map[string]interface{}{
+				"error":  "preflight failed — install missing tools / secrets first",
+				"target": tgt,
+				"doctor": preflight,
+			})
+			return
+		}
+
+		script, err := GenerateDeployScript(DeployScriptSpec{
+			App:    body.App,
+			Stack:  stack,
+			Target: tgt,
+			Path:   path,
 		})
-		return
-	}
-
-	// Persist the generated script to a short-lived temp file so bash
-	// can read it via a filename (also plays nicely with `set -x`).
-	f, err := os.CreateTemp("", "yaver-deploy-*.sh")
-	if err != nil {
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "tempfile: " + err.Error()})
-		return
-	}
-	scriptPath := f.Name()
-	defer os.Remove(scriptPath)
-	if _, err := f.WriteString(script); err != nil {
+		if err != nil {
+			cleanupPlans()
+			jsonReply(w, http.StatusBadRequest, map[string]interface{}{
+				"error":  err.Error(),
+				"target": tgt,
+			})
+			return
+		}
+		f, ferr := os.CreateTemp("", "yaver-deploy-*.sh")
+		if ferr != nil {
+			cleanupPlans()
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "tempfile: " + ferr.Error()})
+			return
+		}
+		if _, werr := f.WriteString(script); werr != nil {
+			f.Close()
+			_ = os.Remove(f.Name())
+			cleanupPlans()
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "write tempfile: " + werr.Error()})
+			return
+		}
 		f.Close()
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "write tempfile: " + err.Error()})
-		return
+		_ = os.Chmod(f.Name(), 0700)
+		plans = append(plans, &targetPlan{
+			target:     tgt,
+			stack:      stack,
+			path:       path,
+			script:     script,
+			scriptPath: f.Name(),
+		})
 	}
-	f.Close()
-	_ = os.Chmod(scriptPath, 0700)
+	defer cleanupPlans()
 
-	// Build the subprocess env. Guests get a sanitised whitelist +
-	// vault values; owners inherit their full env but still see vault
-	// values layered on top.
+	// Create history entries (one per target) BEFORE the SSE opens so
+	// the first meta events already have their IDs. Owner vs. guest
+	// identity is stamped so a guest's /deploy/runs listing only
+	// shows their own runs.
+	requestedBy := "owner"
+	if isGuest {
+		requestedBy = guestUID
+	}
+	startedAt := time.Now()
+	hist := s.ensureDeployHistory()
+	for _, p := range plans {
+		p.historyRun = hist.Start(DeployRun{
+			App:         body.App,
+			Target:      p.target,
+			Stack:       p.stack,
+			Path:        p.path,
+			RequestedBy: requestedBy,
+			IsGuest:     isGuest,
+			StartedAt:   startedAt.UnixMilli(),
+		})
+		p.historyID = p.historyRun.ID
+	}
+
+	// Subprocess env — shared across all targets of the same app, so
+	// computed once.
 	env := buildDeployShipEnv(s.vaultStore, body.App, isGuest)
 
-	// Lock in the timeout.
 	timeoutSec := body.TimeoutSec
 	if timeoutSec <= 0 {
 		timeoutSec = deployShipDefaultTimeoutSec
@@ -248,77 +308,137 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	writeEvent := func(event string, payload interface{}) {
-		b, _ := json.Marshal(payload)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
-		flusher.Flush()
+	// sseWriter serialises writes from the per-target goroutines.
+	// Each write is one SSE frame; if the client has disconnected,
+	// w.Write returns an error and we noop so the goroutines can
+	// still drain their subprocesses cleanly.
+	sw := &sseWriter{w: w, flusher: flusher}
+
+	// One goroutine per target, independent lifecycle. Exit events
+	// interleave; composite event at the end collects results.
+	composite := len(plans) > 1
+	var wg sync.WaitGroup
+	results := make([]targetResult, len(plans))
+	for i, plan := range plans {
+		wg.Add(1)
+		go func(idx int, plan *targetPlan) {
+			defer wg.Done()
+			results[idx] = runOneDeployTarget(ctx, sw, plan, env, body.App, timeoutSec, startedAt, hist, composite)
+		}(i, plan)
 	}
+	wg.Wait()
 
-	startedAt := time.Now()
-
-	// Record this run in the in-memory history so /deploy/runs can
-	// show it later. We stamp owner vs. guest identity too so a
-	// guest's /deploy/runs listing only shows their own deploys.
-	requestedBy := "owner"
-	if isGuest {
-		requestedBy = guestUID
+	if composite {
+		// Summary event — lets clients render a "2/3 ok" line without
+		// parsing individual exit events.
+		summary := make([]map[string]interface{}, 0, len(results))
+		anyFailure := false
+		for _, r := range results {
+			summary = append(summary, map[string]interface{}{
+				"target":      r.target,
+				"id":          r.id,
+				"ok":          r.ok,
+				"code":        r.exitCode,
+				"error_class": string(r.errorClass),
+				"duration_ms": r.durationMs,
+			})
+			if !r.ok {
+				anyFailure = true
+			}
+		}
+		sw.writeEvent("composite", map[string]interface{}{
+			"summary":     summary,
+			"all_ok":      !anyFailure,
+			"any_failure": anyFailure,
+		})
 	}
-	historyRun := s.ensureDeployHistory().Start(DeployRun{
-		App:         body.App,
-		Target:      body.Target,
-		Stack:       stack,
-		Path:        path,
-		RequestedBy: requestedBy,
-		IsGuest:     isGuest,
-		StartedAt:   startedAt.UnixMilli(),
-	})
+}
 
-	writeEvent("meta", map[string]interface{}{
-		"id":         historyRun.ID,
-		"app":        body.App,
-		"target":     body.Target,
-		"stack":      stack,
-		"path":       path,
+// targetResult captures the per-target outcome for the composite
+// summary event. Mirrors what runOneDeployTarget emits in its own
+// `exit` event.
+type targetResult struct {
+	target     string
+	id         string
+	ok         bool
+	exitCode   int
+	errorClass DeployErrorClass
+	timedOut   bool
+	durationMs int64
+}
+
+// runOneDeployTarget spawns bash on the plan's script and streams
+// stdout/stderr to the shared sseWriter. Returns the per-target
+// result that feeds the composite summary. Safe to run concurrently
+// with other targets against the same writer.
+func runOneDeployTarget(ctx context.Context, sw *sseWriter, plan *targetPlan, env []string, app string, timeoutSec int, startedAt time.Time, hist *DeployHistory, composite bool) targetResult {
+	metaPayload := map[string]interface{}{
+		"id":         plan.historyID,
+		"app":        app,
+		"target":     plan.target,
+		"stack":      plan.stack,
+		"path":       plan.path,
 		"started_at": startedAt.UnixMilli(),
 		"timeout_s":  timeoutSec,
-	})
-
-	cmd := exec.CommandContext(ctx, "bash", scriptPath)
-	cmd.Env = env
-	cmd.Dir = path
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		writeEvent("error", map[string]string{"error": "stdout pipe: " + err.Error()})
-		return
 	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		writeEvent("error", map[string]string{"error": "stderr pipe: " + err.Error()})
-		return
+	if composite {
+		metaPayload["composite"] = true
+	}
+	sw.writeEvent("meta", metaPayload)
+
+	cmd := exec.CommandContext(ctx, "bash", plan.scriptPath)
+	cmd.Env = env
+	cmd.Dir = plan.path
+	stdout, serr := cmd.StdoutPipe()
+	if serr != nil {
+		sw.writeEvent("error", map[string]string{
+			"target": plan.target,
+			"id":     plan.historyID,
+			"error":  "stdout pipe: " + serr.Error(),
+		})
+		hist.Finish(plan.historyID, -1, false)
+		final, _ := hist.Get(plan.historyID, "")
+		FireDeployWebhook(final)
+		return targetResult{target: plan.target, id: plan.historyID, ok: false, exitCode: -1, errorClass: final.ErrorClass}
+	}
+	stderr, serr := cmd.StderrPipe()
+	if serr != nil {
+		sw.writeEvent("error", map[string]string{
+			"target": plan.target,
+			"id":     plan.historyID,
+			"error":  "stderr pipe: " + serr.Error(),
+		})
+		hist.Finish(plan.historyID, -1, false)
+		final, _ := hist.Get(plan.historyID, "")
+		FireDeployWebhook(final)
+		return targetResult{target: plan.target, id: plan.historyID, ok: false, exitCode: -1, errorClass: final.ErrorClass}
 	}
 	if err := cmd.Start(); err != nil {
-		writeEvent("error", map[string]string{"error": "spawn: " + err.Error()})
-		return
+		sw.writeEvent("error", map[string]string{
+			"target": plan.target,
+			"id":     plan.historyID,
+			"error":  "spawn: " + err.Error(),
+		})
+		hist.Finish(plan.historyID, -1, false)
+		final, _ := hist.Get(plan.historyID, "")
+		FireDeployWebhook(final)
+		return targetResult{target: plan.target, id: plan.historyID, ok: false, exitCode: -1, errorClass: final.ErrorClass}
 	}
 
 	var wg sync.WaitGroup
-	hist := s.ensureDeployHistory()
 	streamPipe := func(label string, rd io.Reader) {
 		defer wg.Done()
 		scanner := bufio.NewScanner(rd)
-		// Allow up to 1 MB lines (default 64 KB was hitting limits on
-		// noisy xcodebuild output).
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for scanner.Scan() {
 			text := scanner.Text()
-			writeEvent("line", map[string]string{
+			sw.writeEvent("line", map[string]string{
+				"id":     plan.historyID,
+				"target": plan.target,
 				"stream": label,
 				"text":   text,
 			})
-			// Capture into the run's output-tail ring buffer so
-			// /deploy/runs/{id} can replay the last ~8 KB after the
-			// stream closes.
-			hist.Append(historyRun.ID, text)
+			hist.Append(plan.historyID, text)
 		}
 	}
 	wg.Add(2)
@@ -335,31 +455,119 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 			exitCode = ee.ExitCode()
 		} else {
 			exitCode = -1
-			writeEvent("error", map[string]string{"error": waitErr.Error()})
+			sw.writeEvent("error", map[string]string{
+				"target": plan.target,
+				"id":     plan.historyID,
+				"error":  waitErr.Error(),
+			})
 		}
-		// Our own enforced timeout is the only reason we expect a
-		// context-deadline. Mark it as such so the classifier emits
-		// `timeout` rather than a generic build_failed.
 		if ctx.Err() == context.DeadlineExceeded {
 			timedOut = true
 			exitCode = -1
 		}
 	}
 	duration := time.Since(startedAt)
-	hist.Finish(historyRun.ID, exitCode, timedOut)
-	finalRun, _ := hist.Get(historyRun.ID, "")
-	writeEvent("exit", map[string]interface{}{
-		"id":          historyRun.ID,
+	hist.Finish(plan.historyID, exitCode, timedOut)
+	finalRun, _ := hist.Get(plan.historyID, "")
+	sw.writeEvent("exit", map[string]interface{}{
+		"id":          plan.historyID,
+		"target":      plan.target,
 		"code":        exitCode,
 		"duration_ms": duration.Milliseconds(),
-		"ok":          finalRun.OK, // classifier may have rewritten OK (e.g. already_uploaded)
+		"ok":          finalRun.OK,
 		"error_class": string(finalRun.ErrorClass),
 		"timed_out":   timedOut,
 	})
-	// Fire-and-forget completion webhook. Runs in its own goroutine
-	// so a slow/failing Slack/Discord endpoint never blocks this
-	// handler (stream already flushed to the client above).
 	FireDeployWebhook(finalRun)
+	return targetResult{
+		target:     plan.target,
+		id:         plan.historyID,
+		ok:         finalRun.OK,
+		exitCode:   exitCode,
+		errorClass: finalRun.ErrorClass,
+		timedOut:   timedOut,
+		durationMs: duration.Milliseconds(),
+	}
+}
+
+// sseWriter serialises writeEvent calls across goroutines. SSE
+// framing is "event: <name>\ndata: <json>\n\n"; two overlapping
+// writes would interleave and corrupt the stream, so we hold the
+// mutex around each frame.
+type sseWriter struct {
+	mu      sync.Mutex
+	w       io.Writer
+	flusher http.Flusher
+}
+
+func (s *sseWriter) writeEvent(event string, payload interface{}) {
+	b, _ := json.Marshal(payload)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, b)
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
+// normaliseTargetList accepts the composite-or-single pair from the
+// request body and returns the canonical ordered, deduped, trimmed
+// list. `target` (singular) is appended as a fallback ONLY when
+// `targets` is empty — otherwise it's ignored.
+func normaliseTargetList(targets []string, target string) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, t := range targets {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if _, dup := seen[t]; dup {
+			continue
+		}
+		seen[t] = struct{}{}
+		out = append(out, t)
+	}
+	if len(out) == 0 {
+		t := strings.TrimSpace(target)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// resolveDeployStackPath runs the workspace-manifest lookup (+path
+// absolutisation) that the old inline code did. Extracted so both
+// single and composite paths behave identically.
+func resolveDeployStackPath(app, stack, path string) (string, string, error) {
+	var workspaceRoot string
+	if stack == "" || path == "" {
+		ms, mp, root := resolveAppFromWorkspaceFull(app)
+		if stack == "" {
+			stack = ms
+		}
+		if path == "" {
+			path = mp
+		}
+		workspaceRoot = root
+	}
+	if stack == "" || path == "" {
+		return "", "", fmt.Errorf("could not resolve stack and path from workspace manifest — declare the app in yaver.workspace.yaml or pass --stack --path (owner only)")
+	}
+	if !filepath.IsAbs(path) {
+		base := workspaceRoot
+		if base == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				base = cwd
+			}
+		}
+		path = filepath.Join(base, path)
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	return stack, path, nil
 }
 
 // buildDeployShipEnv composes the subprocess env: sanitised system vars
@@ -369,7 +577,6 @@ func (s *HTTPServer) handleDeployShip(w http.ResponseWriter, r *http.Request) {
 func buildDeployShipEnv(vs *VaultStore, project string, isGuest bool) []string {
 	var base []string
 	if isGuest {
-		// Whitelist parent env for guests.
 		for _, kv := range os.Environ() {
 			if eq := strings.IndexByte(kv, '='); eq > 0 {
 				key := kv[:eq]

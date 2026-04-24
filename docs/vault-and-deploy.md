@@ -704,17 +704,89 @@ expected="sha256=$( { printf '%s.' "$ts"; cat "$body_file"; } \
 [ "$expected" = "$sig" ] || { echo "bad sig"; exit 1; }
 ```
 
-### Remaining follow-ups (smaller)
+### Server-side composite (`targets: [...]`)
 
-- **Server-side composite endpoint**: today's composite is a
-  client-side fan-out. Moving it server-side (e.g.
-  `POST /deploy/ship` accepting `targets: [...]` and multiplexing
-  events into one SSE stream) would be cheaper for mobile clients
-  that don't want N parallel connections open.
-- **Per-target webhook filters**: today the filter is global
-  (`all/success/failure`). A config like
-  `{"testflight": "failure", "cloudflare": "all"}` would let the
-  operator be choosier.
+`POST /deploy/ship` accepts either `target: "..."` (single) or
+`targets: ["testflight", "playstore"]` (multiple). When multiple
+targets are supplied the server:
+
+1. Runs preflight (`RunBuildDoctor`) for **every** target upfront.
+   If any fails, returns `409 Conflict` with
+   `{error, target, doctor}` before opening the SSE stream —
+   nothing runs partially.
+2. Acquires the per-caller concurrency slot once per target
+   (composite of 3 = 3 slots). Rolls back cleanly on 429.
+3. Generates a scoped script per target, writes each to its own
+   temp file.
+4. Opens the SSE stream, spawns one goroutine per target, and
+   multiplexes per-target events into that stream. Every `meta`,
+   `line`, and `exit` event carries a `target` field so clients
+   can demux by target (also by `id`, which is per-target).
+5. After every target finishes, emits a `composite` event:
+
+```
+event: composite
+data: {
+  "all_ok": false,
+  "any_failure": true,
+  "summary": [
+    {"target":"testflight","id":"...","ok":true,"code":0,"error_class":"","duration_ms":180000},
+    {"target":"playstore", "id":"...","ok":false,"code":1,"error_class":"signing_error","duration_ms":42000}
+  ]
+}
+```
+
+The CLI (`yaver deploy ship --app X --targets t1,t2`) sends one
+request with the plural field, demuxes events by `target`, prefixes
+printed lines with `[target]`, and renders the composite summary
+as a footer. Overall exit code is the worst per-target exit.
+
+Each target still gets its own row in `/deploy/runs`, obeys the
+concurrency limiter individually, and fires its own completion
+webhook — composite is purely a transport-layer fan-out, not a new
+execution model.
+
+SSE writer is mutex-protected so overlapping writes from the N
+goroutines never corrupt SSE framing.
+
+### Per-target webhook filters
+
+`Config.DeployWebhookOnByTarget` maps target → filter. Lookup
+precedence per finished run:
+
+1. `DeployWebhookOnByTarget[run.Target]`  (most specific)
+2. `DeployWebhookOn`                       (global fallback)
+3. `"all"`                                 (default)
+
+```json
+{
+  "deploy_webhook_url": "https://hooks.slack.com/...",
+  "deploy_webhook_on": "all",
+  "deploy_webhook_on_by_target": {
+    "testflight": "failure",
+    "cloudflare": "all"
+  }
+}
+```
+
+With the config above, TestFlight failures page; TestFlight
+successes are silent; every Cloudflare run (regardless of outcome)
+fires. Any target absent from the map (npm-publish, convex, etc.)
+falls back to the global `deploy_webhook_on`.
+
+### Remaining follow-ups
+
+- **Idempotent resume for Play Store**: today only TestFlight has
+  the archive-resume heuristic. Android AABs could get the same
+  "skip rebuild if versionCode + source hash unchanged" guard,
+  but gradle's own incremental build does most of the heavy lift
+  already.
+- **Webhook receiver kit**: a tiny standalone Go binary (plus JS
+  npm package) with a single `Verify()` call would save downstream
+  users from hand-rolling the timestamp + HMAC check.
+- **Bundle fingerprint in resume**: archive matching currently
+  keys only on `(CFBundleVersion, mtime)`. A commit-SHA check
+  would refuse to resume an archive built from different source.
 
 ---
 

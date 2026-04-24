@@ -135,12 +135,24 @@ func shouldFireDeployWebhook(ok bool, filter string) bool {
 // FireDeployWebhook POSTs a summary of the just-finished run to
 // Config.DeployWebhookURL, if set. Runs in its own goroutine so the
 // caller (/deploy/ship handler) doesn't block on a slow endpoint.
+//
+// Filter precedence:
+//
+//	1. Config.DeployWebhookOnByTarget[run.Target]  (most specific)
+//	2. Config.DeployWebhookOn                       (global)
+//	3. "all"                                        (default)
 func FireDeployWebhook(run DeployRun) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || strings.TrimSpace(cfg.DeployWebhookURL) == "" {
 		return
 	}
-	if !shouldFireDeployWebhook(run.OK, cfg.DeployWebhookOn) {
+	filter := cfg.DeployWebhookOn
+	if cfg.DeployWebhookOnByTarget != nil {
+		if per, ok := cfg.DeployWebhookOnByTarget[run.Target]; ok {
+			filter = per
+		}
+	}
+	if !shouldFireDeployWebhook(run.OK, filter) {
 		return
 	}
 	payload := DeployWebhookPayload{
