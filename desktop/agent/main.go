@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.25"
+const version = "1.99.26"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6636,6 +6636,76 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		log.Println("Initial heartbeat sent.")
 	}
 
+	// Shared body for both the 30 s ticker and out-of-band kicks from
+	// handlers that just changed reportable state (runner auth completing,
+	// etc.). Kept as a closure so a kick and a tick are literally the same
+	// code path — no risk of them diverging over time.
+	sendOne := func() {
+		currentIP := getLocalIP()
+		currentIPs := getLocalIPs()
+		cfgNow, _ := LoadConfig()
+		currentPublicEndpoints := configuredPublicEndpoints(cfgNow)
+		runners := taskMgr.GetRunnerInfos()
+
+		if currentIP != lastIP {
+			log.Printf("[heartbeat] Local IP changed: %s → %s", lastIP, currentIP)
+			lastIP = currentIP
+		}
+		if !sameStringSet(currentIPs, lastIPs) {
+			log.Printf("[heartbeat] LAN/Tailscale set changed: %v → %v", lastIPs, currentIPs)
+			lastIPs = currentIPs
+		}
+		if !sameStringSet(currentPublicEndpoints, lastPublicEndpoints) {
+			log.Printf("[heartbeat] Public endpoints changed: %v → %v", lastPublicEndpoints, currentPublicEndpoints)
+			lastPublicEndpoints = currentPublicEndpoints
+		}
+
+		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); err != nil {
+			if errors.Is(err, ErrAuthExpired) {
+				// Try to refresh token first — backend may rotate.
+				if !refreshAndPersist("on-401") {
+					if !authExpiredLogged {
+						log.Println("[auth] WARNING: Auth token expired or revoked.")
+						log.Println("[auth] This can happen if you signed out from all devices or your session expired.")
+						log.Println("[auth] Run 'yaver auth' to re-authenticate. The agent will continue running but the device will appear offline.")
+						authExpiredLogged = true
+						if httpServer != nil {
+							httpServer.authExpired.Store(true)
+						}
+					}
+					notifyAuthExpiredOnce()
+				} else {
+					log.Println("[auth] Token refreshed after 401 — retrying heartbeat...")
+					authExpiredLogged = false
+					if httpServer != nil {
+						httpServer.authExpired.Store(false)
+					}
+					clearAuthExpiredNotify()
+					// Retry heartbeat
+					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); retryErr != nil {
+						log.Printf("heartbeat retry failed: %v", retryErr)
+					}
+				}
+			} else {
+				log.Printf("heartbeat failed: %v", err)
+			}
+		} else {
+			if authExpiredLogged {
+				log.Println("[auth] Heartbeat succeeded — auth is working again.")
+				authExpiredLogged = false
+				if httpServer != nil {
+					httpServer.authExpired.Store(false)
+				}
+				clearAuthExpiredNotify()
+			}
+		}
+	}
+
+	var kickChan <-chan struct{}
+	if httpServer != nil {
+		kickChan = httpServer.heartbeatKick
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -6649,64 +6719,13 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				clearAuthExpiredNotify()
 			}
 		case <-ticker.C:
-			currentIP := getLocalIP()
-			currentIPs := getLocalIPs()
-			cfgNow, _ := LoadConfig()
-			currentPublicEndpoints := configuredPublicEndpoints(cfgNow)
-			runners := taskMgr.GetRunnerInfos()
-
-			if currentIP != lastIP {
-				log.Printf("[heartbeat] Local IP changed: %s → %s", lastIP, currentIP)
-				lastIP = currentIP
-			}
-			if !sameStringSet(currentIPs, lastIPs) {
-				log.Printf("[heartbeat] LAN/Tailscale set changed: %v → %v", lastIPs, currentIPs)
-				lastIPs = currentIPs
-			}
-			if !sameStringSet(currentPublicEndpoints, lastPublicEndpoints) {
-				log.Printf("[heartbeat] Public endpoints changed: %v → %v", lastPublicEndpoints, currentPublicEndpoints)
-				lastPublicEndpoints = currentPublicEndpoints
-			}
-
-			if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); err != nil {
-				if errors.Is(err, ErrAuthExpired) {
-					// Try to refresh token first — backend may rotate.
-					if !refreshAndPersist("on-401") {
-						if !authExpiredLogged {
-							log.Println("[auth] WARNING: Auth token expired or revoked.")
-							log.Println("[auth] This can happen if you signed out from all devices or your session expired.")
-							log.Println("[auth] Run 'yaver auth' to re-authenticate. The agent will continue running but the device will appear offline.")
-							authExpiredLogged = true
-							if httpServer != nil {
-								httpServer.authExpired.Store(true)
-							}
-						}
-						notifyAuthExpiredOnce()
-					} else {
-						log.Println("[auth] Token refreshed after 401 — retrying heartbeat...")
-						authExpiredLogged = false
-						if httpServer != nil {
-							httpServer.authExpired.Store(false)
-						}
-						clearAuthExpiredNotify()
-						// Retry heartbeat
-						if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints); retryErr != nil {
-							log.Printf("heartbeat retry failed: %v", retryErr)
-						}
-					}
-				} else {
-					log.Printf("heartbeat failed: %v", err)
-				}
-			} else {
-				if authExpiredLogged {
-					log.Println("[auth] Heartbeat succeeded — auth is working again.")
-					authExpiredLogged = false
-					if httpServer != nil {
-						httpServer.authExpired.Store(false)
-					}
-					clearAuthExpiredNotify()
-				}
-			}
+			sendOne()
+		case <-kickChan:
+			// Eager beat triggered by a handler that changed reportable
+			// state (e.g. remote codex/claude sign-in just finished). The
+			// 30 s ticker is left running — we don't try to reset it, the
+			// next tick is still a useful freshness signal.
+			sendOne()
 		}
 	}
 }

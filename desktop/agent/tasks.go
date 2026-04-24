@@ -396,11 +396,21 @@ type SystemInfo struct {
 	MemoryMB int64  `json:"memoryMb,omitempty"`
 }
 
-// GetRunnerInfos returns info about active runner processes for heartbeat reporting.
+// GetRunnerInfos returns info about active runner processes for heartbeat
+// reporting, plus a synthetic entry per installed known runner so Convex
+// (and therefore the web/mobile "coding agents" pills) can distinguish
+// "codex is installed and authenticated" from "codex isn't here". Without
+// the synthetic entries, the only runners ever showing up were whichever
+// happened to have a live task — so right after a remote `codex login`,
+// the pill had no way to flip from "needs auth" to "ready" until the next
+// codex task ran. Status strings are chosen to match what the web's
+// deriveRunnerChipStates already classifies: "ready", "needs-auth",
+// "down".
 func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 	infos := make([]RunnerInfo, 0) // never nil — Convex expects [] not null
+	seenRunner := map[string]bool{}
 	for _, t := range tm.tasks {
 		if t.Status == TaskStatusRunning || t.Status == TaskStatusQueued {
 			pid := 0
@@ -419,7 +429,59 @@ func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 				Status:   status,
 				Title:    t.Title,
 			})
+			seenRunner[normalizeRunnerID(t.RunnerID)] = true
 		}
+	}
+
+	// Append one synthetic entry per installed known runner. We only report
+	// runners whose binary is actually on PATH — pill stays "not-installed"
+	// grey for everything else, which is correct. Status="ready" means the
+	// runner's auth check passed; "needs-auth" means the binary is there but
+	// the user still has to sign in; "down" means DetectRunnerRuntimeStatus
+	// returned a hard error. Duplicates of running-task entries are skipped.
+	knownRunnerIDs := []string{"claude", "codex", "aider", "aider-ollama", "ollama", "opencode", "goose"}
+	for _, id := range knownRunnerIDs {
+		if seenRunner[normalizeRunnerID(id)] {
+			continue
+		}
+		cfg, ok := builtinRunners[id]
+		if !ok {
+			continue
+		}
+		if _, err := exec.LookPath(cfg.Command); err != nil {
+			continue
+		}
+		healthStatus := "ready"
+		rs := DetectRunnerRuntimeStatus(cfg, tm.workDir)
+		switch {
+		case strings.TrimSpace(rs.Error) != "":
+			// "Codex is installed but not authenticated…" falls through here
+			// (detectCodexStatus sets Ready=false + Error when auth is
+			// missing). Map that to "needs-auth" so the pill shows amber and
+			// the remote-sign-in flow opens on click.
+			if strings.Contains(strings.ToLower(rs.Error), "authenticate") ||
+				strings.Contains(strings.ToLower(rs.Error), "auth") ||
+				strings.Contains(strings.ToLower(rs.Error), "login") {
+				healthStatus = "needs-auth"
+			} else {
+				healthStatus = "down"
+			}
+		case !rs.AuthConfigured && (id == "codex" || id == "claude"):
+			// Claude's keychain-backed auth can't be probed on macOS so
+			// AuthConfigured stays false even when the user is signed in —
+			// don't force "needs-auth" there; only codex (where the probe is
+			// filesystem and reliable) rides this branch.
+			if id == "codex" {
+				healthStatus = "needs-auth"
+			}
+		}
+		infos = append(infos, RunnerInfo{
+			TaskID:   "",
+			RunnerID: id,
+			Status:   healthStatus,
+			Title:    "",
+		})
+		seenRunner[normalizeRunnerID(id)] = true
 	}
 	return infos
 }

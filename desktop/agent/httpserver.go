@@ -148,6 +148,14 @@ type HTTPServer struct {
 	morningStoreRef       *MorningStore
 	recordingMgrRef       *RecordingManager
 	hostShareWorkspaceMgr *HostShareWorkspaceManager
+
+	// Lets handlers that change reportable state (e.g. runner auth just
+	// completed via /runner-auth/browser/start) cut in front of the 30 s
+	// heartbeat ticker. Without this, a successful remote codex/claude
+	// sign-in takes up to 30 s to reach Convex — and the web pill stays
+	// "sign in" until the next tick, making it look like nothing happened.
+	// Buffer of 1 so concurrent kicks coalesce without the sender blocking.
+	heartbeatKick chan struct{}
 }
 
 // NewHTTPServer creates a new HTTP server bound to the given port.
@@ -167,6 +175,20 @@ func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname s
 		taskMgr:               taskMgr,
 		streams:               NewLogStreamRegistry(),
 		hostShareWorkspaceMgr: hostShareWorkspaceMgr,
+		heartbeatKick:         make(chan struct{}, 1),
+	}
+}
+
+// TriggerHeartbeat nudges the heartbeat loop to send an extra beat now, out
+// of band with the regular 30 s ticker. Non-blocking: if a kick is already
+// pending, this call is a no-op. Safe to call from any goroutine.
+func (s *HTTPServer) TriggerHeartbeat() {
+	if s == nil || s.heartbeatKick == nil {
+		return
+	}
+	select {
+	case s.heartbeatKick <- struct{}{}:
+	default:
 	}
 }
 

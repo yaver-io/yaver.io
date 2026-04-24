@@ -150,7 +150,7 @@ func scanRunnerBrowserAuthOutput(sess *runnerBrowserAuthSessionState, reader io.
 	}
 }
 
-func startRunnerBrowserAuthSession(runner string) (*runnerBrowserAuthSessionState, error) {
+func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBrowserAuthSessionState, error) {
 	runner = normalizeRunnerAuthName(runner)
 	sess := newRunnerBrowserAuthSession(runner)
 	method, cmd, err := runnerBrowserAuthCommand(runner)
@@ -201,6 +201,12 @@ func startRunnerBrowserAuthSession(runner string) (*runnerBrowserAuthSessionStat
 			}
 			refreshRunnerBrowserAuthSnapshot(state)
 		})
+		// Heartbeat-kick on terminal so the pill on yaver.io / mobile
+		// flips from "sign in" to "ready" within a second, instead of
+		// waiting up to 30 s for the next ticker.
+		if onTerminal != nil {
+			onTerminal()
+		}
 	}()
 
 	runnerBrowserAuthSessions.Store(sess.ID, sess)
@@ -226,7 +232,7 @@ func (s *HTTPServer) handleRunnerBrowserAuthStart(w http.ResponseWriter, r *http
 		jsonError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
-	sess, err := startRunnerBrowserAuthSession(req.Runner)
+	sess, err := startRunnerBrowserAuthSession(req.Runner, s.TriggerHeartbeat)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
