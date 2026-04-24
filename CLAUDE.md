@@ -1226,6 +1226,62 @@ Example layerings (the user picks the cost/quality split):
 
 Mechanism: `autodev_cmd` sets `YAVER_HYBRID_PLANNER` / `YAVER_HYBRID_IMPLEMENTER` env vars; `spawnHybrid` reads them and overrides `HybridSpec.Planner` / `Implementer` / `Model`. The runners themselves are dispatched via `runImplementer` against `builtinRunners` so adding a new agent just means adding it to that map.
 
+## Vault (project-scoped, P2P-synced) + Deploy Script Generator
+
+See [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md) for the full reference. Short version for coding agents:
+
+- **Storage**: `~/.yaver/vault.enc` — NaCl secretbox + Argon2id. File format v2 is a JSON array of `VaultEntry` (v1 object-keyed maps auto-migrate on load).
+- **VaultEntry fields**: `name`, `project` (""=global), `category`, `value`, `notes`, `created_at`, `updated_at`, `device_id`, `deleted` (tombstone).
+- **Internal key**: `project + "\x00" + name` so the same name in different projects never collides.
+- **Same-name across projects is intended**: e.g. `APP_STORE_KEY_ID` can differ between `mobile`, `sfmg`, `talos`. `yaver vault env --project mobile` merges globals with project entries; project wins on name collision.
+- **CLI**: `yaver vault add|list|get|delete|export|import|env|exec|projects|sync`. `--project <p>` scopes. `yaver vault env --project X` emits `export K=V`; `yaver vault exec --project X -- <cmd>` runs a command with env preloaded.
+- **HTTP (owner-only, rate-limited)**: `/vault/list`, `/vault/get`, `/vault/set`, `/vault/delete`, `/vault/env`, `/vault/digest`, `/vault/sync`, `/vault/push`. Guests blocked in both `feedback-only` and `full` scopes.
+- **MCP**: `ops secrets {op: list|get|set|delete|env|projects, scope: vault|op, project, name, value, category, notes}`. The remote-proxy rule still forbids `vault_*` MCP tools with a non-empty `device_id` — the new sync protocol is what crosses machines, not arbitrary reads.
+- **P2P sync** (`yaver vault sync`): `/vault/digest` → `/vault/sync` (pull newer) → `/vault/push` (send ours). Merge is last-writer-wins by `UpdatedAt`. Tombstones propagate. Conflicts silently lose the older write (document this when explaining to users).
+- **Privacy boundary unchanged**: vault values never touch Convex. `convex_privacy_test.go` forbidden-keys list covers `vaultValue`, `secret`, `privateKey`, etc.
+
+### Toolchain doctor (`yaver doctor build`)
+
+- `desktop/agent/doctor_build.go::buildTargets` — catalogue of `(target → required tools + secrets)`.
+- `yaver doctor build [--target=X] [--project=Y] [--json]` — probes PATH + vault, returns `BuildDoctorReport`.
+- HTTP: `GET /doctor/build?target=X&project=Y`.
+- Current targets: `testflight`, `playstore`, `cloudflare`, `convex`, `npm-publish`, `pypi-publish`.
+
+### Deploy script generator (`yaver deploy generate`)
+
+- `desktop/agent/deploy_script_gen.go::deployTemplates` — keyed by `<stack>:<target>` (e.g. `react-native-expo:testflight`, `nextjs:cloudflare`).
+- `yaver deploy generate --app=X --target=Y [--stack=Z] [--path=...] [--out=file]` — resolves stack + path from `yaver.workspace.yaml` (walks upward from cwd), emits a bash script. The script sources the vault, runs `yaver doctor build` as a preflight gate, then runs target-specific build + upload commands.
+- `yaver deploy templates` — lists supported combos.
+- HTTP: `GET /deploy/templates`, `POST /deploy/generate`.
+- Generated scripts use `$(yaver vault env --project X)` — never hardcoded values. Safe to commit.
+- Existing `scripts/deploy-testflight.sh`, `scripts/deploy-playstore.sh`, `scripts/deploy-web.sh` also source vault env at the top, with graceful fall-through to CI env vars when vault is empty.
+
+### When NOT to use the vault
+
+- **Inside GitHub Actions**: use `secrets.*` + the existing `env:` blocks. The deploy scripts already fall through.
+- **For Convex-stored state**: forbidden — Convex must never see a vault value.
+- **For one-off test fixtures**: use `.env.test` (gitignored) instead of polluting the vault.
+
+### Key files
+
+| File | Purpose |
+|------|---------|
+| `desktop/agent/vault.go` | `VaultStore`, merge semantics, v1→v2 migration |
+| `desktop/agent/vault_cmd.go` | `yaver vault` CLI (add/list/get/delete/export/import/env/exec/projects/sync) |
+| `desktop/agent/vault_http.go` | `/vault/*` handlers incl. sync endpoints |
+| `desktop/agent/vault_test.go` | CRUD, v1/v2 parse, sync merge, env export |
+| `desktop/agent/ops_secrets.go` | MCP `ops secrets` verb |
+| `desktop/agent/doctor_build.go` | Toolchain + secrets preflight catalogue |
+| `desktop/agent/deploy_script_gen.go` | Script generator + template catalogue |
+| `desktop/agent/deploy_script_http.go` | `/doctor/build`, `/deploy/templates`, `/deploy/generate` |
+| `desktop/agent/deploy_script_gen_test.go` | Generator + doctor tests |
+| `docs/vault-and-deploy.md` | End-user reference |
+
+### Follow-up work (not yet shipped)
+
+- **Guest-triggered deploys** (`POST /deploy/run`): let a guest on a shared Mac mini trigger `yaver deploy run --app mobile --target testflight` from their laptop. Secrets injected into the subprocess server-side, stdout streamed back over SSE, guest never sees raw values. Needs a new guest scope tier `deploy` between `feedback-only` and `full`.
+- **Composite targets**: single command to deploy mobile to both TestFlight and Play Store, with parallel execution + merged status. Today: generate two scripts, `bash a.sh & bash b.sh & wait`.
+
 ## Container Sandbox (Optional Task Isolation)
 
 Run AI agent tasks inside Docker containers for filesystem isolation. **Optional and disabled by default** — the default mode runs tasks directly on the host (unchanged behavior).

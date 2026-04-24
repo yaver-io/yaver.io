@@ -12,6 +12,16 @@ func runDeploy(args []string) {
 		os.Exit(0)
 	}
 
+	// New subcommands: vault-aware shell-script generator.
+	switch args[0] {
+	case "generate", "gen":
+		runDeployGenerateCmd(args[1:])
+		return
+	case "templates":
+		runDeployTemplatesCmd()
+		return
+	}
+
 	fs := flag.NewFlagSet("deploy", flag.ExitOnError)
 	ci := fs.String("ci", "", "CI provider: github or gitlab")
 	repo := fs.String("repo", "", "Repository (owner/repo for GitHub, project ID for GitLab)")
@@ -125,12 +135,21 @@ func runDeployGitLab(projectID, branch string) {
 
 func printDeployUsage() {
 	fmt.Print(`Usage:
+  # Script generation (vault-aware, runs on your own machine):
+  yaver deploy generate --app <name> --target <target> [--out <file>]
+                                                       Emit a bash deploy script
+                                                       that sources secrets from
+                                                       the Yaver vault.
+  yaver deploy templates                               List supported (stack, target)
+                                                       combinations.
+
+  # CI / release automation (existing):
   yaver deploy --file <path>                           Register artifact for P2P transfer
   yaver deploy --ci github --workflow <file.yml>       Trigger GitHub Actions workflow
   yaver deploy --ci github --file <path> --tag <v1.0>  Upload artifact to GitHub Release
   yaver deploy --ci gitlab --repo <project-id>         Trigger GitLab CI pipeline
 
-Options:
+Options (CI mode):
   --ci        CI provider: github or gitlab
   --repo      Repository (owner/repo for GitHub, project ID for GitLab)
   --workflow  GitHub Actions workflow filename

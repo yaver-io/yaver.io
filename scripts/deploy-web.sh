@@ -5,6 +5,16 @@ set -euo pipefail
 # Builds with @opennextjs/cloudflare and deploys via wrangler.
 # Enforces a 10 MB cap on the web/ source tree (excluding
 # node_modules, .next, .open-next).
+#
+# Credentials (CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID) can come from
+# the existing environment OR from the Yaver vault (project="web" plus
+# globals). Vault values win when present — the vault is the deliberate
+# source of truth. To bypass (e.g. in CI), don't store the values in
+# the vault and set them via GitHub secrets instead.
+
+if command -v yaver >/dev/null 2>&1; then
+  eval "$(yaver vault env --project web 2>/dev/null || true)"
+fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/web"

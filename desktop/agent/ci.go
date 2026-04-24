@@ -252,7 +252,7 @@ func getOrCreateGitHubRelease(token, repo, tag string) (int, error) {
 // getVaultToken retrieves a token from the vault by name.
 func getVaultToken(name string) string {
 	vs := openVault()
-	entry, err := vs.Get(name)
+	entry, err := vs.Get("", name)
 	if err != nil {
 		return ""
 	}

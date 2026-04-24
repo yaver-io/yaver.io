@@ -1075,6 +1075,51 @@ Use `host-share` when you want:
 
 Neither model gives the guest your shell, vault, or raw provider secrets by default.
 
+## Vault & Deploy Script Generator
+
+Yaver has an on-device vault that behaves like GitHub/GitLab secrets
+but stays on your own machines. Secrets are grouped by project,
+encrypted at rest (NaCl secretbox + Argon2id), and sync peer-to-peer
+between your paired devices — never through our servers.
+
+A deploy-script generator sits on top of it: given an `(app, target)`
+pair it emits a bash script that reads from the vault, runs a
+toolchain preflight, and executes the build + upload commands on
+your own machine. "Your machine = your CI runner" without the cloud
+CI bill.
+
+```bash
+# 1. Put credentials in the vault (project-scoped).
+yaver vault add APP_STORE_KEY_PATH   --project mobile --value ~/keys/AuthKey.p8
+yaver vault add APP_STORE_KEY_ID     --project mobile --value 77Z6B543D5
+yaver vault add APP_STORE_KEY_ISSUER --project mobile --value 7bd9...
+yaver vault add APPLE_TEAM_ID        --project mobile --value 5SJZ4KA39A
+
+# 2. Check the toolchain + vault are ready to ship.
+yaver doctor build --target testflight --project mobile
+
+# 3. Generate a reviewable bash script.
+yaver deploy generate --app mobile --target testflight --out scripts/deploy-mobile-ios.sh
+
+# 4. Ship. The script sources the vault, runs the preflight gate,
+#    then xcodebuild → export → upload to App Store Connect.
+bash scripts/deploy-mobile-ios.sh
+
+# 5. Sync the vault to your other Yaver-paired devices.
+yaver vault sync
+```
+
+Supported targets out of the box: `testflight`, `playstore`,
+`cloudflare`, `convex`, `npm-publish`, `pypi-publish`. Adding one
+is ~10 lines in `desktop/agent/deploy_script_gen.go`.
+
+The existing `scripts/deploy-*.sh` are vault-aware too — drop values
+in the vault once and they stop needing `export` in every shell.
+GitHub Actions keep working unchanged: a CI host with no vault just
+falls through to env vars set by `secrets.*`.
+
+Full reference: [`docs/vault-and-deploy.md`](docs/vault-and-deploy.md).
+
 ## Container Sandbox (Optional)
 
 Run AI agent tasks inside Docker containers for full filesystem isolation. Optional and disabled by default — the default mode runs tasks directly on the host.

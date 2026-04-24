@@ -7,10 +7,7 @@ package main
 // sandbox, and walks the full set → get → list → delete cycle.
 
 import (
-	"encoding/json"
-	"net/http"
 	"testing"
-	"time"
 )
 
 func TestVaultHTTPCRUD(t *testing.T) {
@@ -43,31 +40,23 @@ func TestVaultHTTPCRUD(t *testing.T) {
 		t.Fatalf("set: got %d", status)
 	}
 
-	// 3. List should now include it — without the value.
+	// 3. List should now include it — without the value. The response
+	// shape is {"entries": [...], "projects": [...]}.
 	_, body = doRequest(t, "GET", baseURL+"/vault/list", "owner-tok", "")
 	entriesIface, ok := body["entries"].([]interface{})
 	if !ok {
-		// handleVaultList returns the slice directly; adjust.
-		entriesIface = []interface{}{}
-		// Try interpreting body itself as a slice: doRequest decodes
-		// into a map, so a bare array response becomes the empty map.
-		// Re-issue the GET into a []interface{} via the low-level path
-		// instead.
+		t.Fatalf("expected 'entries' array in /vault/list response, got %v", body)
 	}
-	// doRequest can only decode objects, not arrays. Re-issue using
-	// a raw fetch so we can assert on the top-level array shape.
-	arr := listVaultRaw(t, baseURL, "owner-tok")
-	if len(arr) != 1 {
-		t.Fatalf("expected 1 entry after set, got %d (%v)", len(arr), arr)
+	if len(entriesIface) != 1 {
+		t.Fatalf("expected 1 entry after set, got %d (%v)", len(entriesIface), entriesIface)
 	}
-	first := arr[0].(map[string]interface{})
+	first := entriesIface[0].(map[string]interface{})
 	if first["name"] != "OPENAI_API_KEY" {
 		t.Errorf("wrong name: %v", first["name"])
 	}
 	if _, hasValue := first["value"]; hasValue {
 		t.Error("vault list leaked the value field — must never be in summaries")
 	}
-	_ = entriesIface
 
 	// 4. Get returns the plaintext.
 	status, getBody := doRequest(t, "GET", baseURL+"/vault/get?name=OPENAI_API_KEY", "owner-tok", "")
@@ -117,28 +106,3 @@ func TestVaultHTTPCRUD(t *testing.T) {
 	}
 }
 
-// listVaultRaw hits /vault/list and returns the response as []interface{}.
-// doRequest in agent_test.go only knows how to decode objects — the
-// vault list endpoint returns a bare array. This helper fills that gap.
-func listVaultRaw(t *testing.T, baseURL, token string) []interface{} {
-	t.Helper()
-	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", baseURL+"/vault/list", nil)
-	if err != nil {
-		t.Fatalf("build req: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("list req: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("list raw: HTTP %d", resp.StatusCode)
-	}
-	var arr []interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&arr); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	return arr
-}

@@ -84,7 +84,7 @@ func TestApplyRunnerAuthSetupLocalCodex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewVaultStore: %v", err)
 	}
-	entry, err := vs.Get("OPENAI_API_KEY")
+	entry, err := vs.Get("", "OPENAI_API_KEY")
 	if err != nil {
 		t.Fatalf("vault get: %v", err)
 	}

@@ -45,7 +45,7 @@ func hostSecretValue(name string) (string, string) {
 		return "", ""
 	}
 	for _, candidate := range providerEnvCandidates(name) {
-		entry, err := vs.Get(candidate)
+		entry, err := vs.Get("", candidate)
 		if err != nil {
 			continue
 		}

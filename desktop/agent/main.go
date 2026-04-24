@@ -373,6 +373,13 @@ func main() {
 	case "update", "self-update", "upgrade":
 		runManualUpdate()
 	case "doctor":
+		// `yaver doctor build [--target=X]` is a focused preflight for
+		// deploy toolchains. Everything else falls through to the
+		// legacy wide-scan runDoctor().
+		if len(os.Args) > 2 && os.Args[2] == "build" {
+			runDoctorBuild(os.Args[3:])
+			return
+		}
 		runDoctor()
 	case "init", "setup":
 		runInit(os.Args[2:])
@@ -2471,12 +2478,12 @@ func runServe(args []string) {
 	if vaultPassphrase == "" {
 		vaultPassphrase = DerivePassphraseFromToken(cfg.AuthToken)
 	}
-	if vs, err := NewVaultStore(vaultPassphrase); err != nil {
+	if vs, err := NewVaultStoreWithDevice(vaultPassphrase, cfg.DeviceID); err != nil {
 		log.Printf("Warning: vault unavailable: %v", err)
 	} else {
 		httpServer.vaultStore = vs
 		setRuntimeVaultStore(vs)
-		log.Printf("Vault unlocked (%d entries)", len(vs.List()))
+		log.Printf("Vault unlocked (%d entries)", len(vs.List("*")))
 	}
 	globalEmailMgr = emailMgr // enable email notifications
 

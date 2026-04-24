@@ -770,7 +770,7 @@ func optionalVaultToken(name string) string {
 	if err != nil {
 		return ""
 	}
-	entry, err := vs.Get(name)
+	entry, err := vs.Get("", name)
 	if err != nil {
 		return ""
 	}

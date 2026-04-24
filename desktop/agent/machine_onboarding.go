@@ -64,7 +64,7 @@ func loadVaultEntryOptional(name string) (*VaultEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	entry, err := vs.Get(name)
+	entry, err := vs.Get("", name)
 	if err != nil || entry == nil || strings.TrimSpace(entry.Value) == "" {
 		return nil, nil
 	}

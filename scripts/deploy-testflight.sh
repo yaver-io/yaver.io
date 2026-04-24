@@ -3,10 +3,19 @@ set -eo pipefail
 
 cd "$(dirname "$0")/../mobile/ios"
 
-# App Store Connect API key — set these env vars or edit for your team
-AUTH_KEY="${APP_STORE_KEY_PATH:?Set APP_STORE_KEY_PATH to your AuthKey_*.p8 file}"
-AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID}"
-AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER}"
+# Load secrets from the Yaver vault (project="mobile" + globals). Vault
+# values win when present; values not in the vault fall through from the
+# parent env. Locally: `yaver vault add APP_STORE_KEY_PATH --project mobile`.
+# In CI: just don't put the secret in the vault — GitHub Actions env vars
+# pass through unchanged.
+if command -v yaver >/dev/null 2>&1; then
+  eval "$(yaver vault env --project mobile 2>/dev/null || true)"
+fi
+
+# App Store Connect API key — set these env vars or in the Yaver vault.
+AUTH_KEY="${APP_STORE_KEY_PATH:?Set APP_STORE_KEY_PATH (env var or: yaver vault add APP_STORE_KEY_PATH --project mobile)}"
+AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID (env or yaver vault)}"
+AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER (env or yaver vault)}"
 
 # Bump build number
 PLIST="Yaver/Info.plist"

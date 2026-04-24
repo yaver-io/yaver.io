@@ -942,10 +942,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// of /vault/get is the most sensitive single response the agent
 	// can produce, so we make it prohibitively expensive to walk
 	// the namespace by hammering names.
+	// Build toolchain + deploy-script generator — owner-only.
+	mux.HandleFunc("/doctor/build", s.auth(s.handleDoctorBuild))
+	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
+	mux.HandleFunc("/deploy/generate", s.auth(s.handleDeployGenerate))
+
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))
 	mux.HandleFunc("/vault/set", s.rateLimit(s.auth(s.handleVaultSet)))
 	mux.HandleFunc("/vault/delete", s.rateLimit(s.auth(s.handleVaultDelete)))
+	mux.HandleFunc("/vault/env", s.rateLimit(s.auth(s.handleVaultEnv)))
+	// Peer-to-peer sync (owner-auth; never cross-user).
+	mux.HandleFunc("/vault/digest", s.rateLimit(s.auth(s.handleVaultDigest)))
+	mux.HandleFunc("/vault/sync", s.rateLimit(s.auth(s.handleVaultSync)))
+	mux.HandleFunc("/vault/push", s.rateLimit(s.auth(s.handleVaultPush)))
 
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
 	mux.HandleFunc("/mcp", s.handleMCP)

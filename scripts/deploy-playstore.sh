@@ -3,6 +3,15 @@ set -e
 
 cd "$(dirname "$0")/../mobile/android"
 
+# Pull Android signing creds + Play service account path from the Yaver
+# vault (project="mobile" + globals). Vault values win when present;
+# values that don't exist in the vault pass through from the parent env.
+# CI workflows that rely on GitHub-secret env vars just don't store them
+# in the vault (or run against a host that has no vault).
+if command -v yaver >/dev/null 2>&1; then
+  eval "$(yaver vault env --project mobile 2>/dev/null || true)"
+fi
+
 if [ -x "./gradlew" ]; then
   GRADLE="./gradlew"
 elif command -v gradle >/dev/null 2>&1; then

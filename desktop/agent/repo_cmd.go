@@ -176,10 +176,10 @@ func runRepoAuthStatus() {
 	vs := openVault()
 	githubVault := false
 	gitlabVault := false
-	if entry, _ := vs.Get("github-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
+	if entry, _ := vs.Get("", "github-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
 		githubVault = true
 	}
-	if entry, _ := vs.Get("gitlab-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
+	if entry, _ := vs.Get("", "gitlab-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
 		gitlabVault = true
 	}
 
@@ -461,7 +461,7 @@ func runRepoAuthRemove(args []string) {
 	}
 
 	vs := openVault()
-	_ = vs.Delete(provider + "-token")
+	_ = vs.Delete("", provider+"-token")
 
 	fmt.Printf("Removed %s integration for %s.\n", provider, targetHost)
 }
