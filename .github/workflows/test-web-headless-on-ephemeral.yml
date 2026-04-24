@@ -64,7 +64,7 @@ jobs:
           fi
           export PATH="/root/.bun/bin:$PATH"
           cd /opt/yaver/web-headless
-          bun install --production=false --silent
+          bun install
           bun run build
           node dist/cli.js version
           REMOTE
