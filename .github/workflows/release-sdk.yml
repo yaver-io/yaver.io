@@ -40,6 +40,11 @@ on:
         required: false
         type: boolean
         default: true
+      publish_web_headless:
+        description: "Publish npm package yaver-web-headless"
+        required: false
+        type: boolean
+        default: true
       package_feedback_unity:
         description: "Build Unity feedback SDK release artifact"
         required: false
@@ -216,6 +221,41 @@ jobs:
         # `npm publish` runs the prepublishOnly script which calls
         # `bun run build` — produces dist/cli.js, dist/mcp.js,
         # dist/mobile-client.js with a Node-friendly shebang.
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-web-headless:
+    # Mirrors publish-mobile-headless. Builds + publishes
+    # yaver-web-headless (the Node/bun surrogate for the web
+    # dashboard — dev-server preview, webview reload, vibing
+    # composer, reconnect-and-fix, repair-relay).
+    if: ${{ github.event_name == 'release' || inputs.publish_web_headless }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        working-directory: web-headless
+        run: bun install
+
+      - name: Typecheck + hermetic tests
+        working-directory: web-headless
+        run: |
+          bun run typecheck
+          bun test test/hermetic.test.ts
+
+      - name: Publish yaver-web-headless to npm
+        working-directory: web-headless
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,161 @@
+# Bootstrap a project directory on yaver-test-ephemeral so the agent
+# can resolve its name for vibing / Web Reload surfaces. The
+# /vibing/eligibility endpoint in cli >= 1.99.31 consults the
+# workspace manifest at the agent's workdir root, so once this
+# workflow has run, the web Feedback SDK on the named project will
+# successfully create vibing tasks against the test box.
+#
+# What it does (idempotent):
+#   1. SSH to the Hetzner box using the existing HCLOUD_SSH_PRIVATE_KEY.
+#   2. Ensure a projects dir exists at /opt/yaver/projects.
+#   3. Clone / update the repo at the given git URL into that dir.
+#   4. Write (or merge) a yaver.workspace.yaml entry for the project.
+#   5. Restart the yaver systemd unit so it picks up the workdir.
+#
+# Secrets needed: HCLOUD_SSH_PRIVATE_KEY, HETZNER_TEST_SERVER_IP.
+# For private repos, also supply GIT_PAT (a short-lived GitHub PAT
+# with repo:read scope) via the workflow input.
+
+name: Bootstrap Ephemeral Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_name:
+        description: "Project name (matches projectName sent by the Feedback SDK, case-insensitive)"
+        required: true
+        type: string
+      git_url:
+        description: "Clone URL. Use https://<PAT>@github.com/... for private repos, or ssh-style."
+        required: true
+        type: string
+      stack:
+        description: "Workspace stack label — nextjs / vite / react-native-expo / react-native / flutter / node / go / python / rust"
+        required: true
+        default: "nextjs"
+        type: string
+      set_as_workdir:
+        description: "Restart agent with --work-dir pointed at this project (true) or just update the manifest (false)"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: bootstrap-ephemeral-project-${{ inputs.project_name }}
+  cancel-in-progress: true
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Clone + wire project on the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          PROJECT_NAME: ${{ inputs.project_name }}
+          GIT_URL: ${{ inputs.git_url }}
+          STACK: ${{ inputs.stack }}
+          SET_AS_WORKDIR: ${{ inputs.set_as_workdir }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "PROJECT_NAME=$PROJECT_NAME GIT_URL='$GIT_URL' STACK=$STACK SET_AS_WORKDIR=$SET_AS_WORKDIR bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          projects_root="/opt/yaver/projects"
+          project_dir="$projects_root/$PROJECT_NAME"
+
+          mkdir -p "$projects_root"
+
+          if [ -d "$project_dir/.git" ]; then
+            echo "== updating existing clone at $project_dir"
+            git -C "$project_dir" fetch --quiet
+            # Reset to default branch tip. We don't want merge conflicts
+            # surviving across bootstrap runs since this is a test box.
+            default_branch=$(git -C "$project_dir" remote show origin | awk '/HEAD branch/ {print $NF}')
+            git -C "$project_dir" checkout --quiet "$default_branch"
+            git -C "$project_dir" reset --hard "origin/$default_branch" --quiet
+          else
+            echo "== cloning $GIT_URL into $project_dir"
+            git clone --depth 1 "$GIT_URL" "$project_dir"
+          fi
+
+          # Always pick the workspace manifest location: the agent's
+          # current --work-dir if we're not switching it, otherwise the
+          # project dir itself (self-contained single-project flow).
+          if [ "$SET_AS_WORKDIR" = "true" ]; then
+            manifest_dir="$project_dir"
+          else
+            # Ask systemd for the current WorkingDirectory of the yaver unit.
+            manifest_dir=$(systemctl show yaver --property=WorkingDirectory --value 2>/dev/null || true)
+            if [ -z "$manifest_dir" ] || [ ! -d "$manifest_dir" ]; then
+              manifest_dir="$projects_root"
+            fi
+          fi
+
+          manifest="$manifest_dir/yaver.workspace.yaml"
+          echo "== writing workspace manifest at $manifest"
+          mkdir -p "$manifest_dir"
+
+          # Idempotent merge: if a manifest exists and already declares
+          # the project, leave it alone; otherwise append.
+          if [ -f "$manifest" ] && grep -qE "^[[:space:]]*- name:[[:space:]]*$PROJECT_NAME\b" "$manifest"; then
+            echo "   (project already declared, skipping manifest write)"
+          elif [ -f "$manifest" ]; then
+            {
+              printf '  - name: %s\n' "$PROJECT_NAME"
+              printf '    path: %s\n' "$project_dir"
+              printf '    stack: %s\n' "$STACK"
+            } >>"$manifest"
+          else
+            {
+              printf 'version: 1\n'
+              printf 'name: ephemeral-test\n'
+              printf 'workspace:\n'
+              printf '  root: "."\n'
+              printf 'apps:\n'
+              printf '  - name: %s\n' "$PROJECT_NAME"
+              printf '    path: %s\n' "$project_dir"
+              printf '    stack: %s\n' "$STACK"
+            } >"$manifest"
+          fi
+          cat "$manifest"
+
+          if [ "$SET_AS_WORKDIR" = "true" ]; then
+            echo "== pointing yaver service at $project_dir"
+            # Replace the WorkingDirectory + ExecStart --work-dir in the
+            # systemd unit. yaver writes its unit to
+            # ~/.config/systemd/user/yaver.service (user scope) OR
+            # /etc/systemd/system/yaver.service (system scope on root).
+            for unit in /etc/systemd/system/yaver.service /root/.config/systemd/user/yaver.service; do
+              if [ -f "$unit" ]; then
+                sed -i "s|--work-dir=[^ ]*|--work-dir=$project_dir|g" "$unit"
+                if grep -q "^WorkingDirectory=" "$unit"; then
+                  sed -i "s|^WorkingDirectory=.*|WorkingDirectory=$project_dir|" "$unit"
+                else
+                  sed -i "/^\[Service\]/a WorkingDirectory=$project_dir" "$unit"
+                fi
+              fi
+            done
+            systemctl daemon-reload || true
+            systemctl restart yaver || true
+            systemctl --no-pager --lines=10 status yaver || true
+          else
+            echo "== leaving agent workdir unchanged; manifest-only wire-up"
+          fi
+
+          echo "== /info on the live agent:"
+          curl -fsS http://127.0.0.1:18080/info 2>&1 | head -30 || true
+          REMOTE
