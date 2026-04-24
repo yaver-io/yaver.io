@@ -1,0 +1,132 @@
+# One-shot: wire a yaver.workspace.yaml at /home/yaver/Workspace on
+# the ephemeral box, list carrotbet + sfmg, and retarget the yaver
+# agent to use that directory as its --work-dir. After this runs,
+# /workspace/apps returns the two projects and Web Reload / Hot
+# Reload surfaces resolve them by name from the Feedback SDK.
+#
+# Sibling of bootstrap-ephemeral-project.yml but opinionated —
+# hardwires the layout the test box already has (projects cloned
+# under /home/yaver/Workspace/<name>).
+
+name: Wire Ephemeral Workspace
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: wire-ephemeral-workspace
+  cancel-in-progress: true
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Write manifest + retarget agent workdir
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          WORKSPACE_ROOT="/home/yaver/Workspace"
+          MANIFEST="$WORKSPACE_ROOT/yaver.workspace.yaml"
+
+          echo "== ensuring workspace root exists"
+          mkdir -p "$WORKSPACE_ROOT"
+
+          echo "== current dirs in $WORKSPACE_ROOT:"
+          ls -1 "$WORKSPACE_ROOT" | head -10 || true
+
+          echo "== writing manifest at $MANIFEST"
+          cat >"$MANIFEST" <<'YAML'
+          version: 1
+          name: ephemeral-test
+          workspace:
+            root: "."
+          apps:
+            - name: carrotbet
+              path: ./carrotbet
+              stack: nextjs
+            - name: sfmg
+              path: ./sfmg
+              stack: react-native-expo
+          YAML
+
+          chown -R yaver:yaver "$WORKSPACE_ROOT" 2>/dev/null || true
+
+          echo "== contents of $MANIFEST:"
+          cat "$MANIFEST"
+
+          echo "== detecting yaver systemd unit"
+          UNIT=""
+          for candidate in \
+              /etc/systemd/system/yaver.service \
+              /home/yaver/.config/systemd/user/yaver.service \
+              /root/.config/systemd/user/yaver.service; do
+            [ -f "$candidate" ] && UNIT="$candidate" && echo "found: $UNIT" && break
+          done
+
+          if [ -z "$UNIT" ]; then
+            echo "!! no yaver.service unit found — the agent may be running from systemd --user as another user"
+            systemctl list-units --type=service --all | grep -i yaver || true
+            exit 3
+          fi
+
+          echo "== pointing $UNIT --work-dir at $WORKSPACE_ROOT"
+          sed -i "s|--work-dir=[^ \"]*|--work-dir=$WORKSPACE_ROOT|g" "$UNIT"
+          if grep -q "^WorkingDirectory=" "$UNIT"; then
+            sed -i "s|^WorkingDirectory=.*|WorkingDirectory=$WORKSPACE_ROOT|" "$UNIT"
+          fi
+          sed -n '/^\[Service\]/,/^\[/p' "$UNIT" | head -20
+
+          echo "== reloading systemd + restarting agent"
+          systemctl daemon-reload || true
+
+          # yaver.service might be a user unit — the `--user` flag switches scope.
+          if systemctl list-units --type=service yaver.service 2>/dev/null | grep -q yaver; then
+            systemctl restart yaver
+            systemctl --no-pager --lines=8 status yaver || true
+          elif command -v sudo >/dev/null && id yaver >/dev/null 2>&1; then
+            sudo -u yaver XDG_RUNTIME_DIR=/run/user/$(id -u yaver) systemctl --user daemon-reload || true
+            sudo -u yaver XDG_RUNTIME_DIR=/run/user/$(id -u yaver) systemctl --user restart yaver || true
+          fi
+
+          echo "== probing /info after restart"
+          sleep 3
+          for _ in 1 2 3 4 5; do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+
+          # Read token + hit /workspace to confirm the manifest is now
+          # visible to the agent.
+          CONFIG_PATH=""
+          for c in /root/.yaver/config.json /home/yaver/.yaver/config.json; do
+            [ -f "$c" ] && CONFIG_PATH="$c" && break
+          done
+          if [ -z "$CONFIG_PATH" ]; then
+            echo "no config file found — cannot self-test"
+            exit 0
+          fi
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('auth_token',''))" "$CONFIG_PATH")
+          echo "== /workspace (after restart):"
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:18080/workspace | python3 -m json.tool | head -40 || true
+          echo "== /workspace/apps?kind=web,hybrid:"
+          curl -fsS -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:18080/workspace/apps?kind=web%2Chybrid' | python3 -m json.tool | head -40 || true
+          REMOTE
