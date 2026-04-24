@@ -4,6 +4,15 @@ export interface FeedbackConfig {
   /** Bearer auth token. Optional in 0.2+: omit to use the in-app sign-in modal. */
   authToken?: string;
   /**
+   * Shared relay password. Required when `agentUrl` points through the Yaver
+   * relay (e.g. `https://public.yaver.io/d/<deviceId>`) — the relay rejects
+   * unauthenticated requests with HTTP 401. Read from Convex
+   * `/settings.relayPassword` by the owner; surfaced to SDK builds via an
+   * env var like `VITE_YAVER_RELAY_PASSWORD`. Attached as
+   * `X-Relay-Password` on every agent request.
+   */
+  relayPassword?: string;
+  /**
    * Override the Yaver public endpoints used for in-SDK auth and cloud-backed
    * device discovery. Defaults to production yaver.io / Convex URLs.
    */

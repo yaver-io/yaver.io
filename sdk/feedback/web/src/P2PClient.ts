@@ -14,7 +14,15 @@ import type {
 export class P2PClient {
   constructor(
     private baseUrl: string,
-    private authToken: string = ''
+    private authToken: string = '',
+    /**
+     * Shared relay secret. When the embedded agentUrl points through the
+     * Yaver relay (e.g. `https://public.yaver.io/d/<deviceId>`), the relay
+     * rejects unauthenticated requests with 401. Pass the relay password
+     * here and it will be attached as `X-Relay-Password` on every
+     * request.
+     */
+    private relayPassword: string = ''
   ) {}
 
   setBaseUrl(url: string): void {
@@ -25,11 +33,23 @@ export class P2PClient {
     this.authToken = token;
   }
 
+  setRelayPassword(password: string): void {
+    this.relayPassword = password;
+  }
+
   private get headers(): Record<string, string> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
     if (this.authToken) h['Authorization'] = `Bearer ${this.authToken}`;
+    if (this.relayPassword) h['X-Relay-Password'] = this.relayPassword;
     h['X-Client-Platform'] = 'web';
     return h;
+  }
+
+  /** Mirror of the shared header block for endpoints that build their own headers. */
+  private augmentHeaders(base: Record<string, string>): Record<string, string> {
+    if (this.authToken) base['Authorization'] = `Bearer ${this.authToken}`;
+    if (this.relayPassword) base['X-Relay-Password'] = this.relayPassword;
+    return base;
   }
 
   /** Health check — is the agent reachable? */
@@ -61,8 +81,7 @@ export class P2PClient {
     if (bundle.audio) form.append('audio', bundle.audio, 'voice.webm');
     bundle.screenshots.forEach((s, i) => form.append(`screenshot_${i}`, s, `screenshot_${i}.png`));
 
-    const headers: Record<string, string> = {};
-    if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+    const headers: Record<string, string> = this.augmentHeaders({});
 
     try {
       const resp = await fetch(`${this.baseUrl}/feedback`, { method: 'POST', headers, body: form });
@@ -75,8 +94,7 @@ export class P2PClient {
 
   /** Stream feedback events in live mode. Returns an EventSource-like reader. */
   async streamFeedback(events: Array<{ type: string; text?: string; data?: string }>): Promise<void> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.authToken) headers['Authorization'] = `Bearer ${this.authToken}`;
+    const headers: Record<string, string> = this.augmentHeaders({ 'Content-Type': 'application/json' });
 
     await fetch(`${this.baseUrl}/feedback/stream`, {
       method: 'POST',
@@ -355,6 +373,7 @@ export class P2PClient {
   private authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
     if (this.authToken) headers.Authorization = `Bearer ${this.authToken}`;
+    if (this.relayPassword) headers['X-Relay-Password'] = this.relayPassword;
     return headers;
   }
 }

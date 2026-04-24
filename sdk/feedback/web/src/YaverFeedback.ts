@@ -107,7 +107,11 @@ export class YaverFeedback {
 
     YaverFeedback.config = config;
     YaverFeedback.client = config.agentUrl
-      ? new P2PClient(config.agentUrl, config.authToken ?? '')
+      ? new P2PClient(
+          config.agentUrl,
+          config.authToken ?? '',
+          config.relayPassword ?? '',
+        )
       : null;
 
     // Set up trigger
@@ -361,6 +365,9 @@ export class YaverFeedback {
       if (YaverFeedback.config?.authToken) {
         headers['Authorization'] = `Bearer ${YaverFeedback.config.authToken}`;
       }
+      if (YaverFeedback.config?.relayPassword) {
+        headers['X-Relay-Password'] = YaverFeedback.config.relayPassword;
+      }
 
       const resp = await fetch(`${agentUrl}/feedback`, {
         method: 'POST',
@@ -382,6 +389,9 @@ export class YaverFeedback {
           headers: {
             ...(YaverFeedback.config?.authToken
               ? { Authorization: `Bearer ${YaverFeedback.config.authToken}` }
+              : {}),
+            ...(YaverFeedback.config?.relayPassword
+              ? { 'X-Relay-Password': YaverFeedback.config.relayPassword }
               : {}),
             'Content-Type': 'application/json',
           },
@@ -1088,11 +1098,13 @@ export class YaverFeedback {
       YaverFeedback.client = new P2PClient(
         YaverFeedback.config.agentUrl,
         YaverFeedback.config.authToken ?? '',
+        YaverFeedback.config.relayPassword ?? '',
       );
       return;
     }
     YaverFeedback.client.setBaseUrl(YaverFeedback.config.agentUrl);
     YaverFeedback.client.setAuthToken(YaverFeedback.config.authToken ?? '');
+    YaverFeedback.client.setRelayPassword(YaverFeedback.config.relayPassword ?? '');
   }
 
   private static connectCommandStream(): void {
