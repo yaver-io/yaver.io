@@ -24,7 +24,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── What is it ──────────────────────────────────────────────────────
   {
     q: "What is Yaver?",
-    a: "An open-source, mobile-first feedback and AI-debugging platform for app teams. Install the SDK in your app, capture screenshots, logs, session context, and bug reports from a real phone, then hand that incident to Claude Code, Codex, Aider, or local models. Yaver stays local-first and self-host friendly.",
+    a: "An open-source, mobile-first developer toolkit centered on your own workstation. Drive your coding agent, trigger Hermes reloads on your own phone, capture feedback from your dev build, and keep everything running on your own machine — no hosted middleman. Works with any terminal agent: Claude Code, Codex, Aider, Goose, OpenCode, or a local model runner of your choice.",
+  },
+  {
+    q: "Who is Yaver for?",
+    a: "An individual developer running Yaver on their own hardware — laptop, Mac mini, Linux box, or VPS — using their own phone as a remote control. Kick off agents, watch runs, reload bundles, iterate on a dev build from the couch. Sharing with trusted teammates (see below) is supported as a secondary capability.",
   },
   {
     q: "How is this different from AWS or Vercel?",
@@ -77,8 +81,8 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
 
   // ── Sharing / cost / privacy ────────────────────────────────────────
   {
-    q: "Can I share my dev machine with teammates?",
-    a: "Yes. yaver guests invite <email> grants scoped P2P access to a teammate (max 5, invitation expires in 2 days, no shell / vault / session access). For shared dev boxes, yaver serve --multi-user --team <id> gives each team member their own isolated workspace and AI sessions on the same machine.",
+    q: "Can I share my own machine with teammates?",
+    a: "Yes. `yaver guests invite <email>` grants scoped P2P access to a teammate (max 5, invitations expire in 2 days, no shell / vault / session access). `yaver serve --multi-user --team <id>` gives each team member an isolated workspace on the same box. Sharing is meant for people you already trust — and if the way you use that access could touch a third party's platform rules (App Store, Play Store, SSO provider, model license, employer policy, etc.), checking compliance is your responsibility.",
   },
   {
     q: "Do I need a powerful machine?",
@@ -1498,12 +1502,12 @@ return (
           </div>
 
           <div className="mt-10 rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-sm leading-relaxed text-surface-300">
-            <strong className="text-surface-100">The landing should sell the SDK loop first, then the Yaver mobile app.</strong>
+            <strong className="text-surface-100">The wedge is the SDK loop first, the Yaver mobile app second.</strong>
             <br />
-            The SDK is the wedge because it installs inside the customer&apos;s app.
-            The Yaver mobile app is the operator surface that makes the workflow
-            feel mobile-first and remote-friendly. Show both, but lead with the
-            embedded feedback moment.
+            The SDK is the wedge because it installs inside your own dev build.
+            The Yaver mobile app is the operator surface that makes the
+            workflow feel mobile-first and remote-friendly &mdash; kick off
+            agents, reload Hermes bundles, triage feedback from the couch.
           </div>
         </div>
       </section>
