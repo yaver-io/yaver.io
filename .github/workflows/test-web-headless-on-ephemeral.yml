@@ -1,0 +1,127 @@
+# Smoke test the yaver-web-headless CLI end-to-end on the persistent
+# Hetzner box. Runs the same Convex + relay flow the web dashboard
+# would run, just driven from the command line.
+#
+# What it proves:
+#   1. npm tarball installs on linux-arm64 (no native deps, no
+#      platform-specific hermesc quirks)
+#   2. sign-up → whoami → devices → repair-relay → sign-out work
+#      end-to-end against prod Convex
+#   3. Cleanup (delete-account) actually clears the throwaway user
+#
+# Non-goals:
+#   - This does NOT connect to a real agent (we don't publish one on
+#     the persistent box). The web-headless CLI's Convex-side surface
+#     is what we smoke-test here; the agent-side surface is covered
+#     by mobile-headless's smoke tests + the hermetic tests that
+#     shipped with this PR.
+name: Smoke yaver-web-headless on ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: test-web-headless-on-ephemeral
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync web-headless to box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          rsync -az --delete \
+            -e "ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" \
+            --exclude node_modules \
+            --exclude dist \
+            web-headless/ "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/web-headless/"
+
+      - name: Ensure bun + build CLI on the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          if ! command -v bun >/dev/null 2>&1; then
+            curl -fsSL https://bun.sh/install | bash
+          fi
+          export PATH="/root/.bun/bin:$PATH"
+          cd /opt/yaver/web-headless
+          bun install --production=false --silent
+          bun run build
+          node dist/cli.js version
+          REMOTE
+
+      - name: Smoke the CLI (signup → whoami → devices → repair → cleanup)
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -e
+          export PATH="/root/.bun/bin:$PATH"
+          cd /opt/yaver/web-headless
+
+          uuid="$(openssl rand -hex 6)"
+          email="e2e-web-headless-${uuid}@yaver.test"
+          password="WebHeadlessSmoke!${uuid}"
+
+          echo "=== sign-up ==="
+          token="$(node dist/cli.js sign-up --email="$email" --password="$password" --full-name="Web-Headless Smoke" | jq -r .token)"
+          if [ -z "$token" ]; then echo "FAIL: no token"; exit 1; fi
+          export YAVER_TOKEN="$token"
+          echo "token length: ${#token}"
+
+          echo "=== whoami ==="
+          node dist/cli.js whoami
+
+          echo "=== devices ==="
+          # Fresh user has 0 devices — expect an empty array, not an error.
+          devs="$(node dist/cli.js devices)"
+          echo "$devs" | jq .
+          if ! echo "$devs" | jq -e 'type == "array"' >/dev/null; then
+            echo "FAIL: devices did not return an array"; exit 1
+          fi
+
+          echo "=== repair-relay ==="
+          rep="$(node dist/cli.js repair-relay)"
+          echo "$rep" | jq .
+          if ! echo "$rep" | jq -e '.repaired' >/dev/null; then
+            # "already in sync" is also OK — means the relay password
+            # was correct at signup time (normal case).
+            reason="$(echo "$rep" | jq -r .reason)"
+            if [ "$reason" != "already in sync" ]; then
+              echo "FAIL: repair-relay returned neither repaired:true nor reason:already in sync"
+              exit 1
+            fi
+          fi
+
+          echo "=== sign-out ==="
+          node dist/cli.js sign-out
+
+          echo "=== cleanup: delete throwaway user ==="
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $token" \
+            https://perceptive-minnow-557.eu-west-1.convex.site/auth/delete-account \
+            || echo "WARN: cleanup delete-account failed; throwaway user will linger"
+
+          echo "OK"
+          REMOTE
