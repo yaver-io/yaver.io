@@ -251,23 +251,23 @@ export default function GitView({ onOpenSurface }: Props) {
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-surface-800 bg-surface-900/60 p-5">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-surface-800 bg-surface-900/60 px-4 py-3">
         <div>
-          <h2 className="text-xl font-semibold text-surface-100">Git</h2>
-          <p className="mt-1 text-sm text-surface-400">
+          <h2 className="text-base font-semibold text-surface-100">Git</h2>
+          <p className="mt-0.5 text-xs text-surface-400">
             See which repos live on this machine, open the right workflow for each one, and keep them in sync.
           </p>
         </div>
         <button
           onClick={() => void autoDetectProviders()}
-          className="rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/15"
+          className="rounded-md border border-surface-700 bg-surface-800/60 px-2.5 py-1.5 text-xs font-semibold text-surface-200 hover:border-surface-600 hover:bg-surface-800"
         >
           Detect Providers
         </button>
       </div>
 
-      <section className="rounded-3xl border border-surface-800 bg-surface-900/50 p-4">
+      <section className="rounded-lg border border-surface-800 bg-surface-900/50 p-3">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Repos On This Machine</div>
@@ -277,7 +277,7 @@ export default function GitView({ onOpenSurface }: Props) {
         </div>
 
         {projects.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-500">
+          <div className="rounded-md border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-500">
             No project roots detected yet. Clone a repo from below or connect to a machine with existing repos.
           </div>
         ) : (
@@ -294,7 +294,7 @@ export default function GitView({ onOpenSurface }: Props) {
                     const nextOpen = (event.currentTarget as HTMLDetailsElement).open;
                     setExpandedProjectPath(nextOpen ? project.path : "");
                   }}
-                  className={`rounded-2xl border transition ${
+                  className={`rounded-md border transition ${
                     isExpanded ? "border-indigo-500/30 bg-surface-950/80" : "border-surface-800 bg-surface-950/60"
                   }`}
                 >
@@ -327,7 +327,7 @@ export default function GitView({ onOpenSurface }: Props) {
                     <div className="border-t border-surface-800 px-4 pb-4 pt-4">
                       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr),minmax(340px,0.9fr)]">
                         <div className="space-y-4">
-                          <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
+                          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-4">
                             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                               <div>
                                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Open Surface</div>
@@ -383,7 +383,7 @@ export default function GitView({ onOpenSurface }: Props) {
                         </div>
 
                         <div className="space-y-4">
-                          <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
+                          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-4">
                             <div className="mb-3 flex items-center justify-between gap-3">
                               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Branches</div>
                               <MiniPill>{gitBranches.length} branches</MiniPill>
@@ -411,7 +411,7 @@ export default function GitView({ onOpenSurface }: Props) {
                             </div>
                           </div>
 
-                          <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
+                          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-4">
                             <div className="mb-3 flex items-center justify-between gap-3">
                               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Recent Commits</div>
                               <MiniPill>last 5</MiniPill>
@@ -455,7 +455,7 @@ export default function GitView({ onOpenSurface }: Props) {
         )}
       </section>
 
-      <section className="rounded-3xl border border-surface-800 bg-surface-900/50 p-4">
+      <section className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
         <details open>
           <summary className="cursor-pointer list-none">
             <div className="flex items-center justify-between gap-3">
@@ -486,7 +486,7 @@ export default function GitView({ onOpenSurface }: Props) {
             </div>
 
             {manualProvider ? (
-              <div className="space-y-2 rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+              <div className="space-y-2 rounded-md border border-surface-800 bg-surface-950/70 p-3">
                 <div className="text-[11px] leading-5 text-surface-500">
                   {manualProvider === "github"
                     ? "Use a GitHub token with repo access for private repositories."
@@ -512,11 +512,11 @@ export default function GitView({ onOpenSurface }: Props) {
             ) : null}
 
             {providers.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-400">
+              <div className="rounded-md border border-dashed border-surface-800 bg-surface-950/70 p-4 text-sm text-surface-400">
                 No git provider linked yet. Auto-detect uses remote `gh` or `glab` auth.
               </div>
             ) : providers.map((provider) => (
-              <div key={provider.host} className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+              <div key={provider.host} className="rounded-md border border-surface-800 bg-surface-950/70 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
@@ -593,7 +593,7 @@ export default function GitView({ onOpenSurface }: Props) {
       </section>
 
       {busy ? (
-        <div className="rounded-2xl border border-surface-800 bg-surface-900/50 px-4 py-3 text-sm text-surface-300">
+        <div className="rounded-md border border-surface-800 bg-surface-900/50 px-4 py-3 text-sm text-surface-300">
           {busy}
         </div>
       ) : null}
@@ -603,7 +603,7 @@ export default function GitView({ onOpenSurface }: Props) {
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
-    <div className="rounded-2xl border border-surface-800 bg-surface-950/70 p-3">
+    <div className="rounded-md border border-surface-800 bg-surface-950/70 p-3">
       <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">{label}</div>
       <div className="mt-2 text-2xl font-semibold text-surface-100">{value}</div>
       <div className="mt-1 text-xs text-surface-500">{sub}</div>
