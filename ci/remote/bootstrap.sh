@@ -132,6 +132,22 @@ if ! command -v yaver >/dev/null 2>&1; then
   fi
 fi
 
+log "system hermesc (linux-arm64 pre-warm)"
+# arm64 Linux boxes have no embedded prebuilt in the Go agent (see
+# desktop/agent/hermesc_embedded.go). Build hermesc once at
+# provisioning time and drop it at /usr/local/libexec/yaver/hermesc
+# so the agent's resolveHermesc() path doesn't stall on the first
+# reload waiting for a 1–2 min CMake build.
+if [ "$(uname -m)" = "aarch64" ] || [ "$(uname -m)" = "arm64" ]; then
+  if [ -f /opt/yaver/ci/remote/install-hermesc.sh ]; then
+    bash /opt/yaver/ci/remote/install-hermesc.sh || true
+  elif [ -f "$(dirname "$0")/install-hermesc.sh" ]; then
+    bash "$(dirname "$0")/install-hermesc.sh" || true
+  else
+    echo "!! ci/remote/install-hermesc.sh not found — arm64 reloads will build hermesc lazily on first push"
+  fi
+fi
+
 log "yaver smoke-check systemd units"
 # Lightweight periodic relay-password regression check. Entirely
 # local to this box — no Yaver /schedule budget, no cron. Reports

@@ -28,10 +28,42 @@ func resolveHermesc(workDir string) (string, error) {
 	if path, err := GetEmbeddedHermesc(); err == nil {
 		return path, nil
 	}
+	// Platforms with no embedded prebuilt (currently only linux/arm64 —
+	// see hermesc_embedded.go) can be pre-warmed at provisioning time
+	// with a /usr/local/libexec/yaver/hermesc binary matched to
+	// platformConfig's target Hermes ref. Avoids the 1–2 min cold
+	// build-from-source on the first reload after box bootstrap.
+	if path := findSystemHermesc(); path != "" {
+		return path, nil
+	}
 	if path := findProjectHermesc(workDir); path != "" {
 		return path, nil
 	}
 	return buildProjectHermesc(workDir)
+}
+
+// findSystemHermesc returns a path to a hermesc installed at a
+// well-known system location, or "" if none exists / is runnable.
+// Currently only checked on Linux — macOS and Windows go through
+// the embedded-prebuilt path.
+func findSystemHermesc() string {
+	if runtime.GOOS != "linux" {
+		return ""
+	}
+	candidates := []string{
+		// Populated by ci/remote/bootstrap.sh on the Hetzner test box
+		// and, eventually, by any customer installer that knows how to
+		// pre-warm this path. Ownership-wise this is a yaver-managed
+		// file, not something the user should hand-edit.
+		"/usr/local/libexec/yaver/hermesc",
+		"/opt/yaver/bin/hermesc",
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil && hermescBinaryRunnable(p) {
+			return p
+		}
+	}
+	return ""
 }
 
 func detectHermesRuntimeInfo(workDir string) HermesRuntimeInfo {

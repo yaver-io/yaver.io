@@ -7,6 +7,7 @@
 // Must NEVER fail npm install. This is best-effort bootstrap only.
 
 const { ensureAgentBinary, runAgentCommand } = require("./agent-runtime");
+const { ensureHermesc } = require("./hermesc-runtime");
 const { execSync } = require("child_process");
 const fs = require("fs");
 const os = require("os");
@@ -220,6 +221,22 @@ async function main() {
   } catch (error) {
     log(`Skipping agent prefetch: ${error.message}`);
     return;
+  }
+
+  // Platform-aware hermesc provisioning. Downloads the binary matching
+  // this host from the react-native npm tarball, caches it under the
+  // CLI install dir + ~/.yaver so `yaver-push` works offline after.
+  // Never blocks install — the bundler falls back to project-local RN
+  // if this step skipped or failed.
+  try {
+    const hermescPath = await ensureHermesc({ quiet: true });
+    if (hermescPath) {
+      log(`Hermes compiler ready at ${hermescPath}.`);
+    } else {
+      log(`Hermes compiler not pre-provisioned for ${process.platform}-${process.arch}; bundler will resolve project-local hermesc at push time.`);
+    }
+  } catch (error) {
+    log(`Skipping hermesc install: ${error.message}`);
   }
 
   ensurePathOnUnix();

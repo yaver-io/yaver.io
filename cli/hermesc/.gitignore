@@ -1,0 +1,13 @@
+# Platform-aware hermesc binaries are downloaded at postinstall time
+# (see ../src/hermesc-runtime.js). The two macOS prebuilts under
+# darwin-arm64/ and darwin-x64/ are tracked (redundant offline
+# fallback for Mac devs); everything else is pulled from the
+# react-native npm tarball per platform at install time.
+
+# Non-macOS platform subdirs — populated at install time.
+linux-*/
+win32-*/
+
+# Legacy flat layout — never commit the stale top-level binary back.
+/hermesc
+/hermesc.exe
