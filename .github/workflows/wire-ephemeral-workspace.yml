@@ -93,11 +93,26 @@ jobs:
           fi
           sed -n '/^\[Service\]/,/^\[/p' "$UNIT" | head -20
 
+          # Normalise binary paths. The yaver .deb installs to
+          # /usr/local/bin/yaver, but this box still has a stale 1.99.25
+          # at /usr/bin/yaver that systemd points at. Point /usr/bin/yaver
+          # at the current binary so every launcher sees the same version.
+          if [ -x /usr/local/bin/yaver ]; then
+            NEW_VER=$(/usr/local/bin/yaver --version 2>/dev/null | head -1)
+            OLD_VER=$(/usr/bin/yaver --version 2>/dev/null | head -1 || echo missing)
+            echo "== binary paths: /usr/local/bin=$NEW_VER /usr/bin=$OLD_VER"
+            if [ "$NEW_VER" != "$OLD_VER" ]; then
+              echo "== symlinking /usr/bin/yaver -> /usr/local/bin/yaver"
+              rm -f /usr/bin/yaver
+              ln -s /usr/local/bin/yaver /usr/bin/yaver
+            fi
+          fi
+
           echo "== existing yaver serve processes BEFORE cleanup:"
           pgrep -af "yaver serve" || echo "(none)"
 
           # Nuke every running yaver serve. There is a known footgun on
-          # this box: a root-owned detached agent with --work-dir=
+          # this box: a user-owned detached agent with --work-dir=
           # /home/yaver/.yaver keeps the TCP port 18080 while systemd's
           # user unit can't bind. pkill + SIGKILL ensures we end up
           # with exactly one agent owned by the user unit.
@@ -105,10 +120,23 @@ jobs:
           pkill -f "yaver serve" || true
           sleep 1
           pkill -9 -f "yaver serve" || true
-
-          # Free the port even if the process linger on close
           fuser -k 18080/tcp 2>/dev/null || true
           sleep 2
+
+          # Block whatever respawner is restarting the rogue process with
+          # --work-dir=/home/yaver/.yaver. Usually this is a stray
+          # systemd unit or a long-forgotten tmux session. Disable the
+          # tmux wrapper if present.
+          if [ -d /home/yaver/.yaver/tmux ]; then
+            tmux -S /home/yaver/.yaver/tmux/default kill-server 2>/dev/null || true
+          fi
+          # And any *other* yaver.service beyond the user unit we're driving.
+          if systemctl list-units --type=service --all | grep -q 'yaver\.service'; then
+            echo "== system-scope yaver.service candidates:"
+            systemctl list-units --type=service --all 'yaver.service' | head -5
+            systemctl stop yaver.service 2>/dev/null || true
+            systemctl disable yaver.service 2>/dev/null || true
+          fi
 
           echo "== reloading user systemd + starting agent"
           if id yaver >/dev/null 2>&1; then
