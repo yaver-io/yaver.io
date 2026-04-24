@@ -16,6 +16,7 @@ type Summary = {
 export default function OverviewView({ user }: { user?: { name?: string; email?: string } }) {
   const [s, setS] = useState<Summary | null>(null);
   const [error, setError] = useState("");
+  const [notConnected, setNotConnected] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -24,14 +25,53 @@ export default function OverviewView({ user }: { user?: { name?: string; email?:
   }, []);
 
   async function refresh() {
-    try { setS(await agentClient.overviewSummary()); setError(""); } catch (e: any) { setError(e.message); }
+    try {
+      setS(await agentClient.overviewSummary());
+      setError("");
+      setNotConnected(false);
+    } catch (e: any) {
+      const msg = String(e?.message || "");
+      // assertConnected() throws this when no agent is picked yet. Showing
+      // it as a blood-red error on Home is wrong — Home should be the
+      // landing page even when you haven't connected to a device.
+      if (msg.includes("not connected")) {
+        setNotConnected(true);
+        setError("");
+      } else {
+        setError(msg);
+        setNotConnected(false);
+      }
+    }
+  }
+
+  const greeting = new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 18 ? "Good afternoon" : "Good evening";
+  const name = user?.name || user?.email?.split("@")[0] || "there";
+
+  if (notConnected) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-surface-100">{greeting}, {name}</h1>
+          <p className="text-sm text-surface-500">Pick a device on the left to open your workspace.</p>
+        </div>
+        <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-6">
+          <h2 className="text-sm font-semibold text-surface-200 mb-1">Not connected to an agent yet</h2>
+          <p className="text-xs text-surface-500">
+            Your devices are listed in the sidebar. Click one to open the workspace —
+            tasks, hot reload, git, vibing, and deploy surfaces all live inside an
+            active agent connection.
+          </p>
+          <p className="mt-3 text-xs text-surface-600">
+            If nothing lights up: install Yaver on a machine and run{" "}
+            <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-300">yaver auth &amp;&amp; yaver serve</code>.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   if (error) return <div className="p-4 text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded">{error}</div>;
   if (!s) return <div className="p-4 text-sm text-surface-500">Loading…</div>;
-
-  const greeting = new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 18 ? "Good afternoon" : "Good evening";
-  const name = user?.name || user?.email?.split("@")[0] || "there";
 
   return (
     <div className="space-y-6">
