@@ -1841,6 +1841,18 @@ func (tm *TaskManager) startProcess(task *Task) error {
 			} else {
 				task.Status = TaskStatusFinished
 				log.Printf("[task %s] %s process finished successfully (output_len=%d)", task.ID, task.runner.Name, len(task.Output))
+				// Task succeeded on the first try — if the device was
+				// previously stuck in runnerDown=true from an old failure
+				// (pre-fix Claude-Code-without-auth loop, or any prior
+				// 4x-exhausted binary crash), clear it so the machine
+				// isn't greyed out forever in the web + SDK device
+				// pickers. Cheap best-effort async call.
+				go func(convexURL, token, deviceID string) {
+					if convexURL == "" || deviceID == "" {
+						return
+					}
+					_ = SetRunnerDown(convexURL, token, deviceID, false)
+				}(tm.ConvexURL, tm.AuthToken, tm.DeviceID)
 			}
 			finishNow := time.Now()
 			task.FinishedAt = &finishNow

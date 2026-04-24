@@ -5,6 +5,7 @@ import type {
   FeedbackReportSummary,
   FeedbackReviewEntry,
   ReloadAck,
+  RunnerBrowserAuthSession,
 } from './types';
 
 /**
@@ -50,6 +51,38 @@ export class P2PClient {
     if (this.authToken) base['Authorization'] = `Bearer ${this.authToken}`;
     if (this.relayPassword) base['X-Relay-Password'] = this.relayPassword;
     return base;
+  }
+
+  /**
+   * Start a remote browser-style sign-in for a runner (codex --device-auth,
+   * claude auth login --console). Returns a session id + the verification URL
+   * + one-time code so carrotbytes.xyz end-users can auth the machine's CLI
+   * without SSH or API keys.
+   */
+  async startRunnerBrowserAuth(runner: string): Promise<RunnerBrowserAuthSession> {
+    const resp = await fetch(`${this.baseUrl}/runner-auth/browser/start`, {
+      method: 'POST',
+      headers: this.augmentHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ runner }),
+    });
+    if (!resp.ok) throw new Error(`startRunnerBrowserAuth(${runner}) HTTP ${resp.status}`);
+    const data = await resp.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async getRunnerBrowserAuthStatus(sessionId: string): Promise<RunnerBrowserAuthSession> {
+    const url = new URL(`${this.baseUrl}/runner-auth/browser/status`);
+    url.searchParams.set('id', sessionId);
+    const resp = await fetch(url.toString(), { headers: this.augmentHeaders({}) });
+    if (!resp.ok) throw new Error(`getRunnerBrowserAuthStatus HTTP ${resp.status}`);
+    const data = await resp.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
+    const url = new URL(`${this.baseUrl}/runner-auth/browser/cancel`);
+    url.searchParams.set('id', sessionId);
+    await fetch(url.toString(), { method: 'POST', headers: this.augmentHeaders({}) }).catch(() => {});
   }
 
   /** Health check — is the agent reachable? */

@@ -149,6 +149,29 @@ export interface DiscoveryResult {
   latency: number; // ms
 }
 
+/**
+ * Remote browser-style sign-in session for a coding-agent CLI on the
+ * connected yaver host. Mirrors runnerBrowserAuthSession on the agent Go
+ * side — `codex login --device-auth` / `claude auth login --console`
+ * emit a verification URL + one-time code; this shape captures that
+ * progression (starting → awaiting_browser → completed / failed).
+ */
+export interface RunnerBrowserAuthSession {
+  id: string;
+  runner: string;
+  method: string;
+  status: 'starting' | 'awaiting_browser' | 'completed' | 'failed' | 'cancelled';
+  openUrl?: string;
+  code?: string;
+  detail?: string;
+  authConfigured?: boolean;
+  authSource?: string;
+  error?: string;
+  startedAt: number;
+  updatedAt: number;
+  completedAt?: number;
+}
+
 export interface FeedbackProjectRef {
   appName?: string;
   projectName?: string;

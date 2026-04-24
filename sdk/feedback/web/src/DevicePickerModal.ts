@@ -126,15 +126,27 @@ export async function openDevicePickerModal(token: string): Promise<RemoteDevice
           <div class="yvr-fb-device-list">
             ${group
               .map((device) => {
-                const online = device.isOnline && !device.runnerDown && !device.needsAuth;
-                const state = online ? 'Online' : device.needsAuth ? 'Needs auth' : 'Offline';
+                // Reachability: we only hard-disable rows that are genuinely
+                // offline. `runnerDown` and `needsAuth` are recoverable from
+                // the picker — clicking them should land you on the device
+                // where you can then trigger remote codex/claude sign-in or
+                // retry the runner. Disabling the button here traps users
+                // on carrotbytes.xyz without any path forward.
+                const reachable = device.isOnline;
+                const state = !device.isOnline
+                  ? 'Offline'
+                  : device.needsAuth
+                    ? 'Needs auth'
+                    : device.runnerDown
+                      ? 'Runner issue — click to fix'
+                      : 'Online';
                 const host =
                   device.isGuest && device.hostName ? `Shared by ${device.hostName}` : device.platform;
                 return `
                   <button
                     class="yvr-fb-device-row"
                     data-device-id="${device.deviceId}"
-                    ${online ? '' : 'disabled'}
+                    ${reachable ? '' : 'disabled'}
                   >
                     <div class="yvr-fb-device-name">${escapeHtml(device.name || device.deviceId)}</div>
                     <div class="yvr-fb-device-meta">${escapeHtml(host || 'Unknown')} • ${escapeHtml(state)}</div>

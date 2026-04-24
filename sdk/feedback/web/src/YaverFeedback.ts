@@ -496,6 +496,79 @@ export class YaverFeedback {
     return client.vibing(prompt, YaverFeedback.projectIdentity());
   }
 
+  /**
+   * Remote sign-in for the selected machine's Codex / Claude CLI.
+   * Opens a small overlay showing the one-time URL + code the user enters
+   * in their browser; the feedback SDK polls the agent until auth lands.
+   *
+   * This is the same flow the yaver.io dashboard exposes — embedded here
+   * so carrotbytes.xyz end-users never need to leave the page to fix an
+   * unauthenticated agent. Zero API keys, zero SSH.
+   */
+  static async signInRunner(runner: string): Promise<void> {
+    const client = await YaverFeedback.getClient();
+    const overlay = document.createElement('div');
+    overlay.id = 'yaver-fb-runner-auth';
+    overlay.style.cssText =
+      'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,0.7);backdrop-filter:blur(6px);padding:16px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;';
+    overlay.innerHTML = `
+      <div style="width:min(420px,100%);background:#0f172a;color:#e2e8f0;border-radius:14px;border:1px solid rgba(148,163,184,0.18);padding:18px;box-shadow:0 24px 60px rgba(2,6,23,0.55);">
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:12px;">
+          <div>
+            <div style="font-size:15px;font-weight:600;">Sign in to ${escapeHtml(runner)} on the remote machine</div>
+            <div style="font-size:11px;color:#94a3b8;margin-top:2px;">We'll open a one-time code — enter it in any browser tab.</div>
+          </div>
+          <button id="yvr-runner-auth-close" style="background:none;border:none;color:#94a3b8;font-size:20px;cursor:pointer;">×</button>
+        </div>
+        <div id="yvr-runner-auth-body" style="font-size:12px;color:#94a3b8;">Starting sign-in on the remote agent…</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    const body = overlay.querySelector<HTMLDivElement>('#yvr-runner-auth-body')!;
+    const closeBtn = overlay.querySelector<HTMLButtonElement>('#yvr-runner-auth-close')!;
+    closeBtn.onclick = () => overlay.remove();
+
+    let sessionId = '';
+    let done = false;
+    try {
+      const sess = await client.startRunnerBrowserAuth(runner);
+      sessionId = sess.id;
+      const render = (s: typeof sess) => {
+        if (s.status === 'completed') {
+          done = true;
+          body.innerHTML = `<div style="padding:10px 12px;border:1px solid rgba(34,197,94,0.35);background:rgba(34,197,94,0.1);border-radius:10px;color:#4ade80;">✓ Signed in — ${escapeHtml(s.detail || 'auth saved on the remote machine')}</div>`;
+          setTimeout(() => overlay.remove(), 2500);
+          return;
+        }
+        if (s.status === 'failed' || s.status === 'cancelled') {
+          done = true;
+          body.innerHTML = `<div style="padding:10px 12px;border:1px solid rgba(248,113,113,0.35);background:rgba(248,113,113,0.1);border-radius:10px;color:#fca5a5;">${escapeHtml(s.status === 'cancelled' ? 'Cancelled' : 'Failed')}: ${escapeHtml(s.error || s.detail || 'The CLI exited before sign-in completed.')}</div>`;
+          return;
+        }
+        const urlPart = s.openUrl
+          ? `<a href="${escapeHtml(s.openUrl)}" target="_blank" rel="noopener noreferrer" style="display:block;margin-bottom:10px;padding:10px;border-radius:10px;border:1px solid rgba(99,102,241,0.35);background:rgba(99,102,241,0.1);color:#c7d2fe;text-decoration:none;word-break:break-all;">↗ ${escapeHtml(s.openUrl)}</a>`
+          : `<div style="padding:10px;border-radius:10px;border:1px solid rgba(148,163,184,0.2);background:rgba(15,23,42,0.6);color:#94a3b8;">Waiting for verification URL from the remote CLI…</div>`;
+        const codePart = s.code
+          ? `<div style="margin-top:10px;"><div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:#94a3b8;margin-bottom:4px;">Enter this code</div><div style="padding:14px;text-align:center;border-radius:10px;border:1px solid rgba(148,163,184,0.22);background:rgba(15,23,42,0.8);font-family:ui-monospace,monospace;font-size:20px;letter-spacing:0.25em;color:#f1f5f9;">${escapeHtml(s.code)}</div></div>`
+          : '';
+        body.innerHTML = `${urlPart}${codePart}<p style="margin-top:12px;font-size:10px;color:#475569;">Device codes are a common phishing target. Never share this code. This popup closes automatically once sign-in completes.</p>`;
+      };
+      render(sess);
+      const iv = setInterval(async () => {
+        if (done) { clearInterval(iv); return; }
+        try { render(await client.getRunnerBrowserAuthStatus(sessionId)); } catch { /* transient — keep polling */ }
+      }, 1500);
+      (overlay as any).__ivHandle = iv;
+      closeBtn.onclick = () => {
+        if (!done && sessionId) { void client.cancelRunnerBrowserAuth(sessionId); }
+        clearInterval(iv);
+        overlay.remove();
+      };
+    } catch (err) {
+      body.innerHTML = `<div style="padding:10px 12px;border:1px solid rgba(248,113,113,0.35);background:rgba(248,113,113,0.1);border-radius:10px;color:#fca5a5;">Couldn't start sign-in: ${escapeHtml(err instanceof Error ? err.message : String(err))}</div>`;
+    }
+  }
+
   /** Manually trigger the feedback report UI. */
   static startReport(): void {
     void YaverFeedback.launchInteractiveReport();
