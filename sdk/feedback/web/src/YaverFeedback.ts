@@ -939,6 +939,17 @@ export class YaverFeedback {
         </div>
         <button id="yaver-fb-send" class="yvr-fb-action yvr-fb-action-send" type="button" style="display:none;">Stop &amp; Send Report</button>
 
+        <div class="yvr-fb-runner-auth-row" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+          <button id="yaver-fb-signin-codex" type="button" style="flex:1;min-width:140px;padding:8px 10px;border-radius:10px;border:1px solid rgba(148,163,184,0.22);background:rgba(15,23,42,0.6);color:#cbd5e1;font-size:11px;cursor:pointer;text-align:left;">
+            <span style="display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Remote sign-in</span>
+            <span style="display:block;font-weight:600;color:#f1f5f9;">Codex</span>
+          </button>
+          <button id="yaver-fb-signin-claude" type="button" style="flex:1;min-width:140px;padding:8px 10px;border-radius:10px;border:1px solid rgba(148,163,184,0.22);background:rgba(15,23,42,0.6);color:#cbd5e1;font-size:11px;cursor:pointer;text-align:left;">
+            <span style="display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Remote sign-in</span>
+            <span style="display:block;font-weight:600;color:#f1f5f9;">Claude</span>
+          </button>
+        </div>
+
         <div class="yvr-fb-vibe-block">
           <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
           <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
@@ -953,6 +964,10 @@ export class YaverFeedback {
       const vibeBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe')!;
       const vibePrompt = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt')!;
       const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
+      const signInCodex = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-codex');
+      const signInClaude = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-claude');
+      if (signInCodex) signInCodex.onclick = () => { void YaverFeedback.signInRunner('codex'); };
+      if (signInClaude) signInClaude.onclick = () => { void YaverFeedback.signInRunner('claude'); };
 
       const setActionsBusy = (value: boolean) => {
         busy = value;
@@ -1060,6 +1075,15 @@ export class YaverFeedback {
       void refreshMachinePill();
     };
 
+    const platformDisplay = (platform: string | undefined): string => {
+      const p = String(platform || '').toLowerCase();
+      if (p === 'darwin' || p === 'macos') return 'macOS';
+      if (p === 'linux') return 'Linux';
+      if (p === 'windows') return 'Windows';
+      if (p === 'android') return 'Android';
+      if (p === 'ios') return 'iOS';
+      return platform || 'unknown';
+    };
     const refreshMachinePill = async () => {
       const nameEl = overlay.querySelector<HTMLElement>('#yaver-fb-machine-pill-name');
       const metaEl = overlay.querySelector<HTMLElement>('#yaver-fb-machine-pill-meta');
@@ -1074,17 +1098,34 @@ export class YaverFeedback {
         const devices = await YaverFeedback.listAvailableDevices();
         const selected = devices.find((d) => d.deviceId === cfg.preferredDeviceId);
         if (!selected) {
-          nameEl.textContent = cfg.preferredDeviceId;
-          metaEl.textContent = cfg.agentUrl || 'Connection pending';
+          // No UUID exposure — just say we're connecting.
+          nameEl.textContent = 'Connecting…';
+          metaEl.textContent = '';
           return;
         }
-        nameEl.textContent = selected.name || selected.deviceId;
-        metaEl.textContent = cfg.agentUrl
-          ? `${selected.platform} • ${cfg.agentUrl}`
-          : selected.platform;
+        // Prefer the human-readable name; if the agent never set one,
+        // fall back to its hostname (SDK doesn't ship UUIDs to users).
+        const human = (selected.name && !/^[0-9a-f-]{36}$/i.test(selected.name))
+          ? selected.name
+          : 'Unnamed machine';
+        nameEl.textContent = human;
+        // Status pill: derived from isOnline + needsAuth + runnerDown.
+        // Matches the dashboard's chip semantics.
+        const anyAny = selected as any;
+        const isOnline = Boolean(anyAny.isOnline);
+        const needsAuth = Boolean(anyAny.needsAuth);
+        const runnerDown = Boolean(anyAny.runnerDown);
+        const status = !isOnline
+          ? 'Offline'
+          : needsAuth
+            ? 'Needs re-auth'
+            : runnerDown
+              ? 'Runner down — click to fix'
+              : 'Ready';
+        metaEl.textContent = `${platformDisplay(selected.platform)} · ${status}`;
       } catch {
-        nameEl.textContent = cfg.preferredDeviceId;
-        metaEl.textContent = cfg.agentUrl || 'Connection pending';
+        nameEl.textContent = 'Connecting…';
+        metaEl.textContent = '';
       }
     };
 

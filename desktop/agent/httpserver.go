@@ -196,9 +196,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
 	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
 	mux.HandleFunc("/runner-auth/setup", s.auth(s.handleRunnerAuthSetup))
-	mux.HandleFunc("/runner-auth/browser/start", s.auth(s.handleRunnerBrowserAuthStart))
-	mux.HandleFunc("/runner-auth/browser/status", s.auth(s.handleRunnerBrowserAuthStatus))
-	mux.HandleFunc("/runner-auth/browser/cancel", s.auth(s.handleRunnerBrowserAuthCancel))
+	// Browser/device-auth sub-family is also reachable by SDK tokens that
+	// carry the "runner-auth" scope — lets the embedded Feedback SDK on
+	// carrotbytes.xyz / an RN host trigger `codex login --device-auth`
+	// (verification URL + one-time code) without forcing the end-user to
+	// also log in to yaver.io. The api-key setter stays owner-only via
+	// the other /runner-auth/* endpoints registered near the top.
+	mux.HandleFunc("/runner-auth/browser/start", s.authSDK(s.handleRunnerBrowserAuthStart))
+	mux.HandleFunc("/runner-auth/browser/status", s.authSDK(s.handleRunnerBrowserAuthStatus))
+	mux.HandleFunc("/runner-auth/browser/cancel", s.authSDK(s.handleRunnerBrowserAuthCancel))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
 	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
 	mux.HandleFunc("/agent/env-profile", s.auth(s.handleEnvironmentProfile))
@@ -1034,6 +1040,12 @@ var scopePathPrefixes = map[string][]string{
 	"todolist":     {"/todolist"},
 	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility", "/unity/test", "/unity/build", "/unity/relaunch"},
 	"guest-vibing": {"/vibing"},
+	// runner-auth: lets the embedded Feedback SDK trigger the codex /
+	// claude remote device-auth flow (verification URL + one-time code)
+	// without requiring a full Convex session. Only the /runner-auth/
+	// browser/{start,status,cancel} family — not the api-key setter,
+	// which stays owner-only.
+	"runner-auth": {"/runner-auth/browser/start", "/runner-auth/browser/status", "/runner-auth/browser/cancel", "/runner-auth/status"},
 }
 
 func pathAllowedByScopes(path string, scopes []string) bool {
