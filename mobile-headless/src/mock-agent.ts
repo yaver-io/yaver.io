@@ -152,6 +152,48 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
     if (path === "/project/wizard/generate" && req.method === "POST") {
       return json(200, { ok: true, directory: "/tmp/mock-project", files: ["README.md"], nextSteps: ["cd mock-project"] });
     }
+    if (path === "/vibing" && req.method === "GET") {
+      const query = url.searchParams.get("query") || "mock-project";
+      return json(200, {
+        project: query,
+        path: `/tmp/mock-phone-projects/${query}`,
+        framework: "expo",
+        suggestions: [
+          {
+            id: "mock-feature",
+            icon: "✨",
+            label: "Add Filters",
+            desc: "Let users filter todos by status.",
+            category: "feature",
+            prompt: "Add an all/open/done filter to the todo list.",
+            priority: 1,
+          },
+        ],
+        quickActions: [
+          {
+            id: "mock-tests",
+            icon: "🧪",
+            label: "Run Tests",
+            desc: "Run the todo tests.",
+            category: "test",
+            prompt: "Run the todo tests and summarize results.",
+            priority: 1,
+          },
+        ],
+        history: ["Create todo app"],
+        generatedAt: new Date().toISOString(),
+      });
+    }
+    if (path === "/vibing/execute" && req.method === "POST") {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+      return json(200, {
+        ok: true,
+        taskId: "mock-vibing-task",
+        message: `queued: ${String(body.prompt || "").slice(0, 80)}`,
+      });
+    }
     if (path === "/phone/projects/list" && req.method === "GET") {
       return json(200, { projects: Array.from(phoneProjects.values()) });
     }

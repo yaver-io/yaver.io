@@ -107,6 +107,41 @@ export interface PhonePushResult {
   project: PhoneProject;
 }
 
+export interface VibingSuggestion {
+  id: string;
+  icon: string;
+  label: string;
+  desc: string;
+  category: string;
+  prompt: string;
+  priority: number;
+  reasoning?: string;
+}
+
+export interface VibingState {
+  project: string;
+  path: string;
+  framework?: string;
+  suggestions: VibingSuggestion[];
+  quickActions: VibingSuggestion[];
+  history: string[];
+  generatedAt?: string;
+}
+
+export interface VibingExecuteRequest {
+  prompt: string;
+  projectPath?: string;
+  projectName?: string;
+  bundleId?: string;
+}
+
+export interface VibingExecuteResult {
+  ok?: boolean;
+  taskId?: string;
+  runtimeDeploy?: unknown;
+  message?: string;
+ }
+
 export interface BootstrapTodoDeployOptions {
   name: string;
   prompt?: string;
@@ -612,6 +647,20 @@ export class MobileClient {
       (await this.raw.post("/project/wizard/answer", { sessionId, questionId, answer })).body,
     generate: async (sessionId: string, parentDir?: string) =>
       (await this.raw.post("/project/wizard/generate", { sessionId, parentDir })).body,
+  };
+
+  // ── Vibing ─────────────────────────────────────────────────────
+  readonly vibing = {
+    state: async (query: string): Promise<VibingState> => {
+      const r = await this.raw.get(`/vibing?query=${encodeURIComponent(query)}`);
+      if (r.status >= 400) throw new Error(r.body?.error ?? `getVibingState: HTTP ${r.status}`);
+      return r.body as VibingState;
+    },
+    execute: async (body: VibingExecuteRequest): Promise<VibingExecuteResult> => {
+      const r = await this.raw.post("/vibing/execute", body);
+      if (r.status >= 400) throw new Error(r.body?.error ?? `executeVibing: HTTP ${r.status}`);
+      return r.body as VibingExecuteResult;
+    },
   };
 
   // ── Guests (via Convex HTTP) ──────────────────────────────────

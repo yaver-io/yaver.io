@@ -87,6 +87,20 @@ describe("MobileClient against mock agent", () => {
     expect(listed.some((project) => project.slug === created.slug)).toBe(true);
   });
 
+  it("fetches vibing state and executes a vibing action", async () => {
+    const state = await mobile.vibing.state("todo-backend");
+    expect(state.project).toBe("todo-backend");
+    expect(state.quickActions.length).toBeGreaterThan(0);
+
+    const result = await mobile.vibing.execute({
+      prompt: state.quickActions[0].prompt,
+      projectPath: state.path,
+      projectName: state.project,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.taskId).toBe("mock-vibing-task");
+  });
+
   it("creates a phone project on another agent", async () => {
     const created = await mobile.phoneProjects.createAt(
       { baseUrl: targetAgent.baseUrl, authToken: "target-token" },
