@@ -1,0 +1,65 @@
+# One-shot heal of every stale cache on yaver-test-ephemeral so the
+# web UI + mobile app see the current state of the box. Specifically:
+#
+#   1. Delete ~/.yaver/PROJECTS.md (stale 24h cache) and force
+#      POST /projects/refresh so /projects discovers carrotbet + sfmg.
+#   2. Force /mobile-projects/refresh if the route exists.
+#   3. Print /agent/runners response so we can see what Chat is seeing.
+#   4. Suggest auth-factory-reset if /info still reports authExpired.
+
+name: Fix Ephemeral State
+
+on:
+  workflow_dispatch:
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Heal + verify
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" /home/yaver/.yaver/config.json)
+          AGENT="http://127.0.0.1:18080"
+          AUTH="Authorization: Bearer $TOKEN"
+
+          echo "== stale PROJECTS.md before delete =="
+          ls -la /home/yaver/.yaver/PROJECTS.md 2>/dev/null || echo "(no file)"
+          rm -f /home/yaver/.yaver/PROJECTS.md
+          chown yaver:yaver /home/yaver/.yaver 2>/dev/null || true
+
+          echo "== forcing /projects/refresh =="
+          curl -sS -o /tmp/refresh -w 'HTTP %{http_code}\n' -X POST -H "$AUTH" "$AGENT/projects/refresh"
+          jq . /tmp/refresh 2>/dev/null | head -30 || head -c 300 /tmp/refresh
+          echo ""
+
+          sleep 2
+          echo "== /projects after refresh =="
+          curl -sS -H "$AUTH" "$AGENT/projects" | jq '.projects | map({name, path, framework})' | head -40
+
+          echo "== /agent/runners =="
+          curl -sS -H "$AUTH" "$AGENT/agent/runners" | jq . | head -40
+
+          echo "== /agent/capabilities =="
+          curl -sS -H "$AUTH" "$AGENT/agent/capabilities" | jq '{runners: (.runners // [] | length), tools: (.tools // [])}' | head -20
+
+          echo "== /info authExpired =="
+          curl -sS -H "$AUTH" "$AGENT/info" | jq '{version, authExpired, workDir}'
+          REMOTE
