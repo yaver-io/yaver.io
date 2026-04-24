@@ -47,6 +47,19 @@ function statusColor(s: string) {
   return "text-surface-400";
 }
 
+type ChatMsg = { role: "user" | "assistant"; text: string };
+
+// Tasks created from the mobile "Open App" / "Run" flow carry a full
+// "Project context: - Work dir: X\nUser request: Y" prompt as their title
+// (the CLI uses text.slice(0, 80) for the title). Show the real ask.
+function displayTaskTitle(title: string): string {
+  const raw = (title || "").trim();
+  if (!raw) return "untitled";
+  const m = raw.match(/User request:\s*([\s\S]+?)$/i);
+  if (m && m[1]) return m[1].trim().split("\n")[0] || raw;
+  return raw;
+}
+
 function DeviceIcon({ platform }: { platform: string }) {
   const normalized = String(platform || "").trim().toLowerCase();
   const isMobile = normalized === "ios" || normalized === "android";
@@ -378,6 +391,7 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [outputLines, setOutputLines] = useState<string[]>([]);
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>("");
   const [input, setInput] = useState("");
@@ -387,7 +401,7 @@ export default function DashboardPage() {
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
   const [reauthBusy, setReauthBusy] = useState<string | null>(null);
   const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains">("devices");
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectDiagnostics, setConnectDiagnostics] = useState<ConnectAttemptDiagnostic[]>([]);
@@ -475,11 +489,28 @@ export default function DashboardPage() {
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
   useEffect(() => {
-    const u = agentClient.on("output", (tid, line) => { setActiveTask(at => { if (at && tid === at.id) setOutputLines(p => [...p, line]); return at; }); });
+    const u = agentClient.on("output", (tid, line) => {
+      setActiveTask(at => {
+        if (at && tid === at.id) {
+          setOutputLines(p => [...p, line]);
+          setChatMsgs(prev => {
+            const next = prev.slice();
+            const last = next[next.length - 1];
+            if (last && last.role === "assistant") {
+              next[next.length - 1] = { role: "assistant", text: last.text ? last.text + "\n" + line : line };
+            } else {
+              next.push({ role: "assistant", text: line });
+            }
+            return next;
+          });
+        }
+        return at;
+      });
+    });
     return u;
   }, []);
 
-  useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines]);
+  useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines, chatMsgs]);
 
   // Keep selectedRunner valid: pick the agent's default if it's installed, else
   // the first installed runner. Clears when the picker's choice disappears
@@ -641,17 +672,28 @@ export default function DashboardPage() {
     }
   };
 
-  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setRunners([]); setSelectedRunner(""); setConnectError(null); };
+  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setConnectError(null); };
 
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = input.trim(); if (!text || sending) return;
     setInput(""); setSending(true);
+    const continuing = activeTask?.status === "running";
+    // Optimistic user echo — always push the user bubble + empty assistant placeholder
+    // so the next streamed line flows into the assistant bubble, not into the last
+    // run's response.
+    setChatMsgs(prev => {
+      const base = continuing ? prev : [];
+      return [...base, { role: "user", text }, { role: "assistant", text: "" }];
+    });
+    if (!continuing) setOutputLines([]);
     try {
-      if (activeTask?.status === "running") { await agentClient.continueTask(activeTask.id, text); }
-      else {
+      if (continuing) {
+        await agentClient.continueTask(activeTask!.id, text);
+      } else {
         const t = await agentClient.sendTask(text.slice(0, 80), text, selectedRunner ? { runner: selectedRunner } : undefined);
-        setActiveTask(t); setOutputLines([]); setTasks(p => [t, ...p]);
+        setActiveTask(t);
+        setTasks(p => [t, ...p]);
       }
     } catch (err: any) {
       setConnectError(err?.message || "Failed to send");
@@ -660,7 +702,20 @@ export default function DashboardPage() {
     }
   };
 
-  const selectTask = (t: Task) => { setActiveTask(t); setOutputLines(t.output || []); setActiveTab("chat"); };
+  const selectTask = (t: Task) => {
+    setActiveTask(t);
+    setOutputLines(t.output || []);
+    // Rebuild chat: show the original user ask first, then the accumulated agent
+    // output as one assistant bubble. Streaming lines will keep appending to it.
+    const msgs: ChatMsg[] = [];
+    const userText = displayTaskTitle(t.title || "");
+    if (userText) msgs.push({ role: "user", text: userText });
+    const out = (t.output || []).join("\n");
+    if (out) msgs.push({ role: "assistant", text: out });
+    else if (t.status === "running") msgs.push({ role: "assistant", text: "" });
+    setChatMsgs(msgs);
+    setActiveTab("chat");
+  };
   const onTaskCreated = () => { setActiveTab("chat"); agentClient.listTasks().then(setTasks).catch(() => {}); };
   const handleSelectPreviewTarget = async (deviceId: string | null) => {
     const target = deviceId ? devices.find((d) => d.id === deviceId) || null : null;
@@ -978,7 +1033,7 @@ export default function DashboardPage() {
               <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Tasks</p>
               {tasks.slice(0, 12).map(t => (
                 <button key={t.id} onClick={() => selectTask(t)} className={`w-full text-left rounded-md px-2 py-1 text-[11px] truncate mb-0.5 ${activeTask?.id === t.id ? "bg-indigo-500/10 text-indigo-400" : "text-surface-400 hover:bg-surface-800"}`}>
-                  <span className={`inline-block h-1 w-1 rounded-full mr-1 ${t.status === "running" ? "bg-amber-400" : t.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />{t.title}
+                  <span className={`inline-block h-1 w-1 rounded-full mr-1 ${t.status === "running" ? "bg-amber-400" : t.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />{displayTaskTitle(t.title)}
                 </button>
               ))}
             </div>
@@ -1359,19 +1414,43 @@ export default function DashboardPage() {
                     <>
                       <div className="flex items-center gap-3 border-b border-surface-800 px-4 py-2">
                         <span className={`h-1.5 w-1.5 rounded-full ${activeTask.status === "running" ? "animate-pulse bg-amber-400" : activeTask.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />
-                        <span className="truncate text-sm font-medium text-surface-200">{activeTask.title}</span>
+                        <span className="truncate text-sm font-medium text-surface-200">{displayTaskTitle(activeTask.title)}</span>
                         <span className={`text-[10px] ${statusColor(activeTask.status)}`}>{activeTask.status}</span>
                         {activeTask.costUsd != null && <span className="text-[10px] text-surface-600">${activeTask.costUsd.toFixed(3)}</span>}
                       </div>
-                      <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 p-4 font-mono text-[12px] leading-5 text-surface-300">
-                        {outputLines.length === 0 ? (
-                          <div className="flex items-center gap-2 text-surface-600">
+                      <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 px-4 py-5">
+                        {chatMsgs.length === 0 ? (
+                          <div className="flex h-full items-center justify-center gap-2 text-[12px] text-surface-600">
                             {activeTask.status === "running" && <span className="h-3 w-3 animate-spin rounded-full border border-surface-500 border-t-transparent" />}
-                            {activeTask.status === "running" ? "Working..." : "No output"}
+                            {activeTask.status === "running" ? "Working..." : "No messages yet"}
                           </div>
-                        ) : outputLines.map((line, i) => (
-                          <div key={i} className="whitespace-pre-wrap break-all">{line.startsWith("> ") ? <span className="text-emerald-400">{line}</span> : line}</div>
-                        ))}
+                        ) : (
+                          <div className="mx-auto flex max-w-3xl flex-col gap-3">
+                            {chatMsgs.map((m, i) => (
+                              m.role === "user" ? (
+                                <div key={i} className="flex justify-end">
+                                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-indigo-500 px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm">
+                                    {m.text}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div key={i} className="flex justify-start">
+                                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-surface-800 px-3.5 py-2 font-mono text-[12px] leading-5 text-surface-100 whitespace-pre-wrap break-words shadow-sm">
+                                    {m.text
+                                      ? m.text
+                                      : activeTask.status === "running"
+                                        ? (<span className="inline-flex items-center gap-1 text-surface-400">
+                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
+                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
+                                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
+                                          </span>)
+                                        : (<span className="text-surface-500">(no response)</span>)}
+                                  </div>
+                                </div>
+                              )
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -1421,11 +1500,11 @@ export default function DashboardPage() {
                   <form onSubmit={handleSend} className="flex items-end gap-2">
                     <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder={runningTask ? "Follow up..." : "Build me a todo app..."} rows={1}
+                      placeholder={activeTask ? "Message..." : "Build me a todo app..."} rows={1}
                       className="max-h-32 w-full resize-none rounded-lg border border-surface-700 bg-surface-850 px-4 py-2.5 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "42px" }} />
                     <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0}
                       className="shrink-0 rounded-lg bg-surface-100 px-4 py-2.5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
-                      {sending ? "..." : runningTask ? "Send" : "Run"}
+                      {sending ? "..." : activeTask ? "Send" : "Run"}
                     </button>
                   </form>
                 </div>
