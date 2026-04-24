@@ -1,0 +1,45 @@
+name: Check ephemeral beacon
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+      - name: Probe
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          echo "--- beacon ---"
+          if [ -f /root/.yaver/last-healthy ]; then
+            age=$(( $(date -u +%s) - $(stat -c '%Y' /root/.yaver/last-healthy) ))
+            echo "last-healthy age=${age}s"
+            cat /root/.yaver/last-healthy
+          else
+            echo "MISSING"
+          fi
+          echo
+          echo "--- agent version ---"
+          /usr/local/bin/yaver --version 2>&1 | head -2
+          echo
+          echo "--- watchdog last 2 runs ---"
+          journalctl -u yaver-watchdog.service --no-pager -n 4
+          echo
+          echo "--- /info ---"
+          curl -sS --max-time 5 http://127.0.0.1:18080/info | head -30
+          echo
+          echo "--- LAN bus listen ---"
+          ss -ulnp | grep 19838 || echo "not listening on :19838"
+          REMOTE
