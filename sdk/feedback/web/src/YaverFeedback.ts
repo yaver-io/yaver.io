@@ -489,6 +489,8 @@ export class YaverFeedback {
     projectPath?: string;
     provider?: string;
     repoFullName?: string;
+    runner?: string;
+    needsRunnerAuth?: boolean;
   }> {
     const client = await YaverFeedback.getClient();
     return client.getVibingEligibility(YaverFeedback.projectIdentity());
@@ -959,6 +961,7 @@ export class YaverFeedback {
         <div class="yvr-fb-vibe-block">
           <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
           <div id="yaver-fb-vibe-gate" style="display:none;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:12px;line-height:1.45;margin-bottom:8px;"></div>
+          <button id="yaver-fb-vibe-repair" class="yvr-fb-action" type="button" style="display:none;margin-bottom:8px;">Make Vibing Work</button>
           <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
           <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
         </div>
@@ -969,6 +972,7 @@ export class YaverFeedback {
       const screenshotBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-screenshot')!;
       const reloadBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-reload')!;
       const vibeBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe')!;
+      const vibeRepairBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-repair')!;
       const vibePrompt = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt')!;
       const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
       const signInCodex = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-codex');
@@ -989,10 +993,40 @@ export class YaverFeedback {
 
       const setActionsBusy = (value: boolean) => {
         busy = value;
-        [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, machinePill].forEach(
+        [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, vibeRepairBtn, machinePill].forEach(
           (el) => ((el as HTMLButtonElement).disabled = value),
         );
         vibePrompt.disabled = value;
+      };
+
+      vibeRepairBtn.onclick = async () => {
+        setActionsBusy(true);
+        try {
+          setStatus('Checking machine sign-in…');
+          const client = await YaverFeedback.getClient();
+          await client.recoverAgentAuth().catch(() => false);
+          await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+          let eligibility = await YaverFeedback.getVibingEligibility();
+          if (!eligibility.canVibe && eligibility.needsRunnerAuth && (eligibility.runner === 'codex' || eligibility.runner === 'claude')) {
+            setStatus(`Signing into ${eligibility.runner} on the remote machine…`);
+            await YaverFeedback.signInRunner(eligibility.runner);
+            await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+            eligibility = await YaverFeedback.getVibingEligibility();
+          }
+          if (eligibility.canVibe) {
+            setStatus('Vibing is ready.');
+          } else {
+            setStatus(
+              eligibility.guidance && eligibility.guidance.trim()
+                ? `${eligibility.reason ?? 'Vibing unavailable.'} ${eligibility.guidance}`
+                : eligibility.reason ?? 'Vibing unavailable.',
+            );
+          }
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : 'Could not prepare vibing.');
+        } finally {
+          setActionsBusy(false);
+        }
       };
 
       machinePill.onclick = () => {
@@ -1108,10 +1142,12 @@ export class YaverFeedback {
       const gate = overlay.querySelector<HTMLDivElement>('#yaver-fb-vibe-gate');
       const vibePromptEl = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt');
       const vibeBtnEl = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe');
-      if (!gate || !vibePromptEl || !vibeBtnEl) return;
+      const vibeRepairBtnEl = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-repair');
+      if (!gate || !vibePromptEl || !vibeBtnEl || !vibeRepairBtnEl) return;
       const disable = (reason: string, guidance?: string) => {
         gate.textContent = guidance && guidance.trim() ? `${reason} ${guidance}` : reason;
         gate.style.display = 'block';
+        vibeRepairBtnEl.style.display = 'block';
         vibePromptEl.disabled = true;
         vibePromptEl.style.opacity = '0.5';
         vibeBtnEl.disabled = true;
@@ -1121,6 +1157,7 @@ export class YaverFeedback {
       const enable = () => {
         gate.textContent = '';
         gate.style.display = 'none';
+        vibeRepairBtnEl.style.display = 'none';
         vibePromptEl.disabled = false;
         vibePromptEl.style.opacity = '';
         vibeBtnEl.disabled = false;
@@ -1522,7 +1559,7 @@ export class YaverFeedback {
     bundleId?: string;
   } {
     return {
-      projectName: YaverFeedback.config?.projectName,
+      projectName: YaverFeedback.config?.projectName || YaverFeedback.config?.appName,
       projectPath: YaverFeedback.config?.projectPath,
       bundleId:
         typeof document !== 'undefined'

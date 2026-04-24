@@ -918,13 +918,43 @@ func resolveVibingProject(projectPath, projectName, bundleID string) (string, st
 	return strings.TrimSpace(projectPath), strings.TrimSpace(projectName)
 }
 
+func (s *HTTPServer) resolveVibingProjectForRequest(projectPath, projectName, bundleID string) (string, string) {
+	projectPath, projectName = resolveVibingProject(projectPath, projectName, bundleID)
+	if projectPath != "" {
+		return projectPath, projectName
+	}
+	if s != nil && s.taskMgr != nil && strings.TrimSpace(s.taskMgr.workDir) != "" {
+		projectPath = strings.TrimSpace(s.taskMgr.workDir)
+	}
+	if projectPath == "" && s != nil && s.devServerMgr != nil {
+		if st := s.devServerMgr.Status(); st != nil && strings.TrimSpace(st.WorkDir) != "" {
+			projectPath = strings.TrimSpace(st.WorkDir)
+		}
+	}
+	if projectName == "" && projectPath != "" {
+		projectName = DetectProjectInfo(projectPath).Name
+	}
+	return strings.TrimSpace(projectPath), strings.TrimSpace(projectName)
+}
+
+func (s *HTTPServer) vibingRunnerStatus(projectPath string) (RunnerConfig, RunnerRuntimeStatus, error) {
+	runnerCfg := defaultRunner
+	if s != nil && s.taskMgr != nil {
+		runnerCfg = s.taskMgr.runner
+	}
+	if err := CheckRunnerBinary(runnerCfg.Command); err != nil {
+		return runnerCfg, RunnerRuntimeStatus{}, err
+	}
+	return runnerCfg, DetectRunnerRuntimeStatus(runnerCfg, projectPath), nil
+}
+
 func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
 		return
 	}
 
-	projectPath, projectName := resolveVibingProject(
+	projectPath, projectName := s.resolveVibingProjectForRequest(
 		r.URL.Query().Get("projectPath"),
 		r.URL.Query().Get("projectName"),
 		r.URL.Query().Get("bundleId"),
@@ -1040,6 +1070,37 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	runnerCfg, runnerStatus, runnerErr := s.vibingRunnerStatus(projectPath)
+	if runnerErr != nil {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":           true,
+			"canVibe":      false,
+			"projectName":  projectName,
+			"projectPath":  projectPath,
+			"provider":     providerKind,
+			"repoFullName": repoFullName,
+			"runner":       normalizeRunnerID(runnerCfg.RunnerID),
+			"reason":       fmt.Sprintf("%s is not installed on this machine.", runnerCfg.Name),
+			"guidance":     strings.TrimSpace(runnerErr.Error()),
+		})
+		return
+	}
+	if !runnerStatus.Ready {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":              true,
+			"canVibe":         false,
+			"projectName":     projectName,
+			"projectPath":     projectPath,
+			"provider":        providerKind,
+			"repoFullName":    repoFullName,
+			"runner":          normalizeRunnerID(runnerCfg.RunnerID),
+			"needsRunnerAuth": !runnerStatus.AuthConfigured,
+			"reason":          fmt.Sprintf("%s is not ready on this machine.", runnerCfg.Name),
+			"guidance":        firstNonEmpty(strings.TrimSpace(runnerStatus.Error), strings.TrimSpace(runnerStatus.Warning)),
+		})
+		return
+	}
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":           true,
 		"canVibe":      true,
@@ -1047,6 +1108,7 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 		"projectPath":  projectPath,
 		"provider":     providerKind,
 		"repoFullName": repoFullName,
+		"runner":       normalizeRunnerID(runnerCfg.RunnerID),
 	})
 }
 
@@ -1324,7 +1386,7 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	// If all three come up empty we leave taskMgr.workDir unchanged
 	// and the taskMgr's own auto-detect runs (with the sloppy
 	// substring matcher that burned us on "in" → mprint).
-	req.ProjectPath, req.ProjectName = resolveVibingProject(req.ProjectPath, req.ProjectName, req.BundleID)
+	req.ProjectPath, req.ProjectName = s.resolveVibingProjectForRequest(req.ProjectPath, req.ProjectName, req.BundleID)
 
 	if req.ProjectPath != "" {
 		s.taskMgr.mu.Lock()

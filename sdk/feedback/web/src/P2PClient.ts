@@ -106,6 +106,15 @@ export class P2PClient {
     }
   }
 
+  async recoverAgentAuth(): Promise<boolean> {
+    const resp = await fetch(`${this.baseUrl}/auth/recover`, {
+      method: 'POST',
+      headers: this.augmentHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ mode: 'direct' }),
+    });
+    return resp.ok;
+  }
+
   /** Upload feedback bundle via multipart POST. Returns report ID. */
   async uploadFeedback(bundle: FeedbackBundle): Promise<FeedbackReportSummary | null> {
     const form = new FormData();
@@ -337,6 +346,8 @@ export class P2PClient {
     projectPath?: string;
     provider?: string;
     repoFullName?: string;
+    runner?: string;
+    needsRunnerAuth?: boolean;
   }> {
     const params = new URLSearchParams();
     if (opts?.projectName) params.set('projectName', opts.projectName);
