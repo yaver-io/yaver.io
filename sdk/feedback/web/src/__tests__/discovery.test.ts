@@ -209,11 +209,15 @@ describe('YaverDiscovery', () => {
     });
 
     it('prefers Convex-backed device discovery when auth is available', async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
+      // URL-routed mocks: the new discovery path fetches /devices/list,
+      // /config, /settings, and then races every candidate transport.
+      // Only the direct LAN probe resolves so it's the unambiguous winner.
+      mockFetch.mockImplementation(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/devices/list')) {
+          return {
+            ok: true,
+            json: async () => ({
               devices: [
                 {
                   deviceId: 'dev-1',
@@ -231,11 +235,26 @@ describe('YaverDiscovery', () => {
                 },
               ],
             }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ hostname: 'MacBook', version: '1.0' }),
-        });
+          };
+        }
+        if (url.endsWith('/config')) {
+          return { ok: true, json: async () => ({ relayServers: [] }) };
+        }
+        if (url.endsWith('/settings')) {
+          return { ok: true, json: async () => ({ settings: {} }) };
+        }
+        if (url === 'http://192.168.1.30:18080/health') {
+          return {
+            ok: true,
+            json: async () => ({ hostname: 'MacBook', version: '1.0' }),
+          };
+        }
+        if (url === 'http://10.0.0.20:18080/health') {
+          // LocalIP health fails so the test has a single winner.
+          throw new Error('other LAN ip unreachable');
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
 
       const result = await YaverDiscovery.discover({
         authToken: 'tok',
@@ -244,8 +263,8 @@ describe('YaverDiscovery', () => {
 
       expect(result).not.toBeNull();
       expect(result!.url).toBe('http://192.168.1.30:18080');
-      expect(mockFetch).toHaveBeenNthCalledWith(
-        1,
+      // The devices/list call still happens first with Bearer auth.
+      expect(mockFetch).toHaveBeenCalledWith(
         'https://perceptive-minnow-557.eu-west-1.convex.site/devices/list',
         expect.objectContaining({
           headers: expect.objectContaining({
@@ -255,12 +274,13 @@ describe('YaverDiscovery', () => {
       );
     });
 
-    it('falls back to relay when direct probe fails', async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
+    it('reaches the agent through the relay when no direct path works', async () => {
+      mockFetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input.toString();
+        if (url.endsWith('/devices/list')) {
+          return {
+            ok: true,
+            json: async () => ({
               devices: [
                 {
                   deviceId: 'dev-1',
@@ -277,20 +297,41 @@ describe('YaverDiscovery', () => {
                 },
               ],
             }),
-        })
-        .mockRejectedValueOnce(new Error('direct down'))
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              relayUrl: 'https://relay.example',
-              relayPassword: 'pw',
+          };
+        }
+        if (url.endsWith('/config')) {
+          return {
+            ok: true,
+            json: async () => ({
+              relayServers: [{ httpUrl: 'https://relay.example', priority: 0 }],
             }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ hostname: 'RelayMac', version: '1.1' }),
-        });
+          };
+        }
+        if (url.endsWith('/settings')) {
+          return {
+            ok: true,
+            json: async () => ({ settings: { relayPassword: 'pw' } }),
+          };
+        }
+        if (url === 'http://192.168.1.30:18080/health') {
+          throw new Error('direct down');
+        }
+        if (url === 'https://relay.example/d/dev-1/health') {
+          // Assert the probe carries both Bearer and X-Relay-Password.
+          const headers = (init?.headers ?? {}) as Record<string, string>;
+          if (headers.Authorization !== 'Bearer tok') {
+            throw new Error('missing Bearer header on relay probe');
+          }
+          if (headers['X-Relay-Password'] !== 'pw') {
+            throw new Error('missing X-Relay-Password on relay probe');
+          }
+          return {
+            ok: true,
+            json: async () => ({ hostname: 'RelayMac', version: '1.1' }),
+          };
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
 
       const result = await YaverDiscovery.discoverFromConvex(
         'https://convex.example',
@@ -299,11 +340,12 @@ describe('YaverDiscovery', () => {
 
       expect(result).not.toBeNull();
       expect(result!.url).toBe('https://relay.example/d/dev-1');
-      expect(mockFetch).toHaveBeenLastCalledWith(
+      expect(mockFetch).toHaveBeenCalledWith(
         'https://relay.example/d/dev-1/health',
         expect.objectContaining({
           headers: expect.objectContaining({
             'X-Relay-Password': 'pw',
+            Authorization: 'Bearer tok',
           }),
         }),
       );
