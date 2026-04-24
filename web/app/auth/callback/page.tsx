@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
 
 function CallbackHandler() {
@@ -45,10 +46,14 @@ function CallbackHandler() {
           }
           return res.json();
         })
-        .then((data) => {
+        .then(async (data) => {
           if (!data) return;
           const raw = data.user ?? data;
           if (!returnTo && !(raw?.surveyCompleted ?? false)) {
+            if (await hasRegisteredMachine(token)) {
+              router.push("/dashboard");
+              return;
+            }
             router.push("/survey");
             return;
           }

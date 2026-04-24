@@ -116,16 +116,37 @@ function formatRunnerChipLabel(runner: string): string {
   return cleaned;
 }
 
-function deviceAccessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
+function runnerChipsForDevice(device: Pick<Device, "sharedRunners" | "runners">): string[] {
+  const chips = new Set<string>();
+  for (const runner of device.sharedRunners || []) {
+    const label = formatRunnerChipLabel(runner);
+    if (label) chips.add(label);
+  }
+  for (const runner of device.runners || []) {
+    const label = formatRunnerChipLabel(String(runner?.runnerId || ""));
+    if (label) chips.add(label);
+  }
+  return [...chips];
+}
+
+function sharedGuestLabels(device: Pick<Device, "sharedGuests">): string[] {
+  return (device.sharedGuests || [])
+    .map((guest) => guest.name || guest.email || "")
+    .map((label) => String(label).trim())
+    .filter(Boolean);
+}
+
+function deviceAccessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharedRunners" | "runners">) {
   const hasSharedState = device.isGuest || device.sharedWithGuests;
   if (!hasSharedState) return null;
   const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
-  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
+  const guests = sharedGuestLabels(device);
   return {
-    projectLabel: device.sharesAllProjects ? "All Resources" : "Project Only",
+    projectLabel: device.sharesAllProjects ? "All Resources" : sharedProjects.length > 0 ? "Projects" : null,
     projectChips: device.sharesAllProjects ? [] : sharedProjects,
-    runnerLabel: device.sharesAllRunners ? "All Agents" : "Some Agents",
-    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
+    runnerChips: runnerChipsForDevice(device),
+    guestChips: guests.slice(0, 3),
+    guestOverflow: Math.max(0, guests.length - 3),
   };
 }
 
@@ -133,14 +154,14 @@ function accessScopeTone(device: Pick<Device, "accessScope" | "isGuest">) {
   if (device.accessScope === "shared-scoped") return "border-amber-500/40 bg-amber-500/10 text-amber-200";
   if (device.accessScope === "shared-legacy") return "border-violet-500/40 bg-violet-500/10 text-violet-200";
   if (device.isGuest) return "border-sky-500/40 bg-sky-500/10 text-sky-200";
-  return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+  return "";
 }
 
 function accessScopeLabel(device: Pick<Device, "accessScope" | "isGuest">) {
   if (device.accessScope === "shared-scoped") return "Scoped Access";
   if (device.accessScope === "shared-legacy") return "Legacy Shared";
   if (device.isGuest) return "Shared Device";
-  return "Owner";
+  return null;
 }
 
 function lanIpsForDevice(device: Pick<Device, "host" | "localIps">): string[] {
@@ -220,9 +241,16 @@ function DeviceConnectCard({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1.5">
-        <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${accessScopeTone(device)}`}>
-          {accessScopeLabel(device)}
-        </span>
+        {accessScopeLabel(device) ? (
+          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${accessScopeTone(device)}`}>
+            {accessScopeLabel(device)}
+          </span>
+        ) : null}
+        {!device.isGuest && device.sharedWithGuests ? (
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+            Shared
+          </span>
+        ) : null}
         {device.deviceClass ? (
           <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
             {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
@@ -256,24 +284,45 @@ function DeviceConnectCard({
 
       {shareSummary ? (
         <div className="mt-3 flex flex-wrap gap-1.5">
-          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
-            shareSummary.projectLabel === "All Resources"
-              ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-              : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-          }`}>
-            {shareSummary.projectLabel}
-          </span>
+          {shareSummary.projectLabel ? (
+            <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
+              shareSummary.projectLabel === "All Resources"
+                ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+                : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+            }`}>
+              {shareSummary.projectLabel}
+            </span>
+          ) : null}
           {shareSummary.projectChips.map((project) => (
             <span key={`${device.id}:project:${project}`} className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-100">
               {project}
             </span>
           ))}
-          <span className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] ${
-            shareSummary.runnerLabel === "All Agents"
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-              : "border-violet-500/40 bg-violet-500/10 text-violet-200"
-          }`}>
-            {shareSummary.runnerLabel}
+        </div>
+      ) : null}
+
+      {shareSummary && shareSummary.guestChips.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+            Shared With
+          </span>
+          {shareSummary.guestChips.map((guest) => (
+            <span key={`${device.id}:guest:${guest}`} className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[10px] font-medium text-sky-100">
+              {guest}
+            </span>
+          ))}
+          {shareSummary.guestOverflow > 0 ? (
+            <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-1 text-[10px] font-medium text-surface-300">
+              +{shareSummary.guestOverflow} more
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {shareSummary && shareSummary.runnerChips.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200">
+            Agents
           </span>
           {shareSummary.runnerChips.map((runner) => (
             <span key={`${device.id}:runner:${runner}`} className="rounded-full border border-violet-500/30 bg-violet-500/10 px-2 py-1 text-[10px] font-medium text-violet-100">
@@ -753,13 +802,20 @@ export default function DashboardPage() {
                   (() => {
                     const authExpired = connectDiagnostics.some((d) => d.authExpired);
                     const anyReached = connectDiagnostics.some((d) => d.status && d.status > 0);
-                    // If /health responded at all, the box is up — box auth is the problem.
-                    // If no attempt got a status, the box is either unreachable or all relays rejected the probe (e.g. 404 from relay = device not registered).
+                    const anyRelayProbeTried = connectDiagnostics.some((d) => d.path === "relay");
+                    const anyLoadFailed = connectDiagnostics.some((d) => d.path === "direct" && !anyReached);
+                    const relayCount = agentClient.configuredRelayServers.length;
+                    // Direct from an HTTPS web origin to http://LAN-IP:18080 is always
+                    // blocked as mixed content. Surface that explicitly.
+                    const mixedContentLikely =
+                      anyLoadFailed && typeof window !== "undefined" && window.location.protocol === "https:";
                     const headline = authExpired
-                      ? "Agent reachable, but its auth is expired"
+                      ? "Agent reachable, but its Convex session is expired"
                       : anyReached
                         ? "Agent responded, but the connection was rejected"
-                        : "Could not reach agent";
+                        : relayCount === 0
+                          ? "No relay configured — can't reach this agent from the web"
+                          : "Could not reach agent";
                     const reauthCmd = "yaver auth";
                     return (
                       <div className="flex flex-col items-center gap-3 w-full max-w-md">
@@ -775,7 +831,7 @@ export default function DashboardPage() {
                                   className="flex items-center gap-2 text-[10px] font-mono text-surface-500"
                                 >
                                   <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${d.ok ? "bg-emerald-400" : d.authExpired ? "bg-amber-400" : "bg-red-400"}`} />
-                                  <span className="text-surface-400 w-14 shrink-0">
+                                  <span className="text-surface-400 w-20 shrink-0 truncate">
                                     {d.path === "relay" ? `relay · ${d.relayId || "?"}` : "direct"}
                                   </span>
                                   <span className={`shrink-0 ${d.authExpired ? "text-amber-300" : d.ok ? "text-emerald-300" : "text-red-300"}`}>
@@ -789,66 +845,95 @@ export default function DashboardPage() {
                             </div>
                           ) : null}
 
-                          {authExpired ? (
-                            <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-left">
-                              <p className="text-[11px] text-amber-300">
-                                The agent can&apos;t validate its session with Convex anymore. You&apos;re already signed in here &mdash; hand your session down to the box:
-                              </p>
-                              <div className="mt-2 flex items-center gap-2">
-                                <button
-                                  disabled={reauthing || !connectedDevice || !token}
-                                  onClick={async () => {
-                                    if (!connectedDevice || !token) return;
-                                    setReauthing(true);
-                                    setReauthMessage(null);
-                                    try {
-                                      const result = await agentClient.reauthDirect({
-                                        deviceId: connectedDevice.id,
-                                        hostSessionToken: token,
+                          {/* Why-it-happened explainer */}
+                          <div className="mt-3 text-[10px] text-surface-500 space-y-1">
+                            <div>
+                              <span className="text-surface-400">Relays configured:</span>{" "}
+                              <span className={relayCount === 0 ? "text-red-300" : "text-surface-300"}>{relayCount}</span>
+                              {relayCount > 0 && !anyRelayProbeTried ? (
+                                <span className="ml-2 text-amber-300">(no relay probe attempted — device has no deviceId?)</span>
+                              ) : null}
+                            </div>
+                            {mixedContentLikely ? (
+                              <div className="text-amber-300">
+                                Direct probe returned <code className="rounded bg-surface-900 px-1 font-mono">Load failed</code> because a browser on <code className="rounded bg-surface-900 px-1 font-mono">https://</code> can&apos;t fetch <code className="rounded bg-surface-900 px-1 font-mono">http://</code> LAN IPs (mixed content). The web path has to go through a relay.
+                              </div>
+                            ) : null}
+                          </div>
+
+                          {/* Re-auth — always offered on connection error. */}
+                          <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 p-2 text-left">
+                            <p className="text-[11px] text-amber-300">
+                              {authExpired
+                                ? "Agent accepted the probe but its Convex session is stale. Hand your current session down to the box:"
+                                : "Try handing your current session down to the box — works even if the agent&apos;s own token is dead, as long as one relay can reach it:"}
+                            </p>
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                disabled={reauthing || !connectedDevice || !token || relayCount === 0}
+                                onClick={async () => {
+                                  if (!connectedDevice || !token) return;
+                                  setReauthing(true);
+                                  setReauthMessage(null);
+                                  try {
+                                    const result = await agentClient.reauthAgent({
+                                      deviceId: connectedDevice.id,
+                                      hostSessionToken: token,
+                                      convexSiteUrl: CONVEX_URL,
+                                    });
+                                    if (result.ok) {
+                                      setReauthMessage({
+                                        kind: "ok",
+                                        text: `Agent accepted via ${result.via} (${result.mode}) — reconnecting…`,
                                       });
-                                      if (result.ok) {
-                                        setReauthMessage({ kind: "ok", text: "Agent accepted new token — reconnecting…" });
-                                        setTimeout(() => {
-                                          connectToDevice(connectedDevice);
-                                        }, 400);
-                                      } else {
-                                        setReauthMessage({ kind: "err", text: result.error || "Re-auth failed" });
-                                      }
-                                    } catch (e: any) {
-                                      setReauthMessage({ kind: "err", text: e?.message || "Re-auth failed" });
+                                      setTimeout(() => {
+                                        connectToDevice(connectedDevice);
+                                      }, 400);
+                                    } else {
+                                      const lines = result.diagnostics.map(
+                                        (d) => `${d.path} · ${d.step}: ${d.ok ? "ok" : d.error || `HTTP ${d.status ?? "?"}`}`,
+                                      );
+                                      setReauthMessage({
+                                        kind: "err",
+                                        text: `${result.error || "Re-auth failed"}\n${lines.join("\n")}`,
+                                      });
                                     }
-                                    setReauthing(false);
+                                  } catch (e: any) {
+                                    setReauthMessage({ kind: "err", text: e?.message || "Re-auth failed" });
+                                  }
+                                  setReauthing(false);
+                                }}
+                                className="flex-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-40"
+                              >
+                                {reauthing ? "Re-authing…" : relayCount === 0 ? "Re-auth (needs a relay)" : "Re-auth this device from web"}
+                              </button>
+                            </div>
+                            {reauthMessage ? (
+                              <pre className={`mt-2 whitespace-pre-wrap break-words font-mono text-[10px] ${reauthMessage.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}>
+                                {reauthMessage.text}
+                              </pre>
+                            ) : null}
+                            <div className="mt-3 border-t border-amber-500/20 pt-2">
+                              <p className="text-[10px] text-surface-500">Or, from a shell on the remote box:</p>
+                              <div className="mt-1 flex items-center gap-2">
+                                <code className="flex-1 rounded bg-surface-900 px-2 py-1 text-[11px] text-surface-300 font-mono">{reauthCmd}</code>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard?.writeText(reauthCmd);
+                                    setCopiedReauth(true);
+                                    setTimeout(() => setCopiedReauth(false), 1500);
                                   }}
-                                  className="flex-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+                                  className="rounded border border-surface-700 px-2 py-1 text-[10px] text-surface-400 hover:text-surface-200"
                                 >
-                                  {reauthing ? "Re-authing…" : "Re-auth this device from web"}
+                                  {copiedReauth ? "copied" : "copy"}
                                 </button>
                               </div>
-                              {reauthMessage ? (
-                                <p className={`mt-2 text-[10px] ${reauthMessage.kind === "ok" ? "text-emerald-300" : "text-red-300"}`}>
-                                  {reauthMessage.text}
-                                </p>
-                              ) : null}
-                              <div className="mt-3 border-t border-amber-500/20 pt-2">
-                                <p className="text-[10px] text-surface-500">Or, from a shell on the remote box:</p>
-                                <div className="mt-1 flex items-center gap-2">
-                                  <code className="flex-1 rounded bg-surface-900 px-2 py-1 text-[11px] text-surface-300 font-mono">{reauthCmd}</code>
-                                  <button
-                                    onClick={() => {
-                                      navigator.clipboard?.writeText(reauthCmd);
-                                      setCopiedReauth(true);
-                                      setTimeout(() => setCopiedReauth(false), 1500);
-                                    }}
-                                    className="rounded border border-surface-700 px-2 py-1 text-[10px] text-surface-400 hover:text-surface-200"
-                                  >
-                                    {copiedReauth ? "copied" : "copy"}
-                                  </button>
-                                </div>
-                              </div>
                             </div>
-                          ) : !anyReached ? (
+                          </div>
+
+                          {!anyReached && !mixedContentLikely && relayCount > 0 ? (
                             <p className="mt-3 text-xs text-surface-600">
-                              Make sure <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-400">yaver serve</code> is running on this machine and it&apos;s reachable from your relay.
+                              Relays are configured but none could reach the agent. Check <code className="rounded bg-surface-800 px-1 py-0.5 text-surface-400">yaver serve</code> is running on this machine and it's registered with the relay.
                             </p>
                           ) : null}
                         </div>
@@ -862,7 +947,7 @@ export default function DashboardPage() {
                 ) : (
                   <>
                     <p className="mb-6 text-sm text-surface-500">Connect to a device running <code className="rounded bg-surface-800 px-1.5 py-0.5 text-surface-300">yaver serve</code></p>
-                    <div className="space-y-3 text-left">
+                    <div className="grid grid-cols-1 gap-3 text-left xl:grid-cols-2">
                       {visibleDevices.map((d) => (
                         <DeviceConnectCard
                           key={d.id}

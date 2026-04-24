@@ -89,10 +89,10 @@ export default function SurveyPage() {
   }, [isAuthenticated, isLoading, router]);
 
   useEffect(() => {
-    if (!isLoading && surveyCompleted && devices.length > 0) {
+    if (!isLoading && devices.length > 0) {
       router.replace("/dashboard");
     }
-  }, [devices.length, isLoading, router, surveyCompleted]);
+  }, [devices.length, isLoading, router]);
 
   const isDeveloper = identity === "developer";
   const hasMachine = devices.length > 0;

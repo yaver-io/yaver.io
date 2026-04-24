@@ -68,16 +68,37 @@ function formatRunnerChipLabel(runner: string): string {
   return cleaned;
 }
 
-function deviceShareSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
+function runnerChipsForDevice(device: Pick<Device, "sharedRunners" | "runners">): string[] {
+  const chips = new Set<string>();
+  for (const runner of device.sharedRunners || []) {
+    const label = formatRunnerChipLabel(runner);
+    if (label) chips.add(label);
+  }
+  for (const runner of device.runners || []) {
+    const label = formatRunnerChipLabel(String(runner?.runnerId || ""));
+    if (label) chips.add(label);
+  }
+  return [...chips];
+}
+
+function sharedGuestLabels(device: Pick<Device, "sharedGuests">): string[] {
+  return (device.sharedGuests || [])
+    .map((guest) => guest.name || guest.email || "")
+    .map((label) => String(label).trim())
+    .filter(Boolean);
+}
+
+function deviceShareSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharedRunners" | "runners">) {
   const hasSharedState = device.isGuest || device.sharedWithGuests;
   if (!hasSharedState) return null;
   const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
-  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
+  const guests = sharedGuestLabels(device);
   return {
-    projectLabel: device.sharesAllProjects ? "All Resources" : "Project Only",
+    projectLabel: device.sharesAllProjects ? "All Resources" : sharedProjects.length > 0 ? "Projects" : null,
     projectChips: device.sharesAllProjects ? [] : sharedProjects,
-    runnerLabel: device.sharesAllRunners ? "All Agents" : "Some Agents",
-    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
+    runnerChips: runnerChipsForDevice(device),
+    guestChips: guests.slice(0, 3),
+    guestOverflow: Math.max(0, guests.length - 3),
   };
 }
 
@@ -193,6 +214,15 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                   <h3 className="font-semibold text-surface-50">
                     {device.name}
                   </h3>
+                  {device.isGuest ? (
+                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      Shared Device
+                    </span>
+                  ) : device.sharedWithGuests ? (
+                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      Shared
+                    </span>
+                  ) : null}
                   {device.deviceClass ? (
                     <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
                       {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
@@ -233,24 +263,43 @@ export default function DevicesView({ devices, onRefresh, signedInEmail, signedI
                 ) : null}
                 {shareSummary ? (
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                      shareSummary.projectLabel === "All Resources"
-                        ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-                        : "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                    }`}>
-                      {shareSummary.projectLabel}
-                    </span>
+                    {shareSummary.projectLabel ? (
+                      <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                        shareSummary.projectLabel === "All Resources"
+                          ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
+                          : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                      }`}>
+                        {shareSummary.projectLabel}
+                      </span>
+                    ) : null}
                     {shareSummary.projectChips.map((project) => (
                       <span key={`${device.id}:project:${project}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
                         {project}
                       </span>
                     ))}
-                    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                      shareSummary.runnerLabel === "All Agents"
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
-                        : "border-violet-500/40 bg-violet-500/10 text-violet-200"
-                    }`}>
-                      {shareSummary.runnerLabel}
+                  </div>
+                ) : null}
+                {shareSummary && shareSummary.guestChips.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                      Shared With
+                    </span>
+                    {shareSummary.guestChips.map((guest) => (
+                      <span key={`${device.id}:guest:${guest}`} className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-sky-200">
+                        {guest}
+                      </span>
+                    ))}
+                    {shareSummary.guestOverflow > 0 ? (
+                      <span className="rounded border border-surface-700 bg-surface-900 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-surface-300">
+                        +{shareSummary.guestOverflow} more
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {shareSummary && shareSummary.runnerChips.length > 0 ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-200">
+                      Agents
                     </span>
                     {shareSummary.runnerChips.map((runner) => (
                       <span key={`${device.id}:runner:${runner}`} className="rounded border border-violet-500/40 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-violet-200">

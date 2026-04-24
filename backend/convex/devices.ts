@@ -56,6 +56,10 @@ type ListedDevice = {
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
   sharedWithGuests?: boolean;
+  sharedGuests?: Array<{
+    name?: string;
+    email?: string;
+  }>;
   sharesAllProjects?: boolean;
   sharedProjects?: string[];
   sharesAllRunners?: boolean;
@@ -68,6 +72,8 @@ type ListedDevice = {
 type ShareRule = {
   allowedProjects?: string[];
   allowedRunners?: string[];
+  guestName?: string;
+  guestEmail?: string;
 };
 
 function normalizeDeviceName(name: string | undefined): string {
@@ -128,6 +134,13 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
     publicEndpoints: [...new Set([...(a.publicEndpoints || []), ...(b.publicEndpoints || [])].filter(Boolean))],
     runners: (base.runners && base.runners.length > 0) ? base.runners : other.runners,
     sharedWithGuests: base.sharedWithGuests ?? other.sharedWithGuests,
+    sharedGuests: [
+      ...new Map(
+        [...(a.sharedGuests || []), ...(b.sharedGuests || [])]
+          .filter((guest) => guest?.name || guest?.email)
+          .map((guest) => [`${guest.email || ""}:${guest.name || ""}`, guest]),
+      ).values(),
+    ],
     sharesAllProjects: (base.sharesAllProjects ?? false) || (other.sharesAllProjects ?? false),
     sharedProjects: [...new Set([...(a.sharedProjects || []), ...(b.sharedProjects || [])].filter(Boolean))],
     sharesAllRunners: (base.sharesAllRunners ?? false) || (other.sharesAllRunners ?? false),
@@ -200,9 +213,10 @@ function normalizeScopedList(items: string[] | undefined): string[] {
     : [];
 }
 
-function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners"> {
+function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWithGuests" | "sharedGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners"> {
   const projects = new Set<string>();
   const runners = new Set<string>();
+  const guests = new Map<string, { name?: string; email?: string }>();
   let sharesAllProjects = false;
   let sharesAllRunners = false;
 
@@ -221,10 +235,20 @@ function summarizeShareRules(rules: ShareRule[]): Pick<ListedDevice, "sharedWith
     } else {
       allowedRunners.forEach((runner) => runners.add(runner));
     }
+
+    const guestName = String(rule.guestName || "").trim();
+    const guestEmail = String(rule.guestEmail || "").trim();
+    if (guestName || guestEmail) {
+      guests.set(`${guestEmail}:${guestName}`, {
+        name: guestName || undefined,
+        email: guestEmail || undefined,
+      });
+    }
   }
 
   return {
     sharedWithGuests: rules.length > 0,
+    sharedGuests: [...guests.values()],
     sharesAllProjects,
     sharedProjects: [...projects],
     sharesAllRunners,
@@ -588,9 +612,12 @@ export const listMyDevices = query({
 
     for (const grant of activeHostInfraGrants) {
       const access = activeGuestAccessByGuest.get(grant.guestUserId.toString());
+      const guest = await ctx.db.get(grant.guestUserId);
       const rule: ShareRule = {
         allowedProjects: access?.allowedProjects,
         allowedRunners: grant.allowedRunners ?? access?.allowedRunners,
+        guestName: guest?.fullName,
+        guestEmail: guest?.email,
       };
       if (grant.shareAllDevices) {
         for (const device of ownDevices) pushShareRule(device.deviceId, rule);
@@ -609,7 +636,14 @@ export const listMyDevices = query({
       const rule: ShareRule = {
         allowedProjects: access.allowedProjects,
         allowedRunners: access.allowedRunners,
+        guestName: undefined,
+        guestEmail: undefined,
       };
+      const guest = await ctx.db.get(access.guestUserId);
+      if (guest) {
+        rule.guestName = guest.fullName;
+        rule.guestEmail = guest.email;
+      }
       for (const device of ownDevices) pushShareRule(device.deviceId, rule);
     }
 

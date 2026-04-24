@@ -34,10 +34,18 @@ export interface Device {
   useHostApiKeys?: boolean;
   allowGuestProvidedApiKeys?: boolean;
   sharedWithGuests?: boolean;
+  sharedGuests?: Array<{
+    name?: string;
+    email?: string;
+  }>;
   sharesAllProjects?: boolean;
   sharedProjects?: string[];
   sharesAllRunners?: boolean;
   sharedRunners?: string[];
+  runners?: Array<{
+    runnerId?: string;
+    status?: string;
+  }>;
   sessionBinding?: "dedicated" | "legacy-shared";
 }
 
@@ -113,6 +121,22 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
       for (const endpoint of other.publicEndpoints || []) if (endpoint) merged.add(endpoint);
       return merged.size > 0 ? [...merged] : undefined;
     })(),
+    sharedGuests: (() => {
+      const merged = new Map<string, { name?: string; email?: string }>();
+      for (const guest of base.sharedGuests || []) {
+        if (!guest?.name && !guest?.email) continue;
+        merged.set(`${guest.email || ""}:${guest.name || ""}`, guest);
+      }
+      for (const guest of other.sharedGuests || []) {
+        if (!guest?.name && !guest?.email) continue;
+        merged.set(`${guest.email || ""}:${guest.name || ""}`, guest);
+      }
+      return merged.size > 0 ? [...merged.values()] : undefined;
+    })(),
+    runners:
+      Array.isArray(base.runners) && base.runners.length > 0
+        ? base.runners
+        : other.runners,
     lastSeen: (() => {
       const next = Math.max(Date.parse(existing.lastSeen || "") || 0, Date.parse(incoming.lastSeen || "") || 0);
       return next > 0 ? new Date(next).toISOString() : base.lastSeen || other.lastSeen;
@@ -228,10 +252,12 @@ export function useDevices(token: string | null): DevicesState {
         useHostApiKeys: d.useHostApiKeys,
         allowGuestProvidedApiKeys: d.allowGuestProvidedApiKeys,
         sharedWithGuests: d.sharedWithGuests,
+        sharedGuests: Array.isArray(d.sharedGuests) ? d.sharedGuests : undefined,
         sharesAllProjects: d.sharesAllProjects,
         sharedProjects: Array.isArray(d.sharedProjects) ? d.sharedProjects : undefined,
         sharesAllRunners: d.sharesAllRunners,
         sharedRunners: Array.isArray(d.sharedRunners) ? d.sharedRunners : undefined,
+        runners: Array.isArray(d.runners) ? d.runners : undefined,
         sessionBinding: d.sessionBinding,
       }});
 

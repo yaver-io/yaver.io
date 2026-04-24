@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState, useRef } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
 
 function TotpContent() {
@@ -95,6 +96,10 @@ function TotpContent() {
           const validateData = await validateRes.json();
           const raw = validateData.user ?? validateData;
           if (!(raw?.surveyCompleted ?? false)) {
+            if (await hasRegisteredMachine(token)) {
+              window.location.href = "/dashboard";
+              return;
+            }
             window.location.href = "/survey";
             return;
           }

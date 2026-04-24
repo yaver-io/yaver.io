@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
 
 function AuthContent() {
@@ -43,6 +44,10 @@ function AuthContent() {
         const data = await res.json();
         const raw = data.user ?? data;
         if (!(raw?.surveyCompleted ?? false)) {
+          if (await hasRegisteredMachine(token)) {
+            window.location.href = "/dashboard";
+            return;
+          }
           window.location.href = "/survey";
           return;
         }
