@@ -520,6 +520,13 @@ interface DeviceState {
   /** Persist the preferred device. Pass null to clear. Syncs to Convex so
    *  other surfaces (web, desktop, MCP) honor the same choice. */
   setPrimaryDevice: (deviceId: string | null) => Promise<void>;
+  /** Per-device primary coding agent. e.g. {"<deviceId>": "codex"}. The
+   *  chat / task surfaces read this when opening a workspace and pre-
+   *  select the runner so the user doesn't have to chase the pill on
+   *  every reconnect. Mirrors the web dashboard's own dropdown. */
+  primaryRunnerByDevice: Record<string, string>;
+  /** Persist a per-device primary coding agent. Pass null to clear. */
+  setPrimaryRunnerForDevice: (deviceId: string, runnerId: string | null) => Promise<void>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -600,6 +607,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // than one device. Undefined = no preference set → force manual pick for
   // multi-device users. Loaded from Convex on mount, persisted on change.
   const [primaryDeviceId, setPrimaryDeviceIdState] = useState<string | null>(null);
+  // Per-device primary coding agent. Keyed by deviceId → runnerId.
+  // Loaded from userSettings.primaryRunnerByDevice on mount, persisted
+  // through saveUserSettings({primaryRunnerForDevice: …}). Empty for
+  // fresh accounts; the dashboard / mobile picker seeds suggestions
+  // and the user confirms.
+  const [primaryRunnerByDevice, setPrimaryRunnerByDeviceState] = useState<Record<string, string>>({});
   const hasLoadedOnce = useRef(false);
 
   const markDeviceUnreachable = useCallback((deviceId: string) => {
@@ -875,6 +888,30 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       throw e;
     }
   }, [token]);
+
+  const setPrimaryRunnerForDevice = useCallback(
+    async (deviceId: string, runnerId: string | null) => {
+      if (!token) throw new Error("Not signed in");
+      // Optimistic local update.
+      const previous = primaryRunnerByDevice;
+      setPrimaryRunnerByDeviceState((prev) => {
+        const next = { ...prev };
+        if (runnerId) next[deviceId] = runnerId;
+        else delete next[deviceId];
+        return next;
+      });
+      try {
+        await saveUserSettings(token, {
+          primaryRunnerForDevice: { deviceId, runnerId },
+        });
+      } catch (e) {
+        appLog("error", `[settings] setPrimaryRunnerForDevice failed: ${e}`);
+        setPrimaryRunnerByDeviceState(previous);
+        throw e;
+      }
+    },
+    [token, primaryRunnerByDevice],
+  );
 
   const stopReconnectAndBounce = useCallback(async () => {
     const failed = activeDevice;
@@ -1197,6 +1234,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (settings.primaryDeviceId !== undefined) {
           setPrimaryDeviceIdState(settings.primaryDeviceId ?? null);
           appLog("info", `[settings] primaryDeviceId=${settings.primaryDeviceId ?? "(none)"}`);
+        }
+
+        // Apply per-device primary coding agent preference. Stored on
+        // userSettings as Array<{deviceId, runnerId}>; we fold it into
+        // a flat map for cheap lookup. The chat / task surfaces read
+        // primaryRunnerByDevice[activeDeviceId] when picking the
+        // initial runner so users don't have to chase the runner pill.
+        const rows = settings.primaryRunnerByDevice;
+        if (Array.isArray(rows)) {
+          const map: Record<string, string> = {};
+          for (const row of rows) {
+            if (row?.deviceId && row?.runnerId) map[String(row.deviceId)] = String(row.runnerId);
+          }
+          setPrimaryRunnerByDeviceState(map);
+          appLog("info", `[settings] primaryRunnerByDevice=${Object.keys(map).length} entries`);
         }
 
         // Apply tunnel from settings (if no local override)
@@ -1788,8 +1840,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       inviteGuest,
       primaryDeviceId,
       setPrimaryDevice,
+      primaryRunnerByDevice,
+      setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

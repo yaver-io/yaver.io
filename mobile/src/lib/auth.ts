@@ -522,6 +522,15 @@ export interface UserSettings {
    * Send `null` to clear; omit to leave untouched. Single-device users
    * auto-connect regardless of this field. */
   primaryDeviceId?: string | null;
+  /** Per-device primary coding agent. The full list is stored on the
+   * server as primaryRunnerByDevice; mutations send a single-entry
+   * patch via this field so we never round-trip the whole array.
+   * runnerId=null clears the entry for that device. */
+  primaryRunnerForDevice?: { deviceId: string; runnerId: string | null };
+  /** Read-only: full per-device runner map populated by the server on
+   * GET /settings. Clients should not write this directly — write via
+   * primaryRunnerForDevice instead. */
+  primaryRunnerByDevice?: Array<{ deviceId: string; runnerId: string }>;
 }
 
 // ── Local secret storage (iOS Keychain / Android SecureStore) ───────

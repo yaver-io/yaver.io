@@ -39,10 +39,14 @@ embedded/c-agent/
 
 | Artifact | Purpose |
 |---|---|
-| `libyvr_cagent_core.a` | Wire framing + status codes (no I/O, no allocator) |
-| `libyvr_cagent_host.a` | Vendor abstraction: module supervisor, event bus, lifecycle |
+| `libyvr_cagent_core.a` | Wire framing + CBOR + all Phase-0 / module-management body codecs |
+| `libyvr_cagent_host.a` | Vendor abstraction: module supervisor, manifest runtime, event bus, session loop |
+| `libyvr_cagent_tcp.a` | POSIX TCP transport adapter (built on UNIX / macOS) |
+| `libyvr_cagent_probes.a` | Built-in probes (`wifi_client_count`, `klipper_status`) |
 | `yvr/frame.h`, `yvr/status.h`, `yvr/types.h` | Core wire ABI |
 | `yvr/host.h`, `yvr/module.h`, `yvr/event.h`, `yvr/manifest.h` | Host + module ABI |
+| `yvr/tcp.h` | POSIX TCP transport API |
+| `yvr/probes.h` | Built-in probe registration API |
 | `yaver-cagent.pc` | pkg-config descriptor (relocatable) |
 | `yaver-cagentConfig.cmake` | CMake `find_package` entry point |
 | `yaver-cagent-config` | Shell config script (ncurses-style) |
@@ -72,10 +76,12 @@ Layout produced:
 ```
 /opt/yaver-cagent/
 ├── bin/yaver-cagent-config
-├── include/yvr/{frame,status,types,host,module,event,manifest}.h
+├── include/yvr/{frame,status,types,host,module,event,manifest,tcp,probes}.h
 └── lib/
     ├── libyvr_cagent_core.a
     ├── libyvr_cagent_host.a
+    ├── libyvr_cagent_probes.a
+    ├── libyvr_cagent_tcp.a        # POSIX builds only
     ├── pkgconfig/yaver-cagent.pc
     └── cmake/yaver_cagent/{Config,Targets}.cmake
 ```
@@ -98,6 +104,8 @@ add_executable(my_app main.c)
 target_link_libraries(my_app PRIVATE
     yaver::cagent_core    # required if you use yvr/frame.h
     yaver::cagent_host    # required if you use yvr/host.h
+    yaver::cagent_probes  # if you want the built-in probes
+    yaver::cagent_tcp     # POSIX TCP transport
 )
 ```
 
@@ -133,7 +141,7 @@ hand-rolled BSP scripts, vendor SDKs):
 YVR_PREFIX := /opt/yaver-cagent
 CFLAGS  += -I$(YVR_PREFIX)/include
 LDFLAGS += -L$(YVR_PREFIX)/lib
-LIBS    += -lyvr_cagent_host -lyvr_cagent_core
+LIBS    += -lyvr_cagent_probes -lyvr_cagent_host -lyvr_cagent_tcp -lyvr_cagent_core
 ```
 
 Or use the shell config script (mirrors `ncurses6-config` /
@@ -179,22 +187,27 @@ target documented in
 
 ## What's implemented
 
-- Wire frame header codec (`core/`)
-- Public ABI for host + modules + events + manifest (`host/`)
-- Stub backend for the host runtime (returns `NOT_READY` for control
-  ops; the public ABI is locked down so vendors can integrate today
-  while the loader is fleshed out)
+- Wire frame codec (`core/frame.{h,c}`)
+- Deterministic CBOR codec (`core/cbor.{h,c}`)
+- All 11 body codecs in the shared wire layer (`core/body.{h,c}`)
+- Host/runtime ABI (`host/`) including manifest application, event
+  bus subscription/fan-out, native module registration, and the
+  session loop in `host/session.c`
+- POSIX TCP transport adapter (`transports/src/tcp.c`)
+- Built-in probes for Wi-Fi client counts and Klipper/Moonraker
+  status (`probes/`)
 - Install layout, pkg-config / CMake / shell-config integration
+- Unit/integration tests under `tests/`
 
 ## What's next
 
-- CBOR codec (deterministic subset; `core/cbor.{h,c}`)
-- Phase-0 frame body schemas: `HELLO`, `AUTH`, `ATTEST`, `HEARTBEAT`,
-  `ERROR`
+- Standalone c-agent CLI / daemon entrypoint
+- Cross-language subprocess integration test against the Go brain
+- Minimal runnable brain service on top of `embedded/c-agent/brain/`
 - TLS 1.3 transport adapter (mbedTLS)
-- Real module loader (`dlopen` + signature verify + dep walk)
-- Event bus dispatch
+- Real signed module loading / verification
 - wasm3 integration
+- eBPF / Layer-2 execution path
 
 See [`../../docs/c-agent-architecture.md`](../../docs/c-agent-architecture.md)
 §13 for the phased plan.

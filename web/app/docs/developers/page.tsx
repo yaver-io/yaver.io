@@ -127,6 +127,7 @@ export default function DevelopersPage() {
               ["whats-new", "What's New"],
               ["remote-windows-box", "Remote Windows AI Box"],
               ["four-parts", "Architecture"],
+              ["iot-fix-architecture", "AI + IoT Fix Architecture"],
               ["push-to-device", "Push to Device (yaver-cli)"],
               ["direct-device-install", "Direct Device Install (iOS WiFi)"],
               ["hot-reload", "Hot Reload — Dev Server to Phone"],
@@ -427,6 +428,90 @@ export default function DevelopersPage() {
             Combine push-to-device with the Feedback SDK for a complete QA loop:
             push → test on real phone → shake to report bug → AI fixes it → re-push → verify.
             No TestFlight queues. No Play Store reviews. Real-device testing in seconds.
+          </Prose>
+        </section>
+
+        <section className="mb-20">
+          <SectionHeading id="iot-fix-architecture">AI + IoT Fix Architecture</SectionHeading>
+          <Prose>
+            The same Yaver control-plane shape also fits an AI-driven IoT troubleshooting product.
+            The right model is not “put an LLM on a router.” The right model is a four-layer loop:
+            mobile operator surface, cloud brain, LLM reasoning layer, and a small device-side
+            runtime that executes bounded work.
+          </Prose>
+          <Terminal title="iot-fix-architecture">
+            <Output>operator on phone</Output>
+            <Output>  -&gt; mobile orchestrator</Output>
+            <Output>  -&gt; cloud brain</Output>
+            <Output>  -&gt; LLM coordinator + retrieval + build/sign</Output>
+            <Output>  -&gt; c-agent runtime on device</Output>
+            <Output>  -&gt; built-in probe / wasm module / bounded fix</Output>
+            <Output>  -&gt; result stream + audit trail back to phone</Output>
+          </Terminal>
+          <SubHeading>Role of each layer</SubHeading>
+          <div className="mb-6 space-y-3">
+            {[
+              {
+                title: "Mobile orchestrator",
+                desc: "Human control surface for incident intake, approvals, iteration status, and the final explanation.",
+              },
+              {
+                title: "Cloud brain",
+                desc: "Durable coordinator that owns the incident graph, routing, artifact registry, signing, and replayable audit history.",
+              },
+              {
+                title: "LLM coordinator",
+                desc: "Reasoning layer that decides what probe, question, or bounded fix should run next for this specific failure case.",
+              },
+              {
+                title: "c-agent runtime",
+                desc: "Small device-side runtime that verifies artifacts, exposes capability-scoped host imports, runs built-in probes first, and later wasm/eBPF modules.",
+              },
+            ].map((item) => (
+              <div key={item.title} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4">
+                <p className="text-sm font-semibold text-surface-200">{item.title}</p>
+                <p className="mt-1 text-xs text-surface-400">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+          <SubHeading>Why this is different from a static tool catalog</SubHeading>
+          <Prose>
+            Real embedded failures do not line up neatly with a fixed set of tools. One Klipper
+            incident wants Moonraker state, another wants Wi-Fi station data, another wants a
+            heater-history extraction, another wants a config diff. The architecture only becomes
+            useful when the brain can author an incident-specific probe, sign it, ship it, run it
+            in a bounded runtime, and iterate.
+          </Prose>
+          <SubHeading>Designing AI-fixable hardware</SubHeading>
+          <Prose>
+            The device architecture itself should cooperate with this loop. Replaceable subsystems
+            should not assume that any dependency failure means &ldquo;crash the whole process.&rdquo; A better
+            design is to let a component enter a bounded stuck or degraded mode, quiesce its work,
+            preserve state, and explicitly wait for a replacement module or dependency implementation
+            to be inserted.
+          </Prose>
+          <Prose>
+            That is why the c-agent host/runtime model uses quiesce, pause, resume, replace, and
+            queued invokes. The target shape is a device that can keep the larger system alive while
+            one module is idle or being swapped, instead of forcing a full-device crash on every
+            local fault.
+          </Prose>
+          <SubHeading>Representative fix loop</SubHeading>
+          <FlowSteps
+            steps={[
+              <>Operator reports the issue from the phone, for example: “my printer starts under-extruding after 20 minutes.”</>,
+              <>The cloud brain creates an incident, retrieves similar cases, and asks the LLM coordinator for the next bounded step.</>,
+              <>The coordinator chooses a built-in probe first or authors a small new probe if the current surface is insufficient.</>,
+              <>The build/sign pipeline produces an immutable artifact.</>,
+              <>The c-agent verifies the artifact, binds only the declared capabilities, runs it, and streams partial output back.</>,
+              <>The brain refines its hypothesis and either asks another question, runs another probe, or proposes a fix.</>,
+              <>If the fix is high-risk, the phone approval surface signs off before execution.</>,
+            ]}
+          />
+          <Prose>
+            That is the design behind the `embedded/c-agent/` work and the architecture documents
+            under <InlineCode>docs/c-agent-architecture.md</InlineCode>, <InlineCode>docs/c-agent-domains.md</InlineCode>,
+            and <InlineCode>docs/c-agent-vendor-modules.md</InlineCode>.
           </Prose>
         </section>
 

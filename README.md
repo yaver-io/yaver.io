@@ -113,6 +113,33 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 - Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent
 - All four together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
 
+## AI + IoT Fix Architecture
+
+Yaver is also the control-plane shape for an AI-driven IoT repair loop.
+
+The architecture we are designing is:
+
+`mobile orchestrator -> cloud brain -> LLM coordinator -> c-agent runtime on device`
+
+Each layer has one job:
+
+- **Mobile orchestrator**: operator UI, incident intake, approvals, live status
+- **Cloud brain**: session coordination, audit trail, retrieval, module registry, signing pipeline
+- **LLM coordinator**: decides which probe or fix should run next for this incident
+- **c-agent runtime**: small device-side runtime that verifies artifacts, binds capabilities, executes bounded code, and streams results back
+
+The important distinction is that the LLM is not the runtime. The model proposes. The runtime enforces.
+
+That matters for real IoT repair cases. A Klipper printer, OpenWrt router, PX4 drone, or robotics host rarely fails in a way that a static predefined tool list fully covers. The useful system is one that can author a small incident-specific probe, sign it, ship it, run it safely on the device, inspect the result, and iterate.
+
+An important hardware/firmware design rule falls out of that: AI-fixable components should be able to enter a bounded stuck or degraded mode instead of crashing the whole device. If a dependency wedges, the component should quiesce, preserve enough state, report that it is waiting for replacement, and resume when a new module is inserted and validated. That is the difference between a system the brain can iteratively repair and a system that just hard-resets on every subsystem fault.
+
+That loop looks like:
+
+`phone reports issue -> brain plans -> LLM writes bounded probe/fix -> build/sign -> c-agent verifies/runs -> telemetry returns -> brain refines -> phone approves risky action`
+
+This is the motivation behind the `embedded/c-agent/` work in this repo and the architecture docs under `docs/c-agent-*.md`.
+
 ## Key Features
 
 - **Push to Device** — Real-device testing in ~4 seconds. No TestFlight. 40+ native modules.

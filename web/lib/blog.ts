@@ -9,6 +9,13 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "ai-iot-fix-architecture",
+    title: "Designing an AI-to-IoT Fix Loop: Mobile Orchestrator, Cloud Brain, and c-agent",
+    date: "2026-04-25",
+    description:
+      "The architecture behind Yaver's IoT troubleshooting direction: a phone as the operator surface, a cloud brain that plans and signs work, and a small c-agent runtime on the device that executes bounded diagnostics and fixes.",
+  },
+  {
     slug: "remote-opencode-on-windows-ollama-via-yaver",
     title:
       "Driving a Windows Ollama Box Remotely with Yaver and opencode",

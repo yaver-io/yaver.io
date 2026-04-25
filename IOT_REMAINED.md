@@ -160,6 +160,70 @@ release-with-Werror:
 - `session` — end-to-end socketpair brain ↔ device protocol
   loop (1 test, the most important).
 
+### 3.4 Repo reality check (verified on 2026-04-25)
+
+This section is the "code beats doc" snapshot for the current tree.
+It reflects what is actually present in the repo right now, not the
+intended architecture.
+
+Present on disk:
+
+- `embedded/c-agent/` runtime/library tree with `core/`, `host/`,
+  `transports/`, `probes/`, `tests/`, `examples/`, `packaging/`,
+  and `brain/`.
+- Packaging skeletons for Buildroot, OpenWrt, and Yocto under
+  `embedded/c-agent/packaging/`.
+- Three consumer examples under `embedded/c-agent/examples/`.
+- The brain-side Go package under `embedded/c-agent/brain/`.
+- Documentation for architecture, domains, vendor modules, firmware
+  architecture, demo recipe, and robotics path.
+
+Not present yet:
+
+- No standalone device CLI / daemon entrypoint such as
+  `embedded/c-agent/cli/cagent.c`.
+- No separate `iot-brain/` service tree yet; only the reusable Go
+  codec/session package exists today.
+- No firmware-image build scripts or board-specific image assets for
+  Klipper distribution.
+- No signed-module pipeline, TLS transport, wasm runtime, or eBPF
+  loader implementation in the repo yet.
+- No web/mobile product surface wired specifically for the IoT
+  troubleshooting flow.
+
+Verified green on 2026-04-25:
+
+- `cd embedded/c-agent && ctest --test-dir build --output-on-failure`
+  passed: 7/7 suites.
+- `cd embedded/c-agent/brain && go test ./...` passed.
+
+Build/export details verified from CMake:
+
+- Static libraries currently exported: `yvr_cagent_core`,
+  `yvr_cagent_host`, `yvr_cagent_probes`, and on POSIX,
+  `yvr_cagent_tcp`.
+- Public CMake aliases: `yaver::cagent_core`,
+  `yaver::cagent_host`, `yaver::cagent_probes`, and on POSIX,
+  `yaver::cagent_tcp`.
+
+### 3.5 Documentation drift to fix
+
+The code has moved ahead of some c-agent docs. These are doc issues,
+not runtime issues, but they should be tracked because they will
+mislead the next implementation pass.
+
+- `embedded/c-agent/README.md` still says the host runtime is a stub
+  and lists CBOR/body codecs/event dispatch as future work. That is no
+  longer true in the current tree.
+- `embedded/c-agent/README.md` "What ships" omits the TCP transport
+  and built-in probe library that the current CMake exports.
+- `embedded/c-agent/brain/README.md` still says the Go side only
+  covers a subset of frame bodies; the repo now has all 11 body codecs
+  plus the session orchestrator.
+- Before shipping Slice A/B/C, update those READMEs so a new engineer
+  can build the correct mental model from the package-local docs
+  without needing to inspect tests first.
+
 ### 3.2 Brain-side Go codec (`embedded/c-agent/brain/`)
 
 Pure-Go module that mirrors the C wire layer byte-for-byte:
@@ -472,7 +536,74 @@ After Phase-3 completion:
   verifies. Real Klipper bug fixed by the loop on bench
   hardware.
 
-## 10. Status / next move
+## 10. Suggested implementation slices
+
+These are the next repo-local chunks that produce visible forward
+progress without needing the whole product stack at once.
+
+### Slice A — standalone c-agent binary
+
+Goal: turn the library into a runnable device process.
+
+Files likely to add:
+
+- `embedded/c-agent/cli/cagent.c`
+- `embedded/c-agent/cli/CMakeLists.txt`
+- optional `embedded/c-agent/cli/README.md`
+
+Acceptance:
+
+- `cagent --brain-host 127.0.0.1 --brain-port 7777 --state-dir /tmp/yvr`
+  starts, registers built-in probes, opens a session, and cleanly
+  exits on transport failure.
+- Links the current exported libraries directly:
+  `yvr_cagent_core` + `yvr_cagent_host` + `yvr_cagent_probes`
+  (+ `yvr_cagent_tcp` on POSIX).
+- CMake installs the binary alongside the existing library artifacts.
+- No regressions in existing ctest suites.
+
+### Slice B — real cross-language integration test
+
+Goal: prove the shipped C binary and Go brain package interoperate
+over a real subprocess boundary, not just byte-vector parity.
+
+Files likely to add:
+
+- `embedded/c-agent/brain/integration_test.go`
+- test helper scripts or fixtures only if strictly necessary
+
+Acceptance:
+
+- Go test spawns the compiled `cagent` binary.
+- Test performs HELLO handshake, invokes at least one built-in probe,
+  receives `TOOL_RSP`, and validates decoded payload fields.
+- Preferred first target: `wifi_client_count`, because it has a small,
+  stable output surface and does not require a live Moonraker server.
+- Test failure output is readable enough to debug wire mismatches.
+
+### Slice C — minimal brain service skeleton
+
+Goal: create the first runnable host process for real device sessions.
+
+Files likely to add:
+
+- `iot-brain/` module root
+- `iot-brain/cmd/iot-brain/main.go`
+- `iot-brain/internal/...` only if needed after the first pass
+
+Acceptance:
+
+- Listens on TCP.
+- Accepts one or more c-agent connections.
+- Wraps each connection in `brain.Session`.
+- Exposes one hardcoded invoke path for demo questions such as
+  "wifi clients" or "hotend temp".
+- Persists no state yet; this slice is for protocol bring-up only.
+
+This slice does not need Convex, mobile UI, or LLM coordination yet.
+It only needs to be enough to support a bench demo.
+
+## 11. Status / next move
 
 **Current state**: device-side runtime is functionally complete
 for read-only probes; brain-side codec + session orchestrator
@@ -480,11 +611,17 @@ are complete. End-to-end socketpair test proves the wire works.
 What's missing is the actual product wrapper — a CLI binary, a
 firmware image, a brain service, a mobile UI.
 
-**Suggested next slice**: Phase 1's first three checklist items —
-CLI binary (~2 hours) + cross-language integration test
-(~4 hours) + Klipper firmware image build pipeline (~3 days).
-Together that produces a flashable image you can hand to a
-Klipper user and have them connect to a Hetzner brain.
+**Suggested next slice**: do Slices A and B before the firmware
+image work. The firmware pipeline is important, but without a
+runnable c-agent binary and a subprocess integration test, it
+would bake an unproven process wrapper into an image too early.
+
+Recommended order:
+
+1. Standalone c-agent binary.
+2. Cross-language integration test against that binary.
+3. Minimal brain service skeleton.
+4. Then Klipper image build/distribution.
 
 After that, Phase 2's signing + wasm3 integration is the
 biggest single remaining unknown. Once that lands, the
