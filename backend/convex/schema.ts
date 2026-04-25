@@ -338,6 +338,26 @@ export default defineSchema({
     // Value is devices.deviceId (uuid), not an Id<"devices">, so the
     // pref survives a device record being deleted and re-created.
     primaryDeviceId: v.optional(v.string()),
+    // Per-device primary coding agent preference. The dashboard reads
+    // this when it connects to a device and pre-selects the named
+    // runner so the user doesn't have to pick "codex" every time on
+    // the box that's signed into Codex but not Claude. Stored as an
+    // array of {deviceId, runnerId} pairs (rather than a record/map)
+    // so the schema works on every Convex version we currently
+    // support. deviceId matches devices.deviceId (uuid), runnerId
+    // matches the agent's runner.id ("claude" / "codex" / "aider" /
+    // "ollama" / "aider-ollama" / "opencode" / "goose").
+    //
+    // Cleared (undefined) for the device → fall back to the previous
+    // selection logic (agent's own default, then first installed).
+    primaryRunnerByDevice: v.optional(
+      v.array(
+        v.object({
+          deviceId: v.string(),
+          runnerId: v.string(),
+        }),
+      ),
+    ),
     // Per-subsystem managed: true|false toggle. true = use Yaver's
     // hosted infrastructure for that subsystem (managed relay,
     // managed analytics, managed storage, …). false = user hosts

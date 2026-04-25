@@ -676,6 +676,75 @@ function usePrimaryDeviceId(token: string | null | undefined): {
   return { primaryDeviceId, setPrimaryDevice };
 }
 
+/**
+ * Per-device primary runner: lets the user say "on this machine, default
+ * to codex" while keeping a different default on another machine. Stored
+ * in userSettings.primaryRunnerByDevice on Convex; we keep a flat map
+ * here for fast lookup. The user-visible flow is the small dropdown on
+ * each device card.
+ */
+function usePrimaryRunnerByDevice(token: string | null | undefined): {
+  primaryRunnerByDevice: Record<string, string>;
+  setPrimaryRunner: (deviceId: string, runnerId: string | null) => Promise<void>;
+} {
+  const [map, setMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/settings`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const rows = Array.isArray(data?.settings?.primaryRunnerByDevice)
+          ? (data.settings.primaryRunnerByDevice as Array<{ deviceId: string; runnerId: string }>)
+          : [];
+        if (!cancelled) {
+          const next: Record<string, string> = {};
+          for (const row of rows) {
+            if (row?.deviceId && row?.runnerId) next[row.deviceId] = row.runnerId;
+          }
+          setMap(next);
+        }
+      } catch {
+        // best-effort — falls back to no per-device pref
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const setPrimaryRunner = useCallback(
+    async (deviceId: string, runnerId: string | null) => {
+      if (!token) return;
+      const previous = map;
+      // Optimistic update.
+      setMap((prev) => {
+        const next = { ...prev };
+        if (runnerId) next[deviceId] = runnerId;
+        else delete next[deviceId];
+        return next;
+      });
+      try {
+        const res = await fetch(`${CONVEX_URL}/settings`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ primaryRunnerForDevice: { deviceId, runnerId } }),
+        });
+        if (!res.ok) throw new Error(`status ${res.status}`);
+      } catch (e) {
+        setMap(previous);
+        throw e;
+      }
+    },
+    [token, map],
+  );
+
+  return { primaryRunnerByDevice: map, setPrimaryRunner };
+}
+
 export default function DevicesView({
   devices,
   onRefresh,
@@ -688,6 +757,7 @@ export default function DevicesView({
   hiddenCount = 0,
 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
+  const { primaryRunnerByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
   const [showDormantDevices, setShowDormantDevices] = useState(false);
@@ -937,10 +1007,55 @@ export default function DevicesView({
           {(() => {
                   const states = deriveRunnerChipStates(device);
                   if (states.length === 0) return null;
+                  // Seed sensible default per the user's policy: yaver-test-
+                  // ephemeral defaults to codex (signed in via Yaver host
+                  // bridge there). Other devices: first runner whose
+                  // health is "ready". Only seeds when no explicit pref
+                  // exists yet — never overrides a user choice.
+                  const explicitPrimary = primaryRunnerByDevice[device.id];
+                  const seededPrimary = (() => {
+                    if (explicitPrimary) return explicitPrimary;
+                    if (device.name === "yaver-test-ephemeral") {
+                      const codexState = states.find((s) => s.id === "codex");
+                      if (codexState && codexState.health !== "not-installed") return "codex";
+                    }
+                    const firstReady = states.find((s) => s.health === "ready");
+                    return firstReady?.id ?? null;
+                  })();
                   return (
                     <div className="mt-3">
-                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
-                        Coding agents
+                      <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                          Coding agents
+                        </span>
+                        {/* Per-device primary picker. Selecting writes to
+                            userSettings.primaryRunnerByDevice on Convex;
+                            the dashboard pre-selects this runner whenever
+                            the user opens a workspace on this device. */}
+                        <span className="ml-auto flex items-center gap-1 text-[10px] text-surface-500">
+                          <span>Primary:</span>
+                          <select
+                            value={explicitPrimary ?? seededPrimary ?? ""}
+                            onChange={(e) => {
+                              const next = e.target.value || null;
+                              void setPrimaryRunner(device.id, next).catch(() => {});
+                            }}
+                            className="rounded border border-surface-700 bg-surface-900 px-1.5 py-0.5 text-[10px] text-surface-200 hover:border-surface-600 focus:outline-none"
+                            title="The default coding agent for this device. Pre-selected in chat / web reload / hot reload when you open this workspace."
+                          >
+                            <option value="">(none)</option>
+                            {states.map((s) => (
+                              <option key={s.id} value={s.id} disabled={s.health === "not-installed"}>
+                                {s.label}{s.health === "needs-auth" ? " · signs-in" : s.health === "not-installed" ? " · not installed" : ""}
+                              </option>
+                            ))}
+                          </select>
+                          {!explicitPrimary && seededPrimary ? (
+                            <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[9px] text-amber-300/80" title="Default suggested — click the dropdown to confirm and persist.">
+                              suggested
+                            </span>
+                          ) : null}
+                        </span>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5">
                         {states.map((state) => (

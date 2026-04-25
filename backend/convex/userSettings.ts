@@ -79,6 +79,16 @@ export const set = mutation({
     keyStorage: v.optional(v.string()),
     // null sentinel = clear the preference; undefined = leave untouched.
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    // Set or clear the primary runner for a single device. The whole
+    // primaryRunnerByDevice list lives on the userSettings row, but
+    // mutations only ever touch one entry at a time so the wire shape
+    // stays small. runnerId=null clears the entry for that device.
+    primaryRunnerForDevice: v.optional(
+      v.object({
+        deviceId: v.string(),
+        runnerId: v.union(v.string(), v.null()),
+      }),
+    ),
     // Per-subsystem managed: true (Yaver-hosted) | false (user-hosted)
     // | null (unset → use legacy default). Clients send only the
     // subsystem(s) they're changing; unspecified keys retain their
@@ -106,6 +116,14 @@ export const set = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
+    if (args.primaryRunnerForDevice !== undefined) {
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string }>;
+      const filtered = cur.filter((row) => row.deviceId !== args.primaryRunnerForDevice!.deviceId);
+      const next = args.primaryRunnerForDevice.runnerId
+        ? [...filtered, { deviceId: args.primaryRunnerForDevice.deviceId, runnerId: args.primaryRunnerForDevice.runnerId }]
+        : filtered;
+      patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;
     }
     if (args.managed !== undefined) {
       patch.managed = mergeManagedPatch(
@@ -166,6 +184,14 @@ export const setByToken = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+    }
+    if (args.primaryRunnerForDevice !== undefined) {
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string }>;
+      const filtered = cur.filter((row) => row.deviceId !== args.primaryRunnerForDevice!.deviceId);
+      const next = args.primaryRunnerForDevice.runnerId
+        ? [...filtered, { deviceId: args.primaryRunnerForDevice.deviceId, runnerId: args.primaryRunnerForDevice.runnerId }]
+        : filtered;
+      patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;
     }
     if (args.managed !== undefined) {
       patch.managed = mergeManagedPatch(
