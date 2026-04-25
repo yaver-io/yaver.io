@@ -1136,11 +1136,18 @@ export default function DashboardPage() {
         <div className="flex min-h-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-hidden p-3">
         <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden">
-          {/* Brand */}
-          <div className="flex items-center gap-2 rounded-lg border border-surface-800/50 px-3 py-2">
-            <div className="flex h-6 w-6 items-center justify-center rounded-md bg-indigo-500/15 text-[11px] font-bold text-indigo-300">Y</div>
-            <p className="truncate text-xs font-semibold tracking-wide text-surface-200">Yaver.io</p>
-          </div>
+          {/* Brand — same wordmark as the landing page header so the
+              dashboard reads as the same product, not a separate
+              admin-style shell. Lowercase "yaver" bold + muted ".io". */}
+          <a
+            href="/"
+            className="flex items-center px-3 py-2 transition-opacity hover:opacity-80"
+            title="Yaver.io home"
+          >
+            <span className="text-xl font-bold tracking-tight text-surface-50">
+              yaver<span className="font-normal text-surface-500">.io</span>
+            </span>
+          </a>
 
           {/* Nav */}
           <nav className="flex flex-col gap-[2px]">
