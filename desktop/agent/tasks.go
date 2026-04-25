@@ -88,7 +88,13 @@ type RunnerConfig struct {
 	// BaseURL points the runner at a non-default LLM endpoint.
 	// For ollama-backed runs this is exported as OLLAMA_API_BASE
 	// (default http://127.0.0.1:11434).
-	BaseURL      string `json:"baseUrl,omitempty"`
+	BaseURL string `json:"baseUrl,omitempty"`
+	// Mode is a runner-specific subcommand selector. Currently only
+	// honored by opencode where it maps to `--agent <mode>` (build /
+	// plan / any custom agent the user has defined in their
+	// opencode.json config). Empty = runner default. Other runners
+	// ignore it.
+	Mode         string `json:"mode,omitempty"`
 	AutoDetected bool   `json:"-"` // true if user never explicitly chose a runner
 }
 
@@ -618,6 +624,11 @@ type TaskCreateOptions struct {
 	WorkDir           string
 	InitialUserPrompt string
 	SliceContract     *TaskSliceContract
+	// Runner-specific mode selector. Currently only honored by
+	// opencode where it maps to `--agent <mode>` (build / plan /
+	// any custom agent the user defines in opencode.json). Empty =
+	// runner default. Other runners ignore it.
+	Mode string
 
 	// Guest policy fields are applied before startProcess runs so per-task
 	// guards (e.g. autoSwitchProject skip) can see GuestUserID atomically.
@@ -1110,6 +1121,13 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		}
 	}
 
+	// Thread the per-task mode (build / plan / custom) onto the runner
+	// before it's frozen on the Task struct. buildRunnerArgs reads it
+	// to splice `--agent <mode>` into opencode invocations.
+	if strings.TrimSpace(opts.Mode) != "" {
+		taskRunner.Mode = strings.TrimSpace(opts.Mode)
+	}
+
 	if source == "" {
 		source = "mobile"
 	}
@@ -1415,6 +1433,30 @@ func buildRunnerArgs(runner RunnerConfig, prompt string) []string {
 			a = strings.ReplaceAll(a, "{model}", runner.Model)
 		}
 		args[i] = a
+	}
+	// Opencode-specific: splice `--agent <mode>` immediately after the
+	// `run` subcommand when the user picked a build/plan/custom agent.
+	// Hardcoded here rather than templated because opencode is the only
+	// runner with this concept and we don't want to mint a generic
+	// "drop-paired-args-when-placeholder-empty" syntax that other
+	// runners might trip over later.
+	if runner.RunnerID == "opencode" && strings.TrimSpace(runner.Mode) != "" {
+		out := make([]string, 0, len(args)+2)
+		injected := false
+		for _, a := range args {
+			out = append(out, a)
+			if !injected && a == "run" {
+				out = append(out, "--agent", strings.TrimSpace(runner.Mode))
+				injected = true
+			}
+		}
+		if !injected {
+			// Defensive: if `run` wasn't found (custom args), still
+			// surface the agent flag so the choice isn't silently
+			// dropped — opencode tolerates --agent anywhere on the line.
+			out = append([]string{"--agent", strings.TrimSpace(runner.Mode)}, out...)
+		}
+		args = out
 	}
 	return args
 }

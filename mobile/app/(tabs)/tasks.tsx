@@ -762,6 +762,11 @@ export default function TasksScreen() {
   const [isRestartingRunner, setIsRestartingRunner] = useState(false);
   const [availableRunners, setAvailableRunners] = useState<RunnerInfo[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>(""); // "" = default
+  // OpenCode-only: which agent (build / plan / custom) drives the
+  // task. Forwarded as `mode` on the task POST and turned into
+  // `--agent <mode>` on `opencode run`. Empty = use the user's
+  // defaultAgent from opencode.json. Other runners ignore it.
+  const [selectedOpenCodeMode, setSelectedOpenCodeMode] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [customCommand, setCustomCommand] = useState("");
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -1367,6 +1372,7 @@ export default function TasksScreen() {
         speechCtx,
         attachedImages.length > 0 ? attachedImages : undefined,
         projectDir || undefined,
+        selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
       );
       setNewTaskText("");
       setAttachedImages([]);
@@ -2359,6 +2365,38 @@ export default function TasksScreen() {
                       onPress={() => setSelectedModel(m.id)}
                     >
                       <Text style={[s.modelChipText, { color: selectedModel === m.id ? c.accent : c.textMuted }]}>
+                        {m.name}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </>
+            )}
+            {/* OpenCode-only: Build vs Plan agent. Maps to
+                `--agent <mode>` on `opencode run`. Empty = use the
+                machine's defaultAgent from opencode.json. Custom
+                agents the user has defined are reachable via the
+                Tools view; this chip rail covers the two builtin
+                agents most users need on the chat surface. */}
+            {selectedRunner === "opencode" && (
+              <>
+                <Text style={[s.agentPickerSection, { color: c.textMuted }]}>OPENCODE AGENT</Text>
+                <View style={s.agentPickerChips}>
+                  {[
+                    { id: "", name: "Default" },
+                    { id: "build", name: "Build" },
+                    { id: "plan", name: "Plan" },
+                  ].map((m) => (
+                    <Pressable
+                      key={m.id || "default"}
+                      style={[
+                        s.modelChip,
+                        { borderColor: selectedOpenCodeMode === m.id ? c.accent : c.border },
+                        selectedOpenCodeMode === m.id && { backgroundColor: c.accent + "20" },
+                      ]}
+                      onPress={() => setSelectedOpenCodeMode(m.id)}
+                    >
+                      <Text style={[s.modelChipText, { color: selectedOpenCodeMode === m.id ? c.accent : c.textMuted }]}>
                         {m.name}
                       </Text>
                     </Pressable>

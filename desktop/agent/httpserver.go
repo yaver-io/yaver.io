@@ -2398,6 +2398,61 @@ func (s *HTTPServer) handleAgentStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type runnerModelInfo struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Source      string `json:"source,omitempty"`
+	IsDefault   bool   `json:"isDefault,omitempty"`
+}
+
+type runnerInfoRow struct {
+	ID                     string            `json:"id"`
+	Name                   string            `json:"name"`
+	Command                string            `json:"command"`
+	Installed              bool              `json:"installed"`
+	Ready                  bool              `json:"ready"`
+	AuthConfigured         bool              `json:"authConfigured,omitempty"`
+	AuthSource             string            `json:"authSource,omitempty"`
+	Warning                string            `json:"warning,omitempty"`
+	Error                  string            `json:"error,omitempty"`
+	IsDefault              bool              `json:"isDefault"`
+	SupportsBrowserAuth    bool              `json:"supportsBrowserAuth,omitempty"`
+	SupportsModelSelection bool              `json:"supportsModelSelection,omitempty"`
+	ModelSource            string            `json:"modelSource,omitempty"`
+	Models                 []runnerModelInfo `json:"models"`
+}
+
+func fallbackRunnerModels(runnerID string) []runnerModelInfo {
+	switch normalizeRunnerID(runnerID) {
+	case "claude":
+		return []runnerModelInfo{
+			{ID: "claude-opus-4-7", Name: "Claude Opus 4.7", Source: "builtin", IsDefault: false},
+			{ID: "claude-opus-4-6", Name: "Claude Opus 4.6", Source: "builtin", IsDefault: false},
+			{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6", Source: "builtin", IsDefault: true},
+			{ID: "claude-sonnet-4-5", Name: "Claude Sonnet 4.5", Source: "builtin", IsDefault: false},
+			{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5", Source: "builtin", IsDefault: false},
+		}
+	case "codex":
+		return []runnerModelInfo{
+			{ID: "gpt-5.5", Name: "GPT-5.5", Source: "builtin", IsDefault: false},
+			{ID: "gpt-5.5-pro", Name: "GPT-5.5 Pro", Source: "builtin", IsDefault: false},
+			{ID: "gpt-5.4", Name: "GPT-5.4", Source: "builtin", IsDefault: true},
+			{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Source: "builtin", IsDefault: false},
+			{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Source: "builtin", IsDefault: false},
+		}
+	case "aider-ollama":
+		return []runnerModelInfo{
+			{ID: "qwen2.5-coder:14b", Name: "Qwen Coder 14B", Source: "builtin", IsDefault: true},
+			{ID: "qwen2.5-coder:7b", Name: "Qwen Coder 7B", Source: "builtin", IsDefault: false},
+			{ID: "qwen2.5-coder:1.5b", Name: "Qwen Coder 1.5B", Source: "builtin", IsDefault: false},
+		}
+	default:
+		return nil
+	}
+}
+
 // handleRunnerRestart checks if the runner is healthy and clears the runnerDown flag.
 // Mobile can call this to "restart" the runner after all retries were exhausted.
 // handleRunners returns all available runners with their install status and models.
@@ -2407,50 +2462,45 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type modelInfo struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Description string `json:"description,omitempty"`
-		IsDefault   bool   `json:"isDefault,omitempty"`
-	}
-
-	type runnerInfo struct {
-		ID             string      `json:"id"`
-		Name           string      `json:"name"`
-		Command        string      `json:"command"`
-		Installed      bool        `json:"installed"`
-		Ready          bool        `json:"ready"`
-		AuthConfigured bool        `json:"authConfigured,omitempty"`
-		AuthSource     string      `json:"authSource,omitempty"`
-		Warning        string      `json:"warning,omitempty"`
-		Error          string      `json:"error,omitempty"`
-		IsDefault      bool        `json:"isDefault"`
-		Models         []modelInfo `json:"models"`
-	}
-
 	// Build models index by runner
-	modelsByRunner := make(map[string][]modelInfo)
+	modelsByRunner := make(map[string][]runnerModelInfo)
+	modelSourceByRunner := make(map[string]string)
 	for _, m := range GetCachedModels() {
-		modelsByRunner[m.RunnerID] = append(modelsByRunner[m.RunnerID], modelInfo{
+		modelsByRunner[m.RunnerID] = append(modelsByRunner[m.RunnerID], runnerModelInfo{
 			ID:          m.ModelID,
 			Name:        m.Name,
 			Description: m.Description,
+			Source:      "backend",
 			IsDefault:   m.IsDefault,
 		})
+		modelSourceByRunner[m.RunnerID] = "backend"
 	}
 	if len(modelsByRunner["opencode"]) == 0 {
 		if cfg, err := loadOpenCodeConfigSummary(); err == nil {
 			for _, model := range cfg.Models {
-				modelsByRunner["opencode"] = append(modelsByRunner["opencode"], modelInfo{
+				modelsByRunner["opencode"] = append(modelsByRunner["opencode"], runnerModelInfo{
 					ID:        model.ID,
 					Name:      model.Name,
+					Provider:  model.Provider,
+					Source:    model.Source,
 					IsDefault: model.IsDefault,
 				})
+			}
+			if len(modelsByRunner["opencode"]) > 0 {
+				modelSourceByRunner["opencode"] = "opencode-config"
+			}
+		}
+	}
+	for _, runnerID := range []string{"claude", "codex", "aider-ollama"} {
+		if len(modelsByRunner[runnerID]) == 0 {
+			if fallback := fallbackRunnerModels(runnerID); len(fallback) > 0 {
+				modelsByRunner[runnerID] = fallback
+				modelSourceByRunner[runnerID] = "builtin"
 			}
 		}
 	}
 
-	var runners []runnerInfo
+	var runners []runnerInfoRow
 	seenIDs := make(map[string]bool)
 	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
 	allowedRunnerSet := map[string]bool{}
@@ -2475,18 +2525,22 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err := osexec.LookPath(r.Command)
 		status := DetectRunnerRuntimeStatus(r, s.taskMgr.workDir)
-		runners = append(runners, runnerInfo{
-			ID:             r.RunnerID,
-			Name:           r.Name,
-			Command:        r.Command,
-			Installed:      err == nil,
-			Ready:          status.Ready,
-			AuthConfigured: status.AuthConfigured,
-			AuthSource:     status.AuthSource,
-			Warning:        status.Warning,
-			Error:          status.Error,
-			IsDefault:      r.RunnerID == defaultID,
-			Models:         modelsByRunner[r.RunnerID],
+		models := modelsByRunner[r.RunnerID]
+		runners = append(runners, runnerInfoRow{
+			ID:                     r.RunnerID,
+			Name:                   r.Name,
+			Command:                r.Command,
+			Installed:              err == nil,
+			Ready:                  status.Ready,
+			AuthConfigured:         status.AuthConfigured,
+			AuthSource:             status.AuthSource,
+			Warning:                status.Warning,
+			Error:                  status.Error,
+			IsDefault:              r.RunnerID == defaultID,
+			SupportsBrowserAuth:    normalizeRunnerID(r.RunnerID) == "claude" || normalizeRunnerID(r.RunnerID) == "codex",
+			SupportsModelSelection: len(models) > 0,
+			ModelSource:            modelSourceByRunner[r.RunnerID],
+			Models:                 models,
 		})
 		seenIDs[r.RunnerID] = true
 	}
@@ -2508,14 +2562,18 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 
 	// Include the active runner if it's custom (not in builtinRunners)
 	if !seenIDs[s.taskMgr.runner.RunnerID] && (!filterGuestRunners || allowedRunnerSet[normalizeRunnerID(s.taskMgr.runner.RunnerID)]) {
-		runners = append(runners, runnerInfo{
-			ID:        s.taskMgr.runner.RunnerID,
-			Name:      s.taskMgr.runner.Name,
-			Command:   s.taskMgr.runner.Command,
-			Installed: true,
-			Ready:     true,
-			IsDefault: true,
-			Models:    nil, // custom runners have no predefined models
+		models := modelsByRunner[s.taskMgr.runner.RunnerID]
+		runners = append(runners, runnerInfoRow{
+			ID:                     s.taskMgr.runner.RunnerID,
+			Name:                   s.taskMgr.runner.Name,
+			Command:                s.taskMgr.runner.Command,
+			Installed:              true,
+			Ready:                  true,
+			IsDefault:              true,
+			SupportsBrowserAuth:    normalizeRunnerID(s.taskMgr.runner.RunnerID) == "claude" || normalizeRunnerID(s.taskMgr.runner.RunnerID) == "codex",
+			SupportsModelSelection: len(models) > 0,
+			ModelSource:            modelSourceByRunner[s.taskMgr.runner.RunnerID],
+			Models:                 models,
 		})
 	}
 
@@ -2733,6 +2791,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		UserPrompt    string             `json:"userPrompt,omitempty"`
 		Model         string             `json:"model"`
 		Runner        string             `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
+		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
 		CustomCommand string             `json:"customCommand"` // arbitrary command — runs via sh -c
 		ProjectName   string             `json:"projectName,omitempty"`
 		Source        string             `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
@@ -2851,6 +2910,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	if mounts, err := sharedStorageContainerMountsForTask(taskOpts.GuestUserID, s.guestConfigMgr); err == nil {
 		taskOpts.GuestSharedStorageMounts = mounts
 	}
+	taskOpts.Mode = strings.TrimSpace(body.Mode)
 
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, body.SpeechContext)
 	if err != nil {
@@ -4110,6 +4170,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args struct {
 			Prompt    string `json:"prompt"`
 			Verbosity *int   `json:"verbosity"`
+			Runner    string `json:"runner"`
+			Model     string `json:"model"`
+			// Mode is the runner-specific subcommand selector. Currently
+			// honored by opencode where it maps to `--agent <mode>` —
+			// e.g. "build" / "plan" / any custom agent the user has
+			// defined in their opencode.json. Other runners ignore it.
+			Mode string `json:"mode"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Prompt == "" {
@@ -4119,7 +4186,8 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.Verbosity != nil {
 			sc = &SpeechContext{Verbosity: args.Verbosity}
 		}
-		task, err := s.taskMgr.CreateTask(args.Prompt, "", "", "mcp", "", "", nil, sc)
+		taskOpts := TaskCreateOptions{Mode: strings.TrimSpace(args.Mode)}
+		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, sc)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("failed to create task: %v", err))
 		}
@@ -8470,6 +8538,61 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			a.ZAIAPIKey,
 			a.Notes,
 		))
+	case "opencode_config_get":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			status, body, err := proxyToDevice(context.Background(), "opencode_config_get", strings.TrimSpace(a.DeviceID), http.MethodGet, "/runner/opencode/config", nil)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("opencode_config_get: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("opencode_config_get: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		cfg, err := loadOpenCodeConfigSummary()
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("opencode_config_get: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "config": cfg})
+
+	case "opencode_config_set":
+		var a struct {
+			DeviceID     string  `json:"device_id"`
+			DefaultAgent *string `json:"default_agent"`
+			Model        *string `json:"model"`
+			SmallModel   *string `json:"small_model"`
+			BuildModel   *string `json:"build_model"`
+			PlanModel    *string `json:"plan_model"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		patch := openCodeConfigPatch{
+			DefaultAgent: a.DefaultAgent,
+			Model:        a.Model,
+			SmallModel:   a.SmallModel,
+			BuildModel:   a.BuildModel,
+			PlanModel:    a.PlanModel,
+		}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			payload, _ := json.Marshal(patch)
+			status, body, err := proxyToDevice(context.Background(), "opencode_config_set", strings.TrimSpace(a.DeviceID), http.MethodPost, "/runner/opencode/config", payload)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("opencode_config_set: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("opencode_config_set: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		cfg, err := applyOpenCodeConfigPatch(patch)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("opencode_config_set: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "config": cfg})
+
 	case "runner_auth_setup":
 		var a struct {
 			DeviceID             string `json:"device_id"`

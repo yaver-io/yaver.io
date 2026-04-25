@@ -4,7 +4,9 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+import { useAuth } from "@/lib/use-auth";
 import PreviewPane from "./PreviewPane";
+import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
 
 type SectionKey = "projects" | "runner" | "actions" | "repo" | "secrets" | "providers" | "sessions";
 
@@ -111,11 +113,17 @@ export default function VibeCodingView({
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
 }) {
+  const { token, user } = useAuth();
+  const { primaryRunnerByDevice, primaryModelByDevice } = usePrimaryRunnerByDevice(token);
   const [projects, setProjects] = useState<Project[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedProjectPath, setSelectedProjectPath] = useState("");
   const [selectedRunner, setSelectedRunner] = useState("");
   const [selectedModel, setSelectedModel] = useState("");
+  // OpenCode-specific: which agent (build / plan / custom) drives the
+  // task. Maps to `--agent <mode>` on `opencode run`. Empty = the
+  // user's defaultAgent in opencode.json. Other runners ignore it.
+  const [selectedMode, setSelectedMode] = useState("");
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [composer, setComposer] = useState("");
@@ -257,10 +265,22 @@ export default function VibeCodingView({
         if (!selectedProjectPath && projectRows.length > 0) {
           setSelectedProjectPath(projectRows[0].path);
         }
-        if (!selectedRunner) {
-          const installed = (runnerRows || []).filter((runner) => runner.installed);
-          const ready = installed.filter((runner) => runner.ready);
+        const installed = (runnerRows || []).filter((runner) => runner.installed);
+        const ready = installed.filter((runner) => runner.ready);
+        const explicitRunner = connectedDevice ? primaryRunnerByDevice[connectedDevice.id] : "";
+        if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
+          setSelectedRunner(explicitRunner);
+        } else if (!selectedRunner) {
+          const seededRunner = connectedDevice
+            ? preferredDefaultRunnerForDevice(
+                connectedDevice,
+                user?.email,
+                ready.map((runner) => runner.id).concat(installed.map((runner) => runner.id)),
+              )
+            : null;
           const preferred =
+            ready.find((runner) => runner.id === seededRunner) ||
+            installed.find((runner) => runner.id === seededRunner) ||
             ready.find((runner) => runner.active) ||
             ready.find((runner) => runner.id === "claude") ||
             ready.find((runner) => runner.id === "opencode") ||
@@ -286,19 +306,31 @@ export default function VibeCodingView({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [connected, connectedDevice?.id, selectedProjectPath, selectedRunner, activeTaskId, refreshNonce]);
+  }, [activeTaskId, connected, connectedDevice, primaryRunnerByDevice, refreshNonce, selectedProjectPath, selectedRunner, user?.email]);
 
   useEffect(() => {
     if (!selectedRunnerRow || availableModels.length === 0) {
       setSelectedModel("");
       return;
     }
+    const explicitModel = connectedDevice ? primaryModelByDevice[connectedDevice.id] : "";
+    if (explicitModel && availableModels.some((model) => model.id === explicitModel) && selectedModel !== explicitModel) {
+      setSelectedModel(explicitModel);
+      return;
+    }
     if (selectedModel && availableModels.some((model) => model.id === selectedModel)) {
       return;
     }
-    const preferred = availableModels.find((model) => model.isDefault) || availableModels[0];
+    const seededModel = connectedDevice
+      ? preferredDefaultModelForRunner(selectedRunnerRow.id, connectedDevice, user?.email)
+      : null;
+    const preferred =
+      (explicitModel && availableModels.find((model) => model.id === explicitModel)) ||
+      (seededModel && availableModels.find((model) => model.id === seededModel)) ||
+      availableModels.find((model) => model.isDefault) ||
+      availableModels[0];
     setSelectedModel(preferred?.id || "");
-  }, [availableModels, selectedModel, selectedRunnerRow]);
+  }, [availableModels, connectedDevice, primaryModelByDevice, selectedModel, selectedRunnerRow, user?.email]);
 
   useEffect(() => {
     if (!runnerAuthSessionId) return;
@@ -402,6 +434,7 @@ export default function VibeCodingView({
       userPrompt: composer.trim(),
       runner: selectedRunner || undefined,
       model: selectedModel || undefined,
+      mode: selectedRunner === "opencode" && selectedMode ? selectedMode : undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
     });
@@ -894,6 +927,45 @@ export default function VibeCodingView({
                       </option>
                     ))}
                   </select>
+                </>
+              ) : null}
+              {/* OpenCode-only: build vs plan agent picker. Maps to
+                  `--agent <mode>` on `opencode run`. The user's
+                  opencode.json defines what each agent does (different
+                  models, system prompts, allowed tools); Yaver just
+                  forwards the choice. Empty value = "default agent",
+                  which means whatever defaultAgent is set in their
+                  opencode.json. Custom agents the user defined show
+                  up here automatically because the agent's
+                  /runner/opencode/config endpoint surfaces them. */}
+              {selectedRunner === "opencode" ? (
+                <>
+                  <label className="mt-4 block text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+                    OpenCode Agent
+                  </label>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      { id: "", label: "Default" },
+                      { id: "build", label: "Build" },
+                      { id: "plan", label: "Plan" },
+                    ].map((mode) => (
+                      <button
+                        key={mode.id || "default"}
+                        onClick={() => setSelectedMode(mode.id)}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                          selectedMode === mode.id
+                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                            : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
+                        }`}
+                        title={mode.id ? `Run with --agent ${mode.id}` : "Use defaultAgent from opencode.json"}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1 text-[10px] text-surface-500">
+                    Build for code edits · Plan for architecture / dry runs · custom agents read from your <span className="font-mono">opencode.json</span>.
+                  </p>
                 </>
               ) : null}
               {selectedRunnerRow?.ready === false ? (
