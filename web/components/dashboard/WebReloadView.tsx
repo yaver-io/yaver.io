@@ -585,39 +585,40 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   );
 }
 
-// Web Reload only previews things the iframe can actually render. The
-// match has to agree with the agent's FrameworkToDevServerKind so the
-// picker never offers a project that /dev/start would then reject.
-//
-// Mobile-only frameworks (react-native, vanilla expo without a web
-// build, kotlin, swift) are deliberately excluded — they have no HTML
-// surface for the iframe and used to render as a blank Metro page.
-const WEB_RELOAD_FRAMEWORK_HINTS = ["next", "nextjs", "vite", "astro", "remix"] as const;
-const WEB_RELOAD_FRAMEWORK_EXACT = new Set([
-  "next",
-  "nextjs",
-  "vite",
-  "astro",
-  "remix",
-  "react",       // generic React (CRA / RSC) projects
-  "flutter-web", // Flutter compiled to web, served on a port
+// Web Reload only previews things the iframe can actually render. We
+// exclude *only* projects whose primary target is a phone (Metro will
+// just serve a JS bundle, not HTML, and the iframe paints blank). Anything
+// else — including projects with no detected framework — is offered to
+// the user. If the iframe gets a non-HTML response we already render the
+// "not browser-renderable" stub, so an unknown project that turns out to
+// be mobile-only fails politely instead of being silently hidden.
+const WEB_RELOAD_DENY_FRAMEWORKS = new Set([
+  "expo",
+  "react-native",
+  "metro",
+  "swift",
+  "kotlin",
+  "flutter-mobile",
+]);
+const WEB_RELOAD_DENY_TAGS = new Set([
+  "expo",
+  "react-native",
+  "metro",
+  "ios",
+  "android",
+  "swift",
+  "kotlin",
 ]);
 
 function isWebReloadProject(project: ProjectRow): boolean {
   const framework = (project.framework || "").toLowerCase().trim();
-  if (!framework) return false;
-  if (WEB_RELOAD_FRAMEWORK_EXACT.has(framework)) return true;
-  for (const hint of WEB_RELOAD_FRAMEWORK_HINTS) {
-    if (framework.includes(hint)) return true;
-  }
-  // Tags are advisory metadata — only honour them when the framework
-  // field is empty-ish ("?") AND a tag explicitly asserts a web stack.
-  // Loose tag-only matches let mobile projects sneak in.
-  if (framework === "?" || framework === "unknown") {
-    const tags = (project.tags || []).map((tag) => tag.toLowerCase());
-    return WEB_RELOAD_FRAMEWORK_HINTS.some((hint) => tags.includes(hint));
-  }
-  return false;
+  if (WEB_RELOAD_DENY_FRAMEWORKS.has(framework)) return false;
+  // Block projects whose tags declare a mobile target even when the
+  // framework label is fuzzy. e.g. an Expo project showing as
+  // framework="?" with tags=["expo","ios"] still belongs on Hot Reload.
+  const tags = (project.tags || []).map((t) => String(t || "").toLowerCase());
+  if (tags.some((t) => WEB_RELOAD_DENY_TAGS.has(t))) return false;
+  return true;
 }
 
 function ScannedProjectSelector({
