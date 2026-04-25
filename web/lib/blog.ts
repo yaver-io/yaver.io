@@ -10,32 +10,10 @@ export const POSTS_PER_PAGE = 10;
 export const blogPosts: BlogPost[] = [
   {
     slug: "ai-iot-fix-architecture",
-    title: "Designing an AI-to-IoT Fix Loop: Mobile Orchestrator, Cloud Brain, and c-agent",
+    title: "AI-to-IoT Fix Loop: ...",
     date: "2026-04-25",
     description:
       "The architecture behind Yaver's IoT troubleshooting direction: a phone as the operator surface, a cloud brain that plans and signs work, and a small c-agent runtime on the device that executes bounded diagnostics and fixes.",
-  },
-  {
-    slug: "remote-opencode-on-windows-ollama-via-yaver",
-    title:
-      "Driving a Windows Ollama Box Remotely with Yaver and opencode",
-    date: "2026-04-24",
-    description:
-      "A ground-truth, developer-docs walkthrough for setting up a Windows box with Ollama + Qwen, exposing it over Tailscale, wrapping it with opencode, and letting Yaver's Go agent manage providers, models, and API keys — all reachable from CLI, the Yaver mobile app, or your own product's settings page.",
-  },
-  {
-    slug: "windows-ollama-box-antigravity-workflow",
-    title: "A Clean Antigravity Workflow with a Windows Ollama Box",
-    date: "2026-04-23",
-    description:
-      "How to keep a Windows machine always-on as a self-hosted LLM box, expose Ollama safely over Tailscale, and drive it from a MacBook through Antigravity, Continue, and OpenCode without turning the editor setup into a mess.",
-  },
-  {
-    slug: "mac-to-windows-ai-box-over-ssh",
-    title: "Turning a Windows PC into a Remote AI Coding Box for a MacBook",
-    date: "2026-04-23",
-    description:
-      "A practical setup for using a 32 GB Windows machine as the always-on coding box: OpenSSH from macOS, Tailscale for stable reachability, Ollama with a Qwen coder model, and a terminal workflow that also fits Antigravity-style remote editing.",
   },
   {
     slug: "unity-feedback-sdk-self-hosted-iteration",

@@ -1132,17 +1132,60 @@ export class YaverFeedback {
         const client = await YaverFeedback.getClient();
         const detected = await client.gitProviderDetect().catch(() => []);
         if (detected.some((row) => row.provider === provider && row.host === host && row.hasToken)) {
-          return;
+          return { kind: 'already-configured' as const };
         }
-        const token = prompt(`Enter a ${provider === 'github' ? 'GitHub' : 'GitLab'} token for ${host}:`) || '';
-        if (!token.trim()) {
-          throw new Error('Git setup cancelled.');
+        const authToken = (YaverFeedback.config?.authToken || getCachedToken() || '').trim();
+        const webBaseUrl = (YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '');
+        const convexBaseUrl = (YaverFeedback.config?.authConvexSiteUrl || YaverFeedback.config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/$/, '');
+        if (!authToken) {
+          const loginUrl = `${webBaseUrl}/auth?return=${encodeURIComponent('/dashboard')}`;
+          if (typeof window !== 'undefined') {
+            window.open(loginUrl, '_blank', 'noopener,noreferrer');
+          }
+          return {
+            kind: 'needs-login' as const,
+            url: loginUrl,
+          };
         }
-        await client.gitProviderSetup({
-          provider: provider as 'github' | 'gitlab',
-          host,
-          token: token.trim(),
+        const linkResp = await fetch(`${convexBaseUrl}/auth/oauth-link/start`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            provider,
+            client: 'web',
+            returnTo: '/dashboard',
+          }),
         });
+        const linkData = await linkResp.json().catch(() => ({} as Record<string, unknown>));
+        if (!linkResp.ok || typeof linkData?.token !== 'string' || !linkData.token.trim()) {
+          const dashboardUrl = `${webBaseUrl}/dashboard`;
+          if (typeof window !== 'undefined') {
+            window.open(dashboardUrl, '_blank', 'noopener,noreferrer');
+          }
+          return {
+            kind: 'needs-dashboard' as const,
+            url: dashboardUrl,
+            detail:
+              typeof linkData?.error === 'string' && linkData.error.trim()
+                ? linkData.error
+                : 'Open the dashboard and finish provider linking there.',
+          };
+        }
+        const oauthUrl = `${webBaseUrl}/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(
+          linkData.token,
+        )}&return=${encodeURIComponent('/dashboard')}`;
+        if (typeof window !== 'undefined') {
+          window.open(oauthUrl, '_blank', 'noopener,noreferrer');
+        }
+        return {
+          kind: 'oauth-started' as const,
+          url: oauthUrl,
+          provider,
+          host,
+        };
       };
 
       const renderOnboarding = (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>, errorMessage?: string) => {
@@ -1223,7 +1266,19 @@ export class YaverFeedback {
             setActionsBusy(true);
             try {
               setStatus('Connecting git for this repo…');
-              await connectGitForRepo(eligibility);
+              const result = await connectGitForRepo(eligibility);
+              if (result.kind === 'oauth-started') {
+                setStatus(`Finish ${result.provider === 'gitlab' ? 'GitLab' : 'GitHub'} sign-in in the opened Yaver tab, then click Continue Setup again.`);
+                return;
+              }
+              if (result.kind === 'needs-login') {
+                setStatus('Sign in to Yaver in the opened tab, then click Continue Setup again.');
+                return;
+              }
+              if (result.kind === 'needs-dashboard') {
+                setStatus(result.detail || 'Open the Yaver dashboard in the new tab and finish provider linking there.');
+                return;
+              }
               await Promise.all([refreshMachinePill(), refreshVibingGate()]);
               const updated = await YaverFeedback.getVibingEligibility();
               setStatus(updated.canVibe ? 'Git is ready for this repo.' : updated.guidance || updated.reason || 'Git setup still needs attention.');
@@ -1325,7 +1380,19 @@ export class YaverFeedback {
           }
           if (!eligibility.canVibe && eligibility.needsGitSetup) {
             setStatus('Connecting git for this repo…');
-            await connectGitForRepo(eligibility);
+            const result = await connectGitForRepo(eligibility);
+            if (result.kind === 'oauth-started') {
+              setStatus(`Finish ${result.provider === 'gitlab' ? 'GitLab' : 'GitHub'} sign-in in the opened Yaver tab, then click Continue Setup again.`);
+              return;
+            }
+            if (result.kind === 'needs-login') {
+              setStatus('Sign in to Yaver in the opened tab, then click Continue Setup again.');
+              return;
+            }
+            if (result.kind === 'needs-dashboard') {
+              setStatus(result.detail || 'Open the Yaver dashboard in the new tab and finish provider linking there.');
+              return;
+            }
             await Promise.all([refreshMachinePill(), refreshRunnerActions(), refreshVibingGate()]);
             eligibility = await YaverFeedback.getVibingEligibility();
           }

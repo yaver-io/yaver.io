@@ -301,10 +301,6 @@ export default function DevelopersPage() {
             <Link href="/manuals/windows-ssh-coding-box" className="underline hover:text-surface-200">
               MacBook to Windows AI Box over SSH
             </Link>
-            . A higher-level rationale and tradeoff write-up is in{" "}
-            <Link href="/blog/mac-to-windows-ai-box-over-ssh" className="underline hover:text-surface-200">
-              the blog post
-            </Link>
             .
           </Prose>
         </section>

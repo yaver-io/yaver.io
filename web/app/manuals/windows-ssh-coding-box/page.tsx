@@ -102,7 +102,7 @@ export default function WindowsSshCodingBoxManual() {
             <WinCmd>Get-Service sshd</WinCmd>
           </Terminal>
           <Terminal title="macos terminal">
-            <MacCmd>ssh user@192.168.1.104</MacCmd>
+            <MacCmd>ssh user@192.168.1.50</MacCmd>
           </Terminal>
         </section>
 
@@ -136,8 +136,8 @@ export default function WindowsSshCodingBoxManual() {
             <WinCmd>tailscale status</WinCmd>
           </Terminal>
           <Terminal title="macos terminal">
-            <MacCmd>ssh user@carrotbytepc.tailc32088.ts.net</MacCmd>
-            <MacCmd>ssh user@100.88.81.42</MacCmd>
+            <MacCmd>ssh user@your-box.tailnet.ts.net</MacCmd>
+            <MacCmd>ssh user@100.64.0.10</MacCmd>
           </Terminal>
           <p className="text-sm leading-relaxed text-surface-400">
             The Tailscale path does not replace OpenSSH. It gives OpenSSH a better network.
@@ -179,7 +179,7 @@ models:
   - name: Qwen 14B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:14b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -187,7 +187,7 @@ models:
   - name: Qwen 7B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:7b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -195,7 +195,7 @@ models:
   - name: Qwen 1.5B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:1.5b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -204,7 +204,7 @@ models:
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
             Keep Tailscale first. Add LAN variants later if raw
-            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">192.168.1.104:11434</code>
+            <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">192.168.1.50:11434</code>
             access is reachable from the Mac.
           </p>
         </section>
@@ -250,22 +250,22 @@ models:
           <Terminal title="~/.ssh/config">
             <div className="text-surface-200">
               <pre className="overflow-x-auto whitespace-pre-wrap text-xs">
-{`Host carrotbytepc
-  HostName carrotbytepc.tailc32088.ts.net
+{`Host windows-ai-box
+  HostName your-box.tailnet.ts.net
   User user
   IdentityFile ~/.ssh/id_ed25519`}
               </pre>
             </div>
           </Terminal>
           <Terminal title="macos terminal">
-            <MacCmd>ssh carrotbytepc</MacCmd>
+            <MacCmd>ssh windows-ai-box</MacCmd>
           </Terminal>
         </section>
 
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">8. Daily workflow from the MacBook</h2>
           <Terminal title="macos terminal">
-            <MacCmd>curl http://carrotbytepc.tailc32088.ts.net:11434/api/tags</MacCmd>
+            <MacCmd>curl http://your-box.tailnet.ts.net:11434/api/tags</MacCmd>
             <MacCmd>open -a Antigravity</MacCmd>
           </Terminal>
           <p className="text-sm leading-relaxed text-surface-400">

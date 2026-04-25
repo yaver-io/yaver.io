@@ -145,6 +145,17 @@ export default function VibeCodingView({
   const [streamedOutput, setStreamedOutput] = useState("");
   const [sections, setSections] = useState<Record<SectionKey, SectionState>>(() => loadSectionState());
   const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [runnerAuthBusy, setRunnerAuthBusy] = useState(false);
+  const [runnerAuthError, setRunnerAuthError] = useState<string | null>(null);
+  const [runnerAuthSessionId, setRunnerAuthSessionId] = useState<string | null>(null);
+  const [runnerAuthStatus, setRunnerAuthStatus] = useState<{
+    runner: "claude" | "codex";
+    status: "starting" | "awaiting_browser" | "completed" | "failed" | "cancelled";
+    openUrl?: string;
+    code?: string;
+    detail?: string;
+    error?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -288,6 +299,49 @@ export default function VibeCodingView({
     const preferred = availableModels.find((model) => model.isDefault) || availableModels[0];
     setSelectedModel(preferred?.id || "");
   }, [availableModels, selectedModel, selectedRunnerRow]);
+
+  useEffect(() => {
+    if (!runnerAuthSessionId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const session = await agentClient.getRunnerBrowserAuthStatus(runnerAuthSessionId);
+        if (cancelled) return;
+        setRunnerAuthStatus({
+          runner: session.runner,
+          status: session.status,
+          openUrl: session.openUrl,
+          code: session.code,
+          detail: session.detail,
+          error: session.error,
+        });
+        if (session.status === "completed") {
+          setRunnerAuthBusy(false);
+          setRunnerAuthError(null);
+          setBusy(`${session.runner === "claude" ? "Claude Code" : "Codex"} is ready on this machine.`);
+          setRefreshNonce((value) => value + 1);
+          setTimeout(() => {
+            setRunnerAuthSessionId(null);
+            setRunnerAuthStatus(null);
+          }, 1500);
+        } else if (session.status === "failed" || session.status === "cancelled") {
+          setRunnerAuthBusy(false);
+          setRunnerAuthError(session.error || session.detail || "Sign-in did not complete.");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setRunnerAuthBusy(false);
+          setRunnerAuthError(error instanceof Error ? error.message : String(error));
+        }
+      }
+    };
+    void poll();
+    const interval = setInterval(() => void poll(), 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [runnerAuthSessionId]);
 
   useEffect(() => {
     if (!activeTask) {
@@ -594,6 +648,38 @@ export default function VibeCodingView({
     }
   }
 
+  async function startSelectedRunnerSignIn() {
+    if (!selectedRunnerRow) return;
+    if (selectedRunnerRow.id !== "claude" && selectedRunnerRow.id !== "codex") {
+      setRunnerAuthError(`${selectedRunnerRow.name} does not expose browser sign-in here.`);
+      return;
+    }
+    setRunnerAuthBusy(true);
+    setRunnerAuthError(null);
+    setRunnerAuthStatus({
+      runner: selectedRunnerRow.id,
+      status: "starting",
+    });
+    try {
+      const session = await agentClient.startRunnerBrowserAuth(selectedRunnerRow.id);
+      setRunnerAuthSessionId(session.id);
+      setRunnerAuthStatus({
+        runner: session.runner,
+        status: session.status,
+        openUrl: session.openUrl,
+        code: session.code,
+        detail: session.detail,
+        error: session.error,
+      });
+      if (session.openUrl && typeof window !== "undefined") {
+        window.open(session.openUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (error) {
+      setRunnerAuthBusy(false);
+      setRunnerAuthError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   const filteredProviderRepos = useMemo(() => {
     const needle = providerSearch.trim().toLowerCase();
     if (!needle) return providerRepos;
@@ -759,7 +845,21 @@ export default function VibeCodingView({
               sections={sections}
               onToggle={toggleSectionOpen}
             >
-              <div className="flex flex-wrap gap-2">
+              <label className="block text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+                Agent
+              </label>
+              <select
+                value={selectedRunner}
+                onChange={(event) => setSelectedRunner(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
+              >
+                {runners.map((runner) => (
+                  <option key={runner.id} value={runner.id}>
+                    {runner.name}{runner.ready === false ? " (sign-in needed)" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-3 flex flex-wrap gap-2">
                 {runners.map((runner) => (
                   <button
                     key={runner.id}
@@ -778,9 +878,67 @@ export default function VibeCodingView({
                   </button>
                 ))}
               </div>
+              {availableModels.length > 0 ? (
+                <>
+                  <label className="mt-4 block text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+                    Model
+                  </label>
+                  <select
+                    value={selectedModel}
+                    onChange={(event) => setSelectedModel(event.target.value)}
+                    className="mt-2 w-full rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-sm text-surface-100 outline-none focus:border-surface-500"
+                  >
+                    {availableModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
               {selectedRunnerRow?.ready === false ? (
                 <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
                   {selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`}
+                </div>
+              ) : null}
+              {selectedRunnerRow && (selectedRunnerRow.id === "claude" || selectedRunnerRow.id === "codex") && selectedRunnerRow.ready === false ? (
+                <div className="mt-3 rounded-2xl border border-sky-500/20 bg-sky-500/10 p-3 text-[11px] text-sky-100">
+                  <div className="font-semibold">
+                    {selectedRunnerRow.id === "claude" ? "Claude Code" : "OpenAI Codex"} sign-in is available from here.
+                  </div>
+                  <div className="mt-1 leading-5 text-sky-100/80">
+                    Start the browser auth flow on the host, finish it in your browser, then this runner will become selectable for vibe coding.
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => void startSelectedRunnerSignIn()}
+                      disabled={runnerAuthBusy}
+                      className="rounded-xl border border-sky-400/30 bg-sky-400/10 px-3 py-2 text-xs font-semibold text-sky-100 hover:bg-sky-400/15 disabled:opacity-40"
+                    >
+                      {runnerAuthBusy ? "Opening sign-in…" : `Sign in to ${selectedRunnerRow.name}`}
+                    </button>
+                    {runnerAuthStatus?.openUrl ? (
+                      <a
+                        href={runnerAuthStatus.openUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                      >
+                        Open auth page
+                      </a>
+                    ) : null}
+                  </div>
+                  {runnerAuthStatus ? (
+                    <div className="mt-3 rounded-xl border border-surface-800 bg-surface-950/60 p-3 text-[10px] text-surface-300">
+                      <div className="font-semibold uppercase tracking-[0.14em] text-surface-500">Sign-in status</div>
+                      <div className="mt-2">{runnerAuthStatus.status.replaceAll("_", " ")}</div>
+                      {runnerAuthStatus.code ? <div className="mt-1 font-mono text-surface-200">Code: {runnerAuthStatus.code}</div> : null}
+                      {runnerAuthStatus.detail ? <div className="mt-1 text-surface-400">{runnerAuthStatus.detail}</div> : null}
+                    </div>
+                  ) : null}
+                  {runnerAuthError ? (
+                    <div className="mt-2 text-[10px] text-rose-200">{runnerAuthError}</div>
+                  ) : null}
                 </div>
               ) : null}
               {availableModels.length > 0 ? (

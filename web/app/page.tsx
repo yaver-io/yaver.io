@@ -859,13 +859,6 @@ function ResourceCardsSection() {
       cta: "Read setup guide",
     },
     {
-      eyebrow: "Blog",
-      title: "Why this setup is worth doing",
-      text: "The higher-level reasoning for using a Windows workstation as the always-on AI box while keeping the MacBook as the thin client.",
-      href: "/blog/mac-to-windows-ai-box-over-ssh",
-      cta: "Read blog post",
-    },
-    {
       eyebrow: "Developer Docs",
       title: "Operational notes for the repo",
       text: "Short-form developer reference for the remote Windows box pattern, including transport, model sizing, and always-on behavior.",
@@ -882,10 +875,9 @@ function ResourceCardsSection() {
         </h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm leading-relaxed text-surface-400">
           Running a stronger Windows machine as the always-on AI box behind a MacBook is a real
-          path. These three pages cover the setup, the reasoning, and the developer-facing
-          operational notes.
+          path. These pages cover the setup and the developer-facing operational notes.
         </p>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2">
           {cards.map((card) => (
             <Link
               key={card.href}

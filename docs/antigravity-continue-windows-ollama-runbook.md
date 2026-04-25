@@ -26,21 +26,21 @@ Important boundary:
 
 Windows host:
 
-- LAN IP: `192.168.1.104`
-- Tailscale DNS: `carrotbytepc.tailc32088.ts.net`
+- LAN IP: `192.168.1.50`
+- Tailscale DNS: `your-box.tailnet.ts.net`
 
 Preferred Ollama endpoint from the Mac:
 
-- `http://carrotbytepc.tailc32088.ts.net:11434`
+- `http://your-box.tailnet.ts.net:11434`
 
 Optional LAN endpoint:
 
-- `http://192.168.1.104:11434`
+- `http://192.168.1.50:11434`
 
 The Tailscale path was verified from the Mac with:
 
 ```bash
-curl http://carrotbytepc.tailc32088.ts.net:11434/api/tags
+curl http://your-box.tailnet.ts.net:11434/api/tags
 ```
 
 This returned the Windows-hosted Ollama models.
@@ -75,7 +75,7 @@ models:
   - name: Qwen 14B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:14b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -83,7 +83,7 @@ models:
   - name: Qwen 7B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:7b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -91,7 +91,7 @@ models:
   - name: Qwen 1.5B Windows Tailscale
     provider: ollama
     model: qwen2.5-coder:1.5b
-    apiBase: http://carrotbytepc.tailc32088.ts.net:11434
+    apiBase: http://your-box.tailnet.ts.net:11434
     roles:
       - chat
       - edit
@@ -99,7 +99,7 @@ models:
   - name: Qwen 14B Windows LAN
     provider: ollama
     model: qwen2.5-coder:14b
-    apiBase: http://192.168.1.104:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
@@ -107,7 +107,7 @@ models:
   - name: Qwen 7B Windows LAN
     provider: ollama
     model: qwen2.5-coder:7b
-    apiBase: http://192.168.1.104:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
@@ -115,7 +115,7 @@ models:
   - name: Qwen 1.5B Windows LAN
     provider: ollama
     model: qwen2.5-coder:1.5b
-    apiBase: http://192.168.1.104:11434
+    apiBase: http://192.168.1.50:11434
     roles:
       - chat
       - edit
@@ -156,7 +156,7 @@ Use Tailscale as the default:
 Use LAN as an optional manual selection:
 
 - lower hop count on the same network
-- only useful if Windows Ollama is reachable on `192.168.1.104:11434`
+- only useful if Windows Ollama is reachable on `192.168.1.50:11434`
 
 At validation time:
 
@@ -224,8 +224,7 @@ Useful log path on macOS:
 If the Tailscale endpoint should work but does not:
 
 ```bash
-curl http://carrotbytepc.tailc32088.ts.net:11434/api/tags
+curl http://your-box.tailnet.ts.net:11434/api/tags
 ```
 
 If that fails, the problem is network reachability or Windows Ollama exposure, not Continue.
-

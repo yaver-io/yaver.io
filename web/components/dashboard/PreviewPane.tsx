@@ -31,8 +31,6 @@ const DEVICES: DeviceSkin[] = [
 
 const SKIN_STORAGE_KEY = "yaver_preview_skin";
 const ORIENTATION_STORAGE_KEY = "yaver_preview_orientation";
-const LOG_TAIL = 6;
-
 type Orientation = "portrait" | "landscape";
 
 type Project = {
@@ -162,7 +160,6 @@ export default function PreviewPane({
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const [shotPulse, setShotPulse] = useState(false);
   const [logLines, setLogLines] = useState<string[]>([]);
-  const [showLogs, setShowLogs] = useState(true);
   const [startingPath, setStartingPath] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -910,7 +907,7 @@ export default function PreviewPane({
     />
   );
 
-  const tail = logLines.slice(-LOG_TAIL);
+  const projectLabel = devStatus?.workDir?.split("/").slice(-1)[0] || "this project";
 
   return (
     <div className="flex flex-col h-full">
@@ -1076,230 +1073,240 @@ export default function PreviewPane({
         ) : null}
       </div>
 
-      {/* Stage */}
-      <div
-        ref={stageRef}
-        className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-surface-950"
-      >
-        {/* Progress + recovery overlay — absolute so it doesn't resize the stage.
-            Visible during: Reconnect & Fix recovery OR initial dev-server boot
-            (when we're streaming log events but devStatus.running hasn't
-            flipped to true yet). Same keyword-heuristic pattern as mobile. */}
-        {(recovering || recoveryLog.length > 0 || devProgress.active) ? (
-          <div className="pointer-events-auto absolute top-3 right-3 z-10 w-72 max-w-[40%] rounded border border-amber-500/30 bg-surface-950/95 shadow-lg backdrop-blur">
-            <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
-              <span>
-                {recovering ? "Recovery · running" : recoveryLog.length > 0 ? "Recovery · last run" : "Dev server · starting"}
-              </span>
-              {!recovering && recoveryLog.length > 0 ? (
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+        <div className="min-h-0 border-b border-surface-800 bg-surface-950/70 xl:border-b-0 xl:border-r">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="border-b border-surface-800 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-widest text-emerald-300">Vibing</div>
+              <div className="mt-1 text-[11px] text-surface-500">
+                {devStatus?.running
+                  ? `Send changes directly to ${projectLabel}.`
+                  : "Start a project, then send a task from here."}
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-auto px-3 py-2">
+              {activeTaskStream ? (
+                <div className="grid gap-2">
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-sky-300">
+                    <span>Task stream · {activeTaskStream.status}</span>
+                    <span className="max-w-[52%] truncate text-right normal-case tracking-normal text-surface-500" title={activeTaskStream.title}>
+                      {activeTaskStream.title}
+                    </span>
+                  </div>
+                  <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap break-all rounded border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-300">
+                    {activeTaskStream.lines.length === 0 ? (
+                      <span className="text-surface-600">
+                        {activeTaskStream.status === "queued" ? "(queued… waiting for runner output)" : "(waiting for output…)"}
+                      </span>
+                    ) : (
+                      activeTaskStream.lines.slice(-120).join("\n")
+                    )}
+                  </pre>
+                </div>
+              ) : (
+                <div className="rounded border border-dashed border-surface-800 bg-surface-950 px-3 py-4 text-[11px] leading-5 text-surface-600">
+                  Send a vibing prompt here to stream the runner output beside the phone preview.
+                </div>
+              )}
+            </div>
+            <div className="border-t border-surface-800 bg-surface-900/60 p-2">
+              <div className="flex items-end gap-2">
+                <textarea
+                  value={composer}
+                  onChange={(e) => setComposer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void handleSendPrompt();
+                    }
+                  }}
+                  placeholder={
+                    devStatus?.running
+                      ? `Vibe on ${projectLabel} — Enter to send`
+                      : "Vibe: describe a change and press Enter"
+                  }
+                  rows={1}
+                  className="max-h-24 flex-1 resize-none rounded border border-surface-800 bg-surface-950 px-2 py-1.5 text-[12px] text-surface-100 placeholder-surface-600 outline-none focus:border-surface-600"
+                  style={{ minHeight: "32px" }}
+                />
                 <button
-                  onClick={() => setRecoveryLog([])}
-                  className="text-surface-600 hover:text-surface-400"
-                  title="Clear recovery log"
+                  type="button"
+                  onClick={() => void handleSendPrompt()}
+                  disabled={!composer.trim() || sending}
+                  className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30"
                 >
-                  clear
+                  {sending ? "…" : "Send"}
                 </button>
+              </div>
+              {sendStatus ? (
+                <div
+                  className={`mt-1 px-1 text-[10px] ${
+                    sendStatus.startsWith("✓") ? "text-emerald-400" : "text-red-400"
+                  }`}
+                >
+                  {sendStatus}
+                </div>
               ) : null}
             </div>
-            {devProgress.active ? (
-              <div className="px-2 pt-2">
-                <div className="h-1 w-full overflow-hidden rounded bg-emerald-500/15">
-                  <div
-                    className="h-full rounded bg-emerald-400 transition-[width] duration-300 ease-out"
-                    style={{ width: `${Math.max(devProgress.pct * 100, 5)}%` }}
-                  />
-                </div>
-                {devProgress.stage ? (
-                  <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={devProgress.stage}>
-                    {devProgress.stage}
-                  </p>
+          </div>
+        </div>
+
+        <div
+          ref={stageRef}
+          className="relative min-h-[420px] xl:min-h-0 flex items-center justify-center overflow-hidden border-b border-surface-800 bg-surface-950 xl:border-b-0"
+        >
+          {(recovering || recoveryLog.length > 0 || devProgress.active) ? (
+            <div className="pointer-events-auto absolute top-3 right-3 z-10 w-72 max-w-[40%] rounded border border-amber-500/30 bg-surface-950/95 shadow-lg backdrop-blur">
+              <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
+                <span>
+                  {recovering ? "Recovery · running" : recoveryLog.length > 0 ? "Recovery · last run" : "Dev server · starting"}
+                </span>
+                {!recovering && recoveryLog.length > 0 ? (
+                  <button
+                    onClick={() => setRecoveryLog([])}
+                    className="text-surface-600 hover:text-surface-400"
+                    title="Clear recovery log"
+                  >
+                    clear
+                  </button>
                 ) : null}
               </div>
-            ) : null}
-            {(recovering || recoveryLog.length > 0) ? (
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
-                {recoveryLog.length === 0 ? (
-                  <span className="text-surface-600">(starting…)</span>
-                ) : (
-                  recoveryLog.join("\n")
-                )}
-              </pre>
-            ) : null}
-          </div>
-        ) : null}
-        {skin.plain ? (
-          <div style={innerDim}>{innerContent}</div>
-        ) : (
-          <div
-            style={{
-              width: frame.width,
-              height: frame.height,
-              transform: `scale(${scale})`,
-              transformOrigin: "center center",
-            }}
-            className="relative"
-          >
+              {devProgress.active ? (
+                <div className="px-2 pt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-emerald-500/15">
+                    <div
+                      className="h-full rounded bg-emerald-400 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.max(devProgress.pct * 100, 5)}%` }}
+                    />
+                  </div>
+                  {devProgress.stage ? (
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={devProgress.stage}>
+                      {devProgress.stage}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {(recovering || recoveryLog.length > 0) ? (
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+                  {recoveryLog.length === 0 ? (
+                    <span className="text-surface-600">(starting…)</span>
+                  ) : (
+                    recoveryLog.join("\n")
+                  )}
+                </pre>
+              ) : null}
+            </div>
+          ) : null}
+          {skin.plain ? (
+            <div style={innerDim}>{innerContent}</div>
+          ) : (
             <div
               style={{
                 width: frame.width,
                 height: frame.height,
-                borderRadius: skin.radius + skin.bezel,
-                background:
-                  "linear-gradient(140deg, #1a1a1a 0%, #0d0d0d 50%, #1a1a1a 100%)",
-                boxShadow:
-                  "inset 0 0 0 1px rgba(255,255,255,0.06), 0 30px 60px -20px rgba(0,0,0,0.7), 0 10px 30px -10px rgba(0,0,0,0.5)",
-                padding: skin.bezel,
+                transform: `scale(${scale})`,
+                transformOrigin: "center center",
               }}
+              className="relative"
             >
               <div
                 style={{
-                  width: (frame as { innerWidth: number }).innerWidth,
-                  height: (frame as { innerHeight: number }).innerHeight,
-                  borderRadius: skin.radius,
-                  overflow: "hidden",
-                  position: "relative",
-                  background: "#000",
+                  width: frame.width,
+                  height: frame.height,
+                  borderRadius: skin.radius + skin.bezel,
+                  background:
+                    "linear-gradient(140deg, #1a1a1a 0%, #0d0d0d 50%, #1a1a1a 100%)",
+                  boxShadow:
+                    "inset 0 0 0 1px rgba(255,255,255,0.06), 0 30px 60px -20px rgba(0,0,0,0.7), 0 10px 30px -10px rgba(0,0,0,0.5)",
+                  padding: skin.bezel,
                 }}
               >
-                {innerContent}
-                {skin.notch && orientation === "portrait" ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 6,
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: skin.notch.width,
-                      height: skin.notch.height,
-                      borderRadius: skin.notch.height,
-                      background: "#000",
-                      zIndex: 2,
-                      pointerEvents: "none",
-                    }}
-                  />
-                ) : null}
-                {skin.punchHole && orientation === "portrait" ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: skin.punchHole.offsetTop,
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: skin.punchHole.size,
-                      height: skin.punchHole.size,
-                      borderRadius: skin.punchHole.size,
-                      background: "#000",
-                      zIndex: 2,
-                      pointerEvents: "none",
-                    }}
-                  />
-                ) : null}
-                {skin.notch && orientation === "portrait" ? (
-                  <div
-                    style={{
-                      position: "absolute",
-                      bottom: 8,
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: 134,
-                      height: 4,
-                      borderRadius: 2,
-                      background: "rgba(255,255,255,0.5)",
-                      zIndex: 2,
-                      pointerEvents: "none",
-                      mixBlendMode: "difference",
-                    }}
-                  />
-                ) : null}
+                <div
+                  style={{
+                    width: (frame as { innerWidth: number }).innerWidth,
+                    height: (frame as { innerHeight: number }).innerHeight,
+                    borderRadius: skin.radius,
+                    overflow: "hidden",
+                    position: "relative",
+                    background: "#000",
+                  }}
+                >
+                  {innerContent}
+                  {skin.notch && orientation === "portrait" ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 6,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: skin.notch.width,
+                        height: skin.notch.height,
+                        borderRadius: skin.notch.height,
+                        background: "#000",
+                        zIndex: 2,
+                        pointerEvents: "none",
+                      }}
+                    />
+                  ) : null}
+                  {skin.punchHole && orientation === "portrait" ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: skin.punchHole.offsetTop,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: skin.punchHole.size,
+                        height: skin.punchHole.size,
+                        borderRadius: skin.punchHole.size,
+                        background: "#000",
+                        zIndex: 2,
+                        pointerEvents: "none",
+                      }}
+                    />
+                  ) : null}
+                  {skin.notch && orientation === "portrait" ? (
+                    <div
+                      style={{
+                        position: "absolute",
+                        bottom: 8,
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                        width: 134,
+                        height: 4,
+                        borderRadius: 2,
+                        background: "rgba(255,255,255,0.5)",
+                        zIndex: 2,
+                        pointerEvents: "none",
+                        mixBlendMode: "difference",
+                      }}
+                    />
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
-      {/* Log tail */}
-      {devStatus?.running ? (
-        <div className="border-t border-surface-800 bg-surface-950/80 shrink-0">
-          <button
-            onClick={() => setShowLogs((v) => !v)}
-            className="flex w-full items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-surface-500 hover:text-surface-300"
-          >
-            <span>Dev log ({logLines.length})</span>
-            <span>{showLogs ? "–" : "+"}</span>
-          </button>
-          {showLogs ? (
-            <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-surface-400">
-              {tail.length === 0 ? (
+        <div className="min-h-0 border-surface-800 bg-surface-950/70 xl:border-l">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex items-center justify-between border-b border-surface-800 px-3 py-2">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-surface-500">Console</div>
+                <div className="mt-1 text-[11px] text-surface-600">
+                  Metro / Expo / dev server output
+                </div>
+              </div>
+              <span className="text-[10px] text-surface-600">{logLines.length} lines</span>
+            </div>
+            <pre className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
+              {logLines.length === 0 ? (
                 <span className="text-surface-600">(waiting for output…)</span>
               ) : (
-                tail.join("\n")
+                logLines.slice(-200).join("\n")
               )}
             </pre>
-          ) : null}
-        </div>
-      ) : null}
-
-      {activeTaskStream ? (
-        <div className="border-t border-surface-800 bg-surface-950/80 shrink-0">
-          <div className="flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-sky-300">
-            <span>
-              Task stream · {activeTaskStream.status}
-            </span>
-            <span className="truncate text-surface-500 normal-case tracking-normal max-w-[60%]" title={activeTaskStream.title}>
-              {activeTaskStream.title}
-            </span>
           </div>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-surface-300">
-            {activeTaskStream.lines.length === 0 ? (
-              <span className="text-surface-600">
-                {activeTaskStream.status === "queued" ? "(queued… waiting for runner output)" : "(waiting for output…)"}
-              </span>
-            ) : (
-              activeTaskStream.lines.slice(-40).join("\n")
-            )}
-          </pre>
         </div>
-      ) : null}
-
-      {/* Vibe composer — send prompts directly from Hot Reload */}
-      <div className="border-t border-surface-800 bg-surface-900/60 p-2 shrink-0">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={composer}
-            onChange={(e) => setComposer(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void handleSendPrompt();
-              }
-            }}
-            placeholder={
-              devStatus?.running
-                ? `Vibe on ${devStatus.workDir?.split("/").slice(-1)[0] || "this project"} — Enter to send`
-                : "Vibe: describe a change and press Enter"
-            }
-            rows={1}
-            className="max-h-24 flex-1 resize-none rounded border border-surface-800 bg-surface-950 px-2 py-1.5 text-[12px] text-surface-100 placeholder-surface-600 outline-none focus:border-surface-600"
-            style={{ minHeight: "32px" }}
-          />
-          <button
-            type="button"
-            onClick={() => void handleSendPrompt()}
-            disabled={!composer.trim() || sending}
-            className="shrink-0 rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30"
-          >
-            {sending ? "…" : "Send"}
-          </button>
-        </div>
-        {sendStatus ? (
-          <div
-            className={`mt-1 px-1 text-[10px] ${
-              sendStatus.startsWith("✓") ? "text-emerald-400" : "text-red-400"
-            }`}
-          >
-            {sendStatus}
-          </div>
-        ) : null}
       </div>
     </div>
   );

@@ -65,12 +65,12 @@ export default function AIIoTFixArchitectureBlogPage() {
             {post.date}
           </time>
           <h1 className="text-3xl font-bold text-surface-50 md:text-4xl">
-            Designing an AI-to-IoT Fix Loop: Mobile Orchestrator, Cloud Brain, and c-agent
+            AI-to-IoT Fix Loop: ...
           </h1>
           <p className="text-surface-400">
             The point is active fixing, not passive observability. The LLM should write the code for
-            the case, the toolchain should compile it, the firmware should already contain a c-agent
-            runtime that can dynamically load and run it, and that loop should iterate until the device
+            the case, the toolchain should compile it, the firmware should already contain <strong>a c-agent runtime</strong>
+            that can dynamically load and run it, and that loop should iterate until the device
             is fixed or the attempt budget is exhausted.
           </p>
         </header>
