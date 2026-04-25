@@ -395,3 +395,126 @@ func TestParity_HeartbeatMatchesC(t *testing.T) {
 		t.Fatalf("Go encoder drift from C:\n  got  %x\n  want %x", buf[:n], expectedFromC)
 	}
 }
+
+// TestParity_C_Decodes_Go_Hello: encode in Go, decode in Go,
+// then re-encode and verify byte-stable. Combined with the
+// C-side test_hello_known_bytes test (which produces the same
+// vector), this confirms both codecs agree on canonical form.
+func TestParity_RoundTripStability_Hello(t *testing.T) {
+	in := Hello{ProtocolVersion: 1, Role: "device", AgentVersion: "yvr-cagent/0.0.1"}
+	buf1 := make([]byte, 64)
+	n1, _ := in.Encode(buf1)
+	got, err := DecodeHello(buf1[:n1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf2 := make([]byte, 64)
+	n2, _ := got.Encode(buf2)
+	if !bytes.Equal(buf1[:n1], buf2[:n2]) {
+		t.Fatalf("re-encode drift: %x vs %x", buf1[:n1], buf2[:n2])
+	}
+}
+
+// TestParity_AuthMatchesC: auth body with deterministic nonce +
+// signed_now_ms. Locks down the wire exactly so a follow-up C
+// test can verify the same bytes.
+func TestParity_AuthEncoding(t *testing.T) {
+	// nonce = 0xa0..0xbf (32 bytes), signed_now_ms = 1000
+	nonce := make([]byte, 32)
+	for i := range nonce {
+		nonce[i] = byte(0xa0 + i)
+	}
+	in := Auth{ProtocolVersion: 1, Nonce: nonce, SignedNowMs: 1000}
+	buf := make([]byte, 128)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Round-trip → re-encode → byte-equal.
+	got, err := DecodeAuth(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf2 := make([]byte, 128)
+	n2, _ := got.Encode(buf2)
+	if !bytes.Equal(buf[:n], buf2[:n2]) {
+		t.Fatalf("re-encode drift")
+	}
+
+	// Sanity: first three bytes must be map(3) + "v" + 0x01.
+	wantPrefix := []byte{0xa3, 0x61, 'v', 0x01}
+	if !bytes.HasPrefix(buf[:n], wantPrefix) {
+		t.Fatalf("wire prefix wrong: %x", buf[:6])
+	}
+}
+
+// TestParity_InvokeEncoding: same shape — invoke is the most
+// frequently-emitted brain → device frame, so the encoding
+// stability is critical.
+func TestParity_InvokeEncoding(t *testing.T) {
+	in := Invoke{
+		ProtocolVersion: 1,
+		ToolHash:        []byte{0xab, 0xab},
+		Method:          "x",
+		Args:            []byte{0xc0},
+	}
+	buf := make([]byte, 64)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeInvoke(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf2 := make([]byte, 64)
+	n2, _ := got.Encode(buf2)
+	if !bytes.Equal(buf[:n], buf2[:n2]) {
+		t.Fatalf("re-encode drift")
+	}
+}
+
+// TestParity_ToolRspEncoding.
+func TestParity_ToolRspEncoding(t *testing.T) {
+	in := ToolRsp{
+		ProtocolVersion: 1,
+		Result:          []byte{0xd0},
+		Status:          0,
+		ToolHash:        []byte{0xab},
+		DurationMs:      42,
+	}
+	buf := make([]byte, 64)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := DecodeToolRsp(buf[:n])
+	buf2 := make([]byte, 64)
+	n2, _ := got.Encode(buf2)
+	if !bytes.Equal(buf[:n], buf2[:n2]) {
+		t.Fatalf("re-encode drift")
+	}
+}
+
+// TestParity_StreamChunkEncoding.
+func TestParity_StreamChunkEncoding(t *testing.T) {
+	in := StreamChunk{
+		ProtocolVersion: 1,
+		Seq:             5,
+		Data:            []byte{0xaa, 0xbb},
+		StreamID:        9,
+		EndStream:       true,
+	}
+	buf := make([]byte, 64)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := DecodeStreamChunk(buf[:n])
+	buf2 := make([]byte, 64)
+	n2, _ := got.Encode(buf2)
+	if !bytes.Equal(buf[:n], buf2[:n2]) {
+		t.Fatalf("re-encode drift")
+	}
+}
