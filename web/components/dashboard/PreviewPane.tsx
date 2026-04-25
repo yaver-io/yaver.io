@@ -537,6 +537,7 @@ export default function PreviewPane({
         // on github after the box's last pull actually shows up in the
         // iframe. Skipped silently when the directory isn't a git repo
         // or the working tree is dirty (we never blow away local edits).
+        stage(0.4, "git pull --ff-only…");
         appendRecovery("→ pulling latest commit (git pull --ff-only)…");
         try {
           // startExec only returns {execId, pid} — it doesn't surface
@@ -561,6 +562,7 @@ export default function PreviewPane({
         // wasn't reaped, and the new one renders the *old* bundle from
         // its in-memory cache. pkill -f is wide-net but limited to this
         // user's processes (no sudo).
+        stage(0.55, "killing stray Metro / Expo…");
         appendRecovery("→ killing stray Metro / Expo processes…");
         try {
           await agentClient.startExec({
@@ -574,6 +576,7 @@ export default function PreviewPane({
           appendRecovery(`warn: pkill failed: ${e?.message || e}`);
         }
 
+        stage(0.7, "clearing caches…");
         appendRecovery("→ clearing caches on remote (metro / .expo / node_modules/.cache)…");
         try {
           await agentClient.startExec({
@@ -588,6 +591,7 @@ export default function PreviewPane({
         }
 
         if (savedFramework) {
+          stage(0.85, `restarting dev server (${savedFramework})…`);
           appendRecovery(`→ restarting dev server (${savedFramework})…`);
           try {
             await agentClient.startDevServer({
@@ -605,16 +609,20 @@ export default function PreviewPane({
         appendRecovery("  (no dev server was running — skipping restart)");
       }
 
+      stage(0.95, "refreshing preview…");
       appendRecovery("→ refreshing preview…");
       setIframeKey((k) => k + 1);
       setReloadNonce((n) => n + 1);
       setPreviewError(null);
       appendRecovery("✓ done");
+      setDevProgress({ pct: 1, stage: "done", active: true });
+      setTimeout(() => setDevProgress({ pct: 0, stage: "", active: false }), 1500);
     } catch (e: any) {
       appendRecovery(`✗ recovery failed: ${e?.message || e}`);
+      setDevProgress((prev) => ({ ...prev, stage: `failed: ${e?.message || e}` }));
     }
     setRecovering(false);
-  }, [recovering, devStatus, onReconnect, selectedPreviewTarget, appendRecovery]);
+  }, [recovering, devStatus, onReconnect, selectedPreviewTarget, appendRecovery, previewError, onRepairRelay]);
 
   const handleSendPrompt = useCallback(async () => {
     const prompt = composer.trim();
@@ -1028,11 +1036,16 @@ export default function PreviewPane({
         ref={stageRef}
         className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-surface-950"
       >
-        {/* Recovery log — absolute overlay so it doesn't resize the stage */}
-        {(recovering || recoveryLog.length > 0) ? (
+        {/* Progress + recovery overlay — absolute so it doesn't resize the stage.
+            Visible during: Reconnect & Fix recovery OR initial dev-server boot
+            (when we're streaming log events but devStatus.running hasn't
+            flipped to true yet). Same keyword-heuristic pattern as mobile. */}
+        {(recovering || recoveryLog.length > 0 || devProgress.active) ? (
           <div className="pointer-events-auto absolute top-3 right-3 z-10 w-72 max-w-[40%] rounded border border-amber-500/30 bg-surface-950/95 shadow-lg backdrop-blur">
             <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
-              <span>Recovery {recovering ? "· running" : "· last run"}</span>
+              <span>
+                {recovering ? "Recovery · running" : recoveryLog.length > 0 ? "Recovery · last run" : "Dev server · starting"}
+              </span>
               {!recovering && recoveryLog.length > 0 ? (
                 <button
                   onClick={() => setRecoveryLog([])}
@@ -1043,13 +1056,30 @@ export default function PreviewPane({
                 </button>
               ) : null}
             </div>
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
-              {recoveryLog.length === 0 ? (
-                <span className="text-surface-600">(starting…)</span>
-              ) : (
-                recoveryLog.join("\n")
-              )}
-            </pre>
+            {devProgress.active ? (
+              <div className="px-2 pt-2">
+                <div className="h-1 w-full overflow-hidden rounded bg-emerald-500/15">
+                  <div
+                    className="h-full rounded bg-emerald-400 transition-[width] duration-300 ease-out"
+                    style={{ width: `${Math.max(devProgress.pct * 100, 5)}%` }}
+                  />
+                </div>
+                {devProgress.stage ? (
+                  <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={devProgress.stage}>
+                    {devProgress.stage}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {(recovering || recoveryLog.length > 0) ? (
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+                {recoveryLog.length === 0 ? (
+                  <span className="text-surface-600">(starting…)</span>
+                ) : (
+                  recoveryLog.join("\n")
+                )}
+              </pre>
+            ) : null}
           </div>
         ) : null}
         {skin.plain ? (
