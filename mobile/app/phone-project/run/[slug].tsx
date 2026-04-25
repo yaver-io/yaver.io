@@ -217,34 +217,6 @@ export default function PhoneProjectRuntimeScreen() {
     ]);
   }
 
-  function openVibeCoding() {
-    if (!project?.dir) {
-      Alert.alert(
-        "Coding loop unavailable",
-        "This phone sandbox runs locally in-app. Move it to a Yaver agent before opening the coding loop.",
-      );
-      return;
-    }
-    const prompt = [
-      `We are iterating on the mobile sandbox app "${project.name}".`,
-      `Focus on the in-app experience first. Keep SQLite as the local backend and preserve exportability to remote dev hardware later.`,
-      `Primary entity: ${primaryTable}.`,
-      primaryScreen?.title ? `Current runtime screen: ${primaryScreen.title}.` : "",
-      `Make the next concrete improvement to the app and narrate progress through the task stream.`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-    router.navigate({
-      pathname: "/(tabs)/tasks" as any,
-      params: {
-        dir: project.dir,
-        prompt,
-        title: `Vibe ${project.name}`,
-        openNew: "1",
-      },
-    });
-  }
-
   if (loading) {
     return (
       <View style={[styles.empty, { backgroundColor: c.bg }]}>
@@ -299,9 +271,6 @@ export default function PhoneProjectRuntimeScreen() {
           <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
             Table: {primaryTable} · {visibleRows.length} row{visibleRows.length === 1 ? "" : "s"}
           </Text>
-          <Pressable onPress={openVibeCoding} style={[styles.ctaSecondary, { borderColor: c.border }]}>
-            <Text style={{ color: c.textPrimary, fontWeight: "700" }}>Vibe code this app</Text>
-          </Pressable>
         </View>
 
         {personas.length ? (

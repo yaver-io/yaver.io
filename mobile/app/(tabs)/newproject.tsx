@@ -1033,7 +1033,7 @@ export default function NewProjectScreen() {
               },
             ]}
           >
-            <Text style={styles.completionBadge}>✨ Ready to vibe</Text>
+            <Text style={styles.completionBadge}>Ready to ship</Text>
             <Text style={styles.completionName}>
               {answers.app_name?.trim() || "Your app"}
             </Text>

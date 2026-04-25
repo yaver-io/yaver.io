@@ -1406,9 +1406,7 @@ export default function AppsScreen() {
             <View style={s.quickActions}>
               {[
                 { icon: "\u{1F680}", label: "Ship It", prompt: `Ship ${runningProject}: bump version, build iOS + Android, upload to TestFlight and Google Play, generate changelog from recent git commits. Report progress.` },
-                { icon: "\u{1F3A8}", label: "Polish UI", prompt: `Do a design pass on ${runningProject}: fix inconsistent spacing, typography, colors. Make it look polished and professional. Don't redesign — just polish what's there. Hot reload when done.` },
                 { icon: "\u{1F4F1}", label: "Screenshots", prompt: `Generate App Store and Google Play screenshots for ${runningProject}: capture all key screens at iPhone 6.7", iPhone 6.1", iPad 12.9", and Android phone/tablet sizes. Save to a screenshots/ folder.` },
-                { icon: "\u{1F41B}", label: "Fix All Bugs", prompt: `Run the test suite for ${runningProject}, find all failing tests and runtime errors, fix them all. Hot reload after each fix so I can verify on my phone.` },
               ].map((action) => (
                 <Pressable
                   key={action.label}

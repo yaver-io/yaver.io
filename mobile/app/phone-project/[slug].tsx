@@ -8,7 +8,6 @@ import {
   Pressable,
   RefreshControl,
   ScrollView,
-  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -16,53 +15,31 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice, type Device } from "../../src/context/DeviceContext";
 import { AppBackButton } from "../../src/components/AppBackButton";
-import { isCloudPreviewUser } from "../../src/lib/cloudPreview";
-import { describeConnectionStatus } from "../../src/lib/connection";
-import { getManagedSubscription } from "../../src/lib/subscription";
-import { getYaverCloudBaseUrl } from "../../src/lib/yaverCloud";
 import { quicClient } from "../../src/lib/quic";
-import { getLocalSecret, LOCAL_KEYS } from "../../src/lib/auth";
 import {
-  EscapeRoute,
-  PhoneProjectAccess,
   PhoneBrowseResult,
-  PhoneProject,
-  PhonePushResult,
-  PhonePushTarget,
   PhoneDeployCostHint,
   PhoneDeployCostHints,
+  PhoneProject,
+  PhoneProjectAccess,
+  PhonePushResult,
+  PhonePushTarget,
   bindPhoneProjectToTarget,
   browsePhoneTable,
   clearPhoneProjectBinding,
-  deployPhoneProjectRuntime,
-  deletePhoneProject,
   deletePhoneRow,
-  getPhoneProjectAccess,
   getPhoneProject,
+  getPhoneProjectAccess,
   insertPhoneRow,
-  listEscapeRoutes,
   listPhoneTablesAt,
   phoneBundleSize,
   phoneDeployCostHints,
-  preparePhoneProjectExport,
-  promotePhoneProject,
   pushPhoneProject,
 } from "../../src/lib/phoneProjects";
 
-// Advanced escape-route rows are fetched live from /escape/routes so the
-// curated catalog in desktop/agent/phone_escape.go is the single source of
-// truth. Positioning (per user): trust signal, not headline — shown behind
-// the existing "Advanced" collapsible, never in the primary Deploy surface.
-
-const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
-
-// A "dev machine" target is an owned, online Yaver-running device that is
-// not the currently-connected source (the phone itself). This is the
-// [Your Dev Machine] button's candidate pool.
 function pickDevMachines(all: Device[], currentId: string | undefined): Device[] {
   return all.filter(
     (d) =>
@@ -70,22 +47,16 @@ function pickDevMachines(all: Device[], currentId: string | undefined): Device[]
       !d.isGuest &&
       !d.needsAuth &&
       d.id !== currentId &&
-      // Filter out mobile-only devices — they can't accept /phone/projects/receive
-      // uploads (they don't run `yaver serve` on a reachable port).
       d.deviceClass !== "edge-mobile",
   );
 }
 
 export default function PhoneProjectDetailScreen() {
   const c = useColors();
-  const { user, token } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const slugStr = String(slug ?? "");
-  const canUseCloudPreview = isCloudPreviewUser(user?.email);
-  const [hasManagedCloud, setHasManagedCloud] = useState(false);
-  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
 
   const [project, setProject] = useState<PhoneProject | null>(null);
   const [access, setAccess] = useState<PhoneProjectAccess | null>(null);
@@ -95,93 +66,26 @@ export default function PhoneProjectDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
   const [showInsert, setShowInsert] = useState(false);
   const [insertJSON, setInsertJSON] = useState("{}");
-  const [promoting, setPromoting] = useState<string | null>(null);
 
-  // Deploy state (roadmap §Wedge Demo)
-  const { devices, activeDevice, connectionStatus } = useDevice();
+  const { devices, activeDevice } = useDevice();
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
   );
   const [selectedDevMachineId, setSelectedDevMachineId] = useState<string | null>(null);
-  const [deploying, setDeploying] = useState<"dev-hw" | "yaver-cloud" | "custom" | "both" | null>(null);
-  const [selfHostedBaseUrl, setSelfHostedBaseUrl] = useState<string | null>(null);
-  const [selfHostedAuthToken, setSelfHostedAuthToken] = useState<string | null>(null);
-  const [lastDeploy, setLastDeploy] = useState<{ kind: "dev-hw" | "yaver-cloud" | "custom"; url: string; via?: string } | null>(null);
-  const [showAdvancedPromote, setShowAdvancedPromote] = useState(false);
-  const [escapeRoutes, setEscapeRoutes] = useState<EscapeRoute[]>([]);
+  const [deploying, setDeploying] = useState(false);
+  const [lastDeploy, setLastDeploy] = useState<{ url: string; via?: string } | null>(null);
   const [costHints, setCostHints] = useState<PhoneDeployCostHints | null>(null);
 
-  // Pull the agent's advisory cost map + bundle-cap once on mount. Used by
-  // the deploy confirm to show "About to upload X.Y MB — <advice>" before
-  // the user taps OK. Keeps the user from a surprise data-plan hit.
   useEffect(() => {
     void (async () => {
-      const h = await phoneDeployCostHints();
-      if (h) setCostHints(h);
+      const hints = await phoneDeployCostHints();
+      if (hints) setCostHints(hints);
     })();
   }, []);
-  useEffect(() => {
-    let cancelled = false;
-    if (!token) {
-      setHasManagedCloud(false);
-      return;
-    }
-    void (async () => {
-      const summary = await getManagedSubscription(token);
-      if (cancelled || !summary) return;
-      const hasMachine = Array.isArray(summary.machines)
-        && summary.machines.some((machine) => machine.status !== "stopped");
-      const hasSubscription = !!summary.subscription;
-      setHasManagedCloud(hasMachine || hasSubscription);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const [base, authToken] = await Promise.all([
-        getLocalSecret(LOCAL_KEYS.selfHostedBaseUrl),
-        getLocalSecret(LOCAL_KEYS.selfHostedAuthToken),
-      ]);
-      if (cancelled) return;
-      setSelfHostedBaseUrl(base?.trim() || null);
-      setSelfHostedAuthToken(authToken?.trim() || null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
-  // Pull curated escape routes once the user opens the Advanced collapsible.
-  // Phone projects are SQLite-backed, so we ask for "yaver"-origin routes
-  // plus cross-family inbound routes (Convex/Supabase → Yaver) that explain
-  // the continuum to a potential migrator.
-  useEffect(() => {
-    if (!showAdvancedPromote || escapeRoutes.length) return;
-    void (async () => {
-      const outbound = await listEscapeRoutes({ from: "yaver" });
-      const inbound = await listEscapeRoutes({ to: "yaver-cloud" });
-      // De-dupe by id; outbound first (this is primarily what the user can
-      // actually execute from a phone project — the "switch to X" story).
-      const seen = new Set<string>();
-      const merged: EscapeRoute[] = [];
-      for (const r of [...outbound, ...inbound]) {
-        if (!seen.has(r.id)) {
-          seen.add(r.id);
-          merged.push(r);
-        }
-      }
-      setEscapeRoutes(merged);
-    })();
-  }, [showAdvancedPromote, escapeRoutes.length]);
-
-  // Auto-select the first dev machine so the primary button is a one-tap action.
   useEffect(() => {
     if (!selectedDevMachineId && devMachines.length) {
       setSelectedDevMachineId(devMachines[0].id);
@@ -212,19 +116,19 @@ export default function PhoneProjectDetailScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [slugStr, selectedTable]);
+  }, [selectedTable, slugStr]);
 
   const loadRows = useCallback(async () => {
     if (!slugStr || !selectedTable) return;
     try {
       const resolved = access ?? (await getPhoneProjectAccess(slugStr));
       if (!access) setAccess(resolved);
-      const r = await browsePhoneTable(slugStr, selectedTable, "", 50, resolved);
-      setRows(r?.rows ?? []);
+      const result = await browsePhoneTable(slugStr, selectedTable, "", 50, resolved);
+      setRows(result?.rows ?? []);
     } catch (e: any) {
       setErr(e?.message ?? "browse failed");
     }
-  }, [access, slugStr, selectedTable]);
+  }, [access, selectedTable, slugStr]);
 
   useEffect(() => {
     void load();
@@ -263,129 +167,16 @@ export default function PhoneProjectDetailScreen() {
     ]);
   }
 
-  async function doExport() {
-    Alert.alert(
-      "Export backend",
-      "Portable export is git + SQLite friendly. Containerized export also adds Docker / compose files for remote dev.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Portable",
-          onPress: async () => {
-            const ref = await preparePhoneProjectExport(slugStr, access, { includeData: true });
-            if (!ref) {
-              Alert.alert("Export", "Agent not reachable");
-              return;
-            }
-            try {
-              await Share.share({
-                message: `Yaver phone-project export:\n${ref.uri}\n\nPortable git + SQLite bundle with live data.\n(Authenticated URL — paste into curl with X-Relay-Password / Authorization headers.)`,
-                url: ref.uri,
-              });
-            } catch (e: any) {
-              Alert.alert("Export", e?.message ?? "share failed");
-            }
-          },
-        },
-        {
-          text: "Containerized",
-          onPress: async () => {
-            const ref = await preparePhoneProjectExport(slugStr, access, {
-              includeData: true,
-              containerize: true,
-            });
-            if (!ref) {
-              Alert.alert("Export", "Agent not reachable");
-              return;
-            }
-            try {
-              await Share.share({
-                message: `Yaver containerized export:\n${ref.uri}\n\nIncludes local.db plus Docker / compose scaffold for Yaver-lite backend deploys.\n(Authenticated URL — paste into curl with X-Relay-Password / Authorization headers.)`,
-                url: ref.uri,
-              });
-            } catch (e: any) {
-              Alert.alert("Export", e?.message ?? "share failed");
-            }
-          },
-        },
-      ],
-    );
-  }
-
-  async function doPromote(targetID: string, label: string) {
-    if (!slugStr) return;
-    const explainPromoteError = (raw: string): string => {
-      const lower = raw.toLowerCase();
-      if (/network|fetch|timeout|econn|offline|unreach/.test(lower)) {
-        return `${raw}\n\nYaver ${describeConnectionStatus(connectionStatus)}. The plan wasn't saved — reconnect and retry.`;
-      }
-      if (/invalid|schema|state|missing/.test(lower)) {
-        return `${raw}\n\nThe project state may be incomplete — try exporting first, then retry the migration.`;
-      }
-      if (/401|403|unauth|permission/.test(lower)) {
-        return `${raw}\n\nYour session may have expired — sign in again from Settings and retry.`;
-      }
-      if (/complex|blocked|pending|conflict/.test(lower)) {
-        return `${raw}\n\nAnother switch plan may already be in progress — check Switch history and finish or roll back that one first.`;
-      }
-      return `${raw}\n\nYour project stays on its current backend until a Plan runs successfully.`;
-    };
-    Alert.alert(
-      `Plan migration to ${label}?`,
-      "This produces a step-by-step switch plan with a 7-day rollback window. You can run it or keep it as a dry-run.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Dry run",
-          onPress: async () => {
-            setPromoting(targetID);
-            try {
-              const r = await promotePhoneProject(slugStr, targetID, { dryRun: true, run: true });
-              if (r?.error) Alert.alert(`Dry Run to ${label} Failed`, explainPromoteError(r.error));
-              else Alert.alert("Plan saved", `Switch plan ${r?.state?.id ?? ""} created. Review in Switch history.`);
-            } catch (e: any) {
-              Alert.alert(`Dry Run to ${label} Failed`, explainPromoteError(e?.message ?? "failed"));
-            } finally {
-              setPromoting(null);
-            }
-          },
-        },
-        {
-          text: "Plan",
-          onPress: async () => {
-            setPromoting(targetID);
-            try {
-              const r = await promotePhoneProject(slugStr, targetID, {});
-              if (r?.error) Alert.alert(`Plan for ${label} Failed`, explainPromoteError(r.error));
-              else Alert.alert("Plan saved", `Complexity: ${r?.state?.complexity}. Run it from Switch history when ready.`);
-            } catch (e: any) {
-              Alert.alert(`Plan for ${label} Failed`, explainPromoteError(e?.message ?? "failed"));
-            } finally {
-              setPromoting(null);
-            }
-          },
-        },
-      ],
-    );
-  }
-
-  // ── Deploy (roadmap §Wedge Demo) ──────────────────────────────────────
-
-  // Pre-flight guard for runPush — fetches the bundle size + cost hint and
-  // asks the user to confirm BEFORE any bytes hit the wire. Keeps a
-  // surprise Hetzner/Cloudflare/Convex bill off the table. Server side
-  // enforces the cap again in handlePhoneReceive so this is transparency
-  // not security.
-  function costHintFor(kind: "dev-hw" | "yaver-cloud"): PhoneDeployCostHint | null {
+  function costHintFor(kind: "dev-hw"): PhoneDeployCostHint | null {
     if (!costHints) return null;
-    return costHints.hints.find((h) => h.targetKind === kind) ?? null;
+    return costHints.hints.find((hint) => hint.targetKind === kind) ?? null;
   }
 
-  async function confirmDeploySize(target: PhonePushTarget, kind: "dev-hw" | "yaver-cloud"): Promise<boolean> {
+  async function confirmDeploySize(): Promise<boolean> {
     const bytes = await phoneBundleSize(slugStr, { includeData: true });
     const capMB = costHints?.bundleCapMB ?? 50;
     const mb = bytes ? (bytes / (1024 * 1024)).toFixed(2) : "?";
-    const hint = costHintFor(kind);
+    const hint = costHintFor("dev-hw");
     const sizeLine = bytes
       ? `Uploading ~${mb} MB (cap: ${capMB} MB).`
       : `Bundle size unknown — cap: ${capMB} MB.`;
@@ -396,238 +187,78 @@ export default function PhoneProjectDetailScreen() {
       );
       return false;
     }
-    const label = kind === "dev-hw" ? selectedDevMachine?.name ?? "your dev machine" : "Yaver Cloud";
     const advice = hint?.advice ?? "";
     const budget = hint?.free ?? "";
-    const message = [sizeLine, "", budget ? `Plan: ${budget}` : "", advice].filter(Boolean).join("\n");
+    const message = [sizeLine, "", budget ? `Plan: ${budget}` : "", advice]
+      .filter(Boolean)
+      .join("\n");
     return new Promise<boolean>((resolve) => {
       Alert.alert(
-        `Deploy to ${label}?`,
+        `Ship to ${selectedDevMachine?.name ?? "your dev machine"}?`,
         message,
         [
           { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-          { text: "Deploy", style: "default", onPress: () => resolve(true) },
+          { text: "Ship", style: "default", onPress: () => resolve(true) },
         ],
         { cancelable: true, onDismiss: () => resolve(false) },
       );
     });
   }
 
-  async function runPush(target: PhonePushTarget, kindLabel: "dev-hw" | "yaver-cloud") {
-    const ok = await confirmDeploySize(target, kindLabel);
+  async function deployToDevMachine() {
+    if (!slugStr) return;
+    if (!selectedDevMachine) {
+      if (devMachines.length === 0) {
+        Alert.alert(
+          "No dev machine paired",
+          "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
+        );
+        return;
+      }
+      if (devMachines.length > 1) {
+        pickDevMachine();
+        return;
+      }
+    }
+    const target = selectedDevMachine ?? devMachines[0];
+    if (!target) return;
+    const relayHttpUrl = quicClient.activeRelayHttpUrl;
+    if (!relayHttpUrl) {
+      Alert.alert(
+        "No relay in use",
+        "Your phone is connected directly to this device. Switch to a relay-routed connection to ship to a different machine.",
+      );
+      return;
+    }
+    const ok = await confirmDeploySize();
     if (!ok) return;
-    setDeploying(kindLabel);
+
+    setDeploying(true);
     try {
-      const result: PhonePushResult = await pushPhoneProject(slugStr, target, {
+      const pushTarget: PhonePushTarget = {
+        kind: "dev-hw",
+        deviceId: target.id,
+        relayHttpUrl,
+      };
+      const result: PhonePushResult = await pushPhoneProject(slugStr, pushTarget, {
         onConflict: "overwrite",
         includeData: true,
         containerize: true,
       });
-      const via =
-        target.kind === "dev-hw" ? selectedDevMachine?.name ?? "dev machine" : "Yaver Cloud";
-      await bindPhoneProjectToTarget(slugStr, target, result, via);
+      const via = target.name || "dev machine";
+      await bindPhoneProjectToTarget(slugStr, pushTarget, result, via);
       const rebound = await getPhoneProjectAccess(slugStr);
       setAccess(rebound);
       const url = result.browseUrl?.startsWith("http")
         ? result.browseUrl
-        : deriveTargetUrl(target, result);
-      setLastDeploy({ kind: kindLabel, url, via });
+        : deriveTargetUrl(pushTarget, result);
+      setLastDeploy({ url, via });
       await load();
       await loadRows();
     } catch (e: any) {
-      // Apple-compliance: we DETECT that payment is required but we do NOT
-      // open the checkout URL from inside the app. Tell the user to finish
-      // setup on the web; the web dashboard is allowed to open checkout.
-      if (e?.name === "PhonePushPaymentRequired") {
-        Alert.alert(
-          "Subscription required",
-          "This Yaver Cloud tenant needs an active subscription. Open yaver.io/pricing in your browser on any device, complete setup, then retry the deploy.",
-        );
-      } else {
-        // Agent returns a descriptive message on 413 — surface it verbatim.
-        Alert.alert("Deploy failed", e?.message ?? "push failed");
-      }
+      Alert.alert("Ship failed", e?.message ?? "push failed");
     } finally {
-      setDeploying(null);
-    }
-  }
-
-  async function deployToDevMachine() {
-    if (!slugStr) return;
-    // If there are multiple online dev machines and none has been explicitly
-    // picked, show the picker first rather than silently using the first one.
-    if (!selectedDevMachine) {
-      if (devMachines.length === 0) {
-        Alert.alert(
-          "No dev machine paired",
-          "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
-        );
-        return;
-      }
-      if (devMachines.length > 1) {
-        pickDevMachine();
-        return;
-      }
-    }
-    const target = selectedDevMachine ?? devMachines[0];
-    if (!target) return;
-    const relayHttpUrl = quicClient.activeRelayHttpUrl;
-    if (!relayHttpUrl) {
-      Alert.alert(
-        "No relay in use",
-        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine.",
-      );
-      return;
-    }
-    await runPush(
-      { kind: "dev-hw", deviceId: target.id, relayHttpUrl },
-      "dev-hw",
-    );
-  }
-
-  async function deployToCloud() {
-    if (!slugStr) return;
-    // Optional legacy auth override for the shared preview host. Dedicated
-    // managed machines should accept the signed-in user's normal session.
-    const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
-    await runPush(
-      { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken },
-      "yaver-cloud",
-    );
-  }
-
-  async function deployToBoth() {
-    if (!slugStr) return;
-    if (!selectedDevMachine) {
-      if (devMachines.length === 0) {
-        Alert.alert(
-          "No dev machine paired",
-          "Install Yaver on your Mac/Linux/Pi and sign in with the same account. It'll appear here.",
-        );
-        return;
-      }
-      if (devMachines.length > 1) {
-        pickDevMachine();
-        return;
-      }
-    }
-    const target = selectedDevMachine ?? devMachines[0];
-    if (!target) return;
-    const relayHttpUrl = quicClient.activeRelayHttpUrl;
-    if (!relayHttpUrl) {
-      Alert.alert(
-        "No relay in use",
-        "Your phone is connected directly to this device. Switch to a relay-routed connection to deploy to a different machine.",
-      );
-      return;
-    }
-    setDeploying("both");
-    try {
-      const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
-      const result = await deployPhoneProjectRuntime({
-        slug: slugStr,
-        includeData: true,
-        exports: [
-          { kind: "dev-hw", deviceId: target.id, relayHttpUrl, onConflict: "overwrite" },
-          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken, onConflict: "overwrite" },
-        ],
-      });
-      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
-      const local = result.pushes.find((push) => push.kind === "dev-hw");
-      if (cloud) {
-        setLastDeploy({
-          kind: "yaver-cloud",
-          via: "Dev Machine + Yaver Cloud",
-          url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken }, cloud.result),
-        });
-      } else if (local) {
-        setLastDeploy({
-          kind: "dev-hw",
-          via: "Dev Machine + Yaver Cloud",
-          url: local.result.browseUrl || deriveTargetUrl({ kind: "dev-hw", deviceId: target.id, relayHttpUrl }, local.result),
-        });
-      }
-    } catch (e: any) {
-      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
-    } finally {
-      setDeploying(null);
-    }
-  }
-
-  async function deployToSelfHosted() {
-    if (!slugStr || !selfHostedBaseUrl) {
-      Alert.alert("Self-hosted target missing", "Save a self-hosted Yaver base URL on this device first.");
-      return;
-    }
-    setDeploying("custom");
-    try {
-      const result = await deployPhoneProjectRuntime({
-        slug: slugStr,
-        includeData: true,
-        exports: [
-          {
-            kind: "custom",
-            baseUrl: selfHostedBaseUrl,
-            authToken: selfHostedAuthToken ?? undefined,
-            onConflict: "overwrite",
-          },
-        ],
-      });
-      const deployed = result.pushes.find((push) => push.kind === "custom");
-      if (deployed) {
-        setLastDeploy({
-          kind: "custom",
-          via: "Self-Hosted",
-          url: deployed.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: selfHostedBaseUrl, authToken: selfHostedAuthToken ?? undefined }, deployed.result),
-        });
-      }
-    } catch (e: any) {
-      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
-    } finally {
-      setDeploying(null);
-    }
-  }
-
-  async function deployToSelfHostedAndCloud() {
-    if (!slugStr || !selfHostedBaseUrl) {
-      Alert.alert("Self-hosted target missing", "Save a self-hosted Yaver base URL on this device first.");
-      return;
-    }
-    setDeploying("both");
-    try {
-      const cloudAuthToken = (await getLocalSecret(LOCAL_KEYS.yaverCloudToken)) ?? token ?? undefined;
-      const result = await deployPhoneProjectRuntime({
-        slug: slugStr,
-        includeData: true,
-        exports: [
-          {
-            kind: "custom",
-            baseUrl: selfHostedBaseUrl,
-            authToken: selfHostedAuthToken ?? undefined,
-            onConflict: "overwrite",
-          },
-          { kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken, onConflict: "overwrite" },
-        ],
-      });
-      const cloud = result.pushes.find((push) => push.kind === "yaver-cloud");
-      const selfHosted = result.pushes.find((push) => push.kind === "custom");
-      if (cloud) {
-        setLastDeploy({
-          kind: "yaver-cloud",
-          via: "Self-Hosted + Yaver Cloud",
-          url: cloud.result.browseUrl || deriveTargetUrl({ kind: "yaver-cloud", cloudBaseUrl: YAVER_CLOUD_BASE, cloudAuthToken }, cloud.result),
-        });
-      } else if (selfHosted) {
-        setLastDeploy({
-          kind: "custom",
-          via: "Self-Hosted + Yaver Cloud",
-          url: selfHosted.result.browseUrl || deriveTargetUrl({ kind: "custom", baseUrl: selfHostedBaseUrl, authToken: selfHostedAuthToken ?? undefined }, selfHosted.result),
-        });
-      }
-    } catch (e: any) {
-      Alert.alert("Deploy failed", e?.message ?? "deploy failed");
-    } finally {
-      setDeploying(null);
+      setDeploying(false);
     }
   }
 
@@ -640,25 +271,11 @@ export default function PhoneProjectDetailScreen() {
       return;
     }
     Alert.alert("Pick a dev machine", "Choose the target for this deploy.", [
-      ...devMachines.map((d) => ({
-        text: `${d.name}${d.local ? " (LAN)" : ""}`,
-        onPress: () => setSelectedDevMachineId(d.id),
+      ...devMachines.map((device) => ({
+        text: `${device.name}${device.local ? " (LAN)" : ""}`,
+        onPress: () => setSelectedDevMachineId(device.id),
       })),
       { text: "Cancel", style: "cancel" as const },
-    ]);
-  }
-
-  async function doDelete() {
-    Alert.alert("Delete project?", `This removes ${project?.name ?? slugStr} and its SQLite file.`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          await deletePhoneProject(slugStr, access);
-          router.back();
-        },
-      },
     ]);
   }
 
@@ -675,30 +292,29 @@ export default function PhoneProjectDetailScreen() {
     await loadRows();
   }
 
-  const rowIdKey = useMemo(() => {
-    if (!rows.length) return "id";
-    return Object.keys(rows[0]).find((k) => k === "id") ?? Object.keys(rows[0])[0];
-  }, [rows]);
-
-  function openVibeCoding() {
+  function openScreenshotsTask() {
     if (!project?.dir) {
       Alert.alert(
-        "Coding loop unavailable",
-        "This phone sandbox runs locally in-app. Move it to a Yaver agent before opening the coding loop.",
+        "Screenshots unavailable",
+        "Ship this project to your dev machine first, then run screenshots from there.",
       );
       return;
     }
-    const prompt = buildSandboxPrompt(project);
     router.navigate({
       pathname: "/(tabs)/tasks" as any,
       params: {
         dir: project.dir,
-        prompt,
-        title: `Vibe ${project.name}`,
+        prompt: `Generate App Store and Google Play screenshots for ${project.name}. Capture the key flows, save them into a screenshots/ folder in the project, and report the generated files.`,
+        title: `Screenshots ${project.name}`,
         openNew: "1",
       },
     });
   }
+
+  const rowIdKey = useMemo(() => {
+    if (!rows.length) return "id";
+    return Object.keys(rows[0]).find((key) => key === "id") ?? Object.keys(rows[0])[0];
+  }, [rows]);
 
   if (loading) {
     return (
@@ -748,6 +364,7 @@ export default function PhoneProjectDetailScreen() {
             {formatBytes(project.stats.dbBytes)} on disk
           </Text>
         ) : null}
+
         <View
           style={[
             styles.deployResult,
@@ -785,83 +402,21 @@ export default function PhoneProjectDetailScreen() {
 
         <View style={{ flexDirection: "row", gap: 8, marginTop: 12 }}>
           <Pressable
-            onPress={() => router.navigate(`/phone-project/run/${slugStr}` as any)}
-            style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
+            onPress={deployToDevMachine}
+            disabled={deploying}
+            style={[styles.btn, { backgroundColor: c.accent, flex: 1, opacity: deploying ? 0.7 : 1 }]}
           >
-            <Text style={{ color: c.bg, fontWeight: "700" }}>Open app</Text>
+            <Text style={{ color: c.bg, fontWeight: "700" }}>
+              {deploying ? "Shipping..." : "Ship it"}
+            </Text>
           </Pressable>
           <Pressable
-            onPress={openVibeCoding}
+            onPress={openScreenshotsTask}
             style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
           >
-            <Text style={[styles.btnText, { color: c.textPrimary }]}>Vibe code</Text>
+            <Text style={[styles.btnText, { color: c.textPrimary }]}>Screenshots</Text>
           </Pressable>
         </View>
-        <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
-          <Pressable
-            onPress={doExport}
-            style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
-          >
-            <Text style={[styles.btnText, { color: c.textPrimary }]}>Export .tgz</Text>
-          </Pressable>
-          <Pressable
-            onPress={doDelete}
-            style={[styles.btnSecondary, { borderColor: "#ff6b6b", flex: 1 }]}
-          >
-            <Text style={[styles.btnText, { color: "#ff6b6b" }]}>Delete</Text>
-          </Pressable>
-        </View>
-
-        <Pressable
-          onPress={() => router.navigate("/(tabs)/gitproviders" as any)}
-          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
-        >
-          <Text style={[styles.btnText, { color: c.textPrimary }]}>
-            Git providers ›
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() =>
-            router.navigate({
-              pathname: "/phone-project/oauth" as any,
-              params: { slug: slugStr },
-            })
-          }
-          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
-        >
-          <Text style={[styles.btnText, { color: c.textPrimary }]}>
-            OAuth providers (Apple · Google · Microsoft) ›
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() =>
-            router.navigate({
-              pathname: "/phone-project/dns" as any,
-              params: { slug: slugStr },
-            })
-          }
-          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
-        >
-          <Text style={[styles.btnText, { color: c.textPrimary }]}>
-            Custom domain (Cloudflare DNS) ›
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={() =>
-            router.navigate({
-              pathname: "/phone-project/api-keys" as any,
-              params: { slug: slugStr },
-            })
-          }
-          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 8 }]}
-        >
-          <Text style={[styles.btnText, { color: c.textPrimary }]}>
-            API keys (for your third-party apps) ›
-          </Text>
-        </Pressable>
       </View>
 
       {project.app ? (
@@ -911,24 +466,24 @@ export default function PhoneProjectDetailScreen() {
 
       <Text style={[styles.section, { color: c.textPrimary }]}>Tables</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
-        {tables.map((t) => (
+        {tables.map((table) => (
           <Pressable
-            key={t.name}
-            onPress={() => setSelectedTable(t.name)}
+            key={table.name}
+            onPress={() => setSelectedTable(table.name)}
             style={[
               styles.chip,
               {
-                backgroundColor: selectedTable === t.name ? c.accent : c.bgCard,
+                backgroundColor: selectedTable === table.name ? c.accent : c.bgCard,
                 borderColor: c.border,
               },
             ]}
           >
-            <Text style={{ color: selectedTable === t.name ? c.bg : c.textPrimary, fontWeight: "500" }}>
-              {t.name}
+            <Text style={{ color: selectedTable === table.name ? c.bg : c.textPrimary, fontWeight: "500" }}>
+              {table.name}
             </Text>
-            {typeof t.rowCount === "number" ? (
-              <Text style={{ color: selectedTable === t.name ? c.bg : c.textMuted, fontSize: 11, marginLeft: 4 }}>
-                {t.rowCount}
+            {typeof table.rowCount === "number" ? (
+              <Text style={{ color: selectedTable === table.name ? c.bg : c.textMuted, fontSize: 11, marginLeft: 4 }}>
+                {table.rowCount}
               </Text>
             ) : null}
           </Pressable>
@@ -942,12 +497,15 @@ export default function PhoneProjectDetailScreen() {
               {rows.length} row{rows.length === 1 ? "" : "s"}
             </Text>
             <Pressable
-              onPress={() => setShowInsert((v) => !v)}
+              onPress={() => setShowInsert((value) => !value)}
               style={[styles.btnSecondary, { borderColor: c.border, paddingHorizontal: 12 }]}
             >
-              <Text style={{ color: c.textPrimary, fontWeight: "500" }}>{showInsert ? "Cancel" : "+ Insert"}</Text>
+              <Text style={{ color: c.textPrimary, fontWeight: "500" }}>
+                {showInsert ? "Cancel" : "+ Insert"}
+              </Text>
             </Pressable>
           </View>
+
           {showInsert ? (
             <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 8 }]}>
               <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 4 }}>Row JSON</Text>
@@ -969,21 +527,22 @@ export default function PhoneProjectDetailScreen() {
               </Pressable>
             </View>
           ) : null}
+
           <FlatList
             scrollEnabled={false}
             data={rows}
-            keyExtractor={(item, idx) => String(item[rowIdKey] ?? idx)}
+            keyExtractor={(item, index) => String(item[rowIdKey] ?? index)}
             ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
             renderItem={({ item }) => (
               <Pressable
                 onLongPress={() => doDeleteRow(item[rowIdKey])}
                 style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
               >
-                {Object.entries(item).map(([k, v]) => (
-                  <View key={k} style={styles.kv}>
-                    <Text style={[styles.k, { color: c.textMuted }]}>{k}</Text>
+                {Object.entries(item).map(([key, value]) => (
+                  <View key={key} style={styles.kv}>
+                    <Text style={[styles.k, { color: c.textMuted }]}>{key}</Text>
                     <Text style={[styles.v, { color: c.textPrimary }]} numberOfLines={2}>
-                      {formatValue(v)}
+                      {formatValue(value)}
                     </Text>
                   </View>
                 ))}
@@ -999,28 +558,26 @@ export default function PhoneProjectDetailScreen() {
         </View>
       ) : null}
 
-      <Text style={[styles.section, { color: c.textPrimary }]}>Deploy</Text>
+      <Text style={[styles.section, { color: c.textPrimary }]}>Ship it</Text>
       <View style={{ paddingHorizontal: 16 }}>
         <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 12 }}>
-          Ship this mini-backend in one tap to your own machine.
+          Push this project to your dev machine.
         </Text>
-
-        {/* [Your Dev Machine] */}
         <Pressable
           onPress={deployToDevMachine}
           onLongPress={pickDevMachine}
-          disabled={deploying !== null}
+          disabled={deploying}
           style={[
             styles.deployCard,
             {
               backgroundColor: c.accent,
               borderColor: c.accent,
-              opacity: deploying !== null && deploying !== "dev-hw" ? 0.5 : 1,
+              opacity: deploying ? 0.7 : 1,
             },
           ]}
         >
           <View style={{ flex: 1 }}>
-            <Text style={[styles.deployLabel, { color: c.bg }]}>Your Dev Machine</Text>
+            <Text style={[styles.deployLabel, { color: c.bg }]}>Ship to your dev machine</Text>
             <Text style={[styles.deploySub, { color: c.bg, opacity: 0.8 }]}>
               {selectedDevMachine
                 ? `→ ${selectedDevMachine.name}${selectedDevMachine.local ? " · LAN" : " · via relay"}`
@@ -1032,98 +589,12 @@ export default function PhoneProjectDetailScreen() {
               </Text>
             ) : null}
           </View>
-          {deploying === "dev-hw" ? (
+          {deploying ? (
             <ActivityIndicator color={c.bg} />
           ) : (
             <Text style={[styles.deployArrow, { color: c.bg }]}>→</Text>
           )}
         </Pressable>
-
-        {canUseYaverCloud ? (
-          <Pressable
-            onPress={deployToCloud}
-            disabled={deploying !== null}
-            style={[
-              styles.deployCard,
-              {
-                backgroundColor: c.bgCard,
-                borderColor: c.accent,
-                opacity: deploying !== null && deploying !== "yaver-cloud" ? 0.5 : 1,
-                marginTop: 8,
-              },
-            ]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Yaver Cloud</Text>
-              <Text style={[styles.deploySub, { color: c.textMuted }]}>
-                {(canUseCloudPreview ? "Private preview" : "Managed machine") + " at " + YAVER_CLOUD_BASE.replace(/^https?:\/\//, "")}
-              </Text>
-            </View>
-            {deploying === "yaver-cloud" ? (
-              <ActivityIndicator color={c.accent} />
-            ) : (
-              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
-            )}
-          </Pressable>
-        ) : null}
-
-        {selfHostedBaseUrl ? (
-          <Pressable
-            onPress={deployToSelfHosted}
-            disabled={deploying !== null}
-            style={[
-              styles.deployCard,
-              {
-                backgroundColor: c.bgCard,
-                borderColor: c.border,
-                opacity: deploying !== null && deploying !== "custom" ? 0.5 : 1,
-                marginTop: 8,
-              },
-            ]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>Self-Hosted Runtime</Text>
-              <Text style={[styles.deploySub, { color: c.textMuted }]}>
-                {selfHostedBaseUrl.replace(/^https?:\/\//, "")}
-              </Text>
-            </View>
-            {deploying === "custom" ? (
-              <ActivityIndicator color={c.accent} />
-            ) : (
-              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
-            )}
-          </Pressable>
-        ) : null}
-
-        {canUseYaverCloud ? (
-          <Pressable
-            onPress={selfHostedBaseUrl ? deployToSelfHostedAndCloud : deployToBoth}
-            disabled={deploying !== null}
-            style={[
-              styles.deployCard,
-              {
-                backgroundColor: c.bgCard,
-                borderColor: c.border,
-                opacity: deploying !== null && deploying !== "both" ? 0.5 : 1,
-                marginTop: 8,
-              },
-            ]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.deployLabel, { color: c.textPrimary }]}>{selfHostedBaseUrl ? "Self-Hosted + Cloud" : "Dev Machine + Cloud"}</Text>
-              <Text style={[styles.deploySub, { color: c.textMuted }]}>
-                {selfHostedBaseUrl
-                  ? "Push the same sandbox to your self-hosted runtime and Yaver Cloud in one go"
-                  : "Push the same sandbox to your own box and Yaver Cloud in one go"}
-              </Text>
-            </View>
-            {deploying === "both" ? (
-              <ActivityIndicator color={c.accent} />
-            ) : (
-              <Text style={[styles.deployArrow, { color: c.accent }]}>→</Text>
-            )}
-          </Pressable>
-        ) : null}
 
         {lastDeploy ? (
           <Pressable
@@ -1134,124 +605,34 @@ export default function PhoneProjectDetailScreen() {
             ]}
           >
             <Text style={{ color: c.success ?? "#22c55e", fontSize: 12, fontWeight: "600" }}>
-              ✓ Running on {lastDeploy.via ?? lastDeploy.kind}
+              ✓ Running on {lastDeploy.via ?? "dev machine"}
             </Text>
             <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }} numberOfLines={1}>
               {lastDeploy.url}
             </Text>
           </Pressable>
         ) : null}
-
-        {/* Advanced: escape routes (trust signal — not the headline). The
-            curated list is served by the agent so it stays in sync with the
-            SwitchEngine target set. Phone projects are SQLite-backed, so we
-            ask for "yaver"-origin rows (where the user can actually execute
-            an escape today) plus a few highlight inbound cases for context. */}
-        <Pressable
-          onPress={() => setShowAdvancedPromote((v) => !v)}
-          style={{ marginTop: 20, paddingVertical: 8 }}
-        >
-          <Text style={{ color: c.textMuted, fontSize: 12 }}>
-            {showAdvancedPromote ? "▾" : "▸"} Advanced — escape to another backend (no lock-in)
-          </Text>
-        </Pressable>
-        {showAdvancedPromote ? (
-          <View>
-            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 8 }}>
-              Same manifest, different backend. Plans go through the switch engine with a 7-day rollback snapshot.
-            </Text>
-            {escapeRoutes.length === 0 ? (
-              <ActivityIndicator color={c.textMuted} style={{ marginTop: 4 }} />
-            ) : (
-              escapeRoutes.map((r) => {
-                const tag = r.complexity || "";
-                const tagColor =
-                  tag === "hard"
-                    ? "#f97316"
-                    : tag === "medium"
-                      ? "#eab308"
-                      : tag === "easy"
-                        ? c.accent
-                        : c.textMuted;
-                return (
-                  <Pressable
-                    key={r.id}
-                    onPress={() => doPromote(r.toTargetId, r.label)}
-                    disabled={promoting === r.toTargetId}
-                    style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 8 }]}
-                  >
-                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                          <Text style={[styles.promoteLabel, { color: c.textPrimary }]}>{r.label}</Text>
-                          {r.highlight ? (
-                            <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>· PITCH</Text>
-                          ) : null}
-                          {tag ? (
-                            <Text style={{ color: tagColor, fontSize: 10, fontWeight: "600", textTransform: "uppercase" }}>
-                              · {tag}
-                            </Text>
-                          ) : null}
-                        </View>
-                        <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>{r.blurb}</Text>
-                      </View>
-                      {promoting === r.toTargetId ? (
-                        <ActivityIndicator color={c.accent} />
-                      ) : (
-                        <Text style={{ color: c.accent, fontSize: 18, marginLeft: 8 }}>›</Text>
-                      )}
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </View>
-        ) : null}
       </View>
     </ScrollView>
   );
 }
 
-// deriveTargetUrl falls back to a sensible "view it on the target" URL when
-// the target agent didn't return a ready-made one in PhonePushResult.
-function deriveTargetUrl(target: PhonePushTarget, result: PhonePushResult): string {
+function deriveTargetUrl(target: Extract<PhonePushTarget, { kind: "dev-hw" }>, result: PhonePushResult): string {
   const slug = encodeURIComponent(result.slug);
-  switch (target.kind) {
-    case "dev-hw":
-      return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}/phone/projects/browse?slug=${slug}`;
-    case "yaver-cloud":
-      return `${(target.cloudBaseUrl ?? YAVER_CLOUD_BASE).replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
-    case "custom":
-      return `${target.baseUrl.replace(/\/$/, "")}/phone/projects/browse?slug=${slug}`;
-  }
+  return `${target.relayHttpUrl.replace(/\/$/, "")}/d/${target.deviceId}/phone/projects/browse?slug=${slug}`;
 }
 
-function formatValue(v: unknown): string {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
+function formatValue(value: unknown): string {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
-function formatBytes(n: number): string {
-  if (!n) return "0 B";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function buildSandboxPrompt(project: PhoneProject): string {
-  const primaryEntity = project.app?.primaryEntity || project.schema?.tables?.find((table) => table.name !== "users")?.name || "items";
-  const screenTitles = (project.app?.screens ?? []).map((screen) => screen.title).join(", ");
-  return [
-    `You are vibe-coding inside Yaver's mobile sandbox for the project "${project.name}".`,
-    `Keep the implementation mobile-first, SQLite-backed, and exportable to the user's hardware later.`,
-    `Primary entity: ${primaryEntity}.`,
-    screenTitles ? `Current screens: ${screenTitles}.` : "",
-    `Improve the sandbox app directly. Prefer concrete edits that make the app feel closer to a polished solo-dev mobile product.`,
-    `After changes, explain what changed in the sandbox and what the next best prompt is.`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 const styles = StyleSheet.create({
@@ -1296,7 +677,6 @@ const styles = StyleSheet.create({
   btn: { paddingVertical: 12, borderRadius: 8, alignItems: "center" },
   btnSecondary: { paddingVertical: 10, borderRadius: 8, alignItems: "center", borderWidth: 1 },
   btnText: { fontWeight: "600", fontSize: 14 },
-  promoteLabel: { fontWeight: "600", fontSize: 14 },
   deployCard: {
     flexDirection: "row",
     alignItems: "center",

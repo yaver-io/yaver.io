@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yaver",
     "slug": "yaver",
-    "version": "1.18.10",
+    "version": "1.18.12",
     "orientation": "portrait",
     "scheme": "yaver",
     "icon": "./assets/icon.png",
