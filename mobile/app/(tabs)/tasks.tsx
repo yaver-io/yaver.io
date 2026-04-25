@@ -91,6 +91,50 @@ const BANNER_CONFIG: Record<
   },
 };
 
+function isKivancAccount(email: string | null | undefined): boolean {
+  return String(email || "").trim().toLowerCase() === "kivanc.cakmak@icloud.com";
+}
+
+function isKivancMacBook(device: { name?: string | null; hostName?: string | null; os?: string | null }): boolean {
+  const haystack = `${device.name || ""} ${device.hostName || ""}`.toLowerCase();
+  const isMac = ["darwin", "macos"].includes(String(device.os || "").trim().toLowerCase());
+  if (!isMac) return false;
+  return haystack.includes("kivanc") || haystack.includes("cakmak") || haystack.includes("macbook");
+}
+
+function preferredDefaultRunnerForDevice(
+  device: { name?: string | null; hostName?: string | null; os?: string | null },
+  signedInEmail: string | null | undefined,
+  availableRunnerIds: string[],
+): string | null {
+  if (availableRunnerIds.length === 0) return null;
+  const unique = Array.from(new Set(availableRunnerIds.filter(Boolean)));
+  if (isKivancAccount(signedInEmail)) {
+    if (isKivancMacBook(device) && unique.includes("claude")) return "claude";
+    if (!isKivancMacBook(device) && unique.includes("codex")) return "codex";
+  }
+  if (unique.includes("claude")) return "claude";
+  if (unique.includes("codex")) return "codex";
+  return unique[0] || null;
+}
+
+function preferredDefaultModelForRunner(
+  runnerId: string | null | undefined,
+  device: { name?: string | null; hostName?: string | null; os?: string | null },
+  signedInEmail: string | null | undefined,
+): string | null {
+  const normalized = String(runnerId || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (isKivancAccount(signedInEmail)) {
+    if (normalized === "claude" && isKivancMacBook(device)) return "claude-opus-4-7";
+    if (normalized === "codex" && !isKivancMacBook(device)) return "gpt-5.4";
+  }
+  if (normalized === "claude") return "claude-opus-4-7";
+  if (normalized === "codex") return "gpt-5.4";
+  if (normalized === "aider-ollama") return "qwen2.5-coder:14b";
+  return null;
+}
+
 type DeviceProbeState = {
   reachable: boolean;
   needsAuth: boolean;
@@ -681,7 +725,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryRunnerByDevice, primaryModelByDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, DeviceProbeState>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -737,7 +781,7 @@ export default function TasksScreen() {
   const [todoDone, setTodoDone] = useState(0);
 
   // Speech state
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
@@ -809,33 +853,56 @@ export default function TasksScreen() {
     quicClient.getRunners().then(r => {
       if (r.length > 0) {
         setAvailableRunners(r);
-        // Set default runner selection and its models
-        const def = r.find(x => x.isDefault);
-        if (def) {
-          setSelectedRunner(def.id);
-          if (def.models?.length > 0) {
-            setAvailableModels(def.models);
-            const defModel = def.models.find(m => m.isDefault);
-            if (defModel) setSelectedModel(defModel.id);
-          }
+        const installed = r.filter((runner) => runner.installed);
+        const ready = installed.filter((runner) => runner.ready !== false);
+        const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
+        if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
+          setSelectedRunner(explicitRunner);
+          return;
         }
+        const seededRunner = activeDevice
+          ? preferredDefaultRunnerForDevice(activeDevice, user?.email, ready.map((runner) => runner.id).concat(installed.map((runner) => runner.id)))
+          : null;
+        const preferred =
+          ready.find((runner) => runner.id === seededRunner) ||
+          installed.find((runner) => runner.id === seededRunner) ||
+          ready.find((runner) => runner.isDefault) ||
+          ready.find((runner) => runner.id === "claude") ||
+          ready.find((runner) => runner.id === "codex") ||
+          installed.find((runner) => runner.isDefault) ||
+          installed[0];
+        if (!selectedRunner && preferred) setSelectedRunner(preferred.id);
       }
     });
-  }, [connectionStatus]);
+  }, [activeDevice, connectionStatus, primaryRunnerByDevice, selectedRunner, user?.email]);
 
   // Update models when runner selection changes
   useEffect(() => {
     const runner = availableRunners.find(r => r.id === selectedRunner);
     if (runner?.models?.length) {
       setAvailableModels(runner.models);
-      const defModel = runner.models.find(m => m.isDefault);
-      if (defModel) setSelectedModel(defModel.id);
-      else setSelectedModel(runner.models[0].id);
+      const explicitModel = activeDevice ? primaryModelByDevice[activeDevice.id] : "";
+      if (explicitModel && runner.models.find((model) => model.id === explicitModel)?.id && selectedModel !== explicitModel) {
+        setSelectedModel(explicitModel);
+        return;
+      }
+      if (selectedModel && runner.models.some((model) => model.id === selectedModel)) {
+        return;
+      }
+      const seededModel = activeDevice
+        ? preferredDefaultModelForRunner(runner.id, activeDevice, user?.email)
+        : null;
+      const preferredModel =
+        (explicitModel && runner.models.find((model) => model.id === explicitModel)?.id) ||
+        (seededModel && runner.models.find((model) => model.id === seededModel)?.id) ||
+        runner.models.find(m => m.isDefault)?.id ||
+        runner.models[0].id;
+      setSelectedModel(preferredModel);
     } else {
       setAvailableModels([]);
       setSelectedModel("");
     }
-  }, [selectedRunner, availableRunners]);
+  }, [activeDevice, availableRunners, primaryModelByDevice, selectedModel, selectedRunner, user?.email]);
 
   useEffect(() => {
     if (didApplyRouteSeedRef.current) return;
@@ -2183,9 +2250,9 @@ export default function TasksScreen() {
                     </Text>
                   </Pressable>
                   <Pressable
-                    style={[s.submitButton, { backgroundColor: c.accent }, ((!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing) && s.submitButtonDisabled]}
+                    style={[s.submitButton, { backgroundColor: c.accent }, ((!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected) && s.submitButtonDisabled]}
                     onPress={handleCreateTask}
-                    disabled={(!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing}
+                    disabled={(!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected}
                   >
                     <Text style={s.submitButtonText}>{isSubmitting ? "Sending..." : "Send"}</Text>
                   </Pressable>

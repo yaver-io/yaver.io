@@ -598,6 +598,8 @@ export interface ModelInfo {
   id: string;
   name: string;
   description?: string;
+  provider?: string;
+  source?: string;
   isDefault?: boolean;
 }
 
@@ -611,6 +613,9 @@ export interface RunnerInfo {
   authSource?: string;
   warning?: string;
   error?: string;
+  supportsBrowserAuth?: boolean;
+  supportsModelSelection?: boolean;
+  modelSource?: string;
   isDefault: boolean;
   models: ModelInfo[];
 }
@@ -1159,7 +1164,12 @@ export class QuicClient {
   /** Send a new task to the desktop agent. */
   async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string): Promise<Task> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/tasks`, {
+    // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
+    // failed device-switch attempt) makes this POST hang forever and
+    // the FAB Submit button gets stuck on "Sending…". 30s is generous
+    // even for image-heavy tasks; the relay caps non-SSE proxies at
+    // ~25s, so anything longer is the connection itself, not the work.
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/tasks`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1173,7 +1183,7 @@ export class QuicClient {
         ...(images?.length ? { images } : {}),
         ...(workDir ? { workDir } : {}),
       }),
-    });
+    }, 30000);
     if (!res.ok) {
       let msg = `Failed to create task: ${res.status}`;
       try {
