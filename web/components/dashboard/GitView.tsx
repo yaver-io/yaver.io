@@ -33,6 +33,11 @@ type ProjectAction = {
 
 type Props = {
   onOpenSurface?: (surface: "chat" | "preview" | "web-reload" | "builds", projectPath: string) => void;
+  /** Optional: open the chat tab for `projectPath` with the supplied
+   *  prompt pre-filled in the composer. Used by the "Pull (Rebase)"
+   *  action so the user gets a one-click rebase via the Vibing flow
+   *  without having to type the prompt themselves. */
+  onVibePrompt?: (projectPath: string, prompt: string) => void;
 };
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter", "swift", "kotlin"];
@@ -70,7 +75,7 @@ function actionLabelForSurface(action: ProjectAction, surface: "preview" | "web-
   return "Builds";
 }
 
-export default function GitView({ onOpenSurface }: Props) {
+export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [expandedProjectPath, setExpandedProjectPath] = useState("");
   const [gitStatus, setGitStatus] = useState<GitStatusRow | null>(null);
@@ -294,6 +299,19 @@ export default function GitView({ onOpenSurface }: Props) {
                       type: "vibing",
                       supported: true,
                     } satisfies ProjectAction,
+                    // Pull/Rebase action — drives the Vibing flow with
+                    // a pre-canned prompt so the user gets one-click
+                    // git pull --rebase + conflict resolution by the
+                    // chosen primary agent. Hidden when no vibe-prompt
+                    // handler is wired (older dashboard mounts).
+                    ...(onVibePrompt
+                      ? [{
+                          label: "Pull (Rebase)",
+                          target: ".",
+                          type: "vibe-prompt-rebase",
+                          supported: true,
+                        } satisfies ProjectAction]
+                      : []),
                     ...projectActions,
                   ]
                 : [];
@@ -351,10 +369,17 @@ export default function GitView({ onOpenSurface }: Props) {
                               ) : (
                                 actions.map((action, index) => {
                                   const isVibing = action.type === "vibing";
+                                  const isVibePrompt = String(action.type || "").startsWith("vibe-prompt");
                                   const surface = preferredSurfaceForAction(action);
                                   const supported = action.supported !== false;
-                                  const label = isVibing ? "Start Vibing" : surface ? actionLabelForSurface(action, surface) : action.label;
-                                  const disabled = !supported || (!isVibing && !surface);
+                                  const label = isVibing
+                                    ? "Start Vibing"
+                                    : isVibePrompt
+                                      ? action.label
+                                      : surface
+                                        ? actionLabelForSurface(action, surface)
+                                        : action.label;
+                                  const disabled = !supported || (!isVibing && !isVibePrompt && !surface);
                                   return (
                                     <button
                                       key={`${action.label}:${action.target}:${index}`}
@@ -365,11 +390,27 @@ export default function GitView({ onOpenSurface }: Props) {
                                           ? action.reason || "Not supported on this machine yet."
                                           : isVibing
                                             ? `Open ${label}`
-                                            : surface
-                                              ? `Open ${label}`
-                                              : "No dashboard surface for this action yet"
+                                            : isVibePrompt
+                                              ? "git pull --rebase via the Vibing flow on the device's primary coding agent. Conflicts get resolved by the agent."
+                                              : surface
+                                                ? `Open ${label}`
+                                                : "No dashboard surface for this action yet"
                                       }
                                       onClick={() => {
+                                        if (isVibePrompt && onVibePrompt) {
+                                          // Hand off to the chat tab with a pre-canned
+                                          // rebase prompt. The agent picks up the workdir
+                                          // from preferredProjectPath and the runner
+                                          // from the device's primary, so this is a
+                                          // single-click "fast-forward me to origin
+                                          // with conflict help".
+                                          onVibePrompt(project.path, [
+                                            "Run `git pull --rebase origin " + (project.branch || "main") + "` in this repo.",
+                                            "If there are merge conflicts, resolve them in the smallest, most conservative way that keeps both intents — never delete code without telling me which file and which lines.",
+                                            "When done, run `git log --oneline -5` and `git status` and report the result.",
+                                          ].join("\n"));
+                                          return;
+                                        }
                                         if (!onOpenSurface) return;
                                         if (isVibing) {
                                           onOpenSurface("chat", project.path);
@@ -383,6 +424,8 @@ export default function GitView({ onOpenSurface }: Props) {
                                           ? "cursor-not-allowed border-surface-800 bg-surface-950 text-surface-600"
                                           : isVibing
                                             ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15"
+                                          : isVibePrompt
+                                            ? "border-violet-500/30 bg-violet-500/10 text-violet-100 hover:bg-violet-500/15"
                                           : surface === "builds"
                                             ? "border-amber-500/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"
                                             : surface === "web-reload"

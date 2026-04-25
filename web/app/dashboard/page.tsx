@@ -482,7 +482,7 @@ function DeviceConnectCard({
               : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
           }`}
         >
-          {isConnecting ? "Connecting…" : "Open Workspace"}
+          {isConnecting ? "Connecting…" : isOffline ? "Try Connect" : "Open Workspace"}
         </button>
         {canTogglePrimary && onTogglePrimary ? (
           <button
@@ -513,6 +513,7 @@ export default function DashboardPage() {
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>("");
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
@@ -585,16 +586,12 @@ export default function DashboardPage() {
   // Pick the runner the user actually wants to use on this device.
   // Order:
   //   1. Explicit primary persisted to userSettings
-  //   2. Hard-coded policy: yaver-test-ephemeral defaults to codex
-  //      (matches the seed in DevicesView so the Hot Reload re-auth
-  //      CTA isn't lying about which provider's OAuth it triggers)
-  //   3. First runner the device has registered as authenticated
-  //   4. null — the consumer falls back to "claude" as last resort
+  //   2. First runner the device has registered as authenticated
+  //   3. null — the consumer falls back to the live runner list
   const connectedDevicePrimaryRunner = (() => {
     if (!connectedDevice) return null;
     const explicit = primaryRunnerByDevice[connectedDevice.id];
     if (explicit) return explicit;
-    if (connectedDevice.name === "yaver-test-ephemeral") return "codex";
     const runners = (connectedDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean }>;
     const ready = runners.find((r) => r?.authConfigured);
     if (ready?.runnerId) return ready.runnerId;
@@ -779,15 +776,19 @@ export default function DashboardPage() {
 
   useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines, chatMsgs]);
 
-  // Keep selectedRunner valid: pick the agent's default if it's installed, else
-  // the first installed runner. Clears when the picker's choice disappears
-  // (e.g. on reconnect to a different host where the runner isn't installed).
+  // Keep selectedRunner valid: prefer the connected device's chosen
+  // primary runner, then the agent's default/active runner, then a
+  // sensible installed fallback. Clears when the picker's choice
+  // disappears (e.g. on reconnect to a different host where the runner
+  // isn't installed).
   useEffect(() => {
     const installed = runners.filter(r => r.installed);
     if (installed.length === 0) { setSelectedRunner(""); return; }
     if (selectedRunner && installed.some(r => r.id === selectedRunner)) return;
     const ready = installed.filter(r => r.ready !== false);
     const preferred =
+      ready.find(r => r.id === connectedDevicePrimaryRunner) ||
+      installed.find(r => r.id === connectedDevicePrimaryRunner) ||
       ready.find(r => r.isDefault || r.active) ||
       ready.find(r => r.id === "claude") ||
       ready.find(r => r.id === "opencode") ||
@@ -795,7 +796,19 @@ export default function DashboardPage() {
       installed.find(r => r.isDefault || r.active) ||
       installed[0];
     setSelectedRunner(preferred.id);
-  }, [runners, selectedRunner]);
+  }, [connectedDevicePrimaryRunner, runners, selectedRunner]);
+
+  useEffect(() => {
+    const runner = runners.find((r) => r.id === selectedRunner);
+    const models = Array.isArray(runner?.models) ? runner.models : [];
+    if (models.length === 0) {
+      if (selectedModel) setSelectedModel("");
+      return;
+    }
+    if (selectedModel && models.some((m) => m.id === selectedModel)) return;
+    const preferredModel = models.find((m) => m.isDefault)?.id || models[0]?.id || "";
+    setSelectedModel(preferredModel);
+  }, [runners, selectedRunner, selectedModel]);
 
   useEffect(() => {
     if (!token) { setPendingInvites([]); return; }
@@ -1007,7 +1020,7 @@ export default function DashboardPage() {
     }
   };
 
-  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setConnectError(null); };
+  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setSelectedModel(""); setConnectError(null); };
 
   const refreshConnectedRunners = async () => {
     if (!isConnected) return;
@@ -1045,6 +1058,7 @@ export default function DashboardPage() {
           title: text.slice(0, 80),
           description: text,
           runner: selectedRunner || undefined,
+          model: selectedModel || undefined,
           workDir: preferredSurfaceProjectPath || undefined,
         });
         setActiveTask(t);
@@ -1859,10 +1873,24 @@ export default function DashboardPage() {
               />
             </div>
           ) : activeTab === "git" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-[1600px] mx-auto w-full"><GitView onOpenSurface={(surface, projectPath) => {
-              setPreferredSurfaceProjectPath(projectPath);
-              setActiveTab(surface);
-            }} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-[1600px] mx-auto w-full"><GitView
+              onOpenSurface={(surface, projectPath) => {
+                setPreferredSurfaceProjectPath(projectPath);
+                setActiveTab(surface);
+              }}
+              onVibePrompt={(projectPath, prompt) => {
+                // One-click rebase via Vibing: drop the pre-canned
+                // prompt into the chat composer, switch to Chat tab,
+                // and pin the project so the runner has the workdir.
+                // The user sees the prompt and can edit / Enter to
+                // send — nothing fires automatically.
+                setPreferredSurfaceProjectPath(projectPath);
+                setInput(prompt);
+                setActiveTab("chat");
+                // Defer focus until after the tab switch + render.
+                setTimeout(() => { inputRef.current?.focus(); }, 50);
+              }}
+            /></div>
           ) : (
             <>
               <div className="flex flex-1 min-h-0">
@@ -1934,6 +1962,8 @@ export default function DashboardPage() {
                 <div className="mx-auto flex max-w-5xl flex-col gap-3">
                   {(() => {
                     const installed = runners.filter(r => r.installed);
+                    const selectedRunnerRow = installed.find((r) => r.id === selectedRunner) || null;
+                    const selectedRunnerModels = Array.isArray(selectedRunnerRow?.models) ? selectedRunnerRow.models : [];
                     if (installed.length === 0) {
                       return (
                         <div className="text-[11px] text-amber-400">
@@ -1968,11 +1998,38 @@ export default function DashboardPage() {
                             );
                           })}
                         </div>
-                        {activeRunnerId ? (
-                          <div className="text-[11px] text-surface-500">
-                            Active: <span className="text-surface-300">{runnerLabel(activeRunnerId)}</span>
-                          </div>
-                        ) : null}
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
+                          {selectedRunnerModels.length > 0 ? (
+                            <>
+                              <span>Model</span>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {selectedRunnerModels.map((model) => {
+                                  const active = model.id === selectedModel;
+                                  return (
+                                    <button
+                                      key={model.id}
+                                      type="button"
+                                      onClick={() => setSelectedModel(model.id)}
+                                      title={model.description || model.id}
+                                      className={`rounded-full border px-2.5 py-1 transition ${
+                                        active
+                                          ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-100"
+                                          : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                      }`}
+                                    >
+                                      {model.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          ) : null}
+                          {activeRunnerId ? (
+                            <span>
+                              Active: <span className="text-surface-300">{runnerLabel(activeRunnerId)}</span>
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     );
                   })()}
