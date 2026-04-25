@@ -72,6 +72,16 @@ export const HEARTBEAT_STALE_MS = 360_000;
  */
 export const BEACON_STALE_MS = 10_000;
 
+/**
+ * How old the most recent `peer/{id}/ping` bus event can be before
+ * we stop trusting bus presence as a sign the peer is alive. The
+ * agent pings every 60 s (`StartPeerHeartbeat` in
+ * desktop/agent/leader.go), so 180 s tolerates two missed pings —
+ * tight enough that a SIGKILL'd peer flips offline within 3 min,
+ * wide enough that one dropped UDP / SSE frame doesn't flap.
+ */
+export const BUS_PRESENCE_STALE_MS = 180_000;
+
 /** Timeout for a direct /health probe over LAN. */
 export const PROBE_TIMEOUT_MS = 2_500;
 

@@ -1,0 +1,12 @@
+config BR2_PACKAGE_YAVER_CAGENT
+	bool "yaver-cagent"
+	help
+	  Yaver c-agent — device-side runtime for AI-driven IoT
+	  troubleshooting. Provides a small loader + sandbox + event
+	  bus that hosts signed code modules shipped from a cloud
+	  reasoning brain over the existing Yaver control plane.
+
+	  See docs/c-agent-architecture.md and docs/c-agent-domains.md
+	  in the upstream repo for the full design.
+
+	  https://github.com/kivanccakmak/yaver.io

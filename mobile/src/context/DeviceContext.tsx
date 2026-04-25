@@ -144,7 +144,7 @@ const BUILD_NUMBER =
 // backend all agree on the same number. Drift here previously produced
 // "green on one, yellow on the other" UX glitches from clock skew
 // alone. See ARCHITECTURE_CLIENT_CORE.md.
-import { HEARTBEAT_STALE_MS } from "../_core/constants";
+import { BUS_PRESENCE_STALE_MS, HEARTBEAT_STALE_MS } from "../_core/constants";
 
 export interface RunnerInfo {
   taskId: string;
@@ -583,6 +583,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [guestInvitations, setGuestInvitations] = useState<GuestInvitation[]>([]);
   const [agentAuthExpired, setAgentAuthExpired] = useState(false);
   const [unreachableSet, setUnreachableSet] = useState<Set<string>>(() => new Set());
+  // Sub-minute peer presence harvested from the connected agent's
+  // P2P bus (`/bus/events`). Maps `deviceId` → unix-ms of the most
+  // recent `peer/{id}/online|ping`. Lets the device list render
+  // fresh even between Convex's 5-min `lastHeartbeat` updates: the
+  // agent rings the bus every 60 s, so a healthy peer stays "fresh"
+  // long before its Convex timestamp catches up.
+  const [busPresence, setBusPresence] = useState<Record<string, number>>({});
   // Auto-pair failure tracking. Each auto-pair path (LAN beacon / relay /
   // direct) records per-device failures; after MAX_PAIR_ATTEMPTS we add
   // the deviceId to `manualAuthRequiredSet` and the polling loops skip
@@ -968,6 +975,53 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     });
     return () => unsub();
   }, [activeDevice]);
+
+  // Subscribe to the connected agent's P2P bus so the device picker
+  // sees sub-minute peer presence for the whole mesh — the bus pings
+  // every 60 s while Convex `lastHeartbeat` only refreshes every
+  // 5 min. Without this, a healthy peer would briefly look offline
+  // between every Convex beat. Subscription is foreground-only;
+  // iOS/Android kill the SSE socket within seconds of suspend, and
+  // the AppState handler triggers a reconnect on resume which
+  // re-fires this effect via `connectionStatus`.
+  useEffect(() => {
+    if (!activeDevice || connectionStatus !== "connected") {
+      setBusPresence((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      return;
+    }
+    const unsub = quicClient.subscribeBusEvents({
+      prefix: "peer",
+      onEvent: (evt) => {
+        const segs = evt.topic.split("/");
+        if (segs.length < 3 || segs[0] !== "peer") return;
+        const peerId = segs[1];
+        const kind = segs[2];
+        if (!peerId) return;
+        if (kind === "offline") {
+          setBusPresence((prev) => {
+            if (!(peerId in prev)) return prev;
+            const next = { ...prev };
+            delete next[peerId];
+            return next;
+          });
+          return;
+        }
+        if (kind !== "online" && kind !== "ping") return;
+        const at = evt.publishedAt > 0 ? evt.publishedAt : Date.now();
+        setBusPresence((prev) => {
+          if ((prev[peerId] || 0) >= at) return prev;
+          return { ...prev, [peerId]: at };
+        });
+      },
+      onError: () => {
+        // Drop the SSE silently — the next connectionState transition
+        // re-fires this effect and re-subscribes. We deliberately do
+        // not clear `busPresence` on error: stale entries age out via
+        // the freshness window on read.
+      },
+    });
+    return () => unsub();
+  }, [activeDevice?.id, connectionStatus]);
 
   // Mirror auth-expiry changes from the transport into React state.
   // The QUIC client updates this flag from /health probes, but it is
@@ -1683,9 +1737,35 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => sub.remove();
   }, [activeDevice, connectionStatus, selectDevice, userDisconnected]);
 
+  // Overlay sub-minute bus presence on top of the Convex-derived
+  // online flag. Convex `lastHeartbeat` only refreshes every 5 min,
+  // so a freshly-rung peer would otherwise show offline until the
+  // next polling tick. The bus pings every 60 s (see
+  // BUS_PRESENCE_STALE_MS) — when we have a recent ping we flip
+  // `online` to true. A stale bus entry naturally stops contributing
+  // because `(Date.now() - at) < BUS_PRESENCE_STALE_MS` becomes
+  // false; the 30 s polling re-runs this memo with a fresh `devices`
+  // ref so freshness drifts at most one polling interval before the
+  // UI catches up.
+  const displayDevices = useMemo<Device[]>(() => {
+    if (Object.keys(busPresence).length === 0) return devices;
+    const now = Date.now();
+    let mutated = false;
+    const next = devices.map((d) => {
+      if (d.online) return d;
+      const at = busPresence[d.id];
+      if (at && now - at < BUS_PRESENCE_STALE_MS) {
+        mutated = true;
+        return { ...d, online: true };
+      }
+      return d;
+    });
+    return mutated ? next : devices;
+  }, [devices, busPresence]);
+
   const value = useMemo<DeviceState>(
     () => ({
-      devices,
+      devices: displayDevices,
       activeDevice,
       connectionStatus,
       isLoadingDevices,
@@ -1709,7 +1789,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryDeviceId,
       setPrimaryDevice,
     }),
-    [devices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

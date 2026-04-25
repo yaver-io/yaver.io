@@ -1,0 +1,16 @@
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.dSYM/
+compile_commands.json
+.cache/
+.idea/
+.vscode/
+
+# Example consumers compile to a binary called `example`; the
+# source lives in main.c. Don't track the built artifact.
+examples/cmake-find-package/build/
+examples/pkg-config/example
+examples/plain-makefile/example

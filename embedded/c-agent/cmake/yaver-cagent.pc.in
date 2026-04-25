@@ -1,0 +1,20 @@
+# Relocatable .pc file: ${pcfiledir} is the directory containing this
+# .pc (i.e. <prefix>/lib/pkgconfig). Walking up two levels recovers
+# the real prefix at pkg-config invocation time, so a binary install
+# tarball moved to a different location still produces correct flags.
+# Requires pkg-config >= 0.29 (2015) or any pkgconf release.
+
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${prefix}/@LIBDIR_SUFFIX@
+includedir=${prefix}/@INCLUDEDIR_SUFFIX@
+
+Name: yaver-cagent
+Description: Yaver c-agent — device-side runtime for AI-driven IoT troubleshooting
+URL: https://github.com/kivanccakmak/yaver.io
+Version: @PROJECT_VERSION@
+
+# Libs are listed in dependency order: cagent_host depends on
+# cagent_core, so cagent_host appears first on the link line.
+Libs: -L${libdir} -lyvr_cagent_host -lyvr_cagent_core
+Cflags: -I${includedir}

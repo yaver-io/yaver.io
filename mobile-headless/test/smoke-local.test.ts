@@ -58,6 +58,49 @@ maybe("smoke against live yaver agent", () => {
     expect(Array.isArray(s.packageManagers)).toBe(true);
   });
 
+  it("bus presence reaches subscribers within 90 s", async () => {
+    // Hits /bus/status + /bus/events on a real agent. Locks in:
+    //   - the bus is enabled by default
+    //   - peer/{self}/online or peer/{self}/ping arrives within
+    //     the 60-s heartbeat tick + jitter (90 s upper bound)
+    //
+    // This is the live-agent counterpart of bus-subscribe.test.ts and
+    // catches the regression where a cost-cutting refactor on the
+    // agent (or a dropped relay env var) silently kills the bus
+    // without flipping `enabled=false` — the symptom on mobile would
+    // be device cards flapping offline between Convex's 5-min
+    // heartbeats. Background to the regression in
+    // CLAUDE.md "Networking Stack" → P0 audit.
+    const status = await mobile.getBusStatus();
+    expect(status).toBeDefined();
+    expect(status.enabled).toBe(true);
+
+    const events: Array<{ topic: string; publisher: string }> = [];
+    let resolve: (() => void) | null = null;
+    const got = new Promise<void>((r) => {
+      resolve = r;
+    });
+    const unsub = mobile.subscribeBusEvents({
+      prefix: "peer",
+      onEvent: (evt) => {
+        events.push({ topic: evt.topic, publisher: evt.publisher });
+        if (/^peer\/.+\/(online|ping)$/.test(evt.topic) && resolve) {
+          resolve();
+          resolve = null;
+        }
+      },
+    });
+    try {
+      const timeout = new Promise<void>((_r, rej) =>
+        setTimeout(() => rej(new Error(`no peer/+/online|ping in 90s; saw ${events.length} events: ${events.slice(0, 3).map((e) => e.topic).join(",")}`)), 90_000),
+      );
+      await Promise.race([got, timeout]);
+      expect(events.length).toBeGreaterThan(0);
+    } finally {
+      unsub();
+    }
+  }, 95_000);
+
   it("wizard round-trip: start → answer → generate (dummy dir)", async () => {
     const start = await mobile.wizard.start();
     expect(start?.session?.id).toBeDefined();

@@ -451,12 +451,48 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
       const collapsed = collapseDevices(mapped);
       const withRelayPresence = await applyRelayPresence(collapsed);
 
-      withRelayPresence.sort((a, b) => {
-        if (a.online !== b.online) return a.online ? -1 : 1;
-        return b.lastSeen.localeCompare(a.lastSeen);
-      });
+      // Stable order: preserve the previous ordering whenever the set
+      // of device IDs hasn't changed. Devices only re-sort when one
+      // appears or disappears — not every 10s poll, which would shuffle
+      // the sidebar under the user's cursor as lastSeen timestamps tick.
+      setDevices((prev) => {
+        const prevIds = prev.map((d) => d.id);
+        const nextIds = withRelayPresence.map((d) => d.id);
+        const prevSet = new Set(prevIds);
+        const nextSet = new Set(nextIds);
 
-      setDevices(withRelayPresence);
+        const sameMembership =
+          prevIds.length === nextIds.length &&
+          prevIds.every((id) => nextSet.has(id));
+
+        if (sameMembership && prevIds.length > 0) {
+          // Membership unchanged → keep the existing order, just merge
+          // the fresh fields (online, lastSeen, peerState, …).
+          const byId = new Map(withRelayPresence.map((d) => [d.id, d]));
+          return prevIds
+            .map((id) => byId.get(id))
+            .filter((d): d is typeof withRelayPresence[number] => Boolean(d));
+        }
+
+        // Membership changed → sort once, freezing the new order until
+        // the next add/remove. New devices land at the top of their
+        // online/offline bucket; pre-existing devices keep their place.
+        const indexBefore = new Map(prevIds.map((id, i) => [id, i] as const));
+        return [...withRelayPresence].sort((a, b) => {
+          if (a.online !== b.online) return a.online ? -1 : 1;
+          const ai = indexBefore.has(a.id) ? indexBefore.get(a.id)! : -1;
+          const bi = indexBefore.has(b.id) ? indexBefore.get(b.id)! : -1;
+          if (ai !== -1 && bi !== -1) return ai - bi;
+          if (ai !== -1) return -1;
+          if (bi !== -1) return 1;
+          // Both new — fall back to lastSeen so newest sits on top.
+          return b.lastSeen.localeCompare(a.lastSeen);
+        });
+      });
+      // Touch unused locals so type-narrowing stays useful for
+      // future readers without dead-code warnings.
+      void prevSet;
+      void nextSet;
     } catch {
       // Silently fail
     }

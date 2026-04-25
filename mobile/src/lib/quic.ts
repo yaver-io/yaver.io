@@ -428,6 +428,22 @@ export interface MachineInfo {
   capabilities?: MachineCapabilities;
 }
 
+/**
+ * One event off the agent's P2P bus. Mirrors `desktop/agent/bus.go`
+ * + the headless clients so a single wire format covers RN, Node,
+ * and the Go peers themselves. Topics are slash-separated; presence
+ * lives at `peer/{deviceId}/online` | `ping` | `offline`.
+ */
+export interface BusEvent {
+  id: string;
+  topic: string;
+  publisher: string;
+  publishedAt: number;
+  ttl?: number;
+  qos: 0 | 1;
+  payload?: unknown;
+}
+
 export interface InfraNetworkInterface {
   name: string;
   mac?: string;
@@ -1367,6 +1383,71 @@ export class QuicClient {
         }
       } catch {
         // aborted or connection dropped — the caller re-subscribes on its own cadence
+      }
+    })();
+    return () => controller.abort();
+  }
+
+  /**
+   * Subscribe to the connected agent's P2P bus event stream.
+   * Topics like `peer/{id}/online`, `peer/{id}/ping`,
+   * `peer/{id}/offline` carry sub-minute peer presence — subscribe
+   * with `prefix="peer"` to track which devices are alive in the
+   * mesh without polling Convex. Returns an unsubscribe function;
+   * call it when the app backgrounds (iOS/Android kill long-lived
+   * sockets within seconds of suspend).
+   *
+   * The wire format mirrors `web-headless`/`mobile-headless`
+   * `subscribeBusEvents` so Node/Bun smoke tests consume the same
+   * stream as the RN app.
+   */
+  subscribeBusEvents(opts: {
+    prefix?: string;
+    onEvent: (evt: BusEvent) => void;
+    onError?: (err: Error) => void;
+  }): () => void {
+    if (!this.isConnected) return () => {};
+    const url = opts.prefix
+      ? `${this.baseUrl}/bus/events?prefix=${encodeURIComponent(opts.prefix)}`
+      : `${this.baseUrl}/bus/events`;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(url, {
+          headers: { ...this.authHeaders, Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) {
+          opts.onError?.(new Error(`bus/events: HTTP ${res.status}`));
+          return;
+        }
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            const dataLines = frame
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            try {
+              opts.onEvent(JSON.parse(dataLines.join("\n")) as BusEvent);
+            } catch {
+              // drop malformed frames
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err?.name !== "AbortError") {
+          opts.onError?.(err);
+        }
       }
     })();
     return () => controller.abort();

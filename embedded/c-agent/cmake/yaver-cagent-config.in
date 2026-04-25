@@ -1,0 +1,74 @@
+#!/bin/sh
+# yaver-cagent-config — print build flags for the c-agent runtime.
+#
+# Mirrors ncurses6-config / sdl-config / pkg-config so vendor build
+# systems that pre-date pkg-config can still consume the library.
+#
+# Self-relocating: derives the install prefix from the location of
+# this script at runtime, so a tarball moved to a new path keeps
+# producing correct flags.
+
+set -e
+
+# Resolve absolute path of this script (without realpath, which is
+# not portable to busybox sh on minimal embedded hosts).
+script="$0"
+case "$script" in
+    /*) ;;
+    *)  script="$PWD/$script" ;;
+esac
+# One level of symlink resolution is enough for typical
+# /usr/local/bin → /opt/yaver/bin layouts.
+while [ -L "$script" ]; do
+    target=$(readlink "$script")
+    case "$target" in
+        /*) script="$target" ;;
+        *)  script="$(dirname "$script")/$target" ;;
+    esac
+done
+
+bindir=$(cd "$(dirname "$script")" && pwd)
+prefix=$(cd "$bindir/.." && pwd)
+exec_prefix="$prefix"
+libdir="$prefix/@LIBDIR_SUFFIX@"
+includedir="$prefix/@INCLUDEDIR_SUFFIX@"
+version="@PROJECT_VERSION@"
+
+usage() {
+    cat <<EOF
+Usage: yaver-cagent-config [OPTIONS]
+  --version       Print library version
+  --prefix        Print install prefix
+  --libdir        Print directory containing libyvr_cagent_core.a
+  --includedir    Print directory containing yvr/*.h
+  --cflags        Print compiler flags (include paths)
+  --libs          Print linker flags (library paths + names)
+  --static-libs   Same as --libs (only static lib is shipped today)
+  --help          Print this message
+EOF
+}
+
+if [ $# -eq 0 ]; then
+    usage
+    exit 1
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version)              echo "$version" ;;
+        --prefix)               echo "$prefix" ;;
+        --libdir)               echo "$libdir" ;;
+        --includedir)           echo "$includedir" ;;
+        --cflags)               echo "-I$includedir" ;;
+        --libs|--static-libs)
+            # Dependency order: host first (depends on core).
+            echo "-L$libdir -lyvr_cagent_host -lyvr_cagent_core" ;;
+        --help|-h)              usage ;;
+        *)
+            echo "yaver-cagent-config: unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+    shift
+done

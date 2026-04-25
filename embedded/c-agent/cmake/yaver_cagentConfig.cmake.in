@@ -1,0 +1,9 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+if(NOT TARGET yaver::cagent_core)
+    include("${CMAKE_CURRENT_LIST_DIR}/yaver_cagentTargets.cmake")
+endif()
+
+check_required_components(yaver_cagent)
