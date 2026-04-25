@@ -127,6 +127,8 @@ export default function PreviewPane({
    *  hardcoded default. Falls back to "claude" when unset. */
   primaryRunner?: string | null;
 }) {
+  const taskStreamStopRef = useRef<(() => void) | null>(null);
+  const taskPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
     framework?: string;
@@ -149,9 +151,22 @@ export default function PreviewPane({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
+  // Dev-server boot/recovery progress, mirrored from the same
+  // /dev/events SSE stream the mobile app consumes. The heuristic
+  // (keyword → percent) matches mobile/app/(tabs)/apps.tsx so the two
+  // surfaces feel identical. `active` stays true while we're streaming
+  // pre-ready events; flipped to false when we see `type==="ready"`
+  // or the dev-server status poll confirms `running=true`.
+  const [devProgress, setDevProgress] = useState<{ pct: number; stage: string; active: boolean }>({ pct: 0, stage: "", active: false });
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
+  const [activeTaskStream, setActiveTaskStream] = useState<{
+    id: string;
+    title: string;
+    status: "queued" | "running" | "completed" | "failed" | "stopped";
+    lines: string[];
+  } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -187,6 +202,21 @@ export default function PreviewPane({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(ORIENTATION_STORAGE_KEY, orientation);
   }, [orientation]);
+
+  const stopActiveTaskStream = useCallback(() => {
+    if (taskStreamStopRef.current) {
+      taskStreamStopRef.current();
+      taskStreamStopRef.current = null;
+    }
+    if (taskPollRef.current) {
+      clearInterval(taskPollRef.current);
+      taskPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopActiveTaskStream();
+  }, [stopActiveTaskStream]);
 
   // Poll dev server + worker-session status.
   useEffect(() => {
@@ -240,12 +270,12 @@ export default function PreviewPane({
     };
   }, [devStatus?.running]);
 
-  // SSE: reload on ready/reload events, also capture `line` events for the tail.
+  // SSE: /dev/events streams boot progress, log lines, reload/ready signals.
+  // We subscribe unconditionally (not gated on devStatus.running) so the
+  // overlay shows progress during initial startup too, not only once the
+  // server is ready. The keyword heuristic below mirrors mobile
+  // (apps.tsx) so web and mobile advance the bar at the same moments.
   useEffect(() => {
-    if (!devStatus?.running) return;
-    const previewUrl = agentClient.devPreviewUrl;
-    if (!previewUrl) return;
-
     const controller = new AbortController();
     (async () => {
       try {
@@ -259,6 +289,23 @@ export default function PreviewPane({
         if (!reader) return;
         const decoder = new TextDecoder();
         let buffer = "";
+        const bumpFromMessage = (msg: string) => {
+          const m = msg.toLowerCase();
+          let pct = 0;
+          if (m.includes("install")) pct = 0.1;
+          else if (m.includes("prebuild")) pct = 0.2;
+          else if (m.includes("pod install")) pct = 0.3;
+          else if (m.includes("bundling") || m.includes("metro")) pct = 0.45;
+          else if (m.includes("compile") || m.includes("hermes")) pct = 0.6;
+          else if (m.includes("starting") || m.includes("listen")) pct = 0.75;
+          else if (m.includes("waiting on")) pct = 0.85;
+          else if (m.includes("ready") || m.includes("accepting")) pct = 0.95;
+          if (pct > 0) {
+            setDevProgress((prev) => ({ pct: Math.max(prev.pct, pct), stage: msg.slice(0, 120), active: true }));
+          } else {
+            setDevProgress((prev) => prev.active ? { ...prev, stage: msg.slice(0, 120) } : prev);
+          }
+        };
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -269,16 +316,29 @@ export default function PreviewPane({
             if (!line.startsWith("data: ")) continue;
             try {
               const ev = JSON.parse(line.slice(6));
+              const text = (ev.logLine || ev.message || ev.text || "").toString();
               if (ev.type === "reload" || ev.type === "ready") {
                 setIframeKey((k) => k + 1);
                 setReloadNonce((n) => n + 1);
-              } else if (ev.type === "line" && typeof ev.text === "string") {
-                setLogLines((prev) => {
-                  const next = [...prev, ev.text];
-                  return next.length > 200 ? next.slice(-200) : next;
-                });
-              } else if (ev.type === "error" && typeof ev.text === "string") {
-                setLogLines((prev) => [...prev.slice(-200), `[error] ${ev.text}`]);
+                if (ev.type === "ready") {
+                  setDevProgress({ pct: 1, stage: "ready", active: true });
+                  setTimeout(() => setDevProgress({ pct: 0, stage: "", active: false }), 1500);
+                }
+              } else if (ev.type === "log" || ev.type === "line") {
+                if (text) {
+                  setLogLines((prev) => {
+                    const next = [...prev, text];
+                    return next.length > 200 ? next.slice(-200) : next;
+                  });
+                  bumpFromMessage(text);
+                }
+              } else if (ev.type === "error") {
+                if (text) {
+                  setLogLines((prev) => [...prev.slice(-200), `[error] ${text}`]);
+                  setDevProgress((prev) => ({ ...prev, stage: `error: ${text.slice(0, 120)}`, active: true }));
+                }
+              } else if (ev.type === "stopped") {
+                setDevProgress({ pct: 0, stage: "", active: false });
               }
             } catch {}
           }
@@ -286,6 +346,15 @@ export default function PreviewPane({
       } catch {}
     })();
     return () => controller.abort();
+  }, []);
+
+  // When the dev server confirms "running" via the status poll, clear
+  // the progress overlay (SSE may have missed the `ready` event if we
+  // connected late — the status poll is the authoritative ground truth).
+  useEffect(() => {
+    if (devStatus?.running) {
+      setDevProgress({ pct: 0, stage: "", active: false });
+    }
   }, [devStatus?.running]);
 
   // Reset logs when dev server transitions stopped → running.
@@ -400,9 +469,14 @@ export default function PreviewPane({
     if (recovering) return;
     setRecovering(true);
     setRecoveryLog([]);
+    setDevProgress({ pct: 0.05, stage: "starting recovery…", active: true });
     const savedWorkDir = devStatus?.workDir;
     const savedFramework = devStatus?.framework;
+    const stage = (pct: number, label: string) => {
+      setDevProgress((prev) => ({ pct: Math.max(prev.pct, pct), stage: label, active: true }));
+    };
     try {
+      stage(0.1, "checking agent reachability…");
       appendRecovery("→ checking agent reachability…");
       try {
         const info = await agentClient.getInfo();
@@ -450,6 +524,7 @@ export default function PreviewPane({
       }
 
       if (savedWorkDir) {
+        stage(0.25, "stopping dev server…");
         appendRecovery("→ stopping dev server…");
         try {
           await agentClient.stopDevServer();
@@ -547,6 +622,7 @@ export default function PreviewPane({
     setSending(true);
     setSendStatus(null);
     try {
+      stopActiveTaskStream();
       const projectName = (() => {
         const wd = devStatus?.workDir;
         if (!wd) return undefined;
@@ -559,13 +635,54 @@ export default function PreviewPane({
         projectName,
         workDir: devStatus?.workDir,
       });
+      setActiveTaskStream({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        lines: [],
+      });
+      taskStreamStopRef.current = agentClient.streamTaskOutput(task.id, (line) => {
+        const trimmed = String(line || "").trimEnd();
+        if (!trimmed) return;
+        setActiveTaskStream((prev) => {
+          if (!prev || prev.id !== task.id) return prev;
+          const next = [...prev.lines, trimmed];
+          return {
+            ...prev,
+            status: "running",
+            lines: next.length > 200 ? next.slice(-200) : next,
+          };
+        });
+      });
+      taskPollRef.current = setInterval(() => {
+        void agentClient.getTask(task.id)
+          .then((fresh) => {
+            setActiveTaskStream((prev) => {
+              if (!prev || prev.id !== task.id) return prev;
+              const nextLines = fresh.output && fresh.output.length > 0
+                ? fresh.output
+                : prev.lines.length === 0 && fresh.resultText
+                  ? [fresh.resultText]
+                  : prev.lines;
+              return {
+                ...prev,
+                status: fresh.status,
+                lines: nextLines.length > 200 ? nextLines.slice(-200) : nextLines,
+              };
+            });
+            if (fresh.status !== "queued" && fresh.status !== "running") {
+              stopActiveTaskStream();
+            }
+          })
+          .catch(() => {});
+      }, 2000);
       setComposer("");
-      setSendStatus(`✓ kicked “${task.title}”`);
+      setSendStatus(`✓ started “${task.title}”`);
     } catch (e: any) {
       setSendStatus(`✗ ${e?.message || e}`);
     }
     setSending(false);
-  }, [composer, sending, devStatus?.workDir]);
+  }, [composer, sending, devStatus?.workDir, stopActiveTaskStream]);
 
   const handleReload = useCallback(async () => {
     const framework = (devStatus?.framework || "").toLowerCase();
@@ -909,8 +1026,32 @@ export default function PreviewPane({
       {/* Stage */}
       <div
         ref={stageRef}
-        className="flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-surface-950"
+        className="relative flex-1 min-h-0 flex items-center justify-center overflow-hidden bg-surface-950"
       >
+        {/* Recovery log — absolute overlay so it doesn't resize the stage */}
+        {(recovering || recoveryLog.length > 0) ? (
+          <div className="pointer-events-auto absolute top-3 right-3 z-10 w-72 max-w-[40%] rounded border border-amber-500/30 bg-surface-950/95 shadow-lg backdrop-blur">
+            <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
+              <span>Recovery {recovering ? "· running" : "· last run"}</span>
+              {!recovering && recoveryLog.length > 0 ? (
+                <button
+                  onClick={() => setRecoveryLog([])}
+                  className="text-surface-600 hover:text-surface-400"
+                  title="Clear recovery log"
+                >
+                  clear
+                </button>
+              ) : null}
+            </div>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+              {recoveryLog.length === 0 ? (
+                <span className="text-surface-600">(starting…)</span>
+              ) : (
+                recoveryLog.join("\n")
+              )}
+            </pre>
+          </div>
+        ) : null}
         {skin.plain ? (
           <div style={innerDim}>{innerContent}</div>
         ) : (
@@ -1023,26 +1164,23 @@ export default function PreviewPane({
         </div>
       ) : null}
 
-      {/* Recovery log — shows what Reconnect & Fix is doing */}
-      {(recovering || recoveryLog.length > 0) ? (
+      {activeTaskStream ? (
         <div className="border-t border-surface-800 bg-surface-950/80 shrink-0">
-          <div className="flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-amber-400">
-            <span>Recovery {recovering ? "· running" : "· last run"}</span>
-            {!recovering && recoveryLog.length > 0 ? (
-              <button
-                onClick={() => setRecoveryLog([])}
-                className="text-surface-600 hover:text-surface-400"
-                title="Clear recovery log"
-              >
-                clear
-              </button>
-            ) : null}
+          <div className="flex items-center justify-between px-3 py-1 text-[10px] uppercase tracking-widest text-sky-300">
+            <span>
+              Task stream · {activeTaskStream.status}
+            </span>
+            <span className="truncate text-surface-500 normal-case tracking-normal max-w-[60%]" title={activeTaskStream.title}>
+              {activeTaskStream.title}
+            </span>
           </div>
-          <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-amber-200/80">
-            {recoveryLog.length === 0 ? (
-              <span className="text-surface-600">(starting…)</span>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all border-t border-surface-800 bg-surface-950 px-3 py-1 font-mono text-[10px] text-surface-300">
+            {activeTaskStream.lines.length === 0 ? (
+              <span className="text-surface-600">
+                {activeTaskStream.status === "queued" ? "(queued… waiting for runner output)" : "(waiting for output…)"}
+              </span>
             ) : (
-              recoveryLog.join("\n")
+              activeTaskStream.lines.slice(-40).join("\n")
             )}
           </pre>
         </div>

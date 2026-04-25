@@ -1009,10 +1009,11 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	)
 	if projectPath == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":       true,
-			"canVibe":  false,
-			"reason":   "This app is not linked to a detected project on the selected machine.",
-			"guidance": "Open the repo on a machine running `yaver serve`, then try again.",
+			"ok":            true,
+			"canVibe":       false,
+			"reason":        "This app is not linked to a detected project on the selected machine.",
+			"guidance":      "Open the repo on a machine running `yaver serve`, then try again.",
+			"needsGitSetup": false,
 		})
 		return
 	}
@@ -1020,20 +1021,22 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	if guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")); guestUID != "" {
 		if s.guestConfigMgr != nil && !s.guestConfigMgr.GuestCanAccessProject(guestUID, projectName) {
 			jsonReply(w, http.StatusOK, map[string]interface{}{
-				"ok":          true,
-				"canVibe":     false,
-				"projectName": projectName,
-				"reason":      "Your guest access is not allowed for this project.",
-				"guidance":    "Ask the host to add this repo to your Feedback SDK guest grant.",
+				"ok":            true,
+				"canVibe":       false,
+				"projectName":   projectName,
+				"reason":        "Your guest access is not allowed for this project.",
+				"guidance":      "Ask the host to add this repo to your Feedback SDK guest grant.",
+				"needsGitSetup": false,
 			})
 			return
 		}
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":          true,
-			"canVibe":     true,
-			"projectName": projectName,
-			"projectPath": projectPath,
-			"guidance":    "Using host-granted Feedback SDK access for this repo.",
+			"ok":            true,
+			"canVibe":       true,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"guidance":      "Using host-granted Feedback SDK access for this repo.",
+			"needsGitSetup": false,
 		})
 		return
 	}
@@ -1043,12 +1046,13 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	repoFullName := repoRemote.Repo
 	if providerKind == "" || strings.TrimSpace(repoFullName) == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":          true,
-			"canVibe":     false,
-			"projectName": projectName,
-			"projectPath": projectPath,
-			"reason":      "This project is not connected to GitHub or GitLab.",
-			"guidance":    "Connect git for this repo first. If the project is not in your GitHub/GitLab account, vibe coding stays disabled.",
+			"ok":            true,
+			"canVibe":       false,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"reason":        "This project is not connected to GitHub or GitLab.",
+			"guidance":      "Connect git for this repo first. If the project is not in your GitHub/GitLab account, vibe coding stays disabled.",
+			"needsGitSetup": true,
 		})
 		return
 	}
@@ -1060,14 +1064,16 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	provider := findProvider(host)
 	if provider == nil || strings.TrimSpace(provider.Token) == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":           true,
-			"canVibe":      false,
-			"projectName":  projectName,
-			"projectPath":  projectPath,
-			"provider":     providerKind,
-			"repoFullName": repoFullName,
-			"reason":       fmt.Sprintf("Connect your %s account in Yaver before vibe coding.", strings.Title(string(providerKind))),
-			"guidance":     "This project must be visible in your connected git account.",
+			"ok":            true,
+			"canVibe":       false,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"provider":      providerKind,
+			"repoHost":      host,
+			"repoFullName":  repoFullName,
+			"reason":        fmt.Sprintf("Connect your %s account in Yaver before vibe coding.", strings.Title(string(providerKind))),
+			"guidance":      "This project must be visible in your connected git account.",
+			"needsGitSetup": true,
 		})
 		return
 	}
@@ -1086,14 +1092,16 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	}
 	if err != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":           true,
-			"canVibe":      false,
-			"projectName":  projectName,
-			"projectPath":  projectPath,
-			"provider":     providerKind,
-			"repoFullName": repoFullName,
-			"reason":       "Could not verify your repository access right now.",
-			"guidance":     "Reconnect your git account in Yaver and try again.",
+			"ok":            true,
+			"canVibe":       false,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"provider":      providerKind,
+			"repoHost":      host,
+			"repoFullName":  repoFullName,
+			"reason":        "Could not verify your repository access right now.",
+			"guidance":      "Reconnect your git account in Yaver and try again.",
+			"needsGitSetup": true,
 		})
 		return
 	}
@@ -1107,14 +1115,16 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	}
 	if !visible {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":           true,
-			"canVibe":      false,
-			"projectName":  projectName,
-			"projectPath":  projectPath,
-			"provider":     providerKind,
-			"repoFullName": repoFullName,
-			"reason":       "This project is not in your connected git account, so vibe coding is disabled.",
-			"guidance":     fmt.Sprintf("You need GitHub/GitLab access to %s before Yaver can vibe code on it.", repoFullName),
+			"ok":            true,
+			"canVibe":       false,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"provider":      providerKind,
+			"repoHost":      host,
+			"repoFullName":  repoFullName,
+			"reason":        "This project is not in your connected git account, so vibe coding is disabled.",
+			"guidance":      fmt.Sprintf("You need GitHub/GitLab access to %s before Yaver can vibe code on it.", repoFullName),
+			"needsGitSetup": true,
 		})
 		return
 	}
@@ -1122,15 +1132,17 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 	runnerCfg, runnerStatus, runnerErr := s.vibingRunnerStatus(projectPath)
 	if runnerErr != nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":           true,
-			"canVibe":      false,
-			"projectName":  projectName,
-			"projectPath":  projectPath,
-			"provider":     providerKind,
-			"repoFullName": repoFullName,
-			"runner":       normalizeRunnerID(runnerCfg.RunnerID),
-			"reason":       fmt.Sprintf("%s is not installed on this machine.", runnerCfg.Name),
-			"guidance":     strings.TrimSpace(runnerErr.Error()),
+			"ok":            true,
+			"canVibe":       false,
+			"projectName":   projectName,
+			"projectPath":   projectPath,
+			"provider":      providerKind,
+			"repoHost":      host,
+			"repoFullName":  repoFullName,
+			"runner":        normalizeRunnerID(runnerCfg.RunnerID),
+			"reason":        fmt.Sprintf("%s is not installed on this machine.", runnerCfg.Name),
+			"guidance":      strings.TrimSpace(runnerErr.Error()),
+			"needsGitSetup": false,
 		})
 		return
 	}
@@ -1141,23 +1153,27 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 			"projectName":     projectName,
 			"projectPath":     projectPath,
 			"provider":        providerKind,
+			"repoHost":        host,
 			"repoFullName":    repoFullName,
 			"runner":          normalizeRunnerID(runnerCfg.RunnerID),
 			"needsRunnerAuth": !runnerStatus.AuthConfigured,
 			"reason":          fmt.Sprintf("%s is not ready on this machine.", runnerCfg.Name),
 			"guidance":        firstNonEmpty(strings.TrimSpace(runnerStatus.Error), strings.TrimSpace(runnerStatus.Warning)),
+			"needsGitSetup":   false,
 		})
 		return
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":           true,
-		"canVibe":      true,
-		"projectName":  projectName,
-		"projectPath":  projectPath,
-		"provider":     providerKind,
-		"repoFullName": repoFullName,
-		"runner":       normalizeRunnerID(runnerCfg.RunnerID),
+		"ok":            true,
+		"canVibe":       true,
+		"projectName":   projectName,
+		"projectPath":   projectPath,
+		"provider":      providerKind,
+		"repoHost":      host,
+		"repoFullName":  repoFullName,
+		"runner":        normalizeRunnerID(runnerCfg.RunnerID),
+		"needsGitSetup": false,
 	})
 }
 

@@ -173,6 +173,54 @@ export interface RunnerBrowserAuthSession {
   completedAt?: number;
 }
 
+export interface RunnerAuthStatus {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+  detail?: string;
+}
+
+export interface RunnerAuthSetupResult {
+  ok: boolean;
+  runner: string;
+  installed: boolean;
+  installAttempt?: boolean;
+  vaultKeys?: string[];
+  loginAttempt?: boolean;
+  mcpConfigured?: string[];
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  detail?: string;
+  warning?: string;
+  notes?: string[];
+}
+
+export interface FeedbackProjectActionResult {
+  ok: boolean;
+  projectName?: string;
+  projectPath?: string;
+  branch?: string;
+  commit?: string;
+  message?: string;
+  target?: string;
+  taskId?: string;
+}
+
+export interface GitProviderStatusRow {
+  host: string;
+  provider: string;
+  username: string;
+  avatarUrl?: string;
+  hasSsh: boolean;
+  setupAt: string;
+}
+
 export interface IncidentEvent {
   id: string;
   timestamp: number;

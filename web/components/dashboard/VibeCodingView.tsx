@@ -115,6 +115,7 @@ export default function VibeCodingView({
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedProjectPath, setSelectedProjectPath] = useState("");
   const [selectedRunner, setSelectedRunner] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
   const [taskList, setTaskList] = useState<Task[]>([]);
   const [activeTaskId, setActiveTaskId] = useState("");
   const [composer, setComposer] = useState("");
@@ -184,6 +185,7 @@ export default function VibeCodingView({
     () => runners.find((runner) => runner.id === selectedRunner) || null,
     [runners, selectedRunner],
   );
+  const availableModels = selectedRunnerRow?.models || [];
   const conversationTurns = useMemo(
     () => (activeTask?.turns || []).filter((turn) => String(turn.content || "").trim()),
     [activeTask?.turns],
@@ -276,6 +278,18 @@ export default function VibeCodingView({
   }, [connected, connectedDevice?.id, selectedProjectPath, selectedRunner, activeTaskId, refreshNonce]);
 
   useEffect(() => {
+    if (!selectedRunnerRow || availableModels.length === 0) {
+      setSelectedModel("");
+      return;
+    }
+    if (selectedModel && availableModels.some((model) => model.id === selectedModel)) {
+      return;
+    }
+    const preferred = availableModels.find((model) => model.isDefault) || availableModels[0];
+    setSelectedModel(preferred?.id || "");
+  }, [availableModels, selectedModel, selectedRunnerRow]);
+
+  useEffect(() => {
     if (!activeTask) {
       setStreamedOutput("");
       return;
@@ -333,6 +347,7 @@ export default function VibeCodingView({
       }),
       userPrompt: composer.trim(),
       runner: selectedRunner || undefined,
+      model: selectedModel || undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
     });
@@ -405,6 +420,7 @@ export default function VibeCodingView({
       description: plan.prompt,
       userPrompt: plan.userPrompt,
       runner: selectedRunner || undefined,
+      model: selectedModel || undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
     });
@@ -627,6 +643,7 @@ export default function VibeCodingView({
             <StatusPill>{connectedDevice?.name || "no machine"}</StatusPill>
             {selectedProject ? <StatusPill>{selectedProject.name}</StatusPill> : null}
             {selectedRunner ? <StatusPill>{selectedRunner}</StatusPill> : null}
+            {selectedModel ? <StatusPill>{selectedModel}</StatusPill> : null}
             {devStatus?.running ? <StatusPill>preview live</StatusPill> : null}
             <div className="relative ml-auto">
               <button
@@ -764,6 +781,24 @@ export default function VibeCodingView({
               {selectedRunnerRow?.ready === false ? (
                 <div className="mt-3 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
                   {selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`}
+                </div>
+              ) : null}
+              {availableModels.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {availableModels.map((model) => (
+                    <button
+                      key={model.id}
+                      onClick={() => setSelectedModel(model.id)}
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold ${
+                        selectedModel === model.id
+                          ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-100"
+                          : "border-surface-700 bg-surface-950 text-surface-400 hover:border-surface-600"
+                      }`}
+                      title={model.description || model.name}
+                    >
+                      {model.name}
+                    </button>
+                  ))}
                 </div>
               ) : null}
             </FoldableSection>

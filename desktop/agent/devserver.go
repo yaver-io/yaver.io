@@ -74,6 +74,7 @@ type DevServerStatus struct {
 	Building          bool          `json:"building,omitempty"` // true during native compilation (expo run:ios, etc.)
 	Port              int           `json:"port"`
 	BundleURL         string        `json:"bundleUrl"`
+	DirectURL         string        `json:"directUrl,omitempty"`
 	DeepLink          string        `json:"deepLink,omitempty"`
 	DevMode           string        `json:"devMode,omitempty"` // "dev-client", "web", "expo-go", "" (for non-Expo)
 	StartedAt         string        `json:"startedAt,omitempty"`
@@ -971,10 +972,18 @@ func isPortInUse(port int) bool {
 }
 
 func (e *ExpoDevServer) Reload() error {
-	// Metro auto-reloads on file change; this is a manual force
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/reload", e.port))
-	if err != nil {
-		return err
+	// Metro auto-reloads on file change; this is a manual force.
+	// --host lan --dev-client mode makes /reload flaky on 127.0.0.1
+	// (Metro binds to LAN IP, or the endpoint is gone in newer Metro).
+	// Best-effort HTTP here; the caller (handleDevServerReload) also
+	// broadcasts a `reload` command over the blackbox channel, which
+	// is the path that actually reloads mobile clients. Return nil
+	// either way so a Metro HTTP hiccup doesn't abort the real path.
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, httpErr := client.Get(fmt.Sprintf("http://127.0.0.1:%d/reload", e.port))
+	if httpErr != nil {
+		log.Printf("[dev:expo] /reload HTTP unreachable (soft-fail, broadcast will still fire): %v", httpErr)
+		return nil
 	}
 	resp.Body.Close()
 	return nil

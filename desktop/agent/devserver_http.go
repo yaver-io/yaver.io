@@ -754,6 +754,11 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 
 	status.IOSInstallMethod = resolvedIOSMethod
 	status.IOSInstallReason = resolvedIOSReason
+	if status.Port > 0 {
+		if ip := strings.TrimSpace(getLocalIP()); ip != "" && ip != "0.0.0.0" {
+			status.DirectURL = fmt.Sprintf("http://%s:%d", ip, status.Port)
+		}
+	}
 	jsonReply(w, http.StatusOK, status)
 }
 
@@ -1122,11 +1127,12 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Metro's HTTP /reload endpoint is flaky in --host lan --dev-client mode
+	// (connection-refuses on 127.0.0.1). That's fine — the actual mobile
+	// reload path is the blackbox BroadcastCommand below, which doesn't care
+	// whether Metro's HTTP layer responded. Log + keep going.
 	if err := s.devServerMgr.Reload(); err != nil {
-		incident := s.appendDevIncident("reload", ReasonReloadDevServerUnavailable, "Hot reload failed", "The agent could not trigger hot reload on the active dev server.", err.Error(), "Check whether the dev server is still running and reachable on the host machine.", projectPath, target.DeviceID, "dev-server", IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, reloadOp.ID)
-		s.upsertDevOperation("reload", "failed", "error", incident.UserMessage, projectPath, target.DeviceID, 1, nil, incident.ID)
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
+		log.Printf("[dev] dev server Reload() soft-failed (continuing to broadcast): %v", err)
 	}
 
 	// Emit control signal for hot reload

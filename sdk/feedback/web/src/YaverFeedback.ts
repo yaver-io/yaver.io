@@ -2,11 +2,14 @@ import type {
   AgentCommand,
   FeedbackBundle,
   FeedbackConfig,
+  FeedbackProjectActionResult,
   FeedbackReportSummary,
   FeedbackStatusUpdate,
-  TimelineEvent,
   DeviceInfo,
   ReloadAck,
+  RunnerAuthSetupResult,
+  RunnerAuthStatus,
+  TimelineEvent,
 } from './types';
 import { YaverDiscovery } from './discovery';
 import {
@@ -35,6 +38,10 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function supportsRunnerBrowserAuth(runner: string): boolean {
+  return runner === 'codex' || runner === 'claude';
 }
 
 /**
@@ -457,6 +464,22 @@ export class YaverFeedback {
     return client.reloadApp(mode, YaverFeedback.projectIdentity());
   }
 
+  static async commitProject(message?: string): Promise<FeedbackProjectActionResult> {
+    const client = await YaverFeedback.getClient();
+    return client.commitProject({
+      ...YaverFeedback.projectIdentity(),
+      message,
+    });
+  }
+
+  static async deployProject(target?: string): Promise<FeedbackProjectActionResult> {
+    const client = await YaverFeedback.getClient();
+    return client.deployProject({
+      ...YaverFeedback.projectIdentity(),
+      target,
+    });
+  }
+
   /**
    * Sign out — clears the cached Yaver session token and selected device.
    * After this returns, ensureAuthToken() will prompt for sign-in again on
@@ -488,9 +511,11 @@ export class YaverFeedback {
     projectName?: string;
     projectPath?: string;
     provider?: string;
+    repoHost?: string;
     repoFullName?: string;
     runner?: string;
     needsRunnerAuth?: boolean;
+    needsGitSetup?: boolean;
   }> {
     const client = await YaverFeedback.getClient();
     return client.getVibingEligibility(YaverFeedback.projectIdentity());
@@ -499,6 +524,68 @@ export class YaverFeedback {
   static async vibing(prompt: string): Promise<{ taskId: string }> {
     const client = await YaverFeedback.getClient();
     return client.vibing(prompt, YaverFeedback.projectIdentity());
+  }
+
+  static async getRunnerAuthStatus(): Promise<RunnerAuthStatus[]> {
+    const client = await YaverFeedback.getClient();
+    return client.getRunnerAuthStatus();
+  }
+
+  static async getAvailableRunners(): Promise<Array<{
+    id: string;
+    name: string;
+    installed: boolean;
+    ready: boolean;
+    authConfigured: boolean;
+    authSource?: string;
+    warning?: string;
+    error?: string;
+    isDefault: boolean;
+  }>> {
+    const client = await YaverFeedback.getClient();
+    return client.getAvailableRunners();
+  }
+
+  static async switchRunner(runnerId: string): Promise<{ ok: boolean; runnerId: string; runner: string }> {
+    const client = await YaverFeedback.getClient();
+    return client.switchRunner(runnerId);
+  }
+
+  static async setupRunnerAuth(runner: string): Promise<RunnerAuthSetupResult | null> {
+    const client = await YaverFeedback.getClient();
+    const normalized = runner.trim().toLowerCase();
+    if (normalized === 'opencode') {
+      const provider = (prompt('OpenCode provider: openai, anthropic, glm, or zai', 'openai') || '')
+        .trim()
+        .toLowerCase();
+      if (!provider) return null;
+      const token = prompt(`Enter the ${provider.toUpperCase()} API key for OpenCode:`) || '';
+      if (!token.trim()) return null;
+      return client.setupRunnerAuth({
+        runner: 'opencode',
+        openai_api_key: provider === 'openai' ? token.trim() : undefined,
+        anthropic_api_key: provider === 'anthropic' ? token.trim() : undefined,
+        glm_api_key: provider === 'glm' ? token.trim() : undefined,
+        zai_api_key: provider === 'zai' ? token.trim() : undefined,
+      });
+    }
+    if (normalized === 'codex') {
+      const token = prompt('Enter the OpenAI API key for Codex:') || '';
+      if (!token.trim()) return null;
+      return client.setupRunnerAuth({
+        runner: 'codex',
+        openai_api_key: token.trim(),
+      });
+    }
+    if (normalized === 'claude') {
+      const token = prompt('Enter the Anthropic API key for Claude Code:') || '';
+      if (!token.trim()) return null;
+      return client.setupRunnerAuth({
+        runner: 'claude',
+        anthropic_api_key: token.trim(),
+      });
+    }
+    throw new Error(`Unsupported runner: ${runner}`);
   }
 
   /**
@@ -647,7 +734,7 @@ export class YaverFeedback {
         <div class="yvr-fb-card">
           <div class="yvr-fb-header">
             <div>
-              <h3 class="yvr-fb-title">Yaver Feedback</h3>
+              <h3 class="yvr-fb-title">Yaver</h3>
               <p id="yaver-fb-subtitle" class="yvr-fb-subtitle"></p>
             </div>
             <button id="yaver-fb-close" class="yvr-fb-close" type="button" aria-label="Close">×</button>
@@ -673,6 +760,8 @@ export class YaverFeedback {
     const lastReport = overlay.querySelector<HTMLElement>('#yaver-fb-last-report')!;
     const progressTrack = overlay.querySelector<HTMLElement>('#yaver-fb-progress-track')!;
     const progressFill = overlay.querySelector<HTMLElement>('#yaver-fb-progress-fill')!;
+    let syncVibingOnboarding: ((eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>, errorMessage?: string) => void) | null = null;
+    const dashboardUrl = `${(YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '')}/dashboard`;
     const closeBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-close')!;
 
     let busy = false;
@@ -832,7 +921,7 @@ export class YaverFeedback {
             ? list.shared.map(renderDeviceRow).join('')
             : `<p class="yvr-fb-empty">None.</p>`;
         if (list.owned.length === 0 && list.shared.length === 0) {
-          errorEl.textContent = 'No machines found for this account.';
+          errorEl.innerHTML = `You have no access to a machine for this project. <a class="yvr-fb-inline-link" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener noreferrer">Open your Yaver dashboard</a>.`;
         }
         wireDeviceClicks(list.owned.concat(list.shared));
       } catch (err) {
@@ -920,7 +1009,7 @@ export class YaverFeedback {
     // ── Step 3 — Actions ────────────────────────────────
 
     const renderActionsView = () => {
-      subtitle.textContent = 'Step 2 of 2 — Record, reload, or start the next vibing task.';
+      subtitle.textContent = 'Step 2 — Fix, ship, or vibe.';
       body.innerHTML = `
         <button id="yaver-fb-machine-pill" class="yvr-fb-machine-pill" type="button">
           <span class="yvr-fb-dot yvr-fb-dot-green"></span>
@@ -932,10 +1021,6 @@ export class YaverFeedback {
         </button>
 
         <div class="yvr-fb-toolbar">
-          <button id="yaver-fb-record" class="yvr-fb-tool yvr-fb-tool-record" type="button" title="Start recording">
-            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
-            <span>Record</span>
-          </button>
           <button id="yaver-fb-screenshot" class="yvr-fb-tool yvr-fb-tool-screenshot" type="button" title="Screenshot + note">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
             <span>Screenshot</span>
@@ -944,58 +1029,274 @@ export class YaverFeedback {
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4v5h5"/><path d="M20 20v-5h-5"/><path d="M5.5 9A7.5 7.5 0 0 1 19 8.5"/><path d="M18.5 15A7.5 7.5 0 0 1 5 15.5"/></svg>
             <span>Reload</span>
           </button>
-        </div>
-        <button id="yaver-fb-send" class="yvr-fb-action yvr-fb-action-send" type="button" style="display:none;">Stop &amp; Send Report</button>
-
-        <div class="yvr-fb-runner-auth-row" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-          <button id="yaver-fb-signin-codex" type="button" style="flex:1;min-width:140px;padding:8px 10px;border-radius:10px;border:1px solid rgba(148,163,184,0.22);background:rgba(15,23,42,0.6);color:#cbd5e1;font-size:11px;cursor:pointer;text-align:left;">
-            <span style="display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Remote sign-in</span>
-            <span style="display:block;font-weight:600;color:#f1f5f9;">Codex</span>
+          <button id="yaver-fb-commit" class="yvr-fb-tool yvr-fb-tool-commit" type="button" title="Commit, rebase, and push">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M7 8l5-5 5 5"/><path d="M7 16l5 5 5-5"/></svg>
+            <span>Commit</span>
           </button>
-          <button id="yaver-fb-signin-claude" type="button" style="flex:1;min-width:140px;padding:8px 10px;border-radius:10px;border:1px solid rgba(148,163,184,0.22);background:rgba(15,23,42,0.6);color:#cbd5e1;font-size:11px;cursor:pointer;text-align:left;">
-            <span style="display:block;font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Remote sign-in</span>
-            <span style="display:block;font-weight:600;color:#f1f5f9;">Claude</span>
+          <button id="yaver-fb-deploy" class="yvr-fb-tool yvr-fb-tool-deploy" type="button" title="Deploy to production">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l3.5 7H22l-5 4.5 2 6.5-7-4-7 4 2-6.5L2 10h6.5z"/></svg>
+            <span>Deploy</span>
           </button>
         </div>
 
-        <div class="yvr-fb-vibe-block">
-          <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
-          <div id="yaver-fb-vibe-gate" style="display:none;padding:10px 12px;border-radius:10px;border:1px solid rgba(245,158,11,0.3);background:rgba(245,158,11,0.08);color:#fbbf24;font-size:12px;line-height:1.45;margin-bottom:8px;"></div>
-          <button id="yaver-fb-vibe-repair" class="yvr-fb-action" type="button" style="display:none;margin-bottom:8px;">Make Vibing Work</button>
-          <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
-          <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
+        <div class="yvr-fb-vibe-shell">
+          <div class="yvr-fb-vibe-topline">
+            <div class="yvr-fb-vibe-topline-copy">
+              <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
+              <p id="yaver-fb-vibe-intro" class="yvr-fb-vibe-intro">Sign in to an agent first, then connect git, then start the task.</p>
+            </div>
+            <div id="yaver-fb-runner-summary" class="yvr-fb-runner-summary">Checking agent…</div>
+          </div>
+          <div id="yaver-fb-vibe-onboarding" class="yvr-fb-vibe-onboarding">
+            <div id="yaver-fb-vibe-steps" class="yvr-fb-vibe-steps"></div>
+            <div class="yvr-fb-vibe-stage">
+              <div id="yaver-fb-vibe-stage-copy" class="yvr-fb-vibe-stage-copy"></div>
+              <div id="yaver-fb-runner-actions" class="yvr-fb-runner-auth-row">
+                <div class="yvr-fb-device-loading">Checking remote agents…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="yvr-fb-vibe-block">
+            <div id="yaver-fb-vibe-gate" class="yvr-fb-vibe-gate" style="display:none;"></div>
+            <button id="yaver-fb-vibe-repair" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;">Continue Setup</button>
+            <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
+            <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
+          </div>
         </div>
       `;
 
-      const recordBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-record')!;
-      const sendBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-send')!;
       const screenshotBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-screenshot')!;
       const reloadBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-reload')!;
+      const commitBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-commit')!;
+      const deployBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-deploy')!;
       const vibeBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe')!;
       const vibeRepairBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-repair')!;
       const vibePrompt = overlay.querySelector<HTMLTextAreaElement>('#yaver-fb-vibe-prompt')!;
       const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
-      const signInCodex = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-codex');
-      const signInClaude = overlay.querySelector<HTMLButtonElement>('#yaver-fb-signin-claude');
-      // Refresh vibing gate + machine pill after a sign-in attempt
-      // completes (success or cancel) — if auth landed, the gate lifts
-      // automatically without making the user close & re-open the
-      // feedback widget.
-      const afterSignIn = async () => {
+      const runnerActions = overlay.querySelector<HTMLDivElement>('#yaver-fb-runner-actions')!;
+      const runnerSummary = overlay.querySelector<HTMLDivElement>('#yaver-fb-runner-summary')!;
+      const vibeIntro = overlay.querySelector<HTMLParagraphElement>('#yaver-fb-vibe-intro')!;
+      const vibeOnboarding = overlay.querySelector<HTMLDivElement>('#yaver-fb-vibe-onboarding')!;
+      const vibeSteps = overlay.querySelector<HTMLDivElement>('#yaver-fb-vibe-steps')!;
+      const vibeStageCopy = overlay.querySelector<HTMLDivElement>('#yaver-fb-vibe-stage-copy')!;
+      let cachedRunners: Awaited<ReturnType<typeof YaverFeedback.getAvailableRunners>> = [];
+
+      const renderRunnerCards = (runners: typeof cachedRunners) => {
+        if (!runners.length) {
+          return `<div class="yvr-fb-empty">No remote coding agents were detected.</div>`;
+        }
+        return runners
+          .map((runner) => {
+            const actionLabel = runner.isDefault
+              ? 'Primary'
+              : runner.ready
+                ? 'Confirm'
+                : supportsRunnerBrowserAuth(runner.id)
+                  ? 'Sign In'
+                  : 'Configure';
+            const detail = runner.ready
+              ? runner.authSource
+                ? `Authenticated via ${runner.authSource}`
+                : 'Authenticated'
+              : runner.error || runner.warning || (runner.installed ? 'Needs authentication' : 'Not installed');
+            return `
+              <button type="button" class="yvr-fb-runner-card" data-runner="${escapeHtml(runner.id)}">
+                <span class="yvr-fb-runner-card-kicker">${runner.isDefault ? 'Primary agent' : 'Available agent'}</span>
+                <span class="yvr-fb-runner-card-title">${escapeHtml(runner.name || runner.id)}</span>
+                <span class="yvr-fb-runner-card-meta">${escapeHtml(detail)}</span>
+                <span class="yvr-fb-runner-card-action">${escapeHtml(actionLabel)}</span>
+              </button>
+            `;
+          })
+          .join('');
+      };
+
+      const renderRunnerSummary = (runners: typeof cachedRunners) => {
+        const primary = runners.find((runner) => runner.isDefault) || runners.find((runner) => runner.ready) || runners[0];
+        if (!primary) {
+          runnerSummary.textContent = 'No agent';
+          return;
+        }
+        runnerSummary.textContent = primary.ready
+          ? `${primary.name || primary.id} ready`
+          : `${primary.name || primary.id} needs setup`;
+      };
+
+      const connectGitForRepo = async (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>) => {
+        const provider = (eligibility?.provider || '').trim().toLowerCase();
+        if (provider !== 'github' && provider !== 'gitlab') {
+          throw new Error('This repo does not expose a supported git host yet.');
+        }
+        const host = (eligibility?.repoHost || (provider === 'gitlab' ? 'gitlab.com' : 'github.com')).trim();
+        const client = await YaverFeedback.getClient();
+        const detected = await client.gitProviderDetect().catch(() => []);
+        if (detected.some((row) => row.provider === provider && row.host === host && row.hasToken)) {
+          return;
+        }
+        const token = prompt(`Enter a ${provider === 'github' ? 'GitHub' : 'GitLab'} token for ${host}:`) || '';
+        if (!token.trim()) {
+          throw new Error('Git setup cancelled.');
+        }
+        await client.gitProviderSetup({
+          provider: provider as 'github' | 'gitlab',
+          host,
+          token: token.trim(),
+        });
+      };
+
+      const renderOnboarding = (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>, errorMessage?: string) => {
+        const hasReadyRunner = cachedRunners.some((runner) => runner.ready);
+        const needsAgent = !eligibility?.canVibe && (!!eligibility?.needsRunnerAuth || !hasReadyRunner);
+        const needsGit = !eligibility?.canVibe && !needsAgent && eligibility?.needsGitSetup === true;
+        const steps = [
+          {
+            id: 'agent',
+            label: '1. Agent',
+            state: eligibility?.canVibe ? 'done' : needsAgent ? 'active' : 'done',
+          },
+          {
+            id: 'git',
+            label: '2. Git',
+            state: eligibility?.canVibe ? 'done' : needsGit ? 'active' : needsAgent ? 'upcoming' : 'done',
+          },
+          {
+            id: 'chat',
+            label: '3. Chat',
+            state: eligibility?.canVibe ? 'active' : 'upcoming',
+          },
+        ];
+        vibeSteps.innerHTML = steps
+          .map((step) => `<span class="yvr-fb-vibe-step" data-state="${step.state}">${escapeHtml(step.label)}</span>`)
+          .join('');
+
+        if (eligibility?.canVibe) {
+          vibeOnboarding.style.display = 'none';
+          vibeIntro.textContent = 'Chat takes over once the machine is ready.';
+          return;
+        }
+
+        if (!needsAgent && !needsGit) {
+          vibeOnboarding.style.display = 'none';
+          vibeIntro.textContent = 'Chat stays available while Yaver checks the remaining repo access rules.';
+          return;
+        }
+
+        vibeOnboarding.style.display = 'grid';
+        if (needsAgent) {
+          vibeIntro.textContent = 'Sign in to a coding agent first. Git comes after OAuth.';
+          vibeStageCopy.innerHTML = `
+            <div class="yvr-fb-vibe-stage-title">Select Agent</div>
+            <div class="yvr-fb-vibe-stage-text">Pick the runner you want on this machine and finish its sign-in flow.</div>
+          `;
+          runnerActions.style.display = 'grid';
+          if (!cachedRunners.length && errorMessage) {
+            runnerActions.innerHTML = `<div class="yvr-fb-empty">${escapeHtml(errorMessage)}</div>`;
+          } else if (!cachedRunners.length) {
+            runnerActions.innerHTML = `<div class="yvr-fb-device-loading">Checking remote agents…</div>`;
+          }
+          return;
+        }
+
+        vibeIntro.textContent = 'Agent access is ready. Connect the repo next, then the chat unlocks.';
+        vibeStageCopy.innerHTML = `
+          <div class="yvr-fb-vibe-stage-title">Connect Git</div>
+          <div class="yvr-fb-vibe-stage-text">${escapeHtml(
+            eligibility?.guidance?.trim()
+              ? `${eligibility.reason ?? 'This repo is not ready yet.'} ${eligibility.guidance}`
+              : eligibility?.reason ?? 'Finish repo connection after agent sign-in.',
+          )}</div>
+        `;
+        runnerActions.style.display = 'grid';
+        runnerActions.innerHTML = `
+          <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="connect">
+            <span class="yvr-fb-runner-card-kicker">Repo access</span>
+            <span class="yvr-fb-runner-card-title">Connect Git</span>
+            <span class="yvr-fb-runner-card-meta">Use the machine's git settings for ${escapeHtml(eligibility?.repoHost || eligibility?.provider || 'this repo')}.</span>
+            <span class="yvr-fb-runner-card-action">Connect</span>
+          </button>
+        `;
+        runnerActions.querySelectorAll<HTMLButtonElement>('[data-git-action="connect"]').forEach((button) => {
+          button.disabled = busy;
+          button.onclick = async () => {
+            if (busy) return;
+            setActionsBusy(true);
+            try {
+              setStatus('Connecting git for this repo…');
+              await connectGitForRepo(eligibility);
+              await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+              const updated = await YaverFeedback.getVibingEligibility();
+              setStatus(updated.canVibe ? 'Git is ready for this repo.' : updated.guidance || updated.reason || 'Git setup still needs attention.');
+            } catch (err) {
+              setStatus(err instanceof Error ? err.message : 'Could not connect git.');
+            } finally {
+              setActionsBusy(false);
+            }
+          };
+        });
+      };
+      syncVibingOnboarding = renderOnboarding;
+
+      const afterRunnerAuth = async () => {
         await Promise.all([refreshMachinePill(), refreshVibingGate()]);
       };
-      if (signInCodex) signInCodex.onclick = () => {
-        YaverFeedback.signInRunner('codex').finally(() => { void afterSignIn(); });
-      };
-      if (signInClaude) signInClaude.onclick = () => {
-        YaverFeedback.signInRunner('claude').finally(() => { void afterSignIn(); });
+
+      const refreshRunnerActions = async () => {
+        try {
+          const runners = await YaverFeedback.getAvailableRunners();
+          cachedRunners = runners;
+          renderRunnerSummary(runners);
+          runnerActions.innerHTML = renderRunnerCards(runners);
+          runnerActions.querySelectorAll<HTMLButtonElement>('[data-runner]').forEach((button) => {
+            button.disabled = busy;
+            button.onclick = async () => {
+              if (busy) return;
+              const runner = button.dataset.runner || '';
+              setActionsBusy(true);
+              try {
+                const selected = cachedRunners.find((item) => item.id === runner);
+                if (selected?.ready) {
+                  setStatus(`Setting ${runner} as the primary agent…`);
+                  const result = await YaverFeedback.switchRunner(runner);
+                  setStatus(`${result.runner} is now the primary agent.`);
+                } else if (supportsRunnerBrowserAuth(runner)) {
+                  setStatus(`Starting ${runner} sign-in on the remote machine…`);
+                  await YaverFeedback.signInRunner(runner);
+                } else {
+                  setStatus(`Configuring ${runner} on the remote machine…`);
+                  const result = await YaverFeedback.setupRunnerAuth(runner);
+                  if (!result) {
+                    setStatus(`Cancelled ${runner} setup.`);
+                    return;
+                  }
+                  setStatus(result.detail || `${runner} is configured.`);
+                }
+                await Promise.all([refreshRunnerActions(), afterRunnerAuth()]);
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : `Could not configure ${runner}.`);
+              } finally {
+                setActionsBusy(false);
+              }
+            };
+          });
+          renderOnboarding();
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not load agent selection.';
+          cachedRunners = [];
+          renderRunnerSummary([]);
+          renderOnboarding(undefined, message);
+          runnerActions.innerHTML = `<div class="yvr-fb-empty">${escapeHtml(message)}</div>`;
+        }
       };
 
       const setActionsBusy = (value: boolean) => {
         busy = value;
-        [recordBtn, sendBtn, screenshotBtn, reloadBtn, vibeBtn, vibeRepairBtn, machinePill].forEach(
+        [screenshotBtn, reloadBtn, commitBtn, deployBtn, vibeBtn, vibeRepairBtn, machinePill].forEach(
           (el) => ((el as HTMLButtonElement).disabled = value),
         );
+        runnerActions.querySelectorAll<HTMLButtonElement>('[data-runner], [data-git-action]').forEach((el) => {
+          el.disabled = value;
+        });
         vibePrompt.disabled = value;
       };
 
@@ -1005,12 +1306,21 @@ export class YaverFeedback {
           setStatus('Checking machine sign-in…');
           const client = await YaverFeedback.getClient();
           await client.recoverAgentAuth().catch(() => false);
-          await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+          await Promise.all([refreshMachinePill(), refreshRunnerActions(), refreshVibingGate()]);
           let eligibility = await YaverFeedback.getVibingEligibility();
-          if (!eligibility.canVibe && eligibility.needsRunnerAuth && (eligibility.runner === 'codex' || eligibility.runner === 'claude')) {
-            setStatus(`Signing into ${eligibility.runner} on the remote machine…`);
-            await YaverFeedback.signInRunner(eligibility.runner);
-            await Promise.all([refreshMachinePill(), refreshVibingGate()]);
+          if (!eligibility.canVibe && eligibility.needsRunnerAuth && eligibility.runner) {
+            if (supportsRunnerBrowserAuth(eligibility.runner)) {
+              setStatus(`Signing into ${eligibility.runner} on the remote machine…`);
+              await YaverFeedback.signInRunner(eligibility.runner);
+            } else {
+              setStatus(`Configuring ${eligibility.runner} on the remote machine…`);
+              const result = await YaverFeedback.setupRunnerAuth(eligibility.runner);
+              if (!result) {
+                setStatus(`Cancelled ${eligibility.runner} setup.`);
+                return;
+              }
+            }
+            await Promise.all([refreshMachinePill(), refreshRunnerActions(), refreshVibingGate()]);
             eligibility = await YaverFeedback.getVibingEligibility();
           }
           if (eligibility.canVibe) {
@@ -1031,15 +1341,6 @@ export class YaverFeedback {
 
       machinePill.onclick = () => {
         if (!busy) setView('machine');
-      };
-
-      recordBtn.onclick = async () => {
-        setActionsBusy(true);
-        await YaverFeedback.startRecording();
-        recordBtn.style.display = 'none';
-        sendBtn.style.display = 'block';
-        setStatus('Recording… narrate the bug while you move through the broken flow.');
-        setActionsBusy(false);
       };
 
       screenshotBtn.onclick = async () => {
@@ -1068,9 +1369,41 @@ export class YaverFeedback {
         setStatus('Requesting reload…');
         try {
           const ack = await YaverFeedback.reloadApp('dev');
+          await YaverFeedback.switchToRemoteDevServerIfNeeded();
           setStatus(ack.message);
         } catch (err) {
           setStatus(err instanceof Error ? err.message : 'Reload failed.');
+        } finally {
+          setActionsBusy(false);
+        }
+      };
+
+      commitBtn.onclick = async () => {
+        const message = prompt('Commit message (leave blank for automatic message):') || '';
+        setActionsBusy(true);
+        setStatus('Committing, rebasing, and pushing…');
+        try {
+          const result = await YaverFeedback.commitProject(message.trim() || undefined);
+          setStatus(
+            result.commit
+              ? `Committed ${result.commit}${result.branch ? ` on ${result.branch}` : ''}.`
+              : result.message || 'Commit completed.',
+          );
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : 'Commit failed.');
+        } finally {
+          setActionsBusy(false);
+        }
+      };
+
+      deployBtn.onclick = async () => {
+        setActionsBusy(true);
+        setStatus('Starting production deploy…');
+        try {
+          const result = await YaverFeedback.deployProject();
+          setStatus(result.message || (result.taskId ? `Deploy started: ${result.taskId}` : 'Deploy started.'));
+        } catch (err) {
+          setStatus(err instanceof Error ? err.message : 'Deploy failed.');
         } finally {
           setActionsBusy(false);
         }
@@ -1105,26 +1438,8 @@ export class YaverFeedback {
         }
       };
 
-      sendBtn.onclick = async () => {
-        setActionsBusy(true);
-        setStatus('Sending report…');
-        const id = await YaverFeedback.stopAndSend();
-        if (id) {
-          const changeSet = YaverFeedback.lastUploadResult?.changeSet;
-          setStatus(
-            changeSet?.candidateLabel
-              ? `Report sent: ${id} • ${changeSet.candidateLabel}`
-              : `Report sent: ${id}`,
-          );
-          refreshLastReport();
-          setTimeout(() => cleanup(), 2000);
-        } else {
-          setStatus('Failed to send. Check console.');
-          setActionsBusy(false);
-        }
-      };
-
       void refreshMachinePill();
+      void refreshRunnerActions();
       void refreshVibingGate();
     };
 
@@ -1144,10 +1459,13 @@ export class YaverFeedback {
       const vibeBtnEl = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe');
       const vibeRepairBtnEl = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-repair');
       if (!gate || !vibePromptEl || !vibeBtnEl || !vibeRepairBtnEl) return;
-      const disable = (reason: string, guidance?: string) => {
-        gate.textContent = guidance && guidance.trim() ? `${reason} ${guidance}` : reason;
+      const disable = (reason: string, guidance?: string, opts?: { dashboardLink?: boolean }) => {
+        const text = guidance && guidance.trim() ? `${reason} ${guidance}` : reason;
+        gate.innerHTML = opts?.dashboardLink
+          ? `${escapeHtml(text)} <a class="yvr-fb-inline-link" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener noreferrer">Open your dashboard</a>.`
+          : escapeHtml(text);
         gate.style.display = 'block';
-        vibeRepairBtnEl.style.display = 'block';
+        vibeRepairBtnEl.style.display = opts?.dashboardLink ? 'none' : 'block';
         vibePromptEl.disabled = true;
         vibePromptEl.style.opacity = '0.5';
         vibeBtnEl.disabled = true;
@@ -1167,11 +1485,18 @@ export class YaverFeedback {
       try {
         const eligibility = await YaverFeedback.getVibingEligibility();
         if (eligibility.canVibe) {
+          syncVibingOnboarding?.(eligibility);
           enable();
         } else {
+          const noProjectAccess =
+            (eligibility.reason || '').toLowerCase().includes('not allowed for this project');
+          syncVibingOnboarding?.(eligibility);
           disable(
-            eligibility.reason ?? 'Vibing is not available on this machine.',
-            eligibility.guidance,
+            eligibility.reason ?? 'Finish setup before starting a vibing task.',
+            eligibility.needsRunnerAuth
+              ? 'Start with agent sign-in.'
+              : eligibility.guidance,
+            noProjectAccess ? { dashboardLink: true } : undefined,
           );
         }
       } catch (err) {
@@ -1179,9 +1504,10 @@ export class YaverFeedback {
         // case the user called out. Gate rather than offer a broken CTA.
         const msg = err instanceof Error ? err.message : String(err);
         disable(
-          'Vibing requires a reachable machine with an authenticated coding agent.',
-          `Sign in to Codex or Claude on this machine first. (${msg})`,
+          'Vibing needs a reachable machine.',
+          `Sign in to an agent first. (${msg})`,
         );
+        syncVibingOnboarding?.(undefined, msg);
       }
     };
 
@@ -1499,11 +1825,14 @@ export class YaverFeedback {
 
   private static handleAgentCommand(command: AgentCommand): void {
     if (command.command === 'reload') {
-      if (YaverFeedback.config?.onReload) {
-        YaverFeedback.config.onReload();
-      } else {
-        window.location.reload();
-      }
+      void YaverFeedback.switchToRemoteDevServerIfNeeded().then((redirected) => {
+        if (redirected) return;
+        if (YaverFeedback.config?.onReload) {
+          YaverFeedback.config.onReload();
+        } else {
+          window.location.reload();
+        }
+      });
       return;
     }
     if (command.command === 'reload_bundle') {
@@ -1511,11 +1840,14 @@ export class YaverFeedback {
         typeof command.data?.bundleUrl === 'string' ? command.data.bundleUrl : undefined;
       const assetsUrl =
         typeof command.data?.assetsUrl === 'string' ? command.data.assetsUrl : undefined;
-      if (YaverFeedback.config?.onReloadBundle) {
-        YaverFeedback.config.onReloadBundle(bundleUrl, assetsUrl);
-      } else {
-        window.location.reload();
-      }
+      void YaverFeedback.switchToRemoteDevServerIfNeeded().then((redirected) => {
+        if (redirected) return;
+        if (YaverFeedback.config?.onReloadBundle) {
+          YaverFeedback.config.onReloadBundle(bundleUrl, assetsUrl);
+        } else {
+          window.location.reload();
+        }
+      });
       return;
     }
     if (command.command === 'status') {
@@ -1566,6 +1898,26 @@ export class YaverFeedback {
           ? document.querySelector<HTMLMetaElement>('meta[name="application-name"]')?.content
           : undefined,
     };
+  }
+
+  private static async switchToRemoteDevServerIfNeeded(): Promise<boolean> {
+    if (typeof window === 'undefined') return false;
+    const client = await YaverFeedback.getClient();
+    const status = await client.getDevServerStatus();
+    if (!status?.running || !status.port) return false;
+    if (status.framework !== 'vite' && status.framework !== 'nextjs' && status.framework !== 'flutter') {
+      return false;
+    }
+    const base = status.directUrl || YaverFeedback.config?.agentUrl;
+    if (!base) return false;
+    const agent = new URL(base);
+    const target = new URL(window.location.href);
+    target.protocol = agent.protocol === 'https:' ? 'https:' : 'http:';
+    target.hostname = agent.hostname;
+    target.port = String(status.port);
+    if (target.href === window.location.href) return false;
+    window.location.href = target.toString();
+    return true;
   }
 
   private static injectReportStyles(): void {
@@ -1664,6 +2016,10 @@ export class YaverFeedback {
       .yvr-fb-empty code {
         background: rgba(148, 163, 184, 0.14); padding: 0 4px; border-radius: 4px;
       }
+      .yvr-fb-inline-link {
+        color: #7dd3fc; text-decoration: underline; text-underline-offset: 2px;
+      }
+      .yvr-fb-inline-link:hover { color: #bae6fd; }
       .yvr-fb-devices-error { margin: 4px 0 0; font-size: 12px; color: #fca5a5; }
 
       /* Machine pill (actions view) */
@@ -1684,9 +2040,9 @@ export class YaverFeedback {
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
 
-      /* Compact 3-tool action row (Record / Screenshot / Reload) */
+      /* Compact 4-tool action row */
       .yvr-fb-toolbar {
-        display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+        display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
       }
       .yvr-fb-tool {
         display: inline-flex; flex-direction: column; align-items: center;
@@ -1703,18 +2059,98 @@ export class YaverFeedback {
       }
       .yvr-fb-tool:disabled { opacity: 0.55; cursor: not-allowed; }
       .yvr-fb-tool > svg { flex-shrink: 0; }
-      .yvr-fb-tool-record { color: #f87171; }
-      .yvr-fb-tool-record:hover:not(:disabled) { color: #fca5a5; border-color: rgba(248,113,113,0.5); }
       .yvr-fb-tool-screenshot { color: #60a5fa; }
       .yvr-fb-tool-screenshot:hover:not(:disabled) { color: #93c5fd; border-color: rgba(96,165,250,0.5); }
       .yvr-fb-tool-reload { color: #c4b5fd; }
       .yvr-fb-tool-reload:hover:not(:disabled) { color: #ddd6fe; border-color: rgba(196,181,253,0.5); }
+      .yvr-fb-tool-commit { color: #34d399; }
+      .yvr-fb-tool-commit:hover:not(:disabled) { color: #6ee7b7; border-color: rgba(52,211,153,0.5); }
+      .yvr-fb-tool-deploy { color: #fbbf24; }
+      .yvr-fb-tool-deploy:hover:not(:disabled) { color: #fcd34d; border-color: rgba(251,191,36,0.5); }
+
+      .yvr-fb-vibe-shell { display: grid; gap: 12px; }
+      .yvr-fb-vibe-topline {
+        display: flex; gap: 10px; align-items: flex-start; justify-content: space-between;
+      }
+      .yvr-fb-vibe-topline-copy { display: grid; gap: 4px; min-width: 0; }
+      .yvr-fb-vibe-intro {
+        margin: 0; font-size: 12px; line-height: 1.45; color: #94a3b8;
+      }
+      .yvr-fb-runner-summary {
+        flex-shrink: 0; max-width: 48%;
+        padding: 7px 10px; border-radius: 999px;
+        border: 1px solid rgba(96,165,250,0.28);
+        background: rgba(59,130,246,0.12); color: #bfdbfe;
+        font-size: 11px; font-weight: 600; text-align: right;
+      }
+      .yvr-fb-vibe-onboarding {
+        display: grid; gap: 10px; padding: 12px;
+        border-radius: 14px; border: 1px solid rgba(148,163,184,0.16);
+        background:
+          radial-gradient(circle at top left, rgba(14,165,233,0.08), transparent 40%),
+          rgba(15,23,42,0.72);
+      }
+      .yvr-fb-vibe-steps {
+        display: flex; flex-wrap: wrap; gap: 8px;
+      }
+      .yvr-fb-vibe-step {
+        padding: 6px 9px; border-radius: 999px;
+        border: 1px solid rgba(148,163,184,0.18);
+        background: rgba(15,23,42,0.65); color: #94a3b8;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.01em;
+      }
+      .yvr-fb-vibe-step[data-state="done"] {
+        border-color: rgba(52,211,153,0.26); background: rgba(16,185,129,0.1); color: #86efac;
+      }
+      .yvr-fb-vibe-step[data-state="active"] {
+        border-color: rgba(96,165,250,0.32); background: rgba(59,130,246,0.14); color: #dbeafe;
+      }
+      .yvr-fb-vibe-stage { display: grid; gap: 10px; }
+      .yvr-fb-vibe-stage-copy { display: grid; gap: 4px; }
+      .yvr-fb-vibe-stage-title {
+        font-size: 13px; font-weight: 700; color: #f8fafc;
+      }
+      .yvr-fb-vibe-stage-text {
+        font-size: 12px; line-height: 1.5; color: #cbd5e1;
+      }
+
+      .yvr-fb-runner-auth-row {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
+      }
+      .yvr-fb-runner-card {
+        display: grid; gap: 4px; text-align: left;
+        border-radius: 10px; border: 1px solid rgba(148,163,184,0.22);
+        background: rgba(15,23,42,0.6); color: #cbd5e1;
+        padding: 10px; cursor: pointer; font: inherit;
+      }
+      .yvr-fb-runner-card:hover:not(:disabled) {
+        background: rgba(30,41,59,0.8); border-color: rgba(96,165,250,0.35);
+      }
+      .yvr-fb-runner-card:disabled { opacity: 0.6; cursor: not-allowed; }
+      .yvr-fb-runner-card-kicker {
+        font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;
+      }
+      .yvr-fb-runner-card-title {
+        font-size: 13px; font-weight: 600; color: #f1f5f9;
+      }
+      .yvr-fb-runner-card-meta {
+        font-size: 11px; line-height: 1.4; color: #94a3b8;
+      }
+      .yvr-fb-runner-card-action {
+        font-size: 11px; font-weight: 700; color: #7dd3fc;
+      }
 
       /* Vibing textarea + "Start Vibing Task" + the send-report full-width action */
-      .yvr-fb-vibe-block { display: grid; gap: 8px; }
+      .yvr-fb-vibe-block { display: grid; gap: 10px; }
       .yvr-fb-vibe-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #94a3b8; }
+      .yvr-fb-vibe-gate {
+        padding: 10px 12px; border-radius: 10px;
+        border: 1px solid rgba(245,158,11,0.28);
+        background: rgba(245,158,11,0.08); color: #fcd34d;
+        font-size: 12px; line-height: 1.45;
+      }
       .yvr-fb-vibe-input {
-        min-height: 86px; resize: vertical;
+        min-height: 160px; resize: vertical;
         border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.18);
         background: rgba(15, 23, 42, 0.78); color: inherit;
         padding: 10px 12px; font: inherit; box-sizing: border-box;
@@ -1724,6 +2160,9 @@ export class YaverFeedback {
         cursor: pointer; font: inherit; font-size: 13px; font-weight: 600;
       }
       .yvr-fb-action:disabled { opacity: 0.6; cursor: not-allowed; }
+      .yvr-fb-action-secondary {
+        background: rgba(30,41,59,0.92); border: 1px solid rgba(148,163,184,0.2);
+      }
       .yvr-fb-action-send { background: #16a34a; }
       .yvr-fb-action-vibe { background: #0891b2; }
 
@@ -1736,6 +2175,13 @@ export class YaverFeedback {
       }
       .yvr-fb-status, .yvr-fb-last-report { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: #cbd5e1; }
       .yvr-fb-last-report { color: #94a3b8; }
+
+      @media (max-width: 640px) {
+        .yvr-fb-vibe-topline { grid-template-columns: 1fr; display: grid; }
+        .yvr-fb-runner-summary { max-width: none; text-align: left; }
+        .yvr-fb-runner-auth-row { grid-template-columns: 1fr; }
+        .yvr-fb-vibe-input { min-height: 140px; }
+      }
     `;
     document.head.appendChild(style);
     YaverFeedback.reportStyleInjected = true;

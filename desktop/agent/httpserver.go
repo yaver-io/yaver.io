@@ -224,11 +224,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/capabilities", s.auth(s.handleAgentCapabilities))
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
-	mux.HandleFunc("/agent/runners", s.auth(s.handleRunners))
+	mux.HandleFunc("/agent/runners", s.authSDKOrGuest(s.handleRunners))
 	mux.HandleFunc("/agent/runners/test", s.auth(s.handleRunnerTest))
 	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
 	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
-	mux.HandleFunc("/runner-auth/setup", s.auth(s.handleRunnerAuthSetup))
+	mux.HandleFunc("/runner-auth/setup", s.authSDK(s.handleRunnerAuthSetup))
+	mux.HandleFunc("/runner/opencode/config", s.auth(s.handleOpenCodeConfig))
 	// Browser/device-auth sub-family is also reachable by SDK tokens that
 	// carry the "runner-auth" scope — lets the embedded Feedback SDK on
 	// carrotbytes.xyz / an RN host trigger `codex login --device-auth`
@@ -251,7 +252,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Owner-only; deliberately NOT in guestAllowedPrefixes.
 	s.RegisterMorningRoutes(mux)
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
-	mux.HandleFunc("/agent/runner/switch", s.auth(s.handleRunnerSwitch))
+	mux.HandleFunc("/agent/runner/switch", s.authSDKOrGuest(s.handleRunnerSwitch))
 	mux.HandleFunc("/agent/shutdown", s.auth(s.handleShutdown))
 	mux.HandleFunc("/machine/remove", s.auth(s.handleMachineRemove))
 	mux.HandleFunc("/infra/summary", s.auth(s.handleInfraSummary))
@@ -644,6 +645,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/publish/runs/", s.auth(s.handlePublishRunByID))
 	mux.HandleFunc("/vibing", s.authSDKOrGuest(s.handleVibing))
 	mux.HandleFunc("/vibing/eligibility", s.authSDKOrGuest(s.handleVibingEligibility))
+	mux.HandleFunc("/vibing/commit", s.authSDKOrGuest(s.handleVibingCommit))
+	mux.HandleFunc("/vibing/deploy", s.authSDKOrGuest(s.handleVibingDeploy))
 	mux.HandleFunc("/vibing/execute", s.authSDKOrGuest(s.handleVibingExecute))
 	mux.HandleFunc("/vibing/surprise", s.authSDKOrGuest(s.handleVibingSurprise))
 
@@ -1107,12 +1110,10 @@ var scopePathPrefixes = map[string][]string{
 	"todolist":     {"/todolist"},
 	"guest-reload": {"/dev/reload", "/dev/reload-app", "/dev/status", "/dev/target", "/dev/events", "/dev/compatibility", "/unity/test", "/unity/build", "/unity/relaunch"},
 	"guest-vibing": {"/vibing"},
-	// runner-auth: lets the embedded Feedback SDK trigger the codex /
-	// claude remote device-auth flow (verification URL + one-time code)
-	// without requiring a full Convex session. Only the /runner-auth/
-	// browser/{start,status,cancel} family — not the api-key setter,
-	// which stays owner-only.
-	"runner-auth": {"/runner-auth/browser/start", "/runner-auth/browser/status", "/runner-auth/browser/cancel", "/runner-auth/status"},
+	// runner-auth: lets the embedded Feedback SDK inspect runner state
+	// and complete either browser-style auth (codex / claude) or
+	// token-based setup (opencode) without a separate full-session UI.
+	"runner-auth": {"/runner-auth/browser/start", "/runner-auth/browser/status", "/runner-auth/browser/cancel", "/runner-auth/status", "/runner-auth/setup", "/agent/runners", "/agent/runner/switch"},
 }
 
 func pathAllowedByScopes(path string, scopes []string) bool {
@@ -2430,6 +2431,17 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			IsDefault:   m.IsDefault,
 		})
 	}
+	if len(modelsByRunner["opencode"]) == 0 {
+		if cfg, err := loadOpenCodeConfigSummary(); err == nil {
+			for _, model := range cfg.Models {
+				modelsByRunner["opencode"] = append(modelsByRunner["opencode"], modelInfo{
+					ID:        model.ID,
+					Name:      model.Name,
+					IsDefault: model.IsDefault,
+				})
+			}
+		}
+	}
 
 	var runners []runnerInfo
 	seenIDs := make(map[string]bool)
@@ -2564,49 +2576,19 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Map runner IDs to commands
-	runnerCommands := map[string]string{
-		"claude": "claude",
-		"codex":  "codex",
-		"aider":  "aider",
-	}
-
-	cmd, known := runnerCommands[body.RunnerID]
+	runnerID := normalizeRunnerID(body.RunnerID)
+	newRunner, known := builtinRunners[runnerID]
 	if !known {
-		jsonError(w, http.StatusBadRequest, fmt.Sprintf("unknown runner: %s (available: claude, codex, aider)", body.RunnerID))
+		jsonError(w, http.StatusBadRequest, fmt.Sprintf("unknown runner: %s", body.RunnerID))
 		return
 	}
 
 	// Check if binary exists on this machine
-	path, err := osexec.LookPath(cmd)
+	path, err := osexec.LookPath(newRunner.Command)
 	if err != nil {
-		log.Printf("[HTTP] Runner switch failed: %s not found on machine", cmd)
-		jsonError(w, http.StatusNotFound, fmt.Sprintf("%s is not installed on this machine", cmd))
+		log.Printf("[HTTP] Runner switch failed: %s not found on machine", newRunner.Command)
+		jsonError(w, http.StatusNotFound, fmt.Sprintf("%s is not installed on this machine", newRunner.Command))
 		return
-	}
-
-	// Build new runner config
-	var newRunner RunnerConfig
-	switch body.RunnerID {
-	case "claude":
-		newRunner = defaultRunner
-	case "codex":
-		newRunner = RunnerConfig{
-			RunnerID:   "codex",
-			Name:       "OpenAI Codex",
-			Command:    "codex",
-			Args:       []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
-			OutputMode: "raw",
-		}
-	case "aider":
-		newRunner = RunnerConfig{
-			RunnerID:    "aider",
-			Name:        "Aider",
-			Command:     "aider",
-			Args:        []string{"--yes-always", "--no-git", "--message", "{prompt}"},
-			OutputMode:  "raw",
-			ExitCommand: "/quit",
-		}
 	}
 
 	// Update the task manager's runner
@@ -2614,12 +2596,12 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 	s.taskMgr.runner = newRunner
 	s.taskMgr.mu.Unlock()
 
-	log.Printf("[HTTP] Runner switched to %s (%s) at %s", newRunner.Name, body.RunnerID, path)
+	log.Printf("[HTTP] Runner switched to %s (%s) at %s", newRunner.Name, runnerID, path)
 
 	// Also save to Convex user settings (non-blocking)
 	if s.taskMgr.ConvexURL != "" {
 		go func() {
-			payload, _ := json.Marshal(map[string]string{"runnerId": body.RunnerID})
+			payload, _ := json.Marshal(map[string]string{"runnerId": runnerID})
 			req, err := newBearerRequest("POST", s.taskMgr.ConvexURL+"/settings", s.taskMgr.AuthToken, bytes.NewReader(payload))
 			if err == nil {
 				resp, err := http.DefaultClient.Do(req)
@@ -2633,7 +2615,7 @@ func (s *HTTPServer) handleRunnerSwitch(w http.ResponseWriter, r *http.Request) 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":       true,
 		"runner":   newRunner.Name,
-		"runnerId": body.RunnerID,
+		"runnerId": runnerID,
 		"path":     path,
 	})
 }

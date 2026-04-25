@@ -1011,18 +1011,12 @@ export default function DevicesView({
           {(() => {
                   const states = deriveRunnerChipStates(device);
                   if (states.length === 0) return null;
-                  // Seed sensible default per the user's policy: yaver-test-
-                  // ephemeral defaults to codex (signed in via Yaver host
-                  // bridge there). Other devices: first runner whose
-                  // health is "ready". Only seeds when no explicit pref
+                  // Seed a sensible default from the device's actual
+                  // runner health. Only seeds when no explicit pref
                   // exists yet — never overrides a user choice.
                   const explicitPrimary = primaryRunnerByDevice[device.id];
                   const seededPrimary = (() => {
                     if (explicitPrimary) return explicitPrimary;
-                    if (device.name === "yaver-test-ephemeral") {
-                      const codexState = states.find((s) => s.id === "codex");
-                      if (codexState && codexState.health !== "not-installed") return "codex";
-                    }
                     const firstReady = states.find((s) => s.health === "ready");
                     return firstReady?.id ?? null;
                   })();

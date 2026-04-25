@@ -2,12 +2,15 @@ import type {
   AgentCommand,
   CapabilitySnapshot,
   FeedbackBundle,
+  FeedbackProjectActionResult,
   FeedbackChangeSet,
   FeedbackReportSummary,
   FeedbackReviewEntry,
   IncidentEvent,
   OperationState,
   ReloadAck,
+  RunnerAuthSetupResult,
+  RunnerAuthStatus,
   RunnerBrowserAuthSession,
 } from './types';
 
@@ -88,6 +91,128 @@ export class P2PClient {
     await fetch(url.toString(), { method: 'POST', headers: this.augmentHeaders({}) }).catch(() => {});
   }
 
+  async getRunnerAuthStatus(): Promise<RunnerAuthStatus[]> {
+    const resp = await fetch(`${this.baseUrl}/runner-auth/status`, {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Runner auth status failed (${resp.status}): ${text}`);
+    }
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    const rows = Array.isArray((data as any)?.runners) ? ((data as any).runners as Array<Record<string, unknown>>) : [];
+    return rows.map((row) => ({
+      id: typeof row.id === 'string' ? row.id : typeof row.ID === 'string' ? row.ID : '',
+      name: typeof row.name === 'string' ? row.name : typeof row.Name === 'string' ? row.Name : '',
+      installed: row.installed === true || row.Installed === true,
+      ready: row.ready === true || row.Ready === true,
+      authConfigured: row.authConfigured === true || row.AuthConfigured === true,
+      authSource:
+        typeof row.authSource === 'string'
+          ? row.authSource
+          : typeof row.AuthSource === 'string'
+            ? row.AuthSource
+            : undefined,
+      warning:
+        typeof row.warning === 'string'
+          ? row.warning
+          : typeof row.Warning === 'string'
+            ? row.Warning
+            : undefined,
+      error:
+        typeof row.error === 'string'
+          ? row.error
+          : typeof row.Error === 'string'
+            ? row.Error
+            : undefined,
+      detail:
+        typeof row.detail === 'string'
+          ? row.detail
+          : typeof row.Detail === 'string'
+            ? row.Detail
+            : undefined,
+    }));
+  }
+
+  async setupRunnerAuth(body: {
+    runner: string;
+    openai_api_key?: string;
+    anthropic_api_key?: string;
+    anthropic_auth_token?: string;
+    claude_code_oauth_token?: string;
+    glm_api_key?: string;
+    zai_api_key?: string;
+    notes?: string;
+    install_if_missing?: boolean;
+    codex_login?: boolean;
+    setup_mcp?: boolean;
+  }): Promise<RunnerAuthSetupResult> {
+    const resp = await fetch(`${this.baseUrl}/runner-auth/setup`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Runner auth setup failed (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
+  async getAvailableRunners(): Promise<Array<{
+    id: string;
+    name: string;
+    installed: boolean;
+    ready: boolean;
+    authConfigured: boolean;
+    authSource?: string;
+    warning?: string;
+    error?: string;
+    isDefault: boolean;
+  }>> {
+    const resp = await fetch(`${this.baseUrl}/agent/runners`, {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Runners failed (${resp.status}): ${text}`);
+    }
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    const rows = Array.isArray((data as any)?.runners) ? ((data as any).runners as Array<Record<string, unknown>>) : [];
+    return rows.map((row) => ({
+      id: typeof row.id === 'string' ? row.id : '',
+      name: typeof row.name === 'string' ? row.name : '',
+      installed: row.installed === true,
+      ready: row.ready === true,
+      authConfigured: row.authConfigured === true,
+      authSource: typeof row.authSource === 'string' ? row.authSource : undefined,
+      warning: typeof row.warning === 'string' ? row.warning : undefined,
+      error: typeof row.error === 'string' ? row.error : undefined,
+      isDefault: row.isDefault === true,
+    }));
+  }
+
+  async switchRunner(runnerId: string): Promise<{ ok: boolean; runnerId: string; runner: string }> {
+    const resp = await fetch(`${this.baseUrl}/agent/runner/switch`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ runnerId }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Runner switch failed (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
   async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
     try {
       const resp = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.headers });
@@ -165,6 +290,31 @@ export class P2PClient {
       const resp = await fetch(`${this.baseUrl}/info`, { headers: this.headers });
       if (!resp.ok) return null;
       return resp.json();
+    } catch {
+      return null;
+    }
+  }
+
+  async getDevServerStatus(): Promise<{
+    running: boolean;
+    framework?: string;
+    port?: number;
+    workDir?: string;
+    bundleUrl?: string;
+    directUrl?: string;
+  } | null> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/dev/status`, { headers: this.authHeaders() });
+      if (!resp.ok) return null;
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      return {
+        running: data.running === true,
+        framework: typeof data.framework === 'string' ? data.framework : undefined,
+        port: typeof data.port === 'number' ? data.port : undefined,
+        workDir: typeof data.workDir === 'string' ? data.workDir : undefined,
+        bundleUrl: typeof data.bundleUrl === 'string' ? data.bundleUrl : undefined,
+        directUrl: typeof data.directUrl === 'string' ? data.directUrl : undefined,
+      };
     } catch {
       return null;
     }
@@ -409,9 +559,11 @@ export class P2PClient {
     projectName?: string;
     projectPath?: string;
     provider?: string;
+    repoHost?: string;
     repoFullName?: string;
     runner?: string;
     needsRunnerAuth?: boolean;
+    needsGitSetup?: boolean;
   }> {
     const params = new URLSearchParams();
     if (opts?.projectName) params.set('projectName', opts.projectName);
@@ -428,6 +580,102 @@ export class P2PClient {
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`[P2PClient] Vibing eligibility failed (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
+  async gitProviderDetect(): Promise<Array<{
+    provider: string;
+    host: string;
+    username: string;
+    avatarUrl?: string;
+    hasToken: boolean;
+  }>> {
+    const resp = await fetch(`${this.baseUrl}/git/provider/detect`, {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(`[P2PClient] Git provider detect failed (${resp.status})`);
+    }
+    const rows = Array.isArray((data as any)?.providers) ? ((data as any).providers as Array<Record<string, unknown>>) : [];
+    return rows.map((row) => ({
+      provider: typeof row.provider === 'string' ? row.provider : '',
+      host: typeof row.host === 'string' ? row.host : '',
+      username: typeof row.username === 'string' ? row.username : '',
+      avatarUrl: typeof row.avatarUrl === 'string' ? row.avatarUrl : undefined,
+      hasToken: row.hasToken === true,
+    }));
+  }
+
+  async gitProviderSetup(params: {
+    provider: 'github' | 'gitlab';
+    token: string;
+    host?: string;
+    generateSsh?: boolean;
+  }): Promise<{ ok: boolean; username?: string; host?: string; provider?: string; error?: string }> {
+    const resp = await fetch(`${this.baseUrl}/git/provider/setup`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(
+        typeof data?.error === 'string'
+          ? data.error
+          : `[P2PClient] Git provider setup failed (${resp.status})`,
+      );
+    }
+    return data as { ok: boolean; username?: string; host?: string; provider?: string; error?: string };
+  }
+
+  async commitProject(
+    opts?: { projectName?: string; projectPath?: string; bundleId?: string; message?: string },
+  ): Promise<FeedbackProjectActionResult> {
+    const resp = await fetch(`${this.baseUrl}/vibing/commit`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        projectName: opts?.projectName,
+        projectPath: opts?.projectPath,
+        bundleId: opts?.bundleId,
+        message: opts?.message,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Commit failed (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
+  async deployProject(
+    opts?: { projectName?: string; projectPath?: string; bundleId?: string; target?: string },
+  ): Promise<FeedbackProjectActionResult> {
+    const resp = await fetch(`${this.baseUrl}/vibing/deploy`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        projectName: opts?.projectName,
+        projectPath: opts?.projectPath,
+        bundleId: opts?.bundleId,
+        target: opts?.target,
+      }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] Deploy failed (${resp.status}): ${text}`);
     }
     return resp.json();
   }

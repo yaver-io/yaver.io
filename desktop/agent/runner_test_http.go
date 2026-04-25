@@ -113,6 +113,7 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Runner string `json:"runner"`
 		Prompt string `json:"prompt"`
+		Model  string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -132,6 +133,9 @@ func (s *HTTPServer) handleRunnerTest(w http.ResponseWriter, r *http.Request) {
 			Error:  "unknown runner id",
 		})
 		return
+	}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		cfg.Model = model
 	}
 	started := time.Now()
 
@@ -236,7 +240,11 @@ func runRunnerProbe(cfg RunnerConfig, runnerID, prompt string, timeout time.Dura
 	case "goose":
 		args = []string{"run", "--text", prompt}
 	case "opencode":
-		args = []string{"run", "--dangerously-skip-permissions", prompt}
+		args = []string{"run", "--dangerously-skip-permissions"}
+		if mid := strings.TrimSpace(cfg.Model); mid != "" {
+			args = append(args, "--model", mid)
+		}
+		args = append(args, prompt)
 	case "amp":
 		args = []string{"run", prompt}
 	default:

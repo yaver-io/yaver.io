@@ -361,6 +361,13 @@ export interface VoiceStatus {
   providers?: Array<{ id: string; name: string; type: string; ready: boolean }>;
 }
 
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  isDefault?: boolean;
+}
+
 export interface Runner {
   id: string;
   name: string;
@@ -371,7 +378,34 @@ export interface Runner {
   authConfigured?: boolean;
   warning?: string;
   error?: string;
-  models?: string[];
+  models?: ModelInfo[];
+}
+
+export interface OpenCodeModelSummary {
+  id: string;
+  name: string;
+  provider?: string;
+  isDefault?: boolean;
+  source?: string;
+}
+
+export interface OpenCodeProviderSummary {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  models?: OpenCodeModelSummary[];
+}
+
+export interface OpenCodeConfigSummary {
+  path: string;
+  exists: boolean;
+  defaultAgent?: string;
+  model?: string;
+  smallModel?: string;
+  buildModel?: string;
+  planModel?: string;
+  providers?: OpenCodeProviderSummary[];
+  models?: OpenCodeModelSummary[];
 }
 
 // RunnerBrowserAuthSession is defined below — single source of truth.
@@ -1403,12 +1437,12 @@ export class AgentClient {
    * desktop/agent/runner_test_http.go. `needsAuth + supportsBrowserAuth`
    * are the signal callers use to auto-trigger the headless login flow.
    */
-  async testRunner(runner: string, opts?: { prompt?: string }): Promise<RunnerTestResult> {
+  async testRunner(runner: string, opts?: { prompt?: string; model?: string }): Promise<RunnerTestResult> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/runners/test`, {
       method: "POST",
       headers: this.authHeaders,
-      body: JSON.stringify({ runner, prompt: opts?.prompt }),
+      body: JSON.stringify({ runner, prompt: opts?.prompt, model: opts?.model }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -1604,6 +1638,43 @@ export class AgentClient {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
     return { ok: true, session: data?.session };
+  }
+
+  async openCodeConfig(target?: string): Promise<OpenCodeConfigSummary> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner/opencode/config`
+      : `${this.baseUrl}/runner/opencode/config`;
+    const res = await fetch(base, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `openCodeConfig ${res.status}`);
+    }
+    return (data?.config || {}) as OpenCodeConfigSummary;
+  }
+
+  async saveOpenCodeConfig(
+    patch: {
+      defaultAgent?: string;
+      model?: string;
+      smallModel?: string;
+      buildModel?: string;
+      planModel?: string;
+    },
+    target?: string,
+  ): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner/opencode/config`
+      : `${this.baseUrl}/runner/opencode/config`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    return { ok: true, config: data?.config as OpenCodeConfigSummary };
   }
 
   async machineOnboardingStatus(target?: string): Promise<MachineOnboardingProviderStatus[]> {

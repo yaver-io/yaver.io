@@ -7,7 +7,7 @@
 // terminal. Progress streams live from /streams/install:<tool>.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { agentClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary, type MachineOnboardingProviderStatus, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
+import { agentClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary, type MachineOnboardingProviderStatus, type OpenCodeConfigSummary, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
@@ -70,6 +70,17 @@ export default function ToolsView({ devices = [] }: Props) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [browserAuthError, setBrowserAuthError] = useState<string | null>(null);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [openCodeConfig, setOpenCodeConfig] = useState<OpenCodeConfigSummary | null>(null);
+  const [openCodeConfigDraft, setOpenCodeConfigDraft] = useState({
+    defaultAgent: "",
+    model: "",
+    smallModel: "",
+    buildModel: "",
+    planModel: "",
+  });
+  const [savingOpenCodeConfig, setSavingOpenCodeConfig] = useState(false);
+  const [openCodeConfigResult, setOpenCodeConfigResult] = useState<string | null>(null);
+  const [openCodeConfigError, setOpenCodeConfigError] = useState<string | null>(null);
   const [codexOpenAIKey, setCodexOpenAIKey] = useState("");
   const [claudeAnthropicKey, setClaudeAnthropicKey] = useState("");
   const [claudeAuthToken, setClaudeAuthToken] = useState("");
@@ -126,6 +137,22 @@ export default function ToolsView({ devices = [] }: Props) {
     }
   }, [target]);
 
+  const loadOpenCodeConfig = useCallback(async () => {
+    try {
+      const config = await agentClient.openCodeConfig(target);
+      setOpenCodeConfig(config);
+      setOpenCodeConfigDraft({
+        defaultAgent: config.defaultAgent || "",
+        model: config.model || "",
+        smallModel: config.smallModel || "",
+        buildModel: config.buildModel || "",
+        planModel: config.planModel || "",
+      });
+    } catch {
+      /* soft-fail */
+    }
+  }, [target]);
+
   const loadOnboarding = useCallback(async () => {
     try {
       setOnboardingRows(await agentClient.machineOnboardingStatus(target));
@@ -139,17 +166,19 @@ export default function ToolsView({ devices = [] }: Props) {
     loadCatalogue();
     loadRunnerAuth();
     loadOnboarding();
+    loadOpenCodeConfig();
     const i = setInterval(() => {
       loadSummary();
       loadCatalogue();
       loadRunnerAuth();
       loadOnboarding();
+      loadOpenCodeConfig();
     }, 15_000);
     return () => {
       clearInterval(i);
       cancelStreamRef.current?.();
     };
-  }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding]);
+  }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding, loadOpenCodeConfig]);
 
   useEffect(() => {
     if (!browserAuthSession) return;
@@ -268,6 +297,29 @@ export default function ToolsView({ devices = [] }: Props) {
     }
     setOnboardingRows(res.providers);
     setOnboardingResult(res.applied.length > 0 ? `Applied ${res.applied.join(", ")}` : "Nothing changed");
+  }
+
+  async function saveOpenCodeSettings() {
+    if (savingOpenCodeConfig) return;
+    setSavingOpenCodeConfig(true);
+    setOpenCodeConfigError(null);
+    setOpenCodeConfigResult(null);
+    const res = await agentClient.saveOpenCodeConfig(openCodeConfigDraft, target);
+    setSavingOpenCodeConfig(false);
+    if (!res.ok || !res.config) {
+      setOpenCodeConfigError(res.error || "OpenCode config update failed");
+      return;
+    }
+    setOpenCodeConfig(res.config);
+    setOpenCodeConfigDraft({
+      defaultAgent: res.config.defaultAgent || "",
+      model: res.config.model || "",
+      smallModel: res.config.smallModel || "",
+      buildModel: res.config.buildModel || "",
+      planModel: res.config.planModel || "",
+    });
+    setOpenCodeConfigResult("OpenCode config saved");
+    void loadRunnerAuth();
   }
 
   const metrics = summary?.metrics;
@@ -560,6 +612,86 @@ export default function ToolsView({ devices = [] }: Props) {
             {authError || browserAuthError || runnerAuthResult}
           </div>
         )}
+      </section>
+
+      <section>
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h3 className="text-sm font-semibold text-surface-300">OpenCode config</h3>
+            <p className="text-xs text-surface-500 mt-1">
+              Set the machine-level OpenCode defaults Yaver cannot infer from runner auth alone: default agent, global model, and dedicated plan/build models.
+            </p>
+          </div>
+          <button
+            onClick={() => void loadOpenCodeConfig()}
+            className="rounded-lg border border-surface-700 px-3 py-2 text-xs font-semibold text-surface-300 hover:border-surface-600"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4 space-y-4">
+          <p className="text-xs text-surface-500">
+            Config path: <span className="font-mono text-surface-300">{openCodeConfig?.path || "~/.config/opencode/opencode.jsonc"}</span>
+            {openCodeConfig?.exists ? "" : " · file will be created on save"}
+          </p>
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <SecretField label="Default agent" value={openCodeConfigDraft.defaultAgent} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, defaultAgent: value }))} placeholder="build or plan" secret={false} />
+            <SecretField label="Default model" value={openCodeConfigDraft.model} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, model: value }))} placeholder="provider/model" secret={false} />
+            <SecretField label="Small model" value={openCodeConfigDraft.smallModel} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, smallModel: value }))} placeholder="provider/model" secret={false} />
+            <SecretField label="Build model" value={openCodeConfigDraft.buildModel} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, buildModel: value }))} placeholder="provider/model" secret={false} />
+            <SecretField label="Plan model" value={openCodeConfigDraft.planModel} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, planModel: value }))} placeholder="provider/model" secret={false} />
+          </div>
+
+          {openCodeConfig?.models && openCodeConfig.models.length > 0 ? (
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Discovered models</div>
+              <div className="flex flex-wrap gap-2">
+                {openCodeConfig.models.map((model) => (
+                  <button
+                    key={model.id}
+                    type="button"
+                    onClick={() => setOpenCodeConfigDraft((s) => ({ ...s, model: model.id }))}
+                    className={`rounded-full border px-3 py-1.5 text-xs ${
+                      openCodeConfigDraft.model === model.id
+                        ? "border-indigo-500/50 bg-indigo-500/15 text-indigo-300"
+                        : "border-surface-700 bg-surface-950 text-surface-300"
+                    }`}
+                    title={model.provider || model.source || ""}
+                  >
+                    {model.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {openCodeConfig?.providers && openCodeConfig.providers.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {openCodeConfig.providers.map((provider) => (
+                <div key={provider.id} className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold text-surface-50">{provider.name || provider.id}</span>
+                    <span className="text-[11px] text-surface-500">{provider.models?.length || 0} models</span>
+                  </div>
+                  {provider.baseUrl ? <p className="mt-2 break-all text-xs text-surface-400">{provider.baseUrl}</p> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => void saveOpenCodeSettings()}
+              disabled={savingOpenCodeConfig}
+              className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {savingOpenCodeConfig ? "Saving..." : "Save OpenCode config"}
+            </button>
+            {openCodeConfigResult ? <span className="text-sm text-emerald-300">{openCodeConfigResult}</span> : null}
+            {openCodeConfigError ? <span className="text-sm text-rose-300">{openCodeConfigError}</span> : null}
+          </div>
+        </div>
       </section>
 
       {browserAuthSession && (
