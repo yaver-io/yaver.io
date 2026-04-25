@@ -98,6 +98,7 @@ export default function PreviewPane({
   onReconnect,
   onRepairRelay,
   connectedDeviceNeedsAuth,
+  onSwitchAgent,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
@@ -109,6 +110,11 @@ export default function PreviewPane({
    *  re-auth CTA on top of the phone mockup so the user understands why
    *  the iframe is showing a stale frame. */
   connectedDeviceNeedsAuth?: boolean;
+  /** Optional escape hatch from the re-auth CTA — open the Devices tab
+   *  so the user can sign in to another runner (claude / codex / etc.)
+   *  or pick a local LLM that doesn't need cloud auth. The selected
+   *  agent saves the day until the cloud token comes back. */
+  onSwitchAgent?: () => void;
 }) {
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
@@ -605,18 +611,31 @@ export default function PreviewPane({
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
       <p className="text-[12px] font-medium text-surface-100">Agent session expired on this machine</p>
-      <p className="max-w-[280px] text-[11px] text-surface-400">
+      <p className="max-w-[320px] text-[11px] text-surface-400">
         Hot reload can&apos;t reach the agent until you sign back in on the host
-        (run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[10px]">yaver auth</code>) or reconnect.
+        (run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[10px]">yaver auth</code>),
+        reconnect, or switch to a different coding agent that doesn&apos;t need
+        re-auth (Ollama / Aider+Qwen, packaged with Yaver and ready to go).
       </p>
-      {onReconnect && (
-        <button
-          onClick={() => void onReconnect()}
-          className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
-        >
-          Try reconnect
-        </button>
-      )}
+      <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+        {onReconnect && (
+          <button
+            onClick={() => void onReconnect()}
+            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
+          >
+            Try reconnect
+          </button>
+        )}
+        {onSwitchAgent && (
+          <button
+            onClick={() => onSwitchAgent()}
+            className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+            title="Pick a different runner. Cloud agents (Claude / Codex) trigger the browser sign-in flow; local agents (Ollama / Aider+Qwen) start immediately."
+          >
+            Switch agent
+          </button>
+        )}
+      </div>
     </div>
   ) : devStatus?.running && previewFrameUrl ? (
     <iframe

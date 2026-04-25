@@ -1265,6 +1265,15 @@ function RunnerAuthModal({
   const [startError, setStartError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const [copied, setCopied] = useState(false);
+  // Claude's modern OAuth flow returns a long token the user must
+  // paste back into the CLI on the remote machine. We pipe that paste
+  // through the agent's /runner-auth/browser/submit-code endpoint
+  // straight into the spawned `claude auth login --console` stdin.
+  // Codex still uses the auto-completing device-auth flow and doesn't
+  // need this field — it never renders for runner=codex.
+  const [authCode, setAuthCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // A dedicated AgentClient bound to *this* device. The shared singleton is
   // scoped to the active workspace (the "Open Workspace" flow) and may be
   // disconnected — or connected to a different machine — while the user is
@@ -1415,6 +1424,75 @@ function RunnerAuthModal({
                 </button>
               </div>
             ) : null}
+
+            {/* Claude flow: user signs in on platform.claude.com, copies
+                the long auth token, and pastes it here. We forward it
+                straight to the spawned CLI's stdin and never persist
+                it (host-only, never to Convex). Codex's device-auth
+                flow auto-completes — no paste step. */}
+            {runner === "claude" && session.openUrl && (
+              <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-indigo-300">
+                  Paste the auth code from platform.claude.com
+                </div>
+                <input
+                  type="text"
+                  value={authCode}
+                  onChange={(e) => { setAuthCode(e.target.value); setSubmitError(null); }}
+                  placeholder="EfaWvHCZ1pZWDZ3KZReKSnGdZDIpCn4viSCY4QLzSZ4bUYHV#…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  className="w-full rounded-md border border-surface-700 bg-surface-950 px-3 py-2 font-mono text-[11px] text-surface-100 placeholder-surface-600 outline-none focus:border-indigo-400/60"
+                  onPaste={(e) => {
+                    // Tokens often have trailing whitespace from the
+                    // copy button — trim aggressively so the user
+                    // doesn't have to.
+                    const pasted = e.clipboardData.getData("text") || "";
+                    const cleaned = pasted.trim();
+                    if (cleaned !== pasted) {
+                      e.preventDefault();
+                      setAuthCode(cleaned);
+                    }
+                  }}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <p className="flex-1 text-[10px] text-surface-500 leading-relaxed">
+                    Stays on this machine. Never goes to Convex.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={submitting || authCode.trim().length < 8}
+                    onClick={async () => {
+                      const code = authCode.trim();
+                      if (!code) return;
+                      setSubmitting(true);
+                      setSubmitError(null);
+                      try {
+                        const next = await clientRef.current!.submitRunnerBrowserAuthCode(session.id, code);
+                        setSession(next);
+                        // Clear the input immediately — we want zero
+                        // window-of-exposure inside the React state
+                        // tree once it's been forwarded to the agent.
+                        setAuthCode("");
+                      } catch (err) {
+                        setSubmitError(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
+                    className="shrink-0 rounded-md border border-indigo-400/40 bg-indigo-500/15 px-3 py-1 text-[11px] font-medium text-indigo-100 hover:bg-indigo-500/25 disabled:opacity-50"
+                  >
+                    {submitting ? "Submitting…" : "Submit code"}
+                  </button>
+                </div>
+                {submitError ? (
+                  <p className="text-[10px] text-red-300">{submitError}</p>
+                ) : null}
+              </div>
+            )}
+
             <p className="text-[10px] text-surface-600 leading-relaxed">
               Device codes are a common phishing target. Never share this code. Once you finish in the browser, this dialog turns green automatically.
             </p>

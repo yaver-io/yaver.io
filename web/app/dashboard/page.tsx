@@ -1746,6 +1746,7 @@ export default function DashboardPage() {
               onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
               onRepairRelay={token ? repairRelay : undefined}
               connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
+              onSwitchAgent={() => setActiveTab("devices")}
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">

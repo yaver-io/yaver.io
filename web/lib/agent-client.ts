@@ -1365,6 +1365,35 @@ export class AgentClient {
   }
 
   /**
+   * Forward a user-pasted authentication code to the running CLI's
+   * stdin. Used by the Claude device-auth flow where the user signs
+   * in on platform.claude.com, copies the long token, and pastes it
+   * back here. The agent fire-and-forgets the code into the spawned
+   * `claude auth login --console` process; nothing is persisted.
+   *
+   * Privacy: the code is only ever held in memory on the host (the
+   * machine running the spawned CLI), never on Convex, never on the
+   * bus, never in any log. Do not call from a context where the
+   * caller could be a guest — the agent's authSDK middleware enforces
+   * that, but this comment is the second line of defence.
+   */
+  async submitRunnerBrowserAuthCode(sessionId: string, code: string): Promise<RunnerBrowserAuthSession> {
+    this.assertConnected();
+    const url = new URL(`${this.baseUrl}/runner-auth/browser/submit-code`);
+    url.searchParams.set("id", sessionId);
+    const res = await fetch(url.toString(), {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `submitRunnerBrowserAuthCode ${res.status}`);
+    }
+    return data.session as RunnerBrowserAuthSession;
+  }
+
+  /**
    * Run a small probe through the named runner's CLI on the connected
    * agent and return a structured pass/fail. Used by the device-card
    * "Test" button to answer "is claude actually working on this

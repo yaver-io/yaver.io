@@ -238,6 +238,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner-auth/browser/start", s.authSDK(s.handleRunnerBrowserAuthStart))
 	mux.HandleFunc("/runner-auth/browser/status", s.authSDK(s.handleRunnerBrowserAuthStatus))
 	mux.HandleFunc("/runner-auth/browser/cancel", s.authSDK(s.handleRunnerBrowserAuthCancel))
+	mux.HandleFunc("/runner-auth/browser/submit-code", s.authSDK(s.handleRunnerBrowserAuthSubmitCode))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
 	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
 	mux.HandleFunc("/agent/env-profile", s.auth(s.handleEnvironmentProfile))

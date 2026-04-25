@@ -39,6 +39,15 @@ type runnerBrowserAuthSessionState struct {
 	runnerBrowserAuthSession
 	cmd    *exec.Cmd
 	cancel context.CancelFunc
+	// stdin is the spawned CLI's stdin pipe, captured at start time so
+	// the dashboard / mobile / Yaver mobile app can forward a pasted
+	// authentication code (`claude auth login --console` flow shows a
+	// URL, the user signs in on platform.claude.com, gets a long token,
+	// pastes it back). The token is forwarded once and discarded — it
+	// never lands in Convex, the bus, or any persistent log. Closing
+	// the writer signals EOF so a CLI that wraps a single-shot read
+	// terminates cleanly.
+	stdin io.WriteCloser
 }
 
 var (
@@ -174,6 +183,12 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 		cancel()
 		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	sess.stdin = stdin
 	if err := cmd.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start %s auth: %w", runner, err)
@@ -342,6 +357,83 @@ func (s *HTTPServer) handleRunnerBrowserAuthStatus(w http.ResponseWriter, r *htt
 			recordRunnerBrowserAuthOperation(snap)
 			return snap
 		}(),
+	})
+}
+
+// handleRunnerBrowserAuthSubmitCode forwards a user-pasted token to the
+// running CLI's stdin. Used by the Claude device-auth flow: the user
+// signs in on platform.claude.com, copies the long authentication code,
+// pastes it into the Yaver dashboard / mobile UI, and we feed it through
+// to `claude auth login --console` (which is blocked on its read).
+//
+// Privacy contract: the code is forwarded once to the spawned CLI's
+// stdin and immediately discarded. It is NEVER persisted, never logged,
+// never sent to Convex, never stored on the bus. The activity log only
+// records that *some* code was submitted — never the value.
+func (s *HTTPServer) handleRunnerBrowserAuthSubmitCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		jsonError(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	code := strings.TrimSpace(body.Code)
+	if code == "" {
+		jsonError(w, http.StatusBadRequest, "missing code")
+		return
+	}
+	sess, ok := lookupRunnerBrowserAuthSession(id)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "auth session not found")
+		return
+	}
+	sess.mu.Lock()
+	stdin := sess.stdin
+	status := sess.Status
+	sess.mu.Unlock()
+	if stdin == nil {
+		jsonError(w, http.StatusConflict, "session has no stdin pipe")
+		return
+	}
+	if status == "completed" || status == "failed" || status == "cancelled" {
+		jsonError(w, http.StatusConflict, fmt.Sprintf("session already %s", status))
+		return
+	}
+	// Append a newline so the CLI's blocked `read` resolves. Closing
+	// the writer afterwards signals EOF so single-shot prompts (the
+	// `claude` flow) terminate cleanly without us having to track
+	// whether more lines are expected.
+	if _, err := io.WriteString(stdin, code+"\n"); err != nil {
+		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("write stdin: %s", err.Error()))
+		return
+	}
+	// Close the writer fire-and-forget — some CLIs keep stdin open for
+	// re-prompts, in which case Close() is a no-op-after-EOF and the
+	// CLI ignores it. Best-effort.
+	_ = stdin.Close()
+	// Mark progress on the session so polling clients see motion. We
+	// intentionally do NOT include the code in any field.
+	sess.update(func(state *runnerBrowserAuthSession) {
+		if state.Status == "starting" || state.Status == "awaiting_browser" {
+			state.Status = "verifying"
+		}
+		state.Detail = "Authentication code submitted; waiting for the CLI to confirm."
+	})
+	snap := sess.snapshot()
+	recordRunnerBrowserAuthOperation(snap)
+	jsonReply(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"session": snap,
 	})
 }
 
