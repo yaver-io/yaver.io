@@ -40,6 +40,16 @@ yvr_tcp_t *yvr_tcp_connect(const char *host,
                            uint16_t    port,
                            uint32_t    connect_timeout_ms);
 
+/* Wrap an already-connected file descriptor as a yvr_tcp_t. The
+ * resulting handle owns `fd` — close() will run when yvr_tcp_close
+ * is called. Useful for socketpair() tests + for transports that
+ * obtain an fd through some other path (an inetd-style spawn,
+ * an existing relay tunnel multiplexer, etc.).
+ *
+ * The fd should be in BLOCKING mode; the codec uses poll() around
+ * its syscalls but expects blocking semantics underneath. */
+yvr_tcp_t *yvr_tcp_wrap_fd(int fd);
+
 /* Close + free the connection. Safe with NULL. */
 void yvr_tcp_close(yvr_tcp_t *conn);
 

@@ -1,6 +1,11 @@
 add_library(yvr_cagent_host STATIC
     src/host.c
+    src/session.c
 )
+target_link_libraries(yvr_cagent_host PUBLIC yvr_cagent_core)
+if (TARGET yvr_cagent_tcp)
+    target_link_libraries(yvr_cagent_host PUBLIC yvr_cagent_tcp)
+endif()
 add_library(yaver::cagent_host ALIAS yvr_cagent_host)
 
 target_include_directories(yvr_cagent_host

@@ -198,6 +198,20 @@ yvr_tcp_t *yvr_tcp_connect(const char *host,
     return c;
 }
 
+yvr_tcp_t *yvr_tcp_wrap_fd(int fd)
+{
+    if (fd < 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+    yvr_tcp_t *c = calloc(1, sizeof *c);
+    if (c == NULL) {
+        return NULL;
+    }
+    c->fd = fd;
+    return c;
+}
+
 void yvr_tcp_close(yvr_tcp_t *conn)
 {
     if (conn == NULL) return;

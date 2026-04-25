@@ -72,8 +72,8 @@ set(LIBDIR_SUFFIX     "${CMAKE_INSTALL_LIBDIR}")
 set(INCLUDEDIR_SUFFIX "${CMAKE_INSTALL_INCLUDEDIR}")
 
 add_subdirectory(core)
+add_subdirectory(transports)   # before host so host can reference TCP target
 add_subdirectory(host)
-add_subdirectory(transports)
 add_subdirectory(probes)
 
 if (YVR_CAGENT_TESTS)
