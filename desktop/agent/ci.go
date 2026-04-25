@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"strings"
@@ -259,33 +260,115 @@ func getVaultToken(name string) string {
 	return entry.Value
 }
 
-// detectRepoFromGit tries to detect GitHub/GitLab repo from git remote.
+type detectedGitRepo struct {
+	Provider CIProvider
+	Host     string
+	Repo     string
+}
+
+// detectRepoFromGit tries to detect GitHub/GitLab repo from git remotes.
 func detectRepoFromGit(dir string) (provider CIProvider, repo string) {
-	out, err := runCmdDir(dir, "git", "remote", "get-url", "origin")
+	detected := detectRepoRemoteFromGit(dir)
+	return detected.Provider, detected.Repo
+}
+
+func detectRepoRemoteFromGit(dir string) detectedGitRepo {
+	out, err := runCmdDir(dir, "git", "config", "--get-regexp", `^remote\..*\.url$`)
 	if err != nil {
+		return detectedGitRepo{}
+	}
+
+	var (
+		best      detectedGitRepo
+		bestScore int
+	)
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		key := fields[0]
+		rawURL := fields[1]
+		remoteName := strings.TrimPrefix(strings.TrimSuffix(key, ".url"), "remote.")
+
+		detected := detectRepoFromRemoteURL(rawURL)
+		if detected.Provider == "" || strings.TrimSpace(detected.Repo) == "" {
+			continue
+		}
+		score := gitRemotePriority(remoteName)
+		if best.Provider == "" || score < bestScore {
+			best = detected
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func detectRepoFromRemoteURL(raw string) detectedGitRepo {
+	host, repo := parseGitRemoteHostRepo(raw)
+	if host == "" || repo == "" {
+		return detectedGitRepo{}
+	}
+
+	switch {
+	case strings.EqualFold(host, "github.com"):
+		return detectedGitRepo{Provider: CIGitHub, Host: host, Repo: repo}
+	case strings.EqualFold(host, "gitlab.com"):
+		return detectedGitRepo{Provider: CIGitLab, Host: host, Repo: repo}
+	case strings.Contains(strings.ToLower(host), "gitlab"):
+		return detectedGitRepo{Provider: CIGitLab, Host: host, Repo: repo}
+	}
+
+	if provider := findProvider(host); provider != nil {
+		switch strings.ToLower(strings.TrimSpace(provider.Provider)) {
+		case string(CIGitHub):
+			return detectedGitRepo{Provider: CIGitHub, Host: host, Repo: repo}
+		case string(CIGitLab):
+			return detectedGitRepo{Provider: CIGitLab, Host: host, Repo: repo}
+		}
+	}
+
+	return detectedGitRepo{}
+}
+
+func parseGitRemoteHostRepo(raw string) (host, repo string) {
+	raw = strings.TrimSpace(strings.TrimSuffix(raw, ".git"))
+	if raw == "" {
 		return "", ""
 	}
-	url := strings.TrimSpace(out)
 
-	// Handle SSH and HTTPS URLs
-	url = strings.TrimSuffix(url, ".git")
-	if strings.Contains(url, "github.com") {
-		parts := strings.Split(url, "github.com")
-		if len(parts) == 2 {
-			repo = strings.TrimPrefix(parts[1], "/")
-			repo = strings.TrimPrefix(repo, ":")
-			return CIGitHub, repo
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err == nil {
+			return strings.ToLower(u.Hostname()), strings.TrimPrefix(u.Path, "/")
 		}
 	}
-	if strings.Contains(url, "gitlab.com") {
-		parts := strings.Split(url, "gitlab.com")
-		if len(parts) == 2 {
-			repo = strings.TrimPrefix(parts[1], "/")
-			repo = strings.TrimPrefix(repo, ":")
-			return CIGitLab, repo
-		}
+
+	if at := strings.Index(raw, "@"); at >= 0 {
+		raw = raw[at+1:]
 	}
+	if parts := strings.SplitN(raw, ":", 2); len(parts) == 2 && !strings.Contains(parts[0], "/") {
+		return strings.ToLower(parts[0]), strings.TrimPrefix(parts[1], "/")
+	}
+
 	return "", ""
+}
+
+func gitRemotePriority(name string) int {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "origin":
+		return 0
+	case "github", "gitlab":
+		return 1
+	case "upstream":
+		return 2
+	default:
+		return 10
+	}
 }
 
 // runCmdDir runs a command in a specific directory and returns stdout.

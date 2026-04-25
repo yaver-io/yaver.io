@@ -1038,7 +1038,9 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	providerKind, repoFullName := detectRepoFromGit(projectPath)
+	repoRemote := detectRepoRemoteFromGit(projectPath)
+	providerKind := repoRemote.Provider
+	repoFullName := repoRemote.Repo
 	if providerKind == "" || strings.TrimSpace(repoFullName) == "" {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"ok":          true,
@@ -1051,9 +1053,8 @@ func (s *HTTPServer) handleVibingEligibility(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	host := "github.com"
-	switch providerKind {
-	case CIGitLab:
+	host := firstNonEmpty(strings.TrimSpace(repoRemote.Host), "github.com")
+	if providerKind == CIGitLab && host == "github.com" {
 		host = "gitlab.com"
 	}
 	provider := findProvider(host)
