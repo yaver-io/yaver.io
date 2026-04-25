@@ -1103,7 +1103,7 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="dashboard-shell relative flex min-h-[calc(100vh-4rem)] flex-col md:h-[calc(100vh-4rem)] md:min-h-0 md:flex-row">
+    <div className="dashboard-shell relative flex min-h-[100vh] flex-col md:h-[100vh] md:min-h-0 md:flex-row">
       <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-60 border-r border-white/5 md:block" />
       {/* Mobile top bar — visible only below md */}
       <div className="dashboard-mobilebar md:hidden">
@@ -1806,7 +1806,12 @@ export default function DashboardPage() {
           ) : activeTab === "storage" ? (
             <div className="flex-1 min-h-0 w-full"><StorageView /></div>
           ) : activeTab === "vault" ? (
-            <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><VaultView /></div>
+            <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">
+              <VaultView
+                needsAuth={!!connectedDevice?.needsAuth}
+                onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
+              />
+            </div>
           ) : activeTab === "apikeys" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><APIKeysView /></div>
           ) : activeTab === "schedules" ? (

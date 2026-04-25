@@ -27,7 +27,16 @@ function categoryColor(c: VaultCategory): string {
   }
 }
 
-export default function VaultView() {
+interface VaultViewProps {
+  /** True when the connected device is in needsAuth state. Lets us
+   *  swap the raw "HTTP 503" / "HTTP 401" error for a re-auth CTA. */
+  needsAuth?: boolean;
+  /** Called when the user clicks "Reconnect" on the re-auth banner.
+   *  Same handler the dashboard uses for the device cards. */
+  onReconnect?: () => Promise<void>;
+}
+
+export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {}) {
   const [entries, setEntries] = useState<VaultEntrySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -262,11 +271,55 @@ export default function VaultView() {
         </p>
       </header>
 
-      {err && (
-        <div className="rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
-          {err}
-        </div>
-      )}
+      {err && (() => {
+        const looksLikeAuthFailure = needsAuth ||
+          /HTTP 5(03|02)|HTTP 401|HTTP 403|needs auth|expired|unauthor/i.test(err);
+        if (looksLikeAuthFailure) {
+          return (
+            <div className="flex items-start gap-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100" role="alert">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-amber-300">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+              <div className="flex-1">
+                <p className="font-medium">Vault locked: agent session expired on this machine</p>
+                <p className="mt-0.5 text-[12px] text-amber-200/80">
+                  Vault stays sealed until the host signs back in. Run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[11px]">yaver auth</code> on the host, or click Reconnect.
+                </p>
+              </div>
+              {onReconnect && (
+                <button
+                  type="button"
+                  onClick={() => { void onReconnect(); }}
+                  className="shrink-0 self-start rounded border border-amber-400/50 bg-amber-500/20 px-2.5 py-1 text-[11px] hover:bg-amber-500/30"
+                >
+                  Reconnect
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="shrink-0 self-start rounded border border-amber-400/40 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/15"
+                title="Retry the vault list call"
+              >
+                Retry
+              </button>
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-center gap-2 rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
+            <span className="flex-1">{err}</span>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded border border-red-500/40 px-2 py-0.5 text-[11px] hover:bg-red-500/15"
+            >
+              Retry
+            </button>
+          </div>
+        );
+      })()}
 
       <section className="rounded border border-surface-700 bg-surface-950/30 p-3">
         <div className="flex items-center gap-2">

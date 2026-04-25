@@ -709,17 +709,17 @@ export default function PreviewPane({
           <>
             <button
               onClick={() => void handleReload()}
-              className="text-surface-400 hover:text-surface-200 text-sm"
-              title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Reload"}
+              className="rounded border border-surface-700 px-2 py-0.5 text-[10px] text-surface-300 hover:bg-surface-800 hover:text-surface-100"
+              title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Hot reload"}
             >
-              &#x21BB;
+              ↻ Reload
             </button>
             <button
               onClick={handleStop}
-              className="text-red-400 hover:text-red-300 text-sm"
-              title="Stop serving preview"
+              className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20"
+              title="Stop the dev server and return to the project picker"
             >
-              &#x25A0;
+              ■ Stop & switch
             </button>
           </>
         ) : null}

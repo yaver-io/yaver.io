@@ -267,6 +267,21 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     } catch { /* surface via polling */ }
   };
 
+  // Stop the active dev server and immediately start the currently
+  // selected one. Used for the "Switch to <X>" affordance so the user
+  // doesn't have to chase a two-step (stop, then start) flow.
+  const handleSwitchProject = async () => {
+    try {
+      await agentClient.stopDevServer();
+    } catch { /* keep going — start will surface its own error */ }
+    setDevStatus({ running: false });
+    await handleStart();
+  };
+
+  // True when the user has picked a different project than the one
+  // currently running. Drives the Switch button label/visibility.
+  // (Recomputed below after `isRunning` is in scope.)
+
   const handleReload = async () => {
     try {
       await agentClient.reloadDevServer();
@@ -298,6 +313,11 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
   const previewUrl = agentClient.devPreviewUrl;
   const isRunning = !!devStatus?.running;
+  const switchPending =
+    isRunning &&
+    !!devStatus?.workDir &&
+    !!selectedProject &&
+    selectedProject.path !== devStatus.workDir;
 
   // Preflight: fetch the preview URL from the parent page once so
   // transport/auth failures surface as a readable dashboard error
@@ -391,12 +411,22 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               >
                 Hard reload
               </button>
+              {switchPending && selectedProject && (
+                <button
+                  onClick={() => void handleSwitchProject()}
+                  disabled={starting}
+                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                  title={`Stop ${devStatus?.workDir?.split("/").slice(-1)[0] || "current"} and start ${selectedProject.name}`}
+                >
+                  {starting ? "Switching…" : `Switch to ${selectedProject.name}`}
+                </button>
+              )}
               <button
                 onClick={handleStop}
                 className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/20"
-                title="Stop serving this preview"
+                title="Stop serving this preview and return to the project picker"
               >
-                {devStatus?.stopActionLabel || "Stop Serving"}
+                {devStatus?.stopActionLabel || "Stop & switch"}
               </button>
             </>
           ) : (

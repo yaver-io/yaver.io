@@ -190,18 +190,25 @@ func TestWebReload_DevStartFallbackSurfaceGating(t *testing.T) {
 		t.Fatalf("vite + hot-reload: expected 400, got %d", status)
 	}
 
-	// Expo is hybrid — must NOT be rejected from either surface by the
-	// fallback gate (DevServerKindHybrid is allowed everywhere).
-	// We can't actually start the server in this test (no project on
-	// disk), but the surface gate must let the request through to the
-	// later 412/400 path. Anything other than 400 with our specific
-	// "mobile-only" / "web-only" message is acceptable here.
+	// Expo is intentionally classified as Mobile in
+	// FrameworkToDevServerKind because mobile-first projects (sfmg /
+	// talos / etc.) shouldn't appear in Web Reload's iframe surface —
+	// even though Expo can technically serve a web build. The dedicated
+	// "expo-web" framework string routes to Web for projects whose
+	// primary target IS the browser.
 	status, body = doRequest(t, "POST", baseURL+"/dev/start", "tok",
 		`{"framework":"expo","workDir":"/tmp/whatever","surface":"web-reload"}`)
+	if status != 400 {
+		t.Fatalf("expo + web-reload: expected 400 (Expo is mobile-first), got %d (body=%v)", status, body)
+	}
+
+	// expo-web is the explicit web target — must pass the gate.
+	status, body = doRequest(t, "POST", baseURL+"/dev/start", "tok",
+		`{"framework":"expo-web","workDir":"/tmp/whatever","surface":"web-reload"}`)
 	if status == 400 {
 		if msg, _ := body["error"].(string); msg != "" &&
 			(containsCI(msg, "mobile-only") || containsCI(msg, "web-only")) {
-			t.Fatalf("expo from web-reload should not hit surface gate, got %v", body)
+			t.Fatalf("expo-web from web-reload should not hit surface gate, got %v", body)
 		}
 	}
 }

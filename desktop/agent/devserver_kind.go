@@ -83,13 +83,20 @@ func StackToFramework(stack string) string {
 // when no yaver.workspace.yaml exists. Returns empty string for unknown
 // values; callers should treat that as "let the manager auto-detect
 // then re-check via DevServer.Kind()".
+//
+// Expo is bucketed as Mobile here even though Expo can technically
+// serve a web build — the Web Reload surface is reserved for projects
+// whose primary target is the browser. Mobile-first projects like
+// sfmg / talos that happen to have expo-web wired up should be driven
+// from Hot Reload (real device) rather than the iframe surface that
+// frequently breaks on HMR WebSocket reconnects through the proxy.
+// If a future "expo-web" framework string lands explicitly, route it
+// to Web here.
 func FrameworkToDevServerKind(framework string) DevServerKind {
 	switch framework {
-	case "nextjs", "next", "vite", "flutter", "astro", "remix":
+	case "nextjs", "next", "vite", "flutter", "astro", "remix", "expo-web":
 		return DevServerKindWeb
-	case "expo":
-		return DevServerKindHybrid
-	case "react-native":
+	case "expo", "react-native":
 		return DevServerKindMobile
 	default:
 		return ""

@@ -458,9 +458,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
       setDevices((prev) => {
         const prevIds = prev.map((d) => d.id);
         const nextIds = withRelayPresence.map((d) => d.id);
-        const prevSet = new Set(prevIds);
         const nextSet = new Set(nextIds);
-
         const sameMembership =
           prevIds.length === nextIds.length &&
           prevIds.every((id) => nextSet.has(id));
@@ -475,8 +473,8 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         }
 
         // Membership changed → sort once, freezing the new order until
-        // the next add/remove. New devices land at the top of their
-        // online/offline bucket; pre-existing devices keep their place.
+        // the next add/remove. Pre-existing devices keep their place;
+        // new devices land at the top of their online/offline bucket.
         const indexBefore = new Map(prevIds.map((id, i) => [id, i] as const));
         return [...withRelayPresence].sort((a, b) => {
           if (a.online !== b.online) return a.online ? -1 : 1;
@@ -485,14 +483,9 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
           if (ai !== -1 && bi !== -1) return ai - bi;
           if (ai !== -1) return -1;
           if (bi !== -1) return 1;
-          // Both new — fall back to lastSeen so newest sits on top.
           return b.lastSeen.localeCompare(a.lastSeen);
         });
       });
-      // Touch unused locals so type-narrowing stays useful for
-      // future readers without dead-code warnings.
-      void prevSet;
-      void nextSet;
     } catch {
       // Silently fail
     }
