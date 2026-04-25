@@ -87,6 +87,15 @@ type DevServerStatus struct {
 	TargetDeviceClass string        `json:"targetDeviceClass,omitempty"`
 	IOSInstallMethod  string        `json:"iosInstallMethod,omitempty"`
 	IOSInstallReason  string        `json:"iosInstallReason,omitempty"`
+	// WebPort is non-zero when a sibling Expo Web preview is running
+	// alongside Metro (--dev-client). Browser iframe routes through
+	// /dev-web/* to this port while /dev/index.bundle?platform=...
+	// continues to hit Metro on `Port`. Zero means "no web sibling
+	// running"; the Web Reload tab shows a "Start Web Preview" CTA in
+	// that state. Only populated for the Expo framework — other
+	// frameworks either serve web directly (Vite, Next) or are mobile-
+	// only (Flutter mobile, Swift, Kotlin).
+	WebPort int `json:"webPort,omitempty"`
 }
 
 // DevServerEvent is pushed via SSE on /dev/events.
@@ -481,6 +490,65 @@ func (m *DevServerManager) DevServerPort() int {
 	return m.active.server.Port()
 }
 
+// WebPreviewPort returns the local port of the sibling Expo Web
+// process if one is running, or 0. Only meaningful when the active
+// dev server is an Expo framework; other dev servers serve web
+// directly (Vite / Next) and don't use the sibling pattern.
+func (m *DevServerManager) WebPreviewPort() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.active == nil {
+		return 0
+	}
+	if expo, ok := m.active.server.(*ExpoDevServer); ok {
+		return expo.WebPort()
+	}
+	return 0
+}
+
+// StartWebPreview starts a sibling Expo Web process alongside Metro.
+// Returns the web port on success, 0 + error otherwise. Only valid
+// when the active dev server is an ExpoDevServer — Vite / Next / etc.
+// already serve browser preview through their primary port.
+func (m *DevServerManager) StartWebPreview() (int, error) {
+	m.mu.RLock()
+	active := m.active
+	m.mu.RUnlock()
+	if active == nil {
+		return 0, fmt.Errorf("no dev server running")
+	}
+	expo, ok := active.server.(*ExpoDevServer)
+	if !ok {
+		return 0, fmt.Errorf("web preview sibling is only supported for Expo — active framework is %s", active.server.Name())
+	}
+	port, err := expo.StartWebPreview(active.ctx, expo.Status().WorkDir)
+	if err != nil {
+		return 0, err
+	}
+	m.emit(DevServerEvent{
+		Type:      "web-preview-starting",
+		Framework: "expo-web",
+		Message:   fmt.Sprintf("Expo Web preview starting on :%d", port),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+	return port, nil
+}
+
+// StopWebPreview terminates the Expo Web sibling if running. Metro
+// is left alone.
+func (m *DevServerManager) StopWebPreview() error {
+	m.mu.RLock()
+	active := m.active
+	m.mu.RUnlock()
+	if active == nil {
+		return nil
+	}
+	if expo, ok := active.server.(*ExpoDevServer); ok {
+		return expo.StopWebPreview()
+	}
+	return nil
+}
+
 // Subscribe returns a channel that receives dev server events.
 func (m *DevServerManager) Subscribe() chan DevServerEvent {
 	m.subsMu.Lock()
@@ -766,6 +834,16 @@ type ExpoDevServer struct {
 	baseDevServer
 	devMode  string // "dev-client", "web", "expo-go"
 	building bool   // true during native compilation (expo run:ios)
+
+	// Sibling Expo Web process for the browser iframe on the Web Reload
+	// tab. Runs *alongside* Metro (--dev-client) on a different port so
+	// the Hermes bundle path (/dev/index.bundle?platform=ios|android)
+	// keeps flowing to Metro untouched. Empty when the user hasn't
+	// started a web preview. webMu guards both webCmd and webPort.
+	webMu   sync.Mutex
+	webCmd  *exec.Cmd
+	webPort int
+	webCtx  context.Context
 }
 
 func (e *ExpoDevServer) Name() string { return "expo" }
@@ -953,7 +1031,161 @@ func (e *ExpoDevServer) Status() DevServerStatus {
 		// Metro URL for same-network dev client connections
 		s.DeepLink = fmt.Sprintf("exp://%s:%d", getLocalIP(), e.port)
 	}
+	// Expose sibling Expo Web port when it's running. Doesn't touch
+	// any existing field — BundleURL, DevMode, Port all stay pointed
+	// at Metro. Clients that want the browser preview read WebPort
+	// separately and route through /dev-web/*.
+	e.webMu.Lock()
+	s.WebPort = e.webPort
+	e.webMu.Unlock()
 	return s
+}
+
+// StartWebPreview spawns an `expo start --web` sibling process on a
+// free port alongside the running Metro dev-client. Idempotent —
+// returns nil with no side effects if a web preview is already
+// running. The Metro process (`e.cmd`) is never touched.
+//
+// Caller MUST verify `e.running == true` (Metro started) before
+// calling; otherwise Expo Web is pointless on its own and the parent
+// DevServerManager has no way to route /dev-web/* for us.
+func (e *ExpoDevServer) StartWebPreview(parent context.Context, workDir string) (int, error) {
+	e.webMu.Lock()
+	if e.webCmd != nil && e.webCmd.Process != nil && e.webPort > 0 {
+		port := e.webPort
+		e.webMu.Unlock()
+		return port, nil
+	}
+	e.webMu.Unlock()
+
+	// Pick a free port >=19006 (Expo Web's historical default).
+	// Scanning avoids colliding with Metro on 8081/8082 or with a
+	// previous Expo Web that's still in TIME_WAIT.
+	port := 19006
+	for p := port; p < port+50; p++ {
+		if !isPortInUse(p) {
+			port = p
+			break
+		}
+	}
+	if isPortInUse(port) {
+		return 0, fmt.Errorf("no free port near 19006 for expo --web")
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	args := []string{"expo", "start",
+		"--web",
+		"--port", fmt.Sprintf("%d", port),
+		"--host", "lan",
+	}
+	cmd := exec.CommandContext(ctx, "npx", args...)
+	cmd.Dir = workDir
+	// Isolate this Expo's cache so it doesn't fight Metro over .expo/
+	// bundler state. Two concurrent `expo start` invocations on the
+	// same project without separate cache dirs occasionally race on
+	// watchman manifest writes; dedicated dirs eliminate the risk.
+	cacheDir, _ := os.MkdirTemp("", "yaver-expo-web-*")
+	extraEnv := []string{
+		fmt.Sprintf("EXPO_METRO_CACHE_DIR=%s", cacheDir),
+		// Don't open a browser tab on the remote machine.
+		"BROWSER=none",
+		"CI=1",
+	}
+	cmd.Env = append(augmentEnv(nil), extraEnv...)
+
+	logWriter := &devLogWriter{prefix: "[dev:expo:web]"}
+	if e.emitFn != nil {
+		emitFn := e.emitFn
+		logWriter.onLogLine = func(line string) {
+			emitFn(DevServerEvent{
+				Type:      "log",
+				Framework: "expo-web",
+				LogLine:   line,
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+		}
+	}
+	cmd.Stdout = logWriter
+	cmd.Stderr = logWriter
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		os.RemoveAll(cacheDir)
+		return 0, fmt.Errorf("expo --web failed to start: %w", err)
+	}
+
+	e.webMu.Lock()
+	e.webCmd = cmd
+	e.webPort = port
+	e.webCtx = ctx
+	e.webMu.Unlock()
+
+	// Reap the child and clean up state when it exits on its own.
+	go func() {
+		cmd.Wait()
+		e.webMu.Lock()
+		if e.webCmd == cmd {
+			e.webCmd = nil
+			e.webPort = 0
+			e.webCtx = nil
+		}
+		e.webMu.Unlock()
+		cancel()
+		os.RemoveAll(cacheDir)
+		if e.emitFn != nil {
+			e.emitFn(DevServerEvent{
+				Type:      "stopped",
+				Framework: "expo-web",
+				Message:   "Expo Web preview stopped",
+				Timestamp: time.Now().UTC().Format(time.RFC3339),
+			})
+		}
+	}()
+
+	return port, nil
+}
+
+// StopWebPreview terminates the sibling Expo Web process if running.
+// Safe to call when nothing is running. Metro (`e.cmd`) is untouched.
+func (e *ExpoDevServer) StopWebPreview() error {
+	e.webMu.Lock()
+	cmd := e.webCmd
+	e.webMu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	cmd.Process.Signal(os.Interrupt)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		cmd.Process.Kill()
+	}
+	e.webMu.Lock()
+	e.webCmd = nil
+	e.webPort = 0
+	e.webCtx = nil
+	e.webMu.Unlock()
+	return nil
+}
+
+// WebPort returns the port the sibling Expo Web process is serving on,
+// or 0 when no web preview is active. Used by the HTTP proxy to route
+// /dev-web/* independently of Metro's Port().
+func (e *ExpoDevServer) WebPort() int {
+	e.webMu.Lock()
+	defer e.webMu.Unlock()
+	return e.webPort
+}
+
+// Stop overrides baseDevServer.Stop to also terminate any sibling
+// Expo Web process. Metro is stopped first (the primary surface), then
+// the web preview — ordering doesn't really matter, but Metro going
+// first matches user expectation when they click "Stop Serving".
+func (e *ExpoDevServer) Stop() error {
+	_ = e.StopWebPreview()
+	return e.baseDevServer.Stop()
 }
 
 // ExpoDeepLink returns the exp:// URL for the dev client.

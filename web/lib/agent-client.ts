@@ -2917,6 +2917,11 @@ export class AgentClient {
     framework?: string;
     workDir?: string;
     port?: number;
+    /** Expo only — Metro's devMode: "dev-client" (default) or "web" */
+    devMode?: string;
+    /** Expo parallel web preview port (sibling of Metro). Non-zero
+     *  when a browser iframe preview is running through /dev-web/*. */
+    webPort?: number;
     targetDeviceId?: string;
     targetDeviceName?: string;
     targetDeviceClass?: string;
@@ -3070,6 +3075,38 @@ export class AgentClient {
       throw new Error(data?.error || "Failed to reload dev server");
     }
     return data;
+  }
+
+  // Spin up a sibling Expo Web process alongside Metro so the browser
+  // iframe can render RN apps without killing the phone's Hermes push
+  // path. Only valid when the active dev server is Expo.
+  async startWebPreview(): Promise<{ ok: boolean; port: number; webUrl: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/dev/web-preview/start`, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Failed to start Expo Web preview");
+    return data;
+  }
+
+  async stopWebPreview(): Promise<{ ok: boolean }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/dev/web-preview/stop`, { method: "POST", headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || "Failed to stop Expo Web preview");
+    return data;
+  }
+
+  /** URL the browser iframe points at for the Expo Web sibling. Only
+   *  meaningful when devStatus.webPort > 0. Mirrors devPreviewUrl
+   *  shape (relay-proxied vs direct) but hits /dev-web/ instead. */
+  get devWebPreviewUrl(): string | null {
+    if (!this.baseUrl) return null;
+    const direct = this.baseUrl.startsWith("http://127.0.0.1") || this.baseUrl.startsWith("http://localhost");
+    if (direct) return `${this.baseUrl}/dev-web/`;
+    // Same relay-proxy rewrite pattern as devPreviewUrl.
+    const relayMatch = this.baseUrl.match(/\/d\/([^/]+)/);
+    if (!relayMatch) return `${this.baseUrl}/dev-web/`;
+    return `/api/relay/d/${relayMatch[1]}/dev-web/`;
   }
 
   get devPreviewUrl(): string | null {

@@ -788,21 +788,29 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
 
 // Options shown in the per-runner model dropdown. First entry is the
 // default. Full model ids so the agent can forward them verbatim to
-// `--model` / YAVER_CLAUDE_MODEL / YAVER_CODEX_MODEL.
+// `--model` / YAVER_CLAUDE_MODEL / YAVER_CODEX_MODEL. Only real model
+// identifiers — anything the runner's CLI would actually accept.
 export const MODEL_OPTIONS_BY_RUNNER: Record<string, Array<{ id: string; label: string; hint?: string }>> = {
   claude: [
     { id: "claude-opus-4-7", label: "Opus 4.7", hint: "highest quality, ~5× Sonnet cost" },
+    { id: "claude-opus-4-6", label: "Opus 4.6", hint: "prior Opus" },
     { id: "claude-sonnet-4-6", label: "Sonnet 4.6", hint: "daily work, balanced" },
+    { id: "claude-sonnet-4-5", label: "Sonnet 4.5", hint: "prior Sonnet" },
     { id: "claude-haiku-4-5", label: "Haiku 4.5", hint: "fastest, cheapest" },
   ],
   codex: [
-    { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "latest, agentic" },
+    { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "agentic coding model" },
+    { id: "gpt-5-thinking", label: "GPT-5 Thinking", hint: "reasoning-heavy" },
     { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
+    { id: "gpt-5-mini", label: "GPT-5 Mini", hint: "fastest, cheapest" },
+    { id: "o3", label: "o3", hint: "prior reasoning line" },
   ],
   "aider-ollama": [
     { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B", hint: "fits 24 GB RAM" },
     { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B", hint: "needs 48+ GB" },
+    { id: "qwen2.5-coder:7b", label: "Qwen Coder 7B", hint: "fits 16 GB RAM" },
     { id: "qwen2.5-coder:1.5b", label: "Qwen Coder 1.5B", hint: "smoke-test only" },
+    { id: "deepseek-coder-v2:16b", label: "DeepSeek Coder v2 16B", hint: "strong C/Go/Rust" },
   ],
 };
 

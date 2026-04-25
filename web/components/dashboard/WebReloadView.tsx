@@ -15,7 +15,7 @@
 //   │ └──────────────────────────────────────────────────────────┘ │
 //   └──────────────────────────────────────────────────────────────┘
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentClient, type WorkspaceAppView } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { WebAppSelector } from "./WebAppSelector";
@@ -54,12 +54,28 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [showLogs, setShowLogs] = useState(false);
   const [relayRepairState, setRelayRepairState] = useState<"idle" | "repairing" | "repaired" | "failed">("idle");
   const [relayRepairMsg, setRelayRepairMsg] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
   const [recoveryProgress, setRecoveryProgress] = useState<{ pct: number; stage: string; active: boolean }>({ pct: 0, stage: "", active: false });
+  // Sibling Expo Web preview — spawned on demand so RN/Expo projects
+  // can render in the browser iframe without touching Metro (which
+  // keeps serving Hermes bundles to the phone). Status.webPort is
+  // authoritative; these flags drive the CTA state.
+  const [webPreviewStarting, setWebPreviewStarting] = useState(false);
+  const [webPreviewError, setWebPreviewError] = useState<string | null>(null);
+  const [composer, setComposer] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendStatus, setSendStatus] = useState<string | null>(null);
+  const [activeTaskStream, setActiveTaskStream] = useState<{
+    id: string;
+    title: string;
+    status: "queued" | "running" | "completed" | "failed" | "stopped";
+    lines: string[];
+  } | null>(null);
+  const taskStreamStopRef = useRef<(() => void) | null>(null);
+  const taskPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isConnected = connState === "connected" && !!connectedDevice;
   const needsAuth = !!connectedDevice?.needsAuth;
@@ -233,6 +249,21 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     return () => { es.close(); esRef.current = null; };
   }, [isConnected]);
 
+  const stopActiveTaskStream = useCallback(() => {
+    if (taskStreamStopRef.current) {
+      taskStreamStopRef.current();
+      taskStreamStopRef.current = null;
+    }
+    if (taskPollRef.current) {
+      clearInterval(taskPollRef.current);
+      taskPollRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => stopActiveTaskStream();
+  }, [stopActiveTaskStream]);
+
   const handleStart = async () => {
     if (!selectedApp && !selectedProject) return;
     setStarting(true);
@@ -292,6 +323,106 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
       setStartError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  // Spawn a sibling Expo Web process on the remote box. Only valid
+  // when the active dev server is Expo in --dev-client mode (the
+  // default). Metro keeps running; this adds a second subprocess on
+  // a different port so the iframe has HTML to render.
+  const handleStartWebPreview = async () => {
+    setWebPreviewStarting(true);
+    setWebPreviewError(null);
+    try {
+      await agentClient.startWebPreview();
+      // Poll status until webPort flips positive; the preview needs a
+      // few seconds to bundle before it responds with HTML.
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const s = await agentClient.getDevServerStatus();
+        setDevStatus(s);
+        if (s?.webPort && s.webPort > 0) break;
+      }
+    } catch (e) {
+      setWebPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWebPreviewStarting(false);
+    }
+  };
+  const handleStopWebPreview = async () => {
+    try {
+      await agentClient.stopWebPreview();
+      const s = await agentClient.getDevServerStatus();
+      setDevStatus(s);
+    } catch (e) {
+      setWebPreviewError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleSendPrompt = useCallback(async () => {
+    const prompt = composer.trim();
+    if (!prompt || sending) return;
+    const appRow = selectedApp ? apps.find((app) => app.name === selectedApp) ?? null : null;
+    const workDir = selectedProject?.path || appRow?.absPath || devStatus?.workDir;
+    const projectName = selectedProject?.name || appRow?.name || workDir?.split("/").filter(Boolean).slice(-1)[0];
+    setSending(true);
+    setSendStatus(null);
+    try {
+      stopActiveTaskStream();
+      const task = await agentClient.createTask({
+        title: prompt.slice(0, 80),
+        description: prompt,
+        userPrompt: prompt,
+        projectName,
+        workDir,
+      });
+      setActiveTaskStream({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        lines: [],
+      });
+      taskStreamStopRef.current = agentClient.streamTaskOutput(task.id, (line) => {
+        const trimmed = String(line || "").trimEnd();
+        if (!trimmed) return;
+        setActiveTaskStream((prev) => {
+          if (!prev || prev.id !== task.id) return prev;
+          const next = [...prev.lines, trimmed];
+          return {
+            ...prev,
+            status: "running",
+            lines: next.length > 200 ? next.slice(-200) : next,
+          };
+        });
+      });
+      taskPollRef.current = setInterval(() => {
+        void agentClient.getTask(task.id)
+          .then((fresh) => {
+            setActiveTaskStream((prev) => {
+              if (!prev || prev.id !== task.id) return prev;
+              const nextLines = fresh.output && fresh.output.length > 0
+                ? fresh.output
+                : prev.lines.length === 0 && fresh.resultText
+                  ? [fresh.resultText]
+                  : prev.lines;
+              return {
+                ...prev,
+                status: fresh.status,
+                lines: nextLines.length > 200 ? nextLines.slice(-200) : nextLines,
+              };
+            });
+            if (fresh.status !== "queued" && fresh.status !== "running") {
+              stopActiveTaskStream();
+            }
+          })
+          .catch(() => {});
+      }, 2000);
+      setComposer("");
+      setSendStatus(`Started “${task.title}”.`);
+    } catch (err) {
+      setSendStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }, [apps, composer, devStatus?.workDir, selectedApp, selectedProject, sending, stopActiveTaskStream]);
 
   // Reconnect & Fix — same robust recovery the Hot Reload tab runs.
   // Ping → repair relay password (if relevant) → stop → git-pull →
@@ -480,12 +611,17 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
         if (!isHtml) {
           const fw = (devStatus?.framework || "").toLowerCase();
           const isMobile = fw === "expo" || fw === "react-native" || fw === "metro";
+          const hasWebSibling = !!devStatus?.webPort && devStatus.webPort > 0;
           setNotRenderable({
             title: isMobile
-              ? "This dev server is mobile-only — no browser preview available"
+              ? (hasWebSibling
+                ? "Expo Web preview is ready"
+                : "This dev server is mobile-only — start an Expo Web preview to render it here")
               : "Dev server response isn't browser-renderable",
             body: isMobile
-              ? "Metro / Expo emit a JavaScript bundle, not HTML. Open the project on the Yaver mobile app to use Hot Reload, or switch the project to expo --web."
+              ? (hasWebSibling
+                ? "Click the preview URL to load the sibling Expo Web process (Metro keeps serving Hermes bundles to the phone)."
+                : "Metro emits a JavaScript bundle, not HTML. Keep Metro running for the phone and spawn a sibling `expo --web` process here — the button below does that on the remote box without touching Metro.")
               : `The dev server returned ${ct || "no content-type"} instead of HTML. Check the dev server is configured to serve a web build.`,
           });
         } else {
@@ -640,7 +776,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
       )}
 
       {/* Split body */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_280px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="relative flex min-h-0 flex-col gap-2">
           {/* Recovery overlay — progress bar + streaming log. Absolute
               so it doesn't reflow the preview frame when it mounts. */}
@@ -685,70 +821,151 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             </div>
           ) : null}
           <WebPreviewFrame
-            url={previewUrl}
+            // Route the iframe at the Expo Web sibling when it's running,
+            // otherwise fall back to the primary dev server preview.
+            url={devStatus?.webPort && devStatus.webPort > 0 ? agentClient.devWebPreviewUrl : previewUrl}
             running={isRunning}
             onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
             connectionLabel={connectionLabel}
             notRenderableNotice={notRenderable}
+            // Expo RN projects can opt in to a sibling `expo --web`
+            // process that doesn't disturb Metro's Hermes push. The
+            // button only shows when we actually surfaced the
+            // mobile-only notice AND the sibling isn't up yet.
+            notRenderableAction={
+              notRenderable && (devStatus?.framework || "").toLowerCase() === "expo" && !devStatus?.webPort
+                ? {
+                    label: webPreviewStarting ? "Starting Expo Web…" : "Start Expo Web preview (sibling of Metro)",
+                    onClick: () => void handleStartWebPreview(),
+                    disabled: webPreviewStarting,
+                  }
+                : null
+            }
           />
+          {webPreviewError ? (
+            <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-200">
+              Expo Web preview failed: {webPreviewError}
+            </div>
+          ) : null}
+          {devStatus?.webPort ? (
+            <div className="flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-3 py-1.5 text-[11px] text-emerald-200">
+              <span className="font-mono">expo --web · :{devStatus.webPort}</span>
+              <span className="text-surface-500">(Metro on :{devStatus.port} is untouched)</span>
+              <button
+                onClick={() => void handleStopWebPreview()}
+                className="ml-auto rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20"
+                title="Stop the sibling Expo Web process. Metro keeps serving Hermes bundles to the phone."
+              >
+                Stop web preview
+              </button>
+            </div>
+          ) : null}
 
-          {/* Logs strip */}
-          <div className="rounded-md border border-surface-800 bg-surface-950/60">
-            <button
-              onClick={() => setShowLogs((v) => !v)}
-              className="flex w-full items-center justify-between px-3 py-1.5 text-[10px] uppercase tracking-widest text-surface-400 hover:text-surface-200"
-            >
-              <span>Dev server logs ({logs.length})</span>
-              <span>{showLogs ? "▾" : "▸"}</span>
-            </button>
-            {showLogs && (
-              <pre className="max-h-40 overflow-auto border-t border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
-                {logs.length === 0 ? "(waiting for events…)" : logs.join("\n")}
-              </pre>
-            )}
-          </div>
         </div>
 
         {/* Right column — app selector + meta */}
         <aside className="flex min-h-0 flex-col gap-3">
-          <div>
-            <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
-              {useProjectFallback ? "Projects" : "Web apps in workspace"}
-            </p>
-            {useProjectFallback ? (
-              <ScannedProjectSelector
-                projects={projects}
-                selectedProjectPath={selectedProjectPath}
-                activeProjectPath={activeProject?.path ?? null}
-                onSelect={setSelectedProjectPath}
-                loading={projectsLoading}
-                workspaceError={workspaceError}
-              />
-            ) : (
-              <WebAppSelector
-                apps={apps}
-                selectedApp={selectedApp}
-                activeApp={activeApp}
-                onSelect={setSelectedApp}
-                loading={workspaceLoading}
-                error={workspaceError}
-              />
-            )}
-          </div>
-
-          {devStatus?.running && (
-            <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2 text-[11px]">
-              <p className="text-[10px] uppercase tracking-widest text-surface-500">Running</p>
-              <p className="mt-1 font-medium text-surface-100">
-                {devStatus.framework} <span className="text-surface-500">· :{devStatus.port}</span>
+          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                {useProjectFallback ? "Projects" : "Web apps in workspace"}
               </p>
-              {devStatus.workDir && (
-                <p className="mt-0.5 truncate text-[10px] text-surface-500" title={devStatus.workDir}>
-                  {devStatus.workDir}
-                </p>
+              <span className="text-[10px] text-surface-600">
+                {(useProjectFallback ? projects.length : apps.length) || 0} total
+              </span>
+            </div>
+            <div className="max-h-[15.5rem] overflow-auto pr-1">
+              {useProjectFallback ? (
+                <ScannedProjectSelector
+                  projects={projects}
+                  selectedProjectPath={selectedProjectPath}
+                  activeProjectPath={activeProject?.path ?? null}
+                  onSelect={setSelectedProjectPath}
+                  loading={projectsLoading}
+                  workspaceError={workspaceError}
+                />
+              ) : (
+                <WebAppSelector
+                  apps={apps}
+                  selectedApp={selectedApp}
+                  activeApp={activeApp}
+                  onSelect={setSelectedApp}
+                  loading={workspaceLoading}
+                  error={workspaceError}
+                />
               )}
             </div>
-          )}
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col rounded-md border border-surface-800 bg-surface-900/40 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">Vibing</p>
+              {activeTaskStream ? (
+                <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-surface-300">
+                  {activeTaskStream.status}
+                </span>
+              ) : null}
+            </div>
+            <div className="mb-3 text-[11px] text-surface-500">
+              Send a repo-scoped task for the selected web app and keep the live output here.
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-surface-800 bg-surface-950/70 p-3">
+              {activeTaskStream ? (
+                <div className="space-y-2">
+                  <div className="text-[11px] font-semibold text-surface-100">{activeTaskStream.title}</div>
+                  <pre className="whitespace-pre-wrap font-mono text-[10px] leading-5 text-surface-300">
+                    {activeTaskStream.lines.length === 0 ? "(waiting for output…)" : activeTaskStream.lines.join("\n")}
+                  </pre>
+                </div>
+              ) : (
+                <div className="text-[11px] text-surface-500">Start a task and the runner stream will stay here.</div>
+              )}
+            </div>
+            <textarea
+              value={composer}
+              onChange={(event) => setComposer(event.target.value)}
+              placeholder="Fix the selected app, reload it here, and tell me the remote dev URL."
+              className="mt-3 min-h-28 w-full rounded-2xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 outline-none focus:border-indigo-500"
+            />
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <div className="text-[11px] text-surface-500">
+                {selectedProject?.name || selectedApp || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
+              </div>
+              <button
+                onClick={() => void handleSendPrompt()}
+                disabled={!composer.trim() || sending || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
+                className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
+              >
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </div>
+            {sendStatus ? <div className="mt-2 text-[11px] text-surface-400">{sendStatus}</div> : null}
+          </div>
+
+          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-3">
+            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Console</p>
+            <pre className="max-h-52 overflow-auto rounded-md border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
+              {logs.length === 0 ? "(waiting for events…)" : logs.join("\n")}
+            </pre>
+          </div>
+
+          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2 text-[11px]">
+            <p className="text-[10px] uppercase tracking-widest text-surface-500">Running</p>
+            <p className="mt-1 font-medium text-surface-100">
+              {devStatus?.running ? (
+                <>
+                  {devStatus.framework} <span className="text-surface-500">· :{devStatus.port}</span>
+                </>
+              ) : (
+                "No app running"
+              )}
+            </p>
+            {devStatus?.workDir && (
+              <p className="mt-0.5 truncate text-[10px] text-surface-500" title={devStatus.workDir}>
+                {devStatus.workDir}
+              </p>
+            )}
+          </div>
         </aside>
       </div>
     </div>

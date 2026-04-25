@@ -609,6 +609,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves proxied dev content for browser/webview preview surfaces
+	// Parallel Expo Web: sibling preview process so the Web Reload tab
+	// can render RN apps in a browser iframe without killing Metro's
+	// dev-client (which serves Hermes bundles to the phone via /dev/*).
+	mux.HandleFunc("/dev/web-preview/start", s.authOrLocalhost(s.handleDevWebPreviewStart))
+	mux.HandleFunc("/dev/web-preview/stop", s.authOrLocalhost(s.handleDevWebPreviewStop))
+	mux.HandleFunc("/dev-web/", s.handleDevWebProxy) // No auth — matches /dev/ convention for browser iframe previews
 	// Monorepo workspace manifest (declarative yaver.workspace.yaml)
 	mux.HandleFunc("/workspace", s.auth(s.handleWorkspace))
 	mux.HandleFunc("/workspace/apps", s.auth(s.handleWorkspaceApps))

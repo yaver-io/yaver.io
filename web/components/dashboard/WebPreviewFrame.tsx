@@ -29,9 +29,13 @@ interface Props {
    *  is running but the underlying response can't be rendered in a
    *  browser (e.g. Metro returning a JS bundle, no expo web build). */
   notRenderableNotice?: { title: string; body: string } | null;
+  /** Optional primary CTA inside the notRenderable notice — e.g.
+   *  "Start Expo Web preview". When provided, renders a solid button
+   *  above the secondary "Open raw response anyway" link. */
+  notRenderableAction?: { label: string; onClick: () => void; disabled?: boolean } | null;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice }: Props) {
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction }: Props) {
   const [viewport, setViewport] = useState<ViewportId>("fluid");
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -153,6 +157,15 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
               </svg>
               <p className="font-medium text-surface-100">{notRenderableNotice.title}</p>
               <p className="max-w-[420px] text-[11px] text-surface-400">{notRenderableNotice.body}</p>
+              {notRenderableAction && (
+                <button
+                  onClick={notRenderableAction.onClick}
+                  disabled={notRenderableAction.disabled}
+                  className="mt-2 rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-1.5 text-[12px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+                >
+                  {notRenderableAction.label}
+                </button>
+              )}
               {onOpenInNewTab && (
                 <button
                   onClick={onOpenInNewTab}

@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1518,6 +1520,81 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 			flusher.Flush()
 		}
 	}
+}
+
+// handleDevWebProxy reverse-proxies requests to the sibling Expo Web
+// process when one is running. /dev-web/* → http://127.0.0.1:{webPort}/*
+// Completely independent of /dev/*, which continues to point at Metro
+// so the Hermes bundle URL (/dev/index.bundle?platform=ios|android)
+// keeps working while the browser iframe renders Expo Web's HTML.
+func (s *HTTPServer) handleDevWebProxy(w http.ResponseWriter, r *http.Request) {
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	port := s.devServerMgr.WebPreviewPort()
+	if port == 0 {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no Expo Web preview running — POST /dev/web-preview/start"})
+		return
+	}
+	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		http.Error(w, "expo web unavailable", http.StatusBadGateway)
+	}
+	r.URL.Path = strings.TrimPrefix(r.URL.Path, "/dev-web")
+	if r.URL.Path == "" {
+		r.URL.Path = "/"
+	}
+	// Expo Web uses WebSockets for HMR on the same port as HTTP.
+	if isWebSocketUpgrade(r) {
+		s.proxyWebSocket(w, r, fmt.Sprintf("127.0.0.1:%d", port))
+		return
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// handleDevWebPreviewStart spawns an Expo Web sibling alongside Metro.
+// Owner-only; guests never spawn subprocesses.
+// POST /dev/web-preview/start → { ok, port, webUrl }
+func (s *HTTPServer) handleDevWebPreviewStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	port, err := s.devServerMgr.StartWebPreview()
+	if err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":     true,
+		"port":   port,
+		"webUrl": "/dev-web/",
+	})
+}
+
+// handleDevWebPreviewStop terminates the Expo Web sibling. Metro is
+// left alone so Hermes push keeps working.
+// POST /dev/web-preview/stop → { ok }
+func (s *HTTPServer) handleDevWebPreviewStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
+		return
+	}
+	if err := s.devServerMgr.StopWebPreview(); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleDevServerProxy reverse-proxies requests to the local dev server.
