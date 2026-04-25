@@ -610,14 +610,19 @@ const WEB_RELOAD_DENY_TAGS = new Set([
   "kotlin",
 ]);
 
-function isWebReloadProject(project: ProjectRow): boolean {
+function isMobileOnlyProject(project: ProjectRow): boolean {
   const framework = (project.framework || "").toLowerCase().trim();
-  if (WEB_RELOAD_DENY_FRAMEWORKS.has(framework)) return false;
-  // Block projects whose tags declare a mobile target even when the
-  // framework label is fuzzy. e.g. an Expo project showing as
-  // framework="?" with tags=["expo","ios"] still belongs on Hot Reload.
+  if (WEB_RELOAD_DENY_FRAMEWORKS.has(framework)) return true;
   const tags = (project.tags || []).map((t) => String(t || "").toLowerCase());
-  if (tags.some((t) => WEB_RELOAD_DENY_TAGS.has(t))) return false;
+  if (tags.some((t) => WEB_RELOAD_DENY_TAGS.has(t))) return true;
+  return false;
+}
+
+// Now retained as a thin alias so existing call sites compile. We no
+// longer hide mobile-only projects — the picker shows them with a
+// "Hot Reload" badge and disables Start so the user knows to switch
+// tabs rather than wondering why their project vanished.
+function isWebReloadProject(_project: ProjectRow): boolean {
   return true;
 }
 

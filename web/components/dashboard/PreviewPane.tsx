@@ -452,11 +452,46 @@ export default function PreviewPane({
           appendRecovery(`warn: stop failed: ${e?.message || e}`);
         }
 
+        // Fast-forward the project to origin/HEAD so a fix that landed
+        // on github after the box's last pull actually shows up in the
+        // iframe. Skipped silently when the directory isn't a git repo
+        // or the working tree is dirty (we never blow away local edits).
+        appendRecovery("→ pulling latest commit (git pull --ff-only)…");
+        try {
+          const r = await agentClient.startExec({
+            command:
+              "if [ -d .git ]; then if git diff --quiet && git diff --cached --quiet; then git fetch --depth=50 && git pull --ff-only && git log -1 --oneline; else echo 'skip: working tree has uncommitted changes'; fi; else echo 'skip: not a git repo'; fi",
+            workDir: savedWorkDir,
+            timeout: 60,
+          });
+          appendRecovery(`· ${(r as any)?.stdout?.split('\n').filter(Boolean).slice(-1)[0] || 'no output'}`);
+        } catch (e: any) {
+          appendRecovery(`warn: git pull failed: ${e?.message || e}`);
+        }
+
+        // Kill stray Metro / Expo processes — the most common cause of
+        // "expo:8082" / "expo:8083" port creep is a previous Metro that
+        // wasn't reaped, and the new one renders the *old* bundle from
+        // its in-memory cache. pkill -f is wide-net but limited to this
+        // user's processes (no sudo).
+        appendRecovery("→ killing stray Metro / Expo processes…");
+        try {
+          await agentClient.startExec({
+            command:
+              "pkill -f 'expo start' 2>/dev/null; pkill -f 'metro' 2>/dev/null; pkill -f 'react-native start' 2>/dev/null; sleep 1; echo procs-killed",
+            workDir: savedWorkDir,
+            timeout: 20,
+          });
+          appendRecovery("✓ procs killed");
+        } catch (e: any) {
+          appendRecovery(`warn: pkill failed: ${e?.message || e}`);
+        }
+
         appendRecovery("→ clearing caches on remote (metro / .expo / node_modules/.cache)…");
         try {
           await agentClient.startExec({
             command:
-              "rm -rf node_modules/.cache .expo/web/cache .metro-cache /tmp/metro-* 2>/dev/null || true; echo cache-cleared",
+              "rm -rf node_modules/.cache .expo/web/cache .metro-cache /tmp/metro-* /tmp/haste-map-* 2>/dev/null || true; echo cache-cleared",
             workDir: savedWorkDir,
             timeout: 30,
           });
