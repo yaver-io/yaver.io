@@ -63,21 +63,19 @@ function likelyFramework(project: Project): string {
   return "vite";
 }
 
-// Returns true when the active dev server is Metro in mobile-only mode
-// (expo --dev-client / react-native start). That serves a JS bundle JSON
-// at /, not HTML, so iframing `/dev/` paints blank. Used by the Hot
-// Reload tab to render an instructional placeholder instead of a
-// blank iframe. We explicitly exclude `devMode === "web"` so Expo Web
-// previews still iframe normally.
+// Returns true when the active dev server is mobile-by-intent — Expo,
+// React Native, or any Metro instance. PreviewPane is the Hot Reload
+// surface (the phone-shaped mockup); for these frameworks the iframe
+// content is meaningless to the user regardless of whether Metro is
+// in --dev-client or --web mode (web previews belong in Web Reload
+// tab, where the user actually picked browser preview). Always show
+// the instructional placeholder so the phone frame never paints blank
+// white. Vite / Next.js / Flutter Web fall through to the iframe path
+// because they have a meaningful HTML response to render.
 function isMobileDevClient(status: { framework?: string; devMode?: string } | null | undefined): boolean {
   if (!status) return false;
   const fw = (status.framework || "").toLowerCase();
-  const mode = (status.devMode || "").toLowerCase();
-  const mobileFw = fw.includes("expo") || fw.includes("react-native") || fw === "metro";
-  if (!mobileFw) return false;
-  // Empty devMode on a mobile framework means we haven't seen the
-  // Expo status yet; assume dev-client which is the Yaver default.
-  return mode !== "web";
+  return fw.includes("expo") || fw.includes("react-native") || fw === "metro";
 }
 
 function isWebPreviewFramework(framework?: string): boolean {
