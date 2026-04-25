@@ -365,6 +365,8 @@ export interface ModelInfo {
   id: string;
   name: string;
   description?: string;
+  provider?: string;
+  source?: string;
   isDefault?: boolean;
 }
 
@@ -376,8 +378,12 @@ export interface Runner {
   isDefault?: boolean;
   ready?: boolean;
   authConfigured?: boolean;
+  authSource?: string;
   warning?: string;
   error?: string;
+  supportsBrowserAuth?: boolean;
+  supportsModelSelection?: boolean;
+  modelSource?: string;
   models?: ModelInfo[];
 }
 
@@ -1093,6 +1099,11 @@ export class AgentClient {
     userPrompt?: string;
     runner?: string;
     model?: string;
+    /** Runner-specific subcommand selector. Currently honored by
+     *  opencode where it maps to `--agent <mode>` (build / plan /
+     *  any custom agent the user has defined in opencode.json).
+     *  Other runners ignore it. */
+    mode?: string;
     customCommand?: string;
     projectName?: string;
     workDir?: string;
@@ -1107,6 +1118,7 @@ export class AgentClient {
         userPrompt: params.userPrompt ?? "",
         runner: params.runner ?? "",
         model: params.model ?? "",
+        mode: params.mode ?? "",
         customCommand: params.customCommand ?? "",
         projectName: params.projectName ?? "",
         workDir: params.workDir ?? "",
@@ -1716,6 +1728,40 @@ export class AgentClient {
     return {
       ok: true,
       applied: Array.isArray(data?.applied) ? data.applied : [],
+      providers: Array.isArray(data?.providers) ? data.providers : [],
+    };
+  }
+
+  async machineOnboardingRemove(
+    params: {
+      providers: Array<"github" | "gitlab">;
+      gitlabHost?: string;
+      removeClone?: boolean;
+      removeCiToken?: boolean;
+    },
+    target?: string,
+  ): Promise<{ ok: boolean; removed: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/remove`
+      : `${this.baseUrl}/machine/onboarding/remove`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: params.providers,
+        gitlab_host: params.gitlabHost,
+        remove_clone: params.removeClone,
+        remove_ci_token: params.removeCiToken,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, removed: [], providers: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      removed: Array.isArray(data?.removed) ? data.removed : [],
       providers: Array.isArray(data?.providers) ? data.providers : [],
     };
   }

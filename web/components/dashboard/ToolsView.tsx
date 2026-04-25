@@ -59,6 +59,8 @@ export default function ToolsView({ devices = [] }: Props) {
   const [runnerCapabilitySnapshot, setRunnerCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
   const [runnerIncidents, setRunnerIncidents] = useState<IncidentEvent[]>([]);
   const [onboardingRows, setOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
+  const [onboardingRowsByTarget, setOnboardingRowsByTarget] = useState<Record<string, MachineOnboardingProviderStatus[]>>({});
+  const [onboardingTargets, setOnboardingTargets] = useState<string[]>(["__local__"]);
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [installing, setInstalling] = useState<string | null>(null);
   const [savingRunnerAuth, setSavingRunnerAuth] = useState<string | null>(null);
@@ -94,6 +96,7 @@ export default function ToolsView({ devices = [] }: Props) {
   const [machineGitLabToken, setMachineGitLabToken] = useState("");
   const [machineGitLabHost, setMachineGitLabHost] = useState("gitlab.com");
   const [savingOnboarding, setSavingOnboarding] = useState(false);
+  const [removingOnboardingProvider, setRemovingOnboardingProvider] = useState<string | null>(null);
   const [startingBrowserAuth, setStartingBrowserAuth] = useState<string | null>(null);
   const [browserAuthSession, setBrowserAuthSession] = useState<RunnerBrowserAuthSession | null>(null);
   const cancelStreamRef = useRef<(() => void) | null>(null);
@@ -104,6 +107,10 @@ export default function ToolsView({ devices = [] }: Props) {
         .filter((d) => d.online && d.deviceClass !== "edge-mobile")
         .map((d) => ({ id: d.id, name: d.name })),
     [devices],
+  );
+  const onboardingTargetOptions = useMemo(
+    () => [{ id: "__local__", name: "This machine" }, ...peers],
+    [peers],
   );
 
   const loadSummary = useCallback(async () => {
@@ -155,11 +162,23 @@ export default function ToolsView({ devices = [] }: Props) {
 
   const loadOnboarding = useCallback(async () => {
     try {
-      setOnboardingRows(await agentClient.machineOnboardingStatus(target));
+      const selectedTargets = onboardingTargets.length > 0 ? onboardingTargets : ["__local__"];
+      const entries = await Promise.all(
+        selectedTargets.map(async (targetId) => {
+          const rows = await agentClient.machineOnboardingStatus(targetId === "__local__" ? undefined : targetId);
+          return [targetId, rows] as const;
+        }),
+      );
+      const next: Record<string, MachineOnboardingProviderStatus[]> = {};
+      entries.forEach(([targetId, rows]) => {
+        next[targetId] = rows;
+      });
+      setOnboardingRowsByTarget(next);
+      setOnboardingRows(next[selectedTargets[0]] || []);
     } catch {
       /* soft-fail */
     }
-  }, [target]);
+  }, [onboardingTargets]);
 
   useEffect(() => {
     loadSummary();
@@ -278,25 +297,82 @@ export default function ToolsView({ devices = [] }: Props) {
     setSavingOnboarding(true);
     setOnboardingError(null);
     setOnboardingResult(null);
-    const res = await agentClient.machineOnboardingApply(
-      {
-        openaiApiKey: machineOpenAIKey,
-        githubToken: machineGitHubToken,
-        gitlabToken: machineGitLabToken,
-        gitlabHost: machineGitLabHost,
-        applyClone: true,
-        applyCiToken: true,
-        notes: "Saved from Yaver web dashboard.",
-      },
-      target,
-    );
+    const selectedTargets = onboardingTargets.length > 0 ? onboardingTargets : ["__local__"];
+    const nextRows: Record<string, MachineOnboardingProviderStatus[]> = {};
+    const appliedSummaries: string[] = [];
+    const failures: string[] = [];
+    for (const targetId of selectedTargets) {
+      const res = await agentClient.machineOnboardingApply(
+        {
+          openaiApiKey: machineOpenAIKey,
+          githubToken: machineGitHubToken,
+          gitlabToken: machineGitLabToken,
+          gitlabHost: machineGitLabHost,
+          applyClone: true,
+          applyCiToken: true,
+          notes: "Saved from Yaver web dashboard.",
+        },
+        targetId === "__local__" ? undefined : targetId,
+      );
+      const label = onboardingTargetOptions.find((option) => option.id === targetId)?.name || targetId;
+      if (!res.ok) {
+        failures.push(`${label}: ${res.error || "Machine onboarding update failed"}`);
+        continue;
+      }
+      nextRows[targetId] = res.providers;
+      appliedSummaries.push(`${label}: ${res.applied.length > 0 ? res.applied.join(", ") : "no changes"}`);
+    }
     setSavingOnboarding(false);
-    if (!res.ok) {
-      setOnboardingError(res.error || "Machine onboarding update failed");
+    if (appliedSummaries.length === 0 && failures.length > 0) {
+      setOnboardingError(failures.join(" | "));
       return;
     }
-    setOnboardingRows(res.providers);
-    setOnboardingResult(res.applied.length > 0 ? `Applied ${res.applied.join(", ")}` : "Nothing changed");
+    setOnboardingRowsByTarget((prev) => ({ ...prev, ...nextRows }));
+    setOnboardingRows(nextRows[selectedTargets[0]] || []);
+    setOnboardingResult(appliedSummaries.join(" | "));
+    if (failures.length > 0) {
+      setOnboardingError(failures.join(" | "));
+    }
+  }
+
+  async function removeMachineOnboarding(provider: "github" | "gitlab") {
+    if (removingOnboardingProvider) return;
+    setRemovingOnboardingProvider(provider);
+    setOnboardingError(null);
+    setOnboardingResult(null);
+    const selectedTargets = onboardingTargets.length > 0 ? onboardingTargets : ["__local__"];
+    const nextRows: Record<string, MachineOnboardingProviderStatus[]> = {};
+    const removedSummaries: string[] = [];
+    const failures: string[] = [];
+    for (const targetId of selectedTargets) {
+      const res = await agentClient.machineOnboardingRemove(
+        {
+          providers: [provider],
+          gitlabHost: provider === "gitlab" ? machineGitLabHost : undefined,
+          removeClone: true,
+          removeCiToken: true,
+        },
+        targetId === "__local__" ? undefined : targetId,
+      );
+      const label = onboardingTargetOptions.find((option) => option.id === targetId)?.name || targetId;
+      if (!res.ok) {
+        failures.push(`${label}: ${res.error || "Machine onboarding remove failed"}`);
+        continue;
+      }
+      nextRows[targetId] = res.providers;
+      removedSummaries.push(`${label}: ${res.removed.length > 0 ? res.removed.join(", ") : "nothing removed"}`);
+    }
+    setRemovingOnboardingProvider(null);
+    if (removedSummaries.length === 0 && failures.length > 0) {
+      setOnboardingError(failures.join(" | "));
+      return;
+    }
+    setOnboardingRowsByTarget((prev) => ({ ...prev, ...nextRows }));
+    setOnboardingRows(nextRows[selectedTargets[0]] || []);
+    setOnboardingResult(removedSummaries.join(" | "));
+    if (failures.length > 0) {
+      setOnboardingError(failures.join(" | "));
+    }
   }
 
   async function saveOpenCodeSettings() {
@@ -406,8 +482,33 @@ export default function ToolsView({ devices = [] }: Props) {
         <h3 className="text-sm font-semibold text-surface-300 mb-3">Remote onboarding</h3>
         <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4 space-y-4">
           <p className="text-sm text-surface-400">
-            Configure OpenAI, GitHub, and GitLab on the selected machine in one pass. GitHub and GitLab write both clone credentials and CI/deploy vault tokens.
+            Configure OpenAI, GitHub, and GitLab on one or more live machines in one pass. GitHub and GitLab write both clone credentials and CI/deploy vault tokens.
           </p>
+          <div className="space-y-2">
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Onboarding targets</div>
+            <div className="flex flex-wrap gap-2">
+              {onboardingTargetOptions.map((option) => {
+                const selected = onboardingTargets.includes(option.id);
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => setOnboardingTargets((current) => (
+                      current.includes(option.id)
+                        ? current.filter((id) => id !== option.id)
+                        : [...current, option.id]
+                    ))}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold border ${
+                      selected
+                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+                        : "bg-surface-900 text-surface-300 border-surface-800 hover:border-surface-700"
+                    }`}
+                  >
+                    {option.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="grid gap-3 md:grid-cols-2">
             <SecretField label="OpenAI API key" value={machineOpenAIKey} onChange={setMachineOpenAIKey} placeholder="sk-..." />
             <SecretField label="GitHub token" value={machineGitHubToken} onChange={setMachineGitHubToken} placeholder="ghp_..." />
@@ -417,31 +518,58 @@ export default function ToolsView({ devices = [] }: Props) {
           <div className="flex items-center gap-3">
             <button
               onClick={saveMachineOnboarding}
-              disabled={savingOnboarding}
+              disabled={savingOnboarding || onboardingTargets.length === 0}
               className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
             >
-              {savingOnboarding ? "Applying..." : "Apply Onboarding"}
+              {savingOnboarding ? "Applying..." : `Apply To ${Math.max(1, onboardingTargets.length)} Machine${onboardingTargets.length === 1 ? "" : "s"}`}
+            </button>
+            <button
+              onClick={() => void removeMachineOnboarding("github")}
+              disabled={!!removingOnboardingProvider || onboardingTargets.length === 0}
+              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-300 disabled:opacity-50"
+            >
+              {removingOnboardingProvider === "github" ? "Removing GitHub..." : "Remove GitHub"}
+            </button>
+            <button
+              onClick={() => void removeMachineOnboarding("gitlab")}
+              disabled={!!removingOnboardingProvider || onboardingTargets.length === 0}
+              className="rounded-xl border border-rose-500/40 px-4 py-2 text-sm font-semibold text-rose-300 disabled:opacity-50"
+            >
+              {removingOnboardingProvider === "gitlab" ? "Removing GitLab..." : "Remove GitLab"}
             </button>
             {onboardingResult && <span className="text-sm text-emerald-300">{onboardingResult}</span>}
             {onboardingError && <span className="text-sm text-rose-300">{onboardingError}</span>}
           </div>
           <div className="grid gap-3 md:grid-cols-3">
-            {onboardingRows.map((row) => (
-              <div key={row.id} className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-semibold text-surface-50">{row.name}</span>
-                  <span className={`text-xs font-semibold ${row.ready ? "text-emerald-300" : row.configured ? "text-amber-300" : "text-surface-500"}`}>
-                    {row.ready ? "Ready" : row.configured ? "Partial" : "Missing"}
-                  </span>
+            {onboardingTargets.map((targetId) => {
+              const rows = onboardingRowsByTarget[targetId] || [];
+              const label = onboardingTargetOptions.find((option) => option.id === targetId)?.name || targetId;
+              return (
+                <div key={targetId} className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
+                  <div className="font-semibold text-surface-50">{label}</div>
+                  <div className="mt-3 space-y-3">
+                    {rows.length === 0 ? (
+                      <p className="text-xs text-surface-500">No status yet.</p>
+                    ) : rows.map((row) => (
+                      <div key={`${targetId}:${row.id}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="font-semibold text-surface-50">{row.name}</span>
+                          <span className={`text-xs font-semibold ${row.ready ? "text-emerald-300" : row.configured ? "text-amber-300" : "text-surface-500"}`}>
+                            {row.ready ? "Ready" : row.configured ? "Partial" : "Missing"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs text-surface-400">{row.detail || row.warning || "No status yet"}</p>
+                        {(row.host || row.username) && (
+                          <p className="mt-2 text-[11px] text-surface-500">
+                            {[row.host, row.username].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <p className="mt-2 text-xs text-surface-400">{row.detail || row.warning || "No status yet"}</p>
-                {(row.host || row.username) && (
-                  <p className="mt-2 text-[11px] text-surface-500">
-                    {[row.host, row.username].filter(Boolean).join(" · ")}
-                  </p>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </section>

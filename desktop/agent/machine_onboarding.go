@@ -40,6 +40,13 @@ type machineOnboardingApplyRequest struct {
 	Notes        string `json:"notes"`
 }
 
+type machineOnboardingRemoveRequest struct {
+	Providers     []string `json:"providers"`
+	GitLabHost    string   `json:"gitlab_host"`
+	RemoveClone   *bool    `json:"remove_clone"`
+	RemoveCIToken *bool    `json:"remove_ci_token"`
+}
+
 func boolOrDefault(v *bool, fallback bool) bool {
 	if v == nil {
 		return fallback
@@ -298,6 +305,140 @@ func setVaultEntry(name, category, value, notes string) error {
 	})
 }
 
+func deleteVaultEntryOptional(name string) error {
+	vs, err := openVaultOptional()
+	if err != nil {
+		return err
+	}
+	if err := vs.Delete("", name); err != nil && !strings.Contains(err.Error(), "not found") {
+		return err
+	}
+	return nil
+}
+
+func removeGitCredentialsForHost(host string) (bool, error) {
+	creds, _ := loadGitCredentials()
+	filtered := make([]GitCredential, 0, len(creds))
+	removed := false
+	for _, c := range creds {
+		if strings.EqualFold(c.Host, host) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	if !removed {
+		return false, nil
+	}
+	return true, saveGitCredentials(filtered)
+}
+
+func removeGitProvidersByMatch(match func(GitProvider) bool) (bool, error) {
+	providers, _ := loadGitProviders()
+	filtered := make([]GitProvider, 0, len(providers))
+	removed := false
+	for _, p := range providers {
+		if match(p) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	if !removed {
+		return false, nil
+	}
+	return true, saveGitProviders(filtered)
+}
+
+func removeGitCredentialsByMatch(match func(GitCredential) bool) (bool, error) {
+	creds, _ := loadGitCredentials()
+	filtered := make([]GitCredential, 0, len(creds))
+	removed := false
+	for _, c := range creds {
+		if match(c) {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	if !removed {
+		return false, nil
+	}
+	return true, saveGitCredentials(filtered)
+}
+
+func applyMachineOnboardingRemoveLocal(req machineOnboardingRemoveRequest) (map[string]any, error) {
+	providers := uniqueNonEmptyStrings(req.Providers)
+	if len(providers) == 0 {
+		return nil, fmt.Errorf("no providers requested")
+	}
+	removeClone := boolOrDefault(req.RemoveClone, true)
+	removeCIToken := boolOrDefault(req.RemoveCIToken, true)
+	removed := []string{}
+
+	for _, provider := range providers {
+		switch strings.ToLower(strings.TrimSpace(provider)) {
+		case "github":
+			if removeClone {
+				if ok, err := removeGitProvidersByMatch(func(p GitProvider) bool { return strings.EqualFold(p.Provider, "github") || strings.EqualFold(p.Host, "github.com") }); err != nil {
+					return nil, err
+				} else if ok {
+					removed = append(removed, "github.clone")
+				}
+				if ok, err := removeGitCredentialsByMatch(func(c GitCredential) bool { return strings.EqualFold(c.Host, "github.com") }); err != nil {
+					return nil, err
+				} else if ok && !containsOnboardingMarker(removed, "github.clone") {
+					removed = append(removed, "github.clone")
+				}
+			}
+			if removeCIToken {
+				if err := deleteVaultEntryOptional("github-token"); err == nil {
+					removed = append(removed, "github.ci")
+				}
+			}
+		case "gitlab":
+			targetHost := strings.TrimSpace(req.GitLabHost)
+			if removeClone {
+				matchProvider := func(p GitProvider) bool {
+					if !strings.EqualFold(p.Provider, "gitlab") {
+						return false
+					}
+					return targetHost == "" || strings.EqualFold(p.Host, targetHost)
+				}
+				matchCred := func(c GitCredential) bool {
+					if targetHost != "" {
+						return strings.EqualFold(c.Host, targetHost)
+					}
+					return strings.Contains(strings.ToLower(strings.TrimSpace(c.Host)), "gitlab")
+				}
+				if ok, err := removeGitProvidersByMatch(matchProvider); err != nil {
+					return nil, err
+				} else if ok {
+					removed = append(removed, "gitlab.clone")
+				}
+				if ok, err := removeGitCredentialsByMatch(matchCred); err != nil {
+					return nil, err
+				} else if ok && !containsOnboardingMarker(removed, "gitlab.clone") {
+					removed = append(removed, "gitlab.clone")
+				}
+			}
+			if removeCIToken {
+				if err := deleteVaultEntryOptional("gitlab-token"); err == nil {
+					removed = append(removed, "gitlab.ci")
+				}
+			}
+		default:
+			return nil, fmt.Errorf("unsupported provider %q", provider)
+		}
+	}
+
+	return map[string]any{
+		"ok":        true,
+		"removed":   removed,
+		"providers": collectMachineOnboardingStatus().Providers,
+	}, nil
+}
+
 func applyMachineOnboardingLocal(req machineOnboardingApplyRequest) (map[string]any, error) {
 	applied := []string{}
 	notes := strings.TrimSpace(req.Notes)
@@ -406,6 +547,50 @@ func applyMachineOnboardingRemote(target string, req machineOnboardingApplyReque
 	return proxyToDeviceJSON(context.Background(), "machine-onboarding-apply", target, http.MethodPost, "/machine/onboarding/apply", req)
 }
 
+func removeMachineOnboardingRemote(target string, req machineOnboardingRemoveRequest) (map[string]any, error) {
+	return proxyToDeviceJSON(context.Background(), "machine-onboarding-remove", target, http.MethodPost, "/machine/onboarding/remove", req)
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, raw := range values {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func mcpMachineOnboardingStatusMulti(deviceIDs []string) interface{} {
+	deviceIDs = uniqueNonEmptyStrings(deviceIDs)
+	if len(deviceIDs) == 0 {
+		return mcpMachineOnboardingStatus("")
+	}
+	results := make([]map[string]any, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		status, err := fetchMachineOnboardingStatusRemote(deviceID)
+		if err != nil {
+			results = append(results, map[string]any{
+				"device_id": deviceID,
+				"error":     err.Error(),
+			})
+			continue
+		}
+		results = append(results, map[string]any{
+			"device_id": deviceID,
+			"providers": status.Providers,
+		})
+	}
+	return map[string]any{"results": results}
+}
+
 func mcpMachineOnboardingStatus(deviceID string) interface{} {
 	if strings.TrimSpace(deviceID) != "" {
 		status, err := fetchMachineOnboardingStatusRemote(strings.TrimSpace(deviceID))
@@ -432,6 +617,81 @@ func mcpMachineOnboardingApply(deviceID string, req machineOnboardingApplyReques
 		return map[string]any{"error": err.Error()}
 	}
 	return result
+}
+
+func mcpMachineOnboardingApplyMulti(deviceIDs []string, req machineOnboardingApplyRequest) interface{} {
+	deviceIDs = uniqueNonEmptyStrings(deviceIDs)
+	if len(deviceIDs) == 0 {
+		return mcpMachineOnboardingApply("", req)
+	}
+	results := make([]map[string]any, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		result, err := applyMachineOnboardingRemote(deviceID, req)
+		if err != nil {
+			results = append(results, map[string]any{
+				"device_id": deviceID,
+				"ok":        false,
+				"error":     err.Error(),
+			})
+			continue
+		}
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["device_id"] = deviceID
+		results = append(results, result)
+	}
+	return map[string]any{"results": results}
+}
+
+func mcpMachineOnboardingRemove(deviceID string, req machineOnboardingRemoveRequest) interface{} {
+	var (
+		result map[string]any
+		err    error
+	)
+	if strings.TrimSpace(deviceID) != "" {
+		result, err = removeMachineOnboardingRemote(strings.TrimSpace(deviceID), req)
+	} else {
+		result, err = applyMachineOnboardingRemoveLocal(req)
+	}
+	if err != nil {
+		return map[string]any{"error": err.Error()}
+	}
+	return result
+}
+
+func mcpMachineOnboardingRemoveMulti(deviceIDs []string, req machineOnboardingRemoveRequest) interface{} {
+	deviceIDs = uniqueNonEmptyStrings(deviceIDs)
+	if len(deviceIDs) == 0 {
+		return mcpMachineOnboardingRemove("", req)
+	}
+	results := make([]map[string]any, 0, len(deviceIDs))
+	for _, deviceID := range deviceIDs {
+		result, err := removeMachineOnboardingRemote(deviceID, req)
+		if err != nil {
+			results = append(results, map[string]any{
+				"device_id": deviceID,
+				"ok":        false,
+				"error":     err.Error(),
+			})
+			continue
+		}
+		if result == nil {
+			result = map[string]any{}
+		}
+		result["device_id"] = deviceID
+		results = append(results, result)
+	}
+	return map[string]any{"results": results}
+}
+
+func containsOnboardingMarker(values []string, needle string) bool {
+	for _, v := range values {
+		if v == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func machineOnboardingDoctorLevel(provider machineOnboardingProviderStatus) string {

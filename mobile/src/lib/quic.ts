@@ -1162,7 +1162,7 @@ export class QuicClient {
   // ── Task API ───────────────────────────────────────────────────────
 
   /** Send a new task to the desktop agent. */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
@@ -1178,6 +1178,7 @@ export class QuicClient {
         source: "mobile",
         ...(model ? { model } : {}),
         ...(runner ? { runner } : {}),
+        ...(mode ? { mode } : {}),
         ...(customCommand ? { customCommand } : {}),
         ...(speechContext ? { speechContext } : {}),
         ...(images?.length ? { images } : {}),
@@ -2422,6 +2423,40 @@ export class QuicClient {
     return {
       ok: true,
       applied: Array.isArray(data?.applied) ? data.applied : [],
+      providers: Array.isArray(data?.providers) ? data.providers : [],
+    };
+  }
+
+  async machineOnboardingRemove(
+    params: {
+      providers: Array<"github" | "gitlab">;
+      gitlabHost?: string;
+      removeClone?: boolean;
+      removeCiToken?: boolean;
+    },
+    target?: string,
+  ): Promise<{ ok: boolean; removed: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/remove`
+      : `${this.baseUrl}/machine/onboarding/remove`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        providers: params.providers,
+        gitlab_host: params.gitlabHost,
+        remove_clone: params.removeClone,
+        remove_ci_token: params.removeCiToken,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, removed: [], providers: [], error: data?.error || `HTTP ${res.status}` };
+    }
+    return {
+      ok: true,
+      removed: Array.isArray(data?.removed) ? data.removed : [],
       providers: Array.isArray(data?.providers) ? data.providers : [],
     };
   }

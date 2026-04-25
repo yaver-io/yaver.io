@@ -873,7 +873,7 @@ export class YaverFeedback {
     // ── Step 2 — Machine picker ─────────────────────────
 
     const renderMachineView = () => {
-      subtitle.textContent = 'Step 1 of 2 — Pick the machine to connect to.';
+      subtitle.textContent = 'Step 2 of 4 — Pick the machine to connect to.';
       body.innerHTML = `
         <div class="yvr-fb-devices">
           <div class="yvr-fb-devices-head">
@@ -958,7 +958,7 @@ export class YaverFeedback {
               }
               setStatus('');
               busy = false;
-              setView('actions');
+              setView('git');
             } catch (err) {
               setStatus(err instanceof Error ? err.message : 'Unable to connect.');
               row.classList.remove('yvr-fb-device-row-busy');
@@ -1006,10 +1006,393 @@ export class YaverFeedback {
       `;
     };
 
-    // ── Step 3 — Actions ────────────────────────────────
+    const connectGitForRepo = async (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>) => {
+      const provider = (eligibility?.provider || '').trim().toLowerCase();
+      if (provider !== 'github' && provider !== 'gitlab') {
+        throw new Error('This repo does not expose a supported git host yet.');
+      }
+      const host = (eligibility?.repoHost || (provider === 'gitlab' ? 'gitlab.com' : 'github.com')).trim();
+      const client = await YaverFeedback.getClient();
+      const detected = await client.gitProviderDetect().catch(() => []);
+      if (detected.some((row) => row.provider === provider && row.host === host && row.hasToken)) {
+        return { kind: 'already-configured' as const };
+      }
+      const authToken = (YaverFeedback.config?.authToken || getCachedToken() || '').trim();
+      const webBaseUrl = (YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '');
+      const convexBaseUrl = (YaverFeedback.config?.authConvexSiteUrl || YaverFeedback.config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/$/, '');
+      if (!authToken) {
+        const loginUrl = `${webBaseUrl}/auth?return=${encodeURIComponent('/dashboard')}`;
+        if (typeof window !== 'undefined') {
+          window.open(loginUrl, '_blank', 'noopener,noreferrer');
+        }
+        return {
+          kind: 'needs-login' as const,
+          url: loginUrl,
+        };
+      }
+      const linkResp = await fetch(`${convexBaseUrl}/auth/oauth-link/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider,
+          client: 'web',
+          returnTo: '/dashboard',
+        }),
+      });
+      const linkData = await linkResp.json().catch(() => ({} as Record<string, unknown>));
+      if (!linkResp.ok || typeof linkData?.token !== 'string' || !linkData.token.trim()) {
+        const dashboardUrl = `${webBaseUrl}/dashboard`;
+        if (typeof window !== 'undefined') {
+          window.open(dashboardUrl, '_blank', 'noopener,noreferrer');
+        }
+        return {
+          kind: 'needs-dashboard' as const,
+          url: dashboardUrl,
+          detail:
+            typeof linkData?.error === 'string' && linkData.error.trim()
+              ? linkData.error
+              : 'Open the dashboard and finish provider linking there.',
+        };
+      }
+      const oauthUrl = `${webBaseUrl}/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(
+        linkData.token,
+      )}&return=${encodeURIComponent('/dashboard')}`;
+      if (typeof window !== 'undefined') {
+        window.open(oauthUrl, '_blank', 'noopener,noreferrer');
+      }
+      return {
+        kind: 'oauth-started' as const,
+        url: oauthUrl,
+        provider,
+        host,
+      };
+    };
+
+    const listLinkedGitProviders = async (): Promise<Set<'github' | 'gitlab'>> => {
+      const authToken = (YaverFeedback.config?.authToken || getCachedToken() || '').trim();
+      const convexBaseUrl = (YaverFeedback.config?.authConvexSiteUrl || YaverFeedback.config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/$/, '');
+      if (!authToken) return new Set();
+      const resp = await fetch(`${convexBaseUrl}/auth/providers`, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+      if (!resp.ok) return new Set();
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      const identities = Array.isArray(data?.identities) ? data.identities as Array<Record<string, unknown>> : [];
+      const linked = new Set<'github' | 'gitlab'>();
+      identities.forEach((identity) => {
+        if (identity.provider === 'github' || identity.provider === 'gitlab') {
+          linked.add(identity.provider);
+        }
+      });
+      return linked;
+    };
+
+    const startAccountLinkProvider = async (provider: 'github' | 'gitlab') => {
+      const authToken = (YaverFeedback.config?.authToken || getCachedToken() || '').trim();
+      const webBaseUrl = (YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '');
+      const convexBaseUrl = (YaverFeedback.config?.authConvexSiteUrl || YaverFeedback.config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/$/, '');
+      if (!authToken) {
+        const loginUrl = `${webBaseUrl}/auth?return=${encodeURIComponent('/dashboard')}`;
+        if (typeof window !== 'undefined') {
+          window.open(loginUrl, '_blank', 'noopener,noreferrer');
+        }
+        return { kind: 'needs-login' as const, url: loginUrl };
+      }
+      const res = await fetch(`${convexBaseUrl}/auth/oauth-link/start`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          provider,
+          client: 'web',
+          returnTo: '/dashboard',
+        }),
+      });
+      const data = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok || typeof data?.token !== 'string' || !data.token.trim()) {
+        throw new Error(typeof data?.error === 'string' && data.error.trim() ? data.error : `Could not link ${provider}.`);
+      }
+      const oauthUrl = `${webBaseUrl}/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(
+        data.token,
+      )}&return=${encodeURIComponent('/dashboard')}`;
+      if (typeof window !== 'undefined') {
+        window.open(oauthUrl, '_blank', 'noopener,noreferrer');
+      }
+      return { kind: 'oauth-started' as const, provider, url: oauthUrl };
+    };
+
+    // ── Step 3 — Git setup ──────────────────────────────
+
+    const renderGitSetupView = () => {
+      subtitle.textContent = 'Step 3 of 4 — Set up git for this project.';
+      body.innerHTML = `
+        <button id="yaver-fb-machine-pill" class="yvr-fb-machine-pill" type="button">
+          <span class="yvr-fb-dot yvr-fb-dot-green"></span>
+          <span class="yvr-fb-machine-pill-text">
+            <span id="yaver-fb-machine-pill-name" class="yvr-fb-machine-pill-name">Checking…</span>
+            <span id="yaver-fb-machine-pill-meta" class="yvr-fb-machine-pill-meta"></span>
+          </span>
+          <span class="yvr-fb-link">Change</span>
+        </button>
+
+        <div class="yvr-fb-vibe-shell">
+          <div class="yvr-fb-vibe-topline">
+            <div class="yvr-fb-vibe-topline-copy">
+              <label class="yvr-fb-vibe-label">Git Setup</label>
+              <p id="yaver-fb-git-intro" class="yvr-fb-vibe-intro">Checking whether this machine is ready to use the repo.</p>
+            </div>
+            <div id="yaver-fb-git-summary" class="yvr-fb-runner-summary">Checking…</div>
+          </div>
+
+          <div class="yvr-fb-vibe-onboarding" style="display:grid;">
+            <div class="yvr-fb-vibe-steps">
+              <span class="yvr-fb-vibe-step" data-state="done">1. OAuth</span>
+              <span class="yvr-fb-vibe-step" data-state="done">2. Machine</span>
+              <span class="yvr-fb-vibe-step" data-state="active">3. Git</span>
+              <span class="yvr-fb-vibe-step" data-state="upcoming">4. Vibing</span>
+            </div>
+            <div class="yvr-fb-vibe-stage">
+              <div id="yaver-fb-git-stage-copy" class="yvr-fb-vibe-stage-copy"></div>
+              <div id="yaver-fb-git-actions" class="yvr-fb-runner-auth-row">
+                <div class="yvr-fb-device-loading">Checking repo access…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const machinePill = overlay.querySelector<HTMLButtonElement>('#yaver-fb-machine-pill')!;
+      const gitIntro = overlay.querySelector<HTMLParagraphElement>('#yaver-fb-git-intro')!;
+      const gitSummary = overlay.querySelector<HTMLDivElement>('#yaver-fb-git-summary')!;
+      const gitStageCopy = overlay.querySelector<HTMLDivElement>('#yaver-fb-git-stage-copy')!;
+      const gitActions = overlay.querySelector<HTMLDivElement>('#yaver-fb-git-actions')!;
+      const dashboardUrl = `${(YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '')}/dashboard`;
+
+      const setGitBusy = (value: boolean) => {
+        busy = value;
+        machinePill.disabled = value;
+        gitActions.querySelectorAll<HTMLButtonElement>('button').forEach((button) => {
+          button.disabled = value;
+        });
+      };
+
+      const refreshGitSetup = async () => {
+        setGitBusy(true);
+        await refreshMachinePill();
+        try {
+          const eligibility = await YaverFeedback.getVibingEligibility();
+          const linkedProviders = await listLinkedGitProviders().catch(() => new Set<'github' | 'gitlab'>());
+          const provider = (eligibility.provider === 'github' || eligibility.provider === 'gitlab')
+            ? eligibility.provider
+            : null;
+          const availableDevices = await YaverFeedback.listAvailableDevices().catch(() => [] as RemoteDevice[]);
+          const selectedDevice = availableDevices.find((device) => device.deviceId === YaverFeedback.config?.preferredDeviceId);
+          const selectedMachineOwned = !!selectedDevice && !selectedDevice.isGuest;
+          const detectedProviders = await YaverFeedback.getClient()
+            .then((client) => client.gitProviderDetect())
+            .catch(() => []);
+          const detectedProvider = provider
+            ? detectedProviders.find((row) => row.provider === provider)
+            : null;
+          const gitReady = eligibility.needsGitSetup !== true;
+          gitSummary.textContent = gitReady ? 'Git configured' : 'Git setup needed';
+          gitIntro.textContent = gitReady
+            ? 'This project is already connected on the selected machine.'
+            : 'Link your git provider to Yaver, or configure the selected machine from web/mobile/SSH, before vibing unlocks.';
+          gitStageCopy.innerHTML = `
+            <div class="yvr-fb-vibe-stage-title">${gitReady ? 'Git Ready' : 'Connect Git'}</div>
+            <div class="yvr-fb-vibe-stage-text">${escapeHtml(
+              gitReady
+                ? 'Git is configured for this project on the selected machine. Continue when you want to open the vibing page.'
+                : eligibility.guidance?.trim()
+                  ? `${eligibility.reason ?? 'Git is not configured for this project.'} ${eligibility.guidance}`
+                  : eligibility.reason ?? 'Git is not configured for this project.',
+            )}</div>
+          `;
+          if (gitReady) {
+            gitActions.innerHTML = `
+              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="next">
+                <span class="yvr-fb-runner-card-kicker">Repo access</span>
+                <span class="yvr-fb-runner-card-title">Git configured</span>
+                <span class="yvr-fb-runner-card-meta">This machine can use the repo for this project.</span>
+                <span class="yvr-fb-runner-card-action">Next</span>
+              </button>
+            `;
+            gitActions.querySelector<HTMLButtonElement>('[data-git-action="next"]')!.onclick = () => {
+              if (!busy) {
+                setStatus('');
+                setView('actions');
+              }
+            };
+          } else {
+            const providerTitle = provider === 'gitlab' ? 'GitLab' : 'GitHub';
+            const linkState = provider && linkedProviders.has(provider) ? `${providerTitle} linked to Yaver` : `Link ${providerTitle} to Yaver`;
+            gitActions.innerHTML = `
+              ${provider ? `
+              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="link-account">
+                <span class="yvr-fb-runner-card-kicker">Main flow</span>
+                <span class="yvr-fb-runner-card-title">${escapeHtml(linkState)}</span>
+                <span class="yvr-fb-runner-card-meta">Account linking works from Yaver web and mobile settings. It should be part of the normal setup flow.</span>
+                <span class="yvr-fb-runner-card-action">${linkedProviders.has(provider) ? 'Open' : 'Link'}</span>
+              </button>` : ''}
+              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="detect">
+                <span class="yvr-fb-runner-card-kicker">Selected machine</span>
+                <span class="yvr-fb-runner-card-title">Discover existing git auth</span>
+                <span class="yvr-fb-runner-card-meta">${escapeHtml(
+                  detectedProvider?.username
+                    ? `Detected ${detectedProvider.username} on ${detectedProvider.host || providerTitle.toLowerCase()}.`
+                    : 'Try remote gh/glab or existing machine credentials first.',
+                )}</span>
+                <span class="yvr-fb-runner-card-action">Detect</span>
+              </button>
+              ${provider && selectedMachineOwned ? `
+              <div class="yvr-fb-runner-card yvr-fb-git-card">
+                <span class="yvr-fb-runner-card-kicker">Owned machine</span>
+                <span class="yvr-fb-runner-card-title">Set machine ${escapeHtml(providerTitle)} token</span>
+                <span class="yvr-fb-runner-card-meta">Paste a ${escapeHtml(providerTitle)} token here to configure git directly on this selected machine.</span>
+                <input id="yaver-fb-git-token" class="yvr-fb-vibe-input" type="password" placeholder="${escapeHtml(provider === 'gitlab' ? 'glpat-...' : 'ghp_...')}" />
+                ${provider === 'gitlab' ? '<input id="yaver-fb-git-host" class="yvr-fb-vibe-input" type="text" placeholder="gitlab.com" />' : ''}
+                <button type="button" class="yvr-fb-action yvr-fb-action-secondary" data-git-action="save-machine-token">Save on machine</button>
+              </div>` : ''}
+              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="connect">
+                <span class="yvr-fb-runner-card-kicker">Repo access</span>
+                <span class="yvr-fb-runner-card-title">Manual machine setup</span>
+                <span class="yvr-fb-runner-card-meta">${escapeHtml(
+                  selectedMachineOwned
+                    ? 'If direct setup here does not work, finish machine onboarding from Yaver web UI, Yaver mobile settings, or your own SSH session.'
+                    : 'This machine is shared with you. You can link your git account in Yaver here, but machine-side git setup must be done by the host or on one of your own machines.',
+                )}</span>
+                <span class="yvr-fb-runner-card-action">Guide</span>
+              </button>
+              <a class="yvr-fb-runner-card yvr-fb-git-card" data-git-link="dashboard" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener noreferrer">
+                <span class="yvr-fb-runner-card-kicker">Yaver web</span>
+                <span class="yvr-fb-runner-card-title">Open dashboard</span>
+                <span class="yvr-fb-runner-card-meta">Use Settings to link GitHub/GitLab to your Yaver account, then use Git or Tools to push git tokens to one or more machines.</span>
+                <span class="yvr-fb-runner-card-action">Open</span>
+              </a>
+              <div class="yvr-fb-runner-card yvr-fb-git-card" aria-hidden="true">
+                <span class="yvr-fb-runner-card-kicker">Yaver mobile / SSH</span>
+                <span class="yvr-fb-runner-card-title">Other recovery paths</span>
+                <span class="yvr-fb-runner-card-meta">Mobile app: Settings → Remote machine onboarding. SSH path: use your usual git/gh/glab setup on the machine, then come back and press Detect.</span>
+                <span class="yvr-fb-runner-card-action">Info</span>
+              </div>
+            `;
+            if (provider) {
+              gitActions.querySelector<HTMLButtonElement>('[data-git-action="link-account"]')!.onclick = async () => {
+                if (busy) return;
+                setGitBusy(true);
+                try {
+                  setStatus(`Linking ${providerTitle} to your Yaver account…`);
+                  const result = await startAccountLinkProvider(provider);
+                  if (result.kind === 'needs-login') {
+                    setStatus('Sign in to Yaver in the opened tab, then come back here.');
+                    return;
+                  }
+                  setStatus(`Finish ${providerTitle} sign-in in the opened tab. After that, if this machine still cannot see the repo, use Detect or machine onboarding.`);
+                } catch (err) {
+                  setStatus(err instanceof Error ? err.message : `Could not link ${providerTitle}.`);
+                } finally {
+                  setGitBusy(false);
+                }
+              };
+            }
+            if (provider && selectedMachineOwned) {
+              gitActions.querySelector<HTMLButtonElement>('[data-git-action="save-machine-token"]')!.onclick = async () => {
+                if (busy) return;
+                const tokenInput = gitActions.querySelector<HTMLInputElement>('#yaver-fb-git-token');
+                const hostInput = gitActions.querySelector<HTMLInputElement>('#yaver-fb-git-host');
+                const token = tokenInput?.value.trim() || '';
+                const host = hostInput?.value.trim() || '';
+                if (!token) {
+                  setStatus(`Paste a ${providerTitle} token first.`);
+                  return;
+                }
+                setGitBusy(true);
+                try {
+                  setStatus(`Saving ${providerTitle} token on the selected machine…`);
+                  await YaverFeedback.getClient().then((client) => client.gitProviderSetup({
+                    provider,
+                    token,
+                    host: provider === 'gitlab' ? (host || 'gitlab.com') : undefined,
+                  }));
+                  if (tokenInput) tokenInput.value = '';
+                  if (hostInput) hostInput.value = provider === 'gitlab' ? (host || 'gitlab.com') : '';
+                  setStatus(`${providerTitle} is configured on the selected machine. Re-checking repo access…`);
+                } catch (err) {
+                  setStatus(err instanceof Error ? err.message : `Could not save ${providerTitle} token.`);
+                } finally {
+                  await refreshGitSetup();
+                }
+              };
+            }
+            gitActions.querySelector<HTMLButtonElement>('[data-git-action="detect"]')!.onclick = async () => {
+              if (busy) return;
+              setGitBusy(true);
+              try {
+                setStatus('Detecting existing git credentials on the selected machine…');
+                const detected = await YaverFeedback.getClient().then((client) => client.gitProviderDetect());
+                setStatus(
+                  detected.length > 0
+                    ? `Detected ${detected.map((row) => row.provider).join(', ')} on the selected machine. Re-checking setup…`
+                    : 'No machine-side git credentials were detected. Use dashboard, mobile settings, or SSH setup.',
+                );
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : 'Could not detect git credentials.');
+              } finally {
+                await refreshGitSetup();
+              }
+            };
+            gitActions.querySelector<HTMLButtonElement>('[data-git-action="connect"]')!.onclick = async () => {
+              if (busy) return;
+              try {
+                setStatus('Use one of these paths: 1) Yaver web dashboard, 2) Yaver mobile Settings → Remote machine onboarding, or 3) your own SSH session on the machine. Then press Detect.');
+              } finally {
+                setGitBusy(false);
+              }
+            };
+          }
+        } catch (err) {
+          gitSummary.textContent = 'Machine unavailable';
+          gitIntro.textContent = 'Pick a reachable machine before continuing.';
+          gitStageCopy.innerHTML = `
+            <div class="yvr-fb-vibe-stage-title">Machine Required</div>
+            <div class="yvr-fb-vibe-stage-text">${escapeHtml(err instanceof Error ? err.message : 'Could not check git setup.')}</div>
+          `;
+          gitActions.innerHTML = `
+            <button type="button" class="yvr-fb-runner-card" data-git-action="machine">
+              <span class="yvr-fb-runner-card-kicker">Connection</span>
+              <span class="yvr-fb-runner-card-title">Pick machine</span>
+              <span class="yvr-fb-runner-card-meta">Go back and select a reachable machine.</span>
+              <span class="yvr-fb-runner-card-action">Back</span>
+            </button>
+          `;
+          gitActions.querySelector<HTMLButtonElement>('[data-git-action="machine"]')!.onclick = () => {
+            if (!busy) setView('machine');
+          };
+          setStatus(err instanceof Error ? err.message : 'Could not check git setup.');
+        } finally {
+          setGitBusy(false);
+        }
+      };
+
+      machinePill.onclick = () => {
+        if (!busy) setView('machine');
+      };
+
+      void refreshGitSetup();
+    };
+
+    // ── Step 4 — Actions / vibing ───────────────────────
 
     const renderActionsView = () => {
-      subtitle.textContent = 'Step 2 — Fix, ship, or vibe.';
+      subtitle.textContent = 'Step 4 of 4 — Vibing tools and chat.';
       body.innerHTML = `
         <button id="yaver-fb-machine-pill" class="yvr-fb-machine-pill" type="button">
           <span class="yvr-fb-dot yvr-fb-dot-green"></span>
@@ -1043,11 +1426,11 @@ export class YaverFeedback {
           <div class="yvr-fb-vibe-topline">
             <div class="yvr-fb-vibe-topline-copy">
               <label class="yvr-fb-vibe-label" for="yaver-fb-vibe-prompt">Vibing</label>
-              <p id="yaver-fb-vibe-intro" class="yvr-fb-vibe-intro">Sign in to an agent first, then connect git, then start the task.</p>
+              <p id="yaver-fb-vibe-intro" class="yvr-fb-vibe-intro">Use tools, chat, and vibing from the selected machine.</p>
             </div>
             <div id="yaver-fb-runner-summary" class="yvr-fb-runner-summary">Checking agent…</div>
           </div>
-          <div id="yaver-fb-vibe-onboarding" class="yvr-fb-vibe-onboarding">
+            <div id="yaver-fb-vibe-onboarding" class="yvr-fb-vibe-onboarding">
             <div id="yaver-fb-vibe-steps" class="yvr-fb-vibe-steps"></div>
             <div class="yvr-fb-vibe-stage">
               <div id="yaver-fb-vibe-stage-copy" class="yvr-fb-vibe-stage-copy"></div>
@@ -1123,71 +1506,6 @@ export class YaverFeedback {
           : `${primary.name || primary.id} needs setup`;
       };
 
-      const connectGitForRepo = async (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>) => {
-        const provider = (eligibility?.provider || '').trim().toLowerCase();
-        if (provider !== 'github' && provider !== 'gitlab') {
-          throw new Error('This repo does not expose a supported git host yet.');
-        }
-        const host = (eligibility?.repoHost || (provider === 'gitlab' ? 'gitlab.com' : 'github.com')).trim();
-        const client = await YaverFeedback.getClient();
-        const detected = await client.gitProviderDetect().catch(() => []);
-        if (detected.some((row) => row.provider === provider && row.host === host && row.hasToken)) {
-          return { kind: 'already-configured' as const };
-        }
-        const authToken = (YaverFeedback.config?.authToken || getCachedToken() || '').trim();
-        const webBaseUrl = (YaverFeedback.config?.authWebBaseUrl || 'https://yaver.io').replace(/\/$/, '');
-        const convexBaseUrl = (YaverFeedback.config?.authConvexSiteUrl || YaverFeedback.config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/$/, '');
-        if (!authToken) {
-          const loginUrl = `${webBaseUrl}/auth?return=${encodeURIComponent('/dashboard')}`;
-          if (typeof window !== 'undefined') {
-            window.open(loginUrl, '_blank', 'noopener,noreferrer');
-          }
-          return {
-            kind: 'needs-login' as const,
-            url: loginUrl,
-          };
-        }
-        const linkResp = await fetch(`${convexBaseUrl}/auth/oauth-link/start`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${authToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            provider,
-            client: 'web',
-            returnTo: '/dashboard',
-          }),
-        });
-        const linkData = await linkResp.json().catch(() => ({} as Record<string, unknown>));
-        if (!linkResp.ok || typeof linkData?.token !== 'string' || !linkData.token.trim()) {
-          const dashboardUrl = `${webBaseUrl}/dashboard`;
-          if (typeof window !== 'undefined') {
-            window.open(dashboardUrl, '_blank', 'noopener,noreferrer');
-          }
-          return {
-            kind: 'needs-dashboard' as const,
-            url: dashboardUrl,
-            detail:
-              typeof linkData?.error === 'string' && linkData.error.trim()
-                ? linkData.error
-                : 'Open the dashboard and finish provider linking there.',
-          };
-        }
-        const oauthUrl = `${webBaseUrl}/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(
-          linkData.token,
-        )}&return=${encodeURIComponent('/dashboard')}`;
-        if (typeof window !== 'undefined') {
-          window.open(oauthUrl, '_blank', 'noopener,noreferrer');
-        }
-        return {
-          kind: 'oauth-started' as const,
-          url: oauthUrl,
-          provider,
-          host,
-        };
-      };
-
       const renderOnboarding = (eligibility?: Awaited<ReturnType<typeof YaverFeedback.getVibingEligibility>>, errorMessage?: string) => {
         const hasReadyRunner = cachedRunners.some((runner) => runner.ready);
         const needsAgent = !eligibility?.canVibe && (!!eligibility?.needsRunnerAuth || !hasReadyRunner);
@@ -1195,17 +1513,22 @@ export class YaverFeedback {
         const steps = [
           {
             id: 'agent',
-            label: '1. Agent',
+            label: '1. OAuth',
             state: eligibility?.canVibe ? 'done' : needsAgent ? 'active' : 'done',
           },
           {
+            id: 'machine',
+            label: '2. Machine',
+            state: 'done',
+          },
+          {
             id: 'git',
-            label: '2. Git',
-            state: eligibility?.canVibe ? 'done' : needsGit ? 'active' : needsAgent ? 'upcoming' : 'done',
+            label: '3. Git',
+            state: eligibility?.canVibe ? 'done' : needsGit ? 'active' : 'done',
           },
           {
             id: 'chat',
-            label: '3. Chat',
+            label: '4. Vibing',
             state: eligibility?.canVibe ? 'active' : 'upcoming',
           },
         ];
@@ -1215,19 +1538,19 @@ export class YaverFeedback {
 
         if (eligibility?.canVibe) {
           vibeOnboarding.style.display = 'none';
-          vibeIntro.textContent = 'Chat takes over once the machine is ready.';
+          vibeIntro.textContent = 'The selected machine is ready.';
           return;
         }
 
         if (!needsAgent && !needsGit) {
           vibeOnboarding.style.display = 'none';
-          vibeIntro.textContent = 'Chat stays available while Yaver checks the remaining repo access rules.';
+          vibeIntro.textContent = 'Yaver is checking the remaining access rules.';
           return;
         }
 
         vibeOnboarding.style.display = 'grid';
         if (needsAgent) {
-          vibeIntro.textContent = 'Sign in to a coding agent first. Git comes after OAuth.';
+          vibeIntro.textContent = 'Finish coding-agent sign-in for this machine.';
           vibeStageCopy.innerHTML = `
             <div class="yvr-fb-vibe-stage-title">Select Agent</div>
             <div class="yvr-fb-vibe-stage-text">Pick the runner you want on this machine and finish its sign-in flow.</div>
@@ -1241,7 +1564,7 @@ export class YaverFeedback {
           return;
         }
 
-        vibeIntro.textContent = 'Agent access is ready. Connect the repo next, then the chat unlocks.';
+        vibeIntro.textContent = 'Git still needs to be connected before vibing can start.';
         vibeStageCopy.innerHTML = `
           <div class="yvr-fb-vibe-stage-title">Connect Git</div>
           <div class="yvr-fb-vibe-stage-text">${escapeHtml(
@@ -1268,11 +1591,11 @@ export class YaverFeedback {
               setStatus('Connecting git for this repo…');
               const result = await connectGitForRepo(eligibility);
               if (result.kind === 'oauth-started') {
-                setStatus(`Finish ${result.provider === 'gitlab' ? 'GitLab' : 'GitHub'} sign-in in the opened Yaver tab, then click Continue Setup again.`);
+                setStatus(`Finish ${result.provider === 'gitlab' ? 'GitLab' : 'GitHub'} sign-in in the opened Yaver tab, then go back to git setup.`);
                 return;
               }
               if (result.kind === 'needs-login') {
-                setStatus('Sign in to Yaver in the opened tab, then click Continue Setup again.');
+                setStatus('Sign in to Yaver in the opened tab, then go back to git setup.');
                 return;
               }
               if (result.kind === 'needs-dashboard') {
@@ -1656,15 +1979,16 @@ export class YaverFeedback {
       metaEl.textContent = platform ? `${platformDisplay(platform)} · ${status}` : status;
     };
 
-    const setView = (next: 'machine' | 'actions') => {
+      const setView = (next: 'machine' | 'git' | 'actions') => {
       if (next === 'machine') renderMachineView();
+      else if (next === 'git') renderGitSetupView();
       else renderActionsView();
     };
 
-    const decideInitialView = (): 'machine' | 'actions' => {
+    const decideInitialView = (): 'machine' | 'git' | 'actions' => {
       const cfg = YaverFeedback.config;
       if (!cfg) return 'machine';
-      return cfg.agentUrl && cfg.preferredDeviceId ? 'actions' : 'machine';
+      return cfg.agentUrl && cfg.preferredDeviceId ? 'git' : 'machine';
     };
 
     const statusListener = ((event: Event) => {

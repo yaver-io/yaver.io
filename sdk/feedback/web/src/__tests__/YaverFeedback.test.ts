@@ -248,7 +248,7 @@ describe('YaverFeedback', () => {
       expect(overlay).not.toBeNull();
     });
 
-    it('overlay has record, screenshot, and cancel buttons', async () => {
+    it('opens on git setup before vibing tools', async () => {
       await YaverFeedback.init({
         enabled: true,
         agentUrl: 'http://localhost:18080',
@@ -261,10 +261,8 @@ describe('YaverFeedback', () => {
       YaverFeedback.startReport();
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      expect(document.getElementById('yaver-fb-record')).not.toBeNull();
-      expect(document.getElementById('yaver-fb-screenshot')).not.toBeNull();
-      // Cancel button was removed in 0.3.2 — the X in the header now
-      // closes the overlay. The close button is always present.
+      expect(document.getElementById('yaver-fb-git-summary')).not.toBeNull();
+      expect(document.getElementById('yaver-fb-screenshot')).toBeNull();
       expect(document.getElementById('yaver-fb-close')).not.toBeNull();
     });
   });

@@ -33,3 +33,20 @@ func (s *HTTPServer) handleMachineOnboardingApply(w http.ResponseWriter, r *http
 		jsonReply(w, http.StatusOK, result)
 	}
 }
+
+func (s *HTTPServer) handleMachineOnboardingRemove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var req machineOnboardingRemoveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	if result, err := applyMachineOnboardingRemoveLocal(req); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+	} else {
+		jsonReply(w, http.StatusOK, result)
+	}
+}

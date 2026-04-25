@@ -242,6 +242,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner-auth/browser/submit-code", s.authSDK(s.handleRunnerBrowserAuthSubmitCode))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
 	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
+	mux.HandleFunc("/machine/onboarding/remove", s.auth(s.handleMachineOnboardingRemove))
 	mux.HandleFunc("/agent/env-profile", s.auth(s.handleEnvironmentProfile))
 	mux.HandleFunc("/agent/env-profile/apply", s.auth(s.handleEnvironmentProfileApply))
 	mux.HandleFunc("/agent/toolchain-sync/profile", s.auth(s.handleEnvironmentProfile))
@@ -8500,23 +8501,28 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}))
 	case "machine_onboarding_status":
 		var a struct {
-			DeviceID string `json:"device_id"`
+			DeviceID  string   `json:"device_id"`
+			DeviceIDs []string `json:"device_ids"`
 		}
 		json.Unmarshal(call.Arguments, &a)
+		if len(a.DeviceIDs) > 0 {
+			return mcpToolJSON(mcpMachineOnboardingStatusMulti(a.DeviceIDs))
+		}
 		return mcpToolJSON(mcpMachineOnboardingStatus(a.DeviceID))
 	case "machine_onboarding_apply":
 		var a struct {
-			DeviceID     string `json:"device_id"`
-			OpenAIAPIKey string `json:"openai_api_key"`
-			GitHubToken  string `json:"github_token"`
-			GitLabToken  string `json:"gitlab_token"`
-			GitLabHost   string `json:"gitlab_host"`
-			ApplyClone   *bool  `json:"apply_clone"`
-			ApplyCIToken *bool  `json:"apply_ci_token"`
-			Notes        string `json:"notes"`
+			DeviceID     string   `json:"device_id"`
+			DeviceIDs    []string `json:"device_ids"`
+			OpenAIAPIKey string   `json:"openai_api_key"`
+			GitHubToken  string   `json:"github_token"`
+			GitLabToken  string   `json:"gitlab_token"`
+			GitLabHost   string   `json:"gitlab_host"`
+			ApplyClone   *bool    `json:"apply_clone"`
+			ApplyCIToken *bool    `json:"apply_ci_token"`
+			Notes        string   `json:"notes"`
 		}
 		json.Unmarshal(call.Arguments, &a)
-		return mcpToolJSON(mcpMachineOnboardingApply(a.DeviceID, machineOnboardingApplyRequest{
+		req := machineOnboardingApplyRequest{
 			OpenAIAPIKey: a.OpenAIAPIKey,
 			GitHubToken:  a.GitHubToken,
 			GitLabToken:  a.GitLabToken,
@@ -8524,7 +8530,39 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			ApplyClone:   a.ApplyClone,
 			ApplyCIToken: a.ApplyCIToken,
 			Notes:        a.Notes,
+		}
+		if len(a.DeviceIDs) > 0 {
+			return mcpToolJSON(mcpMachineOnboardingApplyMulti(a.DeviceIDs, req))
+		}
+		return mcpToolJSON(mcpMachineOnboardingApply(a.DeviceID, machineOnboardingApplyRequest{
+			OpenAIAPIKey: req.OpenAIAPIKey,
+			GitHubToken:  req.GitHubToken,
+			GitLabToken:  req.GitLabToken,
+			GitLabHost:   req.GitLabHost,
+			ApplyClone:   req.ApplyClone,
+			ApplyCIToken: req.ApplyCIToken,
+			Notes:        req.Notes,
 		}))
+	case "machine_onboarding_remove":
+		var a struct {
+			DeviceID      string   `json:"device_id"`
+			DeviceIDs     []string `json:"device_ids"`
+			Providers     []string `json:"providers"`
+			GitLabHost    string   `json:"gitlab_host"`
+			RemoveClone   *bool    `json:"remove_clone"`
+			RemoveCIToken *bool    `json:"remove_ci_token"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		req := machineOnboardingRemoveRequest{
+			Providers:     a.Providers,
+			GitLabHost:    a.GitLabHost,
+			RemoveClone:   a.RemoveClone,
+			RemoveCIToken: a.RemoveCIToken,
+		}
+		if len(a.DeviceIDs) > 0 {
+			return mcpToolJSON(mcpMachineOnboardingRemoveMulti(a.DeviceIDs, req))
+		}
+		return mcpToolJSON(mcpMachineOnboardingRemove(a.DeviceID, req))
 	case "yaver_auth_unlink":
 		var a struct {
 			Provider string `json:"provider"`

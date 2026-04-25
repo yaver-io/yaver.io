@@ -172,10 +172,13 @@ export default function SettingsScreen() {
   const [runnerCapabilitySnapshot, setRunnerCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
   const [runnerIncidents, setRunnerIncidents] = useState<IncidentEvent[]>([]);
   const [machineOnboardingRows, setMachineOnboardingRows] = useState<MachineOnboardingProviderStatus[]>([]);
+  const [machineOnboardingRowsByDevice, setMachineOnboardingRowsByDevice] = useState<Record<string, MachineOnboardingProviderStatus[]>>({});
   const [githubToken, setGithubToken] = useState("");
   const [gitlabToken, setGitlabToken] = useState("");
   const [gitlabHost, setGitlabHost] = useState("gitlab.com");
   const [isApplyingMachineOnboarding, setIsApplyingMachineOnboarding] = useState(false);
+  const [removingOnboardingProvider, setRemovingOnboardingProvider] = useState<"github" | "gitlab" | null>(null);
+  const [selectedOnboardingTargetIds, setSelectedOnboardingTargetIds] = useState<string[]>([]);
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
   const [toolchainSourceId, setToolchainSourceId] = useState<string | null>(null);
@@ -870,18 +873,50 @@ export default function SettingsScreen() {
       setRunnerCapabilitySnapshot(null);
       setRunnerIncidents([]);
       setMachineOnboardingRows([]);
+      setMachineOnboardingRowsByDevice({});
       return;
     }
-    const [rows, onboarding, snapshot, incidents] = await Promise.all([
+    const [rows, snapshot, incidents] = await Promise.all([
       quicClient.runnerAuthStatus(),
-      quicClient.machineOnboardingStatus(),
       quicClient.capabilitySnapshot(),
       quicClient.incidents({ category: "runner_auth", limit: 8 }),
     ]);
     setRunnerAuthRows(rows);
     setRunnerCapabilitySnapshot(snapshot);
     setRunnerIncidents(incidents);
-    setMachineOnboardingRows(onboarding);
+    await loadMachineOnboardingStatusForTargets();
+  };
+
+  const onboardingTargetCandidates = devices.filter(
+    (device) => !device.isGuest && (device.online || device.id === activeDevice?.id),
+  );
+  const selectedOnboardingTargets = onboardingTargetCandidates.filter((device) => selectedOnboardingTargetIds.includes(device.id));
+  const resolveOnboardingTargetArg = (deviceId: string) =>
+    activeDevice?.id === deviceId ? undefined : deviceId;
+  const loadMachineOnboardingStatusForTargets = async (deviceIds: string[] = selectedOnboardingTargetIds) => {
+    if (connectionStatus !== "connected" || activeDevice?.isGuest) {
+      setMachineOnboardingRows([]);
+      setMachineOnboardingRowsByDevice({});
+      return;
+    }
+    const uniqueIds = Array.from(new Set(deviceIds.filter(Boolean)));
+    if (uniqueIds.length === 0) {
+      setMachineOnboardingRows([]);
+      setMachineOnboardingRowsByDevice({});
+      return;
+    }
+    const entries = await Promise.all(
+      uniqueIds.map(async (deviceId) => {
+        const rows = await quicClient.machineOnboardingStatus(resolveOnboardingTargetArg(deviceId));
+        return [deviceId, rows] as const;
+      }),
+    );
+    const next: Record<string, MachineOnboardingProviderStatus[]> = {};
+    entries.forEach(([deviceId, rows]) => {
+      next[deviceId] = rows;
+    });
+    setMachineOnboardingRowsByDevice(next);
+    setMachineOnboardingRows(next[uniqueIds[0]] || []);
   };
 
   const syncAiProvidersToRunners = async () => {
@@ -960,27 +995,109 @@ export default function SettingsScreen() {
       Alert.alert("No credentials", "Add at least one OpenAI, GitHub, or GitLab credential first.");
       return;
     }
+    if (selectedOnboardingTargets.length === 0) {
+      Alert.alert("Select machines", "Pick at least one owned live machine first.");
+      return;
+    }
     setIsApplyingMachineOnboarding(true);
     try {
-      const res = await quicClient.machineOnboardingApply({
-        openaiApiKey: openAiApiKey.trim(),
-        githubToken: githubToken.trim(),
-        gitlabToken: gitlabToken.trim(),
-        gitlabHost: gitlabHost.trim() || "gitlab.com",
-        applyClone: true,
-        applyCiToken: true,
-        notes: "Saved from Yaver mobile settings.",
-      });
-      if (!res.ok) {
-        throw new Error(res.error || "Failed to apply machine onboarding");
+      const nextRows: Record<string, MachineOnboardingProviderStatus[]> = {};
+      const updatedTargets: string[] = [];
+      const failures: string[] = [];
+      for (const device of selectedOnboardingTargets) {
+        const res = await quicClient.machineOnboardingApply({
+          openaiApiKey: openAiApiKey.trim(),
+          githubToken: githubToken.trim(),
+          gitlabToken: gitlabToken.trim(),
+          gitlabHost: gitlabHost.trim() || "gitlab.com",
+          applyClone: true,
+          applyCiToken: true,
+          notes: "Saved from Yaver mobile settings.",
+        }, resolveOnboardingTargetArg(device.id));
+        if (!res.ok) {
+          failures.push(`${device.name}: ${res.error || "Failed to apply machine onboarding"}`);
+          continue;
+        }
+        nextRows[device.id] = res.providers;
+        if (res.applied.length > 0) {
+          updatedTargets.push(`${device.name} (${res.applied.join(", ")})`);
+        } else {
+          updatedTargets.push(`${device.name} (no changes)`);
+        }
       }
-      setMachineOnboardingRows(res.providers);
-      Alert.alert("Applied", res.applied.length > 0 ? `Updated ${res.applied.join(", ")}.` : "No changes were needed.");
+      setMachineOnboardingRowsByDevice((prev) => ({ ...prev, ...nextRows }));
+      if (selectedOnboardingTargets[0]) {
+        setMachineOnboardingRows(nextRows[selectedOnboardingTargets[0].id] || []);
+      }
+      if (failures.length > 0 && updatedTargets.length === 0) {
+        throw new Error(failures.join("\n"));
+      }
+      Alert.alert(
+        failures.length > 0 ? "Applied with warnings" : "Applied",
+        [
+          updatedTargets.length > 0 ? `Updated: ${updatedTargets.join(", ")}` : "",
+          failures.length > 0 ? `Failed: ${failures.join(" | ")}` : "",
+        ].filter(Boolean).join("\n"),
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to apply machine onboarding.";
       Alert.alert("Error", message);
     } finally {
       setIsApplyingMachineOnboarding(false);
+    }
+  };
+
+  const removeMachineOnboarding = async (provider: "github" | "gitlab") => {
+    if (connectionStatus !== "connected") {
+      Alert.alert("Connect a device", "Connect to your own Yaver machine to remove GitHub or GitLab credentials.");
+      return;
+    }
+    if (activeDevice?.isGuest) {
+      Alert.alert("Guest machine", "Machine onboarding removal is disabled on guest connections. Connect to your own host machine instead.");
+      return;
+    }
+    if (selectedOnboardingTargets.length === 0) {
+      Alert.alert("Select machines", "Pick at least one owned live machine first.");
+      return;
+    }
+    setRemovingOnboardingProvider(provider);
+    try {
+      const nextRows: Record<string, MachineOnboardingProviderStatus[]> = {};
+      const removedTargets: string[] = [];
+      const failures: string[] = [];
+      for (const device of selectedOnboardingTargets) {
+        const res = await quicClient.machineOnboardingRemove({
+          providers: [provider],
+          gitlabHost: provider === "gitlab" ? (gitlabHost.trim() || "gitlab.com") : undefined,
+          removeClone: true,
+          removeCiToken: true,
+        }, resolveOnboardingTargetArg(device.id));
+        if (!res.ok) {
+          failures.push(`${device.name}: ${res.error || "Failed to remove machine onboarding"}`);
+          continue;
+        }
+        nextRows[device.id] = res.providers;
+        removedTargets.push(`${device.name} (${res.removed.length > 0 ? res.removed.join(", ") : "nothing removed"})`);
+      }
+      setMachineOnboardingRowsByDevice((prev) => ({ ...prev, ...nextRows }));
+      if (selectedOnboardingTargets[0]) {
+        setMachineOnboardingRows(nextRows[selectedOnboardingTargets[0].id] || []);
+      }
+      if (failures.length > 0 && removedTargets.length === 0) {
+        throw new Error(failures.join("\n"));
+      }
+      Alert.alert(
+        failures.length > 0 ? "Removed with warnings" : "Removed",
+        [
+          removedTargets.length > 0 ? `Updated: ${removedTargets.join(", ")}` : "",
+          failures.length > 0 ? `Failed: ${failures.join(" | ")}` : "",
+        ].filter(Boolean).join("\n"),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to remove machine onboarding.";
+      Alert.alert("Error", message);
+    } finally {
+      setRemovingOnboardingProvider(null);
     }
   };
 
@@ -1001,9 +1118,20 @@ export default function SettingsScreen() {
   }, [selectedToolchainSource?.id]);
 
   useEffect(() => {
+    const allowedIds = new Set(onboardingTargetCandidates.map((device) => device.id));
+    setSelectedOnboardingTargetIds((current) => {
+      const filtered = current.filter((id) => allowedIds.has(id));
+      if (filtered.length > 0) return filtered;
+      if (activeDevice && !activeDevice.isGuest && allowedIds.has(activeDevice.id)) return [activeDevice.id];
+      const first = onboardingTargetCandidates[0];
+      return first ? [first.id] : [];
+    });
+  }, [activeDevice?.id, activeDevice?.isGuest, onboardingTargetCandidates.map((device) => device.id).join("|")]);
+
+  useEffect(() => {
     if (!showIntegrations) return;
     void loadRunnerAuthStatus();
-  }, [showIntegrations, connectionStatus, activeDevice?.id, activeDevice?.isGuest]);
+  }, [showIntegrations, connectionStatus, activeDevice?.id, activeDevice?.isGuest, selectedOnboardingTargetIds.join("|")]);
 
   const currentToolchainSyncKinds = () => {
     const kinds: string[] = [];
@@ -4018,8 +4146,52 @@ export default function SettingsScreen() {
 
               <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>Remote machine onboarding</Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
-                Push OpenAI, GitHub, and GitLab onboarding into the connected machine through the Yaver agent. Git tokens are stored for both clone/pull and CI/deploy use.
+                Push OpenAI, GitHub, and GitLab onboarding into one or more owned live machines through the Yaver agent. Git tokens are stored for both clone/pull and CI/deploy use.
               </Text>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Target machines</Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                Pick the owned live boxes that should receive this git/API-key setup.
+              </Text>
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                {onboardingTargetCandidates.length === 0 ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    No owned live machines available yet.
+                  </Text>
+                ) : (
+                  onboardingTargetCandidates.map((device) => {
+                    const selected = selectedOnboardingTargetIds.includes(device.id);
+                    return (
+                      <Pressable
+                        key={device.id}
+                        onPress={() => {
+                          setSelectedOnboardingTargetIds((current) => (
+                            current.includes(device.id)
+                              ? current.filter((id) => id !== device.id)
+                              : [...current, device.id]
+                          ));
+                        }}
+                        style={{
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          borderRadius: 10,
+                          borderWidth: 1,
+                          borderColor: selected ? c.accent : c.border,
+                          backgroundColor: selected ? `${c.accent}22` : c.bg,
+                          minWidth: 150,
+                        }}
+                      >
+                        <Text style={{ color: selected ? c.accent : c.textPrimary, fontWeight: "600", fontSize: 13 }}>
+                          {device.name}
+                        </Text>
+                        <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>
+                          {device.id === activeDevice?.id ? "connected host" : "via peer proxy"} · {device.os || "machine"}
+                        </Text>
+                      </Pressable>
+                    );
+                  })
+                )}
+              </View>
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>GitHub token</Text>
               <TextInput
@@ -4072,22 +4244,95 @@ export default function SettingsScreen() {
                 ]}
               >
                 <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
-                  {isApplyingMachineOnboarding ? "Applying..." : "Apply Machine Onboarding"}
+                  {isApplyingMachineOnboarding ? "Applying..." : `Apply To ${Math.max(1, selectedOnboardingTargetIds.length)} Machine${selectedOnboardingTargetIds.length === 1 ? "" : "s"}`}
                 </Text>
               </Pressable>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
+                <Pressable
+                  onPress={() => void removeMachineOnboarding("github")}
+                  disabled={!!removingOnboardingProvider || connectionStatus !== "connected" || !!activeDevice?.isGuest}
+                  style={({ pressed }) => [
+                    {
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: c.error,
+                      alignItems: "center",
+                      opacity: (!!removingOnboardingProvider || connectionStatus !== "connected" || !!activeDevice?.isGuest) ? 0.5 : 1,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: c.error, fontWeight: "600", fontSize: 13 }}>
+                    {removingOnboardingProvider === "github" ? "Removing GitHub..." : "Remove GitHub"}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => void removeMachineOnboarding("gitlab")}
+                  disabled={!!removingOnboardingProvider || connectionStatus !== "connected" || !!activeDevice?.isGuest}
+                  style={({ pressed }) => [
+                    {
+                      flex: 1,
+                      paddingVertical: 10,
+                      borderRadius: 8,
+                      borderWidth: 1,
+                      borderColor: c.error,
+                      alignItems: "center",
+                      opacity: (!!removingOnboardingProvider || connectionStatus !== "connected" || !!activeDevice?.isGuest) ? 0.5 : 1,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={{ color: c.error, fontWeight: "600", fontSize: 13 }}>
+                    {removingOnboardingProvider === "gitlab" ? "Removing GitLab..." : "Remove GitLab"}
+                  </Text>
+                </Pressable>
+              </View>
 
               <View style={{ marginTop: 12, gap: 6 }}>
-                {machineOnboardingRows.length === 0 ? (
+                {selectedOnboardingTargets.length === 0 ? (
+                  <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                    Select one or more owned machines to inspect onboarding state.
+                  </Text>
+                ) : Object.keys(machineOnboardingRowsByDevice).length === 0 ? (
                   <Text style={{ color: c.textMuted, fontSize: 11 }}>
                     {connectionStatus === "connected" && !activeDevice?.isGuest
-                      ? "OpenAI / GitHub / GitLab status will appear here."
+                      ? "OpenAI / GitHub / GitLab status will appear here for the selected machines."
                       : "Connect to your own machine to inspect provider onboarding."}
                   </Text>
                 ) : (
-                  machineOnboardingRows.map((row) => (
-                    <Text key={row.id} style={{ color: row.ready ? c.success : row.configured ? c.accent : c.textMuted, fontSize: 11 }}>
-                      {row.name}: {row.detail || row.warning || (row.ready ? "ready" : "not configured")}
-                    </Text>
+                  selectedOnboardingTargets.map((device) => (
+                    <View
+                      key={device.id}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: c.border,
+                        backgroundColor: c.bgCardElevated,
+                        borderRadius: 10,
+                        padding: 10,
+                      }}
+                    >
+                      <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 12 }}>
+                        {device.name}
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }}>
+                        {device.id === activeDevice?.id ? "connected host" : "live peer"} · {device.os || "machine"}
+                      </Text>
+                      <View style={{ marginTop: 8, gap: 6 }}>
+                        {(machineOnboardingRowsByDevice[device.id] || []).length === 0 ? (
+                          <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                            No onboarding status loaded yet.
+                          </Text>
+                        ) : (
+                          (machineOnboardingRowsByDevice[device.id] || []).map((row) => (
+                            <Text key={`${device.id}:${row.id}`} style={{ color: row.ready ? c.success : row.configured ? c.accent : c.textMuted, fontSize: 11 }}>
+                              {row.name}: {row.detail || row.warning || (row.ready ? "ready" : "not configured")}
+                            </Text>
+                          ))
+                        )}
+                      </View>
+                    </View>
                   ))
                 )}
               </View>
