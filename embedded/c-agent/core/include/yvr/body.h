@@ -241,6 +241,179 @@ yvr_status_t yvr_error_decode(const uint8_t *buf,
                               size_t         n,
                               yvr_error_t   *out);
 
+/* ── INVOKE (brain → device) ────────────────────────────────── */
+/* Run a module by hash with a vendor-defined argument blob. The
+ * args field is opaque CBOR — the host treats it as a byte
+ * string and passes it verbatim to the module's invoke().
+ *
+ * High-risk modules require a signed approval token (see
+ * c-agent-architecture.md §7.3); the token is also opaque bytes
+ * here, validated by the host before invocation.
+ *
+ * Keys (CTAP2 order):
+ *   "v" (0x61) < "args" (0x64) < "method" (0x66) <
+ *   "approval" (0x68) < "tool_hash" (0x69)
+ *
+ *   v          (uint)   protocol version
+ *   args       (bytes)  opaque CBOR args; may be empty
+ *   method     (text)   vendor-defined method name
+ *   approval   (bytes)  optional signed approval token
+ *   tool_hash  (bytes)  blake3 hash of the target module
+ */
+typedef struct yvr_invoke {
+    uint32_t       protocol_version;
+    const uint8_t *tool_hash;
+    size_t         tool_hash_len;
+    const char    *method;
+    size_t         method_len;
+    const uint8_t *args;
+    size_t         args_len;
+    const uint8_t *approval;
+    size_t         approval_len;
+} yvr_invoke_t;
+
+yvr_status_t yvr_invoke_encode(const yvr_invoke_t *r,
+                               uint8_t            *buf,
+                               size_t              cap,
+                               size_t             *out_len);
+
+yvr_status_t yvr_invoke_decode(const uint8_t *buf,
+                               size_t         n,
+                               yvr_invoke_t  *out);
+
+/* ── TOOL_RSP (device → brain) ──────────────────────────────── */
+/* Result of a TOOL_REQ. `status` mirrors yvr_module_status_t
+ * (0 = ok, negative = error). On success, `result` carries the
+ * module's CBOR-encoded response. On error, `error` carries a
+ * human-readable string + `result` may be empty.
+ *
+ * `duration_ms` is the host's measured wall time for the
+ * invocation, useful for the brain's per-iteration budget tracking.
+ *
+ * Keys (CTAP2):
+ *   "v" (0x61) < "error" (0x65) < "result" (0x66-72) <
+ *   "status" (0x66-73) < "tool_hash" (0x69) <
+ *   "duration_ms" (0x6b)
+ *
+ *   v            (uint)
+ *   error        (text)   optional human-readable error
+ *   result       (bytes)  opaque CBOR result; may be empty
+ *   status       (int)    yvr_module_status_t value
+ *   tool_hash    (bytes)  echoes the INVOKE's tool_hash
+ *   duration_ms  (uint)   wall time of the invocation
+ */
+typedef struct yvr_tool_rsp {
+    uint32_t       protocol_version;
+    const char    *error;
+    size_t         error_len;
+    const uint8_t *result;
+    size_t         result_len;
+    int32_t        status;
+    const uint8_t *tool_hash;
+    size_t         tool_hash_len;
+    uint32_t       duration_ms;
+} yvr_tool_rsp_t;
+
+yvr_status_t yvr_tool_rsp_encode(const yvr_tool_rsp_t *r,
+                                 uint8_t              *buf,
+                                 size_t                cap,
+                                 size_t               *out_len);
+
+yvr_status_t yvr_tool_rsp_decode(const uint8_t  *buf,
+                                 size_t          n,
+                                 yvr_tool_rsp_t *out);
+
+/* ── STREAM_CHUNK (device → brain) ──────────────────────────── */
+/* One chunk of a long-running probe's output. Multiple chunks
+ * carry the same stream_id; the brain reassembles by seq order.
+ * end_stream = true on the final chunk.
+ *
+ * Keys (CTAP2):
+ *   "v" (0x61) < "seq" (0x63) < "data" (0x64) <
+ *   "stream_id" (0x69) < "end_stream" (0x6a)
+ *
+ *   v            (uint)
+ *   seq          (uint)   monotonically increasing per stream
+ *   data         (bytes)  opaque chunk payload; may be empty
+ *   stream_id    (uint)   matches the frame header's stream_id
+ *   end_stream   (bool)   true on the final chunk
+ */
+typedef struct yvr_stream_chunk {
+    uint32_t       protocol_version;
+    uint32_t       seq;
+    const uint8_t *data;
+    size_t         data_len;
+    uint32_t       stream_id;
+    bool           end_stream;
+} yvr_stream_chunk_t;
+
+yvr_status_t yvr_stream_chunk_encode(const yvr_stream_chunk_t *c,
+                                     uint8_t                  *buf,
+                                     size_t                    cap,
+                                     size_t                   *out_len);
+
+yvr_status_t yvr_stream_chunk_decode(const uint8_t      *buf,
+                                     size_t              n,
+                                     yvr_stream_chunk_t *out);
+
+/* ── NEED (device → brain) ──────────────────────────────────── */
+/* Cache miss: the device received an INVOKE for a hash it doesn't
+ * have locally and asks the brain to ship the module bytes via
+ * MODULE.
+ *
+ * Keys (CTAP2): "v" (0x61) < "tool_hash" (0x69)
+ *
+ *   v          (uint)
+ *   tool_hash  (bytes)  the missing module's hash
+ */
+typedef struct yvr_need {
+    uint32_t       protocol_version;
+    const uint8_t *tool_hash;
+    size_t         tool_hash_len;
+} yvr_need_t;
+
+yvr_status_t yvr_need_encode(const yvr_need_t *r,
+                             uint8_t          *buf,
+                             size_t            cap,
+                             size_t           *out_len);
+
+yvr_status_t yvr_need_decode(const uint8_t *buf,
+                             size_t         n,
+                             yvr_need_t    *out);
+
+/* ── MODULE (brain → device) ────────────────────────────────── */
+/* Signed module shipment. `descriptor` is a CBOR-encoded
+ * structure carrying name + version + capabilities + expires_at
+ * + signature; the device parses it separately, verifies the
+ * signature, and checks that the hash of `wasm` matches what
+ * the descriptor declares.
+ *
+ * The body codec here treats both `descriptor` and `wasm` as
+ * opaque bytes — descriptor parsing is upstream of this layer.
+ *
+ * Keys (CTAP2): "v" (0x61) < "wasm" (0x64) < "descriptor" (0x6a)
+ *
+ *   v           (uint)
+ *   wasm        (bytes)  module artifact bytes
+ *   descriptor  (bytes)  CBOR-encoded signed descriptor
+ */
+typedef struct yvr_module_body {
+    uint32_t       protocol_version;
+    const uint8_t *wasm;
+    size_t         wasm_len;
+    const uint8_t *descriptor;
+    size_t         descriptor_len;
+} yvr_module_body_t;
+
+yvr_status_t yvr_module_body_encode(const yvr_module_body_t *m,
+                                    uint8_t                 *buf,
+                                    size_t                   cap,
+                                    size_t                  *out_len);
+
+yvr_status_t yvr_module_body_decode(const uint8_t     *buf,
+                                    size_t             n,
+                                    yvr_module_body_t *out);
+
 #ifdef __cplusplus
 }
 #endif

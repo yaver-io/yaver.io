@@ -430,6 +430,261 @@ static int test_error_roundtrip_minimal(void)
     return 0;
 }
 
+/* ── INVOKE ─────────────────────────────────────────────────── */
+
+static int test_invoke_roundtrip_minimal(void)
+{
+    int rc = 700;
+    uint8_t hash[32];
+    for (size_t i = 0; i < sizeof hash; i++) hash[i] = (uint8_t)(0xab + i);
+    uint8_t args[16];
+    for (size_t i = 0; i < sizeof args; i++) args[i] = (uint8_t)(0xc0 + i);
+
+    yvr_invoke_t in = {
+        .protocol_version = 1,
+        .tool_hash = hash, .tool_hash_len = sizeof hash,
+        .method = "wifi_client_count", .method_len = 17,
+        .args = args, .args_len = sizeof args,
+    };
+    uint8_t buf[128];
+    size_t n = 0;
+    EXP_OK(yvr_invoke_encode(&in, buf, sizeof buf, &n));
+
+    yvr_invoke_t out;
+    EXP_OK(yvr_invoke_decode(buf, n, &out));
+    EXPECT(out.tool_hash_len == sizeof hash, rc);
+    EXPECT(memcmp(out.tool_hash, hash, sizeof hash) == 0, rc + 1);
+    EXPECT(out.method_len == 17, rc + 2);
+    EXPECT(memcmp(out.method, "wifi_client_count", 17) == 0, rc + 3);
+    EXPECT(out.args_len == sizeof args, rc + 4);
+    EXPECT(memcmp(out.args, args, sizeof args) == 0, rc + 5);
+    EXPECT(out.approval == NULL && out.approval_len == 0, rc + 6);
+    return 0;
+}
+
+static int test_invoke_roundtrip_with_approval(void)
+{
+    int rc = 710;
+    uint8_t hash[32]; uint8_t args[8]; uint8_t apv[64];
+    for (size_t i = 0; i < sizeof hash; i++) hash[i] = (uint8_t)i;
+    for (size_t i = 0; i < sizeof args; i++) args[i] = (uint8_t)(0x10 + i);
+    for (size_t i = 0; i < sizeof apv;  i++) apv[i]  = (uint8_t)(0x80 + i);
+
+    yvr_invoke_t in = {
+        .protocol_version = 1,
+        .tool_hash = hash, .tool_hash_len = sizeof hash,
+        .method = "restart_service", .method_len = 15,
+        .args = args, .args_len = sizeof args,
+        .approval = apv, .approval_len = sizeof apv,
+    };
+    uint8_t buf[256];
+    size_t n = 0;
+    EXP_OK(yvr_invoke_encode(&in, buf, sizeof buf, &n));
+
+    yvr_invoke_t out;
+    EXP_OK(yvr_invoke_decode(buf, n, &out));
+    EXPECT(out.approval_len == sizeof apv, rc);
+    EXPECT(memcmp(out.approval, apv, sizeof apv) == 0, rc + 1);
+    return 0;
+}
+
+static int test_invoke_skips_unknown(void)
+{
+    int rc = 720;
+    /* Hand-rolled CBOR: {"v":1, "args":h'', "future":42, "method":"x", "tool_hash":h'aa'}
+     *
+     * CBOR-key order: "v"(0x61) < "args"(0x64) < "future"(0x66) <
+     * "method"(0x66) < "tool_hash"(0x69). "future" and "method"
+     * tie on first byte (both 0x66, length 6); compare second
+     * byte: "future" 'f' (0x66) vs "method" 'm' (0x6d). 'f'<'m'
+     * → "future" first.
+     */
+    static const uint8_t in[] = {
+        0xa5,
+        0x61, 'v',                              0x01,
+        0x64, 'a','r','g','s',                  0x40,
+        0x66, 'f','u','t','u','r','e',          0x18, 0x2a,
+        0x66, 'm','e','t','h','o','d',          0x61, 'x',
+        0x69, 't','o','o','l','_','h','a','s','h', 0x41, 0xaa,
+    };
+    yvr_invoke_t out;
+    EXP_OK(yvr_invoke_decode(in, sizeof in, &out));
+    EXPECT(out.method_len == 1 && out.method[0] == 'x', rc);
+    EXPECT(out.tool_hash_len == 1 && out.tool_hash[0] == 0xaa, rc + 1);
+    return 0;
+}
+
+/* ── TOOL_RSP ───────────────────────────────────────────────── */
+
+static int test_tool_rsp_roundtrip_ok(void)
+{
+    int rc = 800;
+    uint8_t hash[32];
+    uint8_t result[16];
+    for (size_t i = 0; i < sizeof hash;   i++) hash[i]   = (uint8_t)(0xab + i);
+    for (size_t i = 0; i < sizeof result; i++) result[i] = (uint8_t)(0xd0 + i);
+
+    yvr_tool_rsp_t in = {
+        .protocol_version = 1,
+        .result = result, .result_len = sizeof result,
+        .status = 0,
+        .tool_hash = hash, .tool_hash_len = sizeof hash,
+        .duration_ms = 1234,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_tool_rsp_encode(&in, buf, sizeof buf, &n));
+
+    yvr_tool_rsp_t out;
+    EXP_OK(yvr_tool_rsp_decode(buf, n, &out));
+    EXPECT(out.status == 0, rc);
+    EXPECT(out.result_len == sizeof result, rc + 1);
+    EXPECT(memcmp(out.result, result, sizeof result) == 0, rc + 2);
+    EXPECT(out.duration_ms == 1234, rc + 3);
+    EXPECT(out.error == NULL && out.error_len == 0, rc + 4);
+    return 0;
+}
+
+static int test_tool_rsp_roundtrip_error(void)
+{
+    int rc = 810;
+    uint8_t hash[32] = {0};
+    yvr_tool_rsp_t in = {
+        .protocol_version = 1,
+        .error = "module trapped: out of memory", .error_len = 29,
+        .result = NULL, .result_len = 0,
+        .status = -2,
+        .tool_hash = hash, .tool_hash_len = sizeof hash,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_tool_rsp_encode(&in, buf, sizeof buf, &n));
+
+    yvr_tool_rsp_t out;
+    EXP_OK(yvr_tool_rsp_decode(buf, n, &out));
+    EXPECT(out.status == -2, rc);
+    EXPECT(out.result_len == 0, rc + 1);
+    EXPECT(out.error_len == 29, rc + 2);
+    EXPECT(memcmp(out.error, "module trapped: out of memory", 29) == 0, rc + 3);
+    return 0;
+}
+
+/* ── STREAM_CHUNK ───────────────────────────────────────────── */
+
+static int test_stream_chunk_roundtrip(void)
+{
+    int rc = 900;
+    uint8_t data[64];
+    for (size_t i = 0; i < sizeof data; i++) data[i] = (uint8_t)i;
+
+    yvr_stream_chunk_t in = {
+        .protocol_version = 1,
+        .seq = 17,
+        .data = data, .data_len = sizeof data,
+        .stream_id = 0xDEADBEEF,
+        .end_stream = false,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_stream_chunk_encode(&in, buf, sizeof buf, &n));
+
+    yvr_stream_chunk_t out;
+    EXP_OK(yvr_stream_chunk_decode(buf, n, &out));
+    EXPECT(out.seq == 17,                    rc);
+    EXPECT(out.data_len == sizeof data,      rc + 1);
+    EXPECT(memcmp(out.data, data, sizeof data) == 0, rc + 2);
+    EXPECT(out.stream_id == 0xDEADBEEF,      rc + 3);
+    EXPECT(out.end_stream == false,          rc + 4);
+    return 0;
+}
+
+static int test_stream_chunk_end(void)
+{
+    int rc = 910;
+    yvr_stream_chunk_t in = {
+        .protocol_version = 1,
+        .seq = 999,
+        .data = NULL, .data_len = 0,
+        .stream_id = 1,
+        .end_stream = true,
+    };
+    uint8_t buf[64];
+    size_t  n = 0;
+    EXP_OK(yvr_stream_chunk_encode(&in, buf, sizeof buf, &n));
+
+    yvr_stream_chunk_t out;
+    EXP_OK(yvr_stream_chunk_decode(buf, n, &out));
+    EXPECT(out.end_stream == true, rc);
+    EXPECT(out.data_len == 0,      rc + 1);
+    return 0;
+}
+
+/* ── NEED ───────────────────────────────────────────────────── */
+
+static int test_need_roundtrip(void)
+{
+    int rc = 1000;
+    uint8_t hash[32];
+    for (size_t i = 0; i < sizeof hash; i++) hash[i] = (uint8_t)(0x10 + i);
+
+    yvr_need_t in = {
+        .protocol_version = 1,
+        .tool_hash = hash, .tool_hash_len = sizeof hash,
+    };
+    uint8_t buf[64];
+    size_t  n = 0;
+    EXP_OK(yvr_need_encode(&in, buf, sizeof buf, &n));
+
+    yvr_need_t out;
+    EXP_OK(yvr_need_decode(buf, n, &out));
+    EXPECT(out.protocol_version == 1, rc);
+    EXPECT(out.tool_hash_len == sizeof hash, rc + 1);
+    EXPECT(memcmp(out.tool_hash, hash, sizeof hash) == 0, rc + 2);
+    return 0;
+}
+
+/* ── MODULE ─────────────────────────────────────────────────── */
+
+static int test_module_body_roundtrip(void)
+{
+    int rc = 1100;
+    uint8_t wasm[256];
+    uint8_t desc[64];
+    for (size_t i = 0; i < sizeof wasm; i++) wasm[i] = (uint8_t)(i & 0xFF);
+    for (size_t i = 0; i < sizeof desc; i++) desc[i] = (uint8_t)(0x40 + i);
+
+    yvr_module_body_t in = {
+        .protocol_version = 1,
+        .wasm = wasm, .wasm_len = sizeof wasm,
+        .descriptor = desc, .descriptor_len = sizeof desc,
+    };
+    uint8_t buf[512];
+    size_t  n = 0;
+    EXP_OK(yvr_module_body_encode(&in, buf, sizeof buf, &n));
+
+    yvr_module_body_t out;
+    EXP_OK(yvr_module_body_decode(buf, n, &out));
+    EXPECT(out.wasm_len == sizeof wasm, rc);
+    EXPECT(memcmp(out.wasm, wasm, sizeof wasm) == 0, rc + 1);
+    EXPECT(out.descriptor_len == sizeof desc, rc + 2);
+    EXPECT(memcmp(out.descriptor, desc, sizeof desc) == 0, rc + 3);
+    return 0;
+}
+
+static int test_module_body_rejects_missing(void)
+{
+    int rc = 1110;
+    /* Map missing wasm field. */
+    static const uint8_t in[] = {
+        0xa2,
+        0x61, 'v',                                              0x01,
+        0x6a, 'd','e','s','c','r','i','p','t','o','r',          0x41, 0x42,
+    };
+    yvr_module_body_t out;
+    EXPECT(yvr_module_body_decode(in, sizeof in, &out) == YVR_E_BAD_FRAME, rc);
+    return 0;
+}
+
 /* ── Driver ──────────────────────────────────────────────────── */
 
 typedef int (*tfn)(void);
@@ -456,6 +711,16 @@ int main(void)
         { "attest_capabilities_overflow",    test_attest_capabilities_overflow   },
         { "error_roundtrip_full",            test_error_roundtrip_full           },
         { "error_roundtrip_minimal",         test_error_roundtrip_minimal        },
+        { "invoke_roundtrip_minimal",        test_invoke_roundtrip_minimal       },
+        { "invoke_roundtrip_with_approval",  test_invoke_roundtrip_with_approval },
+        { "invoke_skips_unknown",            test_invoke_skips_unknown           },
+        { "tool_rsp_roundtrip_ok",           test_tool_rsp_roundtrip_ok          },
+        { "tool_rsp_roundtrip_error",        test_tool_rsp_roundtrip_error       },
+        { "stream_chunk_roundtrip",          test_stream_chunk_roundtrip         },
+        { "stream_chunk_end",                test_stream_chunk_end               },
+        { "need_roundtrip",                  test_need_roundtrip                 },
+        { "module_body_roundtrip",           test_module_body_roundtrip          },
+        { "module_body_rejects_missing",     test_module_body_rejects_missing    },
     };
     const size_t n = sizeof T / sizeof T[0];
     int failed = 0;
