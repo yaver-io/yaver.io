@@ -683,7 +683,11 @@ function usePrimaryDeviceId(token: string | null | undefined): {
  * here for fast lookup. The user-visible flow is the small dropdown on
  * each device card.
  */
-function usePrimaryRunnerByDevice(token: string | null | undefined): {
+// Re-exported so the dashboard can read the same map without
+// duplicating the Convex round-trip. Hooks used in two trees still
+// fire two fetches, but they use Convex's HTTP cache so it's cheap;
+// long-term we should hoist this to a shared context.
+export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   primaryRunnerByDevice: Record<string, string>;
   setPrimaryRunner: (deviceId: string, runnerId: string | null) => Promise<void>;
 } {
@@ -1022,52 +1026,104 @@ export default function DevicesView({
                     const firstReady = states.find((s) => s.health === "ready");
                     return firstReady?.id ?? null;
                   })();
+                  const primaryId = explicitPrimary ?? seededPrimary ?? "";
+                  const primaryState = states.find((s) => s.id === primaryId);
+                  // "Available" = anything that's actually present on
+                  // the agent. We strip "not-installed" entries so the
+                  // dropdown / chip rail isn't full of dead options the
+                  // user can't act on. Test / Sign-in business logic
+                  // stays — we just route them through the existing
+                  // RunnerChipWithTest component for whichever runner
+                  // the user is currently looking at.
+                  const availableStates = states.filter((s) => s.health !== "not-installed");
+                  const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">
-                      <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">
-                          Coding agents
+                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                        Coding agents
+                      </div>
+                      {/* Primary agent — promoted to its own card. This
+                          is the default runner used when chat / hot
+                          reload / web reload opens a workspace on this
+                          device, so we make it visually load-bearing
+                          instead of one chip among many. */}
+                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-3 py-2">
+                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-300">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                            <path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.51 5.79 22l2.39-8.15L2 9.36h7.61z"/>
+                          </svg>
+                          Primary
                         </span>
-                        {/* Per-device primary picker. Selecting writes to
-                            userSettings.primaryRunnerByDevice on Convex;
-                            the dashboard pre-selects this runner whenever
-                            the user opens a workspace on this device. */}
-                        <span className="ml-auto flex items-center gap-1 text-[10px] text-surface-500">
-                          <span>Primary:</span>
+                        {primaryState ? (
+                          <RunnerChipWithTest
+                            device={device}
+                            state={primaryState}
+                            token={token ?? null}
+                            onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                          />
+                        ) : (
+                          <span className="text-[12px] text-surface-500">(none set)</span>
+                        )}
+                        {!explicitPrimary && seededPrimary ? (
+                          <span
+                            className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
+                          >
+                            suggested
+                          </span>
+                        ) : null}
+                        <span className="ml-auto flex items-center gap-1.5">
                           <select
-                            value={explicitPrimary ?? seededPrimary ?? ""}
+                            value={primaryId}
                             onChange={(e) => {
                               const next = e.target.value || null;
                               void setPrimaryRunner(device.id, next).catch(() => {});
                             }}
-                            className="rounded border border-surface-700 bg-surface-900 px-1.5 py-0.5 text-[10px] text-surface-200 hover:border-surface-600 focus:outline-none"
-                            title="The default coding agent for this device. Pre-selected in chat / web reload / hot reload when you open this workspace."
+                            className="rounded border border-indigo-500/30 bg-surface-900 px-2 py-1 text-[12px] font-medium text-indigo-100 hover:border-indigo-400/50 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
+                            title="Change primary coding agent for this device. Auto-selected in every Yaver surface (chat, hot reload, web reload, mobile) when this device is active."
                           >
                             <option value="">(none)</option>
-                            {states.map((s) => (
-                              <option key={s.id} value={s.id} disabled={s.health === "not-installed"}>
-                                {s.label}{s.health === "needs-auth" ? " · signs-in" : s.health === "not-installed" ? " · not installed" : ""}
+                            {availableStates.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.label}{s.health === "needs-auth" ? " · signs-in" : ""}
                               </option>
                             ))}
                           </select>
                           {!explicitPrimary && seededPrimary ? (
-                            <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[9px] text-amber-300/80" title="Default suggested — click the dropdown to confirm and persist.">
-                              suggested
-                            </span>
+                            <button
+                              type="button"
+                              onClick={() => { void setPrimaryRunner(device.id, seededPrimary).catch(() => {}); }}
+                              className="rounded bg-indigo-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-400"
+                              title="Persist this suggestion as the device's primary."
+                            >
+                              Confirm
+                            </button>
                           ) : null}
                         </span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {states.map((state) => (
-                          <RunnerChipWithTest
-                            key={`${device.id}:runner:${state.id}`}
-                            device={device}
-                            state={state}
-                            token={token ?? null}
-                            onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
-                          />
-                        ))}
-                      </div>
+                      {/* Other available agents — collapsed by default
+                          since the user already chose a primary. Click
+                          to expose the full chip rail with Test +
+                          Sign-in buttons preserved for each one. */}
+                      {availableOthers.length > 0 ? (
+                        <details className="rounded-lg border border-surface-800 bg-surface-900/30">
+                          <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-surface-400 hover:text-surface-200">
+                            <span>Other available agents</span>
+                            <span className="text-[10px] text-surface-500">({availableOthers.length})</span>
+                          </summary>
+                          <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-800/60 px-3 py-2">
+                            {availableOthers.map((state) => (
+                              <RunnerChipWithTest
+                                key={`${device.id}:runner:${state.id}`}
+                                device={device}
+                                state={state}
+                                token={token ?? null}
+                                onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                              />
+                            ))}
+                          </div>
+                        </details>
+                      ) : null}
                     </div>
                   );
                 })()}

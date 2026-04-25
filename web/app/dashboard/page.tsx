@@ -571,6 +571,12 @@ export default function DashboardPage() {
   const outputRef = useRef<HTMLDivElement>(null);
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
   const previousActiveTabRef = useRef<string | null>(null);
+  // Per-device debounce of the proactive Open-Workspace re-auth.
+  // The relay rate-limits agent recovery to ~5 s — without this map
+  // a quick double-click on Open Workspace produces "too many
+  // recovery attempts — wait 5 seconds" from the relay even on the
+  // first real attempt.
+  const lastAutoReauthRef = useRef<Map<string, number>>(new Map());
   const probedForCurrentTabOpenRef = useRef(false);
 
   const isConnected = connState === "connected";
@@ -892,30 +898,35 @@ export default function DashboardPage() {
     );
 
     // Proactive re-auth: if Convex still says the device needs auth,
-    // recover the session BEFORE we try to connect. The original code
-    // only re-auth'd on connect-failure, but a needsAuth device whose
-    // QUIC tunnel is still alive will let us connect — and then 401 on
-    // every API call. Doing it up-front means a single click on
-    // "Open Workspace" recovers the session AND opens the workspace,
-    // instead of forcing the user to chase a separate Re-auth button.
-    if (device.needsAuth && !device.isGuest && agentClient.configuredRelayServers.length > 0) {
-      setConnectError("Recovering expired session…");
+    // recover the session BEFORE we try to connect. Two important
+    // guardrails so this doesn't fight the manual Re-auth button:
+    //   1. If the device became needsAuth=false in the last poll
+    //      (bus presence override), skip — there's nothing to fix.
+    //   2. Track the last reauth attempt per-device and skip if the
+    //      relay's 5 s rate-limit window is still active. Otherwise
+    //      a quick double-click on Open Workspace produces the
+    //      "too many recovery attempts — wait 5 seconds" error from
+    //      the relay rate-limiter.
+    const reauthRateMs = 8_000;
+    const lastReauth = lastAutoReauthRef.current.get(device.id) || 0;
+    const sinceLast = Date.now() - lastReauth;
+    if (
+      device.needsAuth &&
+      !device.isGuest &&
+      agentClient.configuredRelayServers.length > 0 &&
+      sinceLast > reauthRateMs
+    ) {
+      lastAutoReauthRef.current.set(device.id, Date.now());
       try {
-        const recovered = await agentClient.reauthAgent({
+        await agentClient.reauthAgent({
           deviceId: device.id,
           hostSessionToken: token,
           convexSiteUrl: CONVEX_URL,
         });
-        if (recovered.ok) {
-          setConnectError(null);
-        } else {
-          // Auto-recovery failed — fall through to the regular connect
-          // path. If that also fails, the catch below will surface a
-          // useful error and offer the manual re-auth button.
-          setConnectError(null);
-        }
       } catch {
-        setConnectError(null);
+        // Best-effort. Errors here are not user-actionable — the
+        // user-visible failure path is the connect catch below,
+        // which already runs reauthAgent again with proper diagnostics.
       }
     }
 

@@ -458,13 +458,19 @@ export default function PreviewPane({
         // or the working tree is dirty (we never blow away local edits).
         appendRecovery("→ pulling latest commit (git pull --ff-only)…");
         try {
-          const r = await agentClient.startExec({
+          // startExec only returns {execId, pid} — it doesn't surface
+          // stdout to the dashboard, so we don't pretend to read git's
+          // output here. Success means the shell exited 0; that's
+          // enough to advance the recovery flow. The exec is fire-and-
+          // forget at the dashboard layer — Metro will pick up any new
+          // files on its next file-watcher tick after restart.
+          await agentClient.startExec({
             command:
-              "if [ -d .git ]; then if git diff --quiet && git diff --cached --quiet; then git fetch --depth=50 && git pull --ff-only && git log -1 --oneline; else echo 'skip: working tree has uncommitted changes'; fi; else echo 'skip: not a git repo'; fi",
+              "if [ -d .git ]; then if git diff --quiet && git diff --cached --quiet; then git fetch --depth=50 && git pull --ff-only; else echo 'skip: working tree has uncommitted changes' >&2; fi; else echo 'skip: not a git repo' >&2; fi",
             workDir: savedWorkDir,
             timeout: 60,
           });
-          appendRecovery(`· ${(r as any)?.stdout?.split('\n').filter(Boolean).slice(-1)[0] || 'no output'}`);
+          appendRecovery("✓ git pulled (or skipped on dirty/non-repo)");
         } catch (e: any) {
           appendRecovery(`warn: git pull failed: ${e?.message || e}`);
         }
