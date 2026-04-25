@@ -1878,68 +1878,30 @@ export default function DashboardPage() {
                             {activeTask.status === "running" ? "Working..." : "No messages yet"}
                           </div>
                         ) : (
-                          <div className="mx-auto flex max-w-5xl flex-col gap-4">
-                            <div className="grid gap-4 xl:grid-cols-[minmax(0,320px),minmax(0,1fr)]">
-                              <section className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-surface-500">Task</p>
-                                    <h3 className="mt-1 text-sm font-semibold text-surface-100">{displayTaskTitle(activeTask.title)}</h3>
-                                  </div>
-                                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide ${activeTask.status === "running" ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : activeTask.status === "completed" ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-surface-700 bg-surface-800 text-surface-300"}`}>
-                                    {activeTask.status}
-                                  </span>
-                                </div>
-                                <div className="mt-4 space-y-3 text-xs text-surface-400">
-                                  <div>
-                                    <div className="text-[10px] uppercase tracking-wide text-surface-500">Runner</div>
-                                    <div className="mt-1 text-surface-200">{runnerLabel(activeRunnerId || selectedRunner)}</div>
-                                  </div>
-                                  {activeTask.costUsd != null ? (
-                                    <div>
-                                      <div className="text-[10px] uppercase tracking-wide text-surface-500">Cost</div>
-                                      <div className="mt-1 text-surface-200">${activeTask.costUsd.toFixed(3)}</div>
-                                    </div>
-                                  ) : null}
-                                  <div>
-                                    <div className="text-[10px] uppercase tracking-wide text-surface-500">Updates</div>
-                                    <div className="mt-1 text-surface-200">{chatMsgs.length}</div>
-                                  </div>
-                                </div>
-                              </section>
-                              <section className="rounded-2xl border border-surface-800 bg-surface-900/30 p-4">
-                                <div className="mb-3 flex items-center justify-between gap-3">
-                                  <div>
-                                    <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-surface-500">Activity</p>
-                                    <h3 className="mt-1 text-sm font-semibold text-surface-100">Task run output</h3>
-                                  </div>
-                                  <div className="text-[10px] uppercase tracking-wide text-surface-500">{chatMsgs.length} entries</div>
-                                </div>
-                                <div className="space-y-3">
+                          <div className="mx-auto flex max-w-3xl flex-col gap-3">
                             {chatMsgs.map((m, i) => (
-                                  <div key={i} className={`rounded-xl border px-4 py-3 ${m.role === "user" ? "border-indigo-500/25 bg-indigo-500/10" : "border-surface-800 bg-surface-950/70"}`}>
-                                    <div className="mb-2 flex items-center justify-between gap-3">
-                                      <span className={`text-[10px] font-semibold uppercase tracking-[0.24em] ${m.role === "user" ? "text-indigo-300" : "text-surface-500"}`}>
-                                        {m.role === "user" ? "Task update" : "Worker output"}
-                                      </span>
-                                      <span className="text-[10px] text-surface-600">#{i + 1}</span>
-                                    </div>
-                                    <div className={`${m.role === "user" ? "text-[13px] leading-6 text-indigo-50" : "font-mono text-[12px] leading-5 text-surface-100"} whitespace-pre-wrap break-words`}>
-                                      {m.text
-                                        ? m.text
-                                        : activeTask.status === "running"
-                                          ? (<span className="inline-flex items-center gap-1 text-surface-400">
-                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
-                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
-                                              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
-                                            </span>)
-                                          : (<span className="text-surface-500">({activeTask.status || "no response"})</span>)}
-                                </div>
+                              m.role === "user" ? (
+                                <div key={i} className="flex justify-end">
+                                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-indigo-500 px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm">
+                                    {m.text}
                                   </div>
-                            ))}
                                 </div>
-                              </section>
-                            </div>
+                              ) : (
+                                <div key={i} className="flex justify-start">
+                                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-surface-800 px-3.5 py-2 font-mono text-[12px] leading-5 text-surface-100 whitespace-pre-wrap break-words shadow-sm">
+                                    {m.text || (activeTask.status === "running" ? (
+                                      <span className="inline-flex items-center gap-1 text-surface-400">
+                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
+                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
+                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
+                                      </span>
+                                    ) : (
+                                      <span className="text-surface-500">({activeTask.status || "no response"})</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
+                            ))}
                           </div>
                         )}
                       </div>
