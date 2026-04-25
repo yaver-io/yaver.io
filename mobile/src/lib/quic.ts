@@ -2304,7 +2304,7 @@ export class QuicClient {
    */
   async testRunner(
     runner: string,
-    opts?: { prompt?: string },
+    opts?: { prompt?: string; model?: string },
   ): Promise<RunnerTestResult> {
     if (!this.isConnected && !this.hasConnectionInfo) {
       throw new Error("agent not reachable");
@@ -2312,7 +2312,7 @@ export class QuicClient {
     const res = await fetch(`${this.baseUrl}/agent/runners/test`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ runner, prompt: opts?.prompt }),
+      body: JSON.stringify({ runner, prompt: opts?.prompt, model: opts?.model }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
