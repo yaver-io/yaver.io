@@ -439,6 +439,11 @@ export default function DevelopersPage() {
             mobile operator surface, cloud brain, LLM reasoning layer, and a small device-side
             runtime that executes bounded work.
           </Prose>
+          <Prose>
+            In plain language: the LLM writes code for the current case, the toolchain compiles it,
+            the firmware already contains c-agent, the device dynamically loads and runs the module,
+            and the loop keeps iterating until the problem is fixed or the attempt budget is exhausted.
+          </Prose>
           <Terminal title="iot-fix-architecture">
             <Output>operator on phone</Output>
             <Output>  -&gt; mobile orchestrator</Output>
@@ -482,6 +487,13 @@ export default function DevelopersPage() {
             useful when the brain can author an incident-specific probe, sign it, ship it, run it
             in a bounded runtime, and iterate.
           </Prose>
+          <SubHeading>The firmware already needs the runtime</SubHeading>
+          <Prose>
+            This only works if the firmware or host stack was designed for it up front. The LLM has
+            to be writing code for a runtime that already exists on the device. In our case, that is
+            c-agent. Without that embedded runtime boundary, the model can suggest fixes but it cannot
+            actively keep trying compiled modules on the real hardware.
+          </Prose>
           <SubHeading>Designing AI-fixable hardware</SubHeading>
           <Prose>
             The device architecture itself should cooperate with this loop. Replaceable subsystems
@@ -493,8 +505,8 @@ export default function DevelopersPage() {
           <Prose>
             That is why the c-agent host/runtime model uses quiesce, pause, resume, replace, and
             queued invokes. The target shape is a device that can keep the larger system alive while
-            one module is idle or being swapped, instead of forcing a full-device crash on every
-            local fault.
+            one module is idle or being swapped, so the LLM can keep trying the next fix, instead of
+            forcing a full-device crash on every local fault.
           </Prose>
           <SubHeading>Representative fix loop</SubHeading>
           <FlowSteps

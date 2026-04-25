@@ -68,25 +68,45 @@ export default function AIIoTFixArchitectureBlogPage() {
             Designing an AI-to-IoT Fix Loop: Mobile Orchestrator, Cloud Brain, and c-agent
           </h1>
           <p className="text-surface-400">
-            The goal is not another dashboard full of prewritten probes. The goal is a system that can
-            understand a live device problem, write the right diagnostic code for that incident, run it
-            safely on the device, and converge toward a fix while a human stays in control.
+            The point is active fixing, not passive observability. The LLM should write the code for
+            the case, the toolchain should compile it, the firmware should already contain a c-agent
+            runtime that can dynamically load and run it, and that loop should iterate until the device
+            is fixed or the attempt budget is exhausted.
           </p>
         </header>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The simple version</h2>
+          <pre className="overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
+{`user reports a real hardware problem
+  -> cloud brain asks the LLM what code should run
+  -> LLM writes a probe or fix
+  -> build toolchain compiles it
+  -> firmware already has c-agent inside it
+  -> c-agent dynamically loads the module
+  -> device runs it and streams the result
+  -> brain decides the next step
+  -> loop repeats until fixed or budget hit`}
+          </pre>
+          <p className="mt-4">
+            That is the architecture in one screen. The firmware must already contain the runtime.
+            Without that, the LLM is just writing text. With it, the LLM can keep trying real code
+            against the real device.
+          </p>
+        </section>
 
         <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">The motivating fix case</h2>
           <p>
             Start with a concrete example: a Klipper printer suddenly starts under-extruding after
-            a board swap. A static tool catalog is not enough. One incident needs Moonraker state,
-            another needs Wi-Fi health, another needs a kernel log, another needs a heater PID
-            history or a board-specific config diff.
+            a board swap. The right answer is not a dashboard with 40 fixed buttons. The right answer
+            is a loop that can keep generating and running the next piece of code needed for this case.
           </p>
           <p className="mt-4">
-            That is why the architecture is built around <strong>per-incident code generation</strong>.
-            The brain should be able to author a small bounded probe for this case, sign it, ship it,
-            run it, inspect the result, and then decide whether to ask a follow-up question, run
-            another probe, or propose a fix.
+            One attempt may need Moonraker state. The next may need Wi-Fi health. The next may need
+            a focused heater-history extractor. The one after that may need a bounded config patch.
+            That is why the architecture is built around <strong>iterative code generation</strong>,
+            not a static tool menu.
           </p>
         </section>
 
@@ -110,6 +130,23 @@ export default function AIIoTFixArchitectureBlogPage() {
             <li><strong>LLM coordinator:</strong> reasoning layer that decides what probe or fix should run next.</li>
             <li><strong>c-agent runtime:</strong> small device-side execution layer that verifies, binds capabilities, runs, and reports.</li>
           </ul>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The firmware requirement</h2>
+          <p>
+            For this to work, the firmware or host software stack must already ship with a small
+            runtime inside it. In our design, that runtime is <strong>c-agent</strong>.
+          </p>
+          <p className="mt-4">
+            The LLM does not SSH into the box and improvise forever. It writes a bounded module.
+            The build toolchain compiles it. The brain signs it. The device&apos;s c-agent verifies it,
+            loads it, runs it, and reports the result. Then the brain decides what to try next.
+          </p>
+          <p className="mt-4">
+            If the firmware does not have this runtime boundary, you do not have an AI-fix loop.
+            You just have an assistant suggesting ideas.
+          </p>
         </section>
 
         <section>
@@ -137,9 +174,9 @@ export default function AIIoTFixArchitectureBlogPage() {
             another probe, a fix proposal, or a stop condition.
           </p>
           <p className="mt-4">
-            It is also where module artifacts get built and signed. The device should not compile
-            untrusted code locally. The brain produces an immutable artifact, signs it, and the
-            device runtime either accepts or rejects it.
+            It is also where the real code path lives: write module source, compile it through the
+            toolchain, sign the artifact, ship it, inspect the result, and decide whether to retry
+            with another generated module. This is an active fixing loop, not a reporting loop.
           </p>
         </section>
 
@@ -161,8 +198,9 @@ export default function AIIoTFixArchitectureBlogPage() {
 5. require mobile approval before applying`}
           </pre>
           <p className="mt-4">
-            The runtime still enforces the boundary. The model can propose. It does not get to
-            skip verification, capability binding, budgets, or approval gates.
+            Then the code gets compiled and actually run. That is the important part. The runtime
+            still enforces the boundary, so the model does not get to skip verification, capability
+            binding, budgets, or approval gates.
           </p>
         </section>
 
@@ -180,8 +218,9 @@ export default function AIIoTFixArchitectureBlogPage() {
             <li>It can stream partial output and return structured final results.</li>
           </ul>
           <p className="mt-4">
-            That gives the system a stable execution substrate across wildly different device classes:
-            printers, routers, drones, CNC controllers, and robotics hosts.
+            That gives the system a stable place to keep loading generated code and trying the next
+            fix attempt across wildly different device classes: printers, routers, drones, CNC
+            controllers, and robotics hosts.
           </p>
         </section>
 
@@ -194,8 +233,8 @@ export default function AIIoTFixArchitectureBlogPage() {
           <p className="mt-4">
             Replaceable components should be able to enter a <strong>bounded stuck or degraded mode</strong>,
             preserve enough state to be resumed, and wait for a new module or dependency implementation
-            to be inserted. That is a much better substrate than taking down the full controller every
-            time one subsystem wedges.
+            to be inserted. If the whole process crashes on every dependency failure, the LLM does not
+            get a chance to keep trying fixes.
           </p>
           <p className="mt-4">
             In practice that means designing components so they can:
@@ -208,8 +247,8 @@ export default function AIIoTFixArchitectureBlogPage() {
           </ul>
           <p className="mt-4">
             That is exactly why the c-agent host model includes quiesce, pause, resume, queued invokes,
-            and replace semantics. AI-fixable hardware needs <strong>hot-swappable failure boundaries</strong>,
-            not global crashes.
+            and replace semantics. Good firmware architecture is mandatory here. AI-fixable hardware
+            needs <strong>hot-swappable failure boundaries</strong>, not global crashes.
           </p>
         </section>
 
@@ -217,7 +256,8 @@ export default function AIIoTFixArchitectureBlogPage() {
           <h2 className="mb-3 text-xl font-semibold text-surface-100">The real architecture claim</h2>
           <p>
             The interesting claim is not &ldquo;LLMs can analyze logs.&rdquo; Everyone can do that. The real
-            claim is:
+            claim is that the model can keep generating code, the device can keep running it, and
+            the loop can keep iterating on the real hardware:
           </p>
           <pre className="overflow-x-auto rounded-lg bg-surface-900 p-4 text-xs text-surface-300">
 {`human reports issue on phone
@@ -227,6 +267,7 @@ export default function AIIoTFixArchitectureBlogPage() {
   -> c-agent verifies and runs it
   -> telemetry streams back
   -> brain refines
+  -> LLM writes the next module
   -> phone approves high-risk actions
   -> device converges on a fix`}
           </pre>
