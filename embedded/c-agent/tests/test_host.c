@@ -9,6 +9,9 @@
 #include "yvr/event.h"
 #include "yvr/host.h"
 #include "yvr/manifest.h"
+#include "yvr/module.h"
+
+#include <stdlib.h>
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -275,6 +278,96 @@ static int test_invoke_returns_typed_errors(void)
     return 0;
 }
 
+/* ── Native module registry ──────────────────────────────────── */
+
+static int native_load_count = 0;
+static int native_unload_count = 0;
+
+static yvr_module_status_t native_on_load(yvr_module_ctx_t *ctx)
+{
+    (void)ctx;
+    native_load_count++;
+    return YVR_MODULE_OK;
+}
+
+static void native_on_unload(yvr_module_ctx_t *ctx)
+{
+    (void)ctx;
+    native_unload_count++;
+}
+
+/* Reverses the request bytes into a heap-allocated response.
+ * Caller (the host) frees with yvr_host_free_response. */
+static void *native_invoke(yvr_module_ctx_t *ctx, const char *method,
+                           const void *req, size_t req_len, size_t *out_len)
+{
+    (void)ctx; (void)method;
+    if (req == NULL || req_len == 0) {
+        *out_len = 0;
+        return NULL;
+    }
+    uint8_t *rsp = malloc(req_len);
+    if (rsp == NULL) {
+        *out_len = 0;
+        return NULL;
+    }
+    const uint8_t *src = req;
+    for (size_t i = 0; i < req_len; i++) rsp[i] = src[req_len - 1 - i];
+    *out_len = req_len;
+    return rsp;
+}
+
+static yvr_module_vtable_t native_vt = {
+    .abi_version = YVR_MODULE_ABI_VERSION,
+    .name        = "echo_reverse",
+    .version     = "0.0.1",
+    .on_load     = native_on_load,
+    .on_unload   = native_on_unload,
+    .invoke      = native_invoke,
+};
+
+static int test_register_native_and_invoke(void)
+{
+    int rc = 900;
+    native_load_count = 0;
+    native_unload_count = 0;
+
+    yvr_host_t *h = yvr_host_init("/tmp/yvr-host-test");
+    capture_t cap = {0};
+    yvr_host_subscribe(h, NULL, on_event, &cap);
+
+    EXPECT(yvr_host_register_native(h, "echo_reverse", &native_vt) == YVR_HOST_OK, rc);
+    EXPECT(native_load_count == 1, rc + 1);
+    EXPECT(yvr_host_module_state(h, "echo_reverse") == YVR_MS_ACTIVE, rc + 2);
+    EXPECT(contains_event(&cap, YVR_EVT_MODULE_LOADED, "echo_reverse"), rc + 3);
+
+    /* Invoke routes into the vtable. */
+    const uint8_t in[] = { 0x01, 0x02, 0x03, 0x04, 0x05 };
+    size_t out_len = 0;
+    yvr_host_status_t st = YVR_HOST_OK;
+    void *rsp = yvr_host_invoke(h, "echo_reverse", "any", in, sizeof in, &out_len, &st);
+    EXPECT(st == YVR_HOST_OK, rc + 4);
+    EXPECT(rsp != NULL, rc + 5);
+    EXPECT(out_len == sizeof in, rc + 6);
+    static const uint8_t expected[] = { 0x05, 0x04, 0x03, 0x02, 0x01 };
+    EXPECT(memcmp(rsp, expected, sizeof expected) == 0, rc + 7);
+    yvr_host_free_response(h, rsp);
+
+    /* Pause → invoke returns NOT_READY, vtable not called. */
+    yvr_host_pause_module(h, "echo_reverse");
+    rsp = yvr_host_invoke(h, "echo_reverse", "any", in, sizeof in, &out_len, &st);
+    EXPECT(rsp == NULL, rc + 8);
+    EXPECT(st == YVR_HOST_E_NOT_READY, rc + 9);
+
+    /* Re-registering same name is a no-op success. */
+    EXPECT(yvr_host_register_native(h, "echo_reverse", &native_vt) == YVR_HOST_OK, rc + 10);
+    EXPECT(native_load_count == 1, rc + 11);
+
+    yvr_host_shutdown(h);
+    EXPECT(native_unload_count == 1, rc + 12);
+    return 0;
+}
+
 /* ── Driver ──────────────────────────────────────────────────── */
 
 typedef int (*tfn)(void);
@@ -291,6 +384,7 @@ int main(void)
         { "unsubscribe",                  test_unsubscribe                  },
         { "list_modules",                 test_list_modules                 },
         { "invoke_returns_typed_errors",  test_invoke_returns_typed_errors  },
+        { "register_native_and_invoke",   test_register_native_and_invoke   },
     };
     const size_t n = sizeof T / sizeof T[0];
     int failed = 0;

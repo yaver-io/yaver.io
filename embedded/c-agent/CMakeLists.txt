@@ -73,6 +73,8 @@ set(INCLUDEDIR_SUFFIX "${CMAKE_INSTALL_INCLUDEDIR}")
 
 add_subdirectory(core)
 add_subdirectory(host)
+add_subdirectory(transports)
+add_subdirectory(probes)
 
 if (YVR_CAGENT_TESTS)
     enable_testing()
@@ -136,6 +138,16 @@ if (YVR_CAGENT_INSTALL)
     )
     install(
         DIRECTORY host/include/yvr
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        FILES_MATCHING PATTERN "*.h"
+    )
+    install(
+        DIRECTORY transports/include/yvr
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+        FILES_MATCHING PATTERN "*.h"
+    )
+    install(
+        DIRECTORY probes/include/yvr
         DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
         FILES_MATCHING PATTERN "*.h"
     )

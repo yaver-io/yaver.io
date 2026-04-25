@@ -42,10 +42,11 @@ typedef struct subscriber {
 } subscriber_t;
 
 typedef struct module_entry {
-    char                 *name;
-    char                 *artifact;
-    yvr_module_state_t    state;
-    struct module_entry  *next;
+    char                       *name;
+    char                       *artifact;     /* NULL for native modules */
+    const yvr_module_vtable_t  *vtable;       /* non-NULL ⇒ native, in-process */
+    yvr_module_state_t          state;
+    struct module_entry        *next;
 } module_entry_t;
 
 struct yvr_host {
@@ -180,6 +181,58 @@ yvr_host_status_t yvr_host_apply_manifest(yvr_host_t           *host,
     return YVR_HOST_OK;
 }
 
+yvr_host_status_t yvr_host_register_native(yvr_host_t                 *host,
+                                           const char                 *name,
+                                           const yvr_module_vtable_t  *vtable)
+{
+    if (host == NULL || name == NULL || name[0] == '\0' || vtable == NULL) {
+        return YVR_HOST_E_INVALID_ARG;
+    }
+    if (vtable->abi_version != YVR_MODULE_ABI_VERSION) {
+        return YVR_HOST_E_INVALID_ARG;
+    }
+    if (module_find(host, name) != NULL) {
+        return YVR_HOST_OK;
+    }
+    module_entry_t *m = calloc(1, sizeof *m);
+    if (m == NULL) return YVR_HOST_E_INTERNAL;
+    m->name     = dup_or_null(name);
+    m->vtable   = vtable;
+    m->state    = YVR_MS_LOADING;
+    if (m->name == NULL) {
+        free(m);
+        return YVR_HOST_E_INTERNAL;
+    }
+
+    /* Append to keep dep / registration order stable. */
+    if (host->modules_head == NULL) {
+        host->modules_head = m;
+    } else {
+        module_entry_t *t = host->modules_head;
+        while (t->next != NULL) t = t->next;
+        t->next = m;
+    }
+
+    /* Run on_load synchronously if provided, then transition to
+     * ACTIVE and fire LOADED. Native modules can refuse load by
+     * returning a non-OK status; we report the failure but leave
+     * the registry entry in LOADING so the host's introspection
+     * shows what went wrong. */
+    if (m->vtable->on_load != NULL) {
+        struct yvr_module_ctx ctx = {
+            .host = host, .name = m->name, .state_path = NULL,
+        };
+        if (m->vtable->on_load(&ctx) != YVR_MODULE_OK) {
+            m->state = YVR_MS_FAILED;
+            emit_simple(host, YVR_EVT_MODULE_ERROR, m->name);
+            return YVR_HOST_E_INTERNAL;
+        }
+    }
+    m->state = YVR_MS_ACTIVE;
+    emit_simple(host, YVR_EVT_MODULE_LOADED, m->name);
+    return YVR_HOST_OK;
+}
+
 void yvr_host_shutdown(yvr_host_t *host)
 {
     if (host == NULL) return;
@@ -193,9 +246,18 @@ void yvr_host_shutdown(yvr_host_t *host)
         emit_simple(host, YVR_EVT_MODULE_UNLOADING, m->name);
         m = m->next;
     }
-    /* Free everything. */
+    /* Free everything. Native modules' on_unload runs here; the
+     * vtable is owned by the caller, so we don't free it. */
     while (host->modules_head != NULL) {
         module_entry_t *next = host->modules_head->next;
+        if (host->modules_head->vtable != NULL &&
+            host->modules_head->vtable->on_unload != NULL) {
+            struct yvr_module_ctx ctx = {
+                .host = host, .name = host->modules_head->name,
+                .state_path = NULL,
+            };
+            host->modules_head->vtable->on_unload(&ctx);
+        }
         emit_simple(host, YVR_EVT_MODULE_UNLOADED, host->modules_head->name);
         free(host->modules_head->name);
         free(host->modules_head->artifact);
@@ -222,22 +284,35 @@ void *yvr_host_invoke(yvr_host_t        *host,
                       size_t            *out_response_len,
                       yvr_host_status_t *out_status_code)
 {
-    (void)method;
-    (void)request;
-    (void)request_len;
     if (out_response_len != NULL) *out_response_len = 0;
     if (host == NULL || module_name == NULL) {
         if (out_status_code != NULL) *out_status_code = YVR_HOST_E_INVALID_ARG;
         return NULL;
     }
-    /* Without a real loader there's nothing to invoke. Return
-     * NOT_FOUND for unknown names, NOT_READY for known-but-
-     * unloaded ones — matches the eventual real-loader semantics. */
-    if (out_status_code != NULL) {
-        *out_status_code = (module_find(host, module_name) == NULL)
-            ? YVR_HOST_E_NOT_FOUND
-            : YVR_HOST_E_NOT_READY;
+    module_entry_t *m = module_find(host, module_name);
+    if (m == NULL) {
+        if (out_status_code != NULL) *out_status_code = YVR_HOST_E_NOT_FOUND;
+        return NULL;
     }
+    /* Native module: synchronous in-process call into the vtable. */
+    if (m->vtable != NULL && m->vtable->invoke != NULL) {
+        if (m->state != YVR_MS_ACTIVE) {
+            if (out_status_code != NULL) *out_status_code = YVR_HOST_E_NOT_READY;
+            return NULL;
+        }
+        struct yvr_module_ctx ctx = {
+            .host       = host,
+            .name       = m->name,
+            .state_path = NULL,
+        };
+        size_t rsp_len = 0;
+        void *rsp = m->vtable->invoke(&ctx, method, request, request_len, &rsp_len);
+        if (out_response_len != NULL) *out_response_len = rsp_len;
+        if (out_status_code != NULL) *out_status_code = YVR_HOST_OK;
+        return rsp;
+    }
+    /* Dlopen-backed module: deferred to the real loader. */
+    if (out_status_code != NULL) *out_status_code = YVR_HOST_E_NOT_READY;
     return NULL;
 }
 

@@ -33,6 +33,7 @@
 
 #include "event.h"
 #include "manifest.h"
+#include "module.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -72,6 +73,28 @@ yvr_host_status_t yvr_host_apply_manifest(yvr_host_t           *host,
 /* Tear down: unload every module in reverse-dep order, free host
  * resources. Idempotent. */
 void yvr_host_shutdown(yvr_host_t *host);
+
+/* Register an in-process "native" module — a module whose
+ * vtable is statically linked into the vendor binary. Useful for
+ * probes baked into the c-agent at compile time, before the
+ * dynamic signed-module loader is in place. The vtable and name
+ * must remain valid for the host's lifetime; the host does not
+ * copy them.
+ *
+ * Native modules participate in the registry exactly like
+ * dlopen-loaded ones: yvr_host_invoke routes calls into the
+ * vtable, lifecycle events fire, pause / resume / quiesce all
+ * work, dependents see the same event stream.
+ *
+ * Returns YVR_HOST_OK on success, or:
+ *   YVR_HOST_E_INVALID_ARG if any argument is NULL
+ *   YVR_HOST_E_INTERNAL    if the registry is out of memory
+ *   YVR_HOST_OK            (no error) if a module of the same
+ *                          name already exists — the existing
+ *                          registration is left untouched. */
+yvr_host_status_t yvr_host_register_native(yvr_host_t                 *host,
+                                           const char                 *name,
+                                           const yvr_module_vtable_t  *vtable);
 
 /* ── Invoking modules ────────────────────────────────────────── */
 
