@@ -287,12 +287,24 @@ export default function PreviewPane({
   // overlay shows progress during initial startup too, not only once the
   // server is ready. The keyword heuristic below mirrors mobile
   // (apps.tsx) so web and mobile advance the bar at the same moments.
+  //
+  // Re-runs whenever agentClient transitions to "connected" so a
+  // PreviewPane that mounted before the agent finished its relay
+  // handshake (devEventsUrl was null) reconnects once baseUrl lands.
+  // Without this we silently sat on a closed stream forever and the
+  // CONSOLE pane stayed at "0 lines / waiting for output…".
+  const [agentReady, setAgentReady] = useState(() => Boolean(agentClient.devEventsUrl));
   useEffect(() => {
+    return agentClient.on("connectionState", (state) => {
+      setAgentReady(state === "connected" && Boolean(agentClient.devEventsUrl));
+    });
+  }, []);
+  useEffect(() => {
+    const eventsUrl = agentClient.devEventsUrl;
+    if (!eventsUrl) return;
     const controller = new AbortController();
     (async () => {
       try {
-        const eventsUrl = agentClient.devEventsUrl;
-        if (!eventsUrl) return;
         const res = await fetch(eventsUrl, {
           headers: agentClient.getAuthHeaders(),
           signal: controller.signal,
@@ -358,7 +370,7 @@ export default function PreviewPane({
       } catch {}
     })();
     return () => controller.abort();
-  }, []);
+  }, [agentReady]);
 
   // When the dev server confirms "running" via the status poll, clear
   // the progress overlay (SSE may have missed the `ready` event if we

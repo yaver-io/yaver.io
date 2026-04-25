@@ -164,6 +164,13 @@ type DevServerManager struct {
 	subsMu sync.Mutex
 	target DevServerTarget
 
+	// history is a ring buffer of recent events. Subscribe() replays
+	// it into a new channel before adding to subs so a late SSE
+	// subscriber (e.g. the dashboard arriving after Metro has already
+	// printed its banner) still sees what just happened. Capped at
+	// devEventHistoryMax to bound memory.
+	history []DevServerEvent
+
 	// Agent's externally reachable URL (for Metro proxy URL).
 	// Set by the HTTP server after relay connection is established.
 	// Examples: "http://192.168.1.10:18080", "https://public.yaver.io/d/abc123"
@@ -173,6 +180,11 @@ type DevServerManager struct {
 	// Set by handleBuildNativeBundle, read by handleServeNativeBundle.
 	bundleMetaJSON string
 }
+
+// devEventHistoryMax bounds DevServerManager.history. 200 lines covers
+// Metro's startup banner + a comfortable margin of bundling/log output
+// without keeping unbounded state for the long-running session.
+const devEventHistoryMax = 200
 
 type devServerSession struct {
 	server DevServer
@@ -210,6 +222,14 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		m.active.cancel()
 		m.active = nil
 	}
+
+	// Drop replay history so a freshly-started dev server does not
+	// hand its first subscriber the previous run's banner lines.
+	// Live subs (rare — usually the SSE was closed when the previous
+	// session stopped) keep their channels.
+	m.subsMu.Lock()
+	m.history = nil
+	m.subsMu.Unlock()
 
 	if isEmptyDevServerTarget(target) {
 		target = m.target
@@ -549,11 +569,20 @@ func (m *DevServerManager) StopWebPreview() error {
 	return nil
 }
 
-// Subscribe returns a channel that receives dev server events.
+// Subscribe returns a channel that receives dev server events. Any
+// recent events buffered in m.history (capped at devEventHistoryMax)
+// are replayed into the new channel before it is added to the
+// subscriber set, so a late subscriber (the dashboard finishing its
+// SSE handshake after Metro has already printed its banner) still
+// sees what it missed. Held under subsMu so a concurrent emit() can
+// not interleave a partially-replayed view with a new live event.
 func (m *DevServerManager) Subscribe() chan DevServerEvent {
 	m.subsMu.Lock()
 	defer m.subsMu.Unlock()
-	ch := make(chan DevServerEvent, 16)
+	ch := make(chan DevServerEvent, 16+len(m.history))
+	for _, ev := range m.history {
+		ch <- ev
+	}
 	m.subs = append(m.subs, ch)
 	return ch
 }
@@ -597,6 +626,10 @@ func (m *DevServerManager) EmitLog(line string) {
 func (m *DevServerManager) emit(event DevServerEvent) {
 	m.subsMu.Lock()
 	defer m.subsMu.Unlock()
+	m.history = append(m.history, event)
+	if len(m.history) > devEventHistoryMax {
+		m.history = m.history[len(m.history)-devEventHistoryMax:]
+	}
 	for _, ch := range m.subs {
 		select {
 		case ch <- event:
