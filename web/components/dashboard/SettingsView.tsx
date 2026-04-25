@@ -322,21 +322,26 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
         )}
         {linkError && <p className="mb-3 text-xs text-red-400">{linkError}</p>}
         {unlinkError && <p className="mb-3 text-xs text-red-400">{unlinkError}</p>}
-        <div className="grid gap-2 sm:grid-cols-4">
-          {(["apple", "github", "gitlab", "google", "microsoft"] as const).map((provider) => {
-            const alreadyLinked = identities.some((identity) => identity.provider === provider);
-            return (
-              <button
-                key={provider}
-                onClick={() => startLink(provider)}
-                disabled={linkingProvider !== null || alreadyLinked}
-                className="rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50 disabled:opacity-40"
-              >
-                {alreadyLinked ? `${provider} linked` : linkingProvider === provider ? "Connecting..." : `Connect ${provider}`}
-              </button>
-            );
-          })}
-        </div>
+        {(() => {
+          const unlinked = (["apple", "github", "gitlab", "google", "microsoft"] as const).filter(
+            (provider) => !identities.some((identity) => identity.provider === provider),
+          );
+          if (unlinked.length === 0) return null;
+          return (
+            <div className="grid gap-2 sm:grid-cols-4">
+              {unlinked.map((provider) => (
+                <button
+                  key={provider}
+                  onClick={() => startLink(provider)}
+                  disabled={linkingProvider !== null}
+                  className="rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50 disabled:opacity-40"
+                >
+                  {linkingProvider === provider ? "Connecting..." : `Connect ${provider}`}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Merge another account into this one */}
@@ -394,36 +399,38 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
 
       {/* About */}
       <div className="card mb-6">
-        <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
-          About
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-surface-400">
+          <span aria-hidden>ℹ️</span> About
         </h3>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-surface-400">yaver.io web</span>
+          <span className="flex items-center gap-2 text-surface-400">
+            <span aria-hidden>🌐</span> yaver.io web
+          </span>
           <span className="font-mono text-surface-200">v{WEB_VERSION}</span>
         </div>
       </div>
 
       {/* Legal */}
       <div className="card mb-6">
-        <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
-          Legal
+        <h3 className="mb-3 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-surface-400">
+          <span aria-hidden>📜</span> Legal
         </h3>
         <div className="space-y-2">
           <a
             href="https://yaver.io/privacy"
             target="_blank"
             rel="noopener noreferrer"
-            className="block text-sm text-surface-400 transition-colors hover:text-surface-50"
+            className="flex items-center gap-2 text-sm text-surface-400 transition-colors hover:text-surface-50"
           >
-            Privacy Policy
+            <span aria-hidden>🔒</span> Privacy Policy
           </a>
           <a
             href="https://yaver.io/terms"
             target="_blank"
             rel="noopener noreferrer"
-            className="block text-sm text-surface-400 transition-colors hover:text-surface-50"
+            className="flex items-center gap-2 text-sm text-surface-400 transition-colors hover:text-surface-50"
           >
-            Terms of Service
+            <span aria-hidden>📄</span> Terms of Service
           </a>
         </div>
       </div>
@@ -431,15 +438,15 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
       {/* Sign out */}
       <button
         onClick={onLogout}
-        className="mb-6 w-full rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50"
+        className="mb-6 flex w-full items-center justify-center gap-2 rounded-lg border border-surface-700 px-4 py-3 text-sm text-surface-300 transition-colors hover:bg-surface-800/50 hover:text-surface-50"
       >
-        Sign Out
+        <span aria-hidden>🚪</span> Sign Out
       </button>
 
       {/* Delete Account */}
       <div className="card mb-6 border-red-500/20">
-        <h3 className="mb-2 text-sm font-medium uppercase tracking-wider text-red-400/80">
-          Danger Zone
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-red-400/80">
+          <span aria-hidden>⚠️</span> Danger Zone
         </h3>
         <p className="mb-4 text-xs text-surface-500">
           Permanently delete your account and all associated data. This action cannot be undone.
