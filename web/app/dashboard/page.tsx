@@ -1247,7 +1247,7 @@ export default function DashboardPage() {
               <p className="text-[11px] text-surface-600">No devices yet</p>
             ) : (
               <div className="space-y-0.5">
-                {visibleDevices.slice(0, 5).map((d) => {
+                {visibleDevices.slice(0, 10).map((d) => {
                   const isSelected = connectedDevice?.id === d.id;
                   const isConnecting = isSelected && connState === "connecting";
                   const hasError = isSelected && connState === "error";
@@ -1314,12 +1314,12 @@ export default function DashboardPage() {
                     </div>
                   );
                 })}
-                {visibleDevices.length > 5 ? (
+                {visibleDevices.length > 10 ? (
                   <button
                     onClick={() => setActiveTab("devices")}
                     className="w-full px-2 text-left text-[10px] text-surface-500 hover:text-surface-300"
                   >
-                    +{visibleDevices.length - 5} more
+                    +{visibleDevices.length - 10} more
                   </button>
                 ) : null}
                 {dormantDevices.length > 0 ? (
@@ -1335,109 +1335,36 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Invite */}
-          <button
-            onClick={() => setActiveTab("guests")}
-            className="w-full rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/15"
-            title="Invite someone to share this machine (scope by machines, agents, projects)"
-          >
-            + Invite guest
-          </button>
+          <div className="min-h-6 flex-1" />
 
-          {/* Pending invites — auto-match by signed-in email, no code required */}
-          {pendingInvites.length > 0 && (
-            <div className="shrink-0">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">
-                Pending invites
-              </p>
-              <div className="flex flex-col gap-1.5">
-                {pendingInvites.map((inv) => {
-                  const key = inv.inviteId || inv.inviteCode || inv.hostUserId;
-                  const busy = invitesBusy === key;
-                  return (
-                    <div
-                      key={key}
-                      className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-2"
-                    >
-                      <div className="text-[11px] font-medium text-emerald-200 truncate">
-                        {inv.hostName || "Yaver host"}
-                      </div>
-                      <div className="text-[10px] text-emerald-400/80 truncate mb-1.5">
-                        {inv.hostEmail}
-                      </div>
-                      <button
-                        onClick={() => acceptInvite(inv)}
-                        disabled={busy}
-                        className="w-full rounded bg-emerald-500 px-2 py-1 text-[11px] font-medium text-white hover:bg-emerald-400 disabled:opacity-40"
-                      >
-                        {busy ? "Joining…" : "Accept"}
-                      </button>
-                    </div>
-                  );
-                })}
+          <div className="shrink-0 space-y-3 border-t border-surface-800 pt-4">
+            <button
+              onClick={() => setActiveTab("guests")}
+              className="w-full rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/15"
+              title="Invite someone to share this machine"
+            >
+              Invite a guest
+            </button>
+
+            <div>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Join as a guest</p>
+              <div className="flex gap-1.5">
+                <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
+                  placeholder="CODE" className="flex-1 rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
+                <button onClick={async () => {
+                  if (guestCode.trim().length < 4) return;
+                  try {
+                    const res = await fetch(`${CONVEX_URL}/guests/accept-code`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ inviteCode: guestCode.trim() }) });
+                    const data = await res.json();
+                    if (data.ok || data.hostName) { alert(`Joined ${data.hostName || "host"}'s machine!`); setGuestCode(""); refreshDevices(); }
+                    else alert(data.error || "Invalid code");
+                  } catch (e: any) { alert(e.message); }
+                }} disabled={guestCode.trim().length < 4}
+                  className="rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
               </div>
-            </div>
-          )}
-
-          {/* Guest code */}
-          <div className="shrink-0">
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Join as Guest</p>
-            <div className="flex gap-1.5">
-              <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
-                placeholder="CODE" className="flex-1 rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
-              <button onClick={async () => {
-                if (guestCode.trim().length < 4) return;
-                try {
-                  const res = await fetch(`${CONVEX_URL}/guests/accept-code`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ inviteCode: guestCode.trim() }) });
-                  const data = await res.json();
-                  if (data.ok || data.hostName) { alert(`Joined ${data.hostName || "host"}'s machine!`); setGuestCode(""); refreshDevices(); }
-                  else alert(data.error || "Invalid code");
-                } catch (e: any) { alert(e.message); }
-              }} disabled={guestCode.trim().length < 4}
-                className="rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
             </div>
           </div>
-
-          {/* Tasks */}
-          {tasks.length > 0 && (
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500 mb-1">Tasks</p>
-              <div className="flex h-full min-h-0 flex-col gap-1 overflow-hidden">
-                {tasks.slice(0, 8).map(t => (
-                  <button
-                    key={t.id}
-                    onClick={() => selectTask(t)}
-                    className={`w-full rounded-lg border px-2.5 py-2 text-left transition-colors ${
-                      activeTask?.id === t.id
-                        ? "border-indigo-500/40 bg-indigo-500/10"
-                        : "border-surface-800 bg-surface-900/40 hover:border-surface-700 hover:bg-surface-800/80"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={`h-2 w-2 shrink-0 rounded-full ${t.status === "running" ? "bg-amber-400" : t.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />
-                      <span className={`min-w-0 flex-1 truncate text-[11px] font-medium ${activeTask?.id === t.id ? "text-indigo-200" : "text-surface-200"}`}>
-                        {displayTaskTitle(t.title)}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-[10px] uppercase tracking-wide text-surface-500">
-                      {t.status}
-                      {t.costUsd != null ? ` · $${t.costUsd.toFixed(3)}` : ""}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
-        </div>
-        <div className="border-t border-surface-800 p-3 flex items-center justify-end gap-2">
-          <button onClick={toggleTheme} className="rounded-md p-1.5 text-surface-500 hover:text-surface-300 hover:bg-surface-800" title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}>
-            {theme === "dark" ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            )}
-          </button>
         </div>
         </div>
       </aside>
