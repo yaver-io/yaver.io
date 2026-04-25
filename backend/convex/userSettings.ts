@@ -158,6 +158,12 @@ export const setByToken = mutation({
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    primaryRunnerForDevice: v.optional(
+      v.object({
+        deviceId: v.string(),
+        runnerId: v.union(v.string(), v.null()),
+      }),
+    ),
     managed: v.optional(managedPatchValidator),
   },
   handler: async (ctx, args) => {
