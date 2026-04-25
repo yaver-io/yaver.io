@@ -782,9 +782,57 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
 // for "latest opus"), `codex` seeds `gpt-5-codex`, etc.
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-7",
-  codex: "gpt-5-codex",
+  codex: "gpt-5.4",
   "aider-ollama": "qwen2.5-coder:14b",
 };
+
+export function isKivancAccount(email: string | null | undefined): boolean {
+  return String(email || "").trim().toLowerCase() === "kivanc.cakmak@icloud.com";
+}
+
+export function isKivancMacBook(device: Pick<Device, "name" | "hostName" | "platform">): boolean {
+  const haystack = `${device.name || ""} ${device.hostName || ""}`.toLowerCase();
+  const isMac = ["darwin", "macos"].includes(String(device.platform || "").trim().toLowerCase());
+  if (!isMac) return false;
+  return haystack.includes("kivanc") || haystack.includes("cakmak") || haystack.includes("macbook");
+}
+
+export function preferredDefaultRunnerForDevice(
+  device: Pick<Device, "name" | "hostName" | "platform">,
+  signedInEmail: string | null | undefined,
+  availableRunnerIds: string[],
+): string | null {
+  if (availableRunnerIds.length === 0) return null;
+  if (isKivancAccount(signedInEmail)) {
+    if (isKivancMacBook(device) && availableRunnerIds.includes("claude")) {
+      return "claude";
+    }
+    if (!isKivancMacBook(device) && availableRunnerIds.includes("codex")) {
+      return "codex";
+    }
+  }
+  if (availableRunnerIds.includes("claude")) return "claude";
+  if (availableRunnerIds.includes("codex")) return "codex";
+  return availableRunnerIds[0] || null;
+}
+
+export function preferredDefaultModelForRunner(
+  runnerId: string | null | undefined,
+  device: Pick<Device, "name" | "hostName" | "platform">,
+  signedInEmail: string | null | undefined,
+): string | null {
+  const normalized = String(runnerId || "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (isKivancAccount(signedInEmail)) {
+    if (normalized === "claude" && isKivancMacBook(device)) {
+      return "claude-opus-4-7";
+    }
+    if (normalized === "codex" && !isKivancMacBook(device)) {
+      return "gpt-5.4";
+    }
+  }
+  return DEFAULT_MODEL_BY_RUNNER[normalized] || null;
+}
 
 // Options shown in the per-runner model dropdown. First entry is the
 // default. Full model ids so the agent can forward them verbatim to
@@ -799,6 +847,7 @@ export const MODEL_OPTIONS_BY_RUNNER: Record<string, Array<{ id: string; label: 
     { id: "claude-haiku-4-5", label: "Haiku 4.5", hint: "fastest, cheapest" },
   ],
   codex: [
+    { id: "gpt-5.4", label: "GPT-5.4", hint: "stable default fallback" },
     { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "agentic coding model" },
     { id: "gpt-5-thinking", label: "GPT-5 Thinking", hint: "reasoning-heavy" },
     { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
@@ -1082,8 +1131,8 @@ export default function DevicesView({
                   const explicitPrimary = primaryRunnerByDevice[device.id];
                   const seededPrimary = (() => {
                     if (explicitPrimary) return explicitPrimary;
-                    const firstReady = states.find((s) => s.health === "ready");
-                    return firstReady?.id ?? null;
+                    const readyIds = states.filter((s) => s.health === "ready").map((s) => s.id);
+                    return preferredDefaultRunnerForDevice(device, signedInEmail, readyIds);
                   })();
                   const primaryId = explicitPrimary ?? seededPrimary ?? "";
                   const primaryState = states.find((s) => s.id === primaryId);
@@ -1142,7 +1191,7 @@ export default function DevicesView({
                               // a runner where it matters. Preserve any
                               // existing explicit model when the user is
                               // re-selecting the same runner.
-                              const seeded = next ? DEFAULT_MODEL_BY_RUNNER[next] : undefined;
+                              const seeded = next ? preferredDefaultModelForRunner(next, device, signedInEmail) : undefined;
                               const curModel = primaryModelByDevice[device.id];
                               const prevRunner = primaryRunnerByDevice[device.id];
                               const model = next && prevRunner === next && curModel
@@ -1169,7 +1218,7 @@ export default function DevicesView({
                             <select
                               value={
                                 primaryModelByDevice[device.id]
-                                  ?? DEFAULT_MODEL_BY_RUNNER[primaryId]
+                                  ?? preferredDefaultModelForRunner(primaryId, device, signedInEmail)
                                   ?? ""
                               }
                               onChange={(e) => {
@@ -1189,7 +1238,10 @@ export default function DevicesView({
                           {!explicitPrimary && seededPrimary ? (
                             <button
                               type="button"
-                              onClick={() => { void setPrimaryRunner(device.id, seededPrimary).catch(() => {}); }}
+                              onClick={() => {
+                                const seededModel = preferredDefaultModelForRunner(seededPrimary, device, signedInEmail);
+                                void setPrimaryRunner(device.id, seededPrimary, seededModel).catch(() => {});
+                              }}
                               className="rounded bg-indigo-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-400"
                               title="Persist this suggestion as the device's primary."
                             >

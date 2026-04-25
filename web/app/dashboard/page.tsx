@@ -40,7 +40,7 @@ import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
 import { WebReloadView } from "@/components/dashboard/WebReloadView";
 import GitView from "@/components/dashboard/GitView";
-import DevicesView, { usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
+import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 
@@ -582,7 +582,7 @@ export default function DashboardPage() {
   // hook (same Convex query, cached by Convex). Used to (a) pre-select
   // the chat tab's runner when a workspace opens, (b) decide which
   // runner the Hot Reload "Sign in & reconnect" CTA triggers.
-  const { primaryRunnerByDevice } = usePrimaryRunnerByDevice(token);
+  const { primaryRunnerByDevice, primaryModelByDevice } = usePrimaryRunnerByDevice(token);
   // Pick the runner the user actually wants to use on this device.
   // Order:
   //   1. Explicit primary persisted to userSettings
@@ -784,11 +784,25 @@ export default function DashboardPage() {
   useEffect(() => {
     const installed = runners.filter(r => r.installed);
     if (installed.length === 0) { setSelectedRunner(""); return; }
+    const explicitRunner = connectedDevice ? primaryRunnerByDevice[connectedDevice.id] : "";
+    if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
+      setSelectedRunner(explicitRunner);
+      return;
+    }
     if (selectedRunner && installed.some(r => r.id === selectedRunner)) return;
     const ready = installed.filter(r => r.ready !== false);
+    const seededRunner = connectedDevice
+      ? preferredDefaultRunnerForDevice(
+          connectedDevice,
+          user?.email,
+          ready.map((runner) => runner.id).concat(installed.map((runner) => runner.id)),
+        )
+      : null;
     const preferred =
       ready.find(r => r.id === connectedDevicePrimaryRunner) ||
       installed.find(r => r.id === connectedDevicePrimaryRunner) ||
+      ready.find(r => r.id === seededRunner) ||
+      installed.find(r => r.id === seededRunner) ||
       ready.find(r => r.isDefault || r.active) ||
       ready.find(r => r.id === "claude") ||
       ready.find(r => r.id === "opencode") ||
@@ -796,7 +810,7 @@ export default function DashboardPage() {
       installed.find(r => r.isDefault || r.active) ||
       installed[0];
     setSelectedRunner(preferred.id);
-  }, [connectedDevicePrimaryRunner, runners, selectedRunner]);
+  }, [connectedDevice, connectedDevicePrimaryRunner, runners, selectedRunner, user?.email]);
 
   useEffect(() => {
     const runner = runners.find((r) => r.id === selectedRunner);
@@ -805,10 +819,23 @@ export default function DashboardPage() {
       if (selectedModel) setSelectedModel("");
       return;
     }
+    const explicitModel = connectedDevice ? primaryModelByDevice[connectedDevice.id] : "";
+    if (explicitModel && models.some((model) => model.id === explicitModel) && selectedModel !== explicitModel) {
+      setSelectedModel(explicitModel);
+      return;
+    }
     if (selectedModel && models.some((m) => m.id === selectedModel)) return;
-    const preferredModel = models.find((m) => m.isDefault)?.id || models[0]?.id || "";
+    const seededModel = connectedDevice
+      ? preferredDefaultModelForRunner(selectedRunner, connectedDevice, user?.email)
+      : null;
+    const preferredModel =
+      (explicitModel && models.some((m) => m.id === explicitModel) ? explicitModel : "") ||
+      (seededModel && models.some((m) => m.id === seededModel) ? seededModel : "") ||
+      models.find((m) => m.isDefault)?.id ||
+      models[0]?.id ||
+      "";
     setSelectedModel(preferredModel);
-  }, [runners, selectedRunner, selectedModel]);
+  }, [connectedDevice, primaryModelByDevice, runners, selectedRunner, selectedModel, user?.email]);
 
   useEffect(() => {
     if (!token) { setPendingInvites([]); return; }

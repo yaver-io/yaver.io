@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { agentClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary, type MachineOnboardingProviderStatus, type OpenCodeConfigSummary, type RunnerAuthStatusRow, type RunnerBrowserAuthSession } from "@/lib/agent-client";
+import { CONVEX_URL } from "@/lib/constants";
 import type { Device } from "@/lib/use-devices";
 
 type InstallEntry = { name: string; installed: boolean; description: string };
@@ -97,6 +98,9 @@ export default function ToolsView({ devices = [] }: Props) {
   const [machineGitLabHost, setMachineGitLabHost] = useState("gitlab.com");
   const [savingOnboarding, setSavingOnboarding] = useState(false);
   const [removingOnboardingProvider, setRemovingOnboardingProvider] = useState<string | null>(null);
+  const [linkedGitProviders, setLinkedGitProviders] = useState<string[]>([]);
+  const [linkingGitProvider, setLinkingGitProvider] = useState<"github" | "gitlab" | null>(null);
+  const [gitLinkError, setGitLinkError] = useState<string | null>(null);
   const [startingBrowserAuth, setStartingBrowserAuth] = useState<string | null>(null);
   const [browserAuthSession, setBrowserAuthSession] = useState<RunnerBrowserAuthSession | null>(null);
   const cancelStreamRef = useRef<(() => void) | null>(null);
@@ -180,24 +184,66 @@ export default function ToolsView({ devices = [] }: Props) {
     }
   }, [onboardingTargets]);
 
+  const refreshLinkedGitProviders = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const token =
+      localStorage.getItem("yaver_auth_token") ||
+      document.cookie
+        .split(";")
+        .find((c) => c.trim().startsWith("yaver_auth_token="))
+        ?.split("=")[1] ||
+      null;
+    if (!token) {
+      setLinkedGitProviders([]);
+      return;
+    }
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/providers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      const providers = Array.isArray(data?.identities)
+        ? data.identities
+            .map((identity: { provider?: string }) => String(identity?.provider || "").toLowerCase())
+            .filter((provider: string) => provider === "github" || provider === "gitlab")
+        : [];
+      setLinkedGitProviders(Array.from(new Set(providers)));
+    } catch {
+      /* soft-fail */
+    }
+  }, []);
+
   useEffect(() => {
     loadSummary();
     loadCatalogue();
     loadRunnerAuth();
     loadOnboarding();
     loadOpenCodeConfig();
+    refreshLinkedGitProviders();
     const i = setInterval(() => {
       loadSummary();
       loadCatalogue();
       loadRunnerAuth();
       loadOnboarding();
       loadOpenCodeConfig();
+      refreshLinkedGitProviders();
     }, 15_000);
     return () => {
       clearInterval(i);
       cancelStreamRef.current?.();
     };
-  }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding, loadOpenCodeConfig]);
+  }, [loadSummary, loadCatalogue, loadRunnerAuth, loadOnboarding, loadOpenCodeConfig, refreshLinkedGitProviders]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onFocus = () => {
+      void refreshLinkedGitProviders();
+      setLinkingGitProvider(null);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshLinkedGitProviders]);
 
   useEffect(() => {
     if (!browserAuthSession) return;
@@ -375,6 +421,45 @@ export default function ToolsView({ devices = [] }: Props) {
     }
   }
 
+  async function startGitAccountLink(provider: "github" | "gitlab") {
+    if (typeof window === "undefined") return;
+    const token =
+      localStorage.getItem("yaver_auth_token") ||
+      document.cookie
+        .split(";")
+        .find((c) => c.trim().startsWith("yaver_auth_token="))
+        ?.split("=")[1] ||
+      null;
+    if (!token) {
+      setGitLinkError("Not signed in. Refresh the dashboard and sign in again.");
+      return;
+    }
+    setGitLinkError(null);
+    setLinkingGitProvider(provider);
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/oauth-link/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider,
+          client: "web",
+          returnTo: "/dashboard",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.token) {
+        throw new Error(data?.error || `Failed to start ${provider} link`);
+      }
+      window.location.href = `/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(data.token)}&return=${encodeURIComponent("/dashboard")}`;
+    } catch (error) {
+      setGitLinkError(error instanceof Error ? error.message : `Failed to start ${provider} link`);
+      setLinkingGitProvider(null);
+    }
+  }
+
   async function saveOpenCodeSettings() {
     if (savingOpenCodeConfig) return;
     setSavingOpenCodeConfig(true);
@@ -482,10 +567,39 @@ export default function ToolsView({ devices = [] }: Props) {
         <h3 className="text-sm font-semibold text-surface-300 mb-3">Remote onboarding</h3>
         <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4 space-y-4">
           <p className="text-sm text-surface-400">
-            Configure OpenAI, GitHub, and GitLab on one or more live machines in one pass. Linking GitHub or GitLab to your Yaver account is separate; the actions here write machine clone credentials and CI/deploy vault tokens.
+            Use this as a 2-step flow: first connect GitHub or GitLab to this Yaver account, then push git credentials onto one or more owned live machines. Linking the account helps sign-in and recovery; the tokens below are what actually grant machine repo access.
           </p>
+          <div className="rounded-xl border border-surface-800 bg-surface-950/50 p-4 space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Step 1 · Connect provider to Yaver</div>
+            <p className="text-sm text-surface-400">
+              Connect GitHub or GitLab to this same Yaver account so the provider appears in your sign-in methods. This does not populate machine git credentials by itself.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(["github", "gitlab"] as const).map((provider) => {
+                const linked = linkedGitProviders.includes(provider);
+                return (
+                  <button
+                    key={provider}
+                    onClick={() => void startGitAccountLink(provider)}
+                    disabled={linked || linkingGitProvider !== null}
+                    className={`rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-60 ${
+                      linked
+                        ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                        : "border border-surface-700 bg-surface-950 text-surface-200 hover:border-surface-600"
+                    }`}
+                  >
+                    {linked ? `${provider === "github" ? "GitHub" : "GitLab"} linked` : linkingGitProvider === provider ? "Opening…" : `Connect ${provider === "github" ? "GitHub" : "GitLab"}`}
+                  </button>
+                );
+              })}
+            </div>
+            {gitLinkError ? <p className="text-sm text-rose-300">{gitLinkError}</p> : null}
+          </div>
           <div className="space-y-2">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Onboarding targets</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Step 2 · Populate owned live boxes</div>
+            <p className="text-sm text-surface-400">
+              Choose the host-owned machines that should receive GitHub or GitLab clone credentials and CI/deploy tokens.
+            </p>
             <div className="flex flex-wrap gap-2">
               {onboardingTargetOptions.map((option) => {
                 const selected = onboardingTargets.includes(option.id);

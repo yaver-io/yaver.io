@@ -4146,12 +4146,65 @@ export default function SettingsScreen() {
 
               <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>Remote machine onboarding</Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
-                Push OpenAI, GitHub, and GitLab onboarding into one or more owned live machines through the Yaver agent. Account linking is separate; the tokens here are what actually grant machine clone/pull and CI/deploy access.
+                Use this as a 2-step flow: first connect GitHub or GitLab to this Yaver account, then push git credentials into one or more owned live machines. Linking helps sign-in and recovery; the tokens here are what actually grant machine clone/pull and CI/deploy access.
               </Text>
 
-              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Target machines</Text>
+              <View style={{
+                marginTop: 14,
+                borderWidth: 1,
+                borderColor: c.border,
+                borderRadius: 12,
+                backgroundColor: c.bgCardElevated,
+                padding: 12,
+                gap: 10,
+              }}>
+                <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>Step 1 · Connect provider to Yaver</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, lineHeight: 16 }}>
+                  Connect GitHub or GitLab to this same Yaver account so the provider appears in your sign-in methods. This does not populate machine git credentials by itself.
+                </Text>
+                <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                  {(["github", "gitlab"] as const).map((provider) => {
+                    const linked = identities.some((identity) => identity.provider === provider);
+                    const disabled = linkingProvider !== null || linked;
+                    return (
+                      <Pressable
+                        key={provider}
+                        onPress={() => handleLinkProvider(provider)}
+                        disabled={disabled}
+                        style={({ pressed }) => [
+                          {
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 8,
+                            paddingHorizontal: 12,
+                            paddingVertical: 10,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: linked ? c.success : c.border,
+                            backgroundColor: linked ? `${c.success}22` : c.bg,
+                            opacity: disabled ? 0.7 : 1,
+                          },
+                          pressed && !disabled && { opacity: 0.8 },
+                        ]}
+                      >
+                        {providerBadge(provider)}
+                        <Text style={{ color: linked ? c.success : c.textPrimary, fontWeight: "600", fontSize: 12 }}>
+                          {linked ? `${provider} linked` : linkingProvider === provider ? "Opening…" : `Connect ${provider}`}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {authError ? (
+                  <Text style={{ color: c.error, fontSize: 11 }}>
+                    {authError}
+                  </Text>
+                ) : null}
+              </View>
+
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Step 2 · Populate owned live boxes</Text>
               <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                Pick the owned live boxes that should receive this git/API-key setup.
+                Pick the owned live boxes that should receive GitHub or GitLab clone credentials plus CI/deploy tokens.
               </Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                 {onboardingTargetCandidates.length === 0 ? (

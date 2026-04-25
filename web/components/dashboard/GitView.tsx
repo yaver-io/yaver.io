@@ -75,6 +75,42 @@ function actionLabelForSurface(action: ProjectAction, surface: "preview" | "web-
   return "Builds";
 }
 
+function providerTokenHelp(provider: "github" | "gitlab") {
+  if (provider === "github") {
+    return {
+      href: "https://github.com/settings/personal-access-tokens/new",
+      label: "How to create a GitHub token",
+      hint: "Use a GitHub fine-grained token with repository access for private repositories.",
+    };
+  }
+  return {
+    href: "https://gitlab.com/-/user_settings/personal_access_tokens",
+    label: "How to create a GitLab token",
+    hint: "Use a GitLab token with api scope for repo traversal and clone.",
+  };
+}
+
+function ProviderIcon({ provider, className = "h-4 w-4" }: { provider: "github" | "gitlab"; className?: string }) {
+  if (provider === "gitlab") {
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+        <path d="M12 22.4 16.4 8.9h-8.8L12 22.4Z" />
+        <path d="M12 22.4 7.6 8.9H1.8L12 22.4Z" />
+        <path d="M1.8 8.9.5 13a.9.9 0 0 0 .33 1.01L12 22.4 1.8 8.9Z" />
+        <path d="M1.8 8.9h5.8L5.1 1.2a.45.45 0 0 0-.86 0L1.8 8.9Z" />
+        <path d="M12 22.4 16.4 8.9h5.8L12 22.4Z" />
+        <path d="M22.2 8.9 23.5 13a.9.9 0 0 1-.33 1.01L12 22.4 22.2 8.9Z" />
+        <path d="M22.2 8.9h-5.8l2.5-7.7a.45.45 0 0 1 .86 0l2.5 7.7Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      <path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.76-.24.76-.54v-2.07c-3.1.67-3.76-1.31-3.76-1.31-.5-1.29-1.24-1.63-1.24-1.63-1.02-.69.08-.67.08-.67 1.12.08 1.72 1.16 1.72 1.16 1 .17 1.96 1.42 1.96 1.42.89 1.52 2.33 1.08 2.9.82.09-.72.35-1.08.63-1.33-2.47-.28-5.07-1.23-5.07-5.5 0-1.22.43-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .93-.3 3.06 1.14a10.7 10.7 0 0 1 5.58 0c2.13-1.44 3.06-1.14 3.06-1.14.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3 0 4.28-2.61 5.22-5.1 5.49.4.35.75 1.04.75 2.1v3.11c0 .3.2.65.77.54A11.25 11.25 0 0 0 12 .75Z" />
+    </svg>
+  );
+}
+
 export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [expandedProjectPath, setExpandedProjectPath] = useState("");
@@ -543,14 +579,16 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setManualProvider("github")}
-                className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                className="inline-flex items-center gap-2 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
               >
+                <ProviderIcon provider="github" className="h-4 w-4 text-surface-300" />
                 Add GitHub Token
               </button>
               <button
                 onClick={() => setManualProvider("gitlab")}
-                className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
+                className="inline-flex items-center gap-2 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
               >
+                <ProviderIcon provider="gitlab" className="h-4 w-4 text-orange-300" />
                 Add GitLab Token
               </button>
             </div>
@@ -558,10 +596,17 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
             {manualProvider ? (
               <div className="space-y-2 rounded-md border border-surface-800 bg-surface-950/70 p-3">
                 <div className="text-[11px] leading-5 text-surface-500">
-                  {manualProvider === "github"
-                    ? "Use a GitHub token with repo access for private repositories."
-                    : "Use a GitLab token with api scope for repo traversal and clone."}
+                  {providerTokenHelp(manualProvider).hint}
                 </div>
+                <a
+                  href={providerTokenHelp(manualProvider).href}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 text-[11px] font-medium text-sky-300 hover:text-sky-200"
+                >
+                  <ProviderIcon provider={manualProvider} className="h-3.5 w-3.5" />
+                  {providerTokenHelp(manualProvider).label}
+                </a>
                 <div className="flex gap-2">
                   <input
                     type="password"
@@ -589,7 +634,13 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
               <div key={provider.host} className="rounded-md border border-surface-800 bg-surface-950/70 p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
+                    <div className="flex items-center gap-2">
+                      <ProviderIcon
+                        provider={(provider.provider === "gitlab" ? "gitlab" : "github")}
+                        className={`h-4 w-4 ${provider.provider === "gitlab" ? "text-orange-300" : "text-surface-300"}`}
+                      />
+                      <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
+                    </div>
                     <div className="mt-1 text-[11px] text-surface-500">
                       {provider.provider} · {provider.host}{provider.hasSsh ? " · SSH" : " · HTTPS"}
                     </div>
