@@ -87,6 +87,9 @@ export const set = mutation({
       v.object({
         deviceId: v.string(),
         runnerId: v.union(v.string(), v.null()),
+        // Optional model hint. null clears just the model (keeps the
+        // runner selection). undefined leaves the existing model alone.
+        model: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     // Per-subsystem managed: true (Yaver-hosted) | false (user-hosted)
@@ -118,11 +121,30 @@ export const set = mutation({
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
     }
     if (args.primaryRunnerForDevice !== undefined) {
-      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string }>;
-      const filtered = cur.filter((row) => row.deviceId !== args.primaryRunnerForDevice!.deviceId);
-      const next = args.primaryRunnerForDevice.runnerId
-        ? [...filtered, { deviceId: args.primaryRunnerForDevice.deviceId, runnerId: args.primaryRunnerForDevice.runnerId }]
-        : filtered;
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;
+      const payload = args.primaryRunnerForDevice;
+      const filtered = cur.filter((row) => row.deviceId !== payload.deviceId);
+      let next = filtered;
+      if (payload.runnerId) {
+        // Resolve the effective model: explicit string → use it; null →
+        // clear any existing model on that device; undefined → preserve
+        // the current model if the runner is unchanged.
+        const prevRow = cur.find((row) => row.deviceId === payload.deviceId);
+        let model: string | undefined;
+        if (payload.model === null) {
+          model = undefined;
+        } else if (payload.model !== undefined) {
+          model = payload.model;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          model = prevRow.model;
+        }
+        const row: { deviceId: string; runnerId: string; model?: string } = {
+          deviceId: payload.deviceId,
+          runnerId: payload.runnerId,
+        };
+        if (model) row.model = model;
+        next = [...filtered, row];
+      }
       patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;
     }
     if (args.managed !== undefined) {
@@ -162,6 +184,9 @@ export const setByToken = mutation({
       v.object({
         deviceId: v.string(),
         runnerId: v.union(v.string(), v.null()),
+        // Optional model hint. null clears just the model (keeps the
+        // runner selection). undefined leaves the existing model alone.
+        model: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     managed: v.optional(managedPatchValidator),
@@ -192,11 +217,30 @@ export const setByToken = mutation({
       patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
     }
     if (args.primaryRunnerForDevice !== undefined) {
-      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string }>;
-      const filtered = cur.filter((row) => row.deviceId !== args.primaryRunnerForDevice!.deviceId);
-      const next = args.primaryRunnerForDevice.runnerId
-        ? [...filtered, { deviceId: args.primaryRunnerForDevice.deviceId, runnerId: args.primaryRunnerForDevice.runnerId }]
-        : filtered;
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;
+      const payload = args.primaryRunnerForDevice;
+      const filtered = cur.filter((row) => row.deviceId !== payload.deviceId);
+      let next = filtered;
+      if (payload.runnerId) {
+        // Resolve the effective model: explicit string → use it; null →
+        // clear any existing model on that device; undefined → preserve
+        // the current model if the runner is unchanged.
+        const prevRow = cur.find((row) => row.deviceId === payload.deviceId);
+        let model: string | undefined;
+        if (payload.model === null) {
+          model = undefined;
+        } else if (payload.model !== undefined) {
+          model = payload.model;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          model = prevRow.model;
+        }
+        const row: { deviceId: string; runnerId: string; model?: string } = {
+          deviceId: payload.deviceId,
+          runnerId: payload.runnerId,
+        };
+        if (model) row.model = model;
+        next = [...filtered, row];
+      }
       patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;
     }
     if (args.managed !== undefined) {

@@ -525,8 +525,16 @@ interface DeviceState {
    *  select the runner so the user doesn't have to chase the pill on
    *  every reconnect. Mirrors the web dashboard's own dropdown. */
   primaryRunnerByDevice: Record<string, string>;
-  /** Persist a per-device primary coding agent. Pass null to clear. */
-  setPrimaryRunnerForDevice: (deviceId: string, runnerId: string | null) => Promise<void>;
+  /** Per-device model hint paired with the runner above. Optional.
+   *  e.g. {"<deviceId>": "claude-opus-4-7"}. The agent forwards this
+   *  to `--model` / `YAVER_CLAUDE_MODEL` / `YAVER_CODEX_MODEL` at
+   *  spawn time so users can pick Opus-for-one-device / Sonnet-for-
+   *  another without editing env vars. */
+  primaryModelByDevice: Record<string, string>;
+  /** Persist a per-device primary coding agent + optional model.
+   *  runnerId=null clears the entry. model=null clears just the model
+   *  (runner stays). model=undefined leaves any existing model alone. */
+  setPrimaryRunnerForDevice: (deviceId: string, runnerId: string | null, model?: string | null) => Promise<void>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -613,6 +621,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // fresh accounts; the dashboard / mobile picker seeds suggestions
   // and the user confirms.
   const [primaryRunnerByDevice, setPrimaryRunnerByDeviceState] = useState<Record<string, string>>({});
+  // Per-device model hint alongside primaryRunnerByDevice. Same shape,
+  // independent state so callers that only care about the runner id
+  // don't have to re-render when the model changes and vice-versa.
+  const [primaryModelByDevice, setPrimaryModelByDeviceState] = useState<Record<string, string>>({});
   const hasLoadedOnce = useRef(false);
 
   const markDeviceUnreachable = useCallback((deviceId: string) => {
@@ -890,27 +902,42 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const setPrimaryRunnerForDevice = useCallback(
-    async (deviceId: string, runnerId: string | null) => {
+    async (deviceId: string, runnerId: string | null, model?: string | null) => {
       if (!token) throw new Error("Not signed in");
-      // Optimistic local update.
-      const previous = primaryRunnerByDevice;
+      // Optimistic local update for both runner + model.
+      const previousRunner = primaryRunnerByDevice;
+      const previousModel = primaryModelByDevice;
       setPrimaryRunnerByDeviceState((prev) => {
         const next = { ...prev };
         if (runnerId) next[deviceId] = runnerId;
         else delete next[deviceId];
         return next;
       });
+      setPrimaryModelByDeviceState((prev) => {
+        const next = { ...prev };
+        if (!runnerId || model === null) {
+          delete next[deviceId];
+        } else if (typeof model === "string" && model.length > 0) {
+          next[deviceId] = model;
+        }
+        return next;
+      });
       try {
         await saveUserSettings(token, {
-          primaryRunnerForDevice: { deviceId, runnerId },
+          primaryRunnerForDevice: {
+            deviceId,
+            runnerId,
+            ...(model !== undefined ? { model } : {}),
+          },
         });
       } catch (e) {
         appLog("error", `[settings] setPrimaryRunnerForDevice failed: ${e}`);
-        setPrimaryRunnerByDeviceState(previous);
+        setPrimaryRunnerByDeviceState(previousRunner);
+        setPrimaryModelByDeviceState(previousModel);
         throw e;
       }
     },
-    [token, primaryRunnerByDevice],
+    [token, primaryRunnerByDevice, primaryModelByDevice],
   );
 
   const stopReconnectAndBounce = useCallback(async () => {
@@ -1243,12 +1270,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // initial runner so users don't have to chase the runner pill.
         const rows = settings.primaryRunnerByDevice;
         if (Array.isArray(rows)) {
-          const map: Record<string, string> = {};
-          for (const row of rows) {
-            if (row?.deviceId && row?.runnerId) map[String(row.deviceId)] = String(row.runnerId);
+          const runners: Record<string, string> = {};
+          const models: Record<string, string> = {};
+          for (const row of rows as Array<{ deviceId?: string; runnerId?: string; model?: string }>) {
+            if (!row?.deviceId || !row?.runnerId) continue;
+            runners[String(row.deviceId)] = String(row.runnerId);
+            if (row.model) models[String(row.deviceId)] = String(row.model);
           }
-          setPrimaryRunnerByDeviceState(map);
-          appLog("info", `[settings] primaryRunnerByDevice=${Object.keys(map).length} entries`);
+          setPrimaryRunnerByDeviceState(runners);
+          setPrimaryModelByDeviceState(models);
+          appLog("info", `[settings] primaryRunnerByDevice=${Object.keys(runners).length} entries, models=${Object.keys(models).length}`);
         }
 
         // Apply tunnel from settings (if no local override)
@@ -1841,9 +1872,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryDeviceId,
       setPrimaryDevice,
       primaryRunnerByDevice,
+      primaryModelByDevice,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

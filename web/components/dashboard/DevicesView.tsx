@@ -689,9 +689,14 @@ function usePrimaryDeviceId(token: string | null | undefined): {
 // long-term we should hoist this to a shared context.
 export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   primaryRunnerByDevice: Record<string, string>;
-  setPrimaryRunner: (deviceId: string, runnerId: string | null) => Promise<void>;
+  /** Per-device model hint (optional) — `claude-opus-4-7`, `gpt-5-codex`,
+   *  `qwen2.5-coder:14b`, … — read from the same Convex row and stored
+   *  alongside runnerId. Empty when the user hasn't picked one yet. */
+  primaryModelByDevice: Record<string, string>;
+  setPrimaryRunner: (deviceId: string, runnerId: string | null, model?: string | null) => Promise<void>;
 } {
-  const [map, setMap] = useState<Record<string, string>>({});
+  const [runnerMap, setRunnerMap] = useState<Record<string, string>>({});
+  const [modelMap, setModelMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!token) return;
@@ -704,14 +709,18 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
         if (!res.ok) return;
         const data = await res.json();
         const rows = Array.isArray(data?.settings?.primaryRunnerByDevice)
-          ? (data.settings.primaryRunnerByDevice as Array<{ deviceId: string; runnerId: string }>)
+          ? (data.settings.primaryRunnerByDevice as Array<{ deviceId: string; runnerId: string; model?: string }>)
           : [];
         if (!cancelled) {
-          const next: Record<string, string> = {};
+          const runners: Record<string, string> = {};
+          const models: Record<string, string> = {};
           for (const row of rows) {
-            if (row?.deviceId && row?.runnerId) next[row.deviceId] = row.runnerId;
+            if (!row?.deviceId || !row?.runnerId) continue;
+            runners[row.deviceId] = row.runnerId;
+            if (row.model) models[row.deviceId] = row.model;
           }
-          setMap(next);
+          setRunnerMap(runners);
+          setModelMap(models);
         }
       } catch {
         // best-effort — falls back to no per-device pref
@@ -721,33 +730,81 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   }, [token]);
 
   const setPrimaryRunner = useCallback(
-    async (deviceId: string, runnerId: string | null) => {
+    async (deviceId: string, runnerId: string | null, model?: string | null) => {
       if (!token) return;
-      const previous = map;
+      const previousRunner = runnerMap;
+      const previousModel = modelMap;
       // Optimistic update.
-      setMap((prev) => {
+      setRunnerMap((prev) => {
         const next = { ...prev };
         if (runnerId) next[deviceId] = runnerId;
         else delete next[deviceId];
         return next;
       });
+      setModelMap((prev) => {
+        const next = { ...prev };
+        if (!runnerId || model === null) {
+          delete next[deviceId];
+        } else if (typeof model === "string" && model.length > 0) {
+          next[deviceId] = model;
+        }
+        return next;
+      });
       try {
+        const body: Record<string, unknown> = {
+          primaryRunnerForDevice: {
+            deviceId,
+            runnerId,
+            ...(model !== undefined ? { model } : {}),
+          },
+        };
         const res = await fetch(`${CONVEX_URL}/settings`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ primaryRunnerForDevice: { deviceId, runnerId } }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
       } catch (e) {
-        setMap(previous);
+        setRunnerMap(previousRunner);
+        setModelMap(previousModel);
         throw e;
       }
     },
-    [token, map],
+    [token, runnerMap, modelMap],
   );
 
-  return { primaryRunnerByDevice: map, setPrimaryRunner };
+  return { primaryRunnerByDevice: runnerMap, primaryModelByDevice: modelMap, setPrimaryRunner };
 }
+
+// Default model per runner when the user hasn't picked one yet.
+// Applied when the user selects a primary runner and has no prior
+// model choice, so `claude` seeds `opus-4-7` (user's explicit ask
+// for "latest opus"), `codex` seeds `gpt-5-codex`, etc.
+export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
+  claude: "claude-opus-4-7",
+  codex: "gpt-5-codex",
+  "aider-ollama": "qwen2.5-coder:14b",
+};
+
+// Options shown in the per-runner model dropdown. First entry is the
+// default. Full model ids so the agent can forward them verbatim to
+// `--model` / YAVER_CLAUDE_MODEL / YAVER_CODEX_MODEL.
+export const MODEL_OPTIONS_BY_RUNNER: Record<string, Array<{ id: string; label: string; hint?: string }>> = {
+  claude: [
+    { id: "claude-opus-4-7", label: "Opus 4.7", hint: "highest quality, ~5× Sonnet cost" },
+    { id: "claude-sonnet-4-6", label: "Sonnet 4.6", hint: "daily work, balanced" },
+    { id: "claude-haiku-4-5", label: "Haiku 4.5", hint: "fastest, cheapest" },
+  ],
+  codex: [
+    { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "latest, agentic" },
+    { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
+  ],
+  "aider-ollama": [
+    { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B", hint: "fits 24 GB RAM" },
+    { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B", hint: "needs 48+ GB" },
+    { id: "qwen2.5-coder:1.5b", label: "Qwen Coder 1.5B", hint: "smoke-test only" },
+  ],
+};
 
 export default function DevicesView({
   devices,
@@ -761,7 +818,7 @@ export default function DevicesView({
   hiddenCount = 0,
 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
-  const { primaryRunnerByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
+  const { primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
   const [showDormantDevices, setShowDormantDevices] = useState(false);
@@ -1071,7 +1128,19 @@ export default function DevicesView({
                             value={primaryId}
                             onChange={(e) => {
                               const next = e.target.value || null;
-                              void setPrimaryRunner(device.id, next).catch(() => {});
+                              // When switching to a runner that has model
+                              // presets, seed the default so the user
+                              // doesn't land on an empty "(default)" for
+                              // a runner where it matters. Preserve any
+                              // existing explicit model when the user is
+                              // re-selecting the same runner.
+                              const seeded = next ? DEFAULT_MODEL_BY_RUNNER[next] : undefined;
+                              const curModel = primaryModelByDevice[device.id];
+                              const prevRunner = primaryRunnerByDevice[device.id];
+                              const model = next && prevRunner === next && curModel
+                                ? curModel
+                                : seeded ?? null;
+                              void setPrimaryRunner(device.id, next, model).catch(() => {});
                             }}
                             className="rounded border border-indigo-500/30 bg-surface-900 px-2 py-1 text-[12px] font-medium text-indigo-100 hover:border-indigo-400/50 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
                             title="Change primary coding agent for this device. Auto-selected in every Yaver surface (chat, hot reload, web reload, mobile) when this device is active."
@@ -1083,6 +1152,32 @@ export default function DevicesView({
                               </option>
                             ))}
                           </select>
+                          {/* Model selector — only surfaces when the
+                              current primary runner actually has model
+                              presets (claude / codex / aider-ollama).
+                              Other runners (aider plain, ollama with a
+                              bare name, goose) skip it. */}
+                          {primaryId && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
+                            <select
+                              value={
+                                primaryModelByDevice[device.id]
+                                  ?? DEFAULT_MODEL_BY_RUNNER[primaryId]
+                                  ?? ""
+                              }
+                              onChange={(e) => {
+                                const nextModel = e.target.value || null;
+                                void setPrimaryRunner(device.id, primaryId, nextModel).catch(() => {});
+                              }}
+                              className="rounded border border-indigo-500/30 bg-surface-900 px-2 py-1 text-[11px] text-indigo-100 hover:border-indigo-400/50 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
+                              title={`Model used when spawning ${primaryId}. Forwarded as --model / env var to the runner.`}
+                            >
+                              {MODEL_OPTIONS_BY_RUNNER[primaryId].map((m) => (
+                                <option key={m.id} value={m.id} title={m.hint || ""}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : null}
                           {!explicitPrimary && seededPrimary ? (
                             <button
                               type="button"

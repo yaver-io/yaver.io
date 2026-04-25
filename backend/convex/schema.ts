@@ -355,6 +355,14 @@ export default defineSchema({
         v.object({
           deviceId: v.string(),
           runnerId: v.string(),
+          // Optional model hint seeded into the runner at spawn time.
+          // Examples:
+          //   runnerId=claude → model="claude-opus-4-7" / "claude-sonnet-4-6" / "claude-haiku-4-5"
+          //   runnerId=codex  → model="gpt-5-codex" / "gpt-5"
+          //   runnerId=ollama → model="qwen2.5-coder:14b"
+          // Empty/undefined = runner's own default (preserves legacy
+          // rows without a model field).
+          model: v.optional(v.string()),
         }),
       ),
     ),
