@@ -99,6 +99,7 @@ export default function PreviewPane({
   onRepairRelay,
   connectedDeviceNeedsAuth,
   onSwitchAgent,
+  onTriggerReauth,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
@@ -115,6 +116,10 @@ export default function PreviewPane({
    *  or pick a local LLM that doesn't need cloud auth. The selected
    *  agent saves the day until the cloud token comes back. */
   onSwitchAgent?: () => void;
+  /** Direct re-auth: opens the browser-auth modal for the named runner
+   *  without forcing the user to chase Devices → Sign in. Single click
+   *  from the "Agent session expired" banner kicks off the flow. */
+  onTriggerReauth?: (runner: string) => void;
 }) {
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
@@ -618,14 +623,27 @@ export default function PreviewPane({
         re-auth (Ollama / Aider+Qwen, packaged with Yaver and ready to go).
       </p>
       <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
-        {onReconnect && (
+        {/* Single-click re-auth: prefer triggering the browser flow
+            directly when we know the issue is an expired session,
+            because just calling /reconnect against a needsAuth device
+            won't actually fix anything. Falls back to plain reconnect
+            when no reauth handler is wired. */}
+        {onTriggerReauth ? (
+          <button
+            onClick={() => onTriggerReauth("claude")}
+            className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20"
+            title="Open the Claude browser sign-in flow on the host. After you sign in the device reconnects automatically."
+          >
+            Sign in &amp; reconnect
+          </button>
+        ) : onReconnect ? (
           <button
             onClick={() => void onReconnect()}
             className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
           >
             Try reconnect
           </button>
-        )}
+        ) : null}
         {onSwitchAgent && (
           <button
             onClick={() => onSwitchAgent()}

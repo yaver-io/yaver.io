@@ -1747,6 +1747,7 @@ export default function DashboardPage() {
               onRepairRelay={token ? repairRelay : undefined}
               connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
               onSwitchAgent={() => setActiveTab("devices")}
+              onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -1991,23 +1992,31 @@ export default function DashboardPage() {
                   </form>
                 </div>
               </div>
-              {chatRunnerAuthModal ? (
-                <RunnerAuthModal
-                  runner={chatRunnerAuthModal}
-                  deviceName={connectedDevice?.name || connectedDevice?.id || "this machine"}
-                  onClose={() => {
-                    setChatRunnerAuthModal(null);
-                    void refreshConnectedRunners();
-                  }}
-                  onCompleted={() => {
-                    void refreshConnectedRunners();
-                  }}
-                />
-              ) : null}
             </>
           )}
         </div>
       </div>
+      {/* Lifted out of the chat-tab branch so the Hot Reload "Sign in
+          & reconnect" button can open the modal regardless of which
+          tab is active. The modal handles its own backdrop + z-index. */}
+      {chatRunnerAuthModal ? (
+        <RunnerAuthModal
+          runner={chatRunnerAuthModal}
+          deviceName={connectedDevice?.name || connectedDevice?.id || "this machine"}
+          onClose={() => {
+            setChatRunnerAuthModal(null);
+            void refreshConnectedRunners();
+          }}
+          onCompleted={() => {
+            void refreshConnectedRunners();
+            // Also re-establish the device connection in case the
+            // session-expired state lingered on the dashboard side.
+            if (connectedDevice) {
+              void connectToDevice(connectedDevice);
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
 }
