@@ -497,6 +497,74 @@ func TestParity_ToolRspEncoding(t *testing.T) {
 	}
 }
 
+func TestAttest_RoundTrip(t *testing.T) {
+	in := Attest{
+		ProtocolVersion: 1,
+		Arch:            "aarch64",
+		Libc:            "musl-1.2",
+		Kernel:          "5.15.149",
+		Capabilities:    []string{"fs.read.logs", "nl80211.read.station"},
+		EBPFSupported:   true,
+		CacheQuotaBytes: 4 * 1024 * 1024,
+	}
+	buf := make([]byte, 256)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeAttest(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Arch != in.Arch || out.Libc != in.Libc || out.Kernel != in.Kernel {
+		t.Fatalf("mismatch: %+v", out)
+	}
+	if len(out.Capabilities) != 2 || out.Capabilities[0] != "fs.read.logs" {
+		t.Fatalf("capabilities: %v", out.Capabilities)
+	}
+	if !out.EBPFSupported || out.CacheQuotaBytes != 4*1024*1024 {
+		t.Fatalf("flags: %+v", out)
+	}
+}
+
+func TestErrorBody_RoundTrip(t *testing.T) {
+	in := ErrorBody{
+		ProtocolVersion: 1,
+		Code:            -42,
+		Context:         "hostapd ctrl-iface FAIL",
+		Message:         "wifi probe timeout",
+		StreamID:        7,
+	}
+	buf := make([]byte, 128)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeErrorBody(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != in {
+		t.Fatalf("mismatch: got %+v want %+v", out, in)
+	}
+}
+
+func TestErrorBody_Minimal(t *testing.T) {
+	in := ErrorBody{ProtocolVersion: 1, Code: -1, Message: "x"}
+	buf := make([]byte, 32)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := DecodeErrorBody(buf[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Code != -1 || out.Message != "x" || out.Context != "" || out.StreamID != 0 {
+		t.Fatalf("mismatch: %+v", out)
+	}
+}
+
 // TestParity_StreamChunkEncoding.
 func TestParity_StreamChunkEncoding(t *testing.T) {
 	in := StreamChunk{

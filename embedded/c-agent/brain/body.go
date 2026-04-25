@@ -852,3 +852,260 @@ func DecodeModuleBody(buf []byte) (ModuleBody, error) {
 	}
 	return out, nil
 }
+
+// ── ATTEST ────────────────────────────────────────────────────
+
+// Attest is device → brain platform attestation. Sent once per
+// session right after AUTH so the brain knows what kind of
+// modules it can ship.
+type Attest struct {
+	ProtocolVersion uint32
+	Arch            string
+	Libc            string
+	Kernel          string
+	Capabilities    []string
+	EBPFSupported   bool
+	CacheQuotaBytes uint64
+}
+
+func (a Attest) Encode(buf []byte) (int, error) {
+	if a.Arch == "" || a.Libc == "" || a.Kernel == "" {
+		return 0, ErrInvalidArg
+	}
+	w := NewCBORWriter(buf)
+	w.BeginMap(7)
+
+	// CTAP2 order: v < arch < libc < kernel < capabilities
+	//             < ebpf_supported < cache_quota_bytes.
+	w.WriteText("v")
+	w.WriteUint(uint64(a.ProtocolVersion))
+
+	w.WriteText("arch")
+	w.WriteText(a.Arch)
+
+	w.WriteText("libc")
+	w.WriteText(a.Libc)
+
+	w.WriteText("kernel")
+	w.WriteText(a.Kernel)
+
+	w.WriteText("capabilities")
+	w.BeginArray(len(a.Capabilities))
+	for _, cap := range a.Capabilities {
+		w.WriteText(cap)
+	}
+
+	w.WriteText("ebpf_supported")
+	w.WriteBool(a.EBPFSupported)
+
+	w.WriteText("cache_quota_bytes")
+	w.WriteUint(a.CacheQuotaBytes)
+
+	if w.Err != nil {
+		return 0, w.Err
+	}
+	return w.Len(), nil
+}
+
+func DecodeAttest(buf []byte) (Attest, error) {
+	r := NewCBORReader(buf)
+	kv, err := r.ReadMapBegin()
+	if err != nil {
+		return Attest{}, err
+	}
+	var out Attest
+	var sV, sArch, sLibc, sKernel bool
+	for i := 0; i < kv; i++ {
+		key, err := r.ReadText()
+		if err != nil {
+			return Attest{}, err
+		}
+		switch key {
+		case "v":
+			v, err := r.ReadUint()
+			if err != nil {
+				return Attest{}, err
+			}
+			if v > 0xFFFFFFFF {
+				return Attest{}, ErrBadFrame
+			}
+			out.ProtocolVersion = uint32(v)
+			sV = true
+		case "arch":
+			s, err := r.ReadText()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.Arch = s
+			sArch = true
+		case "libc":
+			s, err := r.ReadText()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.Libc = s
+			sLibc = true
+		case "kernel":
+			s, err := r.ReadText()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.Kernel = s
+			sKernel = true
+		case "capabilities":
+			n, err := r.ReadArrayBegin()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.Capabilities = make([]string, 0, n)
+			for j := 0; j < n; j++ {
+				s, err := r.ReadText()
+				if err != nil {
+					return Attest{}, err
+				}
+				out.Capabilities = append(out.Capabilities, s)
+			}
+		case "ebpf_supported":
+			b, err := r.ReadBool()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.EBPFSupported = b
+		case "cache_quota_bytes":
+			v, err := r.ReadUint()
+			if err != nil {
+				return Attest{}, err
+			}
+			out.CacheQuotaBytes = v
+		default:
+			if err := r.Skip(); err != nil {
+				return Attest{}, err
+			}
+		}
+	}
+	if !sV || !sArch || !sLibc || !sKernel {
+		return Attest{}, ErrBadFrame
+	}
+	return out, nil
+}
+
+// ── Error body ────────────────────────────────────────────────
+
+// ErrorBody is structured failure carried on any frame type.
+// Named `ErrorBody` to avoid collision with Go's built-in error
+// interface; `Error` is used in field names.
+type ErrorBody struct {
+	ProtocolVersion uint32
+	Code            int32
+	Context         string // optional
+	Message         string
+	StreamID        uint32 // optional, 0 = connection-scoped
+}
+
+func (e ErrorBody) Encode(buf []byte) (int, error) {
+	w := NewCBORWriter(buf)
+
+	hasCtx := e.Context != ""
+	hasStream := e.StreamID != 0
+	mapN := 3
+	if hasCtx {
+		mapN++
+	}
+	if hasStream {
+		mapN++
+	}
+	w.BeginMap(mapN)
+
+	// CTAP2 order: v < code < context < message < stream_id.
+	w.WriteText("v")
+	w.WriteUint(uint64(e.ProtocolVersion))
+
+	w.WriteText("code")
+	w.WriteInt(int64(e.Code))
+
+	if hasCtx {
+		w.WriteText("context")
+		w.WriteText(e.Context)
+	}
+
+	w.WriteText("message")
+	w.WriteText(e.Message)
+
+	if hasStream {
+		w.WriteText("stream_id")
+		w.WriteUint(uint64(e.StreamID))
+	}
+
+	if w.Err != nil {
+		return 0, w.Err
+	}
+	return w.Len(), nil
+}
+
+func DecodeErrorBody(buf []byte) (ErrorBody, error) {
+	r := NewCBORReader(buf)
+	kv, err := r.ReadMapBegin()
+	if err != nil {
+		return ErrorBody{}, err
+	}
+	var out ErrorBody
+	var sV, sCode, sMsg bool
+	for i := 0; i < kv; i++ {
+		key, err := r.ReadText()
+		if err != nil {
+			return ErrorBody{}, err
+		}
+		switch key {
+		case "v":
+			v, err := r.ReadUint()
+			if err != nil {
+				return ErrorBody{}, err
+			}
+			if v > 0xFFFFFFFF {
+				return ErrorBody{}, ErrBadFrame
+			}
+			out.ProtocolVersion = uint32(v)
+			sV = true
+		case "code":
+			v, err := r.ReadInt()
+			if err != nil {
+				return ErrorBody{}, err
+			}
+			if v < -2147483648 || v > 2147483647 {
+				return ErrorBody{}, ErrBadFrame
+			}
+			out.Code = int32(v)
+			sCode = true
+		case "context":
+			s, err := r.ReadText()
+			if err != nil {
+				return ErrorBody{}, err
+			}
+			out.Context = s
+		case "message":
+			s, err := r.ReadText()
+			if err != nil {
+				return ErrorBody{}, err
+			}
+			out.Message = s
+			sMsg = true
+		case "stream_id":
+			v, err := r.ReadUint()
+			if err != nil {
+				return ErrorBody{}, err
+			}
+			if v > 0xFFFFFFFF {
+				return ErrorBody{}, ErrBadFrame
+			}
+			out.StreamID = uint32(v)
+		default:
+			if err := r.Skip(); err != nil {
+				return ErrorBody{}, err
+			}
+		}
+	}
+	if !sV || !sCode || !sMsg {
+		return ErrorBody{}, ErrBadFrame
+	}
+	return out, nil
+}
