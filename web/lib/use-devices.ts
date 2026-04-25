@@ -133,9 +133,18 @@ async function applyRelayPresence(devices: Device[]): Promise<Device[]> {
     return devices.map((device) => {
       const entry = table[device.id];
       if (entry?.online === true) {
+        // Bus-overrides-Convex: if the relay's presence endpoint
+        // reports the agent has a live tunnel right now, we know
+        // the host's session token is valid (the agent can't keep
+        // its QUIC tunnel registered without one). Convex's
+        // needsAuth flag goes stale between 5-minute heartbeats and
+        // can flicker yellow even on a perfectly healthy agent —
+        // this is the false-positive flicker users keep reporting.
+        // Trust the live signal over the cached row.
         return {
           ...device,
           online: true,
+          needsAuth: false,
           lastTunnelEvent: {
             online: true,
             at: Date.now(),
