@@ -985,7 +985,9 @@ export default function DevicesView({
                   ) : null}
                 </div>
                 {expandedId === device.id ? (
-                  <DeviceDetailsPanel device={device} token={token ?? null} />
+                  <DeviceDetailsBoundary device={device}>
+                    <DeviceDetailsPanel device={device} token={token ?? null} />
+                  </DeviceDetailsBoundary>
                 ) : null}
               </div>
             </div>
@@ -1070,10 +1072,32 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
     return `${m}m`;
   };
 
-  const row = (label: string, value: React.ReactNode) => (
+  // Defensive coercion: agent /info shapes drift between versions
+  // (e.g. autoStart used to be a boolean and became {enabled, type}
+  // in v1.99.x). Stuffing an unexpected object into a JSX child
+  // crashes the whole tree with "Objects are not valid as a React
+  // child" — taking down the entire dashboard for the user, not
+  // just the row. Coerce anything non-primitive / non-element to
+  // a readable string here so the panel keeps rendering even when
+  // the agent is on a different version than the dashboard.
+  const safeValue = (v: unknown): React.ReactNode => {
+    if (v == null) return null;
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      return String(v);
+    }
+    // React elements are objects but pass `$$typeof` — let them through.
+    if (typeof v === "object" && (v as { $$typeof?: symbol }).$$typeof) {
+      return v as React.ReactNode;
+    }
+    if (typeof v === "object") {
+      try { return JSON.stringify(v); } catch { return "[unserialisable]"; }
+    }
+    return String(v);
+  };
+  const row = (label: string, value: unknown) => (
     <div className="flex items-start justify-between gap-3 py-1 text-xs">
       <span className="text-surface-500">{label}</span>
-      <span className="text-right text-surface-200">{value || sysUnknown}</span>
+      <span className="text-right text-surface-200">{safeValue(value) || sysUnknown}</span>
     </div>
   );
 
@@ -1501,4 +1525,29 @@ function RunnerAuthModal({
       </div>
     </div>
   );
+}
+
+class DeviceDetailsBoundary extends React.Component<{ device: Device; children: React.ReactNode }, { err: Error | null }> {
+  state = { err: null as Error | null };
+  static getDerivedStateFromError(err: Error) { return { err }; }
+  componentDidCatch(err: Error) {
+    if (typeof window !== "undefined" && (window as any).console) {
+      console.error("[DeviceDetailsPanel crash]", this.props.device.id, err);
+    }
+  }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-200">
+          <div className="font-semibold">Details panel crashed</div>
+          <div className="mt-1 text-[11px] text-red-300/80">
+            Likely an agent → dashboard schema mismatch (agent v{this.props.device.agentVersion || "?"} vs dashboard 1.1.32+).
+            Toggling Details closed this panel; the rest of the dashboard is fine. Browser console has the stack trace.
+          </div>
+          <div className="mt-2 font-mono text-[10px] text-red-300/60 break-all">{String(this.state.err.message || this.state.err)}</div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

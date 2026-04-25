@@ -891,6 +891,34 @@ export default function DashboardPage() {
       ),
     );
 
+    // Proactive re-auth: if Convex still says the device needs auth,
+    // recover the session BEFORE we try to connect. The original code
+    // only re-auth'd on connect-failure, but a needsAuth device whose
+    // QUIC tunnel is still alive will let us connect — and then 401 on
+    // every API call. Doing it up-front means a single click on
+    // "Open Workspace" recovers the session AND opens the workspace,
+    // instead of forcing the user to chase a separate Re-auth button.
+    if (device.needsAuth && !device.isGuest && agentClient.configuredRelayServers.length > 0) {
+      setConnectError("Recovering expired session…");
+      try {
+        const recovered = await agentClient.reauthAgent({
+          deviceId: device.id,
+          hostSessionToken: token,
+          convexSiteUrl: CONVEX_URL,
+        });
+        if (recovered.ok) {
+          setConnectError(null);
+        } else {
+          // Auto-recovery failed — fall through to the regular connect
+          // path. If that also fails, the catch below will surface a
+          // useful error and offer the manual re-auth button.
+          setConnectError(null);
+        }
+      } catch {
+        setConnectError(null);
+      }
+    }
+
     try {
       await agentClient.connect(device.host, device.port, token, device.id, { tunnelUrls });
       setConnectDiagnostics(agentClient.lastConnectDiagnostics);
