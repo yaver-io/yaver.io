@@ -1323,6 +1323,12 @@ export class YaverFeedback {
             await Promise.all([refreshMachinePill(), refreshRunnerActions(), refreshVibingGate()]);
             eligibility = await YaverFeedback.getVibingEligibility();
           }
+          if (!eligibility.canVibe && eligibility.needsGitSetup) {
+            setStatus('Connecting git for this repo…');
+            await connectGitForRepo(eligibility);
+            await Promise.all([refreshMachinePill(), refreshRunnerActions(), refreshVibingGate()]);
+            eligibility = await YaverFeedback.getVibingEligibility();
+          }
           if (eligibility.canVibe) {
             setStatus('Vibing is ready.');
           } else {
