@@ -1,6 +1,6 @@
 name: yaver_feedback
 description: Visual feedback SDK for Yaver — shake-to-report, screenshots, voice annotations, and local-first developer workflows
-version: 0.2.0
+version: 0.2.1
 homepage: https://yaver.io
 repository: https://github.com/kivanccakmak/yaver.io/tree/main/sdk/feedback/flutter
 
