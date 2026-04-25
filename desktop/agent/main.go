@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.41"
+const version = "1.99.42"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2666,6 +2666,23 @@ func runServe(args []string) {
 	}
 	go func() {
 		if err := httpServer.Start(ctx); err != nil {
+			// "address already in use" is the most common cause of a
+			// fresh agent failing to start: a previous yaver process
+			// (often an older binary that survived a botched upgrade)
+			// is still bound to :18080. Detecting this and emitting an
+			// actionable message saves users from the silent-failure
+			// where the new binary is on disk but the old process
+			// keeps responding to clients with stale data — the exact
+			// trap that produced "dashboard says v1.99.36 even though
+			// /usr/local/bin/yaver --version prints v1.99.41" reports.
+			if strings.Contains(err.Error(), "address already in use") {
+				log.Printf("HTTP server error: %v", err)
+				log.Printf("[port-conflict] Another process is already bound to :%d.", *httpPort)
+				log.Printf("[port-conflict] Most likely an older yaver process from a previous install survived this restart.")
+				log.Printf("[port-conflict] Find it: ss -tnlp | grep :%d   (or: lsof -i :%d)", *httpPort, *httpPort)
+				log.Printf("[port-conflict] Kill it: pkill -f 'yaver serve'  (then retry)")
+				log.Printf("[port-conflict] If the dashboard is showing a stale agent version, this is why.")
+			}
 			log.Fatalf("HTTP server error: %v", err)
 		}
 	}()

@@ -582,9 +582,24 @@ export default function DashboardPage() {
   // the chat tab's runner when a workspace opens, (b) decide which
   // runner the Hot Reload "Sign in & reconnect" CTA triggers.
   const { primaryRunnerByDevice } = usePrimaryRunnerByDevice(token);
-  const connectedDevicePrimaryRunner = connectedDevice
-    ? primaryRunnerByDevice[connectedDevice.id] ?? null
-    : null;
+  // Pick the runner the user actually wants to use on this device.
+  // Order:
+  //   1. Explicit primary persisted to userSettings
+  //   2. Hard-coded policy: yaver-test-ephemeral defaults to codex
+  //      (matches the seed in DevicesView so the Hot Reload re-auth
+  //      CTA isn't lying about which provider's OAuth it triggers)
+  //   3. First runner the device has registered as authenticated
+  //   4. null — the consumer falls back to "claude" as last resort
+  const connectedDevicePrimaryRunner = (() => {
+    if (!connectedDevice) return null;
+    const explicit = primaryRunnerByDevice[connectedDevice.id];
+    if (explicit) return explicit;
+    if (connectedDevice.name === "yaver-test-ephemeral") return "codex";
+    const runners = (connectedDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean }>;
+    const ready = runners.find((r) => r?.authConfigured);
+    if (ready?.runnerId) return ready.runnerId;
+    return null;
+  })();
   const probedForCurrentTabOpenRef = useRef(false);
 
   const isConnected = connState === "connected";
@@ -941,7 +956,27 @@ export default function DashboardPage() {
     try {
       await agentClient.connect(device.host, device.port, token, device.id, { tunnelUrls });
       setConnectDiagnostics(agentClient.lastConnectDiagnostics);
-      try { setAgentInfo(await agentClient.getInfo()); } catch {}
+      try {
+        const info = await agentClient.getInfo();
+        setAgentInfo(info);
+        // Push the live agentVersion to Convex on every successful
+        // connect. Why: the agent's own heartbeat path can stall when
+        // its session token expired (it returns 401 from Convex and
+        // can't update agentVersion), leaving the dashboard with a
+        // stale "v1.99.36" pill on a box that's actually running
+        // v1.99.41. The browser is freshly authenticated for /devices/
+        // report-version, so we side-channel the truth in. Convex's
+        // own change-or-24h gate inside report-version dedups repeat
+        // calls so this is cheap.
+        const liveVersion = typeof info?.version === "string" ? info.version.trim() : "";
+        if (liveVersion && liveVersion !== device.agentVersion && !device.isGuest && device.id && token) {
+          fetch(`${CONVEX_URL}/devices/report-version`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ deviceId: device.id, agentVersion: liveVersion }),
+          }).catch(() => { /* best-effort */ });
+        }
+      } catch {}
       try { setRunners(await agentClient.getRunners()); } catch {}
     } catch (err: any) {
       const firstDiagnostics = agentClient.lastConnectDiagnostics;
