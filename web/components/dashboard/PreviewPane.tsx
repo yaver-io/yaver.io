@@ -100,6 +100,7 @@ export default function PreviewPane({
   connectedDeviceNeedsAuth,
   onSwitchAgent,
   onTriggerReauth,
+  primaryRunner,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
@@ -120,6 +121,11 @@ export default function PreviewPane({
    *  without forcing the user to chase Devices → Sign in. Single click
    *  from the "Agent session expired" banner kicks off the flow. */
   onTriggerReauth?: (runner: string) => void;
+  /** The device's primary coding agent — codex for the test box, claude
+   *  on a fresh machine, etc. The "Sign in & reconnect" CTA uses this
+   *  so the user re-auths into the runner they actually want, not a
+   *  hardcoded default. Falls back to "claude" when unset. */
+  primaryRunner?: string | null;
 }) {
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
@@ -671,11 +677,11 @@ export default function PreviewPane({
             when no reauth handler is wired. */}
         {onTriggerReauth ? (
           <button
-            onClick={() => onTriggerReauth("claude")}
+            onClick={() => onTriggerReauth(primaryRunner || "claude")}
             className="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] font-medium text-amber-200 hover:bg-amber-500/20"
-            title="Open the Claude browser sign-in flow on the host. After you sign in the device reconnects automatically."
+            title={`Open the ${primaryRunner || "claude"} browser sign-in flow on the host. After you sign in the device reconnects automatically.`}
           >
-            Sign in &amp; reconnect
+            Sign in to {primaryRunner || "claude"} &amp; reconnect
           </button>
         ) : onReconnect ? (
           <button

@@ -457,15 +457,37 @@ export default function GuestsStatusView() {
       <section className="space-y-4">
         {user?.id ? (
           <div className="rounded-lg border border-surface-800 bg-surface-900/40 p-4">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Your user ID</div>
-            <div className="mt-2 break-all font-mono text-sm text-surface-100">{user.id}</div>
-            <div className="mt-2 text-xs text-surface-500">People can invite you without knowing your email.</div>
-            <button
-              onClick={() => copy(user.id)}
-              className="mt-3 border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300"
-            >
-              Copy User ID
-            </button>
+            {user.email ? (
+              <>
+                <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Your email</div>
+                <div className="mt-1 text-sm font-medium text-surface-100">{user.email}</div>
+                <div className="mt-3 text-[10px] font-bold uppercase tracking-wider text-surface-500">Your user ID</div>
+              </>
+            ) : (
+              <div className="text-[10px] font-bold uppercase tracking-wider text-surface-500">Your user ID</div>
+            )}
+            <div className="mt-1 break-all font-mono text-xs text-surface-300">{user.id}</div>
+            <div className="mt-2 text-xs text-surface-500">
+              {user.email
+                ? "Share either your email or user ID. The user ID lets people invite you without knowing your email."
+                : "People can invite you without knowing your email."}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {user.email ? (
+                <button
+                  onClick={() => copy(user.email)}
+                  className="border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-semibold text-indigo-300"
+                >
+                  Copy email
+                </button>
+              ) : null}
+              <button
+                onClick={() => copy(user.id)}
+                className="border border-surface-700 bg-surface-800/50 px-3 py-2 text-xs font-semibold text-surface-300"
+              >
+                Copy user ID
+              </button>
+            </div>
           </div>
         ) : null}
 

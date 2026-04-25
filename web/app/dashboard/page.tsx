@@ -40,7 +40,7 @@ import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
 import { WebReloadView } from "@/components/dashboard/WebReloadView";
 import GitView from "@/components/dashboard/GitView";
-import DevicesView from "@/components/dashboard/DevicesView";
+import DevicesView, { usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 
@@ -577,6 +577,14 @@ export default function DashboardPage() {
   // recovery attempts — wait 5 seconds" from the relay even on the
   // first real attempt.
   const lastAutoReauthRef = useRef<Map<string, number>>(new Map());
+  // Per-device primary coding agent map. Shared with the Devices tab
+  // hook (same Convex query, cached by Convex). Used to (a) pre-select
+  // the chat tab's runner when a workspace opens, (b) decide which
+  // runner the Hot Reload "Sign in & reconnect" CTA triggers.
+  const { primaryRunnerByDevice } = usePrimaryRunnerByDevice(token);
+  const connectedDevicePrimaryRunner = connectedDevice
+    ? primaryRunnerByDevice[connectedDevice.id] ?? null
+    : null;
   const probedForCurrentTabOpenRef = useRef(false);
 
   const isConnected = connState === "connected";
@@ -1721,6 +1729,7 @@ export default function DashboardPage() {
               connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
               onSwitchAgent={() => setActiveTab("devices")}
               onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
+              primaryRunner={connectedDevicePrimaryRunner}
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
