@@ -78,6 +78,126 @@ func loadVaultEntryOptional(name string) (*VaultEntry, error) {
 	return entry, nil
 }
 
+func sanitizeVaultKeySegment(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	lastDash := false
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.'
+		if ok {
+			b.WriteByte(c)
+			lastDash = c == '-'
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-.")
+	if out == "" {
+		return "gitlab"
+	}
+	return out
+}
+
+func gitLabVaultKey(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" || strings.EqualFold(host, "gitlab.com") {
+		return "gitlab-token"
+	}
+	return "gitlab-token." + sanitizeVaultKeySegment(host)
+}
+
+func gitLabVaultKeyCandidates(host string) []string {
+	keys := []string{}
+	add := func(key string) {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return
+		}
+		for _, existing := range keys {
+			if existing == key {
+				return
+			}
+		}
+		keys = append(keys, key)
+	}
+	if trimmed := strings.TrimSpace(host); trimmed != "" {
+		add(gitLabVaultKey(trimmed))
+	}
+	add("gitlab-token")
+	return keys
+}
+
+func listGitLabVaultKeysOptional() ([]string, error) {
+	vs, err := openVaultOptional()
+	if err != nil {
+		return nil, err
+	}
+	summaries := vs.List("")
+	keys := make([]string, 0, len(summaries))
+	for _, entry := range summaries {
+		if entry.Name == "gitlab-token" || strings.HasPrefix(entry.Name, "gitlab-token.") {
+			keys = append(keys, entry.Name)
+		}
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+func loadGitLabVaultEntryOptional(host string) (*VaultEntry, string, error) {
+	var lastErr error
+	for _, key := range gitLabVaultKeyCandidates(host) {
+		entry, err := loadVaultEntryOptional(key)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if entry != nil {
+			return entry, key, nil
+		}
+	}
+	return nil, "", lastErr
+}
+
+func setGitLabVaultEntry(host, token, notes string) (string, error) {
+	key := gitLabVaultKey(host)
+	return key, setVaultEntry(key, "git-credential", token, notes)
+}
+
+func deleteGitLabVaultEntriesOptional(host string) ([]string, error) {
+	keys := []string{}
+	if strings.TrimSpace(host) != "" {
+		keys = gitLabVaultKeyCandidates(host)
+		if !strings.EqualFold(strings.TrimSpace(host), "gitlab.com") {
+			keys = keys[:1]
+		}
+	} else {
+		var err error
+		keys, err = listGitLabVaultKeysOptional()
+		if err != nil {
+			return nil, err
+		}
+		if len(keys) == 0 {
+			keys = []string{"gitlab-token"}
+		}
+	}
+	removed := make([]string, 0, len(keys))
+	for _, key := range uniqueNonEmptyStrings(keys) {
+		if err := deleteVaultEntryOptional(key); err != nil {
+			return removed, err
+		}
+		removed = append(removed, key)
+	}
+	return removed, nil
+}
+
 func collectMachineOnboardingStatus() machineOnboardingStatus {
 	githubCred := findCredentialForHost("github.com")
 	githubProvider := findProvider("github.com")
@@ -85,13 +205,28 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 
 	gitlabHost := "gitlab.com"
 	var gitlabCred *GitCredential
-	for _, host := range []string{"gitlab.com"} {
-		if cred := findCredentialForHost(host); cred != nil && strings.TrimSpace(cred.Token) != "" {
-			gitlabHost = host
-			gitlabCred = cred
-			break
+	providers, _ := loadGitProviders()
+	for _, provider := range providers {
+		if !strings.EqualFold(provider.Provider, "gitlab") || strings.TrimSpace(provider.Host) == "" {
+			continue
+		}
+		gitlabHost = provider.Host
+		break
+	}
+	if gitlabHost == "gitlab.com" {
+		creds, _ := loadGitCredentials()
+		for _, cred := range creds {
+			if strings.TrimSpace(cred.Host) == "" {
+				continue
+			}
+			host := strings.ToLower(strings.TrimSpace(cred.Host))
+			if host == "gitlab.com" || strings.Contains(host, "gitlab") {
+				gitlabHost = cred.Host
+				break
+			}
 		}
 	}
+	gitlabCred = findCredentialForHost(gitlabHost)
 	gitlabProvider := findProvider(gitlabHost)
 	if gitlabProvider == nil {
 		if p := findProvider("gitlab.com"); p != nil {
@@ -102,7 +237,7 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 	if gitlabCred == nil {
 		gitlabCred = findCredentialForHost(gitlabHost)
 	}
-	gitlabVault, gitlabVaultErr := loadVaultEntryOptional("gitlab-token")
+	gitlabVault, gitlabVaultKey, gitlabVaultErr := loadGitLabVaultEntryOptional(gitlabHost)
 	if vaultErr == nil && gitlabVaultErr != nil {
 		vaultErr = gitlabVaultErr
 	}
@@ -183,7 +318,7 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 			}(),
 			CISource: func() string {
 				if gitlabVault != nil {
-					return "vault:gitlab-token"
+					return "vault:" + gitlabVaultKey
 				}
 				return ""
 			}(),
@@ -423,7 +558,9 @@ func applyMachineOnboardingRemoveLocal(req machineOnboardingRemoveRequest) (map[
 				}
 			}
 			if removeCIToken {
-				if err := deleteVaultEntryOptional("gitlab-token"); err == nil {
+				if keys, err := deleteGitLabVaultEntriesOptional(targetHost); err != nil {
+					return nil, err
+				} else if len(keys) > 0 {
 					removed = append(removed, "gitlab.ci")
 				}
 			}
@@ -498,7 +635,7 @@ func applyMachineOnboardingLocal(req machineOnboardingApplyRequest) (map[string]
 		}
 		if applyCIToken {
 			vaultNotes := fmt.Sprintf("gitlab PAT for %s (%s)", host, username)
-			if err := setVaultEntry("gitlab-token", "git-credential", token, vaultNotes); err != nil {
+			if _, err := setGitLabVaultEntry(host, token, vaultNotes); err != nil {
 				return nil, err
 			}
 			applied = append(applied, "gitlab.ci")

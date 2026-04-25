@@ -4146,7 +4146,7 @@ export default function SettingsScreen() {
 
               <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 15 }}>Remote machine onboarding</Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 4 }}>
-                Push OpenAI, GitHub, and GitLab onboarding into one or more owned live machines through the Yaver agent. Git tokens are stored for both clone/pull and CI/deploy use.
+                Push OpenAI, GitHub, and GitLab onboarding into one or more owned live machines through the Yaver agent. Account linking is separate; the tokens here are what actually grant machine clone/pull and CI/deploy access.
               </Text>
 
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Target machines</Text>

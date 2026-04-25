@@ -160,7 +160,7 @@ func printRepoAuthUsage() {
 
 Setup saves the token in both places Yaver uses today:
   1. ~/.yaver/git-credentials.json for clone/pull/private repo access
-  2. vault entry github-token / gitlab-token for deploy + CI helpers
+  2. vault entry github-token / gitlab-token[.<host>] for deploy + CI helpers
 
 Examples:
   yaver repo auth setup github --token ghp_xxx
@@ -179,7 +179,7 @@ func runRepoAuthStatus() {
 	if entry, _ := vs.Get("", "github-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
 		githubVault = true
 	}
-	if entry, _ := vs.Get("", "gitlab-token"); entry != nil && strings.TrimSpace(entry.Value) != "" {
+	if keys, err := listGitLabVaultKeysOptional(); err == nil && len(keys) > 0 {
 		gitlabVault = true
 	}
 
@@ -215,7 +215,7 @@ func runRepoAuthStatus() {
 				ciReady = "yes"
 			}
 		case "gitlab":
-			if gitlabVault {
+			if entry, _, _ := loadGitLabVaultEntryOptional(p.Host); entry != nil {
 				ciReady = "yes"
 			}
 		}
@@ -243,7 +243,7 @@ func runRepoAuthStatus() {
 				ciReady = "yes"
 			}
 		case "gitlab":
-			if gitlabVault {
+			if entry, _, _ := loadGitLabVaultEntryOptional(c.Host); entry != nil {
 				ciReady = "yes"
 			}
 		}
@@ -392,6 +392,9 @@ func runRepoAuthSetup(args []string) {
 	}
 
 	vaultName := provider + "-token"
+	if provider == "gitlab" {
+		vaultName = gitLabVaultKey(targetHost)
+	}
 	vs := openVault()
 	if err := vs.Set(VaultEntry{
 		Name:     vaultName,
@@ -461,7 +464,13 @@ func runRepoAuthRemove(args []string) {
 	}
 
 	vs := openVault()
-	_ = vs.Delete("", provider+"-token")
+	if provider == "gitlab" {
+		for _, key := range gitLabVaultKeyCandidates(targetHost) {
+			_ = vs.Delete("", key)
+		}
+	} else {
+		_ = vs.Delete("", provider+"-token")
+	}
 
 	fmt.Printf("Removed %s integration for %s.\n", provider, targetHost)
 }

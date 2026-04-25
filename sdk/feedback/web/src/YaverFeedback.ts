@@ -1205,7 +1205,7 @@ export class YaverFeedback {
           gitSummary.textContent = gitReady ? 'Git configured' : 'Git setup needed';
           gitIntro.textContent = gitReady
             ? 'This project is already connected on the selected machine.'
-            : 'Link your git provider to Yaver, or configure the selected machine from web/mobile/SSH, before vibing unlocks.';
+            : 'Link your git provider to Yaver for account identity, then configure the selected machine from web/mobile/SSH before vibing unlocks.';
           gitStageCopy.innerHTML = `
             <div class="yvr-fb-vibe-stage-title">${gitReady ? 'Git Ready' : 'Connect Git'}</div>
             <div class="yvr-fb-vibe-stage-text">${escapeHtml(
@@ -1239,7 +1239,7 @@ export class YaverFeedback {
               <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="link-account">
                 <span class="yvr-fb-runner-card-kicker">Main flow</span>
                 <span class="yvr-fb-runner-card-title">${escapeHtml(linkState)}</span>
-                <span class="yvr-fb-runner-card-meta">Account linking works from Yaver web and mobile settings. It should be part of the normal setup flow.</span>
+                <span class="yvr-fb-runner-card-meta">This links the provider to your Yaver account for sign-in and recovery. Machine repo access still needs a machine token or existing local git auth.</span>
                 <span class="yvr-fb-runner-card-action">${linkedProviders.has(provider) ? 'Open' : 'Link'}</span>
               </button>` : ''}
               <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="detect">
@@ -1274,7 +1274,7 @@ export class YaverFeedback {
               <a class="yvr-fb-runner-card yvr-fb-git-card" data-git-link="dashboard" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener noreferrer">
                 <span class="yvr-fb-runner-card-kicker">Yaver web</span>
                 <span class="yvr-fb-runner-card-title">Open dashboard</span>
-                <span class="yvr-fb-runner-card-meta">Use Settings to link GitHub/GitLab to your Yaver account, then use Git or Tools to push git tokens to one or more machines.</span>
+                <span class="yvr-fb-runner-card-meta">Use Settings to link GitHub/GitLab to your Yaver account, then separately configure machine repo access from Git or Tools for one or more machines.</span>
                 <span class="yvr-fb-runner-card-action">Open</span>
               </a>
               <div class="yvr-fb-runner-card yvr-fb-git-card" aria-hidden="true">

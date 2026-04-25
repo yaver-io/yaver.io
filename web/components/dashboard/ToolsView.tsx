@@ -482,7 +482,7 @@ export default function ToolsView({ devices = [] }: Props) {
         <h3 className="text-sm font-semibold text-surface-300 mb-3">Remote onboarding</h3>
         <div className="rounded-2xl border border-surface-800 bg-surface-900/40 p-4 space-y-4">
           <p className="text-sm text-surface-400">
-            Configure OpenAI, GitHub, and GitLab on one or more live machines in one pass. GitHub and GitLab write both clone credentials and CI/deploy vault tokens.
+            Configure OpenAI, GitHub, and GitLab on one or more live machines in one pass. Linking GitHub or GitLab to your Yaver account is separate; the actions here write machine clone credentials and CI/deploy vault tokens.
           </p>
           <div className="space-y-2">
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Onboarding targets</div>
