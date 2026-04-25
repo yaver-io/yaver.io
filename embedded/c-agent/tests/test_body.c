@@ -245,6 +245,191 @@ static int test_heartbeat_rejects_missing_now_ms(void)
     return 0;
 }
 
+/* ── AUTH ───────────────────────────────────────────────────── */
+
+static int test_auth_roundtrip(void)
+{
+    int rc = 300;
+    uint8_t nonce[32];
+    for (size_t i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0xa0 + i);
+
+    yvr_auth_t in = {
+        .protocol_version = YVR_PROTOCOL_VERSION,
+        .nonce            = nonce,
+        .nonce_len        = sizeof nonce,
+        .signed_now_ms    = 1700000000123ULL,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_auth_encode(&in, buf, sizeof buf, &n));
+
+    yvr_auth_t out;
+    EXP_OK(yvr_auth_decode(buf, n, &out));
+    EXPECT(out.protocol_version == YVR_PROTOCOL_VERSION,            rc);
+    EXPECT(out.nonce_len == sizeof nonce,                           rc + 1);
+    EXPECT(memcmp(out.nonce, nonce, sizeof nonce) == 0,             rc + 2);
+    EXPECT(out.signed_now_ms == 1700000000123ULL,                   rc + 3);
+    return 0;
+}
+
+static int test_auth_rejects_missing_nonce(void)
+{
+    int rc = 310;
+    static const uint8_t in[] = {
+        0xa1, 0x61, 'v', 0x01,
+    };
+    yvr_auth_t out;
+    EXPECT(yvr_auth_decode(in, sizeof in, &out) == YVR_E_BAD_FRAME, rc);
+    return 0;
+}
+
+/* ── AUTHRSP ────────────────────────────────────────────────── */
+
+static int test_authrsp_roundtrip(void)
+{
+    int rc = 400;
+    uint8_t sig[64];
+    uint8_t nonce[32];
+    uint8_t cert[128];
+    for (size_t i = 0; i < sizeof sig;   i++) sig[i]   = (uint8_t)i;
+    for (size_t i = 0; i < sizeof nonce; i++) nonce[i] = (uint8_t)(0xa0 + i);
+    for (size_t i = 0; i < sizeof cert;  i++) cert[i]  = (uint8_t)(0x30 + i);
+
+    yvr_authrsp_t in = {
+        .protocol_version = 1,
+        .sig              = sig,   .sig_len         = sizeof sig,
+        .nonce            = nonce, .nonce_len       = sizeof nonce,
+        .device_cert      = cert,  .device_cert_len = sizeof cert,
+    };
+    uint8_t buf[512];
+    size_t  n = 0;
+    EXP_OK(yvr_authrsp_encode(&in, buf, sizeof buf, &n));
+
+    yvr_authrsp_t out;
+    EXP_OK(yvr_authrsp_decode(buf, n, &out));
+    EXPECT(out.sig_len         == sizeof sig    && memcmp(out.sig,         sig,   sizeof sig)   == 0, rc);
+    EXPECT(out.nonce_len       == sizeof nonce  && memcmp(out.nonce,       nonce, sizeof nonce) == 0, rc + 1);
+    EXPECT(out.device_cert_len == sizeof cert   && memcmp(out.device_cert, cert,  sizeof cert)  == 0, rc + 2);
+    return 0;
+}
+
+/* ── ATTEST ─────────────────────────────────────────────────── */
+
+static int test_attest_roundtrip(void)
+{
+    int rc = 500;
+    static const char *caps[] = {
+        "fs.read.logs",
+        "fs.read.config",
+        "nl80211.read.station",
+    };
+    yvr_attest_t in = {
+        .protocol_version    = 1,
+        .arch                = "aarch64",  .arch_len   = 7,
+        .libc                = "musl-1.2", .libc_len   = 8,
+        .kernel              = "5.15.149", .kernel_len = 8,
+        .capabilities        = caps,
+        .capabilities_count  = sizeof caps / sizeof caps[0],
+        .ebpf_supported      = true,
+        .cache_quota_bytes   = 4ULL * 1024ULL * 1024ULL,
+    };
+    uint8_t buf[256];
+    size_t  n = 0;
+    EXP_OK(yvr_attest_encode(&in, buf, sizeof buf, &n));
+
+    yvr_attest_t out;
+    const char *out_caps[8];
+    size_t      out_caps_lens[8];
+    EXP_OK(yvr_attest_decode(buf, n, &out, out_caps, out_caps_lens, 8));
+
+    EXPECT(out.arch_len == 7  && memcmp(out.arch, "aarch64", 7) == 0,     rc);
+    EXPECT(out.libc_len == 8  && memcmp(out.libc, "musl-1.2", 8) == 0,    rc + 1);
+    EXPECT(out.kernel_len== 8 && memcmp(out.kernel, "5.15.149", 8) == 0,  rc + 2);
+    EXPECT(out.capabilities_count == 3,                                   rc + 3);
+    EXPECT(out_caps_lens[0] == 12 && memcmp(out_caps[0], "fs.read.logs", 12) == 0, rc + 4);
+    EXPECT(out_caps_lens[2] == 20 && memcmp(out_caps[2], "nl80211.read.station", 20) == 0, rc + 5);
+    EXPECT(out.ebpf_supported == true,                                    rc + 6);
+    EXPECT(out.cache_quota_bytes == 4ULL * 1024ULL * 1024ULL,             rc + 7);
+    return 0;
+}
+
+static int test_attest_capabilities_overflow(void)
+{
+    int rc = 510;
+    /* Two caps but only room for one in the output array. */
+    static const char *caps[] = { "a", "b" };
+    yvr_attest_t in = {
+        .protocol_version    = 1,
+        .arch                = "x", .arch_len   = 1,
+        .libc                = "y", .libc_len   = 1,
+        .kernel              = "z", .kernel_len = 1,
+        .capabilities        = caps,
+        .capabilities_count  = 2,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_attest_encode(&in, buf, sizeof buf, &n));
+
+    yvr_attest_t out;
+    const char *out_caps[1];
+    size_t      out_caps_lens[1];
+    yvr_status_t s = yvr_attest_decode(buf, n, &out, out_caps, out_caps_lens, 1);
+    EXPECT(s == YVR_E_BUFFER_TOO_SMALL, rc);
+    /* Caller can still see the full count to resize. */
+    EXPECT(out.capabilities_count == 2, rc + 1);
+    EXPECT(out_caps_lens[0] == 1 && memcmp(out_caps[0], "a", 1) == 0, rc + 2);
+    return 0;
+}
+
+/* ── ERROR ──────────────────────────────────────────────────── */
+
+static int test_error_roundtrip_full(void)
+{
+    int rc = 600;
+    yvr_error_t in = {
+        .protocol_version = 1,
+        .code             = -42,
+        .context          = "hostapd ctrl-iface returned 'FAIL'",
+        .context_len      = 33,
+        .message          = "wifi probe timeout",
+        .message_len      = 18,
+        .stream_id        = 7,
+    };
+    uint8_t buf[128];
+    size_t  n = 0;
+    EXP_OK(yvr_error_encode(&in, buf, sizeof buf, &n));
+
+    yvr_error_t out;
+    EXP_OK(yvr_error_decode(buf, n, &out));
+    EXPECT(out.code == -42,        rc);
+    EXPECT(out.message_len == 18 && memcmp(out.message, "wifi probe timeout", 18) == 0, rc + 1);
+    EXPECT(out.context_len == 33,  rc + 2);
+    EXPECT(out.stream_id == 7,     rc + 3);
+    return 0;
+}
+
+static int test_error_roundtrip_minimal(void)
+{
+    int rc = 610;
+    yvr_error_t in = {
+        .protocol_version = 1,
+        .code             = -1,
+        .message          = "x",
+        .message_len      = 1,
+    };
+    uint8_t buf[64];
+    size_t  n = 0;
+    EXP_OK(yvr_error_encode(&in, buf, sizeof buf, &n));
+
+    yvr_error_t out;
+    EXP_OK(yvr_error_decode(buf, n, &out));
+    EXPECT(out.code == -1,            rc);
+    EXPECT(out.message_len == 1,      rc + 1);
+    EXPECT(out.context == NULL,       rc + 2);
+    EXPECT(out.stream_id == 0,        rc + 3);
+    return 0;
+}
+
 /* ── Driver ──────────────────────────────────────────────────── */
 
 typedef int (*tfn)(void);
@@ -264,6 +449,13 @@ int main(void)
         { "heartbeat_known_bytes",           test_heartbeat_known_bytes         },
         { "heartbeat_skips_unknown",         test_heartbeat_skips_unknown       },
         { "heartbeat_rejects_missing_now_ms",test_heartbeat_rejects_missing_now_ms},
+        { "auth_roundtrip",                  test_auth_roundtrip                 },
+        { "auth_rejects_missing_nonce",      test_auth_rejects_missing_nonce     },
+        { "authrsp_roundtrip",               test_authrsp_roundtrip              },
+        { "attest_roundtrip",                test_attest_roundtrip               },
+        { "attest_capabilities_overflow",    test_attest_capabilities_overflow   },
+        { "error_roundtrip_full",            test_error_roundtrip_full           },
+        { "error_roundtrip_minimal",         test_error_roundtrip_minimal        },
     };
     const size_t n = sizeof T / sizeof T[0];
     int failed = 0;

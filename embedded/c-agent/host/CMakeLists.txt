@@ -1,5 +1,5 @@
 add_library(yvr_cagent_host STATIC
-    src/host_stub.c
+    src/host.c
 )
 add_library(yaver::cagent_host ALIAS yvr_cagent_host)
 
