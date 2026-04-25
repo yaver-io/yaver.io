@@ -94,7 +94,9 @@ interface DevicesState {
   refreshDevices: () => Promise<void>;
 }
 
-const HEARTBEAT_STALE_MS = 90_000;
+// Mirrors backend/convex/devices.ts and mobile/_core/constants.ts.
+// Agent beats every 5 min; 6 min = one missed beat + jitter buffer.
+const HEARTBEAT_STALE_MS = 360_000;
 let relayPresenceUrlPromise: Promise<string | null> | null = null;
 
 async function getPrimaryRelayPresenceUrl(): Promise<string | null> {

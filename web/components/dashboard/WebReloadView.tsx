@@ -59,6 +59,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const [relayRepairMsg, setRelayRepairMsg] = useState<string | null>(null);
 
   const isConnected = connState === "connected" && !!connectedDevice;
+  const needsAuth = !!connectedDevice?.needsAuth;
+  const statusError = devStatus?.error || null;
+  const statusHttp = devStatus?.httpStatus || 0;
 
   // Load workspace apps on connect and whenever device changes. This
   // also serves as an early transport/auth probe so we can surface
@@ -301,9 +304,11 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   // instead of a broken iframe.
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [autoRepairedOnce, setAutoRepairedOnce] = useState(false);
+  const [notRenderable, setNotRenderable] = useState<{ title: string; body: string } | null>(null);
   useEffect(() => {
     if (!previewUrl || !isRunning) {
       setPreviewError(null);
+      setNotRenderable(null);
       return;
     }
     let alive = true;
@@ -322,6 +327,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             if (text) msg = text.slice(0, 200);
           }
           setPreviewError(msg);
+          setNotRenderable(null);
           // Auto-repair once when we see invalid-relay-password the first
           // time we mount the iframe. Avoids loops by flipping a flag.
           if (!autoRepairedOnce && /invalid relay password/i.test(msg) && onRepairRelay) {
@@ -331,13 +337,31 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
           return;
         }
         setPreviewError(null);
+        // Non-HTML responses (Metro bundle JSON, plain text, octet-stream)
+        // can't render in an iframe — show a CTA instead of a white box.
+        const ct = res.headers.get("content-type") || "";
+        const isHtml = /text\/html/i.test(ct);
+        if (!isHtml) {
+          const fw = (devStatus?.framework || "").toLowerCase();
+          const isMobile = fw === "expo" || fw === "react-native" || fw === "metro";
+          setNotRenderable({
+            title: isMobile
+              ? "This dev server is mobile-only — no browser preview available"
+              : "Dev server response isn't browser-renderable",
+            body: isMobile
+              ? "Metro / Expo emit a JavaScript bundle, not HTML. Open the project on the Yaver mobile app to use Hot Reload, or switch the project to expo --web."
+              : `The dev server returned ${ct || "no content-type"} instead of HTML. Check the dev server is configured to serve a web build.`,
+          });
+        } else {
+          setNotRenderable(null);
+        }
       } catch (e: any) {
         if (e?.name !== "AbortError") setPreviewError(null);
       }
     })();
     return () => { alive = false; ctrl.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewUrl, isRunning]);
+  }, [previewUrl, isRunning, devStatus?.framework]);
 
   return (
     <div className="flex h-full flex-col gap-3 p-3 md:p-4">
@@ -376,16 +400,54 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               </button>
             </>
           ) : (
-            <button
-              onClick={handleStart}
-              disabled={(!selectedApp && !selectedProject) || starting}
-              className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
-            >
-              {starting ? "Starting…" : selectedApp ? `Start ${selectedApp}` : selectedProject ? `Start ${selectedProject.name}` : "Pick a project"}
-            </button>
+            <>
+              <button
+                onClick={handleStart}
+                disabled={(!selectedApp && !selectedProject) || starting || needsAuth}
+                className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-medium text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-50"
+              >
+                {starting ? "Starting…" : selectedApp ? `Start ${selectedApp}` : selectedProject ? `Start ${selectedProject.name}` : "Pick a project"}
+              </button>
+              {/* Force Stop — always reachable when something might still
+                  be running on the agent (devStatus.workDir, or a previous
+                  start that the status poll can no longer reach). Hidden
+                  only when we're 100% sure nothing's there. */}
+              {(devStatus?.workDir || statusError) && (
+                <button
+                  onClick={handleStop}
+                  className="rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/15"
+                  title="Force-stop any dev server the agent might still be running"
+                >
+                  Force Stop
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
+
+      {needsAuth && (
+        <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+          <span className="flex-1">
+            Agent session expired on this device — sign in on the host to restart Web Reload.
+          </span>
+          {onReconnect && (
+            <button
+              onClick={() => void onReconnect()}
+              className="rounded border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[10px] hover:bg-amber-500/25"
+            >
+              Try reconnect
+            </button>
+          )}
+        </div>
+      )}
+
+      {!needsAuth && statusError && (
+        <div className="rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2 text-[11px] text-red-200">
+          {statusHttp ? `Dev status unreachable (HTTP ${statusHttp}): ` : "Dev status unreachable: "}
+          {statusError}
+        </div>
+      )}
 
       {relayRepairMsg && (
         <div className={`rounded-md border px-3 py-2 text-[11px] ${
@@ -427,6 +489,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             running={isRunning}
             onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
             connectionLabel={connectionLabel}
+            notRenderableNotice={notRenderable}
           />
 
           {/* Logs strip */}
@@ -492,26 +555,39 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   );
 }
 
+// Web Reload only previews things the iframe can actually render. The
+// match has to agree with the agent's FrameworkToDevServerKind so the
+// picker never offers a project that /dev/start would then reject.
+//
+// Mobile-only frameworks (react-native, vanilla expo without a web
+// build, kotlin, swift) are deliberately excluded — they have no HTML
+// surface for the iframe and used to render as a blank Metro page.
+const WEB_RELOAD_FRAMEWORK_HINTS = ["next", "nextjs", "vite", "astro", "remix"] as const;
+const WEB_RELOAD_FRAMEWORK_EXACT = new Set([
+  "next",
+  "nextjs",
+  "vite",
+  "astro",
+  "remix",
+  "react",       // generic React (CRA / RSC) projects
+  "flutter-web", // Flutter compiled to web, served on a port
+]);
+
 function isWebReloadProject(project: ProjectRow): boolean {
-  const framework = (project.framework || "").toLowerCase();
-  const tags = (project.tags || []).map((tag) => tag.toLowerCase());
-  return (
-    framework.includes("next") ||
-    framework.includes("vite") ||
-    framework === "react" ||
-    framework.includes("expo") ||
-    framework.includes("flutter") ||
-    framework.includes("astro") ||
-    framework.includes("remix") ||
-    tags.includes("next") ||
-    tags.includes("nextjs") ||
-    tags.includes("vite") ||
-    tags.includes("react") ||
-    tags.includes("expo") ||
-    tags.includes("flutter") ||
-    tags.includes("astro") ||
-    tags.includes("remix")
-  );
+  const framework = (project.framework || "").toLowerCase().trim();
+  if (!framework) return false;
+  if (WEB_RELOAD_FRAMEWORK_EXACT.has(framework)) return true;
+  for (const hint of WEB_RELOAD_FRAMEWORK_HINTS) {
+    if (framework.includes(hint)) return true;
+  }
+  // Tags are advisory metadata — only honour them when the framework
+  // field is empty-ish ("?") AND a tag explicitly asserts a web stack.
+  // Loose tag-only matches let mobile projects sneak in.
+  if (framework === "?" || framework === "unknown") {
+    const tags = (project.tags || []).map((tag) => tag.toLowerCase());
+    return WEB_RELOAD_FRAMEWORK_HINTS.some((hint) => tags.includes(hint));
+  }
+  return false;
 }
 
 function ScannedProjectSelector({

@@ -97,6 +97,7 @@ export default function PreviewPane({
   preferredProjectPath,
   onReconnect,
   onRepairRelay,
+  connectedDeviceNeedsAuth,
 }: {
   selectedPreviewTarget: PreviewTarget | null;
   onSelectPreviewTarget: (deviceId: string | null) => void;
@@ -104,6 +105,10 @@ export default function PreviewPane({
   preferredProjectPath?: string | null;
   onReconnect?: () => Promise<void>;
   onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
+  /** True when the connected device's session token expired. Surfaces a
+   *  re-auth CTA on top of the phone mockup so the user understands why
+   *  the iframe is showing a stale frame. */
+  connectedDeviceNeedsAuth?: boolean;
 }) {
   const [devStatus, setDevStatus] = useState<{
     running: boolean;
@@ -593,7 +598,27 @@ export default function PreviewPane({
     ? { width: "100%", height: "100%" }
     : { width: `${(frame as { innerWidth: number }).innerWidth}px`, height: `${(frame as { innerHeight: number }).innerHeight}px` };
 
-  const innerContent = devStatus?.running && previewFrameUrl ? (
+  const innerContent = connectedDeviceNeedsAuth ? (
+    <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-surface-950 p-6 text-center text-surface-300">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400/80">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+      <p className="text-[12px] font-medium text-surface-100">Agent session expired on this machine</p>
+      <p className="max-w-[280px] text-[11px] text-surface-400">
+        Hot reload can&apos;t reach the agent until you sign back in on the host
+        (run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[10px]">yaver auth</code>) or reconnect.
+      </p>
+      {onReconnect && (
+        <button
+          onClick={() => void onReconnect()}
+          className="mt-1 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20"
+        >
+          Try reconnect
+        </button>
+      )}
+    </div>
+  ) : devStatus?.running && previewFrameUrl ? (
     <iframe
       key={iframeKey}
       ref={iframeRef}

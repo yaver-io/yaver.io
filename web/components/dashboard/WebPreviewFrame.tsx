@@ -25,9 +25,13 @@ interface Props {
   onOpenInNewTab?: () => void;
   /** Optional connection-mode label shown on the right of the URL bar. */
   connectionLabel?: string;
+  /** Inline notice shown instead of the iframe — used when the dev server
+   *  is running but the underlying response can't be rendered in a
+   *  browser (e.g. Metro returning a JS bundle, no expo web build). */
+  notRenderableNotice?: { title: string; body: string } | null;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel }: Props) {
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice }: Props) {
   const [viewport, setViewport] = useState<ViewportId>("fluid");
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -136,8 +140,29 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
             )}
           </div>
 
-          {/* Iframe or placeholder */}
-          {frameUrl && running ? (
+          {/* Iframe, non-renderable notice, or placeholder */}
+          {frameUrl && running && notRenderableNotice ? (
+            <div
+              className="flex flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-surface-300"
+              style={{ height: `calc(100% - 41px)`, minHeight: 300 }}
+            >
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-400/80">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <p className="font-medium text-surface-100">{notRenderableNotice.title}</p>
+              <p className="max-w-[420px] text-[11px] text-surface-400">{notRenderableNotice.body}</p>
+              {onOpenInNewTab && (
+                <button
+                  onClick={onOpenInNewTab}
+                  className="mt-2 rounded border border-surface-700 bg-surface-900 px-3 py-1 text-[11px] text-surface-200 hover:bg-surface-800"
+                >
+                  Open raw response anyway
+                </button>
+              )}
+            </div>
+          ) : frameUrl && running ? (
             <iframe
               key={frameUrl}
               src={frameUrl}

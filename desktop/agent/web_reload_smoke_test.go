@@ -159,6 +159,81 @@ func TestWebReload_DevStartSurfaceGating(t *testing.T) {
 	}
 }
 
+// TestWebReload_DevStartFallbackSurfaceGating covers the no-workspace-
+// manifest path: the dashboard's project picker fallback POSTs framework
+// + workDir without an `app` key. The gate must still reject mobile
+// frameworks from web-reload (and vice versa) so a Web Reload click
+// can't accidentally start Metro for an Expo project.
+func TestWebReload_DevStartFallbackSurfaceGating(t *testing.T) {
+	root := t.TempDir()
+	tm := NewTaskManager(root, nil, defaultRunner)
+	baseURL, cancel := startTestServer(t, "tok", tm)
+	defer cancel()
+	if srv := currentTestHTTPServer; srv != nil && srv.devServerMgr == nil {
+		srv.devServerMgr = NewDevServerManager()
+	}
+
+	// Pure react-native (mobile) requested from web-reload → 400.
+	status, body := doRequest(t, "POST", baseURL+"/dev/start", "tok",
+		`{"framework":"react-native","workDir":"/tmp/whatever","surface":"web-reload"}`)
+	if status != 400 {
+		t.Fatalf("react-native + web-reload: expected 400, got %d (body=%v)", status, body)
+	}
+	if body["error"] == nil {
+		t.Fatalf("expected error message in 400 response: %v", body)
+	}
+
+	// Vite (web) requested from hot-reload → 400 (reverse gate).
+	status, _ = doRequest(t, "POST", baseURL+"/dev/start", "tok",
+		`{"framework":"vite","workDir":"/tmp/whatever","surface":"hot-reload"}`)
+	if status != 400 {
+		t.Fatalf("vite + hot-reload: expected 400, got %d", status)
+	}
+
+	// Expo is hybrid — must NOT be rejected from either surface by the
+	// fallback gate (DevServerKindHybrid is allowed everywhere).
+	// We can't actually start the server in this test (no project on
+	// disk), but the surface gate must let the request through to the
+	// later 412/400 path. Anything other than 400 with our specific
+	// "mobile-only" / "web-only" message is acceptable here.
+	status, body = doRequest(t, "POST", baseURL+"/dev/start", "tok",
+		`{"framework":"expo","workDir":"/tmp/whatever","surface":"web-reload"}`)
+	if status == 400 {
+		if msg, _ := body["error"].(string); msg != "" &&
+			(containsCI(msg, "mobile-only") || containsCI(msg, "web-only")) {
+			t.Fatalf("expo from web-reload should not hit surface gate, got %v", body)
+		}
+	}
+}
+
+func containsCI(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	S := []byte(s)
+	for i := 0; i+len(sub) <= len(S); i++ {
+		match := true
+		for j := 0; j < len(sub); j++ {
+			a := S[i+j]
+			b := sub[j]
+			if 'A' <= a && a <= 'Z' {
+				a += 'a' - 'A'
+			}
+			if 'A' <= b && b <= 'Z' {
+				b += 'a' - 'A'
+			}
+			if a != b {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 func TestWebReload_WorkspaceRootFromTaskMgr(t *testing.T) {
 	// resolveWorkspaceRoot should fall back to taskMgr.workDir when
 	// no ?root= query param is given. This is the behaviour the web

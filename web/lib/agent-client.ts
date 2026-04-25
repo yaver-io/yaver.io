@@ -2820,13 +2820,32 @@ export class AgentClient {
     targetDeviceId?: string;
     targetDeviceName?: string;
     targetDeviceClass?: string;
+    /** Set when the agent could not be reached or rejected the call.
+     *  Distinguishes "agent says not running" from "we don't know". */
+    error?: string;
+    /** HTTP status when the call returned a response. Useful for the
+     *  dashboard to surface 401 → re-auth, 5xx → infra. */
+    httpStatus?: number;
   } | null> {
     this.assertConnected();
     try {
       const res = await fetch(`${this.baseUrl}/dev/status`, { headers: this.authHeaders });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        let body: any = null;
+        try { body = await res.json(); } catch { body = null; }
+        return {
+          running: false,
+          error: body?.error || `HTTP ${res.status}`,
+          httpStatus: res.status,
+        };
+      }
       return res.json();
-    } catch { return null; }
+    } catch (err) {
+      return {
+        running: false,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   async getDevServerTarget(): Promise<DevTargetPreference | null> {

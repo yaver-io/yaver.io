@@ -32,7 +32,7 @@ type ProjectAction = {
 };
 
 type Props = {
-  onOpenSurface?: (surface: "preview" | "web-reload" | "builds", projectPath: string) => void;
+  onOpenSurface?: (surface: "chat" | "preview" | "web-reload" | "builds", projectPath: string) => void;
 };
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter", "swift", "kotlin"];
@@ -53,6 +53,7 @@ function isWebFramework(framework?: string) {
 }
 
 function preferredSurfaceForAction(action: ProjectAction): "preview" | "web-reload" | "builds" | null {
+  if (action.type === "vibing") return null;
   if (action.type === "build" || action.type === "deploy") return "builds";
   if (action.type === "dev-server") {
     if (isMobileFramework(action.framework)) return "preview";
@@ -285,7 +286,17 @@ export default function GitView({ onOpenSurface }: Props) {
             {projects.map((project) => {
               const isExpanded = expandedProjectPath === project.path;
               const status = isExpanded ? gitStatus : null;
-              const actions = isExpanded ? projectActions : [];
+              const actions = isExpanded
+                ? [
+                    {
+                      label: "Start Vibing",
+                      target: ".",
+                      type: "vibing",
+                      supported: true,
+                    } satisfies ProjectAction,
+                    ...projectActions,
+                  ]
+                : [];
               return (
                 <details
                   key={project.path}
@@ -339,23 +350,39 @@ export default function GitView({ onOpenSurface }: Props) {
                                 <div className="text-sm text-surface-500">No project-specific actions detected for this repo yet.</div>
                               ) : (
                                 actions.map((action, index) => {
+                                  const isVibing = action.type === "vibing";
                                   const surface = preferredSurfaceForAction(action);
                                   const supported = action.supported !== false;
-                                  const label = surface ? actionLabelForSurface(action, surface) : action.label;
-                                  const disabled = !surface || !supported;
+                                  const label = isVibing ? "Start Vibing" : surface ? actionLabelForSurface(action, surface) : action.label;
+                                  const disabled = !supported || (!isVibing && !surface);
                                   return (
                                     <button
                                       key={`${action.label}:${action.target}:${index}`}
                                       type="button"
                                       disabled={disabled}
-                                      title={!supported ? action.reason || "Not supported on this machine yet." : surface ? `Open ${label}` : "No dashboard surface for this action yet"}
+                                      title={
+                                        !supported
+                                          ? action.reason || "Not supported on this machine yet."
+                                          : isVibing
+                                            ? `Open ${label}`
+                                            : surface
+                                              ? `Open ${label}`
+                                              : "No dashboard surface for this action yet"
+                                      }
                                       onClick={() => {
-                                        if (!surface || !onOpenSurface) return;
+                                        if (!onOpenSurface) return;
+                                        if (isVibing) {
+                                          onOpenSurface("chat", project.path);
+                                          return;
+                                        }
+                                        if (!surface) return;
                                         onOpenSurface(surface, project.path);
                                       }}
                                       className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
                                         disabled
                                           ? "cursor-not-allowed border-surface-800 bg-surface-950 text-surface-600"
+                                          : isVibing
+                                            ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-100 hover:bg-fuchsia-500/15"
                                           : surface === "builds"
                                             ? "border-amber-500/30 bg-amber-500/10 text-amber-100 hover:bg-amber-500/15"
                                             : surface === "web-reload"

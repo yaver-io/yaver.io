@@ -147,7 +147,7 @@ function formatAgeShort(ms: number | null): string | null {
 
 function hasRecentLiveSignal(
   device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
-  maxAgeMs = 90_000,
+  maxAgeMs = 360_000,
 ): boolean {
   if (device.workspaceLive) return true;
   if (device.peerState === "online") return true;
@@ -959,7 +959,12 @@ export default function DashboardPage() {
       if (continuing) {
         await agentClient.continueTask(activeTask!.id, text);
       } else {
-        const t = await agentClient.sendTask(text.slice(0, 80), text, selectedRunner ? { runner: selectedRunner } : undefined);
+        const t = await agentClient.createTask({
+          title: text.slice(0, 80),
+          description: text,
+          runner: selectedRunner || undefined,
+          workDir: preferredSurfaceProjectPath || undefined,
+        });
         setActiveTask(t);
         setTasks(p => [t, ...p]);
       }
@@ -1740,6 +1745,7 @@ export default function DashboardPage() {
               preferredProjectPath={preferredSurfaceProjectPath}
               onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
               onRepairRelay={token ? repairRelay : undefined}
+              connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
             /></div>
           ) : activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
@@ -1998,10 +2004,16 @@ export default function DashboardPage() {
                       ) : null}
                     </div>
                   ) : null}
+                  {preferredSurfaceProjectPath ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 px-3 py-2 text-[11px] text-fuchsia-100">
+                      <span className="font-semibold uppercase tracking-[0.18em] text-fuchsia-200/80">Repo</span>
+                      <span className="font-mono text-fuchsia-50">{preferredSurfaceProjectPath}</span>
+                    </div>
+                  ) : null}
                   <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">
                     <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                       onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Add a task update or refinement..." : "Describe the task you want this machine to run..."} rows={1}
+                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Add a task update or refinement..." : preferredSurfaceProjectPath ? "Describe what to do in this repo..." : "Describe the task you want this machine to run..."} rows={1}
                       disabled={Boolean(activeRunnerAuthIssue)}
                       className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "48px" }} />
                     <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0 || Boolean(activeRunnerAuthIssue)}

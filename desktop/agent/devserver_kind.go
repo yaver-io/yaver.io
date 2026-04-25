@@ -75,3 +75,23 @@ func StackToFramework(stack string) string {
 		return ""
 	}
 }
+
+// FrameworkToDevServerKind maps a framework identifier (the value
+// passed to /dev/start without going through a workspace manifest) to
+// the kind of dev server it produces. Mirrors the per-impl Kind()
+// methods so the surface gate in handleDevServerStart can run even
+// when no yaver.workspace.yaml exists. Returns empty string for unknown
+// values; callers should treat that as "let the manager auto-detect
+// then re-check via DevServer.Kind()".
+func FrameworkToDevServerKind(framework string) DevServerKind {
+	switch framework {
+	case "nextjs", "next", "vite", "flutter", "astro", "remix":
+		return DevServerKindWeb
+	case "expo":
+		return DevServerKindHybrid
+	case "react-native":
+		return DevServerKindMobile
+	default:
+		return ""
+	}
+}

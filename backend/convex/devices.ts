@@ -20,14 +20,22 @@ const recoveryPostureValidator = v.object({
 });
 
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still
-// trust the device's `isOnline` flag. The agent beats every 30 s,
-// so 90 s is "missed three beats" — far less likely than network
-// jitter. Without this server-side gate, a SIGKILL'd / power-cut /
-// wifi-dropped agent looks online forever (the flag never gets
-// downgraded by the markOffline mutation that the dying process
-// can't run). Mobile / web read this derived value via the listing
-// queries and the device card stops flickering.
-const HEARTBEAT_STALE_MS = 90 * 1000;
+// trust the device's `isOnline` flag. The agent beats every 5 min
+// (see `desktop/agent/main.go::heartbeatLoop`), so 6 min is "missed
+// one beat plus 60 s of jitter" — enough to ride out network jitter,
+// GC pauses, and Convex write latency without flapping a healthy
+// device offline. Without this server-side gate, a SIGKILL'd /
+// power-cut / wifi-dropped agent looks online forever (the flag
+// never gets downgraded by the markOffline mutation that the dying
+// process can't run). Mobile / web read this derived value via the
+// listing queries and the device card stops flickering.
+//
+// Sub-minute death detection is now provided by the P2P bus
+// (`desktop/agent/bus.go`) which has its own keepalive — clients can
+// subscribe to /bus/events for live presence instead of polling
+// Convex. Keep this constant in sync with mobile/_core/constants.ts
+// and web/lib/use-devices.ts.
+const HEARTBEAT_STALE_MS = 360 * 1000;
 
 /**
  * deriveIsOnline returns the user-visible online state, reconciling

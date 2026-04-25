@@ -99,7 +99,7 @@ function formatAgeShort(ms: number | null): string | null {
 
 function hasRecentLiveSignal(
   device: Pick<Device, "lastTunnelEvent" | "peerState" | "workspaceLive">,
-  maxAgeMs = 90_000,
+  maxAgeMs = 360_000,
 ): boolean {
   if (device.workspaceLive) return true;
   if (device.peerState === "online") return true;

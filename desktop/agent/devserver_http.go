@@ -943,6 +943,42 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 	req.WorkDir = resolvedWorkDir
 
+	// Surface gate for the no-workspace-manifest path. The branch above
+	// only fires when the caller named an `App` from yaver.workspace.yaml.
+	// Without a manifest the dashboard's project-fallback picker can ask
+	// us to start any project on any surface; we re-check the framework
+	// here so a Web Reload click can't accidentally launch Metro for an
+	// Expo / RN project (which the iframe can't render anyway).
+	if strings.TrimSpace(req.App) == "" && strings.TrimSpace(req.Surface) != "" {
+		var kind DevServerKind
+		if framework := strings.TrimSpace(req.Framework); framework != "" {
+			kind = FrameworkToDevServerKind(framework)
+		}
+		if kind == "" && req.WorkDir != "" {
+			if ds := detectDevServer(req.WorkDir); ds != nil {
+				kind = ds.Kind()
+			}
+		}
+		switch req.Surface {
+		case "web-reload":
+			if kind == DevServerKindMobile {
+				jsonReply(w, http.StatusBadRequest, map[string]string{
+					"error": "Project is mobile-only (Metro/RN); use Hot Reload + Yaver app instead of Web Reload.",
+					"kind":  string(kind),
+				})
+				return
+			}
+		case "hot-reload":
+			if kind == DevServerKindWeb {
+				jsonReply(w, http.StatusBadRequest, map[string]string{
+					"error": "Project is web-only; use Web Reload instead of Hot Reload.",
+					"kind":  string(kind),
+				})
+				return
+			}
+		}
+	}
+
 	if req.TargetDeviceID != "" || req.TargetDeviceName != "" || req.TargetDeviceClass != "" {
 		s.devServerMgr.SetPreferredTarget(DevServerTarget{
 			DeviceID:    req.TargetDeviceID,

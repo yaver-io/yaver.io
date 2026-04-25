@@ -57,9 +57,13 @@ export const DEFAULT_BEACON_UDP_PORT = 19837;
 /**
  * How old an agent's last heartbeat can be before the device is
  * considered offline. Mirrors `backend/convex/devices.ts` so
- * Convex + every client agree on the same threshold.
+ * Convex + every client agree on the same threshold. The agent
+ * heartbeats every 5 min (see `desktop/agent/main.go::heartbeatLoop`),
+ * so 6 min tolerates one missed beat + 60 s of jitter without
+ * flapping. Sub-minute death detection comes from the P2P bus, not
+ * this threshold.
  */
-export const HEARTBEAT_STALE_MS = 90_000;
+export const HEARTBEAT_STALE_MS = 360_000;
 
 /**
  * How long after the last UDP beacon an agent is still considered
