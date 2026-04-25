@@ -57,6 +57,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const [showLogs, setShowLogs] = useState(false);
   const [relayRepairState, setRelayRepairState] = useState<"idle" | "repairing" | "repaired" | "failed">("idle");
   const [relayRepairMsg, setRelayRepairMsg] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
+  const [recoveryProgress, setRecoveryProgress] = useState<{ pct: number; stage: string; active: boolean }>({ pct: 0, stage: "", active: false });
 
   const isConnected = connState === "connected" && !!connectedDevice;
   const needsAuth = !!connectedDevice?.needsAuth;
@@ -290,6 +293,119 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     }
   };
 
+  // Reconnect & Fix — same robust recovery the Hot Reload tab runs.
+  // Ping → repair relay password (if relevant) → stop → git-pull →
+  // pkill Metro/Expo stragglers → clear caches → restart → refresh.
+  // Progress bar + streaming log mirror the Hot Reload UX so users
+  // don't have to wonder if it's still working.
+  const appendRecovery = (line: string) => {
+    setRecoveryLog((prev) => {
+      const next = [...prev, line];
+      return next.length > 80 ? next.slice(-80) : next;
+    });
+  };
+  const stageProgress = (pct: number, label: string) => {
+    setRecoveryProgress((prev) => ({ pct: Math.max(prev.pct, pct), stage: label, active: true }));
+  };
+
+  const handleRecover = async () => {
+    if (recovering) return;
+    setRecovering(true);
+    setRecoveryLog([]);
+    setRecoveryProgress({ pct: 0.05, stage: "starting recovery…", active: true });
+    const savedWorkDir = devStatus?.workDir;
+    const savedFramework = devStatus?.framework;
+    try {
+      stageProgress(0.1, "checking agent reachability…");
+      appendRecovery("→ checking agent reachability…");
+      try {
+        const info = await agentClient.getInfo();
+        appendRecovery(`✓ agent ok (v${info?.version || "?"})`);
+      } catch (e: any) {
+        appendRecovery(`✗ agent not reachable: ${e?.message || e}`);
+        if (onReconnect) {
+          appendRecovery("→ reconnecting device…");
+          try { await onReconnect(); appendRecovery("✓ device reconnect done"); }
+          catch (err: any) { appendRecovery(`✗ device reconnect failed: ${err?.message || err}`); }
+        }
+      }
+      if (onRepairRelay) {
+        stageProgress(0.2, "repairing relay password…");
+        appendRecovery("→ repairing user relay password in Convex…");
+        try {
+          const r = await onRepairRelay();
+          appendRecovery(r.repaired ? `✓ repaired: ${r.reason}` : `· ${r.reason}`);
+          if (r.repaired && onReconnect) {
+            try { await onReconnect(); appendRecovery("✓ reconnected"); }
+            catch (err: any) { appendRecovery(`✗ reconnect after repair failed: ${err?.message || err}`); }
+          }
+        } catch (e: any) { appendRecovery(`✗ repair failed: ${e?.message || e}`); }
+      }
+      if (savedWorkDir) {
+        stageProgress(0.3, "stopping dev server…");
+        appendRecovery("→ stopping dev server…");
+        try { await agentClient.stopDevServer(); appendRecovery("✓ stopped"); }
+        catch (e: any) { appendRecovery(`warn: stop failed: ${e?.message || e}`); }
+
+        stageProgress(0.45, "git pull --ff-only…");
+        appendRecovery("→ pulling latest commit (git pull --ff-only)…");
+        try {
+          await agentClient.startExec({
+            command: "if [ -d .git ]; then if git diff --quiet && git diff --cached --quiet; then git fetch --depth=50 && git pull --ff-only; else echo 'skip: working tree has uncommitted changes' >&2; fi; else echo 'skip: not a git repo' >&2; fi",
+            workDir: savedWorkDir,
+            timeout: 60,
+          });
+          appendRecovery("✓ git pulled (or skipped on dirty/non-repo)");
+        } catch (e: any) { appendRecovery(`warn: git pull failed: ${e?.message || e}`); }
+
+        stageProgress(0.6, "killing stray Vite / Next / Metro…");
+        appendRecovery("→ killing stray dev-server processes…");
+        try {
+          await agentClient.startExec({
+            command: "pkill -f 'vite' 2>/dev/null; pkill -f 'next dev' 2>/dev/null; pkill -f 'expo start' 2>/dev/null; pkill -f 'metro' 2>/dev/null; sleep 1; echo procs-killed",
+            workDir: savedWorkDir,
+            timeout: 20,
+          });
+          appendRecovery("✓ procs killed");
+        } catch (e: any) { appendRecovery(`warn: pkill failed: ${e?.message || e}`); }
+
+        stageProgress(0.75, "clearing caches…");
+        appendRecovery("→ clearing caches on remote…");
+        try {
+          await agentClient.startExec({
+            command: "rm -rf node_modules/.cache .expo/web/cache .next/cache .vite /tmp/metro-* /tmp/haste-map-* 2>/dev/null || true; echo cache-cleared",
+            workDir: savedWorkDir,
+            timeout: 30,
+          });
+          appendRecovery("✓ caches cleared");
+        } catch (e: any) { appendRecovery(`warn: cache clear failed: ${e?.message || e}`); }
+
+        if (savedFramework) {
+          stageProgress(0.9, `restarting dev server (${savedFramework})…`);
+          appendRecovery(`→ restarting dev server (${savedFramework})…`);
+          try {
+            await agentClient.startDevServer({
+              framework: savedFramework,
+              workDir: savedWorkDir,
+              platform: "web",
+              surface: "web-reload",
+            });
+            appendRecovery("✓ dev server restarted");
+          } catch (e: any) { appendRecovery(`✗ restart failed: ${e?.message || e}`); }
+        }
+      } else {
+        appendRecovery("  (no dev server was running — skipping restart)");
+      }
+      appendRecovery("✓ done");
+      setRecoveryProgress({ pct: 1, stage: "done", active: true });
+      setTimeout(() => setRecoveryProgress({ pct: 0, stage: "", active: false }), 1500);
+    } catch (e: any) {
+      appendRecovery(`✗ recovery failed: ${e?.message || e}`);
+      setRecoveryProgress((prev) => ({ ...prev, stage: `failed: ${e?.message || e}` }));
+    }
+    setRecovering(false);
+  };
+
   const connectionLabel = connectedDevice
     ? (connectedDevice as any).local
       ? "DIRECT"
@@ -403,6 +519,18 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               {relayRepairState === "repairing" ? "Repairing…" : "Repair relay"}
             </button>
           )}
+          <button
+            onClick={() => void handleRecover()}
+            disabled={recovering}
+            className={`rounded border px-2.5 py-1 text-[11px] ${
+              recovering
+                ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
+                : "border-surface-700 text-surface-300 hover:border-emerald-500/40 hover:text-emerald-300"
+            }`}
+            title="Full recovery: ping agent, repair relay, stop, git pull, pkill, clear caches, restart, refresh"
+          >
+            {recovering ? "Recovering…" : "Reconnect & Fix"}
+          </button>
           {isRunning ? (
             <>
               <button
@@ -513,7 +641,49 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
       {/* Split body */}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[1fr_280px]">
-        <div className="flex min-h-0 flex-col gap-2">
+        <div className="relative flex min-h-0 flex-col gap-2">
+          {/* Recovery overlay — progress bar + streaming log. Absolute
+              so it doesn't reflow the preview frame when it mounts. */}
+          {(recovering || recoveryLog.length > 0 || recoveryProgress.active) ? (
+            <div className="pointer-events-auto absolute top-2 right-2 z-10 w-72 max-w-[40%] rounded border border-amber-500/30 bg-surface-950/95 shadow-lg backdrop-blur">
+              <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
+                <span>{recovering ? "Recovery · running" : "Recovery · last run"}</span>
+                {!recovering && recoveryLog.length > 0 ? (
+                  <button
+                    onClick={() => setRecoveryLog([])}
+                    className="text-surface-600 hover:text-surface-400"
+                    title="Clear recovery log"
+                  >
+                    clear
+                  </button>
+                ) : null}
+              </div>
+              {recoveryProgress.active ? (
+                <div className="px-2 pt-2">
+                  <div className="h-1 w-full overflow-hidden rounded bg-emerald-500/15">
+                    <div
+                      className="h-full rounded bg-emerald-400 transition-[width] duration-300 ease-out"
+                      style={{ width: `${Math.max(recoveryProgress.pct * 100, 5)}%` }}
+                    />
+                  </div>
+                  {recoveryProgress.stage ? (
+                    <p className="mt-1 truncate font-mono text-[10px] text-emerald-200/80" title={recoveryProgress.stage}>
+                      {recoveryProgress.stage}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+              {(recovering || recoveryLog.length > 0) ? (
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-2 py-1 font-mono text-[10px] leading-4 text-amber-200/80">
+                  {recoveryLog.length === 0 ? (
+                    <span className="text-surface-600">(starting…)</span>
+                  ) : (
+                    recoveryLog.join("\n")
+                  )}
+                </pre>
+              ) : null}
+            </div>
+          ) : null}
           <WebPreviewFrame
             url={previewUrl}
             running={isRunning}

@@ -65,6 +65,23 @@ function likelyFramework(project: Project): string {
   return "vite";
 }
 
+// Returns true when the active dev server is Metro in mobile-only mode
+// (expo --dev-client / react-native start). That serves a JS bundle JSON
+// at /, not HTML, so iframing `/dev/` paints blank. Used by the Hot
+// Reload tab to render an instructional placeholder instead of a
+// blank iframe. We explicitly exclude `devMode === "web"` so Expo Web
+// previews still iframe normally.
+function isMobileDevClient(status: { framework?: string; devMode?: string } | null | undefined): boolean {
+  if (!status) return false;
+  const fw = (status.framework || "").toLowerCase();
+  const mode = (status.devMode || "").toLowerCase();
+  const mobileFw = fw.includes("expo") || fw.includes("react-native") || fw === "metro";
+  if (!mobileFw) return false;
+  // Empty devMode on a mobile framework means we haven't seen the
+  // Expo status yet; assume dev-client which is the Yaver default.
+  return mode !== "web";
+}
+
 function isWebPreviewFramework(framework?: string): boolean {
   const fw = (framework || "").toLowerCase();
   return (
@@ -826,6 +843,34 @@ export default function PreviewPane({
           </button>
         )}
       </div>
+    </div>
+  ) : devStatus?.running && previewFrameUrl && isMobileDevClient(devStatus) ? (
+    // Metro in --dev-client mode returns a JSON manifest at /, not HTML.
+    // Iframing it paints blank white and leaves the user staring at an
+    // empty phone. Show a clear status + call-to-action instead so they
+    // know Metro is alive and waiting for the phone to pick up the
+    // bundle. SSE log tail + progress overlay still stream normally.
+    <div className="w-full h-full flex flex-col items-center justify-center gap-4 bg-gradient-to-b from-surface-950 to-surface-900 p-6 text-center">
+      <div className="text-4xl">📱</div>
+      <div className="space-y-1">
+        <p className="text-[13px] font-medium text-surface-100">Metro is ready</p>
+        <p className="text-[11px] text-surface-400">
+          <span className="font-mono">{devStatus?.framework || "expo"}</span>
+          {devStatus?.port ? <span className="font-mono"> · :{devStatus.port}</span> : null}
+        </p>
+      </div>
+      <p className="max-w-[280px] text-[11px] leading-5 text-surface-500">
+        This tab is the mobile Hot Reload surface. Metro is waiting for the Yaver app
+        on your phone to request a Hermes bundle. Open{" "}
+        <span className="font-mono text-surface-300">
+          {devStatus?.workDir?.split("/").slice(-1)[0] || "this project"}
+        </span>{" "}
+        in the Yaver mobile app to preview here.
+      </p>
+      <p className="max-w-[280px] text-[10px] leading-5 text-surface-600">
+        Or switch to the <span className="text-surface-400">Web Reload</span> tab to
+        render a browser preview via <span className="font-mono">expo --web</span>.
+      </p>
     </div>
   ) : devStatus?.running && previewFrameUrl ? (
     <iframe
