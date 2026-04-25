@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import pkg from "../../package.json";
+
+const WEB_VERSION = (pkg as { version?: string }).version ?? "unknown";
 
 interface SettingsViewProps {
   user: {
@@ -387,6 +390,17 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
             </div>
           </div>
         )}
+      </div>
+
+      {/* About */}
+      <div className="card mb-6">
+        <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
+          About
+        </h3>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-surface-400">yaver.io web</span>
+          <span className="font-mono text-surface-200">v{WEB_VERSION}</span>
+        </div>
       </div>
 
       {/* Legal */}
