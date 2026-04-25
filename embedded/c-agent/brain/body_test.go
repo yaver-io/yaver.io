@@ -223,6 +223,166 @@ func TestParity_HelloMatchesC(t *testing.T) {
 	}
 }
 
+// ── New body codec round-trips ───────────────────────────────
+
+func TestAuth_RoundTrip(t *testing.T) {
+	nonce := make([]byte, 32)
+	for i := range nonce {
+		nonce[i] = byte(0xa0 + i)
+	}
+	in := Auth{
+		ProtocolVersion: 1,
+		Nonce:           nonce,
+		SignedNowMs:     1700000000123,
+	}
+	buf := make([]byte, 128)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out, err := DecodeAuth(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.SignedNowMs != in.SignedNowMs {
+		t.Fatalf("SignedNowMs got=%d want=%d", out.SignedNowMs, in.SignedNowMs)
+	}
+	if !bytes.Equal(out.Nonce, nonce) {
+		t.Fatalf("Nonce mismatch")
+	}
+}
+
+func TestAuthRsp_RoundTrip(t *testing.T) {
+	sig := make([]byte, 64)
+	nonce := make([]byte, 32)
+	cert := make([]byte, 128)
+	for i := range sig {
+		sig[i] = byte(i)
+	}
+	for i := range nonce {
+		nonce[i] = byte(0xa0 + i)
+	}
+	for i := range cert {
+		cert[i] = byte(0x30 + i)
+	}
+	in := AuthRsp{
+		ProtocolVersion: 1, Sig: sig, Nonce: nonce, DeviceCert: cert,
+	}
+	buf := make([]byte, 512)
+	n, err := in.Encode(buf)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	out, err := DecodeAuthRsp(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !bytes.Equal(out.Sig, sig) || !bytes.Equal(out.Nonce, nonce) || !bytes.Equal(out.DeviceCert, cert) {
+		t.Fatalf("authrsp round-trip mismatch")
+	}
+}
+
+func TestToolRsp_RoundTripOK(t *testing.T) {
+	hash := make([]byte, 32)
+	result := []byte{0xd0, 0xd1, 0xd2}
+	in := ToolRsp{
+		ProtocolVersion: 1,
+		Result:          result,
+		Status:          0,
+		ToolHash:        hash,
+		DurationMs:      1234,
+	}
+	buf := make([]byte, 128)
+	n, _ := in.Encode(buf)
+	out, err := DecodeToolRsp(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Status != 0 || !bytes.Equal(out.Result, result) || out.DurationMs != 1234 {
+		t.Fatalf("tool_rsp ok mismatch: %+v", out)
+	}
+}
+
+func TestToolRsp_RoundTripError(t *testing.T) {
+	hash := make([]byte, 32)
+	in := ToolRsp{
+		ProtocolVersion: 1,
+		Error:           "module trapped",
+		Status:          -2,
+		ToolHash:        hash,
+	}
+	buf := make([]byte, 128)
+	n, _ := in.Encode(buf)
+	out, err := DecodeToolRsp(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Status != -2 || out.Error != "module trapped" {
+		t.Fatalf("tool_rsp err mismatch: %+v", out)
+	}
+}
+
+func TestStreamChunk_RoundTrip(t *testing.T) {
+	data := make([]byte, 64)
+	for i := range data {
+		data[i] = byte(i)
+	}
+	in := StreamChunk{
+		ProtocolVersion: 1, Seq: 17,
+		Data: data, StreamID: 0xDEADBEEF, EndStream: false,
+	}
+	buf := make([]byte, 128)
+	n, _ := in.Encode(buf)
+	out, err := DecodeStreamChunk(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Seq != 17 || out.StreamID != 0xDEADBEEF || out.EndStream != false {
+		t.Fatalf("stream chunk mismatch: %+v", out)
+	}
+	if !bytes.Equal(out.Data, data) {
+		t.Fatalf("data mismatch")
+	}
+}
+
+func TestNeed_RoundTrip(t *testing.T) {
+	hash := make([]byte, 32)
+	for i := range hash {
+		hash[i] = byte(0x10 + i)
+	}
+	in := Need{ProtocolVersion: 1, ToolHash: hash}
+	buf := make([]byte, 64)
+	n, _ := in.Encode(buf)
+	out, err := DecodeNeed(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !bytes.Equal(out.ToolHash, hash) {
+		t.Fatalf("tool_hash mismatch")
+	}
+}
+
+func TestModuleBody_RoundTrip(t *testing.T) {
+	wasm := make([]byte, 256)
+	desc := make([]byte, 64)
+	for i := range wasm {
+		wasm[i] = byte(i & 0xFF)
+	}
+	for i := range desc {
+		desc[i] = byte(0x40 + i)
+	}
+	in := ModuleBody{ProtocolVersion: 1, Wasm: wasm, Descriptor: desc}
+	buf := make([]byte, 512)
+	n, _ := in.Encode(buf)
+	out, err := DecodeModuleBody(buf[:n])
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !bytes.Equal(out.Wasm, wasm) || !bytes.Equal(out.Descriptor, desc) {
+		t.Fatalf("module body mismatch")
+	}
+}
+
 func TestParity_HeartbeatMatchesC(t *testing.T) {
 	expectedFromC := []byte{
 		0xa2,
