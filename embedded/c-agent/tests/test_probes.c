@@ -147,6 +147,127 @@ static int test_register_and_invoke(void)
     return 0;
 }
 
+/* ── Klipper status probe ──────────────────────────────────── */
+
+static int test_klipper_parse_curl_output_valid(void)
+{
+    int rc = 600;
+    /* Simulated curl response with the sentinel + status code. */
+    static const char in[] =
+        "{\"result\":{\"status\":{\"print_stats\":{\"state\":\"printing\"}}}}\n"
+        "__YVR_HTTP_END__200\n";
+    const char *body = NULL;
+    size_t      body_len = 0;
+    int         status = -1;
+    EXPECT(yvr_klipper_parse_curl_output(in, sizeof in - 1,
+                                         &body, &body_len, &status), rc);
+    EXPECT(status == 200, rc + 1);
+    /* Body should be everything before the sentinel + a trailing
+     * newline. The newline that's part of the sentinel ITSELF
+     * isn't in the body — it's eaten by the "\n__YVR_HTTP_END__"
+     * needle. */
+    EXPECT(body_len > 0, rc + 2);
+    EXPECT(body[0] == '{', rc + 3);
+    return 0;
+}
+
+static int test_klipper_parse_curl_output_no_sentinel(void)
+{
+    int rc = 610;
+    static const char in[] = "{\"some\":\"json\"}";
+    const char *body;
+    size_t      body_len;
+    int         status;
+    EXPECT(yvr_klipper_parse_curl_output(in, sizeof in - 1,
+                                         &body, &body_len, &status) == false, rc);
+    EXPECT(status == 0, rc + 1);
+    return 0;
+}
+
+static int test_klipper_parse_curl_output_404(void)
+{
+    int rc = 620;
+    static const char in[] =
+        "{\"error\":\"not found\"}\n"
+        "__YVR_HTTP_END__404\n";
+    const char *body;
+    size_t      body_len;
+    int         status;
+    EXPECT(yvr_klipper_parse_curl_output(in, sizeof in - 1,
+                                         &body, &body_len, &status), rc);
+    EXPECT(status == 404, rc + 1);
+    return 0;
+}
+
+static int test_klipper_register_and_invoke(void)
+{
+    int rc = 700;
+    yvr_host_t *h = yvr_host_init("/tmp/yvr-klipper-test");
+    EXPECT(h != NULL, rc);
+
+    EXPECT(yvr_register_klipper_status_probe(h) == YVR_HOST_OK, rc + 1);
+    EXPECT(yvr_host_module_state(h, "klipper_status") == YVR_MS_ACTIVE, rc + 2);
+
+    size_t out_len = 0;
+    yvr_host_status_t st = YVR_HOST_OK;
+    void *rsp = yvr_host_invoke(h, "klipper_status", "scan",
+                                NULL, 0, &out_len, &st);
+    EXPECT(st == YVR_HOST_OK, rc + 3);
+    EXPECT(rsp != NULL, rc + 4);
+    EXPECT(out_len > 0, rc + 5);
+
+    /* Validate CBOR shape:
+     *   { "endpoint": <text>, "response": <bytes>,
+     *     "reachable": <bool>, "http_status": <uint> } */
+    yvr_cbor_r_t r;
+    yvr_cbor_r_init(&r, rsp, out_len);
+    size_t kv = 0;
+    EXP_OK(yvr_cbor_r_map_begin(&r, &kv));
+    EXPECT(kv == 4, rc + 6);
+
+    const char *k;
+    size_t      kn;
+
+    EXP_OK(yvr_cbor_r_text(&r, &k, &kn));
+    EXPECT(kn == 8 && memcmp(k, "endpoint", 8) == 0, rc + 7);
+    const char *endpoint;
+    size_t      endpoint_n;
+    EXP_OK(yvr_cbor_r_text(&r, &endpoint, &endpoint_n));
+    EXPECT(endpoint_n > 0, rc + 8);
+
+    EXP_OK(yvr_cbor_r_text(&r, &k, &kn));
+    EXPECT(kn == 8 && memcmp(k, "response", 8) == 0, rc + 9);
+    const uint8_t *body;
+    size_t         body_n;
+    EXP_OK(yvr_cbor_r_bytes(&r, &body, &body_n));
+    /* body_n is 0 on a host without Moonraker; > 0 otherwise. */
+
+    EXP_OK(yvr_cbor_r_text(&r, &k, &kn));
+    EXPECT(kn == 9 && memcmp(k, "reachable", 9) == 0, rc + 10);
+    bool reachable;
+    EXP_OK(yvr_cbor_r_bool(&r, &reachable));
+
+    EXP_OK(yvr_cbor_r_text(&r, &k, &kn));
+    EXPECT(kn == 11 && memcmp(k, "http_status", 11) == 0, rc + 11);
+    uint64_t http_status;
+    EXP_OK(yvr_cbor_r_uint(&r, &http_status));
+
+    /* On a host without Moonraker (CI / Mac dev), reachable is
+     * false, http_status is 0, body is empty. On a real Klipper
+     * host, all three are populated. We accept both. */
+    if (reachable) {
+        EXPECT(http_status >= 100 && http_status < 600, rc + 12);
+        EXPECT(body_n > 0, rc + 13);
+    } else {
+        EXPECT(http_status == 0, rc + 14);
+        EXPECT(body_n == 0, rc + 15);
+    }
+
+    yvr_host_free_response(h, rsp);
+    yvr_host_shutdown(h);
+    return 0;
+}
+
 /* ── Driver ─────────────────────────────────────────────────── */
 
 typedef int (*tfn)(void);
@@ -160,6 +281,10 @@ int main(void)
         { "parser_multi_stations",          test_parser_multi_stations         },
         { "parser_station_keyword_in_value",test_parser_station_keyword_in_value},
         { "register_and_invoke",            test_register_and_invoke           },
+        { "klipper_parse_curl_valid",       test_klipper_parse_curl_output_valid    },
+        { "klipper_parse_curl_no_sentinel", test_klipper_parse_curl_output_no_sentinel },
+        { "klipper_parse_curl_404",         test_klipper_parse_curl_output_404      },
+        { "klipper_register_and_invoke",    test_klipper_register_and_invoke    },
     };
     const size_t n = sizeof T / sizeof T[0];
     int failed = 0;

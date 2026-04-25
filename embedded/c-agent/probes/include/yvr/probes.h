@@ -17,6 +17,7 @@
 #ifndef YVR_PROBES_H
 #define YVR_PROBES_H
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include "yvr/host.h"
@@ -56,6 +57,43 @@ yvr_host_status_t yvr_register_wifi_client_count_probe(yvr_host_t *host);
  * output buffer. Pure function — no I/O, no allocation, no global
  * state. Returns 0 on NULL / zero-length input. */
 size_t yvr_probe_count_stations_in_iw_output(const char *output, size_t len);
+
+/* Register the klipper_status probe.
+ *
+ *   method (ignored for v1)
+ *   request (ignored)
+ *
+ *   response (CBOR map):
+ *     {
+ *       "endpoint":    <text>     # the Moonraker URL the probe hit
+ *       "response":    <bytes>    # raw HTTP response body (JSON)
+ *       "reachable":   <bool>     # whether the HTTP request succeeded
+ *       "http_status": <uint>     # HTTP status code; 0 if unreachable
+ *     }
+ *
+ * Shell-out via curl — works on every Klipper SBC (curl ships in
+ * basically every distro). The brain parses the raw JSON in
+ * `response`; this layer stays JSON-free.
+ *
+ * Portable: on hosts without curl or without Moonraker running,
+ * the probe returns the same CBOR shape with `reachable: false`
+ * and an empty `response` body. The probe never fails. */
+yvr_host_status_t yvr_register_klipper_status_probe(yvr_host_t *host);
+
+/* ── Parser, exposed for unit tests ─────────────────────────────
+ *
+ * Splits a curl response (with our sentinel suffix) into body +
+ * HTTP status code. The sentinel is a literal "\n__YVR_HTTP_END__"
+ * we append via curl's -w flag — this is what lets us avoid
+ * parsing HTTP headers ourselves.
+ *
+ * Returns true on success. On false, *out_body and *out_body_len
+ * are unchanged; *out_status is set to 0. */
+bool yvr_klipper_parse_curl_output(const char  *output,
+                                   size_t       output_len,
+                                   const char **out_body,
+                                   size_t      *out_body_len,
+                                   int         *out_status);
 
 #ifdef __cplusplus
 }

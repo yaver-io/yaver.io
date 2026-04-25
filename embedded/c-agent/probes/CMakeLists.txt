@@ -4,6 +4,7 @@
 # the probe returns an empty (but valid) CBOR document.
 
 add_library(yvr_cagent_probes STATIC
+    src/klipper_status.c
     src/wifi_client_count.c
 )
 add_library(yaver::cagent_probes ALIAS yvr_cagent_probes)
