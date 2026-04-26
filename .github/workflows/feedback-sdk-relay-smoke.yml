@@ -210,40 +210,41 @@ jobs:
           echo
           echo "=== [RN SDK / sfmg] GET /blackbox/command-stream (SSE handshake) ==="
           # Mirrors BlackBox.connectSSE(): GET with bearer + Accept:
-          # text/event-stream. SSE streams stay open forever — we
-          # ONLY want to check that the response headers came back
-          # with status 200 + Content-Type: text/event-stream.
-          # Then we yank the connection. Curl-28 (timeout) is the
-          # EXPECTED outcome here: the body is an infinite stream.
-          # Failure looks like: bad status code in /tmp/sse-hdr OR
-          # missing Content-Type.
+          # text/event-stream. The relay may take a beat to forward
+          # the first byte (QUIC tunnel hop), and SSE streams stay
+          # open forever, so we use -w to capture status + content-
+          # type in one shot — independent of -D flushing on timeout.
+          # Curl-28 (timeout) is the EXPECTED outcome on a healthy
+          # SSE; anything else is signal.
           set +e
-          curl -sS -D /tmp/sse-hdr -m 4 -N \
-                 -H "$AUTH" -H "Accept: text/event-stream" \
-                 -H "X-Device-ID: ci-feedback-sdk-smoke" \
-                 -H "X-Platform: ios" \
-                 -H "X-App-Name: sfmg" \
-                 -o /tmp/sse-body \
-                 "$(rpx /blackbox/command-stream?device=ci-feedback-sdk-smoke)" >/dev/null 2>&1
+          SSE_PROBE=$(curl -sS -m 8 -N \
+                       -H "$AUTH" -H "Accept: text/event-stream" \
+                       -H "X-Device-ID: ci-feedback-sdk-smoke" \
+                       -H "X-Platform: ios" \
+                       -H "X-App-Name: sfmg" \
+                       -o /tmp/sse-body \
+                       -w '%{http_code}|%{content_type}' \
+                       "$(rpx /blackbox/command-stream?device=ci-feedback-sdk-smoke)" 2>/dev/null)
+          SSE_EXIT=$?
           set -e
-          echo "  response headers:"
-          head -10 /tmp/sse-hdr
-          if [ ! -s /tmp/sse-hdr ]; then
-            fail "SSE handshake produced no response headers — relay didn't even reply"
+          # SSE_PROBE is "STATUS|CONTENT_TYPE" — empty-ish on hard
+          # network error.
+          STATUS="${SSE_PROBE%%|*}"
+          CTYPE="${SSE_PROBE#*|}"
+          echo "  curl exit: $SSE_EXIT  status: $STATUS  content-type: $CTYPE"
+          if [ -z "$STATUS" ] || [ "$STATUS" = "000" ]; then
+            fail "SSE handshake: relay never responded (exit=$SSE_EXIT)"
           fi
-          # Status from first line e.g. "HTTP/2 200" / "HTTP/1.1 200 OK"
-          HTTP_LINE=$(head -1 /tmp/sse-hdr | tr -d '\r')
-          case "$HTTP_LINE" in
-            *"200"*) echo "  ✓ status 200 in handshake" ;;
-            *"401"*|*"403"*) fail "SSE handshake auth regression: $HTTP_LINE" ;;
-            *)       fail "SSE handshake unexpected status: $HTTP_LINE" ;;
+          case "$STATUS" in
+            200) echo "  ✓ status 200 in handshake" ;;
+            401|403) fail "SSE handshake auth regression: HTTP $STATUS" ;;
+            *)       fail "SSE handshake unexpected status: HTTP $STATUS" ;;
           esac
-          if grep -i "content-type:.*event-stream" /tmp/sse-hdr >/dev/null; then
-            echo "  ✓ Content-Type: text/event-stream confirmed"
-          else
-            fail "SSE handshake missing event-stream Content-Type"
-          fi
-          echo "  ✓ SSE handshake OK (timeout-after-headers is expected for streams)"
+          case "$CTYPE" in
+            *event-stream*) echo "  ✓ Content-Type: text/event-stream confirmed" ;;
+            *) fail "SSE handshake wrong Content-Type: $CTYPE (expected text/event-stream)" ;;
+          esac
+          echo "  ✓ SSE handshake OK (curl-28 timeout-after-headers is expected for streams)"
 
           ##################################################################
           # 3. Web Feedback SDK shape — carrotbet
