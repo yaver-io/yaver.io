@@ -7,6 +7,7 @@ package main
 //   4. MatchVibeCrashLine identifies common framework signatures.
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -108,6 +109,74 @@ func TestOnCrashDetected_dedupsBurst(t *testing.T) {
 	}
 	if gotCrash != 1 {
 		t.Fatalf("expected exactly 1 crash event after dedup, got %d", gotCrash)
+	}
+}
+
+func TestWaitForStability_quietWindowReturnsStable(t *testing.T) {
+	fb := newFakeBrowser(genFrames(2)...)
+	mgr := NewVibePreviewManager(fb)
+	defer mgr.StopAll()
+
+	if _, err := mgr.Start(VibePreviewStartOpts{
+		Project: "p", TargetURL: "http://x", Mode: VibePreviewModeChangeOnly,
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	res := mgr.WaitForStability(context.Background(), "p", 200*time.Millisecond)
+	if !res.Stable {
+		t.Fatalf("expected stable=true after quiet window, got %+v", res)
+	}
+	if res.Crash != nil {
+		t.Fatalf("expected no crash on stable result, got %+v", res.Crash)
+	}
+}
+
+func TestWaitForStability_crashShortcuts(t *testing.T) {
+	fb := newFakeBrowser(genFrames(2)...)
+	mgr := NewVibePreviewManager(fb)
+	defer mgr.StopAll()
+
+	if _, err := mgr.Start(VibePreviewStartOpts{
+		Project: "p", TargetURL: "http://x", Mode: VibePreviewModeChangeOnly,
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	// Fire a crash a few ms into the wait. The function should return
+	// non-stable immediately, well before the 5 s window expires.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		mgr.OnCrashDetected(VibeCrashSignal{
+			Project: "p",
+			Source:  "flutter",
+			Message: "Exception caught by widgets library",
+		})
+	}()
+
+	start := time.Now()
+	res := mgr.WaitForStability(context.Background(), "p", 5*time.Second)
+	elapsed := time.Since(start)
+
+	if res.Stable {
+		t.Fatalf("expected stable=false after a crash, got %+v", res)
+	}
+	if res.Crash == nil {
+		t.Fatal("expected crash signal on non-stable result")
+	}
+	if res.Crash.Source != "flutter" {
+		t.Errorf("crash.Source = %q, want flutter", res.Crash.Source)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("expected to short-circuit on crash, but waited %v (>2 s)", elapsed)
+	}
+}
+
+func TestWaitForStability_noProjectIsTriviallyStable(t *testing.T) {
+	mgr := NewVibePreviewManager(newFakeBrowser())
+	res := mgr.WaitForStability(context.Background(), "", 100*time.Millisecond)
+	if !res.Stable {
+		t.Fatal("empty project should be trivially stable")
 	}
 }
 

@@ -18,6 +18,7 @@ package main
 // the manager fans the rest out.
 
 import (
+	"context"
 	"regexp"
 	"strings"
 	"time"
@@ -130,6 +131,72 @@ var vibeCrashPatterns = []struct {
 	{source: "ios-crash", re: regexp.MustCompile(`(?m)\*\*\* Terminating app due to uncaught exception|Thread \d+ Crashed:|libsystem_kernel\.dylib.*__pthread_kill`)},
 	// Generic Node/server exceptions (Vite/Next dev server)
 	{source: "node", re: regexp.MustCompile(`(?m)UnhandledPromiseRejection|^Error: .*\n\s+at `)},
+}
+
+// VibeStabilityResult is what WaitForStability returns: whether the
+// project stayed crash-free over the window and (if not) which crash
+// fired first. The autodev "smart develop mode" loop reads this after
+// every kick to decide whether to declare the kick done or re-queue
+// it with the crash transcript appended.
+type VibeStabilityResult struct {
+	Stable bool             // true = no crash arrived during the window
+	Crash  *VibeCrashSignal // populated when Stable=false
+	Window time.Duration    // how long we actually waited (caps below)
+}
+
+// WaitForStability blocks for `window` (default 8 s, max 60 s) watching
+// for crash events on the project's SSE channel. Returns stable=true
+// if the window passes without a crash; stable=false the moment a
+// crash event arrives. Either way, returns immediately on context
+// cancellation.
+//
+// Designed to be called by the autodev post-kick gate (task #14) but
+// useful in any "is this app actually still alive after I touched it?"
+// flow. Cheap — just a channel read with a timer, no polling.
+func (m *VibePreviewManager) WaitForStability(ctx context.Context, project string, window time.Duration) VibeStabilityResult {
+	if m == nil || project == "" {
+		return VibeStabilityResult{Stable: true}
+	}
+	if window <= 0 {
+		window = 8 * time.Second
+	}
+	if window > 60*time.Second {
+		window = 60 * time.Second
+	}
+
+	ch, _, unsubscribe := m.Subscribe(project)
+	defer unsubscribe()
+
+	deadline := time.NewTimer(window)
+	defer deadline.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return VibeStabilityResult{Stable: true, Window: window}
+		case <-deadline.C:
+			return VibeStabilityResult{Stable: true, Window: window}
+		case ev, open := <-ch:
+			if !open {
+				// Manager closed the subscriber (Stop was called) —
+				// treat that as stable; the session ended cleanly.
+				return VibeStabilityResult{Stable: true, Window: window}
+			}
+			if ev.Type == "crash" {
+				m.mu.Lock()
+				lc := m.lastCrash
+				m.mu.Unlock()
+				return VibeStabilityResult{
+					Stable: false,
+					Crash:  lc,
+					Window: window,
+				}
+			}
+			// Any other event (frame / stable / clip_*) is fine — keep
+			// listening. The loop continues until window expires or a
+			// crash arrives.
+		}
+	}
 }
 
 // MatchVibeCrashLine returns the source name + a normalised message if the

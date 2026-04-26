@@ -895,6 +895,43 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 		}
 	}
 
+	// Smart-develop-mode gate: when the spec opts in, after the AI
+	// declares done we briefly watch the active vibe-preview session for
+	// crash signals. A crash in the window downgrades the kick to
+	// in_progress so the scheduler re-queues — autodev refuses to declare
+	// the kick complete while the running app is broken.
+	if l.Spec.Think.SmartDevelop != nil && l.Spec.Think.SmartDevelop.Enabled &&
+		(aiResp.Status == "done" || aiResp.Status == "in_progress") {
+		if mgr := ActiveVibePreviewManager(); mgr != nil {
+			project := l.Spec.Think.SmartDevelop.Project
+			if project == "" {
+				project = l.Spec.App
+			}
+			if project != "" {
+				window := 8 * time.Second
+				if w := l.Spec.Think.SmartDevelop.CrashWindow; w != "" {
+					if d, derr := time.ParseDuration(w); derr == nil {
+						window = d
+					}
+				}
+				stab := mgr.WaitForStability(watchCtx, project, window)
+				if !stab.Stable && stab.Crash != nil {
+					fmt.Fprintf(os.Stderr,
+						"[loop %s] smart-develop: crash detected (%s: %s) — re-queueing kick\n",
+						l.Spec.Name, stab.Crash.Source, stab.Crash.Message)
+					aiResp.Status = "in_progress"
+					if result.Summary != "" {
+						result.Summary += " | "
+					}
+					result.Summary += fmt.Sprintf(
+						"app crashed during stability gate (%s): %s",
+						stab.Crash.Source, stab.Crash.Message,
+					)
+				}
+			}
+		}
+	}
+
 	// Map the AI's status onto the iteration status.
 	switch aiResp.Status {
 	case "done":

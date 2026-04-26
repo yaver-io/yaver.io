@@ -141,6 +141,31 @@ type LoopThink struct {
 	//     if the provider shares a session with interactive use
 	// This is the "don't burn my Claude Code 5-hour window at 3pm" rule.
 	RespectSessionLimits *bool `yaml:"respect_session_limits,omitempty" json:"respect_session_limits,omitempty"`
+
+	// SmartDevelop opts the loop into the post-kick stability gate. When
+	// non-nil + enabled, after the AI runner declares done the loop waits
+	// SmartDevelop.CrashWindow watching the active vibe-preview session
+	// for the project. If a crash event arrives in that window the kick's
+	// status is downgraded from "done" to "in_progress" so the scheduler
+	// re-queues — autodev refuses to declare a kick complete while the
+	// running app is broken. Off by default (existing loops unchanged).
+	SmartDevelop *SmartDevelopSpec `yaml:"smart_develop,omitempty" json:"smart_develop,omitempty"`
+}
+
+// SmartDevelopSpec configures the post-kick stability gate. Lives on
+// LoopThink because it modifies the "is the kick done" verdict, which
+// is part of the think phase contract.
+type SmartDevelopSpec struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// CrashWindow is the wall-clock duration we watch for crash events
+	// after a kick declares done. Default "8s", capped at 60 s by the
+	// VibePreview manager. Short windows minimise wasted wall-clock on
+	// genuinely-clean kicks; longer windows catch crashes that only
+	// appear once the dev server has fully booted.
+	CrashWindow string `yaml:"crash_window,omitempty" json:"crash_window,omitempty"`
+	// Project is the vibe-preview session key to watch. Defaults to the
+	// LoopSpec.App when empty; if neither is set, the gate is a no-op.
+	Project string `yaml:"project,omitempty" json:"project,omitempty"`
 }
 
 // ProviderLimits is the per-provider session budget the loop respects.

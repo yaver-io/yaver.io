@@ -211,6 +211,34 @@ type VibePreviewManager struct {
 	lastCrash *VibeCrashSignal
 }
 
+// activeVibePreviewMgr is the process-wide singleton accessor. main.go's
+// runServe sets it after constructing the HTTPServer; loop_exec.go reads
+// it during the smart-develop-mode gate. Tests can swap it in/out via
+// SetActiveVibePreviewManager.
+//
+// Package-level singleton instead of threading a reference through every
+// LoopState because the manager is genuinely process-scoped (one Chrome
+// browser pool per agent) and forwarding through every spec/state struct
+// would be churn for no gain.
+var activeVibePreviewMgr atomic.Value // stores *VibePreviewManager (or nil)
+
+// SetActiveVibePreviewManager registers the global manager. Idempotent;
+// last writer wins. Pass nil to clear.
+func SetActiveVibePreviewManager(m *VibePreviewManager) {
+	if m == nil {
+		activeVibePreviewMgr.Store((*VibePreviewManager)(nil))
+		return
+	}
+	activeVibePreviewMgr.Store(m)
+}
+
+// ActiveVibePreviewManager returns the registered manager or nil. Safe
+// from any goroutine.
+func ActiveVibePreviewManager() *VibePreviewManager {
+	v, _ := activeVibePreviewMgr.Load().(*VibePreviewManager)
+	return v
+}
+
 // NewVibePreviewManager returns a manager wired to the supplied
 // BrowserManager. Pass nil for tests that don't need real captures —
 // Start will return an error if browser is nil.

@@ -2522,6 +2522,9 @@ func runServe(args []string) {
 	httpServer.devServerMgr = NewDevServerManager()
 	httpServer.browserMgr = NewBrowserManager()
 	httpServer.vibePreviewMgr = NewVibePreviewManager(httpServer.browserMgr)
+	// Register as the global accessor so smart-develop-mode in loop_exec.go
+	// can find it without threading a reference through every LoopState.
+	SetActiveVibePreviewManager(httpServer.vibePreviewMgr)
 	// Use relay URL if relay is available (works from 4G/any network).
 	// Fall back to local IP for direct/LAN connections.
 	if len(relayServers) > 0 && cfg.DeviceID != "" {
