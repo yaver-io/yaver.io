@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Video, ResizeMode } from "expo-av";
+import { clipUrl } from "../../src/lib/vibePreview";
 import {
   ActivityIndicator,
   Alert,
@@ -794,6 +796,14 @@ export default function TasksScreen() {
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [verbosity, setVerbosity] = useState(10);
   const [inputFromSpeech, setInputFromSpeech] = useState(false);
+  // Video summary toggle for the new task. When on, the agent records
+  // a short MP4 demo after the task finishes (vibe-preview pipeline);
+  // the task row gets a "▶ Watch demo" button when ready.
+  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
+  // Inline player state — set the clipId to open the modal that plays
+  // the task's recorded demo MP4. Sourced from the agent at
+  // /vibing/preview/clip/<id>.
+  const [videoSummaryClipId, setVideoSummaryClipId] = useState<string | null>(null);
   const audioRecordingRef = useRef<any>(null);
   const realtimeRef = useRef<{ stop: () => Promise<string> } | null>(null);
   const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1373,6 +1383,7 @@ export default function TasksScreen() {
         attachedImages.length > 0 ? attachedImages : undefined,
         projectDir || undefined,
         selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
+        videoSummaryEnabled ? { enabled: true } : undefined,
       );
       setNewTaskText("");
       setAttachedImages([]);
@@ -2149,6 +2160,39 @@ export default function TasksScreen() {
           </Pressable>
         )}
 
+        {/* Video summary player — opens when a task's "▶ Watch demo"
+            chip is tapped. Plays the clip at /vibing/preview/clip/<id>
+            via expo-av's Video. The clip URL helper attaches the auth
+            headers under the hood (expo-av accepts headers through the
+            source object). */}
+        <Modal
+          visible={!!videoSummaryClipId}
+          animationType="fade"
+          transparent
+          onRequestClose={() => setVideoSummaryClipId(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" }}>
+            <Pressable onPress={() => setVideoSummaryClipId(null)} style={{ position: "absolute", top: 56, right: 24, padding: 12 }}>
+              <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>×</Text>
+            </Pressable>
+            {videoSummaryClipId && clipUrl(videoSummaryClipId) ? (
+              <Video
+                key={videoSummaryClipId}
+                source={{ uri: clipUrl(videoSummaryClipId)!, headers: quicClient.getAuthHeaders() } as any}
+                style={{ width: "100%", height: "70%" }}
+                useNativeControls
+                resizeMode={ResizeMode.CONTAIN}
+                shouldPlay
+                onPlaybackStatusUpdate={(st: any) => {
+                  if (st?.didJustFinish) setVideoSummaryClipId(null);
+                }}
+              />
+            ) : (
+              <Text style={{ color: "#888" }}>Loading…</Text>
+            )}
+          </View>
+        </Modal>
+
         {/* New Task Modal */}
         <Modal
           visible={showNewTask}
@@ -2212,6 +2256,30 @@ export default function TasksScreen() {
                   ))}
                 </ScrollView>
               )}
+              <Pressable
+                onPress={() => setVideoSummaryEnabled((v) => !v)}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row", alignItems: "center", gap: 8,
+                    paddingVertical: 8, paddingHorizontal: 4,
+                    opacity: pressed ? 0.6 : 1,
+                  },
+                ]}
+              >
+                <View
+                  style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    borderWidth: 1.5, borderColor: videoSummaryEnabled ? c.accent : c.border,
+                    backgroundColor: videoSummaryEnabled ? c.accent : "transparent",
+                    alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  {videoSummaryEnabled ? <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>✓</Text> : null}
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>
+                  🎬 Record demo video when this task finishes
+                </Text>
+              </Pressable>
               <View style={s.modalButtons}>
                 <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated }]} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }}>
                   <Text style={[s.cancelButtonText, { color: c.textSecondary }]}>Cancel</Text>
@@ -2448,6 +2516,32 @@ export default function TasksScreen() {
                       >
                         <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }}>Logs</Text>
                       </Pressable>
+                      {/* Video summary chip — visible whenever the task has a
+                          clip in any state. Tapping a "ready" clip plays it
+                          via the existing VibePreviewModal (clip strip).
+                          For "recording" / "queued" we show an indicator
+                          pill. */}
+                      {selectedTask.videoStatus === "ready" && selectedTask.videoClipId ? (
+                        <Pressable
+                          onPress={() => {
+                            // Open the VibePreviewModal anchored to this
+                            // task's project so its clip strip pre-loads
+                            // the just-recorded MP4. ProjectName comes
+                            // from the agent's videoProjectForTask helper.
+                            // For now, just open the device dev banner's
+                            // modal — the existing VibePreviewModal scrubber
+                            // will surface the clip.
+                            setVideoSummaryClipId(selectedTask.videoClipId!);
+                          }}
+                          style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#22c55e22" }}
+                        >
+                          <Text style={{ color: "#22c55e", fontSize: 11, fontWeight: "600" }}>▶ Watch demo</Text>
+                        </Pressable>
+                      ) : selectedTask.videoStatus === "recording" || selectedTask.videoStatus === "queued" ? (
+                        <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#eab30822" }}>
+                          <Text style={{ color: "#eab308", fontSize: 11, fontWeight: "600" }}>🎬 {selectedTask.videoStatus}…</Text>
+                        </View>
+                      ) : null}
                       {/* Cost hidden — Yaver is positioned as part of the free/open-source AI tool stack */}
                     </View>
                     {activeDevice && (

@@ -128,6 +128,12 @@ export default function VibeCodingView({
   const [activeTaskId, setActiveTaskId] = useState("");
   const [composer, setComposer] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
+  // Video summary toggle — when on, the agent records a short MP4 demo
+  // after the task completes (vibe-preview pipeline). Surfaces as a
+  // "▶ Watch demo" button on the task row when ready.
+  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
+  // Currently-playing clip id; opens a fullscreen <video> overlay.
+  const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [deployTargets, setDeployTargets] = useState<Array<{ id: string; name: string }>>([]);
@@ -437,6 +443,7 @@ export default function VibeCodingView({
       mode: selectedRunner === "opencode" && selectedMode ? selectedMode : undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
+      videoEnabled: videoSummaryEnabled,
     });
     setComposer("");
     setDraftTitle("");
@@ -510,6 +517,7 @@ export default function VibeCodingView({
       model: selectedModel || undefined,
       projectName: selectedProject.name,
       workDir: selectedProject.path,
+      videoEnabled: videoSummaryEnabled,
     });
     setActiveTaskId(task.id);
     setBusy(plan.startedLabel);
@@ -745,8 +753,65 @@ export default function VibeCodingView({
     [selectedProject, connectedMachine, deployTargets],
   );
 
+  // Resolve the clip URL once when the user hits "▶ Watch demo".
+  // We can't put the auth token in <video src> directly (browser
+  // ignores headers), so we fetch the MP4 as a blob and render the
+  // object URL. Same blob-shim the standalone VibePreviewView uses.
+  const [activeClipBlobUrl, setActiveClipBlobUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!activeClipId) {
+      if (activeClipBlobUrl) URL.revokeObjectURL(activeClipBlobUrl);
+      setActiveClipBlobUrl(null);
+      return;
+    }
+    const req = agentClient.vibeClipRequest(activeClipId);
+    if (!req) return;
+    let cancelled = false;
+    let url: string | null = null;
+    void (async () => {
+      try {
+        const res = await fetch(req.url, { headers: req.headers });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        url = URL.createObjectURL(blob);
+        if (!cancelled) setActiveClipBlobUrl(url);
+      } catch { /* ignore */ }
+    })();
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [activeClipId]);
+
   return (
     <div className="flex h-full min-h-0 overflow-hidden bg-surface-950 text-surface-100">
+      {/* Video summary overlay — fullscreen player triggered from the
+          task header chip. Closes on ✕ or video end. */}
+      {activeClipId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95"
+          onClick={() => setActiveClipId(null)}
+        >
+          <button
+            onClick={() => setActiveClipId(null)}
+            className="absolute right-6 top-6 rounded-full bg-white/10 px-4 py-2 text-white hover:bg-white/20"
+          >
+            ✕ Close
+          </button>
+          {activeClipBlobUrl ? (
+            <video
+              src={activeClipBlobUrl}
+              controls
+              autoPlay
+              className="max-w-full max-h-full"
+              onClick={(e) => e.stopPropagation()}
+              onEnded={() => setActiveClipId(null)}
+            />
+          ) : (
+            <span className="text-zinc-400 text-sm">Loading clip…</span>
+          )}
+        </div>
+      )}
       <div className="w-[46vw] min-w-[380px] max-w-[760px] border-r border-surface-800">
         <PreviewPane
           selectedPreviewTarget={selectedPreviewTarget}
@@ -1407,8 +1472,25 @@ export default function VibeCodingView({
 
           <div className="flex min-h-0 flex-col bg-[#08111a]">
             <div className="border-b border-surface-800 px-4 py-3">
-              <div className="text-sm font-semibold text-surface-100">
-                {activeTask?.title || "New coding session"}
+              <div className="flex items-center gap-2">
+                <div className="text-sm font-semibold text-surface-100 flex-1">
+                  {activeTask?.title || "New coding session"}
+                </div>
+                {/* Video summary chip — same shape as the mobile chip,
+                    just rendered as a button next to the title. Opens
+                    a fullscreen <video> when clicked. */}
+                {activeTask?.videoStatus === "ready" && activeTask?.videoClipId ? (
+                  <button
+                    onClick={() => setActiveClipId(activeTask.videoClipId!)}
+                    className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                  >
+                    ▶ Watch demo
+                  </button>
+                ) : activeTask?.videoStatus === "recording" || activeTask?.videoStatus === "queued" ? (
+                  <span className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-300">
+                    🎬 {activeTask.videoStatus}…
+                  </span>
+                ) : null}
               </div>
               <div className="text-xs text-surface-500">
                 {activeTask
@@ -1464,6 +1546,15 @@ export default function VibeCodingView({
                 placeholder="Fix the mobile login screen, keep the RN preview running, and tell me the local URL or tunnel once it is reachable."
                 className="min-h-28 w-full rounded-2xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 outline-none focus:border-indigo-500"
               />
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-surface-400 select-none">
+                <input
+                  type="checkbox"
+                  className="h-3.5 w-3.5 rounded border-surface-600 bg-surface-950 text-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                  checked={videoSummaryEnabled}
+                  onChange={(e) => setVideoSummaryEnabled(e.target.checked)}
+                />
+                🎬 Record demo video when this task finishes
+              </label>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <div className="text-xs text-surface-500">
                   Task is scoped to {selectedProject?.name || "the selected project"} and runs on {connectedMachine?.name || connectedDevice?.name || "the connected machine"}.
