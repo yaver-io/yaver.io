@@ -313,6 +313,13 @@ export interface Task {
   autoRetryCount?: number;
   /** Max auto-retries allowed. */
   autoRetryMax?: number;
+  /** Video summary: when the task was created with videoEnabled, the
+   *  agent records a clip after completion via vibe-preview. The UI
+   *  shows a "▶ Watch demo" button when videoStatus = "ready". */
+  videoEnabled?: boolean;
+  videoSource?: "browser" | "sim-ios" | "sim-android" | "phone";
+  videoClipId?: string;
+  videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
 }
 
 export type AgentGraphStatus = "queued" | "running" | "completed" | "failed" | "stopped";
@@ -1186,7 +1193,7 @@ export class QuicClient {
   // ── Task API ───────────────────────────────────────────────────────
 
   /** Send a new task to the desktop agent. */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string): Promise<Task> {
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
@@ -1207,6 +1214,8 @@ export class QuicClient {
         ...(speechContext ? { speechContext } : {}),
         ...(images?.length ? { images } : {}),
         ...(workDir ? { workDir } : {}),
+        ...(video?.enabled ? { videoEnabled: true } : {}),
+        ...(video?.source ? { videoSource: video.source } : {}),
       }),
     }, 30000);
     if (!res.ok) {

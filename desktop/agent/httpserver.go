@@ -2836,6 +2836,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Images        []ImageAttachment  `json:"images,omitempty"`
 		WorkDir       string             `json:"workDir,omitempty"`
 		SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
+		// Video summary toggle. When videoEnabled is true, after the
+		// task finishes the agent auto-records a short MP4 of the
+		// running result via vibe-preview. videoSource picks the
+		// recorder (browser/sim-ios/sim-android/phone); empty =
+		// auto-detect from the task's workDir.
+		VideoEnabled bool   `json:"videoEnabled,omitempty"`
+		VideoSource  string `json:"videoSource,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -2948,6 +2955,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		taskOpts.GuestSharedStorageMounts = mounts
 	}
 	taskOpts.Mode = strings.TrimSpace(body.Mode)
+	// Video summary toggle propagates from request → task → OnTaskDone
+	// hook, where MaybeRecordTaskSummary fires the vibe-preview clip
+	// recorder when status flips to completed.
+	taskOpts.VideoEnabled = body.VideoEnabled
+	taskOpts.VideoSource = strings.TrimSpace(body.VideoSource)
 
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, body.SpeechContext)
 	if err != nil {
@@ -4214,6 +4226,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			// e.g. "build" / "plan" / any custom agent the user has
 			// defined in their opencode.json. Other runners ignore it.
 			Mode string `json:"mode"`
+			// VideoEnabled triggers the post-completion vibe-preview clip
+			// recorder. VideoSource overrides the auto-detected recorder.
+			VideoEnabled bool   `json:"video_enabled"`
+			VideoSource  string `json:"video_source"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Prompt == "" {
@@ -4223,13 +4239,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.Verbosity != nil {
 			sc = &SpeechContext{Verbosity: args.Verbosity}
 		}
-		taskOpts := TaskCreateOptions{Mode: strings.TrimSpace(args.Mode)}
+		taskOpts := TaskCreateOptions{
+			Mode:         strings.TrimSpace(args.Mode),
+			VideoEnabled: args.VideoEnabled,
+			VideoSource:  strings.TrimSpace(args.VideoSource),
+		}
 		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, sc)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("failed to create task: %v", err))
 		}
-		log.Printf("[MCP] Task created: %s", task.ID)
-		return mcpToolResult(fmt.Sprintf("Task created successfully.\nTask ID: %s\nStatus: %s", task.ID, task.Status))
+		log.Printf("[MCP] Task created: %s (video=%v)", task.ID, args.VideoEnabled)
+		return mcpToolResult(fmt.Sprintf("Task created successfully.\nTask ID: %s\nStatus: %s\nVideo summary: %v", task.ID, task.Status, args.VideoEnabled))
 
 	case "list_tasks":
 		tasks := s.taskMgr.ListTasks()

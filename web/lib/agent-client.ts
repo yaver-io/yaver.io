@@ -32,6 +32,15 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   deviceName?: string;
+  /** Video summary: when the task was created with videoEnabled, the
+   *  agent records a clip after completion. videoClipId is populated
+   *  once recording is queued; videoStatus reflects recording state
+   *  ("queued" | "recording" | "ready" | "failed" | "stale"). The UI
+   *  shows a "▶ Watch demo" button when videoStatus="ready". */
+  videoEnabled?: boolean;
+  videoSource?: "browser" | "sim-ios" | "sim-android" | "phone";
+  videoClipId?: string;
+  videoStatus?: "queued" | "recording" | "ready" | "failed" | "stale";
 }
 
 export interface EnvironmentProjectSummary {
@@ -1122,6 +1131,15 @@ export class AgentClient {
     customCommand?: string;
     projectName?: string;
     workDir?: string;
+    /** Toggle the post-completion video summary. When true, after
+     *  the task finishes the agent records a short MP4 demonstration
+     *  via vibe-preview (sim/emulator MP4 for mobile, browser frame
+     *  burst for web). Result lands as Task.videoClipId; UI renders a
+     *  "▶ Watch demo" button. */
+    videoEnabled?: boolean;
+    /** Override the auto-detected source: browser | sim-ios | sim-android
+     *  | phone. Empty = let the agent infer from workDir. */
+    videoSource?: "browser" | "sim-ios" | "sim-android" | "phone" | "";
   }): Promise<Task> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks`, {
@@ -1137,6 +1155,8 @@ export class AgentClient {
         customCommand: params.customCommand ?? "",
         projectName: params.projectName ?? "",
         workDir: params.workDir ?? "",
+        videoEnabled: params.videoEnabled ?? false,
+        videoSource: params.videoSource ?? "",
         source: "web",
       }),
     });

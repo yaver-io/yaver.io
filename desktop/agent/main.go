@@ -2634,7 +2634,15 @@ func runServe(args []string) {
 		if httpServer.autopilot != nil && httpServer.autopilot.IsEnabled() && task.Source == "todolist" {
 			httpServer.autopilot.OnTaskDone(task)
 		}
+
+		// Video summary: if task asked for one, kick off the clip
+		// recorder. Non-blocking; the recorder emits clip_ready over
+		// the vibe-preview SSE channel when the MP4 is mux-ready.
+		MaybeRecordTaskSummary(task)
 	}
+	// Defensive sweep — flip stuck "recording" entries to "stale" if
+	// the recorder somehow died without finalizing.
+	reapInactiveTaskClips(taskMgr)
 	httpServer.execMgr.OnExecDone = func(command string, exitCode int) {
 		status := "completed"
 		if exitCode != 0 {

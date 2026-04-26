@@ -33,6 +33,15 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"type":        "string",
 						"description": "Runner-specific subcommand. Currently honored by opencode where it maps to `--agent <mode>` — typically 'build' or 'plan', or any custom agent defined in the user's opencode.json. Other runners ignore it.",
 					},
+					"video_enabled": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Toggle the post-completion video summary. When true, after the task finishes the agent records a short MP4 demonstrating the running result via vibe-preview (sim/emulator MP4 for mobile, browser frame burst for web). The mobile + web task views render a '▶ Watch demo' button. Default false.",
+					},
+					"video_source": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"browser", "sim-ios", "sim-android", "phone"},
+						"description": "Override the auto-detected recorder. Empty = let the agent infer from the task's workDir (e.g. RN/Expo with ios/ → sim-ios; web → browser).",
+					},
 				},
 			},
 		},

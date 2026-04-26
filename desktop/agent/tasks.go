@@ -640,6 +640,14 @@ type TaskCreateOptions struct {
 	GuestCPULimitPercent        *int
 	GuestRAMLimitMB             *int
 	GuestSharedStorageMounts    []string
+
+	// Video summary toggle — when true, OnTaskDone triggers the
+	// vibe-preview clip recorder against this task's project once
+	// the runner returns. Source is auto-detected from WorkDir
+	// when empty; explicit values are "browser", "sim-ios",
+	// "sim-android", "phone". See Task.VideoSource for semantics.
+	VideoEnabled bool
+	VideoSource  string
 }
 
 type Task struct {
@@ -688,6 +696,22 @@ type Task struct {
 	GuestCPULimitPercent        *int     `json:"-"`
 	GuestRAMLimitMB             *int     `json:"-"`
 	GuestSharedStorageMounts    []string `json:"-"`
+
+	// Video summary — when VideoEnabled, after the task finishes the
+	// vibe-preview manager records a short MP4 demonstration of the
+	// running result (sim/emulator MP4 for mobile, headless-Chrome
+	// frame burst for web). VideoClipID is populated when the
+	// recording is queued; the mobile + web task views render a
+	// "▶ Watch demo" button when set. VideoSource:
+	//   ""           — auto-detect from task workdir
+	//   "browser"    — chromedp against the dev server URL
+	//   "sim-ios"    — `xcrun simctl io booted recordVideo`
+	//   "sim-android"— `adb shell screenrecord`
+	//   "phone"      — drive the developer's phone (Phase 5)
+	VideoEnabled bool   `json:"videoEnabled,omitempty"`
+	VideoSource  string `json:"videoSource,omitempty"`
+	VideoClipID  string `json:"videoClipId,omitempty"`
+	VideoStatus  string `json:"videoStatus,omitempty"` // queued|recording|ready|failed
 
 	runner     RunnerConfig // the runner config used for this task (not persisted)
 	cmd        *exec.Cmd
@@ -1162,6 +1186,8 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		GuestCPULimitPercent:        opts.GuestCPULimitPercent,
 		GuestRAMLimitMB:             opts.GuestRAMLimitMB,
 		GuestSharedStorageMounts:    append([]string{}, opts.GuestSharedStorageMounts...),
+		VideoEnabled:                opts.VideoEnabled,
+		VideoSource:                 opts.VideoSource,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
