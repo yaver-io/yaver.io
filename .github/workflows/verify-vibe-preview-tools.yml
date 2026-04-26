@@ -1,0 +1,92 @@
+name: verify-vibe-preview-tools
+
+# Validates the upgrade-and-install path for the vibe-preview tool
+# stack against the persistent Hetzner ephemeral box. Run when:
+#   - You bumped install_cmd.go or the meta-target list, AND
+#   - You want production-like proof the install actually pulls
+#     chromium / ffmpeg / maestro / appium / adb on a real apt host.
+#
+# Workflow_dispatch only — this isn't a per-commit gate. Run manually
+# from the Actions UI or `gh workflow run verify-vibe-preview-tools.yml`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which box to run against
+        type: choice
+        default: persistent
+        options:
+          - persistent
+          - ephemeral
+
+concurrency:
+  group: verify-vibe-preview-tools-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
+      HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install hcloud CLI
+        run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+          hcloud version
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci_ed25519
+          chmod 600 ~/.ssh/hetzner_ci_ed25519
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
+
+      - name: Hetzner preflight (persistent)
+        if: inputs.target == 'persistent'
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Hetzner preflight (ephemeral)
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/preflight.sh ephemeral
+
+      - name: Create ephemeral box
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/create-server.sh
+
+      - name: Wait for SSH
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync /opt/yaver
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Run verify script (rebuild + install vibe-preview + report)
+        run: |
+          ip="$(cat /tmp/yaver-ci-artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "root@$ip" "bash /opt/yaver/ci/remote/verify-vibe-preview-tools.sh"
+
+      - name: Gather logs
+        if: always()
+        run: ./ci/hcloud/gather-logs.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-vibe-preview-${{ inputs.target }}-logs
+          path: /tmp/yaver-ci-artifacts/
+
+      - name: Tear down ephemeral box
+        if: inputs.target == 'ephemeral' && always()
+        run: ./ci/hcloud/delete-server.sh
