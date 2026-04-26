@@ -1545,17 +1545,35 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// X-Accel-Buffering: no tells nginx + Cloudflare to NOT buffer
+	// the response. Without this Cloudflare's edge holds the bytes
+	// until either a buffer fills or 30s passes — the symptom users
+	// hit is "agent: connected, sse: error, err: HTTP 502" because
+	// CF kills upstream as stalled before the first event arrives.
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
 	ch := mgr.Subscribe()
 	defer mgr.Unsubscribe(ch)
 
+	// Periodic keepalive comments. Without these, an idle Metro that
+	// emits no log lines for 30+ s results in zero bytes flowing
+	// through the relay/Cloudflare edge, which kills the upstream
+	// connection as "stalled" and returns 502 to the browser. SSE
+	// comments (lines starting with `:`) are ignored by clients but
+	// keep the byte stream alive end-to-end.
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
+
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-keepalive.C:
+			fmt.Fprintf(w, ":keep-alive %d\n\n", time.Now().Unix())
+			flusher.Flush()
 		case event, ok := <-ch:
 			if !ok {
 				return

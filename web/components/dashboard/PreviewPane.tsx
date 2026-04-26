@@ -1369,13 +1369,15 @@ export default function PreviewPane({
               lastEventAt={lastEventAt}
               devStatus={devStatus}
             />
-            <pre className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
+            <div className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4">
               {logLines.length === 0 ? (
                 <span className="text-surface-600">{consoleEmptyHint(connState, sseState, sseError, devStatus)}</span>
               ) : (
-                logLines.slice(-200).join("\n")
+                logLines.slice(-200).map((line, i) => (
+                  <div key={i} className={consoleLineClass(line)}>{line}</div>
+                ))
               )}
-            </pre>
+            </div>
           </div>
         </div>
       </div>
@@ -1535,6 +1537,36 @@ function ConsoleStatusHeader({
 }
 
 // consoleEmptyHint replaces the bland "(waiting for output…)" with
+// consoleLineClass maps Metro / Expo / agent log lines to a Tailwind
+// color class so the CONSOLE pane reads at a glance instead of as a
+// wall of muted-grey text. Heuristics — no shared schema with the
+// log emitters, just text matches:
+//   - "error" / "fail" / "✗"        → red
+//   - "warn"                         → amber
+//   - "ready" / "✓" / "started"     → green
+//   - "[error]" prefix the SSE adds  → red
+//   - "[super-host]" / "[hermesc]"  → indigo (Yaver-injected pipeline)
+//   - everything else (Metro logs)   → surface-300 (default light)
+function consoleLineClass(line: string): string {
+  const lower = line.toLowerCase();
+  if (line.startsWith("[error]") || /\b(error|failed|fatal|✗)\b/i.test(lower)) {
+    return "text-red-300";
+  }
+  if (/\bwarn(ing)?\b/i.test(lower)) {
+    return "text-amber-300";
+  }
+  if (/\b(ready|✓|listening on|accepting|reload|started)\b/i.test(lower)) {
+    return "text-emerald-300";
+  }
+  if (line.startsWith("[super-host") || line.includes("hermesc") || line.startsWith("[dev:")) {
+    return "text-indigo-300";
+  }
+  if (line.startsWith(":keep-alive")) {
+    return "text-surface-700"; // SSE keepalives — barely visible
+  }
+  return "text-surface-300";
+}
+
 // a state-aware hint so the user knows whether to wait, click
 // Reconnect, or check the dev server.
 function consoleEmptyHint(
