@@ -1,0 +1,96 @@
+name: verify-vibe-preview-mobile-headless
+
+# Drives the vibe-preview pipeline end-to-end via yaver-mobile-headless
+# (the pure-Node surrogate of the iOS/Android mobile app) on the
+# Hetzner ephemeral box. Proves that:
+#   - The same install path end users hit (yaver-cli npm postinstall +
+#     `yaver install vibe-preview`) actually delivers a working agent.
+#   - mobile-headless can sign-in with a token, list ops verbs,
+#     and dispatch the vibe_preview ops verb.
+#   - The full lifecycle (start → status → snapshot → summaries →
+#     stop) runs cleanly on a production-shaped box.
+#
+# Sister of verify-vibe-preview-tools.yml — that workflow proves the
+# tools land via install; THIS workflow proves the wire works once
+# they're there. workflow_dispatch only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which box to run against
+        type: choice
+        default: persistent
+        options:
+          - persistent
+          - ephemeral
+
+concurrency:
+  group: verify-vibe-preview-mobile-headless-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      HCLOUD_SSH_KEY_NAME: yaver-ci
+      HETZNER_TEST_SNAPSHOT_ID: ${{ secrets.HETZNER_TEST_SNAPSHOT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install hcloud CLI
+        run: |
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -C /usr/local/bin -xz hcloud
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}" > ~/.ssh/hetzner_ci_ed25519
+          chmod 600 ~/.ssh/hetzner_ci_ed25519
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HOME/.ssh/hetzner_ci_ed25519" >> "$GITHUB_ENV"
+
+      - name: Hetzner preflight (persistent)
+        if: inputs.target == 'persistent'
+        env:
+          HETZNER_TEST_SERVER_ID: ${{ secrets.HETZNER_TEST_SERVER_ID }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: ./ci/hcloud/preflight.sh persistent
+
+      - name: Hetzner preflight (ephemeral)
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/preflight.sh ephemeral
+
+      - name: Create ephemeral box
+        if: inputs.target == 'ephemeral'
+        run: ./ci/hcloud/create-server.sh
+
+      - name: Wait for SSH
+        run: ./ci/hcloud/wait-for-ssh.sh
+
+      - name: Sync /opt/yaver
+        run: ./ci/hcloud/sync-repo.sh
+
+      - name: Run mobile-headless smoke
+        run: |
+          ip="$(cat ci/.artifacts/server-ip)"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "root@$ip" "bash /opt/yaver/ci/remote/verify-vibe-preview-mobile-headless.sh"
+
+      - name: Gather logs
+        if: always()
+        run: ./ci/hcloud/gather-logs.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verify-vibe-preview-mh-${{ inputs.target }}-logs
+          path: ci/.artifacts/
+
+      - name: Tear down ephemeral box
+        if: inputs.target == 'ephemeral' && always()
+        run: ./ci/hcloud/delete-server.sh
