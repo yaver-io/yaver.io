@@ -3231,6 +3231,17 @@ export class AgentClient {
     return `${this.baseUrl}/dev/events`;
   }
 
+  /** SSE URL for the agent-update progress stream — same
+   *  same-origin-on-relay rewrite as devEventsUrl. */
+  get agentUpdateStreamUrl(): string | null {
+    if (!this.baseUrl) return null;
+    if (this.activeRelayUrl) {
+      if (!this.deviceId) return null;
+      return `/d/${encodeURIComponent(this.deviceId)}/streams/agent-update`;
+    }
+    return `${this.baseUrl}/streams/agent-update`;
+  }
+
   /** Get auth headers for direct fetch calls (SSE, etc). */
   getAuthHeaders(): Record<string, string> {
     return this.authHeaders;

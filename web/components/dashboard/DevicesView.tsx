@@ -875,8 +875,14 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
     let cancelled = false;
     (async () => {
       try {
+        // Bypass any HTTP cache — without no-store the broadcast
+        // event can fire and the refetch returns the previous map
+        // because the browser already had a fresh copy in cache.
+        // That's how the sidebar kept showing "Claude Code" after
+        // the user picked Codex.
         const res = await fetch(`${CONVEX_URL}/settings`, {
           headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -1543,15 +1549,20 @@ export default function DevicesView({
   );
 }
 
-// AgentUpdateModal triggers POST /agent/update on the named device
-// (routed via /peer/<id>/agent/update for remote machines) and
-// streams the agent's progress events from /streams/agent-update.
-// While the agent restarts the SSE channel closes; the modal then
-// polls /agent/update GET until the new version reports back.
+// AgentUpdateModal triggers POST /agent/update on the connected
+// device and streams the agent's progress events from
+// /streams/agent-update via the same-origin proxy. While the agent
+// restarts the SSE channel closes; the modal then polls /info until
+// the new version reports back.
+//
+// Limitation: today only updates the device the dashboard is
+// connected to (agentClient.baseUrl is implicit). Updating a peer
+// device would need a /peer/<id>/agent/update path — leave for a
+// later iteration.
 function AgentUpdateModal({
   device,
   latestVersion,
-  token,
+  token: _token,
   onClose,
 }: {
   device: Device;
@@ -1565,8 +1576,6 @@ function AgentUpdateModal({
   const [error, setError] = useState<string | null>(null);
   const [confirmedVersion, setConfirmedVersion] = useState<string | null>(null);
 
-  const targetParam = device.id ? `/peer/${encodeURIComponent(device.id)}` : "";
-
   useEffect(() => {
     let cancelled = false;
     const abort = new AbortController();
@@ -1576,10 +1585,7 @@ function AgentUpdateModal({
       while (!cancelled && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
         try {
-          const u = device.id ? `/api/agent/${encodeURIComponent(device.id)}/info` : "/api/agent/info";
-          const res = await fetch(u, { headers: { Authorization: `Bearer ${token}` } });
-          if (!res.ok) continue;
-          const info = await res.json();
+          const info = await agentClient.getInfo();
           const newV = String(info?.version || "").replace(/^v/i, "");
           if (newV && (latestVersion === "" || compareSemver(newV, latestVersion) >= 0)) {
             if (!cancelled) {
@@ -1595,28 +1601,32 @@ function AgentUpdateModal({
 
     (async () => {
       try {
-        // Kick off the update on the agent. Returns 202 with started=true
-        // when an update is now in flight, or 200 with started=false
-        // when it's already on latest. POST is idempotent enough that
-        // double-clicking the button is harmless (returns 409).
-        const startUrl = device.id ? `/api/agent/${encodeURIComponent(device.id)}/agent/update` : "/api/agent/update";
-        const res = await fetch(startUrl, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok && res.status !== 409) {
-          if (!cancelled) setError(data?.error || `start failed (${res.status})`);
+        // Kick off the update on the agent (only the connected one
+        // is supported today). Returns started=true when an update is
+        // now in flight, started=false when already on latest. 409
+        // means an update was already running — totally fine.
+        try {
+          await agentClient.triggerAgentUpdate();
+        } catch (err) {
+          // Don't fail the modal if the start call rejected with 409;
+          // we still want to show the live stream of whatever update
+          // is currently running.
+          if (!String(err).includes("409")) throw err;
+        }
+
+        const streamUrl = agentClient.agentUpdateStreamUrl;
+        if (!streamUrl) {
+          if (!cancelled) setError("Could not resolve agent stream URL — is the device connected?");
           return;
         }
-        // Subscribe to the named log stream for progress events.
-        const streamUrl = device.id
-          ? `/api/agent/${encodeURIComponent(device.id)}/streams/agent-update`
-          : "/api/agent/streams/agent-update";
         const streamRes = await fetch(streamUrl, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: agentClient.getAuthHeaders(),
           signal: abort.signal,
         });
+        if (!streamRes.ok) {
+          if (!cancelled) setError(`Stream failed: HTTP ${streamRes.status}`);
+          return;
+        }
         const reader = streamRes.body?.getReader();
         if (!reader) return;
         const decoder = new TextDecoder();
@@ -1635,8 +1645,6 @@ function AgentUpdateModal({
                 setPhase(ev.phase);
                 setLines((prev) => [...prev.slice(-30), { phase: ev.phase, text: ev.text }]);
                 if (ev.phase === "restart") {
-                  // Agent will exit + systemd respawn; switch to
-                  // version-confirmation polling.
                   setPhase("restarting");
                   pollForNewVersion();
                 }
@@ -1658,7 +1666,7 @@ function AgentUpdateModal({
       cancelled = true;
       abort.abort();
     };
-  }, [device.id, latestVersion, token, targetParam]);
+  }, [device.id, latestVersion]);
 
   return (
     <div
