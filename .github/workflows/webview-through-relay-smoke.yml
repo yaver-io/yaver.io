@@ -21,6 +21,15 @@ name: Webview Through Relay Smoke
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "relay/**"
+      - "web-headless/**"
+      - "desktop/agent/devserver_http.go"
+      - "desktop/agent/devserver.go"
+      - "desktop/agent/httpserver.go"
+      - ".github/workflows/webview-through-relay-smoke.yml"
 
 concurrency:
   group: webview-through-relay-smoke
