@@ -293,24 +293,55 @@ export default function PreviewPane({
   // handshake (devEventsUrl was null) reconnects once baseUrl lands.
   // Without this we silently sat on a closed stream forever and the
   // CONSOLE pane stayed at "0 lines / waiting for output…".
+  // Diagnostic state for the CONSOLE header so an empty pane is
+  // never just "(waiting for output…)" — instead it tells the user
+  // exactly what stage the SSE pipeline is in (handshake → open →
+  // first event), how many events have arrived, and any error.
   const [agentReady, setAgentReady] = useState(() => Boolean(agentClient.devEventsUrl));
+  const [connState, setConnState] = useState<string>("unknown");
+  const [sseState, setSseState] = useState<"idle" | "opening" | "open" | "closed" | "error">("idle");
+  const [sseError, setSseError] = useState<string | null>(null);
+  const [sseUrl, setSseUrl] = useState<string | null>(null);
+  const [sseAttempts, setSseAttempts] = useState(0);
+  const [totalEvents, setTotalEvents] = useState(0);
+  const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+
   useEffect(() => {
     return agentClient.on("connectionState", (state) => {
+      setConnState(state);
       setAgentReady(state === "connected" && Boolean(agentClient.devEventsUrl));
     });
   }, []);
+
   useEffect(() => {
     const eventsUrl = agentClient.devEventsUrl;
-    if (!eventsUrl) return;
+    setSseUrl(eventsUrl);
+    if (!eventsUrl) {
+      setSseState("idle");
+      return;
+    }
     const controller = new AbortController();
+    setSseState("opening");
+    setSseError(null);
+    setSseAttempts((n) => n + 1);
     (async () => {
       try {
         const res = await fetch(eventsUrl, {
           headers: agentClient.getAuthHeaders(),
           signal: controller.signal,
         });
+        if (!res.ok) {
+          setSseState("error");
+          setSseError(`HTTP ${res.status} ${res.statusText}`.trim());
+          return;
+        }
         const reader = res.body?.getReader();
-        if (!reader) return;
+        if (!reader) {
+          setSseState("error");
+          setSseError("response had no body reader (browser/relay dropped stream)");
+          return;
+        }
+        setSseState("open");
         const decoder = new TextDecoder();
         let buffer = "";
         const bumpFromMessage = (msg: string) => {
@@ -332,7 +363,10 @@ export default function PreviewPane({
         };
         while (true) {
           const { done, value } = await reader.read();
-          if (done) break;
+          if (done) {
+            setSseState("closed");
+            break;
+          }
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
@@ -340,6 +374,8 @@ export default function PreviewPane({
             if (!line.startsWith("data: ")) continue;
             try {
               const ev = JSON.parse(line.slice(6));
+              setTotalEvents((n) => n + 1);
+              setLastEventAt(Date.now());
               const text = (ev.logLine || ev.message || ev.text || "").toString();
               if (ev.type === "reload" || ev.type === "ready") {
                 setIframeKey((k) => k + 1);
@@ -367,7 +403,14 @@ export default function PreviewPane({
             } catch {}
           }
         }
-      } catch {}
+      } catch (err) {
+        if (controller.signal.aborted) {
+          // Component unmounted / re-running — not an error.
+          return;
+        }
+        setSseState("error");
+        setSseError(err instanceof Error ? err.message : String(err));
+      }
     })();
     return () => controller.abort();
   }, [agentReady]);
@@ -1308,9 +1351,19 @@ export default function PreviewPane({
               </div>
               <span className="text-[10px] text-surface-600">{logLines.length} lines</span>
             </div>
+            <ConsoleStatusHeader
+              connState={connState}
+              sseState={sseState}
+              sseError={sseError}
+              sseUrl={sseUrl}
+              sseAttempts={sseAttempts}
+              totalEvents={totalEvents}
+              lastEventAt={lastEventAt}
+              devStatus={devStatus}
+            />
             <pre className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
               {logLines.length === 0 ? (
-                <span className="text-surface-600">(waiting for output…)</span>
+                <span className="text-surface-600">{consoleEmptyHint(connState, sseState, sseError, devStatus)}</span>
               ) : (
                 logLines.slice(-200).join("\n")
               )}
@@ -1395,4 +1448,111 @@ function EmptyPhoneState({
       )}
     </div>
   );
+}
+
+// ConsoleStatusHeader renders the diagnostic strip between the
+// "Console / Metro / Expo / dev server output" title and the log
+// pre. It always shows what stage the SSE is in so an empty pane
+// is never silent — the user immediately knows whether it's a
+// connection problem, an auth problem, an empty replay buffer,
+// or just Metro being idle.
+function ConsoleStatusHeader({
+  connState,
+  sseState,
+  sseError,
+  sseUrl,
+  sseAttempts,
+  totalEvents,
+  lastEventAt,
+  devStatus,
+}: {
+  connState: string;
+  sseState: "idle" | "opening" | "open" | "closed" | "error";
+  sseError: string | null;
+  sseUrl: string | null;
+  sseAttempts: number;
+  totalEvents: number;
+  lastEventAt: number | null;
+  devStatus: { running: boolean; framework?: string; workDir?: string; port?: number; webPort?: number; targetDeviceName?: string } | null;
+}) {
+  const dot = (color: string) => (
+    <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} aria-hidden />
+  );
+  const connDot = connState === "connected" ? dot("#34d399") : connState === "connecting" || connState === "reconnecting" ? dot("#fbbf24") : dot("#ef4444");
+  const sseColor = sseState === "open" ? "#34d399" : sseState === "opening" ? "#fbbf24" : sseState === "closed" ? "#94a3b8" : sseState === "error" ? "#ef4444" : "#64748b";
+  const sseDot = dot(sseColor);
+  const lastEventLabel = (() => {
+    if (!lastEventAt) return "no events yet";
+    const ageMs = Date.now() - lastEventAt;
+    if (ageMs < 1000) return "just now";
+    if (ageMs < 60_000) return `${Math.floor(ageMs / 1000)}s ago`;
+    if (ageMs < 3_600_000) return `${Math.floor(ageMs / 60_000)}m ago`;
+    return `${Math.floor(ageMs / 3_600_000)}h ago`;
+  })();
+
+  return (
+    <div className="border-b border-surface-800/50 bg-surface-950/50 px-3 py-1.5 text-[10px] text-surface-500">
+      <div className="flex items-center gap-3">
+        <span className="flex items-center gap-1.5">
+          {connDot}
+          <span>agent: {connState}</span>
+        </span>
+        <span className="flex items-center gap-1.5">
+          {sseDot}
+          <span>sse: {sseState}{sseAttempts > 1 ? ` (#${sseAttempts})` : ""}</span>
+        </span>
+        <span className="text-surface-600">events: {totalEvents}</span>
+        <span className="text-surface-600">last: {lastEventLabel}</span>
+      </div>
+      {(sseError || (devStatus && devStatus.running)) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          {devStatus?.running && (
+            <span className="text-surface-600">
+              dev: {devStatus.framework || "?"} :{devStatus.port ?? "?"}
+              {devStatus.webPort ? ` (web :${devStatus.webPort})` : ""}
+            </span>
+          )}
+          {sseError && (
+            <span className="text-red-400/90">err: {sseError}</span>
+          )}
+        </div>
+      )}
+      {sseUrl && (
+        <div className="mt-0.5 truncate font-mono text-[9px] text-surface-700" title={sseUrl}>
+          {sseUrl}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// consoleEmptyHint replaces the bland "(waiting for output…)" with
+// a state-aware hint so the user knows whether to wait, click
+// Reconnect, or check the dev server.
+function consoleEmptyHint(
+  connState: string,
+  sseState: "idle" | "opening" | "open" | "closed" | "error",
+  sseError: string | null,
+  devStatus: { running: boolean; framework?: string } | null,
+): string {
+  if (connState !== "connected") {
+    return `(agent ${connState} — events stream paused; reconnect when the device is back online)`;
+  }
+  if (sseState === "idle") {
+    return "(waiting for agent to expose dev events endpoint…)";
+  }
+  if (sseState === "opening") {
+    return "(opening event stream…)";
+  }
+  if (sseState === "error") {
+    return `(stream error${sseError ? `: ${sseError}` : ""} — try Reconnect & Fix)`;
+  }
+  if (sseState === "closed") {
+    return "(stream closed by server — usually means the dev server stopped; click Start again or pick a project)";
+  }
+  // sseState === "open"
+  if (!devStatus?.running) {
+    return "(stream open — start a dev server to populate this pane)";
+  }
+  return `(stream open, ${devStatus.framework || "dev server"} running but quiet — Metro only logs at boot or on bundle requests, so this is normal between actions)`;
 }

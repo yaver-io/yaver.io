@@ -1356,6 +1356,42 @@ export default function DashboardPage() {
                         <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300">disconnect</button>
                       </div>
                     </div>
+                    {(() => {
+                      // Surface which coding agent this device defaults
+                      // to + whether its cloud auth is healthy.  Lets the
+                      // user spot "agent is connected but my Claude Code
+                      // token expired" without opening Devices tab.
+                      const runners = (liveDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean; needsAuth?: boolean }>;
+                      const primary = connectedDevicePrimaryRunner;
+                      if (!primary && runners.length === 0) return null;
+                      const primaryRow = primary ? runners.find((r) => r?.runnerId === primary) : runners.find((r) => r?.authConfigured) ?? runners[0];
+                      const runnerId = primary || primaryRow?.runnerId || "";
+                      if (!runnerId) return null;
+                      const isCloud = !runnerId.startsWith("ollama") && runnerId !== "aider-ollama" && runnerId !== "yaver-local";
+                      const authed = primaryRow ? !!primaryRow.authConfigured && !primaryRow.needsAuth : false;
+                      const authBadge = !isCloud
+                        ? { label: "local", className: "border-surface-700 text-surface-400" }
+                        : authed
+                          ? { label: "auth ✓", className: "border-emerald-500/40 text-emerald-300" }
+                          : { label: "sign in", className: "border-amber-500/40 text-amber-300" };
+                      return (
+                        <div className="mt-1 flex items-center gap-2 text-[10px]">
+                          <span className="text-surface-500">runner:</span>
+                          <span className="font-medium text-surface-200">{runnerLabel(runnerId)}</span>
+                          <span className={`rounded-full border px-1.5 py-px text-[9px] uppercase tracking-wider ${authBadge.className}`}>
+                            {authBadge.label}
+                          </span>
+                          {isCloud && !authed ? (
+                            <button
+                              onClick={() => setChatRunnerAuthModal(runnerId)}
+                              className="ml-auto rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/25"
+                            >
+                              auth
+                            </button>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                     {connectedReauthMsg ? (
                       <div className={`mt-1 text-[10px] leading-tight ${connectedReauthMsg.ok ? "text-emerald-300" : "text-red-300"}`}>
                         {connectedReauthMsg.text}
