@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { useDevices } from "@/lib/use-devices";
 import pkg from "../../package.json";
 
 const WEB_VERSION = (pkg as { version?: string }).version ?? "unknown";
@@ -15,6 +16,115 @@ interface SettingsViewProps {
     avatarUrl?: string;
   } | null;
   onLogout: () => void;
+}
+
+function AuthProviderIcon({
+  provider,
+  className = "h-5 w-5",
+}: {
+  provider: string;
+  className?: string;
+}) {
+  switch (provider) {
+    case "apple":
+      return (
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+          <path d="M16.87 12.62c.03 2.82 2.47 3.76 2.5 3.77-.02.07-.39 1.34-1.28 2.66-.77 1.15-1.58 2.3-2.84 2.33-1.24.03-1.64-.73-3.06-.73-1.43 0-1.87.7-3.03.75-1.21.05-2.13-1.21-2.91-2.35-1.6-2.31-2.82-6.53-1.18-9.39.81-1.42 2.26-2.31 3.83-2.34 1.19-.03 2.31.8 3.06.8.74 0 2.13-.99 3.59-.84.61.03 2.31.25 3.41 1.86-.09.05-2.04 1.19-2.02 3.48ZM14.5 4.29c.64-.78 1.08-1.88.96-2.96-.92.04-2.04.61-2.7 1.39-.59.68-1.1 1.79-.96 2.85 1.03.08 2.06-.52 2.7-1.28Z" />
+        </svg>
+      );
+    case "gitlab":
+      return (
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+          <path d="M12 22.4 16.4 8.9h-8.8L12 22.4Z" />
+          <path d="M12 22.4 7.6 8.9H1.8L12 22.4Z" />
+          <path d="M1.8 8.9.5 13a.9.9 0 0 0 .33 1.01L12 22.4 1.8 8.9Z" />
+          <path d="M1.8 8.9h5.8L5.1 1.2a.45.45 0 0 0-.86 0L1.8 8.9Z" />
+          <path d="M12 22.4 16.4 8.9h5.8L12 22.4Z" />
+          <path d="M22.2 8.9 23.5 13a.9.9 0 0 1-.33 1.01L12 22.4 22.2 8.9Z" />
+          <path d="M22.2 8.9h-5.8l2.5-7.7a.45.45 0 0 1 .86 0l2.5 7.7Z" />
+        </svg>
+      );
+    case "github":
+      return (
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+          <path d="M12 .75a11.25 11.25 0 0 0-3.56 21.92c.56.1.76-.24.76-.54v-2.07c-3.1.67-3.76-1.31-3.76-1.31-.5-1.29-1.24-1.63-1.24-1.63-1.02-.69.08-.67.08-.67 1.12.08 1.72 1.16 1.72 1.16 1 .17 1.96 1.42 1.96 1.42.89 1.52 2.33 1.08 2.9.82.09-.72.35-1.08.63-1.33-2.47-.28-5.07-1.23-5.07-5.5 0-1.22.43-2.22 1.15-3-.12-.28-.5-1.42.11-2.96 0 0 .93-.3 3.06 1.14a10.7 10.7 0 0 1 5.58 0c2.13-1.44 3.06-1.14 3.06-1.14.61 1.54.23 2.68.11 2.96.72.78 1.15 1.78 1.15 3 0 4.28-2.61 5.22-5.1 5.49.4.35.75 1.04.75 2.1v3.11c0 .3.2.65.77.54A11.25 11.25 0 0 0 12 .75Z" />
+        </svg>
+      );
+    case "google":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
+          <path fill="#EA4335" d="M12 10.2v3.9h5.5c-.24 1.25-.96 2.3-2.02 3.01l3.27 2.54c1.91-1.76 3.01-4.36 3.01-7.45 0-.72-.06-1.4-.18-2.05H12Z" />
+          <path fill="#34A853" d="M12 22c2.7 0 4.97-.9 6.63-2.44l-3.27-2.54c-.9.6-2.05.95-3.36.95-2.58 0-4.76-1.74-5.54-4.08H3.08v2.62A10 10 0 0 0 12 22Z" />
+          <path fill="#4A90E2" d="M6.46 13.9A5.98 5.98 0 0 1 6.15 12c0-.66.11-1.3.31-1.9V7.48H3.08A10 10 0 0 0 2 12c0 1.61.38 3.13 1.08 4.52l3.38-2.62Z" />
+          <path fill="#FBBC05" d="M12 6.03c1.47 0 2.79.5 3.83 1.49l2.87-2.87C16.96 2.99 14.7 2 12 2A10 10 0 0 0 3.08 7.48l3.38 2.62C7.24 7.76 9.42 6.03 12 6.03Z" />
+        </svg>
+      );
+    case "microsoft":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
+          <path fill="#F25022" d="M2 2h9.5v9.5H2z" />
+          <path fill="#7FBA00" d="M12.5 2H22v9.5h-9.5z" />
+          <path fill="#00A4EF" d="M2 12.5h9.5V22H2z" />
+          <path fill="#FFB900" d="M12.5 12.5H22V22h-9.5z" />
+        </svg>
+      );
+    default:
+      return (
+        <span className={`inline-flex items-center justify-center rounded-full border border-surface-700 text-[10px] uppercase ${className}`}>
+          {provider.slice(0, 1)}
+        </span>
+      );
+  }
+}
+
+function StatusIcon({ primary }: { primary: boolean }) {
+  if (primary) {
+    return (
+      <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-4 w-4 text-emerald-300">
+        <path d="m9.05 2.93-1.1 2.24a1 1 0 0 1-.75.55l-2.47.36c-.82.12-1.15 1.13-.56 1.7l1.79 1.75c.25.24.36.6.3.94l-.42 2.46c-.14.82.72 1.45 1.45 1.07L10 14.9l2.21 1.16c.73.38 1.59-.25 1.45-1.07l-.42-2.46a1 1 0 0 1 .3-.94l1.79-1.75c.59-.57.26-1.58-.56-1.7l-2.47-.36a1 1 0 0 1-.75-.55l-1.1-2.24c-.37-.76-1.46-.76-1.83 0Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" className="h-4 w-4 text-surface-400">
+      <path fillRule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.2 7.2a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4l3.3 3.29 6.5-6.5a1 1 0 0 1 1.4 0Z" clipRule="evenodd" />
+    </svg>
+  );
+}
+
+function DeviceSurfaceIcon({ platform }: { platform: string }) {
+  const value = String(platform || "").trim().toLowerCase();
+  const isMobile = value === "ios" || value === "android";
+  if (isMobile) {
+    return (
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+      </svg>
+    );
+  }
+  return (
+    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
+    </svg>
+  );
+}
+
+function platformLabel(platform: string): string {
+  switch (String(platform || "").trim().toLowerCase()) {
+    case "darwin":
+    case "macos":
+      return "macOS";
+    case "linux":
+      return "Linux";
+    case "windows":
+      return "Windows";
+    case "android":
+      return "Android";
+    case "ios":
+      return "iOS";
+    default:
+      return platform || "Unknown OS";
+  }
 }
 
 export default function SettingsView({ user, onLogout }: SettingsViewProps) {
@@ -235,6 +345,8 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
           ?.split("=")[1] ||
         null
       : null;
+  const { devices } = useDevices(token);
+  const ownedDevices = devices.filter((device) => !device.isGuest);
 
   useEffect(() => {
     if (!token) return;
@@ -291,16 +403,31 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
               const canUnlink = identities.length > 1;
               return (
                 <div key={`${identity.provider}:${identity.email || "none"}`} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2">
-                  <div>
-                    <p className="text-sm text-surface-200">{identity.provider}</p>
-                    <p className="text-xs text-surface-500">{identity.email || "No email reported by provider"}</p>
+                  <div className="flex items-center gap-3">
+                    <span className={`flex h-9 w-9 items-center justify-center rounded-full border border-surface-800 bg-surface-950 ${
+                      identity.provider === "gitlab" ? "text-orange-300" : "text-surface-200"
+                    }`}>
+                      <AuthProviderIcon provider={identity.provider} className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm text-surface-200">{identity.provider}</p>
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] ${
+                            identity.isPrimary
+                              ? "border-emerald-500/30 text-emerald-300"
+                              : "border-surface-700 text-surface-400"
+                          }`}
+                          title={identity.isPrimary ? "Primary sign-in method" : "Linked sign-in method"}
+                        >
+                          <StatusIcon primary={identity.isPrimary} />
+                          {identity.isPrimary ? "Primary" : "Linked"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-surface-500">{identity.email || "No email reported by provider"}</p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {identity.isPrimary ? (
-                      <span className="rounded-full border border-emerald-500/30 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-300">Primary</span>
-                    ) : (
-                      <span className="rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-400">Linked</span>
-                    )}
                     <button
                       onClick={() => unlinkProvider(identity.provider)}
                       disabled={!canUnlink || unlinkingProvider === identity.provider}
@@ -407,6 +534,33 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
             <span aria-hidden>🌐</span> yaver.io web
           </span>
           <span className="font-mono text-surface-200">v{WEB_VERSION}</span>
+        </div>
+        <div className="mt-4 border-t border-surface-800 pt-4">
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+            Your Boxes
+          </div>
+          {ownedDevices.length === 0 ? (
+            <p className="text-sm text-surface-500">No boxes connected yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {ownedDevices.map((device) => (
+                <div key={device.id} className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full border border-surface-800 bg-surface-950 text-surface-300">
+                      <DeviceSurfaceIcon platform={device.platform} />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="truncate text-sm text-surface-200">{device.name || device.hostName || device.id}</div>
+                      <div className="text-xs text-surface-500">
+                        {platformLabel(device.platform)} · {device.agentVersion || "no version info"}
+                      </div>
+                    </div>
+                  </div>
+                  <span className={`ml-3 h-2.5 w-2.5 shrink-0 rounded-full ${device.online ? "bg-emerald-400" : "bg-surface-700"}`} title={device.online ? "Online" : "Offline"} />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

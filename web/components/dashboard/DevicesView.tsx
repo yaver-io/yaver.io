@@ -243,11 +243,11 @@ function deriveRunnerChipStates(
 function runnerChipClass(health: RunnerHealth): string {
   switch (health) {
     case "ready":
-      return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+      return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200";
     case "needs-auth":
-      return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+      return "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200";
     case "down":
-      return "border-red-500/40 bg-red-500/10 text-red-200";
+      return "border-red-300 bg-red-50 text-red-700 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200";
     case "not-installed":
       return "border-surface-800 bg-surface-900/40 text-surface-500";
     default:
@@ -961,12 +961,12 @@ export default function DevicesView({
                         {device.name}
                       </h3>
                       {device.isGuest ? (
-                        <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                        <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200">
                           Shared Device
                         </span>
                       ) : null}
                       {device.deviceClass ? (
-                        <span className="rounded border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-200">
+                        <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
                           {device.deviceClass === "edge-mobile" ? "Edge Worker" : device.deviceClass}
                         </span>
                       ) : null}
@@ -974,8 +974,8 @@ export default function DevicesView({
                         <span
                           className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                             device.sessionBinding === "dedicated"
-                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                              : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
+                              : "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
                           }`}
                         >
                           {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
@@ -1033,8 +1033,8 @@ export default function DevicesView({
                         }}
                         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                           primaryDeviceId === device.id
-                            ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
-                            : "border-surface-700 bg-surface-900/40 text-surface-300 hover:border-amber-500/30 hover:text-amber-200"
+                            ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
+                            : "border-surface-700 bg-surface-900/40 text-surface-300 hover:border-amber-300 hover:text-amber-700 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
                         }`}
                         title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
                       >
@@ -1069,9 +1069,9 @@ export default function DevicesView({
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span
-                        className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-100"
+                        className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
                       >
-                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500/30 text-[10px] font-semibold uppercase text-sky-50">
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-200 text-[10px] font-semibold uppercase text-sky-800 dark:bg-sky-500/30 dark:text-sky-50">
                           {shareSummary.hostLabel.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "·"}
                         </span>
                         <span className="truncate max-w-[12rem]">{shareSummary.hostLabel}</span>
@@ -1084,14 +1084,14 @@ export default function DevicesView({
                     {shareSummary.projectLabel ? (
                       <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                         shareSummary.projectLabel === "All Resources"
-                          ? "border-sky-500/40 bg-sky-500/10 text-sky-200"
-                          : "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                          ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200"
+                          : "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
                       }`}>
                         {shareSummary.projectLabel}
                       </span>
                     ) : null}
                     {shareSummary.projectChips.map((project) => (
-                      <span key={`${device.id}:project:${project}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
+                      <span key={`${device.id}:project:${project}`} className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
                         {project}
                       </span>
                     ))}
@@ -1106,9 +1106,9 @@ export default function DevicesView({
                       {shareSummary.guestChips.map((guest) => (
                         <span
                           key={`${device.id}:guest:${guest}`}
-                          className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/30 bg-sky-500/10 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-100"
+                          className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 py-0.5 pl-0.5 pr-2.5 text-xs text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-100"
                         >
-                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500/30 text-[10px] font-semibold uppercase text-sky-50">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-200 text-[10px] font-semibold uppercase text-sky-800 dark:bg-sky-500/30 dark:text-sky-50">
                             {guest.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase() || "·"}
                           </span>
                           <span className="truncate max-w-[12rem]">{guest}</span>
@@ -1155,8 +1155,8 @@ export default function DevicesView({
                           reload / web reload opens a workspace on this
                           device, so we make it visually load-bearing
                           instead of one chip among many. */}
-                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 px-3 py-2">
-                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-300">
+                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
+                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                             <path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.51 5.79 22l2.39-8.15L2 9.36h7.61z"/>
                           </svg>
@@ -1174,7 +1174,7 @@ export default function DevicesView({
                         )}
                         {!explicitPrimary && seededPrimary ? (
                           <span
-                            className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
+                            className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
                             title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
                           >
                             suggested
@@ -1199,7 +1199,7 @@ export default function DevicesView({
                                 : seeded ?? null;
                               void setPrimaryRunner(device.id, next, model).catch(() => {});
                             }}
-                            className="rounded border border-indigo-500/30 bg-surface-900 px-2 py-1 text-[12px] font-medium text-indigo-100 hover:border-indigo-400/50 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
+                            className="rounded border border-indigo-300 bg-white px-2 py-1 text-[12px] font-medium text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
                             title="Change primary coding agent for this device. Auto-selected in every Yaver surface (chat, hot reload, web reload, mobile) when this device is active."
                           >
                             <option value="">(none)</option>
@@ -1225,7 +1225,7 @@ export default function DevicesView({
                                 const nextModel = e.target.value || null;
                                 void setPrimaryRunner(device.id, primaryId, nextModel).catch(() => {});
                               }}
-                              className="rounded border border-indigo-500/30 bg-surface-900 px-2 py-1 text-[11px] text-indigo-100 hover:border-indigo-400/50 focus:outline-none focus:ring-1 focus:ring-indigo-400/40"
+                              className="rounded border border-indigo-300 bg-white px-2 py-1 text-[11px] text-indigo-700 hover:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400/40 dark:border-indigo-500/30 dark:bg-surface-900 dark:text-indigo-100 dark:hover:border-indigo-400/50"
                               title={`Model used when spawning ${primaryId}. Forwarded as --model / env var to the runner.`}
                             >
                               {MODEL_OPTIONS_BY_RUNNER[primaryId].map((m) => (
@@ -1242,7 +1242,7 @@ export default function DevicesView({
                                 const seededModel = preferredDefaultModelForRunner(seededPrimary, device, signedInEmail);
                                 void setPrimaryRunner(device.id, seededPrimary, seededModel).catch(() => {});
                               }}
-                              className="rounded bg-indigo-500 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-400"
+                              className="rounded bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
                               title="Persist this suggestion as the device's primary."
                             >
                               Confirm
@@ -1292,8 +1292,8 @@ export default function DevicesView({
                       onClick={() => onOpen(device)}
                       className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold shadow-sm ${
                         device.online
-                          ? "bg-indigo-500 text-white hover:bg-indigo-400"
-                          : "border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                          ? "bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400"
+                          : "border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
                       }`}
                       title={device.online
                         ? "Connect to this machine and start working on it"
@@ -1555,7 +1555,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {(device.sharedProjects || []).map((p) => (
-                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
+                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
                   {p}
                 </span>
               ))}

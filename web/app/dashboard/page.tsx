@@ -1473,7 +1473,7 @@ export default function DashboardPage() {
               <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Join as a guest</p>
               <div className="flex gap-1.5">
                 <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
-                  placeholder="CODE" className="flex-1 rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
+                  placeholder="CODE" className="min-w-0 flex-[1_1_0%] rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
                 <button onClick={async () => {
                   if (guestCode.trim().length < 4) return;
                   try {
@@ -1483,7 +1483,7 @@ export default function DashboardPage() {
                     else alert(data.error || "Invalid code");
                   } catch (e: any) { alert(e.message); }
                 }} disabled={guestCode.trim().length < 4}
-                  className="rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
+                  className="shrink-0 rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
               </div>
             </div>
           </div>
