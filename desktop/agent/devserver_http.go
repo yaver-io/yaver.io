@@ -1041,6 +1041,36 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Web Reload tab kicked us — auto-spawn the Expo Web sibling so the
+	// browser iframe has an HTML target, while the primary Metro process
+	// keeps serving Hermes bundles to the mobile app on the canonical
+	// port. Without this, a Web Reload click would either lock Metro
+	// into --web mode (breaking Hot Reload for any other user) or leave
+	// the iframe pointing at a Metro endpoint that returns nothing
+	// renderable. Best-effort: errors here become structured logs but
+	// don't fail the /dev/start response — the dashboard polls
+	// /dev/status and surfaces missing webPort with a "Start Web
+	// Preview" CTA already.
+	if strings.EqualFold(strings.TrimSpace(req.Surface), "web-reload") {
+		framework := strings.TrimSpace(req.Framework)
+		if framework == "" && req.WorkDir != "" {
+			if ds := detectDevServer(req.WorkDir); ds != nil {
+				framework = ds.Name()
+			}
+		}
+		if strings.EqualFold(framework, "expo") || strings.EqualFold(framework, "react-native") {
+			go func() {
+				// Wait briefly for Metro to bind its port before spawning
+				// the sibling — concurrent expo starts on the same project
+				// occasionally race on watchman manifest writes.
+				time.Sleep(2 * time.Second)
+				if _, err := s.devServerMgr.StartWebPreview(); err != nil {
+					log.Printf("[dev] auto web-preview start (surface=web-reload) failed: %v", err)
+				}
+			}()
+		}
+	}
+
 	// Return immediately — server starts in background, mobile polls /dev/status
 	status := s.devServerMgr.Status()
 	if status == nil {

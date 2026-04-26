@@ -295,12 +295,15 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     setStarting(true);
     setStartError(null);
     try {
+      // Always start in the framework's default mode (Expo gets
+      // --dev-client, not --web) so Hot Reload (Hermes) keeps working
+      // for a parallel mobile user. The web preview itself is a
+      // sibling process the agent spawns when surface=web-reload.
       if (useProjectFallback && selectedProject) {
         await agentClient.startDevServer({
           framework: selectedProject.framework,
           workDir: selectedProject.path,
           projectName: selectedProject.name,
-          platform: "web",
           surface: "web-reload",
         });
       } else if (selectedApp) {
