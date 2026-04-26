@@ -1,12 +1,13 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React from "react";
+import React, { useEffect } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
+import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -42,6 +43,11 @@ class ErrorBoundary extends React.Component<
 
 function InnerLayout() {
   const { isDark, colors } = useTheme();
+  // Wire the native screen-recorder bridge once on first render. Idempotent
+  // — vibePreview.ts.setNativeScreenRecorder just stores the latest fn.
+  useEffect(() => {
+    registerNativeScreenRecorder();
+  }, []);
   return (
     <>
       <StatusBar style={isDark ? "light" : "dark"} />

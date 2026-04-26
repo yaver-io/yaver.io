@@ -24,6 +24,7 @@ import {
   frameUrl,
   listClips,
   listSessions,
+  recordAndUploadPhoneClip,
   startClip,
   startPreview,
   stopClip,
@@ -34,6 +35,7 @@ import {
   VibePreviewEvent,
   VibePreviewSession,
 } from "../lib/vibePreview";
+import { isNativeScreenRecorderAvailable } from "../lib/screenRecorder";
 import { quicClient } from "../lib/quic";
 
 interface Props {
@@ -121,9 +123,26 @@ export function VibePreviewModal({ visible, project, targetUrl, onClose }: Props
     onClose();
   }, [session, onClose]);
 
-  // Recording controls
+  // Recording controls. Phone source uses the native ReplayKit /
+  // MediaProjection bridge end-to-end (record locally → upload MP4 to
+  // agent), all other sources go through the agent-side recorder.
   const handleRecord = useCallback(
     async (source?: VibeClipSource) => {
+      if (source === "phone") {
+        if (!isNativeScreenRecorderAvailable()) {
+          Alert.alert("Phone recording unavailable", "Native screen recorder not loaded on this build.");
+          return;
+        }
+        const result = await recordAndUploadPhoneClip({ project, durationSec: 12 });
+        if (!result.ok) {
+          Alert.alert("Phone recording failed", result.error ?? "Unknown error");
+          return;
+        }
+        if (result.clip) {
+          setClips((prev) => [result.clip!, ...prev.filter((c) => c.id !== result.clip!.id)]);
+        }
+        return;
+      }
       const rec = await startClip({ project, source, durationMaxSec: 12 });
       if (!rec) {
         Alert.alert("Couldn't start recording", "Make sure a simulator is booted (or pass a custom source).");
