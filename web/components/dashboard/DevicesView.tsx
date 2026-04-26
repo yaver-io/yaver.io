@@ -361,6 +361,11 @@ function RunnerChipWithTest({
       const result = await client.testRunner(state.id);
       if (result.ok) {
         setLocal({ kind: "ok", result });
+        // Test just proved the runner CLI's token is valid. Broadcast
+        // so the sidebar device card refetches and flips its
+        // "sign in" / "auth ✓" badge accordingly — without this the
+        // sidebar stayed stale until the user reloaded the page.
+        broadcastPrimaryRunnerChange();
       } else if (result.needsAuth && result.supportsBrowserAuth) {
         // Auto fall-through: this is a cloud LLM that needs sign-in
         // and we have a headless flow for it. Skip the red error and

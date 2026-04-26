@@ -590,6 +590,10 @@ export default function DashboardPage() {
   //   3. null — the consumer falls back to the live runner list
   const connectedDevicePrimaryRunner = (() => {
     if (!connectedDevice) return null;
+    // Always trust the explicit user-set primary first — it lives in
+    // Convex (`userSettings.primaryRunnerByDevice`) and survives
+    // disconnects/reconnects. Only fall back to the agent's reported
+    // runner list when no preference is set.
     const explicit = primaryRunnerByDevice[connectedDevice.id];
     if (explicit) return explicit;
     const runners = (connectedDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean }>;
@@ -597,6 +601,19 @@ export default function DashboardPage() {
     if (ready?.runnerId) return ready.runnerId;
     return null;
   })();
+
+  // When the primary runner changes (broadcast from another tab/view),
+  // also kick a device refresh so the sidebar's `runners` array
+  // (authConfigured / needsAuth flags) reflects the just-tested runner
+  // — without this the sidebar's badge stayed "sign in" even after
+  // Devices tab proved the runner authed cleanly.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onChange = () => refreshDevices();
+    window.addEventListener("yaver:primary-runner-changed", onChange);
+    return () => window.removeEventListener("yaver:primary-runner-changed", onChange);
+  }, [refreshDevices]);
+
   const probedForCurrentTabOpenRef = useRef(false);
 
   const isConnected = connState === "connected";
