@@ -122,23 +122,29 @@ curl -fsS "http://127.0.0.1:$AGENT_PORT/health" || { echo "agent never came up â
 
 banner "mobile-headless: sign-in + ops info"
 export YMH_AGENT_URL="http://127.0.0.1:$AGENT_PORT"
-yaver-mobile-headless sign-in --token "$TEST_TOKEN"
-yaver-mobile-headless ops --verb info | head -5
-yaver-mobile-headless ops-verbs | jq '.verbs | map(select(.name=="vibe_preview")) | .[0]'
+# mobile-headless's sign-in writes the token into its data-dir, but
+# subsequent CLI invocations don't always re-read it (depends on
+# defaults). Pass --token explicitly on every call so we don't depend
+# on persistence â€” exactly what a real mobile client does (token
+# kept in-memory and attached to every request).
+YMH=(yaver-mobile-headless --token "$TEST_TOKEN")
+"${YMH[@]}" sign-in --token "$TEST_TOKEN"
+"${YMH[@]}" ops --verb info | head -5
+"${YMH[@]}" ops-verbs | jq '.verbs | map(select(.name=="vibe_preview")) | .[0]'
 
 banner "mobile-headless: vibe_preview start"
-yaver-mobile-headless ops --verb vibe_preview \
+"${YMH[@]}" ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" --arg u "http://127.0.0.1:$DEV_SERVER_PORT" \
     '{op:"start", project:$p, target_url:$u, mode:"change-only"}')" \
   | jq
 
 banner "mobile-headless: vibe_preview status"
-yaver-mobile-headless ops --verb vibe_preview \
+"${YMH[@]}" ops --verb vibe_preview \
   --payload '{"op":"status"}' \
   | jq '.initial.sessions | length, .initial.sessions[0].project'
 
 banner "mobile-headless: vibe_preview snapshot"
-SNAP="$(yaver-mobile-headless ops --verb vibe_preview \
+SNAP="$("${YMH[@]}" ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"snapshot",project:$p}')")"
 echo "$SNAP" | jq
 HASH="$(echo "$SNAP" | jq -r '.initial.hash // empty')"
@@ -162,12 +168,12 @@ else
 fi
 
 banner "mobile-headless: vibe_preview summaries"
-yaver-mobile-headless ops --verb vibe_preview \
+"${YMH[@]}" ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"summaries",project:$p,limit:10}')" \
   | jq
 
 banner "mobile-headless: vibe_preview stop"
-yaver-mobile-headless ops --verb vibe_preview \
+"${YMH[@]}" ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"stop",project:$p}')" \
   | jq
 
