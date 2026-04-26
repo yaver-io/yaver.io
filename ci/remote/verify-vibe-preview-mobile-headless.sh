@@ -31,7 +31,11 @@ exec > >(tee -a "$LOG") 2>&1
 banner() { printf '\n========== %s ==========\n' "$*"; }
 
 TEST_TOKEN="vibe-preview-mobile-headless-smoke-$$"
-AGENT_PORT=18080
+# Use a port other than 18080 — the persistent ephemeral may have a
+# systemd-managed yaver running on the default port that respawns
+# faster than `pkill` can clean up. A non-default port guarantees
+# the agent we boot is the only thing answering on it.
+AGENT_PORT=18099
 PROJECT="vibe-mh-smoke"
 DEV_SERVER_PORT=18081
 
@@ -120,6 +124,7 @@ jq -r 'to_entries | map("  \(.key)=\(.value | tostring | .[0:60])") | .[]' /root
 # /health, /auth/pair/*, /info) — every other route 404's, including
 # /ops which is what mobile-headless depends on.
 YAVER_NO_BOOTSTRAP=1 yaver serve --debug --no-relay --no-tls \
+  --port "$AGENT_PORT" \
   > /tmp/yaver-serve.log 2>&1 &
 AGENT_PID=$!
 
