@@ -1,0 +1,110 @@
+# Deploy the latest relay binary to public.yaver.io.
+#
+# The Hetzner box was running yaver-relay 0.1.0 — old enough that
+# validatePassword rejects the exact same password it's started
+# with via --password (i.e. our shared password is *itself*
+# "invalid" to the binary). Plus 0.1.6 ships the hardcoded Convex
+# URL fallback so future deploys don't drop into shared-only mode.
+#
+# Pulls yaver-relay-linux-arm64.tar.gz from the latest GitHub
+# release, scp's it to the box, swaps with a backup, restarts the
+# unit. ~10s downtime.
+
+name: Relay — Deploy Latest Binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Relay version to deploy (default = latest in versions.json)"
+        required: false
+        default: ""
+
+concurrency:
+  group: relay-deploy-binary
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target version
+        run: |
+          V='${{ github.event.inputs.version }}'
+          if [ -z "$V" ]; then
+            V=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).relay)")
+          fi
+          echo "RELAY_VERSION=$V" >> "$GITHUB_ENV"
+          echo "Deploying yaver-relay v$V"
+
+      - name: Download release tarball
+        run: |
+          mkdir -p /tmp/relay-dl
+          curl -fsSL "https://github.com/kivanccakmak/yaver.io/releases/download/relay/v${RELAY_VERSION}/yaver-relay-linux-arm64.tar.gz" \
+            -o /tmp/relay-dl/relay.tar.gz
+          tar -xzf /tmp/relay-dl/relay.tar.gz -C /tmp/relay-dl/
+          ls -la /tmp/relay-dl/
+          # Find the binary inside (release tar layout may vary).
+          BIN=$(find /tmp/relay-dl -maxdepth 3 -type f -name 'yaver-relay*' -executable | head -1)
+          if [ -z "$BIN" ]; then
+            echo "::error::No yaver-relay binary inside tarball"
+            ls -la /tmp/relay-dl/
+            exit 2
+          fi
+          cp "$BIN" /tmp/relay-dl/yaver-relay
+          chmod +x /tmp/relay-dl/yaver-relay
+          echo "Binary ready: $(file /tmp/relay-dl/yaver-relay)"
+
+      - name: Prepare CI SSH key
+        run: |
+          install -m 600 /dev/stdin "$RUNNER_TEMP/ci_key" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "CI_KEY_PATH=$RUNNER_TEMP/ci_key" >> "$GITHUB_ENV"
+
+      - name: Push binary + restart service
+        run: |
+          # Upload binary to a staging path
+          scp -i "$CI_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              /tmp/relay-dl/yaver-relay root@46.224.110.38:/tmp/yaver-relay.new
+
+          # Swap + restart in one shot to minimize downtime
+          ssh -i "$CI_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              root@46.224.110.38 bash -s <<'REMOTE'
+          set -euo pipefail
+          BIN=/opt/yaver-relay/yaver-relay
+          NEW=/tmp/yaver-relay.new
+          mkdir -p /opt/yaver-relay
+          # Backup the running binary before swap (in case the new one
+          # doesn't boot for any reason — manual rollback path is
+          # `mv /opt/yaver-relay/yaver-relay.previous $BIN && systemctl restart yaver-relay`).
+          if [ -f "$BIN" ]; then
+            cp "$BIN" "$BIN.previous"
+          fi
+          install -m 0755 "$NEW" "$BIN"
+          rm -f "$NEW"
+
+          # Print the version the binary advertises before restart so
+          # the workflow log proves the swap landed.
+          "$BIN" --help 2>&1 | head -3 || true
+
+          systemctl restart yaver-relay
+          sleep 2
+          systemctl --no-pager --lines=20 status yaver-relay
+          echo "=== first 20 log lines after restart ==="
+          journalctl -u yaver-relay --no-pager -n 20
+
+          echo "=== probe localhost :8080 with shared password ==="
+          PW=$(awk -F'--password ' '/--password/ {print $2}' /etc/systemd/system/yaver-relay.service | awk '{print $1}')
+          curl -s -m 4 -i "http://127.0.0.1:8080/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=$PW" | head -8
+          REMOTE
+
+      - name: Probe public endpoint to confirm fix
+        run: |
+          sleep 3
+          curl -s -m 5 -i "https://public.yaver.io/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=afe47cbe5207aa99b721052bf264d96f" | head -8
