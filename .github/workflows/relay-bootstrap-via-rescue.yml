@@ -1,0 +1,193 @@
+# Bootstrap relay SSH access via Hetzner rescue mode.
+#
+# The relay's sshd has PasswordAuthentication=no, so a password
+# reset alone can't get us a shell. Workaround: use the Hetzner
+# Cloud API to boot the server into rescue mode (a tiny live OS
+# whose sshd accepts whatever SSH keys we pass to enable_rescue),
+# mount the real disk, drop our public key into root's
+# authorized_keys, exit rescue + reboot. Once we're back on the
+# normal OS, ssh-key auth works and we can apply the
+# CONVEX_URL fix.
+#
+# Total downtime: 60-120s for the two reboots.
+
+name: Relay — Bootstrap via Rescue Mode
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_name:
+        description: "Hetzner server name"
+        required: false
+        default: "yaver-relay-free"
+
+concurrency:
+  group: relay-bootstrap-rescue
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -qq -y jq
+
+      - name: Prepare CI SSH key + derive pubkey
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          PUB=$(ssh-keygen -y -f "$HCLOUD_SSH_PRIVATE_KEY_PATH")
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+          echo "CI_PUB_KEY=$PUB yaver-ci-relay-bootstrap" >> "$GITHUB_ENV"
+
+      - name: Resolve server + Hetzner SSH key ID
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          NAME='${{ github.event.inputs.server_name }}'
+          SRV=$(curl -fsS -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers?name=$NAME")
+          ID=$(echo "$SRV" | jq -r '.servers[0].id // empty')
+          IP=$(echo "$SRV" | jq -r '.servers[0].public_net.ipv4.ip // empty')
+          if [ -z "$ID" ] || [ -z "$IP" ]; then
+            echo "::error::Server not found"; echo "$SRV" | jq '.' | head; exit 2
+          fi
+          echo "RELAY_ID=$ID" >> "$GITHUB_ENV"
+          echo "RELAY_IP=$IP" >> "$GITHUB_ENV"
+          echo "Server $NAME → id=$ID ip=$IP"
+
+          # Find the Hetzner SSH key whose pubkey matches HCLOUD_SSH_PRIVATE_KEY.
+          # Compare by fingerprint of the OpenSSH-format pub key.
+          OUR_FP=$(echo "$CI_PUB_KEY" | awk '{print $1" "$2}' | ssh-keygen -l -E md5 -f /dev/stdin | awk '{print $2}')
+          KEYS=$(curl -fsS -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/ssh_keys")
+          KEY_ID=$(echo "$KEYS" | jq -r --arg fp "$OUR_FP" '.ssh_keys[] | select(.fingerprint==$fp) | .id' | head -1)
+          if [ -z "$KEY_ID" ]; then
+            # Not registered yet — register it now.
+            REG=$(curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -nc --arg name "yaver-ci-relay-bootstrap" --arg pk "$CI_PUB_KEY" '{name:$name,public_key:$pk}')" \
+              "https://api.hetzner.cloud/v1/ssh_keys")
+            KEY_ID=$(echo "$REG" | jq -r '.ssh_key.id // empty')
+            if [ -z "$KEY_ID" ]; then
+              echo "::error::Could not register SSH key with Hetzner. Response:"
+              echo "$REG" | jq '.' | head -20; exit 2
+            fi
+            echo "Registered new SSH key in Hetzner project: id=$KEY_ID"
+          else
+            echo "Hetzner SSH key already registered: id=$KEY_ID"
+          fi
+          echo "HCLOUD_KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+
+      - name: Enable rescue mode + reboot
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          # Enable rescue with our SSH key — rescue OS will trust it.
+          ENABLE=$(curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -nc --argjson kid "$HCLOUD_KEY_ID" '{type:"linux64",ssh_keys:[$kid]}')" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/enable_rescue")
+          echo "$ENABLE" | jq '.action.status'
+
+          # Reboot to enter rescue
+          curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/reset" \
+            -H "Content-Type: application/json" -d '{}' > /dev/null
+
+          echo "Rebooting into rescue — waiting for SSH (rescue OS) to come up…"
+          for i in $(seq 1 36); do
+            sleep 5
+            if ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+                  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o ConnectTimeout=4 -o BatchMode=yes \
+                  "root@$RELAY_IP" 'cat /etc/hostname && uname -a' 2>/dev/null | grep -q rescue; then
+              echo "  ✓ rescue OS is up after ${i} probes (~$((i*5))s)"
+              exit 0
+            fi
+            echo "  attempt $i/36 — still waiting"
+          done
+          echo "::error::Rescue OS never became reachable"
+          exit 2
+
+      - name: Mount real disk + install CI pubkey + apply systemd fix
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$RELAY_IP" bash -s <<EOF
+          set -euo pipefail
+          # Find the root partition. Hetzner cax11 (arm64) typically /dev/sda1
+          # but be defensive — pick whatever has a /etc/systemd inside.
+          ROOT_DEV=""
+          for dev in /dev/sda1 /dev/sda2 /dev/sda3 /dev/vda1 /dev/nvme0n1p1; do
+            if [ -b "\$dev" ]; then
+              mount -o ro "\$dev" /mnt 2>/dev/null || continue
+              if [ -d /mnt/etc/systemd/system ]; then
+                umount /mnt
+                ROOT_DEV="\$dev"
+                break
+              fi
+              umount /mnt
+            fi
+          done
+          if [ -z "\$ROOT_DEV" ]; then
+            echo "Could not find root partition. Available block devices:"; lsblk; exit 2
+          fi
+          echo "Mounting \$ROOT_DEV …"
+          mount "\$ROOT_DEV" /mnt
+
+          # Install CI key for root.
+          mkdir -p /mnt/root/.ssh && chmod 700 /mnt/root/.ssh
+          touch /mnt/root/.ssh/authorized_keys && chmod 600 /mnt/root/.ssh/authorized_keys
+          sed -i '/yaver-ci-relay-bootstrap\$/d' /mnt/root/.ssh/authorized_keys
+          echo '${{ env.CI_PUB_KEY }}' >> /mnt/root/.ssh/authorized_keys
+
+          # Apply CONVEX_URL to systemd unit while we're at it.
+          UNIT=/mnt/etc/systemd/system/yaver-relay.service
+          if [ -f "\$UNIT" ]; then
+            sed -i '/^Environment=CONVEX_URL=/d' "\$UNIT"
+            sed -i '/^ExecStart=/i Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site' "\$UNIT"
+            echo "=== updated unit (relevant lines) ==="
+            grep -E "^(Environment=|ExecStart=)" "\$UNIT"
+          else
+            echo "::warning::yaver-relay.service not found at \$UNIT — skipping systemd patch"
+          fi
+
+          umount /mnt
+          echo "Done — disk patched."
+          EOF
+
+      - name: Disable rescue + reboot back to normal OS
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/disable_rescue" > /dev/null
+          curl -fsS -X POST -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/reset" \
+            -H "Content-Type: application/json" -d '{}' > /dev/null
+
+          echo "Rebooting back to normal OS — waiting for relay HTTP to come up…"
+          for i in $(seq 1 30); do
+            sleep 5
+            if curl -fsS -m 4 "https://public.yaver.io/health" | grep -q activeDevices; then
+              echo "  ✓ relay HTTP responsive after ${i} probes (~$((i*5))s)"
+              exit 0
+            fi
+            echo "  attempt $i/30 — still rebooting"
+          done
+          echo "::warning::Relay never came back on HTTPS within 150s — check manually"
+
+      - name: Verify CI key works on normal OS
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=8 \
+              "root@$RELAY_IP" \
+              'echo "Logged in OK"; systemctl --no-pager --lines=5 status yaver-relay; grep "^Environment=" /etc/systemd/system/yaver-relay.service'
