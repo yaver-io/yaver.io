@@ -219,11 +219,22 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 		return
 	}
 
-	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)
+	// Check if this is an SSE request (task output, dev server events,
+	// blackbox subscribe + command-stream, agent-update, /streams/*).
+	// Without this branch the relay buffers the whole response body
+	// before forwarding to the client — but SSE bodies never close, so
+	// the client times out with no response. Symptom in CI: SDK smoke
+	// hits /d/<id>/blackbox/command-stream and curl returns
+	// "exit=28 status=000". Keep this list aligned with every long-
+	// lived stream the agent serves.
 	isSSE := req.Method == "GET" && req.Path != "" &&
 		(strings.HasSuffix(req.Path, "/output") ||
 			strings.HasSuffix(req.Path, "/dev/events") ||
-			strings.HasSuffix(req.Path, "/subscribe"))
+			strings.HasSuffix(req.Path, "/subscribe") ||
+			strings.HasSuffix(req.Path, "/blackbox/command-stream") ||
+			strings.HasSuffix(req.Path, "/blackbox/stream") ||
+			strings.HasSuffix(req.Path, "/feedback/stream") ||
+			strings.Contains(req.Path, "/streams/"))
 
 	if isSSE {
 		t.handleSSERequest(stream, req, httpReq)
