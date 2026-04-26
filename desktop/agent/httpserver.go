@@ -131,6 +131,9 @@ type HTTPServer struct {
 
 	// Auth status — set by heartbeat loop when token expires
 	authExpired atomic.Bool
+	// True while a manual update request is running. Prevents duplicate
+	// self-update attempts from web/mobile clients.
+	agentUpdateRunning atomic.Bool
 
 	// Autopilot (auto-driving) mode
 	autopilot *AutopilotManager
@@ -254,6 +257,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	s.RegisterMorningRoutes(mux)
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.authSDKOrGuest(s.handleRunnerSwitch))
+	mux.HandleFunc("/agent/update", s.auth(s.handleAgentUpdate))
 	mux.HandleFunc("/agent/shutdown", s.auth(s.handleShutdown))
 	mux.HandleFunc("/machine/remove", s.auth(s.handleMachineRemove))
 	mux.HandleFunc("/infra/summary", s.auth(s.handleInfraSummary))
@@ -2790,9 +2794,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Description   string             `json:"description"`
 		UserPrompt    string             `json:"userPrompt,omitempty"`
 		Model         string             `json:"model"`
-		Runner        string             `json:"runner"`        // runner ID: "claude", "codex", "aider" — empty uses default
+		Runner        string             `json:"runner"`         // runner ID: "claude", "codex", "aider" — empty uses default
 		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
-		CustomCommand string             `json:"customCommand"` // arbitrary command — runs via sh -c
+		CustomCommand string             `json:"customCommand"`  // arbitrary command — runs via sh -c
 		ProjectName   string             `json:"projectName,omitempty"`
 		Source        string             `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
 		SpeechContext *SpeechContext     `json:"speechContext"` // voice input/output preferences
@@ -8561,12 +8565,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "opencode_config_set":
 		var a struct {
-			DeviceID     string  `json:"device_id"`
-			DefaultAgent *string `json:"default_agent"`
-			Model        *string `json:"model"`
-			SmallModel   *string `json:"small_model"`
-			BuildModel   *string `json:"build_model"`
-			PlanModel    *string `json:"plan_model"`
+			DeviceID     string                  `json:"device_id"`
+			DefaultAgent *string                 `json:"default_agent"`
+			Model        *string                 `json:"model"`
+			SmallModel   *string                 `json:"small_model"`
+			BuildModel   *string                 `json:"build_model"`
+			PlanModel    *string                 `json:"plan_model"`
+			Providers    []openCodeProviderPatch `json:"providers"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		patch := openCodeConfigPatch{
@@ -8575,6 +8580,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			SmallModel:   a.SmallModel,
 			BuildModel:   a.BuildModel,
 			PlanModel:    a.PlanModel,
+			Providers:    a.Providers,
 		}
 		if strings.TrimSpace(a.DeviceID) != "" {
 			payload, _ := json.Marshal(patch)

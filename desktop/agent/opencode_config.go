@@ -43,6 +43,30 @@ type openCodeConfigPatch struct {
 	SmallModel   *string `json:"smallModel,omitempty"`
 	BuildModel   *string `json:"buildModel,omitempty"`
 	PlanModel    *string `json:"planModel,omitempty"`
+	// Providers is an optional list of provider upserts. Each entry
+	// either creates a new provider in opencode.json or merges into an
+	// existing one. Common use case: pointing a remote Yaver machine
+	// at its own Tailscale-reachable Ollama instance — pass
+	// {id: "ollama", baseUrl: "http://100.x.x.x:11434", models: {...}}
+	// from the dashboard and the agent rewrites the provider section
+	// without touching anything else in the file (custom agents,
+	// MCP-server entries, etc.). Pass `delete: true` to remove a
+	// provider entirely. Any other top-level keys the user has in
+	// their opencode.json are preserved as-is.
+	Providers []openCodeProviderPatch `json:"providers,omitempty"`
+}
+
+// openCodeProviderPatch is a single provider mutation. ID is required.
+// BaseURL / Models / APIKey / Name are optional — empty means "leave
+// existing value alone" except when Delete=true, which wipes the
+// provider entry.
+type openCodeProviderPatch struct {
+	ID      string         `json:"id"`
+	Name    string         `json:"name,omitempty"`
+	BaseURL string         `json:"baseUrl,omitempty"`
+	APIKey  string         `json:"apiKey,omitempty"`
+	Models  map[string]any `json:"models,omitempty"`
+	Delete  bool           `json:"delete,omitempty"`
 }
 
 func (s *HTTPServer) handleOpenCodeConfig(w http.ResponseWriter, r *http.Request) {
@@ -110,6 +134,9 @@ func applyOpenCodeConfigPatch(patch openCodeConfigPatch) (OpenCodeConfigSummary,
 	if patch.PlanModel != nil {
 		setOpenCodeAgentModel(cfg, "plan", strings.TrimSpace(*patch.PlanModel))
 	}
+	for _, p := range patch.Providers {
+		applyOpenCodeProviderPatch(cfg, p)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return OpenCodeConfigSummary{}, err
 	}
@@ -122,6 +149,68 @@ func applyOpenCodeConfigPatch(patch openCodeConfigPatch) (OpenCodeConfigSummary,
 		return OpenCodeConfigSummary{}, err
 	}
 	return summarizeOpenCodeConfig(path, cfg, true), nil
+}
+
+// applyOpenCodeProviderPatch upserts a single provider entry on the
+// in-memory config map. Empty ID is a no-op. Delete=true removes the
+// provider; otherwise non-empty fields overwrite the corresponding
+// keys (name, baseURL under options, apiKey under options, models).
+// Existing keys we don't touch (e.g. user-defined custom options or
+// per-model metadata not passed in this patch) are preserved.
+func applyOpenCodeProviderPatch(cfg map[string]any, p openCodeProviderPatch) {
+	id := strings.TrimSpace(p.ID)
+	if id == "" {
+		return
+	}
+	providersNode, _ := cfg["provider"].(map[string]any)
+	if providersNode == nil {
+		if p.Delete {
+			return
+		}
+		providersNode = map[string]any{}
+		cfg["provider"] = providersNode
+	}
+	if p.Delete {
+		delete(providersNode, id)
+		if len(providersNode) == 0 {
+			delete(cfg, "provider")
+		}
+		return
+	}
+	entry, _ := providersNode[id].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+		providersNode[id] = entry
+	}
+	if name := strings.TrimSpace(p.Name); name != "" {
+		entry["name"] = name
+	}
+	options, _ := entry["options"].(map[string]any)
+	if (strings.TrimSpace(p.BaseURL) != "" || strings.TrimSpace(p.APIKey) != "") && options == nil {
+		options = map[string]any{}
+		entry["options"] = options
+	}
+	if base := strings.TrimSpace(p.BaseURL); base != "" {
+		options["baseURL"] = base
+		// Some opencode releases (and downstream tools that read the
+		// same file) use `baseUrl` instead of `baseURL`. Mirror so
+		// either spelling works without us picking a winner. Drop the
+		// alternate when the canonical form is set, to avoid drift.
+		delete(options, "baseUrl")
+	}
+	if key := strings.TrimSpace(p.APIKey); key != "" {
+		options["apiKey"] = key
+	}
+	if len(p.Models) > 0 {
+		modelsNode, _ := entry["models"].(map[string]any)
+		if modelsNode == nil {
+			modelsNode = map[string]any{}
+			entry["models"] = modelsNode
+		}
+		for k, v := range p.Models {
+			modelsNode[strings.TrimSpace(k)] = v
+		}
+	}
 }
 
 func setOpenCodeAgentModel(cfg map[string]any, agentName, model string) {

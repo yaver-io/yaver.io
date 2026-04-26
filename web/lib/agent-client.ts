@@ -200,6 +200,15 @@ export interface AgentInfo {
   sttProvider?: string;
 }
 
+export interface AgentUpdateStatus {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  autoUpdateEnabled: boolean;
+  repo: string;
+  updating: boolean;
+}
+
 export interface DevTargetPreference {
   targetDeviceId?: string;
   targetDeviceName?: string;
@@ -1359,6 +1368,34 @@ export class AgentClient {
     return res.json();
   }
 
+  async getAgentUpdateStatus(): Promise<AgentUpdateStatus> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/update`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get update status: ${res.status}`);
+    return res.json();
+  }
+
+  async triggerAgentUpdate(): Promise<{
+    ok?: boolean;
+    started?: boolean;
+    message?: string;
+    currentVersion?: string;
+    latestVersion?: string;
+    updateAvailable?: boolean;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/agent/update`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Failed to trigger update: ${res.status}`);
+    return data;
+  }
+
   async getRunners(): Promise<Runner[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/agent/runners`, {
@@ -1672,6 +1709,18 @@ export class AgentClient {
       smallModel?: string;
       buildModel?: string;
       planModel?: string;
+      /** Optional provider upserts. Each entry creates or merges a
+       *  provider entry in opencode.json. Common case: setting an
+       *  Ollama provider's baseUrl to a Tailscale-reachable address.
+       *  Pass `delete: true` on an entry to remove it entirely. */
+      providers?: Array<{
+        id: string;
+        name?: string;
+        baseUrl?: string;
+        apiKey?: string;
+        models?: Record<string, unknown>;
+        delete?: boolean;
+      }>;
     },
     target?: string,
   ): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {

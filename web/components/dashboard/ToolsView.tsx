@@ -911,16 +911,45 @@ export default function ToolsView({ devices = [] }: Props) {
           {openCodeConfig?.providers && openCodeConfig.providers.length > 0 ? (
             <div className="grid gap-3 md:grid-cols-2">
               {openCodeConfig.providers.map((provider) => (
-                <div key={provider.id} className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-semibold text-surface-50">{provider.name || provider.id}</span>
-                    <span className="text-[11px] text-surface-500">{provider.models?.length || 0} models</span>
-                  </div>
-                  {provider.baseUrl ? <p className="mt-2 break-all text-xs text-surface-400">{provider.baseUrl}</p> : null}
-                </div>
+                <ProviderCard
+                  key={provider.id}
+                  provider={provider}
+                  onSaveBaseUrl={async (baseUrl) => {
+                    const res = await agentClient.saveOpenCodeConfig({
+                      providers: [{ id: provider.id, baseUrl }],
+                    }, target);
+                    if (!res.ok) {
+                      setOpenCodeConfigError(res.error || "Failed to save baseURL");
+                      return;
+                    }
+                    setOpenCodeConfigError(null);
+                    setOpenCodeConfigResult(`✓ ${provider.id} baseURL saved`);
+                    if (res.config) setOpenCodeConfig(res.config);
+                  }}
+                />
               ))}
             </div>
           ) : null}
+          <details className="rounded-xl border border-surface-800 bg-surface-950/40 p-3">
+            <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.16em] text-surface-300">
+              + Add provider (e.g. Tailscale Ollama)
+            </summary>
+            <AddProviderForm
+              onAdd={async ({ id, baseUrl, apiKey, name }) => {
+                const res = await agentClient.saveOpenCodeConfig({
+                  providers: [{ id, baseUrl, apiKey, name }],
+                }, target);
+                if (!res.ok) {
+                  setOpenCodeConfigError(res.error || "Failed to add provider");
+                  return false;
+                }
+                setOpenCodeConfigError(null);
+                setOpenCodeConfigResult(`✓ provider "${id}" saved`);
+                if (res.config) setOpenCodeConfig(res.config);
+                return true;
+              }}
+            />
+          </details>
 
           <div className="flex items-center gap-3">
             <button
@@ -1061,6 +1090,100 @@ export default function ToolsView({ devices = [] }: Props) {
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+// Inline editor for an existing provider's baseURL. The most common
+// edit on a remote machine is updating the Tailscale address of an
+// Ollama instance (the IP / DNS changes when the remote box reboots
+// or you re-key Tailscale), so we surface it as a one-click "Save"
+// next to the existing display row instead of forcing the user
+// through the full opencode.json edit flow. Other provider settings
+// (API keys, custom options) still go through the full save form.
+function ProviderCard({
+  provider,
+  onSaveBaseUrl,
+}: {
+  provider: { id: string; name?: string; baseUrl?: string; models?: Array<{ id: string }> };
+  onSaveBaseUrl: (baseUrl: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(provider.baseUrl || "");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraft(provider.baseUrl || ""); }, [provider.baseUrl]);
+  const dirty = draft.trim() !== (provider.baseUrl || "").trim();
+  return (
+    <div className="rounded-xl border border-surface-800 bg-surface-950/60 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-semibold text-surface-50">{provider.name || provider.id}</span>
+        <span className="text-[11px] text-surface-500">{provider.models?.length || 0} models</span>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="baseURL — e.g. http://100.x.x.x:11434"
+          className="flex-1 rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500"
+        />
+        <button
+          onClick={async () => {
+            setSaving(true);
+            try { await onSaveBaseUrl(draft.trim()); }
+            finally { setSaving(false); }
+          }}
+          disabled={!dirty || saving}
+          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
+        >
+          {saving ? "…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Compact form for adding a new provider (or replacing the config
+// for an existing one). Use case the user explicitly named: pointing
+// the remote machine's opencode at its own local Ollama via a
+// Tailscale URL. We collect just enough to write the entry — id,
+// name, baseURL, optional API key. Custom per-model metadata is left
+// out on purpose; users who need it edit opencode.json directly or
+// invoke the MCP `opencode_config_set` tool with the full payload.
+function AddProviderForm({
+  onAdd,
+}: {
+  onAdd: (args: { id: string; name?: string; baseUrl?: string; apiKey?: string }) => Promise<boolean>;
+}) {
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <div className="mt-3 grid gap-2 md:grid-cols-2">
+      <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500" placeholder="provider id (e.g. ollama-tailscale)" value={id} onChange={(e) => setId(e.target.value)} />
+      <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500" placeholder="display name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+      <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500 md:col-span-2" placeholder="baseURL — e.g. http://100.x.x.x:11434" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+      <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500 md:col-span-2" placeholder="API key (optional)" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+      <button
+        disabled={!id.trim() || saving}
+        onClick={async () => {
+          setSaving(true);
+          try {
+            const ok = await onAdd({
+              id: id.trim(),
+              name: name.trim() || undefined,
+              baseUrl: baseUrl.trim() || undefined,
+              apiKey: apiKey.trim() || undefined,
+            });
+            if (ok) {
+              setId(""); setName(""); setBaseUrl(""); setApiKey("");
+            }
+          } finally { setSaving(false); }
+        }}
+        className="md:col-span-2 rounded border border-indigo-500/40 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
+      >
+        {saving ? "Saving…" : "Add provider"}
+      </button>
     </div>
   );
 }
