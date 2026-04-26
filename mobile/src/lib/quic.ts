@@ -5896,6 +5896,59 @@ export class QuicClient {
   // secret is what we're actually trusting here, so we keep it in the mobile
   // keychain (see DeviceContext) rather than over the wire every call.
 
+  /** Factory-reset a remote device's agent auth. Mirrors the web
+   *  AgentClient.factoryResetDeviceAuth — agent verifies ownership
+   *  via Convex round-trip in its handler (NOT against its local
+   *  auth_token), so this works even when the agent has someone
+   *  else's session token, which is the case the AUTH/Recover flow
+   *  cannot fix. Owner-only on the agent side; guests get 403.
+   *
+   *  Walks the same relay list connect() does and POSTs to the
+   *  first reachable one. The user's bearer is what authenticates
+   *  the request — Convex looks up which devices that bearer owns.
+   */
+  async factoryResetDeviceAuth(
+    deviceId: string,
+  ): Promise<{ ok: true; via: string } | { ok: false; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!deviceId) return { ok: false, error: "missing deviceId" };
+    const userBearer = this.token;
+    const relayList = [...this.relayServers];
+    if (relayList.length === 0) return { ok: false, error: "no relay servers configured" };
+
+    let lastError = "no relay reached the device";
+    for (const relay of relayList) {
+      const url = `${relay.httpUrl}/d/${deviceId}/auth/factory-reset` +
+        (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${userBearer}`,
+            "X-Client-Platform": Platform.OS,
+          },
+        }, 12000);
+        if (res.ok) {
+          return { ok: true, via: relay.id || relay.httpUrl };
+        }
+        // 401/403 — bearer issue or guest. Stop walking; next relay
+        // can't change the verdict.
+        if (res.status === 401 || res.status === 403) {
+          let body = "";
+          try { body = (await res.json())?.error || ""; } catch {
+            try { body = await res.text(); } catch {}
+          }
+          return { ok: false, error: `${res.status}: ${body || "forbidden"}` };
+        }
+        lastError = `${res.status} on relay ${relay.id || relay.httpUrl}`;
+      } catch (e: unknown) {
+        lastError = e instanceof Error ? e.message : String(e);
+        // network error → try next relay
+      }
+    }
+    return { ok: false, error: lastError };
+  }
+
   async recoverAgent(
     secret?: string,
     mode: "pair" | "device-code" = "pair",

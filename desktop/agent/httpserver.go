@@ -385,6 +385,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// rate limited. Intentionally NOT wrapped in auth() because
 	// the whole point is to bring a locked-out agent back online.
 	mux.HandleFunc("/auth/recover", s.handleAuthRecover)
+	// /auth/factory-reset verifies caller's identity via Convex
+	// round-trip inside the handler (auth_factory_reset_http.go),
+	// NOT via the regular auth() middleware — the bug it fixes is
+	// exactly "agent has someone else's auth_token", which makes
+	// auth() reject the legitimate-owner bearer with 403. Convex
+	// is the trust anchor for who-owns-this-device. Rate-limited
+	// so a malicious bearer can't reset-flood the agent.
+	mux.HandleFunc("/auth/factory-reset", s.rateLimit(s.handleAuthFactoryReset))
 	// Cheap, unauth'd "am I signed in?" probe — used by `yaver status`,
 	// the mobile app's connection list, and health dashboards. Returns
 	// the authExpired flag set by the heartbeat loop after a failed

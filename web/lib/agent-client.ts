@@ -2498,6 +2498,66 @@ export class AgentClient {
     return { ok: false, error: r.error || "reauth failed" };
   }
 
+  /** Factory-reset a remote device's agent auth. The agent verifies
+   *  ownership against Convex (NOT against its local auth_token, which
+   *  is the thing being reset), so this works even when the agent's
+   *  local token is for a different user — which is exactly the case
+   *  the dashboard's regular AUTH/recover flow can't handle.
+   *
+   *  Only the OWNER of the device per Convex /devices/list can reset.
+   *  Guests get 403 server-side (the host has to do it).
+   */
+  async factoryResetDeviceAuth(
+    deviceId: string,
+  ): Promise<{ ok: true; via: string } | { ok: false; status?: number; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    const userBearer = this.token;
+    const tryOne = async (
+      label: string,
+      base: string,
+      relayPassword?: string,
+    ): Promise<{ ok: true } | null> => {
+      const url = `${base}/auth/factory-reset` + (relayPassword ? `?__rp=${encodeURIComponent(relayPassword)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${userBearer}` },
+        }, 12000);
+        if (res.ok) return { ok: true };
+        // 401/403 — bearer issue or guest. Don't keep retrying, the
+        // next relay won't change the verdict.
+        if (res.status === 401 || res.status === 403) {
+          const body = await res.text().catch(() => "");
+          throw new Error(`${label}: HTTP ${res.status} ${body.slice(0, 120)}`);
+        }
+        return null;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("relay") || msg.startsWith("direct") || msg.startsWith("tunnel")) throw e;
+        return null;
+      }
+    };
+
+    // Walk the same relay list connect() does. We don't require
+    // self.deviceId to match — caller can reset any device they own.
+    // Relay list is populated via setRelayServers() at app startup;
+    // if it's empty here something earlier in the connect flow
+    // never ran and the dashboard would already be in a bad state.
+    if (this.relayServers.length === 0) {
+      return { ok: false, error: "no relay servers configured" };
+    }
+    try {
+      for (const relay of this.relayServers) {
+        const base = `${relay.httpUrl}/d/${deviceId}`;
+        const r = await tryOne(`relay · ${relay.id}`, base, relay.password || undefined);
+        if (r?.ok) return { ok: true, via: relay.id };
+      }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+    return { ok: false, error: "no relay path reached the device" };
+  }
+
   private async probeHealth(
     url: string,
     headers: Record<string, string>,

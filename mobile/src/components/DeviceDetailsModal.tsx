@@ -4,7 +4,7 @@
 // breakdown, and runtime info on the phone.
 
 import React, { useEffect, useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
 import type { Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
 import { quicClient } from "../lib/quic";
@@ -40,6 +40,72 @@ function timeAgo(epochMs: number | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+function FactoryResetAuthRow({ device }: { device: Device }) {
+  const c = useColors();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const onPress = () => {
+    Alert.alert(
+      `Factory-reset auth on "${device.name}"?`,
+      "The agent will exit and restart in bootstrap mode. You'll re-pair from this app or the dashboard. Projects, vault, workspace files are preserved.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Auth",
+          style: "destructive",
+          onPress: async () => {
+            setBusy(true);
+            setMsg(null);
+            try {
+              const res = await quicClient.factoryResetDeviceAuth(device.id);
+              if (res.ok) {
+                setMsg("✓ reset triggered — re-pair when the agent comes back (~10s)");
+              } else {
+                setMsg(`✗ ${res.error}`);
+              }
+            } catch (e: any) {
+              setMsg(`✗ ${e?.message ?? String(e)}`);
+            } finally {
+              setBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+  return (
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={busy}
+        style={{
+          alignSelf: "flex-start",
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: "rgba(244,63,94,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(244,63,94,0.45)",
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        <Text style={{ color: "#fecdd3", fontSize: 12, fontWeight: "700" }}>
+          {busy ? "Resetting..." : "Reset Auth"}
+        </Text>
+      </Pressable>
+      {msg ? (
+        <Text style={{
+          marginTop: 8,
+          fontSize: 11,
+          color: msg.startsWith("✓") ? "#a7f3d0" : "#fecdd3",
+        }}>
+          {msg}
+        </Text>
+      ) : null}
+    </View>
+  );
 }
 
 export interface DeviceDetailsModalProps {
@@ -195,6 +261,28 @@ export default function DeviceDetailsModal({ device, visible, onClose }: DeviceD
               </>
             ) : null}
           </View>
+
+          {/* Recovery — owner-only. Hidden for guests because they
+              can't factory-reset the host's auth (the agent enforces
+              this via Convex check in handleAuthFactoryReset). */}
+          {!device.isGuest ? (
+            <View style={{
+              borderWidth: 1, borderColor: c.border, borderRadius: 8,
+              backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
+            }}>
+              <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
+                RECOVERY
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+                Wipe the agent's local auth + device id and put it back
+                into bootstrap (pairing) mode. Use this when the box
+                rejects your session ("token belongs to a different
+                user") and Recover Auth doesn't fix it. Projects, vault,
+                and workspace files are preserved.
+              </Text>
+              <FactoryResetAuthRow device={device} />
+            </View>
+          ) : null}
 
           {/* Runners */}
           {(device.runners || []).length > 0 ? (

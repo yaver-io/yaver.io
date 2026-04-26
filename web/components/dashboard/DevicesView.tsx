@@ -1874,6 +1874,63 @@ function ConnectionSection({ device }: { device: Device }) {
   );
 }
 
+// FactoryResetAuthButton — rendered on every owner-scope device card.
+// Sends POST /auth/factory-reset through the relay using the user's
+// own bearer; the agent verifies ownership via Convex round-trip
+// (see desktop/agent/auth_factory_reset_http.go) so it works EVEN
+// when the agent's local auth_token belongs to a different user
+// (the bug this is fixing). Hidden for guests — they can't reset
+// the host's auth.
+function FactoryResetAuthButton({ device }: { device: Device }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const onClick = async () => {
+    if (busy) return;
+    const ok = window.confirm(
+      `Factory-reset auth on "${device.name}"?\n\n` +
+      `The agent will exit and restart in bootstrap mode. You'll re-pair it from this dashboard.\n\n` +
+      `Use this when:\n` +
+      `  • the agent rejects your session ("token belongs to a different user")\n` +
+      `  • AUTH / Recover Auth doesn't fix it\n` +
+      `  • the box was paired to someone else and you've taken it over\n\n` +
+      `This does NOT delete your projects, vault, or workspace files.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await agentClient.factoryResetDeviceAuth(device.id);
+      if (res.ok) {
+        setMsg("✓ reset triggered — re-pair when the agent comes back (~10s)");
+        setTimeout(() => setMsg(null), 8000);
+      } else {
+        setMsg(`✗ ${res.error}`);
+      }
+    } catch (e: unknown) {
+      setMsg(`✗ ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-2">
+      <button
+        onClick={onClick}
+        disabled={busy}
+        className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 text-[11px] font-medium text-rose-200 hover:border-rose-400 hover:text-rose-100 disabled:opacity-50"
+        title="Wipe the agent's local auth_token + device_id and put it back into bootstrap (pairing) mode. Use when the box has someone else's session and AUTH/recover can't fix it."
+      >
+        {busy ? "Resetting..." : "Reset Auth"}
+      </button>
+      {msg && (
+        <span className={`text-[10px] ${msg.startsWith("✓") ? "text-emerald-300" : "text-rose-300"}`}>
+          {msg}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function useRelayHealth(relayUrl: string | null | undefined) {
   const [state, setState] = useState<{ version?: string; tunnels?: number; activeDevices?: number } | null>(null);
   useEffect(() => {
@@ -1999,6 +2056,9 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
                 ? "Unreachable"
                 : "Ping"}
         </button>
+        {!device.isGuest ? (
+          <FactoryResetAuthButton device={device} />
+        ) : null}
       </div>
       <ConnectionSection device={device} />
       <div className="grid gap-6 md:grid-cols-2">
