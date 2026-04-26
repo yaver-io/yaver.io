@@ -1202,19 +1202,44 @@ export class YaverFeedback {
             ? detectedProviders.find((row) => row.provider === provider)
             : null;
           const gitReady = eligibility.needsGitSetup !== true;
-          gitSummary.textContent = gitReady ? 'Git configured' : 'Git setup needed';
+          // The agent now returns repoBindingSource ∈ {"git","registry"} so
+          // the SDK can tell the user whether it learned the remote from a
+          // local clone or from a registry entry the host declared earlier.
+          const repoBindingSource = (eligibility as { repoBindingSource?: string }).repoBindingSource;
+          const repoFullName = (eligibility as { repoFullName?: string }).repoFullName;
+          const repoHost = (eligibility as { repoHost?: string }).repoHost;
+          const repoBound = !!provider && !!repoFullName;
+          const needsRemoteDeclaration = !provider && selectedMachineOwned;
+          gitSummary.textContent = gitReady
+            ? 'Git configured'
+            : repoBound
+              ? `Bound to ${repoFullName}`
+              : needsRemoteDeclaration
+                ? 'Project remote unknown'
+                : 'Git setup needed';
           gitIntro.textContent = gitReady
             ? 'This project is already connected on the selected machine.'
-            : 'Link your git provider to Yaver for account identity, then configure the selected machine from web/mobile/SSH before vibing unlocks.';
+            : needsRemoteDeclaration
+              ? 'Yaver does not know which repository this project belongs to. Tell it the GitHub or GitLab URL so it can verify access and clone on demand.'
+              : 'Link your git provider to Yaver for account identity, then configure the selected machine from web/mobile/SSH before vibing unlocks.';
+          const stageDetail = repoBound
+            ? `<div class="yvr-fb-vibe-stage-meta">${escapeHtml(
+                `${repoFullName} on ${repoHost || (provider === 'gitlab' ? 'gitlab.com' : 'github.com')}` +
+                (repoBindingSource === 'registry' ? ' (declared via web SDK)' : ''),
+              )}</div>`
+            : '';
           gitStageCopy.innerHTML = `
-            <div class="yvr-fb-vibe-stage-title">${gitReady ? 'Git Ready' : 'Connect Git'}</div>
+            <div class="yvr-fb-vibe-stage-title">${gitReady ? 'Git Ready' : repoBound ? 'Authorize machine' : needsRemoteDeclaration ? 'Bind project to a repo' : 'Connect Git'}</div>
             <div class="yvr-fb-vibe-stage-text">${escapeHtml(
               gitReady
                 ? 'Git is configured for this project on the selected machine. Continue when you want to open the vibing page.'
-                : eligibility.guidance?.trim()
-                  ? `${eligibility.reason ?? 'Git is not configured for this project.'} ${eligibility.guidance}`
-                  : eligibility.reason ?? 'Git is not configured for this project.',
+                : needsRemoteDeclaration
+                  ? 'Pick GitHub or GitLab below and paste the repo URL plus a Personal Access Token. Yaver will save the binding on the selected machine and verify the repo is visible to your account.'
+                  : eligibility.guidance?.trim()
+                    ? `${eligibility.reason ?? 'Git is not configured for this project.'} ${eligibility.guidance}`
+                    : eligibility.reason ?? 'Git is not configured for this project.',
             )}</div>
+            ${stageDetail}
           `;
           if (gitReady) {
             gitActions.innerHTML = `
@@ -1229,6 +1254,116 @@ export class YaverFeedback {
               if (!busy) {
                 setStatus('');
                 setView('actions');
+              }
+            };
+          } else if (needsRemoteDeclaration) {
+            const projectName = (eligibility as { projectName?: string }).projectName || 'this project';
+            gitActions.innerHTML = `
+              <div class="yvr-fb-runner-card yvr-fb-git-card">
+                <span class="yvr-fb-runner-card-kicker">Bind project</span>
+                <span class="yvr-fb-runner-card-title">Where does ${escapeHtml(projectName)} live?</span>
+                <span class="yvr-fb-runner-card-meta">Yaver stores this binding on the selected machine so eligibility, vibing, and clone-on-demand all know the canonical repo.</span>
+                <div class="yvr-fb-vibe-radio-row" role="radiogroup" aria-label="Provider">
+                  <label class="yvr-fb-vibe-radio">
+                    <input type="radio" name="yaver-fb-bootstrap-provider" value="github" checked />
+                    <span>GitHub</span>
+                  </label>
+                  <label class="yvr-fb-vibe-radio">
+                    <input type="radio" name="yaver-fb-bootstrap-provider" value="gitlab" />
+                    <span>GitLab</span>
+                  </label>
+                </div>
+                <input id="yaver-fb-bootstrap-url" class="yvr-fb-vibe-input" type="text" placeholder="https://github.com/owner/repo or git@github.com:owner/repo.git" autocomplete="off" />
+                <input id="yaver-fb-bootstrap-host" class="yvr-fb-vibe-input" type="text" placeholder="gitlab.com (override for self-hosted GitLab)" autocomplete="off" style="display:none;" />
+                <input id="yaver-fb-bootstrap-token" class="yvr-fb-vibe-input" type="password" placeholder="ghp_... (Personal Access Token)" autocomplete="off" />
+                <button type="button" class="yvr-fb-action yvr-fb-action-vibe" data-git-action="bootstrap-save">Save &amp; verify</button>
+              </div>
+              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="detect">
+                <span class="yvr-fb-runner-card-kicker">Selected machine</span>
+                <span class="yvr-fb-runner-card-title">Discover existing git auth</span>
+                <span class="yvr-fb-runner-card-meta">Skip the form if the machine already has gh/glab signed in or a credential helper configured.</span>
+                <span class="yvr-fb-runner-card-action">Detect</span>
+              </button>
+              <a class="yvr-fb-runner-card yvr-fb-git-card" data-git-link="dashboard" href="${escapeHtml(dashboardUrl)}" target="_blank" rel="noopener noreferrer">
+                <span class="yvr-fb-runner-card-kicker">Yaver web</span>
+                <span class="yvr-fb-runner-card-title">Open dashboard</span>
+                <span class="yvr-fb-runner-card-meta">Settings → link GitHub/GitLab to your Yaver account, or use Tools to configure machines from there.</span>
+                <span class="yvr-fb-runner-card-action">Open</span>
+              </a>
+            `;
+
+            const radios = gitActions.querySelectorAll<HTMLInputElement>('input[name="yaver-fb-bootstrap-provider"]');
+            const urlInput = gitActions.querySelector<HTMLInputElement>('#yaver-fb-bootstrap-url')!;
+            const hostInput = gitActions.querySelector<HTMLInputElement>('#yaver-fb-bootstrap-host')!;
+            const tokenInput = gitActions.querySelector<HTMLInputElement>('#yaver-fb-bootstrap-token')!;
+            const saveBtn = gitActions.querySelector<HTMLButtonElement>('[data-git-action="bootstrap-save"]')!;
+
+            const syncProviderUI = () => {
+              const selected = (Array.from(radios).find((r) => r.checked)?.value || 'github') as 'github' | 'gitlab';
+              hostInput.style.display = selected === 'gitlab' ? '' : 'none';
+              tokenInput.placeholder = selected === 'gitlab' ? 'glpat-... (Personal Access Token)' : 'ghp_... (Personal Access Token)';
+            };
+            radios.forEach((radio) => {
+              radio.onchange = syncProviderUI;
+            });
+            syncProviderUI();
+
+            saveBtn.onclick = async () => {
+              if (busy) return;
+              const selected = (Array.from(radios).find((r) => r.checked)?.value || 'github') as 'github' | 'gitlab';
+              const remoteUrl = urlInput.value.trim();
+              const customHost = hostInput.value.trim();
+              const token = tokenInput.value.trim();
+              if (!remoteUrl) {
+                setStatus('Paste the repo URL first.');
+                return;
+              }
+              if (!token) {
+                setStatus('Paste a Personal Access Token first.');
+                return;
+              }
+              setGitBusy(true);
+              try {
+                const client = await YaverFeedback.getClient();
+                setStatus(`Saving ${selected === 'gitlab' ? 'GitLab' : 'GitHub'} token on the selected machine…`);
+                await client.gitProviderSetup({
+                  provider: selected,
+                  token,
+                  host: selected === 'gitlab' ? (customHost || 'gitlab.com') : undefined,
+                });
+                setStatus('Recording project remote on the selected machine…');
+                const projectName =
+                  (eligibility as { projectName?: string }).projectName ||
+                  YaverFeedback.projectIdentity()?.projectName ||
+                  '';
+                if (!projectName) {
+                  throw new Error('Cannot bind the project — its name is unknown to the SDK.');
+                }
+                await client.setProjectRemote({ projectName, remoteUrl });
+                tokenInput.value = '';
+                setStatus('Project remote saved. Verifying repo access…');
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : 'Could not save the project remote.');
+              } finally {
+                await refreshGitSetup();
+              }
+            };
+
+            gitActions.querySelector<HTMLButtonElement>('[data-git-action="detect"]')!.onclick = async () => {
+              if (busy) return;
+              setGitBusy(true);
+              try {
+                setStatus('Detecting existing git credentials on the selected machine…');
+                const detected = await YaverFeedback.getClient().then((client) => client.gitProviderDetect());
+                setStatus(
+                  detected.length > 0
+                    ? `Detected ${detected.map((row) => row.provider).join(', ')}. Re-checking eligibility…`
+                    : 'No machine-side git credentials were detected. Use the form above.',
+                );
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : 'Could not detect git credentials.');
+              } finally {
+                await refreshGitSetup();
               }
             };
           } else {
@@ -2509,6 +2644,25 @@ export class YaverFeedback {
       }
       .yvr-fb-vibe-stage-text {
         font-size: 12px; line-height: 1.5; color: #cbd5e1;
+      }
+      .yvr-fb-vibe-stage-meta {
+        font-size: 11px; line-height: 1.4; color: #7dd3fc;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .yvr-fb-vibe-radio-row {
+        display: flex; gap: 12px; flex-wrap: wrap;
+      }
+      .yvr-fb-vibe-radio {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 12px; color: #cbd5e1; cursor: pointer;
+      }
+      .yvr-fb-vibe-radio input { accent-color: #38bdf8; }
+      /* Single-line variants of yvr-fb-vibe-input. The base class has a
+         large min-height tuned for the prompt textarea; type=text/password
+         inputs reset it so the bootstrap form lays out cleanly. */
+      .yvr-fb-vibe-input[type="text"],
+      .yvr-fb-vibe-input[type="password"] {
+        min-height: 0;
       }
 
       .yvr-fb-runner-auth-row {

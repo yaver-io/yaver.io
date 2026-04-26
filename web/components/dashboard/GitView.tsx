@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { CONVEX_URL } from "@/lib/constants";
 import {
   agentClient,
   type GitBranchRow,
@@ -68,8 +69,7 @@ function preferredSurfaceForAction(action: ProjectAction): "preview" | "web-relo
 }
 
 function actionLabelForSurface(action: ProjectAction, surface: "preview" | "web-reload" | "builds") {
-  if (surface === "preview") return "Hot Reload";
-  if (surface === "web-reload") return "Web Reload";
+  if (surface === "preview" || surface === "web-reload") return "Webview";
   if (action.type === "build") return action.label || "Builds";
   if (action.type === "deploy") return "Builds";
   return "Builds";
@@ -125,6 +125,9 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
   const [providerSearch, setProviderSearch] = useState("");
   const [providerToken, setProviderToken] = useState("");
   const [manualProvider, setManualProvider] = useState<"github" | "gitlab" | null>(null);
+  const [linkedGitProviders, setLinkedGitProviders] = useState<string[]>([]);
+  const [linkingGitProvider, setLinkingGitProvider] = useState<"github" | "gitlab" | null>(null);
+  const [gitLinkError, setGitLinkError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
@@ -144,6 +147,36 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
     );
   }, [providerRepos, providerSearch]);
 
+  async function refreshLinkedGitProviders() {
+    if (typeof window === "undefined") return;
+    const token =
+      localStorage.getItem("yaver_auth_token") ||
+      document.cookie
+        .split(";")
+        .find((c) => c.trim().startsWith("yaver_auth_token="))
+        ?.split("=")[1] ||
+      null;
+    if (!token) {
+      setLinkedGitProviders([]);
+      return;
+    }
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/providers`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      const providers = Array.isArray(data?.identities)
+        ? data.identities
+            .map((identity: { provider?: string }) => String(identity?.provider || "").toLowerCase())
+            .filter((provider: string) => provider === "github" || provider === "gitlab")
+        : [];
+      setLinkedGitProviders(Array.from(new Set(providers)));
+    } catch {
+      // soft-fail
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
@@ -155,6 +188,7 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
         if (cancelled) return;
         setProjects(projectRows);
         setProviders(gitProviders);
+        void refreshLinkedGitProviders();
       } catch (error) {
         if (!cancelled) setBusy(error instanceof Error ? error.message : String(error));
       }
@@ -216,6 +250,45 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
     setManualProvider(null);
     setProviders(await agentClient.gitProviderStatus());
     setBusy(`Connected ${result.provider || manualProvider} as ${result.username || "user"}.`);
+  }
+
+  async function startGitAccountLink(provider: "github" | "gitlab") {
+    if (typeof window === "undefined") return;
+    const token =
+      localStorage.getItem("yaver_auth_token") ||
+      document.cookie
+        .split(";")
+        .find((c) => c.trim().startsWith("yaver_auth_token="))
+        ?.split("=")[1] ||
+      null;
+    if (!token) {
+      setGitLinkError("Not signed in. Refresh the dashboard and sign in again.");
+      return;
+    }
+    setGitLinkError(null);
+    setLinkingGitProvider(provider);
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/oauth-link/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          provider,
+          client: "web",
+          returnTo: "/dashboard",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.token) {
+        throw new Error(data?.error || `Failed to start ${provider} link`);
+      }
+      window.location.href = `/api/auth/oauth/${provider}?client=web&intent=link&linkToken=${encodeURIComponent(data.token)}&return=${encodeURIComponent("/dashboard")}`;
+    } catch (error) {
+      setGitLinkError(error instanceof Error ? error.message : `Failed to start ${provider} link`);
+      setLinkingGitProvider(null);
+    }
   }
 
   async function toggleProviderRepos(host: string) {
@@ -576,6 +649,41 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
           </summary>
 
           <div className="mt-4 space-y-3">
+            <div className="rounded-md border border-surface-800 bg-surface-950/70 p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Step 1 · Connect provider to Yaver</div>
+              <div className="mt-2 text-sm text-surface-400">
+                Connect GitHub or GitLab to this Yaver account for sign-in and recovery. Then add a machine token below when you want this box to browse and clone private repos.
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["github", "gitlab"] as const).map((provider) => {
+                  const linked = linkedGitProviders.includes(provider);
+                  return (
+                    <button
+                      key={provider}
+                      onClick={() => void startGitAccountLink(provider)}
+                      disabled={linked || linkingGitProvider !== null}
+                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-60 ${
+                        linked
+                          ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                          : "border border-surface-700 bg-surface-950 text-surface-200 hover:border-surface-600"
+                      }`}
+                    >
+                      <ProviderIcon provider={provider} className={`h-4 w-4 ${provider === "gitlab" ? "text-orange-300" : "text-surface-300"}`} />
+                      {linked ? `${provider === "github" ? "GitHub" : "GitLab"} linked` : linkingGitProvider === provider ? "Opening…" : `Connect ${provider === "github" ? "GitHub" : "GitLab"}`}
+                    </button>
+                  );
+                })}
+              </div>
+              {gitLinkError ? <div className="mt-2 text-xs text-red-300">{gitLinkError}</div> : null}
+            </div>
+
+            <div className="rounded-md border border-surface-800 bg-surface-950/70 p-4">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Step 2 · Populate this machine</div>
+              <div className="mt-2 text-sm text-surface-400">
+                Add a GitHub or GitLab token when you want this machine to traverse repos and clone them over HTTPS.
+              </div>
+            </div>
+
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => setManualProvider("github")}

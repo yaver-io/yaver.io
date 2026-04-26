@@ -118,6 +118,51 @@ func (s *HTTPServer) handleMultiUserSessions(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// devMgrForRequest returns the DevServerManager that should service
+// this request. In single-user mode (or when the caller is the owner)
+// the legacy s.devServerMgr singleton is returned. In multi-user
+// mode any non-owner user gets their own per-session manager,
+// allocated lazily on first call.
+//
+// Use this from /dev/* handlers instead of reading s.devServerMgr
+// directly so two concurrent users on the same box do not clobber
+// each other's dev server / port / SSE stream.
+func (s *HTTPServer) devMgrForRequest(r *http.Request) *DevServerManager {
+	if s.multiUserMgr == nil {
+		return s.devServerMgr
+	}
+	uid := r.Header.Get("X-Yaver-UserID")
+	if uid == "" || uid == s.ownerUserID {
+		return s.devServerMgr
+	}
+	mgr, _, err := s.multiUserMgr.EnsureDevServerMgr(uid)
+	if err != nil || mgr == nil {
+		// Fall back to the singleton — better than serving 500. The
+		// allocator failure is logged inside EnsureDevServerMgr.
+		return s.devServerMgr
+	}
+	return mgr
+}
+
+// devPortsForRequest returns the (Metro, ExpoWeb) port pair the
+// caller's dev server should bind. Returns the canonical 8081/19006
+// in single-user mode or for the owner.
+func (s *HTTPServer) devPortsForRequest(r *http.Request) DevPortPair {
+	defaultPair := DevPortPair{MetroPort: 8081, WebPort: 19006}
+	if s.multiUserMgr == nil {
+		return defaultPair
+	}
+	uid := r.Header.Get("X-Yaver-UserID")
+	if uid == "" || uid == s.ownerUserID {
+		return defaultPair
+	}
+	_, pair, err := s.multiUserMgr.EnsureDevServerMgr(uid)
+	if err != nil {
+		return defaultPair
+	}
+	return pair
+}
+
 // multiUserAuth is the auth middleware for multi-user mode.
 // Instead of rejecting non-owner tokens, it:
 //  1. Validates the token against Convex → gets userId

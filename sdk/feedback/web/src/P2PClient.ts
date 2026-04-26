@@ -634,6 +634,112 @@ export class P2PClient {
     return data as { ok: boolean; username?: string; host?: string; provider?: string; error?: string };
   }
 
+  /**
+   * Bind a project name to a canonical git remote URL on the agent. The
+   * agent stores the mapping locally and uses it as a fallback when the
+   * project on disk has no `git remote` configured (or hasn't been cloned
+   * yet). Owner-only — guests and SDK tokens cannot call this.
+   */
+  async setProjectRemote(params: {
+    projectName: string;
+    remoteUrl: string;
+  }): Promise<{
+    ok: boolean;
+    project?: {
+      name: string;
+      remoteUrl: string;
+      provider: string;
+      host: string;
+      repo: string;
+      setAt: string;
+    };
+    error?: string;
+  }> {
+    const resp = await fetch(`${this.baseUrl}/vibing/project/remote`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(
+        typeof (data as any)?.error === 'string'
+          ? (data as any).error
+          : `[P2PClient] Set project remote failed (${resp.status})`,
+      );
+    }
+    return data as Awaited<ReturnType<P2PClient['setProjectRemote']>>;
+  }
+
+  /**
+   * Look up the registered remote for a project, if any. Returns
+   * { found: false, project: null } when no entry exists.
+   */
+  async getProjectRemote(projectName: string): Promise<{
+    ok: boolean;
+    found: boolean;
+    project: {
+      name: string;
+      remoteUrl: string;
+      provider: string;
+      host: string;
+      repo: string;
+      setAt: string;
+    } | null;
+  }> {
+    const url = new URL(`${this.baseUrl}/vibing/project/remote`);
+    url.searchParams.set('projectName', projectName);
+    const resp = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this.authHeaders(),
+    });
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(
+        typeof (data as any)?.error === 'string'
+          ? (data as any).error
+          : `[P2PClient] Get project remote failed (${resp.status})`,
+      );
+    }
+    return data as Awaited<ReturnType<P2PClient['getProjectRemote']>>;
+  }
+
+  /**
+   * Clone a repository onto the agent's machine via the existing
+   * `/repos/clone` endpoint. Owner-only.
+   */
+  async cloneRepo(params: {
+    url: string;
+    dir?: string;
+    branch?: string;
+  }): Promise<{
+    ok: boolean;
+    path?: string;
+    name?: string;
+    error?: string;
+  }> {
+    const resp = await fetch(`${this.baseUrl}/repos/clone`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(
+        typeof (data as any)?.error === 'string'
+          ? (data as any).error
+          : `[P2PClient] Clone failed (${resp.status})`,
+      );
+    }
+    return data as Awaited<ReturnType<P2PClient['cloneRepo']>>;
+  }
+
   async commitProject(
     opts?: { projectName?: string; projectPath?: string; bundleId?: string; message?: string },
   ): Promise<FeedbackProjectActionResult> {

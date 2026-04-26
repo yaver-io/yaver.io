@@ -728,14 +728,15 @@ func bundleCommand(packageManager, framework, platform, entryFile, bundlePath, a
 // handleDevServerStatus returns the current dev server status.
 // GET /dev/status
 func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Request) {
-	if s.devServerMgr == nil {
+	mgr := s.devMgrForRequest(r)
+	if mgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
 
 	resolvedIOSMethod, resolvedIOSReason := resolveIOSInstallMethodWithReason(s.iosInstallMethod)
-	target := s.devServerMgr.PreferredTarget()
-	status := s.devServerMgr.Status()
+	target := mgr.PreferredTarget()
+	status := mgr.Status()
 	if status == nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"running":           false,
@@ -856,7 +857,8 @@ func (s *HTTPServer) handleDevServerTarget(w http.ResponseWriter, r *http.Reques
 // handleDevServerStart starts a dev server.
 // POST /dev/start { "framework": "expo", "workDir": "/path", "platform": "ios", "port": 8081 }
 func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request) {
-	if s.devServerMgr == nil {
+	mgr := s.devMgrForRequest(r)
+	if mgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
@@ -987,11 +989,21 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 
 	if req.TargetDeviceID != "" || req.TargetDeviceName != "" || req.TargetDeviceClass != "" {
-		s.devServerMgr.SetPreferredTarget(DevServerTarget{
+		mgr.SetPreferredTarget(DevServerTarget{
 			DeviceID:    req.TargetDeviceID,
 			DeviceName:  req.TargetDeviceName,
 			DeviceClass: req.TargetDeviceClass,
 		})
+	}
+
+	// In multi-user mode the user has been allocated a dedicated
+	// (Metro, ExpoWeb) port pair; apply it when the caller did not
+	// pin an explicit port. Owner / single-user keeps the canonical
+	// 8081 default.
+	if req.Port == 0 {
+		if pair := s.devPortsForRequest(r); pair.MetroPort != 0 && pair.MetroPort != 8081 {
+			req.Port = pair.MetroPort
+		}
 	}
 
 	// Clear build marker if rebuild requested
@@ -1032,7 +1044,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	if err := s.devServerMgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port, DevServerTarget{
+	if err := mgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port, DevServerTarget{
 		DeviceID:    req.TargetDeviceID,
 		DeviceName:  req.TargetDeviceName,
 		DeviceClass: req.TargetDeviceClass,
@@ -1064,7 +1076,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 				// the sibling — concurrent expo starts on the same project
 				// occasionally race on watchman manifest writes.
 				time.Sleep(2 * time.Second)
-				if _, err := s.devServerMgr.StartWebPreview(); err != nil {
+				if _, err := mgr.StartWebPreview(); err != nil {
 					log.Printf("[dev] auto web-preview start (surface=web-reload) failed: %v", err)
 				}
 			}()
@@ -1072,7 +1084,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 
 	// Return immediately — server starts in background, mobile polls /dev/status
-	status := s.devServerMgr.Status()
+	status := mgr.Status()
 	if status == nil {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"running":   false,
@@ -1089,10 +1101,12 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 // handleDevServerStop stops the active dev server.
 // POST /dev/stop
 func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request) {
-	if s.devServerMgr == nil {
+	mgr := s.devMgrForRequest(r)
+	if mgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
+	_ = mgr // routed below via stopServingPreviewResult; kept for parity
 	if s.isolatedGuestDevMutationBlocked(w, r, "dev server stop") {
 		return
 	}
@@ -1513,7 +1527,8 @@ func (s *HTTPServer) sendPreviewWorkerReloadCommand() bool {
 // handleDevServerEvents streams dev server events via SSE.
 // GET /dev/events
 func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Request) {
-	if s.devServerMgr == nil {
+	mgr := s.devMgrForRequest(r)
+	if mgr == nil {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "dev server not available"})
 		return
 	}
@@ -1533,8 +1548,8 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	ch := s.devServerMgr.Subscribe()
-	defer s.devServerMgr.Unsubscribe(ch)
+	ch := mgr.Subscribe()
+	defer mgr.Unsubscribe(ch)
 
 	ctx := r.Context()
 	for {

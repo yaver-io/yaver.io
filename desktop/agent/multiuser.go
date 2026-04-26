@@ -31,6 +31,11 @@ type UserSession struct {
 	taskMgr     *TaskManager
 	feedbackMgr *FeedbackManager
 	blackboxMgr *BlackBoxManager
+	// devServerMgr is allocated lazily on the first /dev/start so an
+	// idle user doesn't spawn a manager. Each user's manager owns its
+	// own port slot from the shared DevPortAllocator.
+	devServerMgr *DevServerManager
+	devPorts     DevPortPair
 }
 
 // MultiUserManager orchestrates multiple user sessions on a shared machine.
@@ -55,6 +60,10 @@ type MultiUserManager struct {
 	// Shared resources (GPU services accessible by all users)
 	sharedOllamaURL       string // http://localhost:11434
 	sharedPersonaPlexURL  string // http://localhost:8765
+
+	// portAlloc hands out unique (Metro, ExpoWeb) port pairs to user
+	// sessions so they don't collide on the canonical 8081 / 19006.
+	portAlloc *DevPortAllocator
 }
 
 // MultiUserConfig holds configuration for multi-user mode.
@@ -81,10 +90,11 @@ func NewMultiUserManager(cfg MultiUserConfig) (*MultiUserManager, error) {
 	}
 
 	mgr := &MultiUserManager{
-		users:    make(map[string]*UserSession),
-		baseDir:  baseDir,
-		teamID:   cfg.TeamID,
-		maxUsers: cfg.MaxUsers,
+		users:     make(map[string]*UserSession),
+		baseDir:   baseDir,
+		teamID:    cfg.TeamID,
+		maxUsers:  cfg.MaxUsers,
+		portAlloc: NewDevPortAllocator(),
 	}
 
 	// Load existing user sessions from disk
@@ -184,6 +194,44 @@ func (m *MultiUserManager) GetSession(userID string) *UserSession {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.users[userID]
+}
+
+// EnsureDevServerMgr lazily attaches a DevServerManager + a reserved
+// port pair to the user's session. Idempotent — returns the existing
+// manager on repeat calls.
+func (m *MultiUserManager) EnsureDevServerMgr(userID string) (*DevServerManager, DevPortPair, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.users[userID]
+	if !ok {
+		return nil, DevPortPair{}, fmt.Errorf("no session for user %s", userID)
+	}
+	if session.devServerMgr != nil {
+		return session.devServerMgr, session.devPorts, nil
+	}
+	pair, err := m.portAlloc.Reserve(userID)
+	if err != nil {
+		return nil, DevPortPair{}, err
+	}
+	session.devServerMgr = NewDevServerManager()
+	session.devPorts = pair
+	log.Printf("[multiuser] DevServerManager allocated for %s (slot=%d, metro=%d, web=%d)",
+		userID[:min(8, len(userID))], pair.Slot, pair.MetroPort, pair.WebPort)
+	return session.devServerMgr, pair, nil
+}
+
+// ReleaseDevServerMgr stops + drops a user's dev server. Called on
+// session removal so port slots get freed for the next user.
+func (m *MultiUserManager) ReleaseDevServerMgr(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.users[userID]
+	if !ok || session.devServerMgr == nil {
+		return
+	}
+	_ = session.devServerMgr.Stop()
+	session.devServerMgr = nil
+	m.portAlloc.Release(userID)
 }
 
 // ListUsers returns info about all active user sessions.

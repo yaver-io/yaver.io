@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
-import { agentClient, AgentClient, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
+import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -76,6 +76,26 @@ function formatLastSeen(value: string | undefined): string {
   const day = Math.floor(hr / 24);
   if (day < 7) return `${day}d ago`;
   return new Date(ts).toLocaleDateString();
+}
+
+function normalizeSemver(value: string | undefined | null): [number, number, number] | null {
+  const raw = String(value || "").trim().replace(/^v/i, "");
+  if (!raw) return null;
+  const [major, minor, patch] = raw.split(".");
+  const a = Number.parseInt(major || "0", 10);
+  const b = Number.parseInt(minor || "0", 10);
+  const c = Number.parseInt((patch || "0").replace(/[^0-9].*$/, ""), 10);
+  if ([a, b, c].some((n) => Number.isNaN(n))) return null;
+  return [a, b, c];
+}
+
+function isVersionOutdated(current: string | undefined | null, latest: string | undefined | null): boolean {
+  const c = normalizeSemver(current);
+  const l = normalizeSemver(latest);
+  if (!c || !l) return false;
+  if (l[0] !== c[0]) return l[0] > c[0];
+  if (l[1] !== c[1]) return l[1] > c[1];
+  return l[2] > c[2];
 }
 
 function lastSeenAgeMs(value: string | undefined): number | null {
@@ -573,6 +593,74 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
   return { info, error, loading };
 }
 
+function useDeviceAgentUpdate(device: Device, enabled: boolean, token: string | null | undefined) {
+  const [status, setStatus] = useState<AgentUpdateStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [updating, setUpdating] = useState(false);
+
+  const connectClient = useCallback(async () => {
+    if (!token) throw new Error("not signed in");
+    const client = new AgentClient();
+    client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
+    const tunnelUrls = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+          ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+        ]
+          .map((u) => String(u || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+    return client;
+  }, [token, device.host, device.port, device.id, device.publicEndpoints, device.tunnelUrl]);
+
+  const refresh = useCallback(async () => {
+    if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
+    setLoading(true);
+    setError(null);
+    let client: AgentClient | null = null;
+    try {
+      client = await connectClient();
+      const next = await client.getAgentUpdateStatus();
+      setStatus(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed to fetch update status");
+    } finally {
+      setLoading(false);
+      try { client?.disconnect(); } catch {}
+    }
+  }, [enabled, token, device.online, device.workspaceLive, connectClient]);
+
+  const trigger = useCallback(async () => {
+    if (!token) throw new Error("not signed in");
+    setUpdating(true);
+    setError(null);
+    let client: AgentClient | null = null;
+    try {
+      client = await connectClient();
+      const res = await client.triggerAgentUpdate();
+      await refresh();
+      return res;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "failed to trigger update";
+      setError(msg);
+      throw err;
+    } finally {
+      setUpdating(false);
+      try { client?.disconnect(); } catch {}
+    }
+  }, [token, connectClient, refresh]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { status, error, loading, updating, refresh, trigger };
+}
+
 interface DeviceProjectInfo {
   name: string;
   path?: string;
@@ -1016,6 +1104,7 @@ export default function DevicesView({
                     </div>
                     <p className="text-sm text-surface-500">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
+                      {device.agentVersion ? ` · v${String(device.agentVersion).replace(/^v/i, "")}` : ""}
                       {device.probeState === "ok" && device.probePath ? ` · probed via ${device.probePath}` : ""}
                       {device.probeState === "auth-expired" ? " · auth expired" : ""}
                     </p>
@@ -1352,6 +1441,8 @@ function InlinePingButton({ device, token }: { device: Device; token: string | n
 
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
+  const { status: updateStatus, error: updateError, loading: updateLoading, updating, trigger: triggerUpdate } =
+    useDeviceAgentUpdate(device, true, token);
   const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
   const { pingState, ping } = useDevicePing(device, token);
   // Guests list /projects under a host-shared-scope allowlist but we
@@ -1391,6 +1482,11 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
   };
+  const currentVersion = typeof effectiveInfo?.version === "string" && effectiveInfo.version.trim()
+    ? effectiveInfo.version
+    : device.agentVersion;
+  const latestVersion = updateStatus?.latestVersion;
+  const outdated = updateStatus?.updateAvailable || isVersionOutdated(currentVersion, latestVersion);
 
   // Defensive coercion: agent /info shapes drift between versions
   // (e.g. autoStart used to be a boolean and became {enabled, type}
@@ -1423,7 +1519,23 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
 
   return (
     <div className="mt-3 rounded-lg border border-surface-800 bg-surface-900/40 p-3">
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex flex-wrap justify-end gap-2">
+        {outdated && latestVersion ? (
+          <button
+            onClick={() => {
+              void triggerUpdate()
+                .then((res) => {
+                  if (res?.message) alert(res.message);
+                })
+                .catch((e: any) => alert(`Failed to trigger update: ${e?.message ?? e}`));
+            }}
+            disabled={updating || updateStatus?.updating}
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:border-amber-400 hover:text-amber-100 disabled:opacity-50"
+            title={`Update this machine from ${currentVersion || "current"} to ${latestVersion}. The agent may restart and disconnect briefly.`}
+          >
+            {updating || updateStatus?.updating ? "Updating..." : `Update to v${String(latestVersion).replace(/^v/i, "")}`}
+          </button>
+        ) : null}
         <button
           onClick={() => void ping()}
           disabled={pingState.pinging}
@@ -1464,11 +1576,23 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("Reachability", deviceReachabilitySummary(device))}
           {row("Last agent signal", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
           {row(
-            "Version",
-            effectiveInfo?.version ||
-              device.agentVersion ||
-              <span className="text-surface-600">no version info</span>,
+            "Yaver version",
+            <span className="inline-flex flex-wrap items-center justify-end gap-2">
+              <span>{currentVersion || <span className="text-surface-600">no version info</span>}</span>
+              {latestVersion ? (
+                <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
+                  outdated
+                    ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                }`}>
+                  {outdated ? `latest v${String(latestVersion).replace(/^v/i, "")} available` : `latest v${String(latestVersion).replace(/^v/i, "")}`}
+                </span>
+              ) : updateLoading ? (
+                <span className="text-surface-500">checking latest…</span>
+              ) : null}
+            </span>,
           )}
+          {row("Auto-update", updateStatus ? (updateStatus.autoUpdateEnabled ? "Enabled" : "Disabled") : null)}
           {row("Platform", effectiveInfo?.platform || device.platform)}
           {row("Architecture", arch)}
           {row("Kernel", kernel)}
@@ -1555,7 +1679,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           ) : (
             <div className="flex flex-wrap gap-1.5">
               {(device.sharedProjects || []).map((p) => (
-                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+                <span key={`pp:${device.id}:${p}`} className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-amber-200">
                   {p}
                 </span>
               ))}
@@ -1569,6 +1693,11 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       {error ? (
         <p className="mt-3 text-[11px] text-surface-600">
           Runtime info unavailable from the agent transport ({error}). Showing {device.probeInfo ? "last authenticated probe + cached registry fields" : "cached registry fields only"}.
+        </p>
+      ) : null}
+      {updateError ? (
+        <p className="mt-2 text-[11px] text-surface-600">
+          Update status unavailable ({updateError}).
         </p>
       ) : null}
       <div className="mt-3 flex justify-end border-t border-surface-800/60 pt-2">

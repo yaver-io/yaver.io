@@ -660,6 +660,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vibing/deploy", s.authSDKOrGuest(s.handleVibingDeploy))
 	mux.HandleFunc("/vibing/execute", s.authSDKOrGuest(s.handleVibingExecute))
 	mux.HandleFunc("/vibing/surprise", s.authSDKOrGuest(s.handleVibingSurprise))
+	mux.HandleFunc("/vibing/project/remote", s.auth(s.handleProjectRemote))
 
 	// Recovery: central catalog of fix prompts routed to the wrapped AI agent.
 	mux.HandleFunc("/recover", s.auth(s.handleRecover))
