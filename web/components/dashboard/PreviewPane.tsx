@@ -328,6 +328,12 @@ export default function PreviewPane({
     });
   }, []);
 
+  // One-shot repair guard — survives effect re-runs so a stale
+  // relay password (server-side infra issue) doesn't put us in a
+  // 200x/sec retry storm with the strip blinking through the same
+  // error 200 times. After one failed repair we stop trying;
+  // a real fix has to happen on the relay/Convex side.
+  const repairAttemptedRef = useRef(false);
   useEffect(() => {
     const eventsUrl = agentClient.devEventsUrl;
     setSseUrl(eventsUrl);
@@ -370,40 +376,42 @@ export default function PreviewPane({
       setSseState("open");
       setSseError(null);
     };
-    let repairAttempted = false;
     es.onerror = () => {
-      // EventSource auto-reconnects on transient errors; we only
-      // flip to "error" state when the connection is permanently
-      // closed (readyState===CLOSED). Otherwise leave UI as-is so
-      // it doesn't flicker on every transient disconnect.
-      if (es.readyState === EventSource.CLOSED) {
-        // First close = likely stale relay password (relay returned
-        // 401 invalid relay password before any event flowed). Mirror
-        // the Cloudflare Worker's auto-repair: call
-        // /settings/repair-relay then bump agentReady so the
-        // useEffect re-runs with the freshly-rotated password.
-        if (!repairAttempted && totalEvents === 0) {
-          repairAttempted = true;
-          setSseState("error");
-          setSseError("auth handshake failed — repairing relay password…");
-          (async () => {
-            const r = await agentClient.repairRelayPassword();
-            if (r.ok) {
-              // Force re-run of the SSE useEffect by toggling the
-              // dependency. setAgentReady to false then true triggers
-              // the effect's cleanup + re-mount with the new password
-              // baked into devEventsUrl.
-              setAgentReady(false);
-              setTimeout(() => setAgentReady(agentClient.connectionState === "connected" && Boolean(agentClient.devEventsUrl)), 50);
-            } else {
-              setSseError(`repair-relay failed: ${r.error || "unknown"}`);
-            }
-          })();
-          return;
-        }
+      if (es.readyState !== EventSource.CLOSED) return; // transient — let auto-reconnect handle
+      // First close, no events flowed yet → try ONE repair, then
+      // give up so we don't spam the strip with #225 retries.
+      if (!repairAttemptedRef.current && totalEvents === 0) {
+        repairAttemptedRef.current = true;
         setSseState("error");
-        setSseError("EventSource closed (browser/relay dropped the stream)");
+        setSseError("relay password mismatch — attempting one-shot repair…");
+        es.close();
+        (async () => {
+          const r = await agentClient.repairRelayPassword();
+          if (r.ok) {
+            // Toggle agentReady so the SSE effect re-runs once with
+            // the rotated password. If THIS attempt also fails, the
+            // ref guard above keeps us at one error message instead
+            // of looping.
+            setAgentReady(false);
+            setTimeout(
+              () => setAgentReady(agentClient.connectionState === "connected" && Boolean(agentClient.devEventsUrl)),
+              80,
+            );
+          } else {
+            setSseError(`relay password mismatch — repair failed (${r.error || "unknown"}). Server-side infra issue; click Reconnect & Fix or contact ops.`);
+          }
+        })();
+        return;
       }
+      // Already tried repair, still failing → freeze the strip on a
+      // clear error and stop the close-loop. EventSource is closed
+      // permanently; nothing else we can do client-side.
+      setSseState("error");
+      setSseError(
+        repairAttemptedRef.current
+          ? "EventSource closed after repair — relay/Convex password are out of sync. Server-side fix needed."
+          : "EventSource closed (browser/relay dropped the stream)",
+      );
     };
     es.onmessage = (msg) => {
       try {
