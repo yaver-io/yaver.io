@@ -297,8 +297,12 @@ export default function PreviewPane({
   // never just "(waiting for output…)" — instead it tells the user
   // exactly what stage the SSE pipeline is in (handshake → open →
   // first event), how many events have arrived, and any error.
-  const [agentReady, setAgentReady] = useState(() => Boolean(agentClient.devEventsUrl));
-  const [connState, setConnState] = useState<string>("unknown");
+  const [agentReady, setAgentReady] = useState(() => agentClient.connectionState === "connected" && Boolean(agentClient.devEventsUrl));
+  // Seed connState from agentClient's current state instead of "unknown" —
+  // the page often mounts AFTER the connect event fired, so the
+  // listener-only path was missing the initial transition and we
+  // showed a misleading "agent: unknown" forever.
+  const [connState, setConnState] = useState<string>(() => agentClient.connectionState || "unknown");
   const [sseState, setSseState] = useState<"idle" | "opening" | "open" | "closed" | "error">("idle");
   const [sseError, setSseError] = useState<string | null>(null);
   const [sseUrl, setSseUrl] = useState<string | null>(null);
@@ -307,6 +311,10 @@ export default function PreviewPane({
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
 
   useEffect(() => {
+    // Re-sync once on mount in case the connect event fired between
+    // the useState initializer and effect registration.
+    setConnState(agentClient.connectionState || "unknown");
+    setAgentReady(agentClient.connectionState === "connected" && Boolean(agentClient.devEventsUrl));
     return agentClient.on("connectionState", (state) => {
       setConnState(state);
       setAgentReady(state === "connected" && Boolean(agentClient.devEventsUrl));

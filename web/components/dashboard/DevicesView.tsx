@@ -775,6 +775,19 @@ function usePrimaryDeviceId(token: string | null | undefined): {
 // duplicating the Convex round-trip. Hooks used in two trees still
 // fire two fetches, but they use Convex's HTTP cache so it's cheap;
 // long-term we should hoist this to a shared context.
+// Custom event broadcast across all usePrimaryRunnerByDevice
+// instances so sidebar + Devices tab + Chat tab all refetch
+// whenever any one of them saves a new primary runner. Without this
+// the sidebar device card kept showing stale "Claude Code" after
+// the user picked Codex from the Devices tab — each hook instance
+// had its own state map and never observed the other's optimistic
+// update.
+const PRIMARY_RUNNER_EVENT = "yaver:primary-runner-changed";
+function broadcastPrimaryRunnerChange() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(PRIMARY_RUNNER_EVENT));
+}
+
 export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   primaryRunnerByDevice: Record<string, string>;
   /** Per-device model hint (optional) — `claude-opus-4-7`, `gpt-5-codex`,
@@ -785,6 +798,14 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
 } {
   const [runnerMap, setRunnerMap] = useState<Record<string, string>>({});
   const [modelMap, setModelMap] = useState<Record<string, string>>({});
+  const [refreshNonce, setRefreshNonce] = useState(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onChange = () => setRefreshNonce((n) => n + 1);
+    window.addEventListener(PRIMARY_RUNNER_EVENT, onChange);
+    return () => window.removeEventListener(PRIMARY_RUNNER_EVENT, onChange);
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -815,7 +836,7 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
       }
     })();
     return () => { cancelled = true; };
-  }, [token]);
+  }, [token, refreshNonce]);
 
   const setPrimaryRunner = useCallback(
     async (deviceId: string, runnerId: string | null, model?: string | null) => {
@@ -852,6 +873,9 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
           body: JSON.stringify(body),
         });
         if (!res.ok) throw new Error(`status ${res.status}`);
+        // Tell every other hook instance (sidebar, Chat tab, Webview)
+        // to refetch so they show the new primary runner immediately.
+        broadcastPrimaryRunnerChange();
       } catch (e) {
         setRunnerMap(previousRunner);
         setModelMap(previousModel);
