@@ -13,6 +13,35 @@ import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
 import { loadApp, onBundleEvent } from "../lib/bundleLoader";
+import { VibePreviewModal } from "./VibePreviewModal";
+
+// Web frameworks where the vibe-preview modal makes sense — chromedp on
+// the agent host can navigate to the dev server URL and capture frames.
+// Native RN/Expo runs in this very mobile app, not in headless Chrome,
+// so the modal isn't useful for those.
+function isWebFrameworkForVibePreview(status: DevServerStatus | null): boolean {
+  const framework = String(status?.framework || "").toLowerCase();
+  return framework === "vite" || framework === "nextjs" || framework === "next" ||
+    framework === "astro" || framework === "web" || status?.devMode === "web";
+}
+
+// Best-effort project name for the vibe-preview session. The agent's
+// devserver_http.go reports workDir on /dev/status; the trailing path
+// segment is what humans recognise as the project name.
+function vibePreviewProjectFromStatus(status: DevServerStatus | null): string {
+  const wd = status?.workDir;
+  if (!wd) return "vibe-preview";
+  const segs = wd.split("/").filter(Boolean);
+  return segs[segs.length - 1] || "vibe-preview";
+}
+
+// Dev-server URL the agent's chromedp will navigate to. Always
+// localhost from the agent's perspective — the headless Chrome runs
+// on the same host as the dev server.
+function vibePreviewTargetUrlFromStatus(status: DevServerStatus | null): string {
+  const port = status?.port || 3000;
+  return `http://127.0.0.1:${port}`;
+}
 
 /**
  * Dev Preview.
@@ -35,6 +64,7 @@ export function DevPreview() {
   const c = useColors();
   const [status, setStatus] = useState<DevServerStatus | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [showVibePreview, setShowVibePreview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
   const wasRunning = useRef(false);
@@ -300,6 +330,19 @@ export function DevPreview() {
               <Text style={styles.bannerArrow}>{"\u203A"}</Text>
             </>
           )}
+          {!status.building && isWebFrameworkForVibePreview(status) && (
+            <Pressable
+              onPress={(e) => {
+                e.stopPropagation?.();
+                setShowVibePreview(true);
+              }}
+              hitSlop={8}
+              style={({ pressed }) => [styles.bannerStopBtn, pressed && { opacity: 0.6 }]}
+              accessibilityLabel="Open Vibe Preview live stream"
+            >
+              <Text style={styles.bannerStopText}>🎬 Vibe</Text>
+            </Pressable>
+          )}
           {!status.building && (
             <Pressable
               onPress={(e) => { e.stopPropagation?.(); handleStop(); }}
@@ -311,6 +354,12 @@ export function DevPreview() {
           )}
         </View>
       </Pressable>
+      <VibePreviewModal
+        visible={showVibePreview}
+        project={vibePreviewProjectFromStatus(status)}
+        targetUrl={vibePreviewTargetUrlFromStatus(status)}
+        onClose={() => setShowVibePreview(false)}
+      />
 
       {/* Full-screen WebView Modal */}
       <Modal visible={showPreview} animationType="slide" onRequestClose={() => setShowPreview(false)}>
