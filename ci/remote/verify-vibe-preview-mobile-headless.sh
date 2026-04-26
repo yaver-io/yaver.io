@@ -149,31 +149,47 @@ if [ "$direct_status" != "200" ]; then
   echo " think it is.)"
 fi
 
-banner "mobile-headless: sign-in + ops info"
+banner "mobile-headless: ops info (env-based auth)"
 export YMH_AGENT_URL="http://127.0.0.1:$AGENT_PORT"
-# mobile-headless's sign-in writes the token into its data-dir, but
-# subsequent CLI invocations don't always re-read it (depends on
-# defaults). Pass --token explicitly on every call so we don't depend
-# on persistence — exactly what a real mobile client does (token
-# kept in-memory and attached to every request).
-YMH=(yaver-mobile-headless --token "$TEST_TOKEN")
-"${YMH[@]}" sign-in --token "$TEST_TOKEN"
-"${YMH[@]}" ops --verb info | head -5
-"${YMH[@]}" ops-verbs | jq '.verbs | map(select(.name=="vibe_preview")) | .[0]'
+# Each yaver-mobile-headless CLI invocation is a fresh Node process —
+# `sign-in` is a no-op that just sets in-memory state, lost on exit.
+# YMH_AUTH_TOKEN env var is read by the MobileClient constructor and
+# survives every fork-exec. Cleaner than threading --token everywhere.
+export YMH_AUTH_TOKEN="$TEST_TOKEN"
+
+# Verbose for the first call so we can see exactly what mobile-headless
+# does. After that swallow the noise.
+echo "YMH_AUTH_TOKEN=${YMH_AUTH_TOKEN:0:20}…"
+echo "YMH_AGENT_URL=$YMH_AGENT_URL"
+
+set +e
+INFO_OUT="$(yaver-mobile-headless ops --verb info 2>&1)"
+INFO_RC=$?
+set -e
+echo "[ops info] rc=$INFO_RC"
+echo "$INFO_OUT" | head -10
+if [ "$INFO_RC" -ne 0 ]; then
+  echo "ops info failed — agent log tail:"
+  tail -40 /tmp/yaver-serve.log
+  exit 1
+fi
+
+yaver-mobile-headless ops-verbs \
+  | jq '.verbs | map(select(.name=="vibe_preview")) | .[0]'
 
 banner "mobile-headless: vibe_preview start"
-"${YMH[@]}" ops --verb vibe_preview \
+yaver-mobile-headless ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" --arg u "http://127.0.0.1:$DEV_SERVER_PORT" \
     '{op:"start", project:$p, target_url:$u, mode:"change-only"}')" \
   | jq
 
 banner "mobile-headless: vibe_preview status"
-"${YMH[@]}" ops --verb vibe_preview \
+yaver-mobile-headless ops --verb vibe_preview \
   --payload '{"op":"status"}' \
   | jq '.initial.sessions | length, .initial.sessions[0].project'
 
 banner "mobile-headless: vibe_preview snapshot"
-SNAP="$("${YMH[@]}" ops --verb vibe_preview \
+SNAP="$(yaver-mobile-headless ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"snapshot",project:$p}')")"
 echo "$SNAP" | jq
 HASH="$(echo "$SNAP" | jq -r '.initial.hash // empty')"
@@ -197,12 +213,12 @@ else
 fi
 
 banner "mobile-headless: vibe_preview summaries"
-"${YMH[@]}" ops --verb vibe_preview \
+yaver-mobile-headless ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"summaries",project:$p,limit:10}')" \
   | jq
 
 banner "mobile-headless: vibe_preview stop"
-"${YMH[@]}" ops --verb vibe_preview \
+yaver-mobile-headless ops --verb vibe_preview \
   --payload "$(jq -nc --arg p "$PROJECT" '{op:"stop",project:$p}')" \
   | jq
 
