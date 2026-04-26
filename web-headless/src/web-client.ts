@@ -39,11 +39,14 @@ export interface RelayConfig {
 }
 
 export interface DeviceRow {
-  id: string;
+  // Convex /devices/list emits `deviceId` (not `id`) and `isOnline`
+  // (not `online`). Don't add aliases — the agent + web client must
+  // match the actual JSON shape, not what feels nice in TS.
+  deviceId: string;
   name: string;
   host?: string;
   port?: number;
-  online?: boolean;
+  isOnline?: boolean;
   isGuest?: boolean;
   hostName?: string;
   hostEmail?: string;

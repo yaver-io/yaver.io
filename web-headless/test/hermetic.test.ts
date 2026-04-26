@@ -81,8 +81,8 @@ describe("WebClient — Convex surface", () => {
         res.end(
           JSON.stringify({
             devices: [
-              { id: "d1", name: "mac-mini", online: true },
-              { id: "d2", name: "yaver-test-ephemeral", online: true, lanIps: ["10.0.0.5"] },
+              { deviceId: "d1", name: "mac-mini", isOnline: true },
+              { deviceId: "d2", name: "yaver-test-ephemeral", isOnline: true, lanIps: ["10.0.0.5"] },
             ],
           }),
         );
@@ -128,7 +128,7 @@ describe("WebClient — Convex surface", () => {
     const c = new WebClient({ convexUrl: convex.url, token: "abc" });
     const devs = await c.listDevices();
     expect(devs).toHaveLength(2);
-    expect(devs[0].id).toBe("d1");
+    expect(devs[0].deviceId).toBe("d1");
     expect(devs[1].lanIps).toEqual(["10.0.0.5"]);
   });
 

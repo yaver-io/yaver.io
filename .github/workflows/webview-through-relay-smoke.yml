@@ -87,8 +87,12 @@ jobs:
 
           echo "=== devices ==="
           DEVS=$($NODE devices)
-          echo "$DEVS" | jq '.[] | {id, name, isOnline, ownerId}'
-          if ! echo "$DEVS" | jq -e --arg id "$YAVER_DEVICE_ID" '.[] | select(.id == $id)' >/dev/null; then
+          # Convex /devices/list emits deviceId (not id) + isOnline
+          # + hostName + hostEmail. The DeviceRow type in
+          # web-headless/src/web-client.ts was wrong (called it id)
+          # so just match on deviceId here.
+          echo "$DEVS" | jq '.[] | {deviceId, name, isOnline}'
+          if ! echo "$DEVS" | jq -e --arg id "$YAVER_DEVICE_ID" '.[] | select(.deviceId == $id)' >/dev/null; then
             echo "::error::test box not in devices list"
             exit 1
           fi
