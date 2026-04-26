@@ -74,17 +74,43 @@ jobs:
           fi
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Use operator-supplied root password (only if needed)
+      - name: Reset password via Hetzner API + wait for propagation (only if needed)
         if: env.CI_KEY_WORKS == '0'
         env:
-          PW: ${{ secrets.HETZNER_PUBLIC_RELAY_SERVER_PASSWORD }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
+          # Fresh reset every run so any stale password (manual or
+          # earlier CI run) doesn't fight us. Hetzner takes 30-60s
+          # for the new password to propagate to sshd.
+          RESP=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/reset_password")
+          PW=$(echo "$RESP" | jq -r '.root_password // empty')
           if [ -z "$PW" ]; then
-            echo "::error::HETZNER_PUBLIC_RELAY_SERVER_PASSWORD is empty"
+            echo "::error::reset_password didn't return a password. Response:"
+            echo "$RESP" | jq '.'
             exit 2
           fi
-          # PW is already a GitHub secret so it's masked in logs by default.
+          echo "::add-mask::$PW"
           echo "RELAY_ROOT_PW=$PW" >> "$GITHUB_ENV"
+          # Poll until sshd accepts the password instead of fixed sleep.
+          # Try every 5s for up to 90s.
+          echo "Waiting for password propagation (up to 90s)…"
+          for i in $(seq 1 18); do
+            sleep 5
+            if sshpass -p "$PW" \
+              ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                  -o ConnectTimeout=5 -o NumberOfPasswordPrompts=1 \
+                  "root@$RELAY_IP" 'true' 2>/dev/null; then
+              echo "  ✓ password accepted after ${i} attempts (~$((i*5))s)"
+              exit 0
+            fi
+            echo "  attempt $i/18 — not yet"
+          done
+          echo "::error::Password never propagated to sshd after 90s"
+          exit 2
 
       - name: Derive CI public key
         env:
