@@ -1554,6 +1554,14 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	// Flush an initial keepalive immediately — Cloudflare's TTFB
+	// timeout is shorter than our 15-s ticker, so without an initial
+	// byte the edge declares the upstream stalled before the first
+	// real event ever arrives. SSE comments are ignored by the
+	// browser but they get the response chunked-encoding rolling.
+	fmt.Fprintf(w, ":hello %d\n\n", time.Now().Unix())
+	flusher.Flush()
+
 	ch := mgr.Subscribe()
 	defer mgr.Unsubscribe(ch)
 

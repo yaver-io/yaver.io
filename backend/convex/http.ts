@@ -1761,6 +1761,14 @@ http.route({
       keyStorage: body.keyStorage,
       // Client sends null to clear the preference, undefined to leave untouched.
       primaryDeviceId: body.primaryDeviceId,
+      // Per-device coding agent — forwarded to the mutation's
+      // primaryRunnerByDevice merge logic. Without this forward the
+      // field was silently dropped at the HTTP boundary, every
+      // Confirm click no-op'd, and the sidebar kept falling back
+      // to whichever runner was first in device.runners[]
+      // (= Claude Code on a Linux box that happens to have it
+      // installed).
+      primaryRunnerForDevice: body.primaryRunnerForDevice,
       // Per-subsystem managed toggle. Client sends only the
       // subsystem(s) it's changing; backend merges the patch into
       // the existing record so other subsystems' toggles are
