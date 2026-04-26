@@ -17,6 +17,7 @@ import { Device, RunnerInfo, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
 
@@ -220,6 +221,10 @@ function DeviceCard({
   const [runtimeLabel, setRuntimeLabel] = useState<string | null>(null);
   const [gitProviders, setGitProviders] = useState<GitProviderSummary | null>(null);
   const [projectSummary, setProjectSummary] = useState<DeviceProjectSummary | null>(null);
+  // Re-auth a remote runner CLI (claude / codex) on this device by
+  // running the same /runner-auth/browser flow the web UI uses.
+  // `runnerAuthOpenFor` is the runner id when the modal is open.
+  const [runnerAuthOpenFor, setRunnerAuthOpenFor] = useState<string | null>(null);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
@@ -759,6 +764,32 @@ function DeviceCard({
                 </Text>
               </Pressable>
             )}
+            {/* Re-auth a remote coding-agent CLI (Claude Code / Codex)
+                running on this device. Both run their own OAuth flow
+                through /runner-auth/browser/start; the modal walks the
+                user through the URL → callback code → submit step.
+                Only show on devices we're connected to or can route
+                through (skip offline guests). */}
+            {!device.isGuest && (isOnline || directReachable) ? (
+              <>
+                <Pressable
+                  style={[styles.menuActionBtn, { backgroundColor: "#8b5cf618" }]}
+                  onPress={() => setRunnerAuthOpenFor("claude")}
+                >
+                  <Text style={[styles.menuActionText, { color: "#a78bfa" }]}>
+                    Sign in: Claude Code
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.menuActionBtn, { backgroundColor: "#06b6d418" }]}
+                  onPress={() => setRunnerAuthOpenFor("codex")}
+                >
+                  <Text style={[styles.menuActionText, { color: "#22d3ee" }]}>
+                    Sign in: Codex
+                  </Text>
+                </Pressable>
+              </>
+            ) : null}
             {!device.isGuest ? (
               <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
                 <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
@@ -847,6 +878,18 @@ function DeviceCard({
           )}
         </View>
       </View>
+      <RunnerAuthModal
+        visible={runnerAuthOpenFor !== null}
+        runner={runnerAuthOpenFor || ""}
+        deviceName={device.name || device.hostName || "this machine"}
+        onClose={() => setRunnerAuthOpenFor(null)}
+        onCompleted={() => {
+          // Modal handles its own close-on-success; nothing else to
+          // do here — the agent's /info poll picks up the new
+          // authConfigured state on its next tick and drops the
+          // [SIGN IN] badge automatically.
+        }}
+      />
     </Pressable>
   );
 }

@@ -1050,6 +1050,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Start guest list refresh goroutine (polls Convex every 60s)
 	go s.refreshGuestList(ctx)
 
+	// Proactively probe runner-CLI tokens every 6h so a Claude Code /
+	// Codex token rotation surfaces in the dashboard's [SIGN IN]
+	// badge BEFORE the user kicks off a task and watches it die at
+	// iteration 1. Reuses the existing /runner-auth/status pipeline
+	// — collectRunnerAuthStatusRows() runs the same lightweight
+	// CLI checks the dashboard polls, and syncRunnerAuthIncidents()
+	// folds any "authConfigured flipped false" results into the dev
+	// incidents Convex stream the mobile app already consumes.
+	go s.runnerAuthHealthLoop(ctx)
+
 	log.Printf("HTTP server listening on 0.0.0.0:%d", s.port)
 	if len(s.allowedCIDRs) > 0 {
 		cidrs := make([]string, len(s.allowedCIDRs))

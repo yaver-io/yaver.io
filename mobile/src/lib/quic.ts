@@ -649,6 +649,23 @@ export interface RunnerAuthStatusRow {
   error?: string;
   path?: string;
   detail?: string;
+  needsAuth?: boolean;
+}
+
+/**
+ * Mirrors desktop/agent/runner_auth_browser_http.go's session shape.
+ * Used by all four /runner-auth/browser/* endpoints to track an
+ * in-flight OAuth handshake on a remote runner CLI (claude / codex).
+ */
+export interface RunnerBrowserAuthSession {
+  id: string;
+  runner: string;
+  status: "pending" | "running" | "awaiting-code" | "completed" | "failed" | "cancelled";
+  openUrl?: string;
+  code?: string;
+  detail?: string;
+  error?: string;
+  authConfigured?: boolean;
 }
 
 export interface RunnerAuthSetParams {
@@ -2330,6 +2347,89 @@ export class QuicClient {
       throw new Error(`testRunner(${runner}) ${res.status}: ${body || res.statusText}`);
     }
     return (await res.json()) as RunnerTestResult;
+  }
+
+  /**
+   * Start a browser-based OAuth flow for a runner CLI (claude / codex)
+   * on the connected agent OR on a peer device routed via /peer/<id>.
+   * Mirrors the web AgentClient.startRunnerBrowserAuth — see
+   * desktop/agent/runner_auth_browser_http.go.
+   *
+   * Returns a session record with `id`, `openUrl`, optional `code`,
+   * and `status`. Caller polls /runner-auth/browser/status until it
+   * flips to "completed" / "failed" / "cancelled". For Claude Code
+   * specifically the user must paste the callback code back via
+   * submitRunnerBrowserAuthCode().
+   */
+  async startRunnerBrowserAuth(
+    runner: string,
+    target?: string,
+  ): Promise<RunnerBrowserAuthSession> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
+      : `${this.baseUrl}/runner-auth/browser/start`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ runner }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `startRunnerBrowserAuth ${res.status}`);
+    }
+    return data as RunnerBrowserAuthSession;
+  }
+
+  async getRunnerBrowserAuthStatus(
+    sessionId: string,
+    target?: string,
+  ): Promise<RunnerBrowserAuthSession> {
+    if (!this.isConnected && !this.hasConnectionInfo) {
+      throw new Error("agent not reachable");
+    }
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/status`
+      : `${this.baseUrl}/runner-auth/browser/status`;
+    const url = new URL(base);
+    url.searchParams.set("id", sessionId);
+    const res = await fetch(url.toString(), { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `getRunnerBrowserAuthStatus ${res.status}`);
+    }
+    return data as RunnerBrowserAuthSession;
+  }
+
+  async cancelRunnerBrowserAuth(sessionId: string, target?: string): Promise<void> {
+    if (!this.isConnected && !this.hasConnectionInfo) return;
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/cancel`
+      : `${this.baseUrl}/runner-auth/browser/cancel`;
+    const url = new URL(base);
+    url.searchParams.set("id", sessionId);
+    await fetch(url.toString(), { method: "POST", headers: this.authHeaders }).catch(() => {});
+  }
+
+  async submitRunnerBrowserAuthCode(
+    sessionId: string,
+    code: string,
+    target?: string,
+  ): Promise<RunnerBrowserAuthSession> {
+    this.assertConnected();
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/submit-code`
+      : `${this.baseUrl}/runner-auth/browser/submit-code`;
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: sessionId, code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `submitRunnerBrowserAuthCode ${res.status}`);
+    }
+    return data as RunnerBrowserAuthSession;
   }
 
   async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {
