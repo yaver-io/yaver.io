@@ -12570,6 +12570,112 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		data, _ := json.Marshal(evalResult)
 		return mcpToolResult(string(data))
 
+	// --- Vibe Preview ---
+	// Schemas live in mcp_tools.go (vibePreviewTools); these are the
+	// dispatchers that turn a JSON-RPC tools/call into a manager call.
+
+	case "vibe_preview_start":
+		if s.vibePreviewMgr == nil {
+			return mcpToolError("vibe-preview manager not initialised")
+		}
+		var args struct {
+			Project   string `json:"project"`
+			TargetURL string `json:"target_url"`
+			Mode      string `json:"mode"`
+			Profile   string `json:"profile"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		sess, err := s.vibePreviewMgr.Start(VibePreviewStartOpts{
+			Project:   args.Project,
+			TargetURL: args.TargetURL,
+			Mode:      VibePreviewMode(args.Mode),
+			Profile:   args.Profile,
+		})
+		if err != nil {
+			return mcpToolError("vibe_preview_start: " + err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"session": sess})
+
+	case "vibe_preview_stop":
+		if s.vibePreviewMgr == nil {
+			return mcpToolError("vibe-preview manager not initialised")
+		}
+		var args struct {
+			Project string `json:"project"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		if err := s.vibePreviewMgr.Stop(args.Project); err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true})
+
+	case "vibe_preview_status":
+		if s.vibePreviewMgr == nil {
+			return mcpToolJSON(map[string]interface{}{"sessions": []interface{}{}})
+		}
+		return mcpToolJSON(map[string]interface{}{"sessions": s.vibePreviewMgr.Status()})
+
+	case "vibe_preview_snapshot":
+		if s.vibePreviewMgr == nil {
+			return mcpToolError("vibe-preview manager not initialised")
+		}
+		var args struct {
+			Project string `json:"project"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		rec, err := s.vibePreviewMgr.Snapshot(args.Project)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{
+			"seq":  rec.Seq,
+			"hash": rec.Hash,
+			"size": len(rec.Bytes),
+		})
+
+	case "vibe_preview_clip_record":
+		if s.vibePreviewMgr == nil {
+			return mcpToolError("vibe-preview manager not initialised")
+		}
+		var args struct {
+			Project        string `json:"project"`
+			Source         string `json:"source"`
+			DurationMaxSec int    `json:"duration_max_sec"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		rec, err := s.vibePreviewMgr.StartClip(VibeClipStartOpts{
+			Project:        args.Project,
+			Source:         VibeClipSource(args.Source),
+			DurationMaxSec: args.DurationMaxSec,
+		})
+		if err != nil {
+			return mcpToolError("vibe_preview_clip_record: " + err.Error())
+		}
+		return mcpToolJSON(map[string]interface{}{"clip": rec})
+
+	case "vibe_preview_clips":
+		if s.vibePreviewMgr == nil {
+			return mcpToolJSON(map[string]interface{}{"clips": []interface{}{}})
+		}
+		var args struct {
+			Project string `json:"project"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(map[string]interface{}{"clips": s.vibePreviewMgr.ListClips(args.Project)})
+
+	case "vibe_preview_summaries":
+		if s.vibePreviewMgr == nil {
+			return mcpToolJSON(map[string]interface{}{"summaries": []interface{}{}})
+		}
+		var args struct {
+			Project string `json:"project"`
+			Limit   int    `json:"limit"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(map[string]interface{}{
+			"summaries": s.vibePreviewMgr.ListSummaries(args.Project, args.Limit),
+		})
+
 	// --- Pipeline ---
 	case "pipeline_run":
 		var args struct {

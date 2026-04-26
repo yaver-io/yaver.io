@@ -3482,6 +3482,94 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, browserTools...)
 
+	// --- Vibe Preview ---
+	// Lets the AI runner check what its own visual change looked like
+	// after a kick — closes the loop "I edited the nav, did it land?"
+	// without the runner having to re-read its own screenshots.
+	vibePreviewTools := []map[string]interface{}{
+		{
+			"name":        "vibe_preview_start",
+			"description": "Start a vibe-preview session: headless Chrome captures the dev server URL at adaptive FPS. The mobile app + web dashboard see the same SSE stream you do. Returns the session metadata.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project", "target_url"},
+				"properties": map[string]interface{}{
+					"project":    map[string]interface{}{"type": "string", "description": "Project name (used as session key)"},
+					"target_url": map[string]interface{}{"type": "string", "description": "Dev server URL to capture (e.g. http://127.0.0.1:3000)"},
+					"mode":       map[string]interface{}{"type": "string", "enum": []string{"live", "change-only", "summary-only"}, "description": "Capture cadence; default live"},
+					"profile":    map[string]interface{}{"type": "string", "description": "Optional profile override: live-direct | live-relay-wifi | live-relay-cell | change-only | summary-only"},
+				},
+			},
+		},
+		{
+			"name":        "vibe_preview_stop",
+			"description": "Stop a vibe-preview session by project. Idempotent.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project"},
+				"properties": map[string]interface{}{
+					"project": map[string]interface{}{"type": "string", "description": "Project name"},
+				},
+			},
+		},
+		{
+			"name":        "vibe_preview_status",
+			"description": "List active vibe-preview sessions: project, profile, FPS, mode, frame count, error count.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "vibe_preview_snapshot",
+			"description": "Force one capture against an active session. Returns the new frame's seq + content hash. Pair with vibe_preview_summarize to ask Claude what changed.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project"},
+				"properties": map[string]interface{}{
+					"project": map[string]interface{}{"type": "string", "description": "Project name"},
+				},
+			},
+		},
+		{
+			"name":        "vibe_preview_clip_record",
+			"description": "Record a short MP4 demo clip from a booted simulator/emulator while the running app is exercised by Maestro (Phase 7). source: 'sim-ios' uses xcrun simctl, 'sim-android' uses adb screenrecord. Returns the clip metadata; poll vibe_preview_clips to see when status flips to ready.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project"},
+				"properties": map[string]interface{}{
+					"project":          map[string]interface{}{"type": "string", "description": "Project name"},
+					"source":           map[string]interface{}{"type": "string", "enum": []string{"sim-ios", "sim-android", "phone", "browser"}, "description": "Capture source (auto-detect if omitted)"},
+					"duration_max_sec": map[string]interface{}{"type": "integer", "description": "Recording duration cap (default 12, max 30)"},
+				},
+			},
+		},
+		{
+			"name":        "vibe_preview_clips",
+			"description": "List recent clips for a project, newest first. Each clip has id, source, status (recording|ready|failed), durationSec, sizeBytes.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project"},
+				"properties": map[string]interface{}{
+					"project": map[string]interface{}{"type": "string", "description": "Project name"},
+				},
+			},
+		},
+		{
+			"name":        "vibe_preview_summaries",
+			"description": "Read recent text summaries for a project (Phase 4). Each entry is a one-sentence description of what visibly changed between two frames, with before/after hashes. Default returns last 50; use limit to widen.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"project"},
+				"properties": map[string]interface{}{
+					"project": map[string]interface{}{"type": "string", "description": "Project name"},
+					"limit":   map[string]interface{}{"type": "integer", "description": "Max entries (default 50, cap 500)"},
+				},
+			},
+		},
+	}
+	tools = append(tools, vibePreviewTools...)
+
 	// --- Workspace features: pipeline, analytics, auth, mail, expose, stripe, monitor, models, lemonsqueezy ---
 	workspaceTools := []map[string]interface{}{
 		// Pipeline
