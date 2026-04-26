@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { agentClient, type MobileWorkerPreviewSession } from "@/lib/agent-client";
+import pkg from "../../package.json";
+
+// Surface the running web bundle version inside the dashboard so
+// users can tell at a glance whether their browser is on the latest
+// deploy or a stale Cloudflare cache. Replaces wondering "is this
+// 1.1.51?" with a visible tag on the Recovery banner.
+const __YAVER_WEB_VERSION__ = (pkg as { version?: string }).version ?? "?";
 
 interface PreviewTarget {
   id: string;
@@ -329,6 +336,13 @@ export default function PreviewPane({
       return;
     }
     const controller = new AbortController();
+    // 12-s ceiling on the fetch handshake. Without this Safari/WebKit
+    // sometimes leaves a cross-origin SSE fetch in "opening" forever
+    // when the preflight or response-headers phase stalls — without
+    // ever resolving or rejecting. The bound flips us to a visible
+    // "error" state so the user knows to retry or the dashboard can
+    // re-attempt automatically on the next render.
+    const handshakeTimer = setTimeout(() => controller.abort(), 12_000);
     setSseState("opening");
     setSseError(null);
     setSseAttempts((n) => n + 1);
@@ -337,7 +351,15 @@ export default function PreviewPane({
         const res = await fetch(eventsUrl, {
           headers: agentClient.getAuthHeaders(),
           signal: controller.signal,
+          // CORS-explicit: relay sets Access-Control-Allow-Origin: *
+          // and includes Authorization + X-Relay-Password in
+          // Allow-Headers, so we don't need credentials. Setting
+          // mode: "cors" makes Safari happier about the preflight.
+          mode: "cors",
+          credentials: "omit",
+          cache: "no-store",
         });
+        clearTimeout(handshakeTimer);
         if (!res.ok) {
           setSseState("error");
           setSseError(`HTTP ${res.status} ${res.statusText}`.trim());
@@ -413,14 +435,26 @@ export default function PreviewPane({
         }
       } catch (err) {
         if (controller.signal.aborted) {
-          // Component unmounted / re-running — not an error.
+          // Could be unmount OR our 12-s timeout. If sseState is
+          // still "opening" we hit the timeout — surface it. If the
+          // user just navigated away, sseError stays null.
+          setSseState((prev) => {
+            if (prev === "opening") {
+              setSseError("handshake timed out after 12s — relay or browser stalled the SSE preflight");
+              return "error";
+            }
+            return prev;
+          });
           return;
         }
         setSseState("error");
         setSseError(err instanceof Error ? err.message : String(err));
       }
     })();
-    return () => controller.abort();
+    return () => {
+      clearTimeout(handshakeTimer);
+      controller.abort();
+    };
   }, [agentReady]);
 
   // When the dev server confirms "running" via the status poll, clear
@@ -1221,6 +1255,13 @@ export default function PreviewPane({
               <div className="flex items-center justify-between px-2 py-1 text-[10px] uppercase tracking-widest text-amber-400 border-b border-amber-500/20">
                 <span>
                   {recovering ? "Recovery · running" : recoveryLog.length > 0 ? "Recovery · last run" : "Dev server · starting"}
+                  {/* Tag the running web bundle version so the user
+                       can tell at a glance whether they're on the
+                       latest deploy or stuck on a stale Cloudflare
+                       cache. */}
+                  <span className="ml-2 normal-case tracking-normal text-surface-500">
+                    web v{__YAVER_WEB_VERSION__}
+                  </span>
                 </span>
                 {!recovering && recoveryLog.length > 0 ? (
                   <button
