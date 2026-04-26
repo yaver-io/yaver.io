@@ -864,7 +864,7 @@ export default function PreviewPane({
       </svg>
       <p className="text-[12px] font-medium text-surface-100">Agent session expired on this machine</p>
       <p className="max-w-[320px] text-[11px] text-surface-400">
-        Hot reload can&apos;t reach the agent until you sign back in on the host
+        Mobile App preview can&apos;t reach the agent until you sign back in on the host
         (run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[10px]">yaver auth</code>),
         reconnect, or switch to a different coding agent that doesn&apos;t need
         re-auth (Ollama / Aider+Qwen, packaged with Yaver and ready to go).
@@ -918,7 +918,7 @@ export default function PreviewPane({
         </p>
       </div>
       <p className="max-w-[280px] text-[11px] leading-5 text-surface-500">
-        This tab is the mobile Hot Reload surface. Metro is waiting for the Yaver app
+        This is the Mobile App preview surface. Metro is waiting for the Yaver app
         on your phone to request a Hermes bundle. Open{" "}
         <span className="font-mono text-surface-300">
           {devStatus?.workDir?.split("/").slice(-1)[0] || "this project"}
@@ -1022,7 +1022,7 @@ export default function PreviewPane({
             <button
               onClick={() => void handleReload()}
               className="rounded border border-surface-700 px-2 py-0.5 text-[10px] text-surface-300 hover:bg-surface-800 hover:text-surface-100"
-              title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Hot reload"}
+              title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Reload mobile app"}
             >
               ↻ Reload
             </button>
@@ -1409,7 +1409,7 @@ function EmptyPhoneState({
     <div className="w-full h-full flex flex-col gap-3 bg-surface-950 text-surface-400 p-4 overflow-auto">
       <div className="text-center mt-2">
         <div className="text-3xl opacity-30">📱</div>
-        <div className="mt-1 text-xs font-medium text-surface-300">Hot reload</div>
+        <div className="mt-1 text-xs font-medium text-surface-300">Mobile App</div>
         <div className="text-[10px] text-surface-600">
           Start a dev server to preview it live in this phone frame.
         </div>

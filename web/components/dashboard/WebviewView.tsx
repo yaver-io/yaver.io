@@ -58,7 +58,7 @@ export default function WebviewView({
             <div>
               <p className="text-sm font-semibold text-surface-100">Webview</p>
               <p className="text-[11px] text-surface-500">
-                One surface for Hot Reload and browser preview.
+                One surface for both Mobile App and Web App previews.
               </p>
             </div>
           </div>
@@ -71,7 +71,7 @@ export default function WebviewView({
                   : "text-surface-400 hover:text-surface-200"
               }`}
             >
-              Hot Reload
+              Mobile App
             </button>
             <button
               onClick={() => setMode("web")}
