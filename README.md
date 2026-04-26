@@ -228,6 +228,33 @@ The agent auto-detects your project type and offers the right deploy target:
 | `fly.toml` | Fly.io | `fly deploy` |
 | `docker-compose.yml` | Docker Compose | `docker compose up -d --build` |
 
+### iOS TestFlight is LOCAL-ONLY — never run from CI
+
+**Don't add a CI workflow that uploads to TestFlight.** It will fail on
+provisioning every time, even when the local Mac uploads cleanly. CI runners
+don't carry the developer-account-registered iPhone UDIDs that the
+provisioning profile bakes in, so xcodebuild errors out at archive time with
+`Device "<UDID>" isn't registered in your developer account` /
+`No profiles for 'io.yaver.mobile' were found`. We tried and it kept burning
+release minutes for no shipped build.
+
+Always ship iOS from this Mac with the existing local script:
+
+```bash
+export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
+export APP_STORE_KEY_ID="77Z6B543D5"
+export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
+export APPLE_TEAM_ID="5SJZ4KA39A"
+./scripts/deploy-testflight.sh
+```
+
+The script auto-bumps `CFBundleVersion`, archives, and uploads to TestFlight
+in one step (~25–30 min). Daily TestFlight upload cap is ~15–20 builds —
+plenty of headroom for normal iteration. Android Play Store deploys can run
+from CI (and currently from the same Mac via `scripts/deploy-playstore.sh`)
+since the keystore lives in the gitignored `keys/` dir / GH `ANDROID_KEYSTORE`
+secret rather than being device-account-bound.
+
 ## Unity
 
 Yaver now also has a Unity lane.

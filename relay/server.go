@@ -1059,18 +1059,23 @@ func (s *RelayServer) tryExposeProxy(w http.ResponseWriter, r *http.Request) boo
 		return false
 	}
 
-	// Bus + path-based device routes are explicitly NOT subdomain
-	// expose targets — the dashboard hits public.yaver.io/d/<id>/...
-	// (and bus + health) from a browser that always carries the
-	// public.yaver.io Host header, and the runner-side smoke does
-	// the same from web-headless. Without this skip, every
-	// `*.yaver.io/d/<id>/health` request gets eaten by the
-	// "subdomain not registered" branch and returns 404 before the
-	// path mux ever sees it. The mux owns these prefixes.
+	// Path-based relay routes that must NOT be eaten by the subdomain
+	// expose handler. The dashboard hits public.yaver.io/<path>
+	// directly from the browser (which always carries that Host
+	// header) for every relay-owned endpoint. Without this skip,
+	// /presence, /tunnels, and admin paths all return 404 with
+	// "subdomain 'public' not registered" before the path mux
+	// ever sees them — surfaced as "Failed to load resource: 404"
+	// floods in the browser console + breaking presence-driven UI.
+	// Keep this list in sync with mux.HandleFunc registrations
+	// above (server.go:412+).
 	switch {
 	case strings.HasPrefix(r.URL.Path, "/d/"),
 		strings.HasPrefix(r.URL.Path, "/bus/"),
+		strings.HasPrefix(r.URL.Path, "/admin/"),
 		r.URL.Path == "/health",
+		r.URL.Path == "/presence",
+		r.URL.Path == "/tunnels",
 		r.URL.Path == "/":
 		return false
 	}

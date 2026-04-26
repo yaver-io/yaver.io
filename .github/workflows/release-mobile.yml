@@ -52,8 +52,15 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   ios:
+    # iOS TestFlight is LOCAL-ONLY — never run from CI. The runner's
+    # keychain doesn't carry the developer-account-registered iPhone
+    # UDIDs that the provisioning profile bakes in, so xcodebuild
+    # always fails at archive with "Device <UDID> isn't registered"
+    # / "No profiles for 'io.yaver.mobile' were found". Don't try to
+    # fix it; ship from the Mac with `./scripts/deploy-testflight.sh`.
+    # See README.md → "iOS TestFlight is LOCAL-ONLY".
     needs: validate
-    if: github.event_name == 'push' || github.event.inputs.upload_testflight == 'true'
+    if: false  # disabled: see README.md
     runs-on: macos-15
     env:
       VERSION: ${{ needs.validate.outputs.version }}

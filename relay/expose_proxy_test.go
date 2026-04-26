@@ -26,6 +26,12 @@ func TestTryExposeProxy_skipsPathBasedDeviceRoutes(t *testing.T) {
 		{"public.yaver.io", "/bus/publish"},
 		{"public.yaver.io", "/bus/subscribe"},
 		{"public.yaver.io", "/health"},
+		{"public.yaver.io", "/presence"},
+		{"public.yaver.io", "/presence?ids=abc123"},
+		{"public.yaver.io", "/tunnels"},
+		{"public.yaver.io", "/admin/status"},
+		{"public.yaver.io", "/admin/set-password"},
+		{"public.yaver.io", "/admin/bandwidth"},
 		{"public.yaver.io", "/"},
 	}
 	for _, tc := range cases {
