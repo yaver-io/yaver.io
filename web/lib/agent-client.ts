@@ -7,6 +7,7 @@
  */
 
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
+import { CONVEX_URL } from "@/lib/constants";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -3251,6 +3252,55 @@ export class AgentClient {
       u.searchParams.set("__rp", this.activeRelayPassword);
     }
     return u.toString();
+  }
+
+  /**
+   * Force-refresh the relay password for the current user from Convex
+   * + re-pull the relayServers list. Mirrors what the Cloudflare
+   * Worker proxy does at /d/<id>/* on 401: when the cached
+   * activeRelayPassword goes stale (relay-side rotation, fresh user
+   * with no password row, etc.), call /settings/repair-relay to have
+   * Convex regenerate it, then re-fetch /config to update our local
+   * relayServers cache. After this returns, this.activeRelayPassword
+   * is fresh and EventSource / fetch can be retried.
+   */
+  async repairRelayPassword(): Promise<{ ok: boolean; error?: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    try {
+      const repairRes = await fetch(`${CONVEX_URL}/settings/repair-relay`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          "Content-Type": "application/json",
+        },
+        body: "{}",
+      });
+      if (!repairRes.ok) {
+        return { ok: false, error: `repair-relay ${repairRes.status}` };
+      }
+      // Pull the freshly-rotated password back from /config so
+      // activeRelayPassword reflects it on the next stream attempt.
+      const cfgRes = await fetch(`${CONVEX_URL}/config`, {
+        headers: { Authorization: `Bearer ${this.token}` },
+        cache: "no-store",
+      });
+      if (cfgRes.ok) {
+        const cfg = await cfgRes.json().catch(() => ({}));
+        const relays: Array<{ httpUrl?: string; password?: string; id?: string }> =
+          Array.isArray(cfg?.relayServers) ? cfg.relayServers : [];
+        // Update password on the matching relay we're already
+        // connected to. Don't switch relays here.
+        for (const relay of relays) {
+          if (relay.httpUrl === this.activeRelayUrl) {
+            this.activeRelayPassword = relay.password || null;
+            break;
+          }
+        }
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   /** Get auth headers for direct fetch calls (non-SSE). */

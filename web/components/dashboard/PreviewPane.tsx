@@ -370,12 +370,37 @@ export default function PreviewPane({
       setSseState("open");
       setSseError(null);
     };
+    let repairAttempted = false;
     es.onerror = () => {
       // EventSource auto-reconnects on transient errors; we only
       // flip to "error" state when the connection is permanently
       // closed (readyState===CLOSED). Otherwise leave UI as-is so
       // it doesn't flicker on every transient disconnect.
       if (es.readyState === EventSource.CLOSED) {
+        // First close = likely stale relay password (relay returned
+        // 401 invalid relay password before any event flowed). Mirror
+        // the Cloudflare Worker's auto-repair: call
+        // /settings/repair-relay then bump agentReady so the
+        // useEffect re-runs with the freshly-rotated password.
+        if (!repairAttempted && totalEvents === 0) {
+          repairAttempted = true;
+          setSseState("error");
+          setSseError("auth handshake failed — repairing relay password…");
+          (async () => {
+            const r = await agentClient.repairRelayPassword();
+            if (r.ok) {
+              // Force re-run of the SSE useEffect by toggling the
+              // dependency. setAgentReady to false then true triggers
+              // the effect's cleanup + re-mount with the new password
+              // baked into devEventsUrl.
+              setAgentReady(false);
+              setTimeout(() => setAgentReady(agentClient.connectionState === "connected" && Boolean(agentClient.devEventsUrl)), 50);
+            } else {
+              setSseError(`repair-relay failed: ${r.error || "unknown"}`);
+            }
+          })();
+          return;
+        }
         setSseState("error");
         setSseError("EventSource closed (browser/relay dropped the stream)");
       }
