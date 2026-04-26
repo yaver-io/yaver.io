@@ -1,0 +1,113 @@
+# One-shot: SSH into the public relay box and inject CONVEX_URL into
+# the running yaver-relay systemd unit so per-user password
+# validation finally calls Convex /relay/validate. Without this set,
+# the relay can only validate against its shared RELAY_PASSWORD env
+# var and rejects every per-user `__rp=` from the web/mobile path
+# with 401 invalid relay password — even though Convex's view of
+# that password is valid (verified via direct curl).
+#
+# This is a config patch, not a binary upgrade. The relay binary on
+# the box already supports CONVEX_URL — it just wasn't being passed.
+# Workflow modifies /etc/systemd/system/yaver-relay.service in place,
+# reloads systemd, restarts the unit. Idempotent: re-running just
+# rewrites the same file.
+
+name: Relay — Fix CONVEX_URL on Public Relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      relay_host:
+        description: "Public relay SSH host (default: pulls from RELAY_HTTP_URL)"
+        required: false
+        default: ""
+
+concurrency:
+  group: relay-fix-convex-url
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Resolve relay host
+        env:
+          RELAY_HTTP_URL: ${{ secrets.RELAY_HTTP_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.relay_host }}" ]; then
+            HOST="${{ github.event.inputs.relay_host }}"
+          else
+            # Strip scheme from RELAY_HTTP_URL (e.g. https://public.yaver.io → public.yaver.io)
+            HOST="${RELAY_HTTP_URL#https://}"
+            HOST="${HOST#http://}"
+            HOST="${HOST%%/*}"
+          fi
+          if [ -z "$HOST" ]; then
+            echo "::error::Could not resolve relay host"
+            exit 2
+          fi
+          echo "RELAY_HOST=$HOST" >> "$GITHUB_ENV"
+          echo "Targeting relay at: $HOST"
+
+      - name: Inject CONVEX_URL + restart relay
+        env:
+          CONVEX_URL: ${{ secrets.CONVEX_SITE_URL }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$RELAY_HOST" \
+              CONVEX_URL="${CONVEX_URL:-https://perceptive-minnow-557.eu-west-1.convex.site}" \
+              bash -s <<'REMOTE'
+          set -euo pipefail
+          UNIT=/etc/systemd/system/yaver-relay.service
+          if [ ! -f "$UNIT" ]; then
+            echo "::error::$UNIT not found — relay not installed via systemd?"
+            exit 2
+          fi
+          echo "=== current ExecStart line ==="
+          grep "^ExecStart=" "$UNIT" || true
+          echo "=== current Environment lines ==="
+          grep "^Environment=" "$UNIT" || echo "(none)"
+
+          # Drop in any existing CONVEX_URL Environment line first so
+          # we don't accumulate duplicates on re-runs.
+          sed -i '/^Environment=CONVEX_URL=/d' "$UNIT"
+
+          # Insert Environment=CONVEX_URL=... right above ExecStart.
+          # The marker we anchor on is the first ExecStart= line.
+          awk -v url="$CONVEX_URL" '
+            /^ExecStart=/ && !inserted {
+              print "Environment=CONVEX_URL=" url
+              inserted = 1
+            }
+            { print }
+          ' "$UNIT" > "$UNIT.new"
+          mv "$UNIT.new" "$UNIT"
+          chmod 644 "$UNIT"
+
+          echo "=== updated unit (relevant lines) ==="
+          grep -E "^(Environment=|ExecStart=)" "$UNIT"
+
+          systemctl daemon-reload
+          systemctl restart yaver-relay
+          sleep 2
+          systemctl --no-pager --lines=20 status yaver-relay || true
+
+          echo "=== quick post-restart probe ==="
+          curl -fsS http://127.0.0.1:8443/health | head -c 200 || true
+          echo
+          REMOTE
