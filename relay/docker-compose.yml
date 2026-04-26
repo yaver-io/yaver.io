@@ -7,6 +7,12 @@ services:
       - "8443:8443/tcp"
     environment:
       - RELAY_PASSWORD=${RELAY_PASSWORD:-}
+      # Required for per-user password validation. The relay POSTs to
+      # ${CONVEX_URL}/relay/validate when the inbound `__rp` doesn't
+      # match the shared RELAY_PASSWORD; without this set, every per-
+      # user password is rejected with 401. Default points at the
+      # production Convex deployment.
+      - CONVEX_URL=${CONVEX_URL:-https://perceptive-minnow-557.eu-west-1.convex.site}
     restart: unless-stopped
     logging:
       driver: "json-file"
