@@ -53,6 +53,7 @@ jobs:
 
   ios:
     needs: validate
+    if: github.event_name == 'push' || github.event.inputs.upload_testflight == 'true'
     runs-on: macos-15
     env:
       VERSION: ${{ needs.validate.outputs.version }}
@@ -179,6 +180,7 @@ jobs:
 
   android:
     needs: validate
+    if: github.event_name == 'push' || github.event.inputs.upload_playstore == 'true'
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.validate.outputs.version }}
@@ -294,6 +296,11 @@ jobs:
 
   update-versions:
     needs: [validate, ios, android]
+    if: |
+      always() &&
+      needs.validate.result == 'success' &&
+      (needs.ios.result == 'success' || needs.ios.result == 'skipped') &&
+      (needs.android.result == 'success' || needs.android.result == 'skipped')
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.validate.outputs.version }}
