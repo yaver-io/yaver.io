@@ -875,7 +875,7 @@ export default function PreviewPane({
         in the Yaver mobile app to preview here.
       </p>
       <p className="max-w-[280px] text-[10px] leading-5 text-surface-600">
-        Or switch to the <span className="text-surface-400">Web Reload</span> tab to
+        Or switch this widget to <span className="text-surface-400">Web App</span> mode to
         render a browser preview via <span className="font-mono">expo --web</span>.
       </p>
     </div>

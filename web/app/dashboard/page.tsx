@@ -27,7 +27,6 @@ import GuestsStatusView from "@/components/dashboard/GuestsStatusView";
 import InfraView from "@/components/dashboard/InfraView";
 import ConnectivityView from "@/components/dashboard/ConnectivityView";
 import ToolsView from "@/components/dashboard/ToolsView";
-import PreviewPane from "@/components/dashboard/PreviewPane";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
 import MorningView from "@/components/dashboard/MorningView";
 import VaultView from "@/components/dashboard/VaultView";
@@ -38,7 +37,7 @@ import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
-import { WebReloadView } from "@/components/dashboard/WebReloadView";
+import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
 import SettingsView from "@/components/dashboard/SettingsView";
@@ -521,7 +520,7 @@ export default function DashboardPage() {
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
   const [reauthBusy, setReauthBusy] = useState<string | null>(null);
   const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains" | "settings">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains" | "settings">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -532,6 +531,7 @@ export default function DashboardPage() {
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
   const [preferredSurfaceProjectPath, setPreferredSurfaceProjectPath] = useState<string | null>(null);
+  const [preferredWebviewMode, setPreferredWebviewMode] = useState<"mobile" | "web">("mobile");
   const [chatRunnerAuthModal, setChatRunnerAuthModal] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }>>({});
   const [probeStates, setProbeStates] = useState<Record<string, DeviceStatusProbe>>({});
@@ -1197,8 +1197,7 @@ export default function DashboardPage() {
     { id: "vibe", label: "Vibe", icon: "\u2328\uFE0F" },
     { id: "todos", label: "Todos", icon: "\u2611\uFE0F", badge: todoCount },
     { id: "builds", label: "Builds", icon: "\uD83D\uDE80" },
-    { id: "preview", label: "Preview", icon: "\uD83C\uDFA8" },
-    { id: "web-reload", label: "Web Reload", icon: "\uD83C\uDF10" },
+    { id: "webview", label: "Webview", icon: "\uD83D\uDCF1" },
     { id: "health", label: "Health", icon: "\uD83D\uDCCA" },
     { id: "quality", label: "Quality", icon: "\u2705" },
     { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
@@ -1280,8 +1279,7 @@ export default function DashboardPage() {
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "builds",   label: "Builds",   icon: "🛠️" },
-              { id: "preview",  label: "Hot Reload", icon: "📱" },
-              { id: "web-reload", label: "Web Reload", icon: "🌐" },
+              { id: "webview",  label: "Webview", icon: "📱" },
               { id: "guests",   label: "Guests",   icon: "👥" },
               { id: "vault",    label: "Vault",    icon: "🔐" },
             ] as const).map((it) => (
@@ -1794,27 +1792,22 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "builds" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} preferredProjectPath={preferredSurfaceProjectPath} /></div>
-          ) : activeTab === "preview" ? (
-            <div className="flex-1 min-h-0"><PreviewPane
-              selectedPreviewTarget={selectedPreviewTarget}
-              onSelectPreviewTarget={handleSelectPreviewTarget}
-              mobileWorkers={mobileWorkers}
-              preferredProjectPath={preferredSurfaceProjectPath}
-              onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
-              onRepairRelay={token ? repairRelay : undefined}
-              connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
-              onSwitchAgent={() => setActiveTab("devices")}
-              onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
-              primaryRunner={connectedDevicePrimaryRunner}
-            /></div>
-          ) : activeTab === "web-reload" ? (
+          ) : activeTab === "webview" || activeTab === "preview" || activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
-              <WebReloadView
+              <WebviewView
                 connectedDevice={connectedDevice}
                 connState={connState}
+                preferredMode={activeTab === "web-reload" ? "web" : activeTab === "preview" ? "mobile" : preferredWebviewMode}
                 preferredProjectPath={preferredSurfaceProjectPath}
+                mobileWorkers={mobileWorkers}
+                selectedPreviewTarget={selectedPreviewTarget}
+                onSelectPreviewTarget={handleSelectPreviewTarget}
                 onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
                 onRepairRelay={token ? repairRelay : undefined}
+                connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
+                onSwitchAgent={() => setActiveTab("devices")}
+                onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
+                primaryRunner={connectedDevicePrimaryRunner}
               />
             </div>
           ) : activeTab === "health" ? (
@@ -1903,6 +1896,16 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-[1600px] mx-auto w-full"><GitView
               onOpenSurface={(surface, projectPath) => {
                 setPreferredSurfaceProjectPath(projectPath);
+                if (surface === "preview") {
+                  setPreferredWebviewMode("mobile");
+                  setActiveTab("webview");
+                  return;
+                }
+                if (surface === "web-reload") {
+                  setPreferredWebviewMode("web");
+                  setActiveTab("webview");
+                  return;
+                }
                 setActiveTab(surface);
               }}
               onVibePrompt={(projectPath, prompt) => {

@@ -226,27 +226,53 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const hasWorkspaceApps = apps.length > 0;
   const useProjectFallback = !hasWorkspaceApps;
 
-  // SSE: live dev-server logs. Use EventSource directly since the
-  // events endpoint lives on the agent through the relay.
-  const esRef = useRef<EventSource | null>(null);
+  // SSE: live dev-server logs. Use fetch-based SSE so auth headers
+  // survive relay/direct modes; browser EventSource drops them.
   useEffect(() => {
     if (!isConnected) return;
     const url = agentClient.devEventsUrl;
     if (!url) return;
-    const es = new EventSource(url);
-    esRef.current = es;
-    es.onmessage = (ev) => {
+    const controller = new AbortController();
+    (async () => {
       try {
-        const data = JSON.parse(ev.data);
-        if (data?.logLine) {
-          setLogs((prev) => [...prev.slice(-199), String(data.logLine)]);
-        } else if (data?.message) {
-          setLogs((prev) => [...prev.slice(-199), `[${data.type || "event"}] ${data.message}`]);
+        const res = await fetch(url, {
+          headers: { ...agentClient.getAuthHeaders(), Accept: "text/event-stream" },
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const dataLines = frame
+              .split("\n")
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            try {
+              const data = JSON.parse(dataLines.join("\n"));
+              if (data?.logLine) {
+                setLogs((prev) => [...prev.slice(-199), String(data.logLine)]);
+              } else if (data?.message) {
+                setLogs((prev) => [...prev.slice(-199), `[${data.type || "event"}] ${data.message}`]);
+              }
+            } catch {
+              // ignore malformed SSE frames
+            }
+          }
         }
-      } catch { /* ignore parse errors */ }
-    };
-    es.onerror = () => { /* EventSource auto-reconnects */ };
-    return () => { es.close(); esRef.current = null; };
+      } catch {
+        // connection dropped or aborted; the effect re-subscribes on reconnect
+      }
+    })();
+    return () => { controller.abort(); };
   }, [isConnected]);
 
   const stopActiveTaskStream = useCallback(() => {
