@@ -1,0 +1,114 @@
+name: Diagnose Dev Events SSE
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diagnose-dev-events
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Probe /dev/* endpoints + tail agent log
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -uo pipefail
+
+          CONFIG=""
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$c" ] && CONFIG="$c" && break
+          done
+          [ -n "$CONFIG" ] || { echo "no agent config found"; exit 2; }
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" "$CONFIG")
+          AGENT="http://127.0.0.1:18080"
+
+          echo "=== yaver version ==="
+          yaver --version
+          echo "agent exe: $(readlink /proc/$(pgrep -f 'yaver serve' | head -1)/exe 2>/dev/null || echo ?)"
+
+          echo
+          echo "=== /info (relevant fields) ==="
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/info" \
+            | jq '{ok, version, hostname, workDir, authExpired, voiceProvider}' || true
+
+          echo
+          echo "=== /dev/status BEFORE probe ==="
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/dev/status" | jq '{running, framework, kind, port, workDir, webPort}' || true
+
+          echo
+          echo "=== /workspace/apps (kind filter for sfmg) ==="
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/workspace/apps" \
+            | jq '.apps[] | select(.name=="sfmg") | {name, kind, stack, exists, absPath}' || true
+
+          echo
+          echo "=== /dev/events: subscribe for 8s, count event types ==="
+          (timeout 8 curl -sN -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" "$AGENT/dev/events" || true) \
+            | awk 'BEGIN{c=0} /^data:/ {c++; sub(/^data: /,"",$0); print "  "$0; if (c>=20) exit}'
+          echo "(end of /dev/events sample)"
+
+          echo
+          echo "=== last 200 lines of agent.log ==="
+          for log in /home/yaver/.yaver/agent.log /root/.yaver/agent.log; do
+            if [ -f "$log" ]; then
+              echo "--- $log ---"
+              tail -n 200 "$log"
+              break
+            fi
+          done
+
+          echo
+          echo "=== last 200 super-host / dev / hermes / bundle log lines ==="
+          for log in /home/yaver/.yaver/agent.log /root/.yaver/agent.log; do
+            if [ -f "$log" ]; then
+              tail -n 5000 "$log" | grep -E '\[super-host|\[dev:|hermesc|bundle|metro|export:embed' | tail -n 200 || true
+              break
+            fi
+          done
+
+          echo
+          echo "=== sfmg node_modules health ==="
+          if [ -d /home/yaver/Workspace/sfmg ]; then
+            cd /home/yaver/Workspace/sfmg
+            echo "package.json scripts:"
+            jq '.scripts // {}' package.json 2>/dev/null || echo "(no package.json)"
+            echo "node_modules: $([ -d node_modules ] && echo present || echo MISSING)"
+            echo "node_modules size: $(du -sh node_modules 2>/dev/null | awk '{print $1}')"
+            echo "key deps present:"
+            for dep in expo metro react-native-web react-dom react-native; do
+              if [ -d "node_modules/$dep" ]; then
+                ver=$(jq -r .version "node_modules/$dep/package.json" 2>/dev/null || echo ?)
+                echo "  $dep: $ver"
+              else
+                echo "  $dep: MISSING"
+              fi
+            done
+            echo "bun/npm/yarn lockfiles: $(ls *lock* 2>/dev/null | tr '\n' ' ')"
+          else
+            echo "(/home/yaver/Workspace/sfmg does not exist)"
+          fi
+
+          echo
+          echo "=== /diagnose ==="
+          curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+            -d '{"skip":["runtime-deps","cloudflared","tailscale","vpn"]}' "$AGENT/diagnose" \
+            | jq '.report // .' | head -c 4000
+          echo
+          REMOTE
