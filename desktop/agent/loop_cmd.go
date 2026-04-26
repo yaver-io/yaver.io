@@ -209,6 +209,15 @@ type LoopShip struct {
 	// budget. If unset / disabled, Deploy runs on every done status
 	// like before.
 	ReleaseTrain LoopReleaseTrain `yaml:"release_train,omitempty" json:"release_train,omitempty"`
+	// FixTarget routes per-kick commits. Default ("" or "main") pushes
+	// directly to Branch (legacy behavior). "branch" creates a fresh
+	// remote branch named "autodev/<loop-name>-<YYYYMMDD-HHMMSS>" and
+	// pushes commits there instead — useful when you want autodev to
+	// stage proposed fixes for review rather than land them on the
+	// trunk. "pr" does the same and additionally runs `gh pr create`
+	// against Branch as the base; falls back to "branch" silently if
+	// the gh CLI is missing.
+	FixTarget string `yaml:"fix_target,omitempty" json:"fix_target,omitempty"`
 }
 
 // LoopReleaseTrain controls how aggressively a loop ships. The defaults
@@ -293,6 +302,13 @@ type LoopState struct {
 	// Release-train gating in phaseDeploy checks this against
 	// Spec.Ship.ReleaseTrain.N and resets it on a successful ship.
 	GreenRunSinceLastDeploy int `json:"greenRunSinceLastDeploy"`
+
+	// FixBranch is the auto-generated branch name when Ship.FixTarget is
+	// "branch" or "pr". Captured on the first kick of a loop run so all
+	// subsequent kicks land on the same branch (a single autodev session
+	// produces one branch / PR, not one per kick). Reset by `yaver loop
+	// reset` or when the loop is recreated.
+	FixBranch string `json:"fixBranch,omitempty"`
 }
 
 // rollBudgetDay zeroes the daily counters if the current UTC day is
