@@ -3216,29 +3216,44 @@ export class AgentClient {
     return `${this.baseUrl}/dev/`;
   }
 
-  /** Get the SSE events URL for dev server live reload.  Goes
-   *  DIRECT to the relay HTTP URL — not through the Cloudflare
-   *  Worker /d/<id>/... same-origin proxy.  The Worker buffers
-   *  streaming responses and returns 502 to the browser before
-   *  the agent's first event/keepalive arrives.  Relay's
-   *  withRelayCORS middleware already returns
-   *  Access-Control-Allow-Origin: * with Authorization +
-   *  X-Relay-Password in Allow-Headers, so the browser's CORS
-   *  preflight succeeds and the SSE response streams cleanly.
-   *  The mobile app uses this same direct path and works fine. */
+  /** Get the SSE events URL for dev server live reload.
+   *
+   *  Returns a URL with auth baked into the query string so the
+   *  browser's native EventSource API can drive it — EventSource
+   *  doesn't support custom headers, but it sails through Safari's
+   *  cross-origin SSE handling that fetch+stream stalls on
+   *  indefinitely. The relay accepts ?__rp=<password> at
+   *  relay/server.go:681; the agent accepts ?token=<bearer> at
+   *  desktop/agent/httpserver.go:1534. Both already work for the
+   *  iframe preview path; we're now using them for the event
+   *  stream too.
+   *
+   *  Token + password ride over HTTPS (yaver.io is TLS end-to-end),
+   *  same as the iframe's __rp=. They never appear in clear text
+   *  on disk or in nginx logs because we use ?__rp= which the relay
+   *  strips before forwarding to the agent. */
   get devEventsUrl(): string | null {
     if (!this.baseUrl) return null;
-    return `${this.baseUrl}/dev/events`;
+    return this.appendStreamAuth(`${this.baseUrl}/dev/events`);
   }
 
-  /** SSE URL for the agent-update progress stream — direct relay
-   *  for the same reason as devEventsUrl. */
+  /** SSE URL for the agent-update progress stream — same query-
+   *  param auth pattern. */
   get agentUpdateStreamUrl(): string | null {
     if (!this.baseUrl) return null;
-    return `${this.baseUrl}/streams/agent-update`;
+    return this.appendStreamAuth(`${this.baseUrl}/streams/agent-update`);
   }
 
-  /** Get auth headers for direct fetch calls (SSE, etc). */
+  private appendStreamAuth(url: string): string {
+    const u = new URL(url);
+    if (this.token) u.searchParams.set("token", this.token);
+    if (this.activeRelayUrl && this.activeRelayPassword) {
+      u.searchParams.set("__rp", this.activeRelayPassword);
+    }
+    return u.toString();
+  }
+
+  /** Get auth headers for direct fetch calls (non-SSE). */
   getAuthHeaders(): Record<string, string> {
     return this.authHeaders;
   }

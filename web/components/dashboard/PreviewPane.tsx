@@ -335,126 +335,84 @@ export default function PreviewPane({
       setSseState("idle");
       return;
     }
-    const controller = new AbortController();
-    // 12-s ceiling on the fetch handshake. Without this Safari/WebKit
-    // sometimes leaves a cross-origin SSE fetch in "opening" forever
-    // when the preflight or response-headers phase stalls — without
-    // ever resolving or rejecting. The bound flips us to a visible
-    // "error" state so the user knows to retry or the dashboard can
-    // re-attempt automatically on the next render.
-    const handshakeTimer = setTimeout(() => controller.abort(), 12_000);
     setSseState("opening");
     setSseError(null);
     setSseAttempts((n) => n + 1);
-    (async () => {
-      try {
-        const res = await fetch(eventsUrl, {
-          headers: agentClient.getAuthHeaders(),
-          signal: controller.signal,
-          // CORS-explicit: relay sets Access-Control-Allow-Origin: *
-          // and includes Authorization + X-Relay-Password in
-          // Allow-Headers, so we don't need credentials. Setting
-          // mode: "cors" makes Safari happier about the preflight.
-          mode: "cors",
-          credentials: "omit",
-          cache: "no-store",
-        });
-        clearTimeout(handshakeTimer);
-        if (!res.ok) {
-          setSseState("error");
-          setSseError(`HTTP ${res.status} ${res.statusText}`.trim());
-          return;
-        }
-        const reader = res.body?.getReader();
-        if (!reader) {
-          setSseState("error");
-          setSseError("response had no body reader (browser/relay dropped stream)");
-          return;
-        }
-        setSseState("open");
-        const decoder = new TextDecoder();
-        let buffer = "";
-        const bumpFromMessage = (msg: string) => {
-          const m = msg.toLowerCase();
-          let pct = 0;
-          if (m.includes("install")) pct = 0.1;
-          else if (m.includes("prebuild")) pct = 0.2;
-          else if (m.includes("pod install")) pct = 0.3;
-          else if (m.includes("bundling") || m.includes("metro")) pct = 0.45;
-          else if (m.includes("compile") || m.includes("hermes")) pct = 0.6;
-          else if (m.includes("starting") || m.includes("listen")) pct = 0.75;
-          else if (m.includes("waiting on")) pct = 0.85;
-          else if (m.includes("ready") || m.includes("accepting")) pct = 0.95;
-          if (pct > 0) {
-            setDevProgress((prev) => ({ pct: Math.max(prev.pct, pct), stage: msg.slice(0, 120), active: true }));
-          } else {
-            setDevProgress((prev) => prev.active ? { ...prev, stage: msg.slice(0, 120) } : prev);
-          }
-        };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            setSseState("closed");
-            break;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const ev = JSON.parse(line.slice(6));
-              setTotalEvents((n) => n + 1);
-              setLastEventAt(Date.now());
-              const text = (ev.logLine || ev.message || ev.text || "").toString();
-              if (ev.type === "reload" || ev.type === "ready") {
-                setIframeKey((k) => k + 1);
-                setReloadNonce((n) => n + 1);
-                if (ev.type === "ready") {
-                  setDevProgress({ pct: 1, stage: "ready", active: true });
-                  setTimeout(() => setDevProgress({ pct: 0, stage: "", active: false }), 1500);
-                }
-              } else if (ev.type === "log" || ev.type === "line") {
-                if (text) {
-                  setLogLines((prev) => {
-                    const next = [...prev, text];
-                    return next.length > 200 ? next.slice(-200) : next;
-                  });
-                  bumpFromMessage(text);
-                }
-              } else if (ev.type === "error") {
-                if (text) {
-                  setLogLines((prev) => [...prev.slice(-200), `[error] ${text}`]);
-                  setDevProgress((prev) => ({ ...prev, stage: `error: ${text.slice(0, 120)}`, active: true }));
-                }
-              } else if (ev.type === "stopped") {
-                setDevProgress({ pct: 0, stage: "", active: false });
-              }
-            } catch {}
-          }
-        }
-      } catch (err) {
-        if (controller.signal.aborted) {
-          // Could be unmount OR our 12-s timeout. If sseState is
-          // still "opening" we hit the timeout — surface it. If the
-          // user just navigated away, sseError stays null.
-          setSseState((prev) => {
-            if (prev === "opening") {
-              setSseError("handshake timed out after 12s — relay or browser stalled the SSE preflight");
-              return "error";
-            }
-            return prev;
-          });
-          return;
-        }
-        setSseState("error");
-        setSseError(err instanceof Error ? err.message : String(err));
+
+    // Native EventSource — Safari handles cross-origin SSE through
+    // EventSource cleanly; fetch + ReadableStream stalls
+    // indefinitely in the preflight phase on this browser. Auth
+    // rides on the URL (token + __rp query params) since
+    // EventSource doesn't support custom headers. The relay strips
+    // __rp before forwarding to the agent so the password never
+    // shows in agent-side request logs.
+    const es = new EventSource(eventsUrl);
+
+    const bumpFromMessage = (msg: string) => {
+      const m = msg.toLowerCase();
+      let pct = 0;
+      if (m.includes("install")) pct = 0.1;
+      else if (m.includes("prebuild")) pct = 0.2;
+      else if (m.includes("pod install")) pct = 0.3;
+      else if (m.includes("bundling") || m.includes("metro")) pct = 0.45;
+      else if (m.includes("compile") || m.includes("hermes")) pct = 0.6;
+      else if (m.includes("starting") || m.includes("listen")) pct = 0.75;
+      else if (m.includes("waiting on")) pct = 0.85;
+      else if (m.includes("ready") || m.includes("accepting")) pct = 0.95;
+      if (pct > 0) {
+        setDevProgress((prev) => ({ pct: Math.max(prev.pct, pct), stage: msg.slice(0, 120), active: true }));
+      } else {
+        setDevProgress((prev) => prev.active ? { ...prev, stage: msg.slice(0, 120) } : prev);
       }
-    })();
-    return () => {
-      clearTimeout(handshakeTimer);
-      controller.abort();
     };
+
+    es.onopen = () => {
+      setSseState("open");
+      setSseError(null);
+    };
+    es.onerror = () => {
+      // EventSource auto-reconnects on transient errors; we only
+      // flip to "error" state when the connection is permanently
+      // closed (readyState===CLOSED). Otherwise leave UI as-is so
+      // it doesn't flicker on every transient disconnect.
+      if (es.readyState === EventSource.CLOSED) {
+        setSseState("error");
+        setSseError("EventSource closed (browser/relay dropped the stream)");
+      }
+    };
+    es.onmessage = (msg) => {
+      try {
+        const ev = JSON.parse(msg.data);
+        setTotalEvents((n) => n + 1);
+        setLastEventAt(Date.now());
+        const text = (ev.logLine || ev.message || ev.text || "").toString();
+        if (ev.type === "reload" || ev.type === "ready") {
+          setIframeKey((k) => k + 1);
+          setReloadNonce((n) => n + 1);
+          if (ev.type === "ready") {
+            setDevProgress({ pct: 1, stage: "ready", active: true });
+            setTimeout(() => setDevProgress({ pct: 0, stage: "", active: false }), 1500);
+          }
+        } else if (ev.type === "log" || ev.type === "line") {
+          if (text) {
+            setLogLines((prev) => {
+              const next = [...prev, text];
+              return next.length > 200 ? next.slice(-200) : next;
+            });
+            bumpFromMessage(text);
+          }
+        } else if (ev.type === "error") {
+          if (text) {
+            setLogLines((prev) => [...prev.slice(-200), `[error] ${text}`]);
+            setDevProgress((prev) => ({ ...prev, stage: `error: ${text.slice(0, 120)}`, active: true }));
+          }
+        } else if (ev.type === "stopped") {
+          setDevProgress({ pct: 0, stage: "", active: false });
+        }
+      } catch { /* ignore non-JSON keepalive comments etc. */ }
+    };
+
+    return () => es.close();
   }, [agentReady]);
 
   // When the dev server confirms "running" via the status poll, clear
