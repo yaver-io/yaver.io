@@ -96,29 +96,58 @@ DEV_PID=$!
 sleep 1
 curl -fsS "http://127.0.0.1:$DEV_SERVER_PORT" | head -3 || { echo "dev server didn't come up"; exit 1; }
 
-banner "yaver serve (background, test token)"
+banner "yaver serve (foreground via --debug, test token)"
+# Stop any prior yaver agent so our config.json wins.
+pkill -f 'yaver serve' 2>/dev/null || true
+sleep 1
+
 mkdir -p /root/.yaver
-# Write the test token as the agent's session token. On a fresh box
-# /root/.yaver/config.json may not exist; jq merge keeps any existing
-# fields intact if it's there.
-if [ -f /root/.yaver/config.json ]; then
-  jq --arg t "$TEST_TOKEN" '.auth_token=$t' /root/.yaver/config.json > /tmp/cfg.json
-else
-  printf '{"auth_token":%s}\n' "$(printf '%s' "$TEST_TOKEN" | jq -Rs .)" > /tmp/cfg.json
-fi
-mv /tmp/cfg.json /root/.yaver/config.json
-yaver serve --no-relay --no-tls > /tmp/yaver-serve.log 2>&1 &
+# Write the test token as the agent's session token. Wipe convex_site_url
+# so the agent doesn't try (and fail to) validate the test token — the
+# fast-path `token == s.token` is what we exercise here.
+printf '{"auth_token":%s,"convex_site_url":""}\n' \
+  "$(printf '%s' "$TEST_TOKEN" | jq -Rs .)" > /root/.yaver/config.json
+echo "config.json written:"
+jq -r 'to_entries | map("  \(.key)=\(.value | tostring | .[0:60])") | .[]' /root/.yaver/config.json
+
+# --debug runs in foreground (no re-exec), so cfg.AuthToken loaded by
+# this process IS what becomes s.token in the HTTPServer. Background-
+# ing via `&` keeps the script flowing.
+yaver serve --debug --no-relay --no-tls > /tmp/yaver-serve.log 2>&1 &
 AGENT_PID=$!
 
 # Wait for /health
-for i in {1..30}; do
+for i in {1..40}; do
   if curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null 2>&1; then
-    echo "agent ready (after ${i}x 200ms)"
+    echo "agent ready (after ${i}x 250ms)"
     break
   fi
-  sleep 0.2
+  sleep 0.25
 done
-curl -fsS "http://127.0.0.1:$AGENT_PORT/health" || { echo "agent never came up — see /tmp/yaver-serve.log"; tail -50 /tmp/yaver-serve.log; exit 1; }
+if ! curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null; then
+  echo "agent never came up — see /tmp/yaver-serve.log"
+  tail -80 /tmp/yaver-serve.log || true
+  exit 1
+fi
+
+banner "diagnostic: direct curl with the test token"
+# This is the exact comparison the agent's auth() middleware fast-paths
+# on. If THIS curl 200's, mobile-headless's request shape is the
+# problem; if it 4xx's, the agent's s.token isn't what we wrote.
+direct_status="$(curl -sS -o /tmp/info-resp.json -w '%{http_code}' \
+  -H "Authorization: Bearer $TEST_TOKEN" \
+  "http://127.0.0.1:$AGENT_PORT/info" || echo curl-fail)"
+echo "GET /info → HTTP $direct_status"
+head -c 400 /tmp/info-resp.json
+echo
+if [ "$direct_status" != "200" ]; then
+  echo "agent rejected the test token — dumping agent boot log:"
+  head -60 /tmp/yaver-serve.log
+  echo "----"
+  echo "(if /info worked, mobile-headless is the issue; if not, the"
+  echo " token-write-into-config path isn't producing the s.token we"
+  echo " think it is.)"
+fi
 
 banner "mobile-headless: sign-in + ops info"
 export YMH_AGENT_URL="http://127.0.0.1:$AGENT_PORT"
