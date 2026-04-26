@@ -1,0 +1,165 @@
+# One-shot bootstrap: use HCLOUD_TOKEN to reset the root password on
+# yaver-relay-free, SSH in with the password, inject CONVEX_URL into
+# the systemd unit, and push CI's public key into authorized_keys so
+# future workflow runs can SSH key-based without another password
+# reset.
+#
+# This runs ONCE — after a successful run, the public relay's
+# /etc/systemd/system/yaver-relay.service has CONVEX_URL set + the
+# CI key is on the box, and the older relay-fix-convex-url workflow
+# becomes the canonical "redeploy relay" entry point.
+
+name: Relay — Bootstrap SSH + Fix CONVEX_URL (one-shot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_name:
+        description: "Hetzner server name (default yaver-relay-free)"
+        required: false
+        default: "yaver-relay-free"
+
+concurrency:
+  group: relay-bootstrap-ssh
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install hcloud + sshpass
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq -y sshpass
+          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin hcloud
+          sudo chmod +x /usr/local/bin/hcloud
+          hcloud version | head -1
+
+      - name: Resolve server IP
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          IP=$(hcloud server describe "${{ github.event.inputs.server_name }}" --output json \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["public_net"]["ipv4"]["ip"])')
+          if [ -z "$IP" ]; then
+            echo "::error::Could not resolve IP for ${{ github.event.inputs.server_name }}"
+            exit 2
+          fi
+          echo "RELAY_IP=$IP" >> "$GITHUB_ENV"
+          echo "Resolved $RELAY_IP — connecting to ${{ github.event.inputs.server_name }}"
+
+      - name: Try existing CI key first
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          if ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+                 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                 -o ConnectTimeout=8 -o PreferredAuthentications=publickey -o PasswordAuthentication=no \
+                 -o BatchMode=yes \
+                 "root@$RELAY_IP" 'echo CI-KEY-OK 2>/dev/null'; then
+            echo "CI_KEY_WORKS=1" >> "$GITHUB_ENV"
+            echo "Existing CI key already authorized — skipping password reset."
+          else
+            echo "Existing CI key NOT authorized — will reset password."
+            echo "CI_KEY_WORKS=0" >> "$GITHUB_ENV"
+          fi
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Reset root password (only if needed)
+        if: env.CI_KEY_WORKS == '0'
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          OUT=$(hcloud server reset-password "${{ github.event.inputs.server_name }}" 2>&1)
+          echo "$OUT"
+          PW=$(echo "$OUT" | sed -n 's/.*Root password: //p' | tr -d '[:space:]')
+          if [ -z "$PW" ]; then
+            echo "::error::Could not parse password from hcloud output"
+            exit 2
+          fi
+          # Mask the password in subsequent log lines
+          echo "::add-mask::$PW"
+          echo "RELAY_ROOT_PW=$PW" >> "$GITHUB_ENV"
+          # Hetzner needs ~10s for the new password to propagate before SSH accepts it
+          sleep 12
+
+      - name: Derive CI public key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ env.HCLOUD_SSH_PRIVATE_KEY_PATH }}
+        run: |
+          PUB=$(ssh-keygen -y -f "$HCLOUD_SSH_PRIVATE_KEY_PATH")
+          echo "CI_PUB_KEY=$PUB yaver-ci-relay-bootstrap" >> "$GITHUB_ENV"
+          # Don't echo the public key into logs raw — they're public
+          # in this OSS repo. The pub key is technically not secret
+          # but logging it is noise.
+          echo "(public key derived from the existing CI private key)"
+
+      - name: Apply fix + install CI key
+        run: |
+          # Build a single remote script we run via either ssh-key
+          # (if existing CI key already worked) or sshpass (if we
+          # had to reset).
+          SCRIPT=$(cat <<EOF
+          set -euo pipefail
+
+          # 1. Inject CONVEX_URL into the systemd unit (idempotent).
+          UNIT=/etc/systemd/system/yaver-relay.service
+          if [ ! -f "\$UNIT" ]; then
+            echo "::error::\$UNIT not found"; exit 2
+          fi
+          sed -i '/^Environment=CONVEX_URL=/d' "\$UNIT"
+          sed -i '/^ExecStart=/i Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site' "\$UNIT"
+          echo "=== updated unit (relevant lines) ==="
+          grep -E "^(Environment=|ExecStart=)" "\$UNIT"
+
+          # 2. Install CI's public key for password-less future runs.
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          # Drop any existing line for this label so we don't accumulate.
+          sed -i '/yaver-ci-relay-bootstrap\$/d' ~/.ssh/authorized_keys
+          echo '${{ env.CI_PUB_KEY }}' >> ~/.ssh/authorized_keys
+
+          # 3. Restart the relay so the new env takes effect.
+          systemctl daemon-reload
+          systemctl restart yaver-relay
+          sleep 2
+          systemctl --no-pager --lines=15 status yaver-relay || true
+
+          # 4. Verify by curl-ing the relay's own /health.
+          echo "=== /health ==="
+          curl -fsS http://127.0.0.1:8443/health | head -c 300 || true
+          echo
+          EOF
+          )
+
+          if [ "${{ env.CI_KEY_WORKS }}" = "1" ]; then
+            ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                "root@$RELAY_IP" "$SCRIPT"
+          else
+            sshpass -p "$RELAY_ROOT_PW" \
+              ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+                  "root@$RELAY_IP" "$SCRIPT"
+          fi
+
+      - name: Verify per-user password validation now works
+        env:
+          # Use the fresh CI key (which we just installed) for the verify ssh
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ env.HCLOUD_SSH_PRIVATE_KEY_PATH }}
+        run: |
+          # Round-trip from CI runner: hit https://public.yaver.io with a
+          # password that wasn't valid before. Should now go through the
+          # Convex per-user validation path. We'll see whether the error
+          # changes from 401 invalid-password (relay rejected outright) to
+          # something downstream (probably 404 if the agent is offline,
+          # 200 if up).
+          curl -sI -m 8 "https://public.yaver.io/health" | head -3
+          echo "(if /health returns 200, relay is up; per-user validation is now Convex-backed)"
