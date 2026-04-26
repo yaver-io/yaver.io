@@ -30,36 +30,38 @@ exec > >(tee -a "$LOG") 2>&1
 
 banner() { printf '\n========== %s ==========\n' "$*"; }
 
-TEST_TOKEN="vibe-preview-mobile-headless-smoke-$$"
-# Use a port other than 18080 — the persistent ephemeral may have a
-# systemd-managed yaver running on the default port that respawns
-# faster than `pkill` can clean up. A non-default port guarantees
-# the agent we boot is the only thing answering on it.
-AGENT_PORT=18099
+TEST_TOKEN=""           # populated from /root/.yaver/config.json below
+AGENT_PORT=18080         # systemd-managed yaver listens here
 PROJECT="vibe-mh-smoke"
 DEV_SERVER_PORT=18081
 
 cleanup() {
   banner "cleanup"
-  if [ -n "${AGENT_PID:-}" ]; then
-    kill "$AGENT_PID" 2>/dev/null || true
+  # Stop the ephemeral preview session we may have created. Idempotent.
+  if [ -n "${TEST_TOKEN:-}" ]; then
+    curl -fsS -X POST -H "Authorization: Bearer $TEST_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -nc --arg p "$PROJECT" '{project:$p}')" \
+      "http://127.0.0.1:${AGENT_PORT:-18080}/vibing/preview/stop" >/dev/null 2>&1 || true
   fi
   if [ -n "${DEV_PID:-}" ]; then
     kill "$DEV_PID" 2>/dev/null || true
   fi
-  # Be a good neighbour: don't leave a yaver serve from an aborted
-  # run hogging port 18080 across CI invocations.
-  pkill -f 'yaver serve' 2>/dev/null || true
 }
 trap cleanup EXIT
 
-banner "rebuild + install yaver"
+banner "rebuild + install yaver from source"
 cd "$REPO/desktop/agent"
 export PATH=/usr/local/go/bin:$PATH
 go build -o /tmp/yaver-new .
 install -m 0755 /tmp/yaver-new /usr/local/bin/yaver
 rm -f /tmp/yaver-new
 yaver --version 2>&1 | head -1
+# Bounce the systemd-managed agent so it picks up the new binary
+# (the running PID still has the old binary mapped — Restart=always
+# kicks in).
+systemctl restart yaver-agent.service 2>/dev/null || true
+sleep 5
 
 banner "install yaver-mobile-headless from npm"
 npm install -g --no-fund --no-audit yaver-mobile-headless 2>&1 | tail -5
@@ -100,69 +102,44 @@ DEV_PID=$!
 sleep 1
 curl -fsS "http://127.0.0.1:$DEV_SERVER_PORT" | head -3 || { echo "dev server didn't come up"; exit 1; }
 
-banner "yaver serve (foreground via --debug, test token)"
-# Stop any prior yaver agent so our config.json wins.
-pkill -f 'yaver serve' 2>/dev/null || true
-sleep 1
-
-mkdir -p /root/.yaver
-# Write the test token as the agent's session token. Wipe convex_site_url
-# so the agent doesn't try (and fail to) validate the test token — the
-# fast-path `token == s.token` is what we exercise here.
-printf '{"auth_token":%s,"convex_site_url":""}\n' \
-  "$(printf '%s' "$TEST_TOKEN" | jq -Rs .)" > /root/.yaver/config.json
-echo "config.json written:"
-jq -r 'to_entries | map("  \(.key)=\(.value | tostring | .[0:60])") | .[]' /root/.yaver/config.json
-
-# --debug runs in foreground (no re-exec), so cfg.AuthToken loaded by
-# this process IS what becomes s.token in the HTTPServer. Background-
-# ing via `&` keeps the script flowing.
-#
-# YAVER_NO_BOOTSTRAP=1 is the escape hatch in auth_bootstrap.go's
-# needsBootstrap() check. Without it, an empty cfg.ConvexSiteURL
-# routes us into the stripped-down bootstrap HTTP server (only
-# /health, /auth/pair/*, /info) — every other route 404's, including
-# /ops which is what mobile-headless depends on.
-YAVER_NO_BOOTSTRAP=1 yaver serve --debug --no-relay --no-tls \
-  --port "$AGENT_PORT" \
-  > /tmp/yaver-serve.log 2>&1 &
-AGENT_PID=$!
-
-# Wait for /health — yaver does Host Share + project discovery on
-# boot which can take 20+ s on a fresh box. 60 s × 0.5 s = 30 s.
-for i in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null 2>&1; then
-    echo "agent ready (after ${i}x 500ms)"
-    break
-  fi
-  sleep 0.5
-done
-if ! curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null; then
-  echo "agent never came up after 30s — full log:"
-  cat /tmp/yaver-serve.log || true
-  echo "---"
-  echo "process state:"
-  ps -p "$AGENT_PID" -o pid,stat,etime,cmd 2>&1 || echo "agent process gone"
-  exit 1
+banner "use existing systemd-managed yaver agent"
+# Don't try to bring up our own agent — the persistent ephemeral
+# already runs yaver-agent.service via systemd with a real Convex-
+# validated token. Trying to spawn a sibling caused 8 iterations
+# worth of bootstrap-mode / port-collision / boot-timing pain. The
+# systemd one IS the production-shaped agent we want to test
+# against. Read its token straight out of /root/.yaver/config.json.
+if ! systemctl is-active --quiet yaver-agent.service; then
+  echo "WARN: yaver-agent.service not active; trying to start it"
+  systemctl start yaver-agent.service || true
+  sleep 3
 fi
+systemctl is-active yaver-agent.service || true
 
-banner "diagnostic: direct curl with the test token"
-# This is the exact comparison the agent's auth() middleware fast-paths
-# on. If THIS curl 200's, mobile-headless's request shape is the
-# problem; if it 4xx's, the agent's s.token isn't what we wrote.
+if [ ! -f /root/.yaver/config.json ]; then
+  echo "no /root/.yaver/config.json — box never paired? skipping"
+  exit 0
+fi
+TEST_TOKEN="$(jq -r '.auth_token // empty' /root/.yaver/config.json)"
+if [ -z "$TEST_TOKEN" ] || [ "$TEST_TOKEN" = "null" ]; then
+  echo "no auth_token in config.json — box not signed in; skipping"
+  exit 0
+fi
+echo "using existing agent's auth_token (${TEST_TOKEN:0:8}…)"
+AGENT_PORT=18080
+
+banner "diagnostic: /health + /info via Bearer"
+curl -fsS "http://127.0.0.1:$AGENT_PORT/health" || { echo "agent not on 18080"; exit 1; }
+echo
 direct_status="$(curl -sS -o /tmp/info-resp.json -w '%{http_code}' \
   -H "Authorization: Bearer $TEST_TOKEN" \
   "http://127.0.0.1:$AGENT_PORT/info" || echo curl-fail)"
 echo "GET /info → HTTP $direct_status"
-head -c 400 /tmp/info-resp.json
+head -c 300 /tmp/info-resp.json
 echo
 if [ "$direct_status" != "200" ]; then
-  echo "agent rejected the test token — dumping agent boot log:"
-  head -60 /tmp/yaver-serve.log
-  echo "----"
-  echo "(if /info worked, mobile-headless is the issue; if not, the"
-  echo " token-write-into-config path isn't producing the s.token we"
-  echo " think it is.)"
+  echo "existing agent rejected its own auth_token — token may be expired"
+  exit 1
 fi
 
 banner "mobile-headless: ops info (env-based auth)"
