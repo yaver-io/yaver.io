@@ -58,10 +58,28 @@ rm -f /tmp/yaver-new
 yaver --version 2>&1 | head -1
 
 banner "install yaver-mobile-headless from npm"
-# Use the npm prefix that's already on PATH so the binary lands at
-# /usr/local/bin/yaver-mobile-headless on Ubuntu's nodejs apt setup.
 npm install -g --no-fund --no-audit yaver-mobile-headless 2>&1 | tail -5
-which yaver-mobile-headless
+
+# `npm install -g` lands the bin at $(npm prefix -g)/bin/<name> on
+# Ubuntu's nodesource setup, but that prefix isn't always on the
+# default ssh-non-interactive PATH. Probe explicitly so the rest of
+# the script can rely on the bin existing.
+npm_prefix="$(npm prefix -g 2>/dev/null || echo /usr)"
+npm_bin_dir="$npm_prefix/bin"
+export PATH="$npm_bin_dir:$PATH"
+echo "npm prefix : $npm_prefix"
+echo "npm bin dir: $npm_bin_dir"
+
+if [ -x "$npm_bin_dir/yaver-mobile-headless" ]; then
+  echo "yaver-mobile-headless installed at $npm_bin_dir/yaver-mobile-headless"
+elif command -v yaver-mobile-headless >/dev/null 2>&1; then
+  echo "yaver-mobile-headless on PATH at $(command -v yaver-mobile-headless)"
+else
+  echo "yaver-mobile-headless not found after npm install -g" >&2
+  echo "PATH=$PATH" >&2
+  ls -la "$npm_bin_dir" 2>&1 | head -20 >&2 || true
+  exit 1
+fi
 
 banner "static dev server (Python http.server)"
 mkdir -p /tmp/vibe-mh-site
