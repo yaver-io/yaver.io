@@ -1,0 +1,42 @@
+name: Relay — Deep Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare CI SSH key
+        run: |
+          install -m 600 /dev/stdin "$RUNNER_TEMP/ci_key" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "CI_KEY_PATH=$RUNNER_TEMP/ci_key" >> "$GITHUB_ENV"
+
+      - name: SSH in + dump everything
+        run: |
+          ssh -i "$CI_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              root@46.224.110.38 bash -s <<'REMOTE'
+          set +e
+          echo "=== running yaver-relay process ==="
+          ps -eo pid,etime,args | grep -i yaver-relay | grep -v grep
+          echo
+          echo "=== systemd unit on disk ==="
+          cat /etc/systemd/system/yaver-relay.service
+          echo
+          echo "=== systemctl show — actual loaded ExecStart + Environment ==="
+          systemctl show yaver-relay --property=ExecStart --property=Environment
+          echo
+          echo "=== relay logs last 30 lines ==="
+          journalctl -u yaver-relay --no-pager -n 30
+          echo
+          echo "=== try password validation directly against relay :8080 (bypass nginx) ==="
+          curl -s -m 4 -i "http://127.0.0.1:8080/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=afe47cbe5207aa99b721052bf264d96f" | head -10
+          echo
+          echo "=== nginx config for public.yaver.io ==="
+          ls /etc/nginx/sites-enabled/ 2>/dev/null
+          cat /etc/nginx/sites-enabled/* 2>/dev/null | head -80
+          REMOTE
