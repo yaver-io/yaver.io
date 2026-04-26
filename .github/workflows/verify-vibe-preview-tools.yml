@@ -71,7 +71,7 @@ jobs:
 
       - name: Run verify script (rebuild + install vibe-preview + report)
         run: |
-          ip="$(cat /tmp/yaver-ci-artifacts/server-ip)"
+          ip="$(cat ci/.artifacts/server-ip)"
           ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
@@ -85,7 +85,7 @@ jobs:
         if: always()
         with:
           name: verify-vibe-preview-${{ inputs.target }}-logs
-          path: /tmp/yaver-ci-artifacts/
+          path: ci/.artifacts/
 
       - name: Tear down ephemeral box
         if: inputs.target == 'ephemeral' && always()
