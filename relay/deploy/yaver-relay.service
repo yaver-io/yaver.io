@@ -6,17 +6,21 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# CONVEX_URL is REQUIRED for per-user password validation. Without it
-# the relay can only validate against the shared RELAY_PASSWORD env
-# var, and every web/mobile request that comes in with the user's
-# per-user `__rp=...` (which doesn't match the shared password) gets
-# rejected with 401 invalid relay password — even though Convex
-# happily validates the same value via POST /relay/validate. The
-# agent's QUIC register works because the agent sends the shared
-# password, while the web SSE path sends the per-user one. Default
-# points at the production Convex deployment; override via
-# /etc/default/yaver-relay if a self-hosted relay needs a different
-# Convex.
+# This unit ships with the OFFICIAL public.yaver.io deployment.
+# YAVER_RELAY_OFFICIAL=1 tells the binary it's safe to fall back to
+# Yaver's prod Convex backend if no CONVEX_URL is explicitly set.
+# Self-hosted users running their own relay should NOT use this unit
+# unchanged — clone it, drop YAVER_RELAY_OFFICIAL, and either set
+# CONVEX_URL to their own Convex deploy or leave it empty for
+# shared-password-only mode.
+#
+# CONVEX_URL is what actually drives per-user `__rp=` validation:
+# the relay POSTs to {CONVEX_URL}/relay/validate when the inbound
+# password doesn't match RELAY_PASSWORD. The agent's QUIC register
+# works either way because the agent always sends the shared
+# password; only the web/mobile per-user path needs Convex. Override
+# CONVEX_URL via /etc/default/yaver-relay for staging-Convex deploys.
+Environment=YAVER_RELAY_OFFICIAL=1
 Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site
 EnvironmentFile=-/etc/default/yaver-relay
 ExecStart=/usr/local/bin/yaver-relay serve --quic-port=4433 --http-port=8443

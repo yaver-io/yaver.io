@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.1.4"
+const version = "0.1.7"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -127,19 +127,19 @@ func runServe(args []string) {
 	if cURL == "" {
 		cURL = os.Getenv("CONVEX_URL")
 	}
-	// Default to the production Convex deployment so per-user
-	// password validation works out of the box. Mirrors the same
-	// default that agent (desktop/agent/main.go), web
-	// (web/lib/constants.ts), and mobile (mobile/src/_core/
-	// constants.ts) hardcode. Without this fallback, a fresh relay
-	// deploy that forgets to pass --convex-url or set CONVEX_URL
-	// would silently fall back to "shared password only" mode and
-	// reject every per-user `__rp=` request with 401, even though
-	// Convex's view of those passwords is correct. Self-hosted
-	// relays override this via the flag or env var.
-	if cURL == "" {
+	// Optional opt-in to Yaver's production Convex deployment for
+	// per-user `__rp=` validation. ONLY public.yaver.io's official
+	// deployment should set this — self-hosted relays must not phone
+	// home to Yaver's backend. The official systemd unit
+	// (relay/deploy/yaver-relay.service) sets both this var AND an
+	// explicit Environment=CONVEX_URL=... so this fallback is just
+	// belt + suspenders. Self-hosters who clone this repo and run
+	// docker-compose up get an empty CONVEX_URL → shared-password-
+	// only mode (or open mode if no shared password set), with no
+	// outbound calls to perceptive-minnow-557.
+	if cURL == "" && os.Getenv("YAVER_RELAY_OFFICIAL") == "1" {
 		cURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
-		log.Printf("  Convex URL: %s (default — set CONVEX_URL or --convex-url to override)", cURL)
+		log.Printf("  Convex URL: %s (YAVER_RELAY_OFFICIAL=1 — using Yaver-cloud default)", cURL)
 	}
 
 	eDomain := *exposeDomain

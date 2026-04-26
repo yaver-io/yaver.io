@@ -65,12 +65,18 @@ jobs:
           EOF
           echo "CI_KEY_PATH=$RUNNER_TEMP/ci_key" >> "$GITHUB_ENV"
 
-      - name: Push binary + restart service
+      - name: Push binary + sync systemd unit + restart service
         run: |
-          # Upload binary to a staging path
+          # Upload binary + the canonical systemd unit to staging paths.
+          # We re-deploy the unit every time so the box's
+          # YAVER_RELAY_OFFICIAL=1 + Environment=CONVEX_URL=... lines
+          # never drift away from the repo's source of truth.
           scp -i "$CI_KEY_PATH" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               /tmp/relay-dl/yaver-relay root@46.224.110.38:/tmp/yaver-relay.new
+          scp -i "$CI_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              relay/deploy/yaver-relay.service root@46.224.110.38:/tmp/yaver-relay.service.new
 
           # Swap + restart in one shot to minimize downtime
           ssh -i "$CI_KEY_PATH" \
@@ -79,18 +85,34 @@ jobs:
           set -euo pipefail
           BIN=/opt/yaver-relay/yaver-relay
           NEW=/tmp/yaver-relay.new
+          UNIT=/etc/systemd/system/yaver-relay.service
+          UNIT_NEW=/tmp/yaver-relay.service.new
           mkdir -p /opt/yaver-relay
-          # Backup the running binary before swap (in case the new one
-          # doesn't boot for any reason — manual rollback path is
-          # `mv /opt/yaver-relay/yaver-relay.previous $BIN && systemctl restart yaver-relay`).
-          if [ -f "$BIN" ]; then
-            cp "$BIN" "$BIN.previous"
-          fi
-          install -m 0755 "$NEW" "$BIN"
-          rm -f "$NEW"
 
-          # Print the version the binary advertises before restart so
-          # the workflow log proves the swap landed.
+          # Preserve the live unit's local-only directives the repo
+          # template doesn't know about — specifically the actual
+          # ExecStart line, which on this box carries the shared
+          # --password=<value>. We keep the live ExecStart and adopt
+          # everything else from the repo template (Environment lines,
+          # hardening directives, EnvironmentFile fallback).
+          LIVE_EXEC=$(grep '^ExecStart=' "$UNIT" || true)
+          if [ -n "$LIVE_EXEC" ]; then
+            # Replace the template's ExecStart placeholder with the
+            # live one so the shared password isn't dropped on the floor.
+            sed -i "s|^ExecStart=.*|$LIVE_EXEC|" "$UNIT_NEW"
+          fi
+
+          # Backup running binary + unit before swap. Manual rollback:
+          #   mv /opt/yaver-relay/yaver-relay.previous $BIN
+          #   cp /etc/systemd/system/yaver-relay.service.previous $UNIT
+          #   systemctl daemon-reload && systemctl restart yaver-relay
+          if [ -f "$BIN" ]; then cp "$BIN" "$BIN.previous"; fi
+          if [ -f "$UNIT" ]; then cp "$UNIT" "$UNIT.previous"; fi
+          install -m 0755 "$NEW" "$BIN"
+          install -m 0644 "$UNIT_NEW" "$UNIT"
+          rm -f "$NEW" "$UNIT_NEW"
+
+          systemctl daemon-reload
           "$BIN" --help 2>&1 | head -3 || true
 
           systemctl restart yaver-relay
