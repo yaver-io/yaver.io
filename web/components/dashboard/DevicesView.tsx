@@ -5,6 +5,44 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
+import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
+
+function transportToneClasses(tone: TransportInfo["tone"]): string {
+  switch (tone) {
+    case "emerald": return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+    case "blue":    return "border-blue-500/40 bg-blue-500/10 text-blue-200";
+    case "violet":  return "border-violet-500/40 bg-violet-500/10 text-violet-200";
+    case "amber":   return "border-amber-500/40 bg-amber-500/10 text-amber-200";
+    case "rose":    return "border-rose-500/40 bg-rose-500/10 text-rose-200";
+    default:        return "border-surface-700 bg-surface-800/40 text-surface-300";
+  }
+}
+
+function transportFor(device: Device): TransportInfo {
+  return classifyTransport({
+    host: device.host,
+    port: device.port,
+    localIps: device.localIps,
+    publicEndpoints: device.publicEndpoints,
+    tunnelUrl: device.tunnelUrl,
+    activeRelayUrl: agentClient.activeRelayUrl ?? null,
+    activeTunnelUrl: agentClient.activeTunnelUrl ?? null,
+    platform: device.platform,
+    name: device.name,
+  });
+}
+
+function TransportBadge({ device }: { device: Device }) {
+  const t = transportFor(device);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${transportToneClasses(t.tone)}`}
+      title={t.detail}
+    >
+      {t.label}
+    </span>
+  );
+}
 
 function DeviceIcon({ platform }: { platform: string }) {
   const isMobile = platform === "iOS" || platform === "Android";
@@ -1199,6 +1237,7 @@ export default function DevicesView({
                               : "Offline"}
                       </span>
                     </div>
+                    <div className="mt-1"><TransportBadge device={device} /></div>
                     <p className="text-sm text-surface-500">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
                       {device.agentVersion ? (
@@ -1737,6 +1776,118 @@ function InlinePingButton({ device, token }: { device: Device; token: string | n
   );
 }
 
+function ConnectionSection({ device }: { device: Device }) {
+  const t = transportFor(device);
+  const relayHealth = useRelayHealth(t.primary === "yaver-public-relay" || t.primary === "self-hosted-relay" ? t.url : null);
+
+  const lanIps = (device.localIps || []).filter(Boolean);
+  const tailscaleIp = lanIps.find((ip) => /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(ip));
+  const wslIp = lanIps.find((ip) => /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip));
+  const privateLanIps = lanIps.filter(
+    (ip) => /^(10\.|192\.168\.)/.test(ip) && ip !== tailscaleIp,
+  );
+
+  return (
+    <div className="mb-4 rounded-md border border-surface-800 bg-surface-950/30 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">Connection</div>
+        <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${transportToneClasses(t.tone)}`}>
+          {t.label}
+        </span>
+      </div>
+      <div className="grid gap-x-6 gap-y-1 text-xs md:grid-cols-2">
+        {/* Primary transport detail */}
+        <div className="flex items-start justify-between gap-3 py-1">
+          <span className="text-surface-500">Active path</span>
+          <span className="text-right text-surface-200">{t.detail}</span>
+        </div>
+        {t.url ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">URL</span>
+            <span className="break-all text-right font-mono text-[11px] text-surface-200">{t.url}</span>
+          </div>
+        ) : null}
+        {/* Relay version when relay-routed */}
+        {(t.primary === "yaver-public-relay" || t.primary === "self-hosted-relay") ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">Relay version</span>
+            <span className="text-right text-surface-200">
+              {relayHealth?.version ? (
+                <span className="inline-flex items-center gap-1">
+                  <span>v{relayHealth.version}</span>
+                  {typeof relayHealth.tunnels === "number" ? (
+                    <span className="rounded border border-surface-700 bg-surface-800/40 px-1 text-[10px] text-surface-400">
+                      {relayHealth.tunnels} tunnel{relayHealth.tunnels === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                <span className="text-surface-600">probing…</span>
+              )}
+            </span>
+          </div>
+        ) : null}
+        {/* Tunnel URL row when relevant */}
+        {device.tunnelUrl ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">Tunnel URL</span>
+            <span className="break-all text-right font-mono text-[11px] text-surface-200">{device.tunnelUrl}</span>
+          </div>
+        ) : null}
+        {/* Tailscale IP if present */}
+        {tailscaleIp ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">Tailscale IP</span>
+            <span className="text-right font-mono text-surface-200">{tailscaleIp}:{device.port ?? 18080}</span>
+          </div>
+        ) : null}
+        {/* WSL2 NAT IP if present */}
+        {wslIp ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">WSL2 NAT IP</span>
+            <span className="text-right font-mono text-surface-200">{wslIp}:{device.port ?? 18080}</span>
+          </div>
+        ) : null}
+        {/* Private LAN IPs */}
+        {privateLanIps.length ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">LAN IPs</span>
+            <span className="text-right font-mono text-surface-200">{privateLanIps.join(", ")}</span>
+          </div>
+        ) : null}
+        {/* Public endpoints */}
+        {(device.publicEndpoints || []).length ? (
+          <div className="flex items-start justify-between gap-3 py-1">
+            <span className="text-surface-500">Public endpoints</span>
+            <span className="break-all text-right font-mono text-[11px] text-surface-200">
+              {(device.publicEndpoints || []).join(", ")}
+            </span>
+          </div>
+        ) : null}
+        {/* Direct host:port */}
+        <div className="flex items-start justify-between gap-3 py-1">
+          <span className="text-surface-500">Reported host</span>
+          <span className="text-right font-mono text-surface-200">{device.host}:{device.port ?? 18080}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function useRelayHealth(relayUrl: string | null | undefined) {
+  const [state, setState] = useState<{ version?: string; tunnels?: number; activeDevices?: number } | null>(null);
+  useEffect(() => {
+    if (!relayUrl) { setState(null); return; }
+    let cancelled = false;
+    const ac = new AbortController();
+    void fetchRelayHealth(relayUrl, ac.signal).then((h) => {
+      if (!cancelled) setState(h);
+    });
+    return () => { cancelled = true; ac.abort(); };
+  }, [relayUrl]);
+  return state;
+}
+
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
   const { status: updateStatus, error: updateError, loading: updateLoading, updating, trigger: triggerUpdate } =
@@ -1849,6 +2000,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
                 : "Ping"}
         </button>
       </div>
+      <ConnectionSection device={device} />
       <div className="grid gap-6 md:grid-cols-2">
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Identity</div>

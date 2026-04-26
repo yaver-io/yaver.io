@@ -18,8 +18,45 @@ import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
+import DeviceDetailsModal from "../../src/components/DeviceDetailsModal";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
+import {
+  classifyTransport,
+  fetchRelayHealth,
+  transportToneRGB,
+  type TransportInfo,
+} from "../../src/lib/transport";
+
+function transportFor(device: Device): TransportInfo {
+  return classifyTransport({
+    host: device.host,
+    port: device.port,
+    localIps: device.lanIps,
+    publicEndpoints: device.publicEndpoints,
+    tunnelUrl: device.tunnelUrl,
+    activeRelayUrl: quicClient.activeRelayBaseUrl ?? null,
+    activeTunnelUrl: quicClient.activeTunnelBaseUrl ?? null,
+    platform: device.os,
+    name: device.name,
+  });
+}
+
+function TransportBadge({ device }: { device: Device }) {
+  const t = transportFor(device);
+  const palette = transportToneRGB(t.tone);
+  return (
+    <View style={{
+      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
+      backgroundColor: palette.bg, borderWidth: 1, borderColor: palette.border,
+      alignSelf: "flex-start",
+    }}>
+      <Text style={{ color: palette.text, fontSize: 9, fontWeight: "700", letterSpacing: 0.6 }}>
+        {t.label.toUpperCase()}
+      </Text>
+    </View>
+  );
+}
 
 type GitProviderSummary = {
   github: boolean;
@@ -225,6 +262,7 @@ function DeviceCard({
   // running the same /runner-auth/browser flow the web UI uses.
   // `runnerAuthOpenFor` is the runner id when the modal is open.
   const [runnerAuthOpenFor, setRunnerAuthOpenFor] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
@@ -567,6 +605,9 @@ function DeviceCard({
               </View>
             ) : null}
           </View>
+          <View style={{ marginTop: 4 }}>
+            <TransportBadge device={device} />
+          </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
             {formatDevicePlatform(device, runtimeLabel)} &middot; {device.host}:{device.port}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
@@ -790,6 +831,12 @@ function DeviceCard({
                 </Pressable>
               </>
             ) : null}
+            <Pressable
+              style={[styles.menuActionBtn, { backgroundColor: c.accent + "18" }]}
+              onPress={() => setDetailsOpen(true)}
+            >
+              <Text style={[styles.menuActionText, { color: c.accent }]}>Details</Text>
+            </Pressable>
             {!device.isGuest ? (
               <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
                 <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
@@ -889,6 +936,11 @@ function DeviceCard({
           // authConfigured state on its next tick and drops the
           // [SIGN IN] badge automatically.
         }}
+      />
+      <DeviceDetailsModal
+        device={device}
+        visible={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
       />
     </Pressable>
   );

@@ -970,9 +970,14 @@ export class AgentClient {
   private token: string | null = null;
   private deviceId: string | null = null;
   private relayServers: RelayServer[] = [];
-  private activeRelayUrl: string | null = null;
+  // Exposed read-only via the activeRelayUrl / activeTunnelUrl
+  // getters below — DevicesView.tsx + transport.ts read them so the
+  // UI can render "via public.yaver.io v0.1.9" badges.
+  private _activeRelayUrl: string | null = null;
   private tunnelCandidates: string[] = [];
-  private activeTunnelUrl: string | null = null;
+  private _activeTunnelUrl: string | null = null;
+  get activeRelayUrl(): string | null { return this._activeRelayUrl; }
+  get activeTunnelUrl(): string | null { return this._activeTunnelUrl; }
   private _connectionState: ConnectionState = "disconnected";
   private pollInterval: ReturnType<typeof setInterval> | null = null;
   private _lastConnectDiagnostics: ConnectAttemptDiagnostic[] = [];
@@ -1030,8 +1035,8 @@ export class AgentClient {
     this.port = port;
     this.token = token;
     this.deviceId = deviceId ?? null;
-    this.activeRelayUrl = null;
-    this.activeTunnelUrl = null;
+    this._activeRelayUrl = null;
+    this._activeTunnelUrl = null;
     this.tunnelCandidates = Array.from(new Set((opts?.tunnelUrls || []).map((url) => String(url || "").trim()).filter(Boolean)));
     this.reconnectAttempt = 0;
 
@@ -1047,8 +1052,8 @@ export class AgentClient {
     this.port = null;
     this.token = null;
     this.deviceId = null;
-    this.activeRelayUrl = null;
-    this.activeTunnelUrl = null;
+    this._activeRelayUrl = null;
+    this._activeTunnelUrl = null;
     this.tunnelCandidates = [];
   }
 
@@ -2183,11 +2188,11 @@ export class AgentClient {
   // ── Private helpers ────────────────────────────────────────────────
 
   private get baseUrl(): string {
-    if (this.activeRelayUrl && this.deviceId) {
-      return `${this.activeRelayUrl}/d/${this.deviceId}`;
+    if (this._activeRelayUrl && this.deviceId) {
+      return `${this._activeRelayUrl}/d/${this.deviceId}`;
     }
-    if (this.activeTunnelUrl) {
-      return this.activeTunnelUrl.replace(/\/+$/, "");
+    if (this._activeTunnelUrl) {
+      return this._activeTunnelUrl.replace(/\/+$/, "");
     }
     return `http://${this.host}:${this.port}`;
   }
@@ -2196,7 +2201,7 @@ export class AgentClient {
 
   private get authHeaders(): Record<string, string> {
     const h: Record<string, string> = { Authorization: `Bearer ${this.token}` };
-    if (this.activeRelayUrl && this.activeRelayPassword) {
+    if (this._activeRelayUrl && this.activeRelayPassword) {
       h["X-Relay-Password"] = this.activeRelayPassword;
     }
     return h;
@@ -2612,8 +2617,8 @@ export class AgentClient {
 
   private async attemptConnect(): Promise<void> {
     this.setConnectionState("connecting");
-    this.activeRelayUrl = null;
-    this.activeTunnelUrl = null;
+    this._activeRelayUrl = null;
+    this._activeTunnelUrl = null;
     const diagnostics: ConnectAttemptDiagnostic[] = [];
     try {
       let connected = false;
@@ -2630,7 +2635,7 @@ export class AgentClient {
           const diag = await this.probeHealth(relayDeviceUrl, relayHeaders, 8000, "relay", relay.id);
           diagnostics.push(diag);
           if (diag.ok) {
-            this.activeRelayUrl = relay.httpUrl;
+            this._activeRelayUrl = relay.httpUrl;
             this.activeRelayPassword = relay.password || null;
             connected = true;
             console.log("[AgentClient] Relay connection succeeded via", relay.id);
@@ -2651,9 +2656,9 @@ export class AgentClient {
           );
           diagnostics.push(diag);
           if (diag.ok) {
-            this.activeRelayUrl = null;
+            this._activeRelayUrl = null;
             this.activeRelayPassword = null;
-            this.activeTunnelUrl = tunnelUrl.replace(/\/+$/, "");
+            this._activeTunnelUrl = tunnelUrl.replace(/\/+$/, "");
             connected = true;
             console.log("[AgentClient] Tunnel connection succeeded via", tunnelUrl);
             break;
@@ -2668,9 +2673,9 @@ export class AgentClient {
         const diag = await this.probeHealth(directUrl, this.authHeaders, 5000, "direct");
         diagnostics.push(diag);
         if (diag.ok) {
-          this.activeRelayUrl = null;
+          this._activeRelayUrl = null;
           this.activeRelayPassword = null;
-          this.activeTunnelUrl = null;
+          this._activeTunnelUrl = null;
           connected = true;
           console.log("[AgentClient] Direct connection succeeded");
         } else {
@@ -3355,7 +3360,7 @@ export class AgentClient {
     // In the browser, route relay-backed previews through our own
     // same-origin proxy so the iframe does not depend on relay query-param
     // auth. That proxy injects X-Relay-Password server-side.
-    if (this.activeRelayUrl) {
+    if (this._activeRelayUrl) {
       if (!this.deviceId) return null;
       return `/d/${encodeURIComponent(this.deviceId)}/dev/`;
     }
@@ -3393,7 +3398,7 @@ export class AgentClient {
   private appendStreamAuth(url: string): string {
     const u = new URL(url);
     if (this.token) u.searchParams.set("token", this.token);
-    if (this.activeRelayUrl && this.activeRelayPassword) {
+    if (this._activeRelayUrl && this.activeRelayPassword) {
       u.searchParams.set("__rp", this.activeRelayPassword);
     }
     return u.toString();
@@ -3436,7 +3441,7 @@ export class AgentClient {
         // Update password on the matching relay we're already
         // connected to. Don't switch relays here.
         for (const relay of relays) {
-          if (relay.httpUrl === this.activeRelayUrl) {
+          if (relay.httpUrl === this._activeRelayUrl) {
             this.activeRelayPassword = relay.password || null;
             break;
           }
@@ -5275,7 +5280,7 @@ export class AgentClient {
    *  always relay-routed (browsers can't talk to localhost:18080 directly)
    *  so this is usually populated — but we still guard it. */
   get activeRelayHttpUrl(): string | null {
-    return this.activeRelayUrl;
+    return this._activeRelayUrl;
   }
 
   /** Pull the project .tgz from the currently-connected agent and POST it to

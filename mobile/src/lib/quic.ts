@@ -973,6 +973,13 @@ export class QuicClient {
     return this.activeRelayUrl;
   }
 
+  /** Read-only accessors used by the UI's transport classifier. Same shape
+   *  as the web AgentClient. The mobile QuicClient owns a bunch of
+   *  private state for connect/reconnect; these getters just publish
+   *  the bits the device-card UI needs. */
+  get activeRelayBaseUrl(): string | null { return this.activeRelayUrl; }
+  get activeTunnelBaseUrl(): string | null { return this._tunnelUrl; }
+
   /** Reachability candidates for recovery. Keep the successful target URL so
    *  /auth/pair/submit can follow the same path instead of falling back to a
    *  stale relay URL. */
