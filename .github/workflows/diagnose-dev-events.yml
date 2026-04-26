@@ -111,4 +111,39 @@ jobs:
             -d '{"skip":["runtime-deps","cloudflared","tailscale","vpn"]}' "$AGENT/diagnose" \
             | jq '.report // .' | head -c 4000
           echo
+
+          echo
+          echo "=== Metro process tree + open files ==="
+          for pid in $(pgrep -f "expo|metro|node.*start" 2>/dev/null); do
+            ps -p "$pid" -o pid,ppid,cmd | tail -n +2
+          done
+          # Find the actual metro process
+          METRO_PID=$(pgrep -af "expo start" | head -1 | awk '{print $1}')
+          if [ -n "$METRO_PID" ]; then
+            echo "metro/expo pid=$METRO_PID"
+            echo "ppid: $(cat /proc/$METRO_PID/status | grep ^PPid)"
+            echo "stdout target: $(readlink /proc/$METRO_PID/fd/1)"
+            echo "stderr target: $(readlink /proc/$METRO_PID/fd/2)"
+          else
+            echo "(no expo/metro process running)"
+          fi
+
+          echo
+          echo "=== systemd journal for yaver (last 200 lines) ==="
+          journalctl -u yaver --no-pager -n 200 2>/dev/null | tail -200 || echo "(no system-scope yaver unit)"
+          echo "--- per-user yaver logs ---"
+          for u in yaver root; do
+            uid=$(id -u "$u" 2>/dev/null) || continue
+            journalctl --user-unit yaver --user-unit yaver-agent _UID="$uid" --no-pager -n 200 2>/dev/null | tail -100 || true
+          done
+          echo "--- raw search for super-host/dev:/metro/bundle in journal ---"
+          journalctl --since "10 minutes ago" --no-pager 2>/dev/null | grep -E '\[super-host|\[dev:|expo:|metro|bundle failed|hermesc|export:embed' | tail -60 || true
+
+          echo
+          echo "=== force a log emit + 5s SSE re-probe ==="
+          # Hit a no-op endpoint that the agent definitely logs about, to
+          # verify the SSE channel itself works.
+          curl -fsS -H "Authorization: Bearer $TOKEN" "$AGENT/info" > /dev/null
+          (timeout 5 curl -sN -H "Authorization: Bearer $TOKEN" -H "Accept: text/event-stream" "$AGENT/dev/events" || true) \
+            | awk '/^data:/ {print "post-poke: "$0}' | head -10
           REMOTE
