@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.54"
+const version = "1.99.55"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7458,10 +7458,19 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 		return
 	}
 
-	// Check if SSE request (must match relay/server.go detection)
+	// Check if SSE request — KEEP IN SYNC with relay/tunnel.go's
+	// SSE detection. Anything that streams forever must be on this
+	// list, otherwise the agent's tunnel-client buffers the response
+	// body and the client times out with no response. The smoke for
+	// /blackbox/command-stream surfaced this before /command-stream
+	// was added.
 	isSSE := req.Method == "GET" && (strings.Contains(req.Path, "/output") ||
 		strings.HasSuffix(req.Path, "/dev/events") ||
-		strings.HasSuffix(req.Path, "/subscribe"))
+		strings.HasSuffix(req.Path, "/subscribe") ||
+		strings.HasSuffix(req.Path, "/blackbox/command-stream") ||
+		strings.HasSuffix(req.Path, "/blackbox/stream") ||
+		strings.HasSuffix(req.Path, "/feedback/stream") ||
+		strings.Contains(req.Path, "/streams/"))
 
 	if isSSE {
 		sseClient := &http.Client{Timeout: 10 * time.Minute}
