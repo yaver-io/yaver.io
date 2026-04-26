@@ -268,6 +268,19 @@ async function main() {
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
     installMissingCodingRunners();
   }
+
+  // Vibe Preview tool stack — best-effort provisioning so a fresh
+  // global npm install gives the user a working chromium-based frame
+  // capture + maestro-driven clip exercises out of the box. Opt out
+  // with YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW=1.
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_VIBE_PREVIEW")) {
+    try {
+      await runAgentCommand(["install", "vibe-preview"], { quiet: true });
+      log("Provisioned Vibe Preview tool stack (chromium + ffmpeg + maestro + appium + adb).");
+    } catch (error) {
+      log(`Skipping vibe-preview bootstrap: ${error.message}`);
+    }
+  }
 }
 
 main()
