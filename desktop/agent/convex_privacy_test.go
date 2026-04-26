@@ -51,6 +51,23 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"fileContent",
 	"fileBytes",
 	"body",         // often carries user input bodies (not to be confused with HTTP bodies here — this is arg key)
+	// Vibe Preview frame + clip data. Frames + clips + summaries
+	// flow agent→client P2P only; Convex must only ever see counters.
+	"previewFrame",
+	"frameData",
+	"frameJpeg",
+	"framePng",
+	"frameBytes",
+	"screenshotB64",
+	"clipMp4",
+	"clipBytes",
+	"clipPath",
+	"videoBlob",
+	"posterBytes",
+	"summaryText",
+	"previewSummary",
+	"exerciseScript",
+	"crashSnippet",
 }
 
 type recordedMutation struct {
@@ -245,6 +262,76 @@ func assertNoAbsolutePaths(t *testing.T, rec recordedMutation) {
 		}
 	}
 	walk(rec.Args)
+}
+
+// TestVibePreviewSessionPayload_isCounterOnly is a forward-looking
+// guardrail: when Phase 8's recordPreviewSession mutation lands, this
+// asserts the payload contains only counters + identifiers, never
+// frame bytes / clip bytes / summary text. The test fabricates the
+// payload that the Convex syncer would build today; if the future
+// implementer wires it up via `convexSyncer.callMutation`, it will
+// hit this gate and discover any leak immediately.
+func TestVibePreviewSessionPayload_isCounterOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	// Simulate the call that the eventual Phase 8 syncer will make. The
+	// shape mirrors what's documented in docs/vibe-preview-streaming.md
+	// section 10. If a future implementer adds frame/clip data here,
+	// the forbidden-keys walker fails the test.
+	convexMutationRecorder(
+		"agentSync:recordPreviewSession",
+		map[string]interface{}{
+			"deviceId":     "test-device",
+			"project":      "web",
+			"mode":         "live",
+			"startedAt":    1714000000,
+			"endedAt":      1714000060,
+			"frameCount":   42,
+			"summaryCount": 0,
+		},
+	)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	assertNoUsernameLeak(t, rec, "kivanccakmak-private-dir")
+}
+
+// TestVibePreviewClipPayload_isCounterOnly is the same guardrail for the
+// clip metadata sync. Crucially: the clip's on-disk path is allowed
+// inside the agent process but MUST NEVER be in a Convex payload.
+func TestVibePreviewClipPayload_isCounterOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	convexMutationRecorder(
+		"agentSync:recordPreviewClip",
+		map[string]interface{}{
+			"deviceId":    "test-device",
+			"project":     "mobile",
+			"clipId":      "c_abc123",
+			"durationSec": 11.4,
+			"sizeBytes":   1843200,
+			"source":      "sim-ios",
+			"createdAt":   1714000000,
+		},
+	)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	// Specifically: no path, no clip bytes, no summary text.
+	for k := range rec.Args {
+		switch k {
+		case "clipPath", "videoBlob", "clipBytes", "clipMp4", "summaryText", "posterBytes":
+			t.Errorf("forbidden field %q must not be in clip metadata payload", k)
+		}
+	}
 }
 
 // assertNoUsernameLeak is the canary for the specific bug we just
