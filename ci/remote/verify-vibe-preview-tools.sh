@@ -60,11 +60,12 @@ report adb      adb                                                          || 
 banner "summary"
 if [ "$missing" -eq 0 ]; then
   echo "All vibe-preview tools present. Install path verified."
-else
-  echo "$missing tool(s) missing — see report above."
-  echo "(Some are platform-specific: appium needs npm; android-sdk on"
-  echo " Linux ships only the platform-tools subset; sim-ios needs Xcode."
-  echo " The user-facing meta-target should still cover at least the apt"
-  echo " path on Ubuntu — investigate any apt-installable misses above.)"
+  exit 0
 fi
-exit 0
+
+echo "$missing tool(s) missing — see report above."
+echo "Apt-installable tools (chromium / ffmpeg / android-tools-adb)"
+echo "must succeed on a fresh ARM64 Ubuntu host; missing those means"
+echo "the meta-target's apt path is broken. Maestro + Appium can"
+echo "skip if their installers fail on ARM (npm appium especially)."
+exit "$missing"
