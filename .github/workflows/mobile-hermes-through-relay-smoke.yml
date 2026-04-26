@@ -144,25 +144,37 @@ jobs:
           echo "  agent version: $AGENT_VER"
 
           echo "=== /dev/compatibility (SDK manifest contract over relay) ==="
-          # /dev/compatibility returns the SDK manifest the agent
-          # ships, including hermesBytecodeVersion. Reading this
-          # through the relay proves the relay can stream JSON
-          # responses without truncation/chunked-corruption.
-          COMPAT=$($NODE raw-get "$(rp /dev/compatibility)" --token="$YAVER_TOKEN")
-          echo "$COMPAT" | jq '.body | {hermesBytecodeVersion: (.manifest.hermesBytecodeVersion // .hermesBytecodeVersion // .body), reactNativeVersion: (.manifest.reactNativeVersion // .reactNativeVersion // null)}' || \
+          # /dev/compatibility is POST with {availableModules,
+          # projectName?, workDir?}. We pass projectName=sfmg so the
+          # agent resolves it through the workspace manifest. This
+          # proves the relay round-trips JSON request bodies and the
+          # agent reaches the project's package.json. Failing here
+          # means the relay corrupted the body or the box has no
+          # sfmg checkout.
+          COMPAT_BODY='{"projectName":"sfmg","availableModules":["expo-camera","react-native-svg"]}'
+          COMPAT=$($NODE raw-post "$(rp /dev/compatibility)" --token="$YAVER_TOKEN" --body="$COMPAT_BODY")
+          echo "$COMPAT" | jq '.body | {compatible, buildState, missingModules, recommendedFlow, needsYaverCLI, needsFeedbackSDK}' || \
             echo "  (compatibility shape unexpected — dumping head)"
-          echo "$COMPAT" | head -c 600
+          echo "$COMPAT" | head -c 800
           if [ "$(echo "$COMPAT" | jq -r .status)" != "200" ]; then
             echo "::error::/dev/compatibility returned non-200"
             exit 1
           fi
           echo "  ✓ compatibility round-trips through relay"
 
-          echo "=== /workspace/apps?kind=hybrid (find a hermes-capable app on the box) ==="
+          echo "=== /workspace/apps?kind=hybrid (target sfmg specifically) ==="
           APPS=$($NODE raw-get "$(rp '/workspace/apps?kind=hybrid')" --token="$YAVER_TOKEN")
           echo "$APPS" | jq '.body.apps | map({name, kind, stack, exists, absPath})' || true
-          # Pick any hybrid app whose absPath actually exists on disk.
-          APP=$(echo "$APPS" | jq -r '.body.apps[]? | select(.exists==true) | .name' | head -1 || true)
+          # Hard-pin to sfmg — the user wants the release smoke to
+          # exercise sfmg specifically. If sfmg's checkout isn't on
+          # the box, this is a real environment problem the box-
+          # bootstrap script needs to fix, not something the smoke
+          # should paper over.
+          APP=sfmg
+          if ! echo "$APPS" | jq -e '.body.apps[]? | select(.name=="sfmg" and .exists==true)' >/dev/null; then
+            echo "::warning::sfmg manifest entry missing or its checkout doesn't exist on the box. Falling back to any other available hybrid app for build round-trip proof."
+            APP=$(echo "$APPS" | jq -r '.body.apps[]? | select(.exists==true) | .name' | head -1 || true)
+          fi
 
           echo "=== POST /dev/build-native through relay ==="
           if [ -z "$APP" ]; then

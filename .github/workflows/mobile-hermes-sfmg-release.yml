@@ -1,0 +1,223 @@
+# Hermes-bundle release readiness check for SFMG, driven by
+# mobile-headless against yaver-test-ephemeral through the public
+# relay. Sister to mobile-hermes-through-relay-smoke.yml, but
+# scoped narrowly to:
+#
+#   - SFMG specifically (not "any hybrid app on the box")
+#   - the full release-style build (no graceful degrade — if the
+#     box can't build SFMG's Hermes bundle, this fails loudly so
+#     the release isn't blocked silently)
+#   - both iOS and Android Hermes targets, since SFMG ships to
+#     both stores
+#   - bundle size + HBC version assertions so the artifact
+#     matches what the mobile container expects
+#
+# This is meant to be run before a SFMG mobile release: a green
+# run here proves yaver-test-ephemeral can produce a bundle that
+# the Yaver mobile container would happily load (right HBC
+# version, right magic, non-empty).
+
+name: Mobile Hermes SFMG Release Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Once a day at 04:00 UTC so we notice if the box's toolchain
+    # rots (hermesc gone, sfmg checkout removed, etc.) before a
+    # human tries to ship.
+    - cron: "0 4 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "mobile-headless/**"
+      - "desktop/agent/build*.go"
+      - "desktop/agent/devserver_http.go"
+      - "desktop/agent/devserver.go"
+      - "relay/**"
+      - "mobile/sdk-manifest.json"
+      - ".github/workflows/mobile-hermes-sfmg-release.yml"
+
+concurrency:
+  group: mobile-hermes-sfmg-release
+  cancel-in-progress: false
+
+jobs:
+  release-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Lift token + deviceId + relay password off the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          DUMP=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              'python3 -c "
+          import json
+          c = json.load(open(\"/home/yaver/.yaver/config.json\"))
+          print(c[\"auth_token\"])
+          print(c[\"device_id\"])
+          print(c.get(\"convex_site_url\", \"\"))
+          print(c.get(\"relay_password\", \"\"))
+          "')
+          TOKEN=$(echo "$DUMP" | sed -n '1p')
+          DEVID=$(echo "$DUMP" | sed -n '2p')
+          CVX=$(echo   "$DUMP" | sed -n '3p')
+          PW=$(echo    "$DUMP" | sed -n '4p')
+          if [ -z "$TOKEN" ] || [ -z "$DEVID" ]; then
+            echo "::error::failed to read token/deviceId from box"; exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          if [ -n "$PW" ]; then echo "::add-mask::$PW"; fi
+          if [ -z "$PW" ]; then
+            CVX_BASE="${CVX:-https://perceptive-minnow-557.eu-west-1.convex.site}"
+            PW=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$CVX_BASE/settings" \
+              | jq -r '.settings.relayPassword // .relayPassword // empty')
+            if [ -z "$PW" ]; then
+              echo "::error::no relayPassword available — repair-relay first"
+              exit 1
+            fi
+            echo "::add-mask::$PW"
+          fi
+          echo "YAVER_TOKEN=$TOKEN"     >> "$GITHUB_ENV"
+          echo "YAVER_DEVICE_ID=$DEVID" >> "$GITHUB_ENV"
+          echo "YAVER_CONVEX_URL=${CVX:-https://perceptive-minnow-557.eu-west-1.convex.site}" >> "$GITHUB_ENV"
+          echo "YAVER_RELAY_PW=$PW"     >> "$GITHUB_ENV"
+          echo "Box: deviceId=$DEVID  cvx=$CVX  pw_len=${#PW}"
+
+      - name: Build mobile-headless on runner
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd mobile-headless
+          bun install
+          bun run build || bun run typecheck
+
+      - name: Read SDK manifest contract from this commit
+        id: manifest
+        run: |
+          # Pull expected hermesBytecodeVersion from the same
+          # sdk-manifest.json that the mobile container ships. If
+          # the bundle the box produces has a different bcVersion,
+          # the mobile app would crash on load — fail the release
+          # smoke instead.
+          BCV=$(jq -r '.hermesBytecodeVersion' mobile/sdk-manifest.json)
+          RNV=$(jq -r '.reactNativeVersion'    mobile/sdk-manifest.json)
+          echo "Expected hermesBytecodeVersion: $BCV"
+          echo "Expected reactNativeVersion:    $RNV"
+          echo "expectedBcVersion=$BCV" >> "$GITHUB_OUTPUT"
+          echo "expectedRnVersion=$RNV" >> "$GITHUB_OUTPUT"
+
+      - name: Build SFMG Hermes bundles for iOS + Android through the relay
+        env:
+          EXPECTED_BC_VERSION: ${{ steps.manifest.outputs.expectedBcVersion }}
+          EXPECTED_RN_VERSION: ${{ steps.manifest.outputs.expectedRnVersion }}
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd mobile-headless
+          export YMH_AGENT_URL="https://public.yaver.io/d/${YAVER_DEVICE_ID}"
+          NODE="bun run src/bin/cli.ts"
+
+          rp() { echo "$1?__rp=${YAVER_RELAY_PW}"; }
+          rpx() { case "$1" in *\?*) echo "$1&__rp=${YAVER_RELAY_PW}";; *) echo "$1?__rp=${YAVER_RELAY_PW}";; esac; }
+
+          echo "=== confirm SFMG is on the box ==="
+          APPS=$($NODE raw-get "$(rp '/workspace/apps?kind=hybrid')" --token="$YAVER_TOKEN")
+          if ! echo "$APPS" | jq -e '.body.apps[]? | select(.name=="sfmg" and .exists==true)' >/dev/null; then
+            echo "::error::SFMG isn't checked out on yaver-test-ephemeral. Re-bootstrap the box (ci/remote/bootstrap.sh) before running this smoke."
+            echo "$APPS" | jq '.body.apps | map({name, exists, absPath})' || true
+            exit 1
+          fi
+          SFMG_PATH=$(echo "$APPS" | jq -r '.body.apps[] | select(.name=="sfmg") | .absPath')
+          echo "  SFMG checkout: $SFMG_PATH"
+
+          echo "=== /dev/compatibility for SFMG (release-readiness shape) ==="
+          COMPAT_BODY=$(jq -nc --arg p sfmg --arg w "$SFMG_PATH" \
+            '{projectName:$p, workDir:$w, availableModules:["expo","expo-camera","react-native-svg","react-native-reanimated"]}')
+          COMPAT=$($NODE raw-post "$(rp /dev/compatibility)" --token="$YAVER_TOKEN" --body="$COMPAT_BODY")
+          if [ "$(echo "$COMPAT" | jq -r .status)" != "200" ]; then
+            echo "::error::compatibility check failed"
+            echo "$COMPAT" | head -c 1000
+            exit 1
+          fi
+          echo "$COMPAT" | jq '.body | {compatible, buildState, missingModules, needsYaverCLI, needsFeedbackSDK, recommendedFlow}'
+
+          fail_if_empty() { if [ -z "$1" ]; then echo "::error::$2"; exit 1; fi; }
+
+          for PLAT in ios android; do
+            echo
+            echo "=== build SFMG Hermes bundle for $PLAT ==="
+            BODY=$(jq -nc --arg p sfmg --arg w "$SFMG_PATH" --arg plat "$PLAT" \
+              '{projectName:$p, projectPath:$w, platform:$plat}')
+            RES=$(timeout 600 $NODE raw-post "$(rp /dev/build-native)" --token="$YAVER_TOKEN" --body="$BODY" || true)
+            HTTP=$(echo "$RES" | jq -r .status 2>/dev/null || echo "error")
+            echo "  HTTP $HTTP"
+            echo "$RES" | jq '.body | {status, bundleUrl, moduleName, error: (.error // null), tail: (.tail // null)}' || true
+            if [ "$HTTP" != "200" ]; then
+              ERR=$(echo "$RES" | jq -r '.body.error // ""')
+              echo "::error::SFMG $PLAT build through relay failed: HTTP $HTTP / $ERR"
+              echo "$RES" | jq '.body.tail // empty'
+              exit 1
+            fi
+            URL=$(echo "$RES" | jq -r '.body.bundleUrl // empty')
+            fail_if_empty "$URL" "build returned 200 but no bundleUrl for $PLAT"
+            echo "  ✓ $PLAT bundleUrl: $URL"
+
+            echo "=== fetch + verify $PLAT Hermes bundle ==="
+            FULL=$(rpx "https://public.yaver.io/d/${YAVER_DEVICE_ID}${URL}")
+            curl -sS -m 90 "$FULL" -o "/tmp/sfmg-$PLAT.hbc"
+            SZ=$(wc -c < "/tmp/sfmg-$PLAT.hbc")
+            echo "  $PLAT bundle bytes: $SZ"
+            if [ "$SZ" -lt 102400 ]; then
+              echo "::error::SFMG $PLAT bundle is suspiciously small ($SZ bytes — expected ≥100 KB)"
+              xxd -l 64 "/tmp/sfmg-$PLAT.hbc"
+              exit 1
+            fi
+
+            # Magic at offset 4..7 little-endian: c1 03 19 1f
+            MAGIC=$(xxd -l 4 -s 4 -p "/tmp/sfmg-$PLAT.hbc" | head -c 8)
+            if [ "$MAGIC" != "c103191f" ]; then
+              echo "::error::SFMG $PLAT bundle has wrong magic: $MAGIC (expected c103191f)"
+              xxd -l 32 "/tmp/sfmg-$PLAT.hbc"
+              exit 1
+            fi
+            echo "  ✓ HBC magic OK"
+
+            # BC version is at offset 8..11 little-endian (uint32).
+            BCV_HEX=$(xxd -l 4 -s 8 -p "/tmp/sfmg-$PLAT.hbc" | head -c 8)
+            # Reverse byte order to read as little-endian uint32.
+            BCV=$((0x${BCV_HEX:6:2}${BCV_HEX:4:2}${BCV_HEX:2:2}${BCV_HEX:0:2}))
+            echo "  $PLAT BC version: $BCV (manifest expects $EXPECTED_BC_VERSION)"
+            if [ "$BCV" != "$EXPECTED_BC_VERSION" ]; then
+              echo "::error::SFMG $PLAT BC version $BCV != manifest $EXPECTED_BC_VERSION — mobile container would reject this bundle on load"
+              exit 1
+            fi
+            echo "  ✓ BC version matches sdk-manifest"
+          done
+
+          echo
+          echo "OK — SFMG Hermes release readiness PROVEN through public.yaver.io"
+          echo "   ios:     /tmp/sfmg-ios.hbc      ($(wc -c < /tmp/sfmg-ios.hbc) bytes)"
+          echo "   android: /tmp/sfmg-android.hbc  ($(wc -c < /tmp/sfmg-android.hbc) bytes)"
+
+      - name: Upload built bundles as workflow artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sfmg-hermes-bundles
+          path: |
+            /tmp/sfmg-ios.hbc
+            /tmp/sfmg-android.hbc
+          retention-days: 7
