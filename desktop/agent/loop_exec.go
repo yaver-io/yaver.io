@@ -932,6 +932,30 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 		}
 	}
 
+	// Auto-summary gate (Phase 4): when the spec opts in, queue a
+	// before/after summary of what visibly changed. Fire-and-forget —
+	// the summarizer runs in a goroutine and emits a "summary" SSE
+	// event when done. Doesn't block the kick result.
+	if l.Spec.Think.AutoSummary != nil && l.Spec.Think.AutoSummary.Enabled &&
+		(aiResp.Status == "done" || aiResp.Status == "in_progress") {
+		if mgr := ActiveVibePreviewManager(); mgr != nil {
+			project := l.Spec.Think.AutoSummary.Project
+			if project == "" {
+				project = l.Spec.App
+			}
+			if project != "" {
+				kickCtx := strings.TrimSpace(aiResp.Summary)
+				if result.PatchCommit != "" {
+					if kickCtx != "" {
+						kickCtx += " "
+					}
+					kickCtx += "(commit " + result.PatchCommit[:8] + ")"
+				}
+				mgr.QueueSummary(watchCtx, project, kickCtx)
+			}
+		}
+	}
+
 	// Map the AI's status onto the iteration status.
 	switch aiResp.Status {
 	case "done":

@@ -12,6 +12,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -104,6 +105,39 @@ func (s *HTTPServer) handleVibePreviewStatus(w http.ResponseWriter, r *http.Requ
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":       true,
 		"sessions": sessions,
+	})
+}
+
+// handleVibePreviewSummaries — GET /vibing/preview/summaries?project=X&limit=N
+//
+// Returns the most-recent N summaries from the on-disk JSONL log,
+// newest first. Default limit 50, max 500.
+func (s *HTTPServer) handleVibePreviewSummaries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if s.vibePreviewMgr == nil {
+		jsonError(w, http.StatusServiceUnavailable, "vibe preview not initialised")
+		return
+	}
+	project := strings.TrimSpace(r.URL.Query().Get("project"))
+	if project == "" {
+		jsonError(w, http.StatusBadRequest, "project query param required")
+		return
+	}
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":        true,
+		"summaries": s.vibePreviewMgr.ListSummaries(project, limit),
 	})
 }
 

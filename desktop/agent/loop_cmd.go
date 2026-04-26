@@ -150,6 +150,21 @@ type LoopThink struct {
 	// re-queues — autodev refuses to declare a kick complete while the
 	// running app is broken. Off by default (existing loops unchanged).
 	SmartDevelop *SmartDevelopSpec `yaml:"smart_develop,omitempty" json:"smart_develop,omitempty"`
+
+	// AutoSummary opts the loop into Phase 4: after each successful
+	// kick, queue a one-sentence text summary of what visibly changed
+	// (driven by the registered VibeSummarizer — noop by default, set
+	// YAVER_VIBE_SUMMARIZER=claude for the real LLM call). Off by
+	// default to avoid surprise LLM cost on existing loops.
+	AutoSummary *AutoSummarySpec `yaml:"auto_summary,omitempty" json:"auto_summary,omitempty"`
+}
+
+// AutoSummarySpec configures the Phase 4 summary pipeline. Project
+// defaults to LoopSpec.App when empty. Off when Enabled=false (the
+// default for the empty struct).
+type AutoSummarySpec struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	Project string `yaml:"project,omitempty" json:"project,omitempty"`
 }
 
 // SmartDevelopSpec configures the post-kick stability gate. Lives on

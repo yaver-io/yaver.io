@@ -2525,6 +2525,9 @@ func runServe(args []string) {
 	// Register as the global accessor so smart-develop-mode in loop_exec.go
 	// can find it without threading a reference through every LoopState.
 	SetActiveVibePreviewManager(httpServer.vibePreviewMgr)
+	// Pick the summary backend from YAVER_VIBE_SUMMARIZER (default noop;
+	// "claude" enables the CLI vision call when the binary is on PATH).
+	SetVibePreviewSummarizer(ResolveDefaultSummarizer())
 	// Use relay URL if relay is available (works from 4G/any network).
 	// Fall back to local IP for direct/LAN connections.
 	if len(relayServers) > 0 && cfg.DeviceID != "" {

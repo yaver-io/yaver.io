@@ -209,6 +209,10 @@ type VibePreviewManager struct {
 	// lastCrash dedups identical crash messages within a 1 s window.
 	// Read + written under m.mu.
 	lastCrash *VibeCrashSignal
+
+	// summaryCtr is the seq number assigned to the next QueueSummary
+	// call. Persisted in summaries.jsonl alongside the text.
+	summaryCtr uint64
 }
 
 // activeVibePreviewMgr is the process-wide singleton accessor. main.go's
