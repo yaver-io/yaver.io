@@ -38,6 +38,25 @@ banner "yaver install vibe-preview"
 yaver install vibe-preview 2>&1 || echo "(install vibe-preview returned non-zero — see log above)"
 
 banner "tool availability report"
+
+# Add the usual non-PATH locations these tools land in to the search
+# scope. Maestro installs to ~/.maestro/bin; appium goes to wherever
+# `npm prefix -g` says; brew installs land at /opt/homebrew on Apple
+# Silicon. command -v alone misses these because non-interactive ssh
+# sessions inherit a stripped PATH.
+export PATH="$PATH:$HOME/.maestro/bin:/usr/local/bin:/opt/homebrew/bin"
+if command -v npm >/dev/null 2>&1; then
+  npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+  if [ -n "$npm_prefix" ]; then
+    export PATH="$PATH:$npm_prefix/bin"
+  fi
+fi
+echo "PATH=$PATH"
+if command -v npm >/dev/null 2>&1; then
+  echo "npm prefix: $(npm prefix -g 2>/dev/null || echo unknown)"
+  echo "npm root  : $(npm root -g 2>/dev/null   || echo unknown)"
+fi
+
 report() {
   local name="$1"; shift
   for cand in "$@"; do

@@ -1050,13 +1050,29 @@ func metaInstallPlan(name string) (installPlan, bool) {
 				{"pacman", "sudo pacman -S --noconfirm chromium"},
 			},
 		}, true
+	case "java":
+		return installPlan{
+			name:        "java",
+			description: "OpenJDK 17 JRE — required by Maestro (and useful for Android tooling)",
+			macOS:       []string{"brew install openjdk@17"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y default-jre-headless"},
+				{"dnf", "sudo dnf install -y java-17-openjdk-headless"},
+				{"pacman", "sudo pacman -S --noconfirm jre17-openjdk-headless"},
+			},
+		}, true
 	case "maestro":
 		return installPlan{
 			name:        "maestro",
-			description: "Maestro — declarative mobile E2E flows; drives demo-clip recordings in vibe-preview (Phase 7)",
-			macOS:       []string{"curl -Ls 'https://get.maestro.mobile.dev' | bash"},
+			description: "Maestro — declarative mobile E2E flows; drives demo-clip recordings in vibe-preview (Phase 7). Requires Java.",
+			macOS: []string{
+				// Best-effort Java first; fail-soft so the curl step
+				// always runs (the user may already have a different JDK).
+				"brew install openjdk@17 2>/dev/null || true",
+				"curl -Ls 'https://get.maestro.mobile.dev' | bash",
+			},
 			linux: []linuxStep{
-				{"curl", "curl -Ls 'https://get.maestro.mobile.dev' | bash"},
+				{"curl", "sudo apt-get install -y default-jre-headless 2>/dev/null || sudo dnf install -y java-17-openjdk-headless 2>/dev/null || true; curl -Ls 'https://get.maestro.mobile.dev' | bash"},
 			},
 		}, true
 	case "appium":
