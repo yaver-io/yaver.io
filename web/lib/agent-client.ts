@@ -3092,6 +3092,151 @@ export class AgentClient {
     } catch { return false; }
   }
 
+  // ── Vibe Preview (live screenshot/video stream of dev server) ──────
+  // See docs/vibe-preview-streaming.md and desktop/agent/vibe_preview.go.
+
+  async startVibePreview(opts: {
+    project: string;
+    targetUrl: string;
+    mode?: "live" | "change-only" | "summary-only";
+    profile?: string;
+    netMode?: "direct" | "relay-wifi" | "relay-cell";
+  }): Promise<{ id: string; project: string; profile?: { fps: number; name: string } } | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/vibing/preview/start`, {
+        method: "POST",
+        headers: {
+          ...this.authHeaders,
+          "Content-Type": "application/json",
+          "X-Yaver-NetMode": opts.netMode ?? "relay-wifi",
+        },
+        body: JSON.stringify({ ...opts, mode: opts.mode ?? "live" }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.session ?? null;
+    } catch { return null; }
+  }
+
+  async stopVibePreview(project: string): Promise<boolean> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/vibing/preview/stop`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ project }),
+      });
+      return res.ok;
+    } catch { return false; }
+  }
+
+  async listVibePreviewSessions(): Promise<Array<{ project: string; profile: { fps: number; name: string }; mode: string }>> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/vibing/preview/status`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data?.sessions) ? data.sessions : [];
+    } catch { return []; }
+  }
+
+  async startVibeClip(opts: {
+    project: string;
+    source?: "browser" | "sim-ios" | "sim-android" | "phone";
+    durationMaxSec?: number;
+  }): Promise<{ id: string; status: string } | null> {
+    this.assertConnected();
+    try {
+      const res = await fetch(`${this.baseUrl}/vibing/preview/clip/start`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(opts),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data?.clip ?? null;
+    } catch { return null; }
+  }
+
+  async listVibeClips(project: string): Promise<Array<{ id: string; status: string; durationSec?: number; source: string }>> {
+    this.assertConnected();
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/vibing/preview/clips?project=${encodeURIComponent(project)}`,
+        { headers: this.authHeaders },
+      );
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data?.clips) ? data.clips : [];
+    } catch { return []; }
+  }
+
+  /** Returns a tuple (url, headers). The view builds an <img> / <video>
+   *  src with the URL and adds the headers via a fetch+blob shim, since
+   *  browsers don't pass custom headers to <img src>. For relay-routed
+   *  paths the auth lives in the URL via the relay's session cookie. */
+  vibeFrameRequest(project: string, hash: string): { url: string; headers: Record<string, string> } | null {
+    if (!this.baseUrl) return null;
+    return {
+      url: `${this.baseUrl}/vibing/preview/frames/${encodeURIComponent(hash)}?project=${encodeURIComponent(project)}`,
+      headers: this.authHeaders,
+    };
+  }
+
+  vibeClipRequest(clipId: string): { url: string; headers: Record<string, string> } | null {
+    if (!this.baseUrl) return null;
+    return {
+      url: `${this.baseUrl}/vibing/preview/clip/${encodeURIComponent(clipId)}`,
+      headers: this.authHeaders,
+    };
+  }
+
+  /** Open an SSE subscription. The browser EventSource API can't carry
+   *  custom auth headers, so we use fetch+ReadableStream and parse SSE
+   *  framing manually (same pattern the mobile client uses). */
+  subscribeVibePreviewEvents(
+    project: string,
+    onEvent: (ev: any) => void,
+    onError?: (err: unknown) => void,
+  ): () => void {
+    const ctrl = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(
+          `${this.baseUrl}/vibing/preview/events?project=${encodeURIComponent(project)}`,
+          { headers: { ...this.authHeaders, Accept: "text/event-stream" }, signal: ctrl.signal },
+        );
+        if (!res.ok || !res.body) {
+          onError?.(new Error(`vibe-preview events: HTTP ${res.status}`));
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!ctrl.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) >= 0) {
+            const chunk = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            const dataLines = chunk
+              .split("\n")
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart());
+            if (dataLines.length === 0) continue;
+            try { onEvent(JSON.parse(dataLines.join("\n"))); } catch { /* ping */ }
+          }
+        }
+      } catch (err) {
+        if (!ctrl.signal.aborted) onError?.(err);
+      }
+    })();
+    return () => ctrl.abort();
+  }
+
   async startDevServer(opts: {
     framework?: string;
     workDir?: string;

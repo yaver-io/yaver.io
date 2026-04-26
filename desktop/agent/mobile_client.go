@@ -433,3 +433,86 @@ func (c *MobileClient) SubscribeDevEvents(ctx context.Context, onEvent func(DevS
 		}
 	}
 }
+
+// ─── Vibe Preview ────────────────────────────────────────────────────────────
+// Same API the mobile app's quic.ts hits — exposed here so the ephemeral
+// test box (and any headless harness) can drive the new pipeline.
+
+// VibePreviewStartOptsHeadless mirrors the agent's VibePreviewStartOpts
+// without depending on it (the agent + headless client may live in
+// different binaries one day).
+type VibePreviewStartOptsHeadless struct {
+	Project   string `json:"project"`
+	TargetURL string `json:"targetUrl"`
+	Mode      string `json:"mode,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	NetMode   string `json:"netMode,omitempty"`
+}
+
+func (c *MobileClient) StartVibePreview(ctx context.Context, opts VibePreviewStartOptsHeadless) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "POST", "/vibing/preview/start", opts, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *MobileClient) StopVibePreview(ctx context.Context, project string) error {
+	return c.doJSON(ctx, "POST", "/vibing/preview/stop", map[string]string{"project": project}, nil)
+}
+
+func (c *MobileClient) VibePreviewStatus(ctx context.Context) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "GET", "/vibing/preview/status", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *MobileClient) VibePreviewSnapshot(ctx context.Context, project string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "POST", "/vibing/preview/snapshot", map[string]string{"project": project}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *MobileClient) StartVibeClip(ctx context.Context, project, source string, durationSec int) (map[string]any, error) {
+	body := map[string]any{"project": project, "source": source, "durationMaxSec": durationSec}
+	var out map[string]any
+	if err := c.doJSON(ctx, "POST", "/vibing/preview/clip/start", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *MobileClient) ListVibeClips(ctx context.Context, project string) (map[string]any, error) {
+	var out map[string]any
+	if err := c.doJSON(ctx, "GET", "/vibing/preview/clips?project="+project, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// FetchVibeFrame downloads a frame's binary bytes by hash. Returns the
+// raw PNG so the headless smoke test can assert size > 0.
+func (c *MobileClient) FetchVibeFrame(ctx context.Context, project, hash string) ([]byte, error) {
+	url := fmt.Sprintf("%s/vibing/preview/frames/%s?project=%s", c.BaseURL, hash, project)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("frame %s: %d %s", hash, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return io.ReadAll(resp.Body)
+}

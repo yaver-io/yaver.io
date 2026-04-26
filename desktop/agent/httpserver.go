@@ -77,6 +77,7 @@ type HTTPServer struct {
 	perfMgr            *PerfManager         // nil until first perf_lighthouse
 	dbLifecycleMgr     *DBLifecycleManager  // nil until first db_migrate
 	previewMgr         *PreviewManager      // nil until first preview_*
+	vibePreviewMgr     *VibePreviewManager  // nil until first /vibing/preview/start
 	oauthWizardMgr     *OAuthWizardManager  // nil until first auth_oauth_*
 	cloudDeployMgr     *CloudDeployManager  // nil until first cloud_*
 	migrateMgr         *MigrateManager      // nil until first migrate_*
@@ -665,6 +666,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vibing/deploy", s.authSDKOrGuest(s.handleVibingDeploy))
 	mux.HandleFunc("/vibing/execute", s.authSDKOrGuest(s.handleVibingExecute))
 	mux.HandleFunc("/vibing/surprise", s.authSDKOrGuest(s.handleVibingSurprise))
+	// Vibe Preview — live screenshot stream of a remote dev server, viewed
+	// from the mobile app while vibe-coding (docs/vibe-preview-streaming.md).
+	// /status + /snapshot are read-ish and inherit guest-vibing scope; the
+	// mutating endpoints stay owner-only.
+	mux.HandleFunc("/vibing/preview/start", s.auth(s.handleVibePreviewStart))
+	mux.HandleFunc("/vibing/preview/stop", s.auth(s.handleVibePreviewStop))
+	mux.HandleFunc("/vibing/preview/status", s.authSDKOrGuest(s.handleVibePreviewStatus))
+	mux.HandleFunc("/vibing/preview/snapshot", s.authSDKOrGuest(s.handleVibePreviewSnapshot))
+	mux.HandleFunc("/vibing/preview/events", s.authSDKOrGuest(s.handleVibePreviewEvents))
+	mux.HandleFunc("/vibing/preview/frames/", s.authSDKOrGuest(s.handleVibePreviewFrame))
+	mux.HandleFunc("/vibing/preview/clip/start", s.auth(s.handleVibePreviewClipStart))
+	mux.HandleFunc("/vibing/preview/clip/stop", s.auth(s.handleVibePreviewClipStop))
+	mux.HandleFunc("/vibing/preview/clips", s.authSDKOrGuest(s.handleVibePreviewClips))
+	mux.HandleFunc("/vibing/preview/clip/", s.authSDKOrGuest(s.handleVibePreviewClip))
 	mux.HandleFunc("/vibing/project/remote", s.auth(s.handleProjectRemote))
 
 	// Recovery: central catalog of fix prompts routed to the wrapped AI agent.

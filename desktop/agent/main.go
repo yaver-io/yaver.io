@@ -322,6 +322,8 @@ func main() {
 		runTest(os.Args[2:])
 	case "dev":
 		runDev(os.Args[2:])
+	case "vibe":
+		runVibe(os.Args[2:])
 	case "repo":
 		runRepo(os.Args[2:])
 	case "pipeline":
@@ -2519,6 +2521,7 @@ func runServe(args []string) {
 	}
 	httpServer.devServerMgr = NewDevServerManager()
 	httpServer.browserMgr = NewBrowserManager()
+	httpServer.vibePreviewMgr = NewVibePreviewManager(httpServer.browserMgr)
 	// Use relay URL if relay is available (works from 4G/any network).
 	// Fall back to local IP for direct/LAN connections.
 	if len(relayServers) > 0 && cfg.DeviceID != "" {

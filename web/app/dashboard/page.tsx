@@ -34,6 +34,7 @@ import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
 import SchedulesView from "@/components/dashboard/SchedulesView";
 import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
+import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
@@ -520,7 +521,7 @@ export default function DashboardPage() {
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
   const [reauthBusy, setReauthBusy] = useState<string | null>(null);
   const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "domains" | "settings">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1235,6 +1236,7 @@ export default function DashboardPage() {
     { id: "apikeys", label: "Yaver Tokens", icon: "\uD83D\uDD11" },
     { id: "schedules", label: "Schedules", icon: "\u23F0" },
     { id: "phone", label: "Phone Backend", icon: "\u26A1" },
+    { id: "vibe-preview", label: "Vibe Preview", icon: "\uD83C\uDFAC" },
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
@@ -1924,6 +1926,8 @@ export default function DashboardPage() {
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto"><SchedulesView /></div>
           ) : activeTab === "phone" ? (
             <div className="flex-1 min-h-0 w-full max-w-6xl mx-auto overflow-auto p-4"><PhoneProjectsView /></div>
+          ) : activeTab === "vibe-preview" ? (
+            <div className="flex-1 min-h-0 w-full"><VibePreviewView /></div>
           ) : activeTab === "domains" ? (
             <div className="flex-1 min-h-0 w-full max-w-5xl mx-auto">
               {token && user?.id ? <DomainsView token={token} userId={user.id} /> :
