@@ -770,6 +770,64 @@ function usePrimaryDeviceId(token: string | null | undefined): {
 }
 
 /**
+ * Latest GitHub release version of the Go agent. Cached in
+ * localStorage with a 1h TTL to avoid hammering the GitHub API
+ * (60 unauthenticated requests/hour limit) when the user opens the
+ * Devices tab repeatedly. Returns null while loading or if the API
+ * is unreachable — callers fall back to "no update banner".
+ */
+export function useLatestAgentVersion(): string | null {
+  const [latest, setLatest] = useState<string | null>(null);
+
+  useEffect(() => {
+    const cacheKey = "yaver_latest_agent_version";
+    const cacheTtlMs = 60 * 60 * 1000; // 1h
+    try {
+      const raw = typeof window !== "undefined" ? window.localStorage.getItem(cacheKey) : null;
+      if (raw) {
+        const parsed = JSON.parse(raw) as { version: string; fetchedAt: number };
+        if (parsed.version && Date.now() - parsed.fetchedAt < cacheTtlMs) {
+          setLatest(parsed.version);
+          return;
+        }
+      }
+    } catch { /* ignore parse errors */ }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("https://api.github.com/repos/kivanccakmak/yaver.io/releases/latest");
+        if (!res.ok) return;
+        const data = await res.json();
+        const tag = String(data?.tag_name || "").replace(/^v/, "");
+        if (!tag) return;
+        if (!cancelled) setLatest(tag);
+        try {
+          window.localStorage.setItem(cacheKey, JSON.stringify({ version: tag, fetchedAt: Date.now() }));
+        } catch { /* private mode / quota */ }
+      } catch { /* network error */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return latest;
+}
+
+/** Compare two semver-ish "1.99.49" strings. +1 a > b, 0 equal, -1 a < b. */
+export function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x > y) return 1;
+    if (x < y) return -1;
+  }
+  return 0;
+}
+
+/**
  * Per-device primary runner: lets the user say "on this machine, default
  * to codex" while keeping a different default on another machine. Stored
  * in userSettings.primaryRunnerByDevice on Convex; we keep a flat map
@@ -993,6 +1051,10 @@ export default function DevicesView({
 }: DevicesViewProps) {
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const { primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
+  // Latest released agent version from GitHub. Drives the per-device
+  // "✓ latest" / "update available" badge + the remote-update button.
+  const latestAgentVersion = useLatestAgentVersion();
+  const [updateModalDevice, setUpdateModalDevice] = useState<Device | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
   const [showDormantDevices, setShowDormantDevices] = useState(false);
@@ -1133,7 +1195,29 @@ export default function DevicesView({
                     </div>
                     <p className="text-sm text-surface-500">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
-                      {device.agentVersion ? ` · v${String(device.agentVersion).replace(/^v/i, "")}` : ""}
+                      {device.agentVersion ? (
+                        <>
+                          {" "}· v{String(device.agentVersion).replace(/^v/i, "")}
+                          {latestAgentVersion ? (() => {
+                            const cur = String(device.agentVersion).replace(/^v/i, "");
+                            const cmp = compareSemver(cur, latestAgentVersion);
+                            if (cmp >= 0) {
+                              return (
+                                <span title={`Latest agent (v${latestAgentVersion})`} className="ml-1 text-emerald-400">✓</span>
+                              );
+                            }
+                            return (
+                              <button
+                                onClick={() => setUpdateModalDevice(device)}
+                                title={`Update v${cur} → v${latestAgentVersion} on ${device.name}`}
+                                className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-300 hover:bg-amber-500/20"
+                              >
+                                update → v{latestAgentVersion}
+                              </button>
+                            );
+                          })() : null}
+                        </>
+                      ) : null}
                       {device.probeState === "ok" && device.probePath ? ` · probed via ${device.probePath}` : ""}
                       {device.probeState === "auth-expired" ? " · auth expired" : ""}
                     </p>
@@ -1444,6 +1528,183 @@ export default function DevicesView({
           }}
         />
       ) : null}
+      {updateModalDevice && token ? (
+        <AgentUpdateModal
+          device={updateModalDevice}
+          latestVersion={latestAgentVersion || ""}
+          token={token}
+          onClose={() => {
+            setUpdateModalDevice(null);
+            void onRefresh();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+// AgentUpdateModal triggers POST /agent/update on the named device
+// (routed via /peer/<id>/agent/update for remote machines) and
+// streams the agent's progress events from /streams/agent-update.
+// While the agent restarts the SSE channel closes; the modal then
+// polls /agent/update GET until the new version reports back.
+function AgentUpdateModal({
+  device,
+  latestVersion,
+  token,
+  onClose,
+}: {
+  device: Device;
+  latestVersion: string;
+  token: string;
+  onClose: () => void;
+}) {
+  const [phase, setPhase] = useState<string>("starting");
+  const [lines, setLines] = useState<Array<{ phase: string; text: string }>>([]);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmedVersion, setConfirmedVersion] = useState<string | null>(null);
+
+  const targetParam = device.id ? `/peer/${encodeURIComponent(device.id)}` : "";
+
+  useEffect(() => {
+    let cancelled = false;
+    const abort = new AbortController();
+
+    const pollForNewVersion = async () => {
+      const deadline = Date.now() + 90_000; // 90s budget for the restart
+      while (!cancelled && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2500));
+        try {
+          const u = device.id ? `/api/agent/${encodeURIComponent(device.id)}/info` : "/api/agent/info";
+          const res = await fetch(u, { headers: { Authorization: `Bearer ${token}` } });
+          if (!res.ok) continue;
+          const info = await res.json();
+          const newV = String(info?.version || "").replace(/^v/i, "");
+          if (newV && (latestVersion === "" || compareSemver(newV, latestVersion) >= 0)) {
+            if (!cancelled) {
+              setConfirmedVersion(newV);
+              setDone(true);
+            }
+            return;
+          }
+        } catch { /* network / restart in progress */ }
+      }
+      if (!cancelled) setError("Restart timed out — the box may need manual intervention.");
+    };
+
+    (async () => {
+      try {
+        // Kick off the update on the agent. Returns 202 with started=true
+        // when an update is now in flight, or 200 with started=false
+        // when it's already on latest. POST is idempotent enough that
+        // double-clicking the button is harmless (returns 409).
+        const startUrl = device.id ? `/api/agent/${encodeURIComponent(device.id)}/agent/update` : "/api/agent/update";
+        const res = await fetch(startUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && res.status !== 409) {
+          if (!cancelled) setError(data?.error || `start failed (${res.status})`);
+          return;
+        }
+        // Subscribe to the named log stream for progress events.
+        const streamUrl = device.id
+          ? `/api/agent/${encodeURIComponent(device.id)}/streams/agent-update`
+          : "/api/agent/streams/agent-update";
+        const streamRes = await fetch(streamUrl, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: abort.signal,
+        });
+        const reader = streamRes.body?.getReader();
+        if (!reader) return;
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!cancelled) {
+          const { value, done: streamDone } = await reader.read();
+          if (streamDone) break;
+          buffer += decoder.decode(value, { stream: true });
+          const sseLines = buffer.split("\n");
+          buffer = sseLines.pop() || "";
+          for (const line of sseLines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const ev = JSON.parse(line.slice(6));
+              if (ev.type === "progress" && typeof ev.phase === "string" && typeof ev.text === "string") {
+                setPhase(ev.phase);
+                setLines((prev) => [...prev.slice(-30), { phase: ev.phase, text: ev.text }]);
+                if (ev.phase === "restart") {
+                  // Agent will exit + systemd respawn; switch to
+                  // version-confirmation polling.
+                  setPhase("restarting");
+                  pollForNewVersion();
+                }
+                if (ev.phase === "error") {
+                  setError(ev.text);
+                }
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      } catch (err) {
+        if (!cancelled && (err as { name?: string })?.name !== "AbortError") {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      abort.abort();
+    };
+  }, [device.id, latestVersion, token, targetParam]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={(e) => { if (e.target === e.currentTarget && (done || error)) onClose(); }}
+    >
+      <div className="w-full max-w-lg rounded-xl border border-surface-800 bg-surface-900 p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-surface-100">Update agent</h3>
+            <p className="text-xs text-surface-500">on <span className="font-mono text-surface-300">{device.name}</span></p>
+            <p className="mt-0.5 text-[10px] text-surface-600">
+              v{String(device.agentVersion || "?").replace(/^v/i, "")} → v{latestVersion}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-xl leading-none text-surface-500 hover:text-surface-200">×</button>
+        </div>
+        {error ? (
+          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-300">
+            <div className="mb-1 font-semibold">Update failed</div>
+            <div>{error}</div>
+          </div>
+        ) : done ? (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4 text-sm text-emerald-200">
+            <div className="mb-1 font-semibold">Updated</div>
+            <div className="text-xs text-emerald-300/80">
+              {device.name} now reports v{confirmedVersion}.
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="mb-2 flex items-center gap-2 text-[11px] text-surface-400">
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${phase === "error" ? "bg-red-400" : phase === "restarting" || phase === "restart" ? "bg-amber-400 animate-pulse" : "bg-indigo-400 animate-pulse"}`} />
+              <span>phase: {phase}</span>
+            </div>
+            <pre className="max-h-64 overflow-auto rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400 whitespace-pre-wrap">
+              {lines.length === 0
+                ? "(starting…)"
+                : lines.map((l) => `[${l.phase}] ${l.text}`).join("\n")}
+            </pre>
+            <p className="mt-2 text-[10px] text-surface-600">
+              The agent will restart itself once the new binary is in place. This dialog reconnects to /info to confirm the new version.
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

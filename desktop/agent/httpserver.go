@@ -173,7 +173,7 @@ func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname s
 	if mgr, err := NewHostShareWorkspaceManager(); err == nil {
 		hostShareWorkspaceMgr = mgr
 	}
-	return &HTTPServer{
+	s := &HTTPServer{
 		port:                  port,
 		token:                 token,
 		ownerUserID:           ownerUserID,
@@ -185,6 +185,11 @@ func NewHTTPServer(port int, token, ownerUserID, deviceID, convexURL, hostname s
 		hostShareWorkspaceMgr: hostShareWorkspaceMgr,
 		heartbeatKick:         make(chan struct{}, 1),
 	}
+	// Expose the agent-update progress stream to the package-level
+	// emitAgentUpdate helper so checkAutoUpdate / runForcedAgentUpdate
+	// (free functions, no HTTPServer reference) can publish to it.
+	setAgentUpdateStream(s.streams.Get("agent-update"))
+	return s
 }
 
 // TriggerHeartbeat nudges the heartbeat loop to send an extra beat now, out

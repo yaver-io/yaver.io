@@ -3883,7 +3883,7 @@ func checkAutoUpdate(cfg *Config) {
 		return
 	}
 
-	log.Printf("[auto-update] New version available: v%s (current: v%s)", latestVersion, version)
+	emitAgentUpdate("check", "New version available: v%s (current: v%s)", latestVersion, version)
 
 	goos := runtime.GOOS
 	goarch := runtime.GOARCH
@@ -3900,10 +3900,10 @@ func checkAutoUpdate(cfg *Config) {
 	}
 	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", updateRepo(), latestVersion, assetName)
 
-	log.Printf("[auto-update] Downloading %s", downloadURL)
+	emitAgentUpdate("download", "Downloading %s", downloadURL)
 	dlResp, err := client.Get(downloadURL)
 	if err != nil {
-		log.Printf("[auto-update] Download failed: %v", err)
+		emitAgentUpdate("error", "Download failed: %v", err)
 		return
 	}
 	defer dlResp.Body.Close()
@@ -3990,10 +3990,10 @@ func checkAutoUpdate(cfg *Config) {
 		log.Printf("[auto-update] (warn) backup of running binary failed: %v", err)
 	}
 
-	// Replace the current binary with the new one
+	emitAgentUpdate("replace", "Replacing running binary at %s", exePath)
 	if err := os.Rename(tmpPath, exePath); err != nil {
 		os.Remove(tmpPath)
-		log.Printf("[auto-update] Failed to replace binary: %v", err)
+		emitAgentUpdate("error", "Failed to replace binary: %v", err)
 		return
 	}
 
@@ -4013,7 +4013,12 @@ func checkAutoUpdate(cfg *Config) {
 		_ = osexec.Command("xattr", "-dr", "com.apple.quarantine", exePath).Run()
 	}
 
-	log.Printf("[auto-update] Updated to v%s.", latestVersion)
+	emitAgentUpdate("restart", "Updated to v%s — restarting in 1s for the new binary to take effect", latestVersion)
+	// Brief pause so any in-flight SSE subscribers receive the
+	// restart event before the process exits and their stream
+	// closes. Without this the dashboard sees "stream closed"
+	// without ever seeing why.
+	time.Sleep(1 * time.Second)
 
 	// Exit cleanly so the supervisor respawns us with the new binary:
 	//   - systemd (Linux):   INVOCATION_ID env, Restart=on-failure triggers
