@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -100,13 +101,29 @@ type DevServerStatus struct {
 
 // DevServerEvent is pushed via SSE on /dev/events.
 type DevServerEvent struct {
-	Type      string `json:"type"` // "ready", "reload", "error", "stopped", "file_changed", "log"
+	Type      string `json:"type"` // "ready", "reload", "error", "stopped", "file_changed", "log", "heartbeat"
 	Framework string `json:"framework"`
 	BundleURL string `json:"bundleUrl,omitempty"`
 	DeepLink  string `json:"deepLink,omitempty"`
 	Message   string `json:"message,omitempty"`
 	LogLine   string `json:"logLine,omitempty"` // single build output line (type="log")
 	Timestamp string `json:"timestamp"`
+
+	// Heartbeat-only fields (type="heartbeat"). Emitted every 5s by
+	// DevServerManager.heartbeatLoop while a dev server is running.
+	// The point: Metro/Expo are quiet between bundle requests, so the
+	// CONSOLE used to render "0 events, last: no events yet" forever
+	// even though the box was perfectly healthy. With heartbeats the
+	// web/mobile UI can render a live "last beat 3s ago, uptime 2m
+	// 14s, pid 1234 alive" indicator instead of dead silence.
+	Pid          int    `json:"pid,omitempty"`          // OS pid of the dev server process
+	PidAlive     bool   `json:"pidAlive,omitempty"`     // true if pid responds to signal-0
+	UptimeSec    int    `json:"uptimeSec,omitempty"`    // since baseDevServer.startedAt
+	Port         int    `json:"port,omitempty"`         // dev server's bound port
+	WorkDir      string `json:"workDir,omitempty"`      // project absolute path
+	Surface      string `json:"surface,omitempty"`      // "hot-reload" | "web-reload"
+	IdleSec      int    `json:"idleSec,omitempty"`      // seconds since last non-heartbeat event
+	BeatNumber   int    `json:"beatNumber,omitempty"`   // monotonically increasing beat counter
 }
 
 // ─── DevServer Registry ────────────────────────────────────────────────
@@ -179,6 +196,14 @@ type DevServerManager struct {
 	// bundleMetaJSON stores the last validated bundle's metadata JSON.
 	// Set by handleBuildNativeBundle, read by handleServeNativeBundle.
 	bundleMetaJSON string
+
+	// Heartbeat state. heartbeatLoop ticks every 5s and emits a
+	// "heartbeat" DevServerEvent with the live process state so the
+	// CONSOLE / Webview pane can render real liveness instead of an
+	// empty stream when Metro is quiet between bundle requests.
+	heartbeatStop  chan struct{}
+	beatCounter    int
+	lastNonBeatAt  time.Time
 }
 
 // devEventHistoryMax bounds DevServerManager.history. 200 lines covers
@@ -332,6 +357,10 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 
+	// Heartbeat loop — emits one event every 5s so the CONSOLE never
+	// looks dead. Stopped by Stop() / next Start().
+	m.startHeartbeatLocked()
+
 	// Launch start in background — don't block the HTTP response
 	go func() {
 		if err := ds.Start(ctx, opts); err != nil {
@@ -398,6 +427,7 @@ func (m *DevServerManager) Stop() error {
 	if st := m.active.server.Status(); st.WorkDir != "" {
 		ClearNativeBaseline(st.WorkDir)
 	}
+	m.stopHeartbeatLocked()
 	m.active.server.Stop()
 	m.active.cancel()
 	m.active = nil
@@ -630,6 +660,9 @@ func (m *DevServerManager) emit(event DevServerEvent) {
 	if len(m.history) > devEventHistoryMax {
 		m.history = m.history[len(m.history)-devEventHistoryMax:]
 	}
+	if event.Type != "heartbeat" {
+		m.lastNonBeatAt = time.Now()
+	}
 	for _, ch := range m.subs {
 		select {
 		case ch <- event:
@@ -637,6 +670,103 @@ func (m *DevServerManager) emit(event DevServerEvent) {
 			// Drop if subscriber is slow
 		}
 	}
+}
+
+// startHeartbeatLocked must be called with m.mu held. Spins up the
+// goroutine that pulses an event onto /dev/events every 5s with the
+// real process state of the active dev server. Idempotent — replaces
+// any existing heartbeat loop on the manager.
+func (m *DevServerManager) startHeartbeatLocked() {
+	if m.heartbeatStop != nil {
+		close(m.heartbeatStop)
+	}
+	stop := make(chan struct{})
+	m.heartbeatStop = stop
+	m.beatCounter = 0
+	m.lastNonBeatAt = time.Now()
+	go m.heartbeatLoop(stop)
+}
+
+func (m *DevServerManager) stopHeartbeatLocked() {
+	if m.heartbeatStop != nil {
+		close(m.heartbeatStop)
+		m.heartbeatStop = nil
+	}
+}
+
+// heartbeatLoop emits a "heartbeat" DevServerEvent every 5 seconds
+// while a dev server is running. The event carries real, agent-side
+// process state — pid alive (signal-0 probe), uptime, port, idle
+// seconds since the last log/event — so the dashboard CONSOLE strip
+// can prove liveness instead of going silent between Metro bundle
+// requests. Five seconds is small enough to feel live without
+// flooding the SSE channel; the web UI throttles its render budget
+// to one beat-line per ~5s so the strip stays readable.
+func (m *DevServerManager) heartbeatLoop(stop <-chan struct{}) {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	// Fire one beat almost immediately so the CONSOLE never sits at
+	// "events: 0" longer than it has to.
+	first := time.NewTimer(750 * time.Millisecond)
+	defer first.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-first.C:
+			m.emitHeartbeat()
+		case <-t.C:
+			m.emitHeartbeat()
+		}
+	}
+}
+
+func (m *DevServerManager) emitHeartbeat() {
+	m.mu.RLock()
+	active := m.active
+	m.mu.RUnlock()
+	if active == nil {
+		return
+	}
+	st := active.server.Status()
+	pid := 0
+	pidAlive := false
+	if base, ok := active.server.(interface{ Pid() int }); ok {
+		pid = base.Pid()
+		if pid > 0 {
+			if proc, err := os.FindProcess(pid); err == nil {
+				// signal 0 — kernel-level "is the process alive" probe
+				pidAlive = proc.Signal(syscall.Signal(0)) == nil
+			}
+		}
+	}
+	uptime := 0
+	if base, ok := active.server.(interface{ StartedAt() time.Time }); ok {
+		if started := base.StartedAt(); !started.IsZero() {
+			uptime = int(time.Since(started).Seconds())
+		}
+	}
+	m.subsMu.Lock()
+	m.beatCounter++
+	beatNum := m.beatCounter
+	idle := 0
+	if !m.lastNonBeatAt.IsZero() {
+		idle = int(time.Since(m.lastNonBeatAt).Seconds())
+	}
+	m.subsMu.Unlock()
+
+	m.emit(DevServerEvent{
+		Type:       "heartbeat",
+		Framework:  active.server.Name(),
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Pid:        pid,
+		PidAlive:   pidAlive,
+		UptimeSec:  uptime,
+		Port:       st.Port,
+		WorkDir:    st.WorkDir,
+		IdleSec:    idle,
+		BeatNumber: beatNum,
+	})
 }
 
 // ─── Base Dev Server (shared logic) ────────────────────────────────────
@@ -657,6 +787,23 @@ type baseDevServer struct {
 func (b *baseDevServer) Name() string                      { return b.name }
 func (b *baseDevServer) Port() int                         { return b.port }
 func (b *baseDevServer) SetEmitFn(fn func(DevServerEvent)) { b.emitFn = fn }
+
+// Pid + StartedAt are read by the heartbeat loop to fill in real
+// process state on the heartbeat event. Both are guarded by b.mu so
+// concurrent Stop() during the heartbeat tick can't race.
+func (b *baseDevServer) Pid() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cmd != nil && b.cmd.Process != nil {
+		return b.cmd.Process.Pid
+	}
+	return 0
+}
+func (b *baseDevServer) StartedAt() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.startedAt
+}
 
 // SetError records a human-readable failure reason on the dev server
 // so Status() returns it even after the manager clears b.running.

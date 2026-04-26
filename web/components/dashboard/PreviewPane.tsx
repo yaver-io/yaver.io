@@ -316,6 +316,30 @@ export default function PreviewPane({
   const [sseAttempts, setSseAttempts] = useState(0);
   const [totalEvents, setTotalEvents] = useState(0);
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  // Live agent heartbeat — populated by the agent's dev-server
+  // heartbeat loop (every 5s). The strip uses this to render
+  // "agent live · uptime 2m 14s · pid 12345 ✓" with a pulsing dot
+  // so the user can SEE the system is alive even when Metro is
+  // quiet between bundle requests.
+  const [lastBeat, setLastBeat] = useState<{
+    at: number;
+    pid: number;
+    pidAlive: boolean;
+    uptimeSec: number;
+    port: number;
+    framework: string;
+    idleSec: number;
+    beatNumber: number;
+  } | null>(null);
+  // Forces the "X seconds ago" labels to refresh once per second
+  // even when no new event lands. Without this the relative-time
+  // strings only update when a beat arrives, undermining the
+  // liveness signal.
+  const [, setRerenderTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setRerenderTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     // Re-sync once on mount in case the connect event fired between
@@ -418,6 +442,23 @@ export default function PreviewPane({
         const ev = JSON.parse(msg.data);
         setTotalEvents((n) => n + 1);
         setLastEventAt(Date.now());
+        // Heartbeat events are agent-driven liveness pulses (every
+        // 5s while a dev server is running). They're not log lines —
+        // we update the live-status header from them instead of
+        // appending to the CONSOLE log buffer (would flood it).
+        if (ev.type === "heartbeat") {
+          setLastBeat({
+            at: Date.now(),
+            pid: typeof ev.pid === "number" ? ev.pid : 0,
+            pidAlive: ev.pidAlive === true,
+            uptimeSec: typeof ev.uptimeSec === "number" ? ev.uptimeSec : 0,
+            port: typeof ev.port === "number" ? ev.port : 0,
+            framework: typeof ev.framework === "string" ? ev.framework : "",
+            idleSec: typeof ev.idleSec === "number" ? ev.idleSec : 0,
+            beatNumber: typeof ev.beatNumber === "number" ? ev.beatNumber : 0,
+          });
+          return;
+        }
         const text = (ev.logLine || ev.message || ev.text || "").toString();
         if (ev.type === "reload" || ev.type === "ready") {
           setIframeKey((k) => k + 1);
@@ -1400,6 +1441,7 @@ export default function PreviewPane({
               totalEvents={totalEvents}
               lastEventAt={lastEventAt}
               devStatus={devStatus}
+              lastBeat={lastBeat}
             />
             <div className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4">
               {logLines.length === 0 ? (
@@ -1507,6 +1549,7 @@ function ConsoleStatusHeader({
   totalEvents,
   lastEventAt,
   devStatus,
+  lastBeat,
 }: {
   connState: string;
   sseState: "idle" | "opening" | "open" | "closed" | "error";
@@ -1516,6 +1559,16 @@ function ConsoleStatusHeader({
   totalEvents: number;
   lastEventAt: number | null;
   devStatus: { running: boolean; framework?: string; workDir?: string; port?: number; webPort?: number; targetDeviceName?: string } | null;
+  lastBeat: {
+    at: number;
+    pid: number;
+    pidAlive: boolean;
+    uptimeSec: number;
+    port: number;
+    framework: string;
+    idleSec: number;
+    beatNumber: number;
+  } | null;
 }) {
   const dot = (color: string) => (
     <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} aria-hidden />
@@ -1559,6 +1612,42 @@ function ConsoleStatusHeader({
           )}
         </div>
       )}
+      {/* Heartbeat row — agent-driven liveness. Only visible while
+          we have a recent beat (dev server running). Pulsing dot
+          + "uptime / pid alive / idle" makes the system feel real
+          even when Metro is silent between bundle requests. */}
+      {lastBeat && (Date.now() - lastBeat.at < 30_000) && (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <span className="flex items-center gap-1.5">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/60" />
+              <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </span>
+            <span className="text-emerald-300">agent live</span>
+          </span>
+          <span className="text-surface-500">
+            beat #{lastBeat.beatNumber}{" "}
+            <span className="text-surface-700">
+              ({Math.max(0, Math.floor((Date.now() - lastBeat.at) / 1000))}s ago)
+            </span>
+          </span>
+          {lastBeat.uptimeSec > 0 && (
+            <span className="text-surface-500">
+              uptime: <span className="text-surface-300">{formatHeartbeatUptime(lastBeat.uptimeSec)}</span>
+            </span>
+          )}
+          {lastBeat.pid > 0 && (
+            <span className="text-surface-500">
+              pid {lastBeat.pid} <span className={lastBeat.pidAlive ? "text-emerald-400" : "text-red-400"}>{lastBeat.pidAlive ? "✓" : "✗"}</span>
+            </span>
+          )}
+          {lastBeat.idleSec > 0 && (
+            <span className="text-surface-700">
+              idle {lastBeat.idleSec}s
+            </span>
+          )}
+        </div>
+      )}
       {sseUrl && (
         <div className="mt-0.5 truncate font-mono text-[9px] text-surface-700" title={sseUrl}>
           {sseUrl}
@@ -1566,6 +1655,16 @@ function ConsoleStatusHeader({
       )}
     </div>
   );
+}
+
+function formatHeartbeatUptime(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return `${h}h ${rm}m`;
 }
 
 // consoleEmptyHint replaces the bland "(waiting for output…)" with
