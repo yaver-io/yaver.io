@@ -234,10 +234,18 @@ var integrations = []installPlan{
 	},
 	{
 		name:        "appium",
-		description: "Appium — only needed if you want to drive existing Appium specs (yaver-test-sdk has its own bridges from M5)",
+		description: "Appium — only needed if you want to drive existing Appium specs (yaver-test-sdk has its own bridges from M5). Used by vibe-preview's RN bug-hunter.",
 		macOS:       []string{"npm install -g appium"},
 		linux: []linuxStep{
 			{"npm", "npm install -g appium"},
+		},
+	},
+	{
+		name:        "maestro",
+		description: "Maestro — declarative mobile E2E flows. Drives demo-clip recordings in vibe-preview (Phase 7 exercise scripts) so MP4s capture interaction instead of an idle home screen.",
+		macOS:       []string{"curl -Ls 'https://get.maestro.mobile.dev' | bash"},
+		linux: []linuxStep{
+			{"curl", "curl -Ls 'https://get.maestro.mobile.dev' | bash"},
 		},
 	},
 	{
@@ -371,6 +379,11 @@ var integrations = []installPlan{
 		name:        "pi-dev-node",
 		description: "Raspberry Pi / ARM64 headless dev-node profile: AI coding stack + TDD + local/cloud backend tooling. Meta-target.",
 		runFunc:     runPiDevNodeInstall,
+	},
+	{
+		name:        "vibe-preview",
+		description: "Vibe Preview tool stack: chromium (frame capture), ffmpeg (clip poster), maestro (clip exercises), appium (RN bug-hunter), android-sdk (sim-android clips). macOS-only sim-ios capture relies on xcrun which ships with Xcode. Meta-target.",
+		runFunc:     runVibePreviewInstall,
 	},
 	{
 		name:        "tmux",
@@ -515,6 +528,7 @@ func checkInstalled(name string) string {
 		"firefox":           {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
 		"android-sdk":       {"adb"},
 		"appium":            {"appium"},
+		"maestro":           {"maestro"},
 		"ollama":            {"ollama"},
 		"aider":             {"aider"},
 		"opencode":          {"opencode"},
@@ -544,9 +558,10 @@ func checkInstalled(name string) string {
 
 func compositeInstallSatisfied(name string) bool {
 	required := map[string][]string{
-		"tdd":         {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
-		"backend-dev": {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
-		"pi-dev-node": {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"},
+		"tdd":          {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
+		"backend-dev":  {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
+		"pi-dev-node":  {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"},
+		"vibe-preview": {"chromium", "ffmpeg", "maestro", "appium", "android-sdk"},
 	}
 	targets, ok := required[name]
 	if !ok {
@@ -746,6 +761,47 @@ func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
 		progress("Pi dev-node base installed.")
 		progress("Optional next steps: `yaver install tailscale`, `yaver install cloudflared`, or `yaver install hybrid` if you want qwen2.5-coder:14b pulled immediately.")
 		progress("Recommended hardware: Raspberry Pi 5, 16 GB RAM, 256 GB storage, active cooling, Ethernet.")
+	}
+	return nil
+}
+
+// runVibePreviewInstall installs every external tool the vibe-preview
+// pipeline drives. Idempotent — already-installed entries are skipped
+// — so this is safe to run on a fresh machine or as a "make sure I'm
+// fully equipped" step on an existing one. macOS-only sim-ios capture
+// uses xcrun (ships with Xcode); we don't try to install that.
+func runVibePreviewInstall(ctx context.Context, progress func(string)) error {
+	planNames := []string{"chromium", "ffmpeg", "maestro", "appium", "android-sdk"}
+	for _, name := range planNames {
+		plan, ok := metaInstallPlan(name)
+		if !ok {
+			return fmt.Errorf("missing install plan: %s", name)
+		}
+		if progress != nil {
+			progress("==> " + plan.name + " — " + plan.description)
+		}
+		if checkInstalled(plan.name) == "✓" {
+			if progress != nil {
+				progress("already installed, skipping")
+			}
+			continue
+		}
+		if err := runInstallPlan(ctx, plan, progress); err != nil {
+			// Tool installs are best-effort here — appium needs Node,
+			// android-sdk install on Linux is the platform-tools subset
+			// only — but we keep going so the user gets every available
+			// piece even if one step needs manual intervention.
+			if progress != nil {
+				progress(fmt.Sprintf("warning: %s failed: %v (continuing)", plan.name, err))
+			}
+		}
+	}
+	if progress != nil {
+		progress("Vibe Preview tool stack installed.")
+		progress("Optional next steps:")
+		progress("  - macOS users: install Xcode for sim-ios clip recording (xcrun simctl).")
+		progress("  - YAVER_VIBE_SUMMARIZER=claude turns on the LLM diff summarizer (needs `claude` CLI).")
+		progress("  - Set Think.AutoSummary.Enabled=true on a loop to start receiving summaries.")
 	}
 	return nil
 }
