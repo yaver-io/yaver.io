@@ -108,13 +108,14 @@ type VibePreviewSession struct {
 // re-subscribers can serve a frame without disk I/O; older frames evict
 // to disk-only and are read back on /frames/:hash GET.
 type vibeFrameRecord struct {
-	Seq        uint64
-	Hash       string // first 12 hex of sha256(bytes)
-	Bytes      []byte // PNG (chromedp default) — may be cleared after persist
-	Width      int
-	Height     int
-	CapturedAt time.Time
-	diskPath   string // ~/.yaver/vibe-preview/<sessionId>/<hash>.png; "" = not persisted
+	Seq         uint64
+	Hash        string // first 12 hex of sha256(bytes)
+	Bytes       []byte // PNG (chromedp default) — may be cleared after persist
+	Width       int
+	Height      int
+	CapturedAt  time.Time
+	diskPath    string // ~/.yaver/vibe-preview/<sessionId>/<hash>.png; "" = not persisted
+	crashTagged bool   // set by OnCrashDetected — surfaced in /frames/<hash> headers
 }
 
 // ─── Manager ─────────────────────────────────────────────────────────────────
@@ -204,6 +205,10 @@ type VibePreviewManager struct {
 	// diskRoot is where frame bytes + clips live. Empty = "~/.yaver/vibe-preview".
 	// Tests inject a tempdir.
 	diskRoot string
+
+	// lastCrash dedups identical crash messages within a 1 s window.
+	// Read + written under m.mu.
+	lastCrash *VibeCrashSignal
 }
 
 // NewVibePreviewManager returns a manager wired to the supplied
