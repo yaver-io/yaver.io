@@ -113,7 +113,14 @@ jq -r 'to_entries | map("  \(.key)=\(.value | tostring | .[0:60])") | .[]' /root
 # --debug runs in foreground (no re-exec), so cfg.AuthToken loaded by
 # this process IS what becomes s.token in the HTTPServer. Background-
 # ing via `&` keeps the script flowing.
-yaver serve --debug --no-relay --no-tls > /tmp/yaver-serve.log 2>&1 &
+#
+# YAVER_NO_BOOTSTRAP=1 is the escape hatch in auth_bootstrap.go's
+# needsBootstrap() check. Without it, an empty cfg.ConvexSiteURL
+# routes us into the stripped-down bootstrap HTTP server (only
+# /health, /auth/pair/*, /info) — every other route 404's, including
+# /ops which is what mobile-headless depends on.
+YAVER_NO_BOOTSTRAP=1 yaver serve --debug --no-relay --no-tls \
+  > /tmp/yaver-serve.log 2>&1 &
 AGENT_PID=$!
 
 # Wait for /health
