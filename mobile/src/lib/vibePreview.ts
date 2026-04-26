@@ -269,6 +269,111 @@ export function clipPosterUrl(clipId: string): string | null {
   return `${base}/vibing/preview/clip/${encodeURIComponent(clipId)}/poster`;
 }
 
+/**
+ * uploadPhoneClip — Phase 5: send a locally-recorded MP4 from the
+ * developer's phone (ReplayKit on iOS, MediaProjection on Android) to
+ * the agent. Pair with startClip({source: "phone"}) which allocates the
+ * clip ID upfront, then call this with the resulting MP4 bytes once the
+ * native recorder finishes.
+ *
+ * Native module wiring (skeleton — implemented in mobile/ios/Yaver/
+ * YaverScreenRecorder.swift + mobile/android/.../YaverScreenRecorderModule.kt
+ * in a follow-up turn):
+ *   1. NativeModules.YaverScreenRecorder.startCapture(durationSec)
+ *      → returns a file path when the recorder finishes.
+ *   2. fetch(filePath) → blob → ArrayBuffer.
+ *   3. uploadPhoneClip({clipId, mp4: arrayBuffer}).
+ *
+ * The upload is a single POST, not chunked — phone clips at 720p / 12 s
+ * are typically 1-3 MB which fits comfortably in one request.
+ */
+export interface UploadPhoneClipOpts {
+  clipId: string;
+  mp4: ArrayBuffer | Uint8Array;
+}
+
+export async function uploadPhoneClip(opts: UploadPhoneClipOpts): Promise<{ ok: boolean; sizeBytes?: number; error?: string }> {
+  const base = baseUrl();
+  if (!base) return { ok: false, error: "not connected" };
+  const bytes = opts.mp4 instanceof Uint8Array ? opts.mp4 : new Uint8Array(opts.mp4);
+  try {
+    const res = await fetch(`${base}/vibing/preview/clip/upload`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "video/mp4",
+        "X-Yaver-Clip-ID": opts.clipId,
+      },
+      body: bytes as any,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, sizeBytes: data?.sizeBytes };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
+ * recordAndUploadPhoneClip — convenience wrapper: starts a phone-source
+ * clip on the agent, asks the native recorder to capture the screen for
+ * `durationSec`, then uploads the resulting MP4. Native module call is
+ * stubbed via `nativeRecorder` — when the iOS/Android modules land
+ * (Phase 5 native), swap the stub for the real bridge.
+ *
+ * Returns the clip record + upload result so the modal can show
+ * progress + handle errors uniformly with the simulator path.
+ */
+export interface RecordPhoneClipOpts {
+  project: string;
+  durationSec?: number;
+}
+
+let nativeRecorder: ((durationSec: number) => Promise<ArrayBuffer | null>) | null = null;
+
+/** Set the native recorder bridge once on app boot. Tests can install
+ *  a fake; production wires the actual ReplayKit / MediaProjection
+ *  module. */
+export function setNativeScreenRecorder(fn: (durationSec: number) => Promise<ArrayBuffer | null>) {
+  nativeRecorder = fn;
+}
+
+export async function recordAndUploadPhoneClip(
+  opts: RecordPhoneClipOpts,
+): Promise<{ ok: boolean; clip?: VibeClipRecord; error?: string }> {
+  if (!nativeRecorder) {
+    return {
+      ok: false,
+      error:
+        "phone-side screen recorder not available — native module not wired yet (waiting on Phase 5 ReplayKit/MediaProjection)",
+    };
+  }
+  const dur = opts.durationSec ?? 12;
+  const rec = await startClip({ project: opts.project, source: "phone", durationMaxSec: dur });
+  if (!rec) {
+    return { ok: false, error: "could not start phone clip on agent" };
+  }
+  try {
+    const mp4 = await nativeRecorder(dur);
+    if (!mp4) {
+      return { ok: false, clip: rec, error: "recording cancelled or empty" };
+    }
+    const upload = await uploadPhoneClip({ clipId: rec.id, mp4 });
+    if (!upload.ok) {
+      return { ok: false, clip: rec, error: upload.error };
+    }
+    return { ok: true, clip: rec };
+  } catch (err) {
+    return {
+      ok: false,
+      clip: rec,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // ─── SSE ─────────────────────────────────────────────────────────────────────
 
 export interface SubscribeOpts {
