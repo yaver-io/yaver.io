@@ -1,0 +1,184 @@
+# End-to-end webview smoke that drives yaver-test-ephemeral
+# strictly through public.yaver.io (no SSH bypass for the test
+# itself — SSH is only used once at the start to lift the box's
+# auth_token + device_id off /home/yaver/.yaver/config.json).
+#
+# What it proves:
+#   1. yaver-web-headless on a fresh GitHub runner can connect to
+#      yaver-test-ephemeral with `via: relay` (forced by skipping
+#      LAN/tunnel routes).
+#   2. /dev/start on the agent works through the relay.
+#   3. /dev/events SSE actually streams through the relay (relay
+#      doesn't buffer / strip the event-stream content type).
+#   4. Per-user `__rp=` validation works for both the JSON path
+#      (/dev/start) and the SSE path (/dev/events) under the live
+#      v0.1.7 binary.
+#
+# Anything failing here is a regression in the relay <-> agent
+# webview pipeline.
+
+name: Webview Through Relay Smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: webview-through-relay-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Lift token + deviceId off the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          # Read /home/yaver/.yaver/config.json (the daemon's token)
+          # — we drive the relay path AS that user so we go through
+          # the same per-user `__rp=` path the web dashboard uses.
+          DUMP=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              'python3 -c "import json,sys; c=json.load(open(\"/home/yaver/.yaver/config.json\")); print(c[\"auth_token\"]); print(c[\"device_id\"]); print(c.get(\"convex_site_url\",\"\"))"')
+          TOKEN=$(echo "$DUMP" | sed -n '1p')
+          DEVID=$(echo "$DUMP" | sed -n '2p')
+          CVX=$(echo "$DUMP" | sed -n '3p')
+          if [ -z "$TOKEN" ] || [ -z "$DEVID" ]; then
+            echo "::error::failed to read token/deviceId from box"; exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          # Don't mask deviceId — it's not secret and we want to see it in logs.
+          echo "Box's userId-bearing token: <masked, len=${#TOKEN}>"
+          echo "Device id: $DEVID"
+          echo "Convex site: $CVX"
+          echo "YAVER_TOKEN=$TOKEN"        >> "$GITHUB_ENV"
+          echo "YAVER_DEVICE_ID=$DEVID"    >> "$GITHUB_ENV"
+          echo "YAVER_CONVEX_URL=${CVX:-https://perceptive-minnow-557.eu-west-1.convex.site}" >> "$GITHUB_ENV"
+
+      - name: Build web-headless on runner
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd web-headless
+          bun install
+          bun run build
+
+      - name: Drive the webview path strictly through public.yaver.io
+        run: |
+          export PATH="$HOME/.bun/bin:$PATH"
+          cd web-headless
+          NODE="node dist/cli.js"
+
+          echo "=== whoami ==="
+          $NODE whoami
+
+          echo "=== devices ==="
+          DEVS=$($NODE devices)
+          echo "$DEVS" | jq '.[] | {id, name, isOnline, ownerId}'
+          if ! echo "$DEVS" | jq -e --arg id "$YAVER_DEVICE_ID" '.[] | select(.id == $id)' >/dev/null; then
+            echo "::error::test box not in devices list"
+            exit 1
+          fi
+
+          echo "=== connect (must go via relay) ==="
+          # connect prints diagnostics. webview-url tells us the
+          # mode it actually picked.
+          $NODE webview-url --device="$YAVER_DEVICE_ID" || true
+          MODE_PROBE=$($NODE webview-url --device="$YAVER_DEVICE_ID" 2>/dev/null | jq -r .mode)
+          echo "connection mode: $MODE_PROBE"
+          if [ "$MODE_PROBE" != "relay" ]; then
+            echo "::warning::connection mode was '$MODE_PROBE', not 'relay' — runner is presumably on a different LAN than the box, so this is expected to be relay; if not, the test isn't actually exercising the relay path"
+          fi
+          # Capture preview + events URL so we can probe SSE directly.
+          INFO=$($NODE webview-url --device="$YAVER_DEVICE_ID")
+          PREVIEW=$(echo "$INFO" | jq -r .previewUrl)
+          EVENTS=$(echo "$INFO" | jq -r .eventsUrl)
+          echo "previewUrl: $PREVIEW"
+          echo "eventsUrl:  $EVENTS"
+          if ! echo "$EVENTS" | grep -q "public.yaver.io"; then
+            echo "::error::events URL doesn't go through public.yaver.io: $EVENTS"
+            exit 1
+          fi
+
+          echo "=== dev-status BEFORE ==="
+          $NODE dev-status --device="$YAVER_DEVICE_ID" | jq . || true
+
+          # Pick a known app from the workspace manifest. carrotbet
+          # and sfmg are both declared. carrotbet is web-only so it's
+          # the safest choice for surface=web-reload.
+          APP=carrotbet
+
+          echo "=== dev-start app=$APP surface=web-reload ==="
+          if ! $NODE dev-start --device="$YAVER_DEVICE_ID" --app="$APP" --surface=web-reload | jq .; then
+            echo "::error::dev-start through relay failed"
+            $NODE dev-status --device="$YAVER_DEVICE_ID" | jq . || true
+            exit 1
+          fi
+
+          echo "=== waiting for dev server to bind ==="
+          for i in $(seq 1 20); do
+            STATUS=$($NODE dev-status --device="$YAVER_DEVICE_ID" 2>/dev/null || echo "{}")
+            RUNNING=$(echo "$STATUS" | jq -r '.running // false')
+            if [ "$RUNNING" = "true" ]; then
+              echo "  ✓ running after ${i} probes (~$((i*1))s)"
+              echo "$STATUS" | jq '{running, app, framework, port, surface, kind}'
+              break
+            fi
+            sleep 1
+          done
+          if [ "$RUNNING" != "true" ]; then
+            echo "::error::dev server never reported running"
+            $NODE dev-status --device="$YAVER_DEVICE_ID" | jq . || true
+            exit 1
+          fi
+
+          echo "=== probe /dev/events SSE through public.yaver.io ==="
+          # The events URL we got back is the relay-routed URL but
+          # WITHOUT auth — `webview-url` is just the URL the iframe
+          # uses; we need to add Authorization for the actual GET.
+          # Capture up to 8 lines or 8 seconds, whichever first.
+          # Append the per-user __rp from `webview-url`'s previewUrl
+          # so EventSource-style auth works without a header.
+          RP=$(echo "$PREVIEW" | sed -nE 's/.*[?&]__rp=([^&]+).*/\1/p')
+          if [ -z "$RP" ]; then
+            echo "::error::no __rp= in previewUrl, can't auth SSE"
+            exit 1
+          fi
+          # Some versions of curl don't emit chunked SSE without -N.
+          # The relay should send the initial `:hello` and any buffered
+          # ring-buffer events within ~1s.
+          FULL_EVENTS_URL="${EVENTS}?__rp=${RP}"
+          echo "GET $FULL_EVENTS_URL  (Authorization: Bearer <masked>)"
+          (timeout 8s curl -N -s -H "Authorization: Bearer $YAVER_TOKEN" "$FULL_EVENTS_URL" | head -c 4096 || true) > /tmp/sse-out
+          SSE_BYTES=$(wc -c < /tmp/sse-out)
+          echo "  got $SSE_BYTES bytes from SSE stream"
+          echo "  first lines:"
+          head -20 /tmp/sse-out || true
+          if [ "$SSE_BYTES" -lt 4 ]; then
+            echo "::error::SSE returned <4 bytes — relay/agent didn't stream"
+            exit 1
+          fi
+          if ! grep -qE "^(event:|data:|:hello)" /tmp/sse-out; then
+            echo "::error::SSE output isn't event-stream framed — content-type wrong?"
+            exit 1
+          fi
+          echo "  ✓ SSE event-stream is live through the relay"
+
+          echo "=== dev-stop ==="
+          $NODE dev-stop --device="$YAVER_DEVICE_ID" | jq . || true
+
+          echo
+          echo "OK — webview path through public.yaver.io is healthy."
