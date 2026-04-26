@@ -74,27 +74,17 @@ jobs:
           fi
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Reset root password via Hetzner API (only if needed)
+      - name: Use operator-supplied root password (only if needed)
         if: env.CI_KEY_WORKS == '0'
         env:
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          PW: ${{ secrets.HETZNER_PUBLIC_RELAY_SERVER_PASSWORD }}
         run: |
-          # Direct REST call — returns JSON with stable shape:
-          # { "action": {...}, "root_password": "<plaintext>" }
-          RESP=$(curl -fsS -X POST \
-            -H "Authorization: Bearer $HCLOUD_TOKEN" \
-            -H "Content-Type: application/json" \
-            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/reset_password")
-          PW=$(echo "$RESP" | jq -r '.root_password // empty')
           if [ -z "$PW" ]; then
-            echo "::error::reset_password API didn't return root_password. Response:"
-            echo "$RESP" | jq '.' | head -20
+            echo "::error::HETZNER_PUBLIC_RELAY_SERVER_PASSWORD is empty"
             exit 2
           fi
-          echo "::add-mask::$PW"
+          # PW is already a GitHub secret so it's masked in logs by default.
           echo "RELAY_ROOT_PW=$PW" >> "$GITHUB_ENV"
-          # Hetzner takes ~10s to propagate the new password to the VM.
-          sleep 12
 
       - name: Derive CI public key
         env:
@@ -145,15 +135,17 @@ jobs:
           EOF
           )
 
+          USER='${{ secrets.HETZNER_PUBLIC_RELAY_SERVER_USERNAME }}'
+          USER="${USER:-root}"
           if [ "${{ env.CI_KEY_WORKS }}" = "1" ]; then
             ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
                 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                "root@$RELAY_IP" "$SCRIPT"
+                "$USER@$RELAY_IP" "$SCRIPT"
           else
             sshpass -p "$RELAY_ROOT_PW" \
               ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                   -o PreferredAuthentications=password -o PubkeyAuthentication=no \
-                  "root@$RELAY_IP" "$SCRIPT"
+                  "$USER@$RELAY_IP" "$SCRIPT"
           fi
 
       - name: Verify per-user password validation now works
