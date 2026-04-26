@@ -1031,12 +1031,52 @@ func metaInstallPlan(name string) (installPlan, bool) {
 	case "ffmpeg":
 		return installPlan{
 			name:        "ffmpeg",
-			description: "ffmpeg — required for the morning match-report screen recorder (run `yaver record`)",
+			description: "ffmpeg — required for the morning match-report screen recorder (run `yaver record`) and the vibe-preview clip poster extractor",
 			macOS:       []string{"brew install ffmpeg"},
 			linux: []linuxStep{
 				{"apt-get", "sudo apt-get install -y ffmpeg"},
 				{"dnf", "sudo dnf install -y ffmpeg"},
 				{"pacman", "sudo pacman -S --noconfirm ffmpeg"},
+			},
+		}, true
+	case "chromium":
+		return installPlan{
+			name:        "chromium",
+			description: "Chromium — headless browser used by chromedp for vibe-preview frame capture",
+			macOS:       []string{"brew install --cask chromium"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y chromium-browser"},
+				{"dnf", "sudo dnf install -y chromium"},
+				{"pacman", "sudo pacman -S --noconfirm chromium"},
+			},
+		}, true
+	case "maestro":
+		return installPlan{
+			name:        "maestro",
+			description: "Maestro — declarative mobile E2E flows; drives demo-clip recordings in vibe-preview (Phase 7)",
+			macOS:       []string{"curl -Ls 'https://get.maestro.mobile.dev' | bash"},
+			linux: []linuxStep{
+				{"curl", "curl -Ls 'https://get.maestro.mobile.dev' | bash"},
+			},
+		}, true
+	case "appium":
+		return installPlan{
+			name:        "appium",
+			description: "Appium — WebDriver automation for RN apps; drives the vibe-preview bug-hunter (Phase 15)",
+			macOS:       []string{"npm install -g appium"},
+			linux: []linuxStep{
+				{"npm", "npm install -g appium"},
+			},
+		}, true
+	case "android-sdk":
+		return installPlan{
+			name:        "android-sdk",
+			description: "Android SDK platform-tools (adb) — needed for `target: android-emu` and vibe-preview sim-android clip recording",
+			macOS:       []string{"brew install --cask android-platform-tools"},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y android-tools-adb"},
+				{"dnf", "sudo dnf install -y android-tools"},
+				{"pacman", "sudo pacman -S --noconfirm android-tools"},
 			},
 		}, true
 	case "ollama":
