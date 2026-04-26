@@ -128,17 +128,21 @@ YAVER_NO_BOOTSTRAP=1 yaver serve --debug --no-relay --no-tls \
   > /tmp/yaver-serve.log 2>&1 &
 AGENT_PID=$!
 
-# Wait for /health
-for i in {1..40}; do
+# Wait for /health — yaver does Host Share + project discovery on
+# boot which can take 20+ s on a fresh box. 60 s × 0.5 s = 30 s.
+for i in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null 2>&1; then
-    echo "agent ready (after ${i}x 250ms)"
+    echo "agent ready (after ${i}x 500ms)"
     break
   fi
-  sleep 0.25
+  sleep 0.5
 done
 if ! curl -fsS "http://127.0.0.1:$AGENT_PORT/health" >/dev/null; then
-  echo "agent never came up — see /tmp/yaver-serve.log"
-  tail -80 /tmp/yaver-serve.log || true
+  echo "agent never came up after 30s — full log:"
+  cat /tmp/yaver-serve.log || true
+  echo "---"
+  echo "process state:"
+  ps -p "$AGENT_PID" -o pid,stat,etime,cmd 2>&1 || echo "agent process gone"
   exit 1
 fi
 
