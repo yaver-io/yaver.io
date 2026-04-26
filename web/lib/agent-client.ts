@@ -3216,29 +3216,25 @@ export class AgentClient {
     return `${this.baseUrl}/dev/`;
   }
 
-  /** Get the SSE events URL for dev server live reload. Mirrors
-   *  devPreviewUrl: when we're on relay we route the SSE through the
-   *  same-origin Cloudflare-Worker proxy at /d/<deviceId>/... so the
-   *  browser's CORS preflight on text/event-stream + Authorization
-   *  doesn't strand the connection (which it does direct against
-   *  public.yaver.io — fetch sits in "opening" forever). */
+  /** Get the SSE events URL for dev server live reload.  Goes
+   *  DIRECT to the relay HTTP URL — not through the Cloudflare
+   *  Worker /d/<id>/... same-origin proxy.  The Worker buffers
+   *  streaming responses and returns 502 to the browser before
+   *  the agent's first event/keepalive arrives.  Relay's
+   *  withRelayCORS middleware already returns
+   *  Access-Control-Allow-Origin: * with Authorization +
+   *  X-Relay-Password in Allow-Headers, so the browser's CORS
+   *  preflight succeeds and the SSE response streams cleanly.
+   *  The mobile app uses this same direct path and works fine. */
   get devEventsUrl(): string | null {
     if (!this.baseUrl) return null;
-    if (this.activeRelayUrl) {
-      if (!this.deviceId) return null;
-      return `/d/${encodeURIComponent(this.deviceId)}/dev/events`;
-    }
     return `${this.baseUrl}/dev/events`;
   }
 
-  /** SSE URL for the agent-update progress stream — same
-   *  same-origin-on-relay rewrite as devEventsUrl. */
+  /** SSE URL for the agent-update progress stream — direct relay
+   *  for the same reason as devEventsUrl. */
   get agentUpdateStreamUrl(): string | null {
     if (!this.baseUrl) return null;
-    if (this.activeRelayUrl) {
-      if (!this.deviceId) return null;
-      return `/d/${encodeURIComponent(this.deviceId)}/streams/agent-update`;
-    }
     return `${this.baseUrl}/streams/agent-update`;
   }
 
