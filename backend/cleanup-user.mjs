@@ -23,8 +23,18 @@ const EMAILS = [
 ];
 
 const CONVEX_URL =
-  process.env.CONVEX_URL ||
-  "https://shocking-echidna-394.eu-west-1.convex.cloud";
+  process.env.CONVEX_URL;
+
+if (!CONVEX_URL) {
+  console.error("ERROR: CONVEX_URL must be set explicitly — no default.");
+  console.error("       Use the dev URL to clean dev data, or the prod URL");
+  console.error("       (see backend/.env.local for the dev URL; prod is");
+  console.error("       https://perceptive-minnow-557.eu-west-1.convex.cloud).");
+  console.error("");
+  console.error("Example:");
+  console.error("  CONVEX_URL=https://shocking-echidna-394.eu-west-1.convex.cloud node cleanup-user.mjs");
+  process.exit(2);
+}
 
 const args = process.argv.slice(2);
 const dryRun = !args.includes("--confirm");

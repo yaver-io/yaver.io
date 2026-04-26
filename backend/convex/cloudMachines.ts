@@ -565,7 +565,12 @@ export const provision = internalAction({
     // (GET /machine/pending-tls) and report the result back.
     const machineToken = randomHex(24);
     const machineTokenHash = await sha256Hex(machineToken);
-    const convexSite = process.env.CONVEX_SITE_URL || "https://shocking-echidna-394.eu-west-1.convex.site";
+    // Fall back to the production deployment, never dev — this runs
+    // server-side on whichever Convex deployment is live, and the dev
+    // deployment must never appear in URLs handed to real user devices.
+    // Set CONVEX_SITE_URL via `npx convex env set` on each deployment
+    // so the explicit value still wins.
+    const convexSite = process.env.CONVEX_SITE_URL || "https://perceptive-minnow-557.eu-west-1.convex.site";
     const machineIdStr = machine._id.toString();
     const userSessionToken = randomHex(32);
     const userSessionTokenHash = await sha256Hex(userSessionToken);
