@@ -2175,6 +2175,9 @@ function RunnerAuthModal({
   const [session, setSession] = useState<RunnerBrowserAuthSession | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pasteCode, setPasteCode] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
@@ -2291,8 +2294,70 @@ function RunnerAuthModal({
                 </button>
               </div>
             ) : null}
+            <div className="rounded-lg border border-surface-800 bg-surface-950/40 p-3">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-400">
+                Paste the code from {runnerLabel(runner)}
+              </div>
+              <p className="mb-2 text-[11px] leading-relaxed text-surface-500">
+                {runner === "claude"
+                  ? "After clicking Authorize on platform.claude.com, copy the code from the callback page (it starts with a long base64 string) and paste it here."
+                  : runner === "codex"
+                    ? "After signing into ChatGPT, copy the code shown after sign-in and paste it here."
+                    : "Copy the code shown by your browser after sign-in and paste it here."}
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={pasteCode}
+                  onChange={(e) => { setPasteCode(e.target.value); setSubmitError(null); }}
+                  placeholder="paste code here"
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="flex-1 rounded-md border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-mono text-surface-100 outline-none placeholder-surface-700 focus:border-indigo-500/40"
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter" && pasteCode.trim() && session && !submitting) {
+                      e.preventDefault();
+                      setSubmitting(true);
+                      setSubmitError(null);
+                      try {
+                        const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim());
+                        setSession(next);
+                        setPasteCode("");
+                      } catch (err) {
+                        setSubmitError(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }
+                  }}
+                />
+                <button
+                  disabled={!pasteCode.trim() || submitting || !session}
+                  onClick={async () => {
+                    if (!session) return;
+                    setSubmitting(true);
+                    setSubmitError(null);
+                    try {
+                      const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim());
+                      setSession(next);
+                      setPasteCode("");
+                    } catch (err) {
+                      setSubmitError(err instanceof Error ? err.message : String(err));
+                    } finally {
+                      setSubmitting(false);
+                    }
+                  }}
+                  className="rounded-md border border-indigo-500/40 bg-indigo-500/10 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-500/20 disabled:opacity-40"
+                >
+                  {submitting ? "…" : "Submit"}
+                </button>
+              </div>
+              {submitError ? (
+                <div className="mt-2 text-[11px] text-red-300">{submitError}</div>
+              ) : null}
+            </div>
             <p className="text-[10px] leading-relaxed text-surface-600">
-              Once sign-in finishes in the browser, this dialog updates automatically and chat will re-enable on this machine.
+              The dialog auto-completes once the remote CLI confirms the token; you can close it then.
             </p>
           </div>
         )}
