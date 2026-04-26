@@ -43,6 +43,9 @@ import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
+import webPkg from "../../package.json";
+
+const WEB_VERSION = (webPkg as { version?: string }).version ?? "unknown";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
@@ -1282,11 +1285,14 @@ export default function DashboardPage() {
               admin-style shell. Lowercase "yaver" bold + muted ".io". */}
           <a
             href="/"
-            className="flex items-center px-3 py-2 transition-opacity hover:opacity-80"
-            title="Yaver.io home"
+            className="flex flex-col items-start px-3 py-2 leading-none transition-opacity hover:opacity-80"
+            title={`Yaver.io home — web v${WEB_VERSION}`}
           >
             <span className="text-xl font-bold tracking-tight text-surface-50">
               yaver<span className="font-normal text-surface-500">.io</span>
+            </span>
+            <span className="mt-0.5 font-mono text-[10px] tracking-wide text-surface-600">
+              v{WEB_VERSION}
             </span>
           </a>
 
