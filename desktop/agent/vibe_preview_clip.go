@@ -165,6 +165,19 @@ func (m *VibePreviewManager) StartClip(opts VibeClipStartOpts) (*VibeClipRecord,
 		DurationS: float64(dur),
 	})
 
+	// Phase 7: drive the running app while the clip records, so the
+	// MP4 captures interaction instead of an idle home screen. The
+	// exerciser is a no-op when Maestro isn't installed — recorder
+	// still produces a clip in that case.
+	if source == VibeClipSourceSimIOS || source == VibeClipSourceSimAndroid {
+		exerciseCtx, exerciseCancel := context.WithTimeout(context.Background(), time.Duration(dur)*time.Second)
+		go func() {
+			defer exerciseCancel()
+			<-recorder.doneCh // tie the exercise lifetime to the recorder
+		}()
+		m.ExerciseClip(exerciseCtx, clipID, opts.Project, opts.ExerciseHint, opts.ExerciseHint)
+	}
+
 	// Watch the recorder asynchronously. When the process exits (timeout
 	// or explicit Stop), finalize the on-disk artifacts + emit clip_ready.
 	go m.watchClipRecorder(recorder, rec, dur)
