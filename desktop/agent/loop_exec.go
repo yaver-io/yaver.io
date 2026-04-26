@@ -920,6 +920,23 @@ func runSingleKick(ctx context.Context, l *LoopState, nudge string) *IterationRe
 						"[loop %s] smart-develop: crash detected (%s: %s) — re-queueing kick\n",
 						l.Spec.Name, stab.Crash.Source, stab.Crash.Message)
 					aiResp.Status = "in_progress"
+					// Plumb the crash transcript into the next kick's
+					// nudge so the AI runner sees what failed instead of
+					// blindly retrying. The kick scheduler reads
+					// AIResponse.NextStep verbatim and prepends it to
+					// the next iteration's prompt — see runDevelopLoop.
+					crashNudge := fmt.Sprintf(
+						"The previous kick declared the change done, but the running app crashed within %s of the commit landing.\n"+
+							"Crash signal: %s\n"+
+							"Crash message: %s\n"+
+							"Investigate the crash and fix the root cause before declaring the kick done. Do not retry blindly.",
+						stab.Window, stab.Crash.Source, stab.Crash.Message,
+					)
+					if existing := strings.TrimSpace(aiResp.NextStep); existing != "" {
+						aiResp.NextStep = crashNudge + "\n\nPrevious next-step: " + existing
+					} else {
+						aiResp.NextStep = crashNudge
+					}
 					if result.Summary != "" {
 						result.Summary += " | "
 					}
