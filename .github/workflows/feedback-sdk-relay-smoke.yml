@@ -1,0 +1,280 @@
+# End-to-end Feedback SDK smoke that drives yaver-test-ephemeral
+# strictly through public.yaver.io.
+#
+# Two "client" surfaces, one box:
+#   - RN  Feedback SDK shape against project `sfmg`     (mobile)
+#   - Web Feedback SDK shape against project `carrotbet` (web)
+#
+# Why "shape" not "the SDK directly"? The RN SDK imports
+# `react-native` at the top, the Web SDK touches `window`. Loading
+# either in plain Node CI requires an entire RN/jsdom transform
+# pass that adds 30+ s and provides no extra signal. What matters
+# for the relay path is that the wire shape both SDKs send
+# (POST /dev/reload, POST /dev/reload-app, POST /feedback,
+# GET /blackbox/command-stream) is accepted by the live agent
+# over the live relay. So we replay the exact requests the SDKs
+# emit (mirrored from sdk/feedback/{react-native,web}/src/
+# P2PClient.ts) using bun + fetch, and assert the same response
+# contracts the SDKs unit-test against.
+#
+# Anything failing here is a regression in the SDK ↔ agent ↔
+# relay HTTP contract.
+
+name: Feedback SDK Relay Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/feedback/react-native/src/**"
+      - "sdk/feedback/web/src/**"
+      - "desktop/agent/devserver_http.go"
+      - "desktop/agent/feedback*.go"
+      - "desktop/agent/blackbox*.go"
+      - "relay/**"
+      - ".github/workflows/feedback-sdk-relay-smoke.yml"
+
+concurrency:
+  group: feedback-sdk-relay-smoke
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    # Hermetic unit pass first — relay smoke is wasted CI minutes
+    # if the SDK can't even send the right request shape.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: RN Feedback SDK unit tests (incl. hot-reload command channel)
+        working-directory: sdk/feedback/react-native
+        run: |
+          npm install --no-audit --no-fund --silent
+          npx jest --runInBand
+      - name: Web Feedback SDK unit tests (incl. hot-reload paths)
+        working-directory: sdk/feedback/web
+        run: |
+          npm install --no-audit --no-fund --silent
+          npx jest --runInBand
+
+  relay-smoke:
+    needs: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Lift token + deviceId + relay password off the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          DUMP=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              'python3 -c "
+          import json
+          c = json.load(open(\"/home/yaver/.yaver/config.json\"))
+          print(c[\"auth_token\"])
+          print(c[\"device_id\"])
+          print(c.get(\"convex_site_url\", \"\"))
+          print(c.get(\"relay_password\", \"\"))
+          "')
+          TOKEN=$(echo "$DUMP" | sed -n '1p')
+          DEVID=$(echo "$DUMP" | sed -n '2p')
+          CVX=$(echo   "$DUMP" | sed -n '3p')
+          PW=$(echo    "$DUMP" | sed -n '4p')
+          if [ -z "$TOKEN" ] || [ -z "$DEVID" ]; then
+            echo "::error::failed to read token/deviceId from box"; exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          if [ -n "$PW" ]; then echo "::add-mask::$PW"; fi
+          if [ -z "$PW" ]; then
+            CVX_BASE="${CVX:-https://perceptive-minnow-557.eu-west-1.convex.site}"
+            PW=$(curl -fsS -H "Authorization: Bearer $TOKEN" "$CVX_BASE/settings" \
+              | jq -r '.settings.relayPassword // .relayPassword // empty')
+            if [ -z "$PW" ]; then
+              echo "::error::no relayPassword available — repair-relay first"; exit 1
+            fi
+            echo "::add-mask::$PW"
+          fi
+          echo "YAVER_TOKEN=$TOKEN"     >> "$GITHUB_ENV"
+          echo "YAVER_DEVICE_ID=$DEVID" >> "$GITHUB_ENV"
+          echo "YAVER_RELAY_PW=$PW"     >> "$GITHUB_ENV"
+
+      - name: Replay SDK wire shapes against the live relay
+        run: |
+          BASE="https://public.yaver.io/d/${YAVER_DEVICE_ID}"
+          AUTH="Authorization: Bearer ${YAVER_TOKEN}"
+
+          # rp() / rpx() append `__rp=<password>` so the relay
+          # validates the per-user password (per webview smoke +
+          # mobile-hermes smoke patterns).
+          rp()  { echo "${BASE}$1?__rp=${YAVER_RELAY_PW}"; }
+          rpx() { case "$1" in *\?*) echo "${BASE}$1&__rp=${YAVER_RELAY_PW}";; *) echo "${BASE}$1?__rp=${YAVER_RELAY_PW}";; esac; }
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          ##################################################################
+          # 1. /info — connectivity + auth proof, mirrors what both SDKs
+          #    do at startup via P2PClient.info().
+          ##################################################################
+          echo "=== /info ==="
+          INFO=$(curl -sS -m 8 -H "$AUTH" "$(rp /info)")
+          echo "$INFO" | jq '{ok, version, hostname, workDir}'
+          echo "$INFO" | jq -e '.ok' >/dev/null || fail "/info not ok"
+          AGENT_VER=$(echo "$INFO" | jq -r .version)
+          echo "  agent version: $AGENT_VER"
+
+          ##################################################################
+          # 2. RN Feedback SDK shape — sfmg
+          ##################################################################
+          echo
+          echo "=== [RN SDK / sfmg] POST /dev/reload (mode=dev fast path) ==="
+          # Mirrors P2PClient.reloadApp('dev'): POST with bearer auth
+          # and no body. Whichever way the agent answers, the wire
+          # contract is "200 ok if reload accepted; non-200 means
+          # caller falls back to /dev/reload-app".
+          R1=$(curl -sS -m 8 -o /tmp/r1.json -w "%{http_code}" -H "$AUTH" -X POST "$(rp /dev/reload)")
+          echo "  HTTP $R1 — body:"
+          jq . /tmp/r1.json 2>/dev/null || cat /tmp/r1.json
+          # Acceptable outcomes:
+          #   200 → reload accepted
+          #   400/404 → no active dev server (test box has none) — caller falls back
+          # Anything else (5xx, 401, 403) is a real regression.
+          case "$R1" in
+            200|400|404) echo "  ✓ /dev/reload returned a SDK-acceptable status";;
+            401|403)     fail "/dev/reload returned $R1 — auth/scope regression";;
+            *)           fail "/dev/reload returned unexpected $R1";;
+          esac
+
+          echo
+          echo "=== [RN SDK / sfmg] POST /dev/reload-app (mode=bundle fallback) ==="
+          # Mirrors P2PClient.reloadApp('bundle', {projectName:'sfmg'}):
+          # POST with mode + projectName JSON body.
+          BODY='{"mode":"bundle","projectName":"sfmg"}'
+          R2=$(curl -sS -m 30 -o /tmp/r2.json -w "%{http_code}" \
+                -H "$AUTH" -H "Content-Type: application/json" \
+                -X POST -d "$BODY" "$(rp /dev/reload-app)")
+          echo "  HTTP $R2 — body:"
+          jq . /tmp/r2.json 2>/dev/null || cat /tmp/r2.json
+          case "$R2" in
+            200) echo "  ✓ /dev/reload-app accepted bundle reload";;
+            400)
+              # 400 with "no mobile project named sfmg" is the
+              # "sfmg not checked out" case — wire format works, env
+              # is the issue.
+              if jq -e '.error | test("no mobile project|no active dev server"; "i")' /tmp/r2.json >/dev/null; then
+                echo "  ⚠ wire format ok; sfmg not on box (env, not regression)"
+              else
+                fail "/dev/reload-app HTTP 400 with unexpected error"
+              fi
+              ;;
+            401|403) fail "/dev/reload-app returned $R2 — auth/scope regression" ;;
+            *)       fail "/dev/reload-app returned unexpected $R2" ;;
+          esac
+
+          echo
+          echo "=== [RN SDK / sfmg] GET /blackbox/command-stream (SSE handshake) ==="
+          # Mirrors BlackBox.connectSSE(): GET with bearer + Accept:
+          # text/event-stream. We only need the response *headers*
+          # to prove the handshake works through the relay; we
+          # don't need to consume actual command frames here (the
+          # unit tests cover dispatch).
+          HDR=$(curl -sS -D /tmp/sse-hdr -m 5 \
+                 -H "$AUTH" -H "Accept: text/event-stream" \
+                 -H "X-Device-ID: ci-feedback-sdk-smoke" \
+                 -H "X-Platform: ios" \
+                 -H "X-App-Name: sfmg" \
+                 -o /dev/null \
+                 -w "%{http_code}" \
+                 "$(rpx /blackbox/command-stream?device=ci-feedback-sdk-smoke)" || echo "ERR")
+          echo "  HTTP $HDR"
+          head -10 /tmp/sse-hdr
+          case "$HDR" in
+            200) echo "  ✓ SSE handshake OK"
+                 grep -i "content-type:.*event-stream" /tmp/sse-hdr >/dev/null \
+                   || fail "SSE handshake had wrong Content-Type"
+                 ;;
+            401|403) fail "command-stream returned $HDR — auth regression" ;;
+            *)       fail "command-stream returned unexpected $HDR" ;;
+          esac
+
+          ##################################################################
+          # 3. Web Feedback SDK shape — carrotbet
+          ##################################################################
+          echo
+          echo "=== [Web SDK / carrotbet] POST /dev/reload (mode=dev fast path) ==="
+          R3=$(curl -sS -m 8 -o /tmp/r3.json -w "%{http_code}" -H "$AUTH" -X POST "$(rp /dev/reload)")
+          echo "  HTTP $R3 — body:"
+          jq . /tmp/r3.json 2>/dev/null || cat /tmp/r3.json
+          case "$R3" in
+            200|400|404) echo "  ✓ /dev/reload returned a SDK-acceptable status";;
+            401|403)     fail "auth regression on /dev/reload" ;;
+            *)           fail "/dev/reload returned unexpected $R3" ;;
+          esac
+
+          echo
+          echo "=== [Web SDK / carrotbet] POST /dev/reload-app (bundle fallback) ==="
+          BODY='{"mode":"bundle","projectName":"carrotbet"}'
+          R4=$(curl -sS -m 30 -o /tmp/r4.json -w "%{http_code}" \
+                -H "$AUTH" -H "Content-Type: application/json" \
+                -X POST -d "$BODY" "$(rp /dev/reload-app)")
+          echo "  HTTP $R4 — body:"
+          jq . /tmp/r4.json 2>/dev/null || cat /tmp/r4.json
+          case "$R4" in
+            200) echo "  ✓ /dev/reload-app accepted carrotbet bundle reload";;
+            400)
+              if jq -e '.error | test("no mobile project|no active dev server"; "i")' /tmp/r4.json >/dev/null; then
+                echo "  ⚠ wire format ok; carrotbet not on box / no active dev server (env)"
+              else
+                fail "/dev/reload-app HTTP 400 with unexpected error"
+              fi
+              ;;
+            401|403) fail "auth regression on /dev/reload-app" ;;
+            *)       fail "/dev/reload-app returned unexpected $R4" ;;
+          esac
+
+          ##################################################################
+          # 4. POST /feedback — both SDKs use the same shape
+          ##################################################################
+          echo
+          echo "=== [Both SDKs] POST /feedback contract probe ==="
+          # Mirrors P2PClient.uploadFeedback. We send a minimal
+          # text-only feedback bundle and assert the agent accepts
+          # it (200/202). No screenshot, no audio, no logs — just
+          # the wire shape.
+          FB_BODY=$(jq -nc \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{summary:"feedback-sdk-relay-smoke",
+              capturedAt:$ts,
+              context:{source:"ci",ciRun:env.GITHUB_RUN_ID // "local"},
+              deviceInfo:{platform:"ci-replay", appName:"sfmg-or-carrotbet"}}')
+          R5=$(curl -sS -m 10 -o /tmp/r5.json -w "%{http_code}" \
+                -H "$AUTH" -H "Content-Type: application/json" \
+                -X POST -d "$FB_BODY" "$(rp /feedback)")
+          echo "  HTTP $R5 — body:"
+          jq . /tmp/r5.json 2>/dev/null || cat /tmp/r5.json
+          case "$R5" in
+            200|201|202) echo "  ✓ /feedback accepted SDK wire shape";;
+            401|403)     fail "auth regression on /feedback" ;;
+            *)           fail "/feedback returned unexpected $R5" ;;
+          esac
+
+          echo
+          echo "OK — Feedback SDK ↔ relay ↔ agent contract is healthy"
+          echo "   (RN SDK reload + bundle, BlackBox SSE handshake,"
+          echo "    Web SDK reload + bundle, /feedback POST — all"
+          echo "    accepted with the wire shapes the SDKs send)"

@@ -254,5 +254,75 @@ describe('P2PClient', () => {
         }),
       );
     });
+
+    it('dev mode hits /dev/reload with bearer auth', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      await client.reloadApp('dev');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:18080/dev/reload',
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'Bearer tok' }),
+        }),
+      );
+    });
+
+    it('bundle mode hits /dev/reload-app with mode + projectName in body', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ok: true }),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      await client.reloadApp('bundle', { projectName: 'sfmg' });
+      const [url, init] = mockFetch.mock.calls[0];
+      expect(url).toBe('http://localhost:18080/dev/reload-app');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body as string)).toEqual(
+        expect.objectContaining({ mode: 'bundle', projectName: 'sfmg' }),
+      );
+      expect(init.headers).toEqual(
+        expect.objectContaining({
+          Authorization: 'Bearer tok',
+          'Content-Type': 'application/json',
+        }),
+      );
+    });
+
+    it('dev mode falls back to /dev/reload-app when /dev/reload 4xxs', async () => {
+      // First call: /dev/reload 404. Second: /dev/reload-app 200.
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 404, json: () => Promise.resolve({}) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
+
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev', { projectName: 'sfmg' });
+
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:18080/dev/reload');
+      expect(mockFetch.mock.calls[1][0]).toBe('http://localhost:18080/dev/reload-app');
+      expect(result.ok).toBe(true);
+    });
+
+    it('surfaces nativeChangesDetected so the host can prompt for rebuild', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ok: true,
+            nativeChangesDetected: true,
+            changeClass: 'native_required',
+          }),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev');
+      expect(result.nativeChangesDetected).toBe(true);
+      expect(result.changeClass).toBe('native_required');
+      // Caller-visible message must distinguish native-required from JS-only.
+      expect(result.message).toMatch(/native|rebuild/i);
+    });
   });
 });

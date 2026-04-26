@@ -339,6 +339,72 @@ describe('P2PClient', () => {
         }),
       );
     });
+
+    it('explicit bundle mode skips /dev/reload entirely', async () => {
+      // Bundle is the slow path — don't waste a round-trip on
+      // /dev/reload first when caller already asked for it.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ message: 'Rebuilding.' }),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('bundle', { projectName: 'carrotbet' });
+      expect(result.mode).toBe('bundle');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://localhost:18080/dev/reload-app',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('passes projectName and projectPath through on bundle reloads', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({}),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      await client.reloadApp('bundle', {
+        projectName: 'carrotbet',
+        projectPath: '/home/yaver/Workspace/carrotbet',
+      });
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(String(init.body));
+      expect(body).toEqual(
+        expect.objectContaining({
+          mode: 'bundle',
+          projectName: 'carrotbet',
+          projectPath: '/home/yaver/Workspace/carrotbet',
+        }),
+      );
+    });
+
+    it('surfaces nativeChangesDetected to caller for native-required prompts', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ok: true,
+            nativeChangesDetected: true,
+            changeClass: 'native_required',
+          }),
+      });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      const result = await client.reloadApp('dev', { projectName: 'carrotbet' });
+      expect(result.nativeChangesDetected).toBe(true);
+      expect(result.changeClass).toBe('native_required');
+      expect(result.message).toMatch(/native|rebuild/i);
+    });
+
+    it('throws when both /dev/reload AND /dev/reload-app fail (caller catches)', async () => {
+      // Documented behavior: both legs fail → SDK throws so the
+      // caller sees the error rather than silently swallowing.
+      // The widget catches and shows a toast.
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 502, text: () => Promise.resolve('') })
+        .mockResolvedValueOnce({ ok: false, status: 502, text: () => Promise.resolve('upstream gone') });
+      const client = new P2PClient('http://localhost:18080', 'tok');
+      await expect(client.reloadApp('dev', { projectName: 'carrotbet' })).rejects.toThrow(/Reload failed.*502/);
+    });
   });
 
   describe('vibing()', () => {
