@@ -1957,10 +1957,17 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	if s.devServerMgr != nil {
 		logW.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }
 	}
-	cmd.Stdout = logW
-	cmd.Stderr = logW
+	// Capture the bundler's tail so the /dev/build-native response can
+	// surface the actual failure reason inline. Without this the
+	// caller only saw "Check agent logs for details." which is useless
+	// for a remote dev box where the agent log isn't tailable from
+	// the dashboard.
+	tail := newRingTailWriter(120)
+	cmd.Stdout = io.MultiWriter(logW, tail)
+	cmd.Stderr = io.MultiWriter(logW, tail)
 
 	if err := cmd.Run(); err != nil {
+		tailLines := tail.lines()
 		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
 		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "JavaScript bundle build failed", "The agent failed while producing the JavaScript bundle used for Hermes compilation.", err.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
 		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
@@ -1970,7 +1977,14 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
 			LastError:    fmt.Sprintf("bundle failed: %v", err),
 		})
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("bundle failed: %v. Check agent logs for details.", err)})
+		jsonReply(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":      fmt.Sprintf("bundle failed: %v", err),
+			"phase":      "bundle",
+			"command":    cmd.Args,
+			"workDir":    workDir,
+			"output":     strings.Join(tailLines, "\n"),
+			"helpHint":   "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause.",
+		})
 		return
 	}
 
