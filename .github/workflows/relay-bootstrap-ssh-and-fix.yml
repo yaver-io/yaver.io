@@ -30,27 +30,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install hcloud + sshpass
+      - name: Install sshpass + jq
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -qq -y sshpass
-          curl -fsSL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz \
-            | sudo tar -xz -C /usr/local/bin hcloud
-          sudo chmod +x /usr/local/bin/hcloud
-          hcloud version | head -1
+          sudo apt-get install -qq -y sshpass jq
 
-      - name: Resolve server IP
+      - name: Resolve server IP via Hetzner API
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
-          IP=$(hcloud server describe "${{ github.event.inputs.server_name }}" --output json \
-            | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["public_net"]["ipv4"]["ip"])')
-          if [ -z "$IP" ]; then
-            echo "::error::Could not resolve IP for ${{ github.event.inputs.server_name }}"
+          # Direct API — stable JSON shape across CLI versions.
+          NAME='${{ github.event.inputs.server_name }}'
+          RESP=$(curl -fsS -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            "https://api.hetzner.cloud/v1/servers?name=$NAME")
+          ID=$(echo "$RESP" | jq -r '.servers[0].id // empty')
+          IP=$(echo "$RESP" | jq -r '.servers[0].public_net.ipv4.ip // empty')
+          if [ -z "$ID" ] || [ -z "$IP" ]; then
+            echo "::error::Could not resolve $NAME via Hetzner API. Response was:"
+            echo "$RESP" | jq '.servers // .error // .' | head -30
             exit 2
           fi
+          echo "RELAY_ID=$ID" >> "$GITHUB_ENV"
           echo "RELAY_IP=$IP" >> "$GITHUB_ENV"
-          echo "Resolved $RELAY_IP — connecting to ${{ github.event.inputs.server_name }}"
+          echo "Resolved $NAME → id=$ID ip=$IP"
 
       - name: Try existing CI key first
         env:
@@ -72,22 +74,26 @@ jobs:
           fi
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Reset root password (only if needed)
+      - name: Reset root password via Hetzner API (only if needed)
         if: env.CI_KEY_WORKS == '0'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
-          OUT=$(hcloud server reset-password "${{ github.event.inputs.server_name }}" 2>&1)
-          echo "$OUT"
-          PW=$(echo "$OUT" | sed -n 's/.*Root password: //p' | tr -d '[:space:]')
+          # Direct REST call — returns JSON with stable shape:
+          # { "action": {...}, "root_password": "<plaintext>" }
+          RESP=$(curl -fsS -X POST \
+            -H "Authorization: Bearer $HCLOUD_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.hetzner.cloud/v1/servers/$RELAY_ID/actions/reset_password")
+          PW=$(echo "$RESP" | jq -r '.root_password // empty')
           if [ -z "$PW" ]; then
-            echo "::error::Could not parse password from hcloud output"
+            echo "::error::reset_password API didn't return root_password. Response:"
+            echo "$RESP" | jq '.' | head -20
             exit 2
           fi
-          # Mask the password in subsequent log lines
           echo "::add-mask::$PW"
           echo "RELAY_ROOT_PW=$PW" >> "$GITHUB_ENV"
-          # Hetzner needs ~10s for the new password to propagate before SSH accepts it
+          # Hetzner takes ~10s to propagate the new password to the VM.
           sleep 12
 
       - name: Derive CI public key
