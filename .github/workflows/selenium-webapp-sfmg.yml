@@ -71,6 +71,8 @@ jobs:
           opts.add_argument("--no-sandbox")
           opts.add_argument("--disable-dev-shm-usage")
           opts.add_argument("--window-size=1600,1000")
+          # Capture browser console logs so we can see runtime errors
+          opts.set_capability("goog:loggingPrefs", {"browser": "ALL"})
           driver = webdriver.Chrome(options=opts)
           wait = WebDriverWait(driver, 60)
 
@@ -145,6 +147,9 @@ jobs:
                   body_text = driver.find_element(By.TAG_NAME, "body").text
                   print("[selenium] FAIL — Web App button never appeared")
                   print(f"[selenium] body snippet: {body_text[:1500]}")
+                  print("[selenium] --- browser console logs ---")
+                  for entry in driver.get_log("browser"):
+                      print(f"  [{entry['level']}] {entry['message'][:600]}")
                   sys.exit(1)
 
               try:
