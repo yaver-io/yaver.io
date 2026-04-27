@@ -463,6 +463,30 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     };
   }, [isConnected, staticBundleState]);
 
+  // Lean default: if the user is on the Web App tab, has a project
+  // selected, and the agent doesn't already have a built bundle —
+  // auto-trigger one. This makes "open dashboard → see app rendered"
+  // the happy path without requiring a button click. The live HMR
+  // sibling stays available as a fallback for users who explicitly
+  // want hot reload, but static-bundle is the stable default since
+  // it doesn't depend on a long-running sibling process and survives
+  // agent restarts cleanly.
+  const autoBuildOnceRef = useRef(false);
+  useEffect(() => {
+    if (!isConnected) return;
+    if (staticBundleState !== "idle") return;
+    if (autoBuildOnceRef.current) return;
+    if (!(activeProject || selectedApp || selectedProjectPath)) return;
+    autoBuildOnceRef.current = true;
+    void handleBuildStaticBundle();
+    // Reset the latch when the project / connection changes so a new
+    // selection can re-auto-build.
+    return () => {
+      autoBuildOnceRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, activeProject?.path, selectedApp, selectedProjectPath, staticBundleState]);
+
   // Subscribe to webview/transport SSE phase events so the dashboard
   // shows live "serving 23/142 files (16%)" progress between the
   // build-native response and the iframe rendering.

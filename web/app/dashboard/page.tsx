@@ -535,7 +535,7 @@ export default function DashboardPage() {
   const [relayReady, setRelayReady] = useState(false);
   const [previewTargetId, setPreviewTargetId] = useState<string | null>(null);
   const [preferredSurfaceProjectPath, setPreferredSurfaceProjectPath] = useState<string | null>(null);
-  const [preferredWebviewMode, setPreferredWebviewMode] = useState<"mobile" | "web">("mobile");
+  const [preferredWebviewMode, setPreferredWebviewMode] = useState<"mobile" | "web">("web");
   const [chatRunnerAuthModal, setChatRunnerAuthModal] = useState<string | null>(null);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: string }>>({});
   const [probeStates, setProbeStates] = useState<Record<string, DeviceStatusProbe>>({});
