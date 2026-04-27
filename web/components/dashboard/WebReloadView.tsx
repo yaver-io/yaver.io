@@ -441,6 +441,28 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     }
   }, [activeProject?.name, activeProject?.path, selectedApp, selectedProjectPath]);
 
+  // Auto-detect a pre-existing built bundle on mount (e.g. one built
+  // via curl / MCP / a prior dashboard session). Without this the
+  // dashboard's React state stays `idle` even though the agent has a
+  // bundle ready to serve, so the iframe never switches to it. Polling
+  // /dev/web-bundle/info is cheap and only runs while the user is on
+  // the Web App tab.
+  useEffect(() => {
+    if (!isConnected) return;
+    let cancelled = false;
+    void (async () => {
+      const info = await agentClient.getWebBundleInfo();
+      if (cancelled) return;
+      if (info.built && (staticBundleState === "idle" || staticBundleState === "failed")) {
+        setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
+        setStaticBundleState("ready");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, staticBundleState]);
+
   // Subscribe to webview/transport SSE phase events so the dashboard
   // shows live "serving 23/142 files (16%)" progress between the
   // build-native response and the iframe rendering.

@@ -3676,6 +3676,43 @@ export class AgentClient {
     };
   }
 
+  /** GET /dev/web-bundle/info — metadata about the most recently
+   *  built static web bundle (target=web-js-bundle). Returns built:false
+   *  if nothing's been built yet. The dashboard polls this on mount so
+   *  any pre-existing bundle (e.g. one built via curl, MCP, or a prior
+   *  session) auto-renders in the iframe without requiring the user to
+   *  click "Build & render static bundle" first. */
+  async getWebBundleInfo(): Promise<{
+    built: boolean;
+    target?: string;
+    indexFile?: string;
+    size?: number;
+    fileCount?: number;
+    builtAt?: string;
+    caller?: string;
+  }> {
+    if (!this.baseUrl) return { built: false };
+    try {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/dev/web-bundle/info`, {
+        headers: this.authHeaders,
+      }, 5_000);
+      if (!res.ok) return { built: false };
+      const body = (await res.json()) as Record<string, unknown>;
+      if (body?.built !== true) return { built: false };
+      return {
+        built: true,
+        target: typeof body.target === "string" ? body.target : undefined,
+        indexFile: typeof body.indexFile === "string" ? body.indexFile : undefined,
+        size: typeof body.size === "number" ? body.size : undefined,
+        fileCount: typeof body.fileCount === "number" ? body.fileCount : undefined,
+        builtAt: typeof body.builtAt === "string" ? body.builtAt : undefined,
+        caller: typeof body.caller === "string" ? body.caller : undefined,
+      };
+    } catch {
+      return { built: false };
+    }
+  }
+
   /** POST /dev/web-bundle/ack — iframe finished loading; transport
    *  tracker transitions to phase=delivered. */
   async ackWebBundleLoaded(msToLoad: number): Promise<void> {
