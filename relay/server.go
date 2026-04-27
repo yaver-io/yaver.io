@@ -728,11 +728,30 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Don't leak the password into the agent-side query string.
+	// Also promote ?token=<jwt> to Authorization: Bearer <jwt> so
+	// EventSource clients (which can't set custom headers) work
+	// through the relay. The agent's auth middleware already does
+	// the same promotion when the request hits it locally, but
+	// going via the tunnel the request body is reconstructed by
+	// the agent's tunnel-client and r.URL.Query() returns empty
+	// for a reason I haven't pinned down — dropping events: 0
+	// for every dashboard SSE subscription. Promoting at the
+	// relay layer is robust and matches what nginx/Cloudflare do
+	// for similar header-stripping scenarios.
 	forwardQuery := r.URL.RawQuery
-	if strings.Contains(forwardQuery, "__rp=") {
+	tokenInQuery := r.URL.Query().Get("token")
+	if strings.Contains(forwardQuery, "__rp=") || tokenInQuery != "" {
 		q := r.URL.Query()
 		q.Del("__rp")
 		forwardQuery = q.Encode()
+	}
+	// If the caller passed ?token= and didn't already set an
+	// Authorization header, promote it. The relay never strips
+	// `token=` from the query because some agent endpoints look
+	// at it (and removing might break those), but we DO inject
+	// the header so the agent's auth fast path succeeds.
+	if tokenInQuery != "" && r.Header.Get("Authorization") == "" {
+		r.Header.Set("Authorization", "Bearer "+tokenInQuery)
 	}
 
 	// Check bandwidth limit
