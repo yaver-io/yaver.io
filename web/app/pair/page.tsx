@@ -103,20 +103,51 @@ export default function PairPage() {
     const run = async () => {
       setProbeBusy(true);
       try {
-        const url = `${agentBase}/auth/pair/session?sid=${encodeURIComponent(payload.sid)}`;
+        // Compose URLs via URL() so a relay-routed agentBase
+        // (e.g. https://public.yaver.io/d/<id>?__rp=PW) doesn't
+        // produce a doubly-?-broken final URL when we append a
+        // path + new query. Previously a naive `${agentBase}/...`
+        // concat made the relay 401 because the path string
+        // started with `?__rp=...&auth/pair/session?...`.
+        const buildUrl = (path: string, extraQuery?: Record<string, string>): string => {
+          const u = new URL(agentBase);
+          // Append the path (handle either trailing slash or not).
+          u.pathname = (u.pathname.replace(/\/+$/, "") + (path.startsWith("/") ? path : `/${path}`));
+          if (extraQuery) {
+            for (const [k, v] of Object.entries(extraQuery)) {
+              u.searchParams.set(k, v);
+            }
+          }
+          // Auto-include the user's per-user relay password if the
+          // target is a relay path and the user already has one in
+          // their session. The dashboard fetched it on sign-in via
+          // /settings; without it any /d/<id>/* request 401s.
+          if (u.hostname.endsWith(".yaver.io") && u.pathname.startsWith("/d/") && !u.searchParams.has("__rp")) {
+            const cached = typeof window !== "undefined" ? window.localStorage.getItem("yaver:userRelayPassword") : null;
+            if (cached) u.searchParams.set("__rp", cached);
+          }
+          return u.toString();
+        };
+
+        const url = buildUrl("/auth/pair/session", { sid: payload.sid });
         const r = await fetch(url, { method: "GET", cache: "no-store" });
         if (r.ok) {
           const data = (await r.json()) as PairSession;
           if (!abort) setProbe({ ...data, ok: true });
         } else if (r.status === 404) {
           // Try the older /info shape — pre-Slice-A agent.
-          const r2 = await fetch(`${agentBase}/auth/pair/info`, { cache: "no-store" });
+          const r2 = await fetch(buildUrl("/auth/pair/info"), { cache: "no-store" });
           if (r2.ok) {
             const old = (await r2.json()) as { host?: string; expiresAt?: string };
             if (!abort) setProbe({ ok: true, hostname: old.host, expiresAt: old.expiresAt, canDirectSubmit: true });
           } else if (!abort) {
             setProbe({ ok: false, error: "No active pairing session at that URL" });
           }
+        } else if (r.status === 401) {
+          if (!abort) setProbe({
+            ok: false,
+            error: "Probe failed (HTTP 401). The dashboard's relay password may be missing or stale — refresh, sign in again, or paste a target URL with `?__rp=<your-relay-password>` baked in."
+          });
         } else if (!abort) {
           setProbe({ ok: false, error: `Probe failed (HTTP ${r.status})` });
         }
@@ -179,18 +210,25 @@ export default function PairPage() {
     setSubmitBusy(true);
     setBanner({ kind: "info", text: "Submitting your token…" });
     try {
-      const res = await fetch(
-        `${agentBase}/auth/pair/submit?code=${encodeURIComponent(submitCode)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            token: auth.token,
-            convexSiteUrl: CONVEX_URL,
-            userId: auth.user?.id ?? "",
-          }),
-        },
-      );
+      // Compose URL via URL() — same reason as the probe above:
+      // a relay-routed agentBase already has its own query
+      // string (`?__rp=...`), so naive concat broke the request.
+      const u = new URL(agentBase);
+      u.pathname = (u.pathname.replace(/\/+$/, "") + "/auth/pair/submit");
+      u.searchParams.set("code", submitCode);
+      if (u.hostname.endsWith(".yaver.io") && u.pathname.startsWith("/d/") && !u.searchParams.has("__rp")) {
+        const cached = typeof window !== "undefined" ? window.localStorage.getItem("yaver:userRelayPassword") : null;
+        if (cached) u.searchParams.set("__rp", cached);
+      }
+      const res = await fetch(u.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: auth.token,
+          convexSiteUrl: CONVEX_URL,
+          userId: auth.user?.id ?? "",
+        }),
+      });
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
         try {

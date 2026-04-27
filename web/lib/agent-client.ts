@@ -1039,9 +1039,20 @@ export class AgentClient {
 
   // ── Relay server config ────────────────────────────────────────────
 
-  /** Set relay servers fetched from platform config. Sorted by priority. */
+  /** Set relay servers fetched from platform config. Sorted by priority.
+   *  Also persists the per-user relay password to localStorage so other
+   *  dashboard surfaces (notably /pair) can read it without going through
+   *  the AgentClient instance. The /pair page is on the same origin but a
+   *  different React tree; without this it can't see the password and
+   *  any `?__rp=` round-trip 401s. */
   setRelayServers(servers: RelayServer[]): void {
     this.relayServers = servers.sort((a, b) => a.priority - b.priority);
+    if (typeof window !== "undefined") {
+      const userPw = servers.find((s) => s.password)?.password;
+      if (userPw) {
+        try { window.localStorage.setItem("yaver:userRelayPassword", userPw); } catch { /* quota / private mode */ }
+      }
+    }
   }
 
   /** Read-only view of currently configured relay servers. The dashboard
