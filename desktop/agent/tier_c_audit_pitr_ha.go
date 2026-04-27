@@ -250,38 +250,13 @@ func DeployMultiRegion(name string, regions []string, domain string) (*MultiRegi
 	if len(regions) < 2 {
 		return nil, fmt.Errorf("multi-region needs at least 2 regions (e.g. [\"nbg1\", \"fsn1\"])")
 	}
-	res := &MultiRegionResult{Regions: regions}
 	// Multi-region used to spin up Hetzner VPSes; the lean stack
-	// dropped the Hetzner provisioner. Returning a manual-runbook
-	// stub so callers see a clear "not supported" message instead
-	// of a nil-deref. Re-enable by adding HostHetzner back to
-	// provisionerRegistry().
+	// dropped the Hetzner provisioner (2026-04-28). Re-enable by
+	// adding HostHetzner back to cloud_provisioners.go::provisionerRegistry()
+	// and restoring the loop below.
+	_ = name
+	_ = domain
 	return nil, fmt.Errorf("multi-region provisioning is disabled in the lean stack — set up VPSes manually if needed")
-	prov := func(name string, opts map[string]string) (*ProvisionResult, error) { return nil, fmt.Errorf("disabled") }
-	if prov == nil {
-		return nil, fmt.Errorf("no Hetzner provisioner available — did you connect a Hetzner account?")
-	}
-	var upstreams []string
-	for i, region := range regions {
-		nm := fmt.Sprintf("%s-%s-%d", name, region, i+1)
-		r, err := prov(nm, map[string]string{"location": region, "server_type": "cpx11"})
-		if err != nil {
-			return res, fmt.Errorf("provision %s: %w", region, err)
-		}
-		res.Servers = append(res.Servers, *r)
-		if r.Details["ipv4"] != "" {
-			upstreams = append(upstreams, r.Details["ipv4"]+":80")
-		}
-	}
-	// Generate a Caddy config that load-balances across all upstreams.
-	if domain != "" && len(upstreams) > 0 {
-		var sb strings.Builder
-		sb.WriteString(domain + " {\n  reverse_proxy ")
-		sb.WriteString(strings.Join(upstreams, " "))
-		sb.WriteString(" {\n    lb_policy round_robin\n    health_path /\n    health_interval 10s\n  }\n  encode gzip zstd\n}\n")
-		res.Caddy = sb.String()
-	}
-	return res, nil
 }
 
 func (s *HTTPServer) handleMultiRegionDeploy(w http.ResponseWriter, r *http.Request) {

@@ -37,11 +37,8 @@ func ListStorageFiles(projectDir, bucket string) ([]StorageFile, string, error) 
 		return listConvexFiles(projectDir)
 	case BackendSupabase:
 		return listSupabaseFiles(projectDir, bucket)
-	case BackendPocketBase:
-		return listPocketBaseFiles(projectDir)
 	}
-	// Fallback: list a local `uploads/` directory.
-	return listLocalFiles(filepath.Join(projectDir, "uploads"))
+	return nil, "", fmt.Errorf("storage browser not supported for backend %q", cfg.Backend)
 }
 
 func listConvexFiles(projectDir string) ([]StorageFile, string, error) {

@@ -70,15 +70,6 @@ var buildTargets = map[string]buildTarget{
 		},
 		Secrets: []string{"CONVEX_DEPLOY_KEY", "CONVEX_URL"},
 	},
-	"npm-publish": {
-		Name:        "npm-publish",
-		Description: "npm publish for a JS package.",
-		Tools: []buildTool{
-			{Name: "node", VersionFlag: "--version", Required: true},
-			{Name: "npm", VersionFlag: "--version", Required: true},
-		},
-		Secrets: []string{"NPM_TOKEN"},
-	},
 	"playstore": {
 		Name:        "playstore",
 		Stack:       "react-native-expo",
@@ -93,15 +84,6 @@ var buildTargets = map[string]buildTarget{
 			"ANDROID_KEY_PASSWORD",
 			"PLAY_STORE_KEY_FILE",
 		},
-	},
-	"pypi-publish": {
-		Name:        "pypi-publish",
-		Description: "PyPI publish via `twine upload`.",
-		Tools: []buildTool{
-			{Name: "python3", VersionFlag: "--version", Required: true},
-			{Name: "twine", VersionFlag: "--version", Required: false, InstallHint: "pipx install twine"},
-		},
-		Secrets: []string{"PYPI_TOKEN"},
 	},
 	"testflight": {
 		Name:        "testflight",
@@ -276,7 +258,7 @@ func probeTool(t buildTool) BuildToolResult {
 
 func runDoctorBuild(args []string) {
 	fs := flag.NewFlagSet("doctor build", flag.ExitOnError)
-	target := fs.String("target", "", "Target to probe (e.g. testflight, playstore, cloudflare, convex, npm-publish, pypi-publish). Empty = all.")
+	target := fs.String("target", "", "Target to probe (testflight, playstore, cloudflare, convex). Empty = all.")
 	project := fs.String("project", "", "Project scope for vault secret lookup (empty = global)")
 	asJSON := fs.Bool("json", false, "Emit JSON")
 	fs.Parse(args)

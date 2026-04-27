@@ -40,10 +40,6 @@ func mapWizardBackend(a map[string]string) BackendKind {
 		return BackendPostgres
 	case "sqlite":
 		return BackendSQLite
-	case "pocketbase":
-		return BackendPocketBase
-	case "appwrite":
-		return BackendAppwrite
 	}
 	// Fall back to the `db` answer if the wizard has one.
 	switch a["db"] {
@@ -70,20 +66,6 @@ func servicesFor(backend BackendKind, a map[string]string) []string {
 		// Supabase is launched via its own CLI (`supabase start`) — no preset.
 	case BackendPostgres:
 		out = append(out, "postgres")
-	case BackendPocketBase:
-		out = append(out, "pocketbase")
-	case BackendAppwrite:
-		// Appwrite uses its own install script — no preset.
-	}
-	// Common dev services when the wizard asks for them.
-	if a["include_email"] == "true" {
-		out = append(out, "mailpit")
-	}
-	if a["include_cache"] == "true" {
-		out = append(out, "redis")
-	}
-	if a["include_storage"] == "true" {
-		out = append(out, "minio")
 	}
 	return out
 }

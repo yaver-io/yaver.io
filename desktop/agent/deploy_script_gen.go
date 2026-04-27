@@ -285,38 +285,11 @@ npx convex deploy --yes
 echo "✓ Convex deployed."
 `,
 	},
-	"node:npm-publish": {
-		Stack:       "node",
-		Target:      "npm-publish",
-		Description: "Publish a JS package to the npm registry.",
-		Body: `cd "{{.Path}}"
-
-: "${NPM_TOKEN:?Missing NPM_TOKEN (yaver vault add NPM_TOKEN --project {{.App}})}"
-
-# Write a scoped .npmrc for this build only — remove at exit.
-cleanup() { rm -f .npmrc.yaver-deploy; }
-trap cleanup EXIT
-cat > .npmrc.yaver-deploy <<EOF
-//registry.npmjs.org/:_authToken=$NPM_TOKEN
-EOF
-
-npm publish --access public --userconfig .npmrc.yaver-deploy
-echo "✓ Published."
-`,
-	},
-	"python:pypi-publish": {
-		Stack:       "python",
-		Target:      "pypi-publish",
-		Description: "Build + publish a Python package to PyPI via twine.",
-		Body: `cd "{{.Path}}"
-
-: "${PYPI_TOKEN:?Missing PYPI_TOKEN (yaver vault add PYPI_TOKEN --project {{.App}})}"
-
-python3 -m build
-python3 -m twine upload dist/* --username __token__ --password "$PYPI_TOKEN"
-echo "✓ Published to PyPI."
-`,
-	},
+	// node:npm-publish + python:pypi-publish were dropped 2026-04-28
+	// per the lean-stack cut. The four supported deploy targets are
+	// react-native-expo:testflight, react-native-expo:playstore,
+	// nextjs:cloudflare, and convex:convex. Re-add publishing
+	// templates only if the lean stack expands again.
 }
 
 // DeployTemplateKey returns the map key for a (stack, target) pair.

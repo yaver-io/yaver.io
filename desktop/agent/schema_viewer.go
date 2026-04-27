@@ -55,21 +55,9 @@ func BuildSchema(projectDir string) (*struct {
 		}
 		out.Tables = tables
 		out.Source = src
-	case BackendPocketBase, BackendAppwrite:
-		adapter, err := NewBackendAdapter(projectDir)
-		if err != nil {
-			return nil, err
-		}
-		list, err := adapter.ListTables()
-		if err != nil {
-			return nil, err
-		}
-		for _, t := range list {
-			out.Tables = append(out.Tables, SchemaTable{Name: t.Name})
-		}
-		out.Source = "adapter.ListTables"
+	default:
+		return nil, fmt.Errorf("schema view not supported for backend %q", cfg.Backend)
 	}
-	out.Mermaid = renderMermaidERD(out.Tables)
 	return &out, nil
 }
 

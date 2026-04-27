@@ -13,12 +13,13 @@ import (
 type BackendKind string
 
 const (
-	BackendConvex     BackendKind = "convex"
-	BackendSupabase   BackendKind = "supabase"
-	BackendPostgres   BackendKind = "postgres"
-	BackendSQLite     BackendKind = "sqlite"
-	BackendPocketBase BackendKind = "pocketbase"
-	BackendAppwrite   BackendKind = "appwrite"
+	BackendConvex   BackendKind = "convex"
+	BackendSupabase BackendKind = "supabase"
+	BackendPostgres BackendKind = "postgres"
+	BackendSQLite   BackendKind = "sqlite"
+	// BackendPocketBase + BackendAppwrite were removed 2026-04-28
+	// per the lean-stack cut. Re-add only if the supported backend
+	// matrix expands. See project_lean_stack_2026_04_28.md.
 )
 
 // TableInfo is a universal table/collection descriptor.
@@ -116,10 +117,6 @@ func inferBackend(dir string) BackendKind {
 	if _, err := os.Stat(filepath.Join(dir, "supabase", "config.toml")); err == nil {
 		return BackendSupabase
 	}
-	// PocketBase: pb_data/ dir or pocketbase binary
-	if _, err := os.Stat(filepath.Join(dir, "pb_data")); err == nil {
-		return BackendPocketBase
-	}
 	// package.json deps
 	if data, err := os.ReadFile(filepath.Join(dir, "package.json")); err == nil {
 		s := string(data)
@@ -128,10 +125,6 @@ func inferBackend(dir string) BackendKind {
 			return BackendConvex
 		case strings.Contains(s, "@supabase/supabase-js"):
 			return BackendSupabase
-		case strings.Contains(s, "pocketbase"):
-			return BackendPocketBase
-		case strings.Contains(s, "appwrite"):
-			return BackendAppwrite
 		case strings.Contains(s, "\"pg\"") || strings.Contains(s, "drizzle-orm"):
 			return BackendPostgres
 		case strings.Contains(s, "better-sqlite3"):
@@ -160,10 +153,6 @@ func newBackendAdapter(dir string, cfg *YaverProjectConfig) (BackendAdapter, err
 		return newSQLAdapter(dir, cfg, BackendPostgres)
 	case BackendSQLite:
 		return newSQLAdapter(dir, cfg, BackendSQLite)
-	case BackendPocketBase:
-		return newPocketBaseAdapter(dir, cfg), nil
-	case BackendAppwrite:
-		return newAppwriteAdapter(dir, cfg), nil
 	case "":
 		return nil, fmt.Errorf("could not detect backend for %s — add .yaver/config.yaml with `backend: <name>`", dir)
 	default:
@@ -174,7 +163,6 @@ func newBackendAdapter(dir string, cfg *YaverProjectConfig) (BackendAdapter, err
 // AllBackendKinds returns the list of known backend kinds (for UI pickers).
 func AllBackendKinds() []BackendKind {
 	return []BackendKind{
-		BackendConvex, BackendSupabase, BackendPostgres,
-		BackendSQLite, BackendPocketBase, BackendAppwrite,
+		BackendConvex, BackendSupabase, BackendPostgres, BackendSQLite,
 	}
 }

@@ -36,36 +36,32 @@ type EscapeRoute struct {
 	Highlight   bool             `json:"highlight,omitempty"`   // one of the top-surfaced routes
 }
 
-// escapeRouteCatalog is the single source of truth for the curated list.
-// New rows: add here, no code changes elsewhere. Keep short — the mobile UI
-// renders this as a list; over ~20 entries it gets noisy.
+// escapeRouteCatalog is the single source of truth for the curated
+// list. Trimmed 2026-04-28 to match the lean target set in
+// switch_targets.go (5 targets: Convex Cloud, Supabase Cloud,
+// Yaver Cloud, Vercel, Cloudflare Workers).
+//
+// Routes that referenced dropped targets (Neon, Turso, D1, Hetzner,
+// Render, Fly) and dropped backends (PocketBase, Appwrite) were
+// removed — the SwitchEngine no longer accepts those target IDs, so
+// the routes would 404 at /escape/plan time anyway. Trust signal +
+// pitch routes preserved.
 var escapeRouteCatalog = []EscapeRoute{
 	// ---- Into Yaver (the pitch: "come home, no migration drama") ----
 	{ID: "convex-to-yaver-cloud", FromBackend: BackendConvex, FromLabel: "Convex", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "Convex → Yaver Cloud", Blurb: "Leave Convex. Same data, same URLs, one manifest.", Highlight: true},
 	{ID: "supabase-to-yaver-cloud", FromBackend: BackendSupabase, FromLabel: "Supabase", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "Supabase → Yaver Cloud", Blurb: "Pull your Supabase schema + data into Yaver's managed tier.", Highlight: true},
 	{ID: "postgres-to-yaver-cloud", FromBackend: BackendPostgres, FromLabel: "Postgres", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "Postgres → Yaver Cloud", Blurb: "Dump + restore — no driver rewrite, just point your app at the new URL."},
-	{ID: "pocketbase-to-yaver-cloud", FromBackend: BackendPocketBase, FromLabel: "PocketBase", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "PocketBase → Yaver Cloud", Blurb: "Collections + auth + files, all promoted to Yaver's managed tier."},
-	{ID: "appwrite-to-yaver-cloud", FromBackend: BackendAppwrite, FromLabel: "Appwrite", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "Appwrite → Yaver Cloud", Blurb: "Appwrite collections + rules mapped onto the Yaver manifest."},
 	{ID: "sqlite-to-yaver-cloud", FromBackend: BackendSQLite, FromLabel: "SQLite", ToTargetID: "yaver-cloud", ToLabel: "Yaver Cloud", Label: "SQLite → Yaver Cloud", Blurb: "Single-file local backend promoted to hosted. Trivial."},
 
 	// ---- Escape OUT of Yaver (trust signal: "we're not holding you hostage") ----
 	{ID: "yaver-to-convex-cloud", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "convex-cloud", ToLabel: "Convex", Label: "Yaver → Convex Cloud", Blurb: "Hard switch — paradigm shift from SQL to Convex reactivity. AI rewrite prompt included."},
 	{ID: "yaver-to-supabase-cloud", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "supabase-cloud", ToLabel: "Supabase Cloud", Label: "Yaver → Supabase Cloud", Blurb: "Postgres-family move. Schema + data transferred; Supabase-specific features (RLS, Realtime) need a light touch."},
-	{ID: "yaver-to-neon", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "postgres-neon", ToLabel: "Neon", Label: "Yaver → Neon", Blurb: "Serverless Postgres. Same schema, different connection string."},
-	{ID: "yaver-to-turso", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "sqlite-turso", ToLabel: "Turso", Label: "Yaver → Turso (managed LibSQL)", Blurb: "SQLite stays SQLite, now distributed at the edge."},
-	{ID: "yaver-to-d1", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "sqlite-d1", ToLabel: "Cloudflare D1", Label: "Yaver → Cloudflare D1", Blurb: "SQLite on the Cloudflare edge. Pair with the Workers port (handoff 2.5)."},
+	{ID: "yaver-to-vercel", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "vercel", ToLabel: "Vercel", Label: "Yaver → Vercel", Blurb: "Deploy the Yaver runtime to Vercel's managed tier."},
+	{ID: "yaver-to-cloudflare-workers", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "cloudflare-workers", ToLabel: "Cloudflare Workers", Label: "Yaver → Cloudflare Workers", Blurb: "Yaver Lite on the Cloudflare edge. Best for read-heavy + globally distributed apps."},
 
 	// ---- Third-party to third-party (Yaver-as-transit) ----
 	{ID: "convex-to-supabase-cloud", FromBackend: BackendConvex, FromLabel: "Convex", ToTargetID: "supabase-cloud", ToLabel: "Supabase Cloud", Label: "Convex → Supabase Cloud", Blurb: "Paradigm shift to Postgres. AI rewrite prompt for functions + auth."},
 	{ID: "supabase-to-convex-cloud", FromBackend: BackendSupabase, FromLabel: "Supabase", ToTargetID: "convex-cloud", ToLabel: "Convex Cloud", Label: "Supabase → Convex Cloud", Blurb: "Flip to reactive Convex. AI rewrite prompt for RLS policies + queries."},
-	{ID: "supabase-to-neon", FromBackend: BackendSupabase, FromLabel: "Supabase", ToTargetID: "postgres-neon", ToLabel: "Neon", Label: "Supabase → Neon", Blurb: "Keep Postgres, drop the Supabase-specific features. Schema + data transferred."},
-	{ID: "neon-to-supabase-cloud", FromBackend: BackendPostgres, FromLabel: "Postgres", ToTargetID: "supabase-cloud", ToLabel: "Supabase Cloud", Label: "Postgres → Supabase Cloud", Blurb: "Add Supabase auth + storage to your existing Postgres schema."},
-	{ID: "postgres-to-turso", FromBackend: BackendPostgres, FromLabel: "Postgres", ToTargetID: "sqlite-turso", ToLabel: "Turso", Label: "Postgres → Turso", Blurb: "Schema translated Postgres → SQLite; re-indexed. Some types (JSONB) simplified."},
-
-	// ---- Self-host exits ----
-	{ID: "yaver-to-hetzner", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "hetzner", ToLabel: "Your Hetzner VPS", Label: "Yaver → Hetzner (self-host)", Blurb: "Same yaver binary on your own VPS. No managed-cloud bill."},
-	{ID: "yaver-to-render", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "render", ToLabel: "Render", Label: "Yaver → Render", Blurb: "Deploy the Yaver runtime to Render's managed tier."},
-	{ID: "yaver-to-fly", FromBackend: BackendSQLite, FromLabel: "Yaver", ToTargetID: "fly", ToLabel: "Fly.io", Label: "Yaver → Fly.io", Blurb: "Yaver Docker image on Fly. Good for regional deploys."},
 }
 
 // computeRouteComplexity fills the Complexity field from the existing

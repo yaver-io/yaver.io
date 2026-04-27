@@ -71,12 +71,6 @@ func StartDashboard(projectDir string) (*DashboardRecord, error) {
 		}
 	case BackendPostgres, BackendSQLite:
 		rec, err = startDrizzleStudio(projectDir)
-	case BackendPocketBase:
-		rec = &DashboardRecord{
-			ProjectDir: projectDir, Backend: string(cfg.Backend), StudioID: "pocketbase",
-			Port: 8090, URL: "http://127.0.0.1:8090/_/", Status: "shared",
-			StartedAt: time.Now(),
-		}
 	default:
 		return nil, fmt.Errorf("no dashboard strategy for backend %q", cfg.Backend)
 	}

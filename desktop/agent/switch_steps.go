@@ -73,10 +73,8 @@ func dumpBackendData(projectDir string, backend BackendKind, snapDir, id string)
 		return dumpSQLite(projectDir, snapDir, id)
 	case BackendConvex:
 		return dumpConvex(projectDir, snapDir, id)
-	case BackendPocketBase, BackendAppwrite:
-		return dumpViaAdapter(projectDir, snapDir, id)
 	}
-	return "", fmt.Errorf("no snapshotter for backend %q", backend)
+	return "", fmt.Errorf("unsupported backend %q for data snapshot", backend)
 }
 
 func dumpPostgres(projectDir, snapDir, id string) (string, error) {
@@ -223,10 +221,6 @@ func execProvision(state *SwitchState, step *SwitchStep) (string, error) {
 		if target.Backend == BackendPostgres {
 			_, _ = sm.Add("postgres", nil)
 			return sm.Start("postgres")
-		}
-		if target.Backend == BackendPocketBase {
-			_, _ = sm.Add("pocketbase", nil)
-			return sm.Start("pocketbase")
 		}
 		return "", fmt.Errorf("no local-docker provisioner for %s", target.Backend)
 	case HostConvexCloud:

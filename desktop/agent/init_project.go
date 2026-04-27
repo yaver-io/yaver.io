@@ -15,7 +15,7 @@ type InitProjectOpts struct {
 	Name      string   `json:"name"`
 	ParentDir string   `json:"parentDir"`
 	Stack     string   `json:"stack"`    // nextjs | vite | remix | sveltekit | expo | hono
-	DB        string   `json:"db"`       // sqlite | postgres | supabase | convex | pocketbase | appwrite | none
+	DB        string   `json:"db"`       // sqlite | postgres | supabase | convex | none
 	Auth      string   `json:"auth"`     // better-auth | supabase-auth | convex-auth | none
 	Payments  string   `json:"payments"` // stripe | lemonsqueezy | none
 	Template  string   `json:"template"` // saas-starter | landing | dashboard | api | mobile
@@ -162,10 +162,6 @@ func mapInitBackend(s string) BackendKind {
 		return BackendConvex
 	case "sqlite":
 		return BackendSQLite
-	case "pocketbase":
-		return BackendPocketBase
-	case "appwrite":
-		return BackendAppwrite
 	}
 	return ""
 }
@@ -177,9 +173,7 @@ func servicesForInit(backend BackendKind, opts InitProjectOpts) []string {
 		out = append(out, "postgres")
 	case BackendConvex:
 		out = append(out, "convex", "convex-dashboard")
-	case BackendPocketBase:
-		out = append(out, "pocketbase")
-	case BackendSupabase, BackendSQLite, BackendAppwrite:
+	case BackendSupabase, BackendSQLite:
 		// Supabase uses `supabase start`; SQLite is file-only; Appwrite has its own installer.
 	}
 	// Extras from opts.Services take precedence, de-dup.
@@ -282,8 +276,6 @@ func starterEnv(opts InitProjectOpts) string {
 		b.WriteString("CONVEX_SELF_HOSTED_ADMIN_KEY=" + defaultConvexAdminKey + "\n")
 	case "sqlite":
 		b.WriteString("DATABASE_URL=file:./local.db\n")
-	case "pocketbase":
-		b.WriteString("POCKETBASE_URL=http://127.0.0.1:8090\n")
 	}
 	if opts.Payments == "stripe" {
 		b.WriteString("STRIPE_SECRET_KEY=\nSTRIPE_WEBHOOK_SECRET=\n")

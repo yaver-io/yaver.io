@@ -57,8 +57,6 @@ func CreateBackup(projectDir, kind string) (*ProjectBackup, error) {
 		path, dumpErr = dumpSQLite(projectDir, dir, id)
 	case BackendConvex:
 		path, dumpErr = dumpConvex(projectDir, dir, id)
-	case BackendPocketBase, BackendAppwrite:
-		path, dumpErr = dumpViaAdapter(projectDir, dir, id)
 	default:
 		dumpErr = fmt.Errorf("no backup strategy for backend %q", cfg.Backend)
 	}
