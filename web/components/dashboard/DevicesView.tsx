@@ -2093,61 +2093,91 @@ function DeviceProjectsRail({
   onShowDetails?: () => void;
 }) {
   const { projects, error, loading } = useDeviceProjects(device, !device.isGuest, token);
-  if (loading || error) return null;
-  if (!projects || projects.length === 0) return null;
+
+  // Three render modes — keep the disclosure visible in all of them
+  // so the user always sees the affordance, even when /projects has
+  // not arrived yet (loading) or the agent transport is wedged
+  // (error). Empty-but-loaded is the only case we hide for, since a
+  // "(0)" chip is just visual noise for machines with no detected
+  // projects.
+  const ready = !loading && !error && Array.isArray(projects);
+  if (ready && (projects?.length ?? 0) === 0) return null;
+
+  // Header label uses git-configured count when known, total
+  // otherwise. "Git projects" matches the dashboard's existing
+  // terminology (the "Git" tab) and signals that these are working
+  // trees, not arbitrary directories.
+  const gitCount = ready ? projects!.filter((p) => !!(p.remote && p.remote.length > 0)).length : null;
+  const totalCount = ready ? projects!.length : null;
+  const headerCount = ready
+    ? gitCount === totalCount
+      ? `(${totalCount})`
+      : `(${gitCount} / ${totalCount})`
+    : loading
+      ? "(…)"
+      : "(— unavailable)";
+
   return (
     <details className="rounded-lg border border-surface-800 bg-surface-900/30">
       <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-surface-400 hover:text-surface-200">
-        <span>Projects</span>
-        <span className="text-[10px] text-surface-500">({projects.length})</span>
+        <span>Git projects</span>
+        <span className="text-[10px] text-surface-500">{headerCount}</span>
       </summary>
       <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-800/60 px-3 py-2">
-        {projects.map((p) => {
-          const stack = (p.framework || "").toUpperCase();
-          const hasGit = !!(p.remote && p.remote.length > 0);
-          const isMonorepoApp = !!(p.monorepoApp && p.monorepoApp.length > 0);
-          const tip = [
-            p.path,
-            stack && `stack: ${stack.toLowerCase()}`,
-            p.branch && `branch: ${p.branch}`,
-            hasGit ? `git: ${p.remote}` : "no git remote",
-            isMonorepoApp && `monorepo app: ${p.monorepoApp}`,
-          ]
-            .filter(Boolean)
-            .join(" · ");
-          return (
-            <button
-              key={`pr:${device.id}:${p.name}`}
-              type="button"
-              onClick={onShowDetails}
-              className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200 hover:bg-emerald-500/20"
-              title={tip || undefined}
-            >
-              <span className="text-emerald-100">{p.name}</span>
-              {stack ? (
-                <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-normal normal-case text-emerald-300/80">
-                  {stack}
-                </span>
-              ) : null}
-              {/* Git-configured marker. The little link glyph means
-                  the project has a configured `origin` remote and is
-                  pushable; absence means the dir is on disk but has
-                  no git history yet. */}
-              {hasGit ? (
-                <span className="text-emerald-300/80" title={`git remote: ${p.remote}`}>⌬</span>
-              ) : (
-                <span className="text-surface-600" title="no git remote configured">∅</span>
-              )}
-              {/* Monorepo-app marker. Filled when the agent's
-                  workspace manifest declares this project as one app
-                  inside a multi-app yaver.workspace.yaml — distinct
-                  from a top-level repo. */}
-              {isMonorepoApp ? (
-                <span className="text-amber-300/80" title={`monorepo app · root ${p.monorepoRoot}`}>◫</span>
-              ) : null}
-            </button>
-          );
-        })}
+        {loading ? (
+          <span className="text-[10px] text-surface-500">Loading project list from agent…</span>
+        ) : error ? (
+          <span className="text-[10px] text-surface-600">
+            Project list unavailable — agent transport returned: {error}.
+          </span>
+        ) : (
+          (projects || []).map((p) => {
+            const stack = (p.framework || "").toUpperCase();
+            const hasGit = !!(p.remote && p.remote.length > 0);
+            const isMonorepoApp = !!(p.monorepoApp && p.monorepoApp.length > 0);
+            const tip = [
+              p.path,
+              stack && `stack: ${stack.toLowerCase()}`,
+              p.branch && `branch: ${p.branch}`,
+              hasGit ? `git: ${p.remote}` : "no git remote",
+              isMonorepoApp && `monorepo app: ${p.monorepoApp}`,
+            ]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <button
+                key={`pr:${device.id}:${p.name}`}
+                type="button"
+                onClick={onShowDetails}
+                className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200 hover:bg-emerald-500/20"
+                title={tip || undefined}
+              >
+                <span className="text-emerald-100">{p.name}</span>
+                {stack ? (
+                  <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-normal normal-case text-emerald-300/80">
+                    {stack}
+                  </span>
+                ) : null}
+                {/* Git-configured marker. The little link glyph means
+                    the project has a configured `origin` remote and is
+                    pushable; absence means the dir is on disk but has
+                    no git history yet. */}
+                {hasGit ? (
+                  <span className="text-emerald-300/80" title={`git remote: ${p.remote}`}>⌬</span>
+                ) : (
+                  <span className="text-surface-600" title="no git remote configured">∅</span>
+                )}
+                {/* Monorepo-app marker. Filled when the agent's
+                    workspace manifest declares this project as one app
+                    inside a multi-app yaver.workspace.yaml — distinct
+                    from a top-level repo. */}
+                {isMonorepoApp ? (
+                  <span className="text-amber-300/80" title={`monorepo app · root ${p.monorepoRoot}`}>◫</span>
+                ) : null}
+              </button>
+            );
+          })
+        )}
       </div>
     </details>
   );
