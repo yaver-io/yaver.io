@@ -3610,6 +3610,103 @@ export class AgentClient {
     return `/api/relay/d/${relayMatch[1]}/dev-web/`;
   }
 
+  /** URL for the most-recently-built static web bundle (target=web-js-bundle).
+   *  Mirrors devWebPreviewUrl's relay-proxy rewriting so the iframe loads
+   *  through our same-origin proxy. The /dev/web-bundle/ endpoint is
+   *  unauthenticated on the agent (the iframe needs to load without
+   *  cooperation from the dashboard's bearer token); the relay still
+   *  enforces password gating via `__rp=`. Agent v1.99.74+ injects
+   *  `<base href="/dev/web-bundle/">` into served index.html so the
+   *  bundle's absolute asset paths resolve through the relay-prefixed
+   *  origin. */
+  get devWebBundleUrl(): string | null {
+    if (!this.baseUrl) return null;
+    const direct = this.baseUrl.startsWith("http://127.0.0.1") || this.baseUrl.startsWith("http://localhost");
+    if (direct) return `${this.baseUrl}/dev/web-bundle/`;
+    const relayMatch = this.baseUrl.match(/\/d\/([^/]+)/);
+    if (!relayMatch) return `${this.baseUrl}/dev/web-bundle/`;
+    return `/api/relay/d/${relayMatch[1]}/dev/web-bundle/`;
+  }
+
+  /** Compile a static web bundle on the agent (target=web-js-bundle).
+   *  Resolves to the agent's response when the build completes; rejects
+   *  with the bundler tail on failure. The dashboard renders SSE
+   *  webview/build + webview/transport events for live progress while
+   *  this is in flight — caller doesn't have to do its own polling.
+   *
+   *  Pair with `ackWebBundleLoaded()` once the iframe fires `onload`
+   *  and `reportWebBundleError()` if the iframe surfaces a JS error,
+   *  so the agent can drive the transport tracker through phase
+   *  delivered/error. */
+  async buildWebJSBundle(opts: { projectName?: string; projectPath?: string }): Promise<{
+    ok: boolean;
+    bundleUrl: string;
+    size: number;
+    fileCount: number;
+    error?: string;
+    output?: string;
+  }> {
+    if (!this.baseUrl) throw new Error("not connected");
+    const res = await this.fetchWithTimeout(`${this.baseUrl}/dev/build-native`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target: "web-js-bundle",
+        projectName: opts.projectName ?? undefined,
+        projectPath: opts.projectPath ?? undefined,
+      }),
+    }, 240_000);
+    const body: unknown = await res.json().catch(() => ({}));
+    const obj = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+    if (!res.ok || obj.status !== "ok") {
+      return {
+        ok: false,
+        bundleUrl: "",
+        size: 0,
+        fileCount: 0,
+        error: typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`,
+        output: typeof obj.output === "string" ? obj.output : undefined,
+      };
+    }
+    return {
+      ok: true,
+      bundleUrl: typeof obj.bundleUrl === "string" ? obj.bundleUrl : "/dev/web-bundle/",
+      size: typeof obj.size === "number" ? obj.size : 0,
+      fileCount: typeof obj.fileCount === "number" ? obj.fileCount : 0,
+    };
+  }
+
+  /** POST /dev/web-bundle/ack — iframe finished loading; transport
+   *  tracker transitions to phase=delivered. */
+  async ackWebBundleLoaded(msToLoad: number): Promise<void> {
+    if (!this.baseUrl) return;
+    try {
+      await fetch(`${this.baseUrl}/dev/web-bundle/ack`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ ms_to_load: msToLoad }),
+      });
+    } catch {
+      // Best-effort; if the ack fails the dashboard already knows
+      // the iframe loaded.
+    }
+  }
+
+  /** POST /dev/web-bundle/error — iframe surfaced a JS init error;
+   *  transport tracker transitions to phase=error. */
+  async reportWebBundleError(message: string, stack?: string, source?: string): Promise<void> {
+    if (!this.baseUrl) return;
+    try {
+      await fetch(`${this.baseUrl}/dev/web-bundle/error`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ message, stack, source }),
+      });
+    } catch {
+      // Best-effort.
+    }
+  }
+
   get devPreviewUrl(): string | null {
     if (!this.baseUrl) return null;
     // In the browser, route relay-backed previews through our own

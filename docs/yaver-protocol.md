@@ -32,8 +32,26 @@ agent owns the topic taxonomy:
 |---|---|
 | `dev/start` | `queued` → `installing_deps` → `starting` → `metro_bundling` → `listening` → `idle` ⇄ `metro_bundling` (loops on each device fetch) |
 | `webview/build` | `queued` → `preparing` → `web_bundling` → `listening` → `ready` |
+| `webview/transport` | `compiled` → `ready_to_serve` → `serving` → `streaming` → `delivered` (or `error`) — per-bundle delivery lifecycle from compile-complete to iframe-loaded |
 | `hermes/compile` | `queued` → `metro_bundling` → `hermesc_compiling` → `validating` → `ready` |
 | `bundle/push` | `queued` → `uploading` → `validating` → `bridge_reload` → `ready` |
+
+### Caller × Target × Endpoint matrix
+
+Every event also carries a `caller` field (the originating surface,
+e.g. `mobile-app/1.18.15` or `web-dashboard/1.1.83`) so the dashboard
+CONSOLE can attribute phases to the surface that triggered them. The
+agent reads `X-Yaver-Caller` request header (or `?caller=` query param
+for SSE-style requests where headers can't be set).
+
+| Endpoint | Allowed callers | Build target | Output served at |
+|---|---|---|---|
+| `POST /dev/build-native target=mobile-hermes` | mobile-app/* | iOS / Android Hermes bytecode | `/dev/native-bundle` |
+| `POST /dev/build-native target=web-js-bundle` | web-dashboard/*, mobile-app/* | static web bundle (`expo export -p web`) | `/dev/web-bundle/` |
+| `POST /dev/build-native target=web-hermes-wasm` | (experimental) | HBC bundle + hermes.wasm runner | `/dev/web-bundle/` + `/dev/hermes-wasm-runtime` |
+| `POST /dev/web-preview/start` | web-dashboard/* | live HMR Expo Web sibling | `/dev-web/` (proxied) |
+| `POST /dev/web-bundle/ack` | dashboard iframe | — | iframe → agent: load complete |
+| `POST /dev/web-bundle/error` | dashboard iframe | — | iframe → agent: JS init error |
 
 ## Progress payload
 

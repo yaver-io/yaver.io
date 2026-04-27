@@ -42,9 +42,14 @@ interface Props {
     elapsedSec?: number;      // counts up while bundling
     expectedSec?: number;     // typical bundle time (~30s for Expo Web)
   } | null;
+  /** Fires when the iframe's onload event triggers — used by the
+   *  static-bundle target (web-js-bundle) to POST /dev/web-bundle/ack
+   *  so the agent's transport tracker transitions to phase=delivered
+   *  with measured ms_to_load. */
+  onIframeLoad?: () => void;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState }: Props) {
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState, onIframeLoad }: Props) {
   const [viewport, setViewport] = useState<ViewportId>("fluid");
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -236,6 +241,7 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
               style={{ height: `calc(100% - 41px)` }}
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
               title="Web preview"
+              onLoad={onIframeLoad}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-[12px] text-surface-500" style={{ minHeight: 300 }}>

@@ -164,7 +164,12 @@ func (s *HTTPServer) buildWebJSBundle(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 
-	totalBytes, fileCount := dirSizeAndCount(buildDir)
+	bundleManifest := scanBundleManifest(buildDir)
+	var totalBytes int64
+	for _, b := range bundleManifest {
+		totalBytes += b
+	}
+	fileCount := len(bundleManifest)
 	s.upsertDevOperation("build_web_js", "completed", "ready", fmt.Sprintf("Web bundle ready: %d KB, %d files", totalBytes/1024, fileCount), workDir, target.DeviceID, 1, map[string]interface{}{
 		"target":     "web-js-bundle",
 		"caller":     req.Caller,
@@ -182,6 +187,13 @@ func (s *HTTPServer) buildWebJSBundle(w http.ResponseWriter, r *http.Request, re
 		BuiltAt:   time.Now().UTC().Format(time.RFC3339),
 		Caller:    req.Caller,
 	})
+	// Yaver Protocol v1 — webview/transport. Spin up a per-bundle
+	// transport tracker so the dashboard CONSOLE has a live view of
+	// the post-compile delivery pipeline (compiled → ready_to_serve →
+	// serving → streaming → delivered/error). Replaces any previous
+	// tracker (last-build-wins, single-track preview pane).
+	s.devServerMgr.SetWebTransport(newWebTransport(s.devServerMgr.emit, "web-js-bundle", req.Caller, bundleManifest))
+	s.devServerMgr.GetWebTransport().transition("ready_to_serve")
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":    "ok",
@@ -382,6 +394,30 @@ func dirSizeAndCount(root string) (int64, int) {
 	return total, count
 }
 
+// scanBundleManifest walks the freshly-built web bundle directory and
+// returns a map of relative path → byte size. Used by the transport
+// tracker as the canonical "what we're going to ship" list so progress
+// percentages are anchored to a known total instead of guessed.
+func scanBundleManifest(root string) map[string]int64 {
+	manifest := map[string]int64{}
+	rootClean := filepath.Clean(root)
+	_ = filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(rootClean, p)
+		if relErr != nil {
+			return nil
+		}
+		// Use forward slashes so URL-style relative paths match what
+		// the HTTP serve layer hands us regardless of host OS.
+		rel = strings.ReplaceAll(rel, string(filepath.Separator), "/")
+		manifest[rel] = info.Size()
+		return nil
+	})
+	return manifest
+}
+
 // hermesWasmRunnerHTML is the minimal page the iframe loads for
 // web-hermes-wasm mode. It instantiates Hermes WASM, fetches the HBC,
 // pumps it through, and provides a basic globalThis shim. The real
@@ -461,9 +497,23 @@ func jsonStringify(v interface{}) string {
 }
 
 // handleServeWebBundle serves files from the most recently built
-// /home/<user>/<project>/.yaver-build-web{,-hermes}/ directory.
-// Mounted at /dev/web-bundle/ so the dashboard iframe can load it
-// through the relay-proxied origin without CORS gymnastics.
+// /home/<user>/<project>/.yaver-build-web{,-hermes}/ directory. Mounted
+// at /dev/web-bundle/ so the dashboard iframe can load through the
+// relay-proxied origin.
+//
+// Critical detail: `expo export -p web` writes index.html with absolute
+// asset paths (e.g. `/_expo/static/js/foo.js`). When served through
+// `https://<relay>/d/<id>/dev/web-bundle/`, those root-absolute paths
+// resolve to `https://<relay>/d/<id>/_expo/...` which doesn't exist —
+// the iframe loads index.html and 404s on every script/css. We patch
+// index.html on serve by injecting `<base href="/dev/web-bundle/">` so
+// the browser rewrites every relative + root-absolute URL through the
+// bundle path. Other files (.js, .css, images, the _expo/ subtree)
+// serve byte-for-byte unchanged.
+//
+// Every served file also fires a transport-progress event on
+// topic=webview/transport so the dashboard CONSOLE renders a live
+// "sending bundle…" phase instead of going silent right after compile.
 func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		http.Error(w, "no dev server", http.StatusServiceUnavailable)
@@ -482,8 +532,7 @@ func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request
 			rel = "index.html"
 		}
 	}
-	// Path-traversal guard: reject anything that resolves outside
-	// the build dir.
+	// Path-traversal guard.
 	cleaned := filepath.Clean("/" + rel)
 	if strings.Contains(cleaned, "..") {
 		http.Error(w, "bad path", http.StatusBadRequest)
@@ -500,17 +549,127 @@ func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request
 		http.Error(w, "path escape", http.StatusBadRequest)
 		return
 	}
-	if _, err := os.Stat(full); err != nil {
+	st, err := os.Stat(full)
+	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	// SPA-friendly: don't aggressively cache index.html so reloads
-	// pick up fresh bundles immediately. Other files are content-
-	// hashed by Metro's web export and safe to cache.
-	if strings.HasSuffix(full, ".html") {
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	// Yaver Protocol v1 — webview/transport. Per-file SSE event so
+	// the dashboard can render a streaming progress bar between
+	// "compile complete" and "iframe rendered".
+	s.devServerMgr.GetWebTransport().recordFile(strings.TrimPrefix(cleaned, "/"), st.Size())
+
+	if strings.HasSuffix(strings.ToLower(full), ".html") {
+		s.serveWebBundleHTML(w, full)
+		return
 	}
+	// Everything else: byte-for-byte. http.ServeFile handles MIME
+	// types from extension (.js, .css, .json, .map, fonts, images).
 	http.ServeFile(w, r, full)
+}
+
+// serveWebBundleHTML reads index.html, injects <base href="/dev/web-bundle/">
+// inside <head>, and writes it.
+func (s *HTTPServer) serveWebBundleHTML(w http.ResponseWriter, htmlPath string) {
+	data, err := os.ReadFile(htmlPath)
+	if err != nil {
+		http.Error(w, "read html: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	patched := injectBaseHref(data, "/dev/web-bundle/")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	info := s.devServerMgr.GetWebBundleInfo()
+	w.Header().Set("X-Yaver-Web-Bundle", fmt.Sprintf("%s/%d", info.Target, info.Size))
+	w.Write(patched)
+}
+
+// injectBaseHref inserts <base href="..."> right after the opening
+// <head> tag so every relative + root-absolute URL in the document
+// resolves through the bundle path. Tolerates `<head>` / `<head class="...">`
+// shapes; if no <head> exists the original body is returned unchanged
+// (very unusual; expo export always emits <head>).
+func injectBaseHref(html []byte, href string) []byte {
+	tag := []byte(`<base href="` + href + `" />`)
+	lower := strings.ToLower(string(html))
+	if idx := strings.Index(lower, "<head>"); idx >= 0 {
+		insertAt := idx + len("<head>")
+		out := make([]byte, 0, len(html)+len(tag))
+		out = append(out, html[:insertAt]...)
+		out = append(out, tag...)
+		out = append(out, html[insertAt:]...)
+		return out
+	}
+	if idx := strings.Index(lower, "<head"); idx >= 0 {
+		if end := strings.Index(string(html[idx:]), ">"); end >= 0 {
+			insertAt := idx + end + 1
+			out := make([]byte, 0, len(html)+len(tag))
+			out = append(out, html[:insertAt]...)
+			out = append(out, tag...)
+			out = append(out, html[insertAt:]...)
+			return out
+		}
+	}
+	return html
+}
+
+// handleWebBundleAck — POST /dev/web-bundle/ack
+// Iframe reports successful load via `{ ms_to_load }`. Transport tracker
+// transitions to phase=delivered with EtaMs set. Idempotent.
+func (s *HTTPServer) handleWebBundleAck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
+		return
+	}
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no dev server"})
+		return
+	}
+	var body struct {
+		MsToLoad int64 `json:"ms_to_load"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	t := s.devServerMgr.GetWebTransport()
+	if t == nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active web transport — bundle not built or already cleared"})
+		return
+	}
+	t.markDelivered(body.MsToLoad)
+	jsonReply(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// handleWebBundleError — POST /dev/web-bundle/error
+// Iframe reports a JS error via `{ message, stack, source }`. Transport
+// tracker transitions to phase=error. Idempotent on subsequent calls.
+func (s *HTTPServer) handleWebBundleError(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
+		return
+	}
+	if s.devServerMgr == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "no dev server"})
+		return
+	}
+	var body struct {
+		Message string `json:"message"`
+		Stack   string `json:"stack"`
+		Source  string `json:"source"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	t := s.devServerMgr.GetWebTransport()
+	if t == nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active web transport"})
+		return
+	}
+	msg := strings.TrimSpace(body.Message)
+	if msg == "" {
+		msg = "iframe reported error with no message"
+	}
+	if body.Source != "" {
+		msg = fmt.Sprintf("%s (source: %s)", msg, body.Source)
+	}
+	t.markError(msg)
+	jsonReply(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // handleServeHermesWasm streams hermes.wasm from a configured local

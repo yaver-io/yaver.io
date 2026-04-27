@@ -144,16 +144,22 @@ type DevServerEvent struct {
 
 	// Yaver Protocol v1 fields (type="phase" | "progress" | "snapshot").
 	// All are omitempty so legacy event shapes still serialize cleanly.
-	Topic       string  `json:"topic,omitempty"`       // "dev/start" | "webview/build" | "hermes/compile" | "bundle/push"
+	Topic       string  `json:"topic,omitempty"`       // "dev/start" | "webview/build" | "hermes/compile" | "bundle/push" | "webview/transport"
 	Phase       string  `json:"phase,omitempty"`       // see file header
 	PrevPhase   string  `json:"prevPhase,omitempty"`   // for transition validation in consumer
 	Pct         float32 `json:"pct,omitempty"`         // 0..100, REAL number from compiler output
-	Done        int     `json:"done,omitempty"`        // e.g. 1247 modules
-	Total       int     `json:"total,omitempty"`       // e.g. 2390 modules
+	Done        int64   `json:"done,omitempty"`        // e.g. 1247 modules / served bytes (int64 to fit multi-MB bundles)
+	Total       int64   `json:"total,omitempty"`       // e.g. 2390 modules / total bytes
 	Unit        string  `json:"unit,omitempty"`        // "modules" | "bytes" | "files" | "tasks"
 	CurrentFile string  `json:"currentFile,omitempty"` // e.g. "node_modules/expo-router/build/Route.js"
 	ProgressSrc string  `json:"progressSrc,omitempty"` // "exact" | "heuristic" | "unknown"
 	EtaMs       int64   `json:"etaMs,omitempty"`       // estimated remaining millis (only when ProgressSrc=="exact")
+	// Caller is the X-Yaver-Caller of the surface that originated the
+	// triggering request. Threaded onto every event under that lifecycle
+	// so the dashboard CONSOLE can attribute phases (`[mobile-app/1.18.15]
+	// hermes/compile 73%` vs `[web-dashboard/1.1.83] webview/transport
+	// streaming 24%`). Empty for heartbeat / log events.
+	Caller string `json:"caller,omitempty"`
 
 	// Snapshot-only fields (type="snapshot"). Lets a late or
 	// reconnecting consumer rebuild full UI state from one event
@@ -267,11 +273,12 @@ type DevServerManager struct {
 	// path attaches them; cleared on Stop. Used by the snapshot
 	// ticker to embed real progress in every snapshot — and by the
 	// tracker itself to emit "phase" / "progress" events.
-	devTracker     *progressTracker // topic="dev/start"
-	webTracker     *progressTracker // topic="webview/build" (Expo Web sibling)
-	hermesTracker  *progressTracker // topic="hermes/compile" (build-native)
-	recentLogTail  []string         // last 8 stdout/stderr lines for snapshots
-	recentLogMu    sync.Mutex
+	devTracker       *progressTracker // topic="dev/start"
+	webTracker       *progressTracker // topic="webview/build" (Expo Web sibling)
+	hermesTracker    *progressTracker // topic="hermes/compile" (build-native)
+	transportTracker *webTransport    // topic="webview/transport" (per-bundle delivery lifecycle)
+	recentLogTail    []string         // last 8 stdout/stderr lines for snapshots
+	recentLogMu      sync.Mutex
 	// webBundleInfo records the most recent web target build so the
 	// /dev/web-bundle/* handler knows which directory to serve from.
 	// Set by build_web.go on completion; cleared on Stop.
@@ -306,6 +313,24 @@ func (m *DevServerManager) GetWebBundleInfo() WebBundleInfo {
 	m.webBundleInfoMu.RLock()
 	defer m.webBundleInfoMu.RUnlock()
 	return m.webBundleInfo
+}
+
+// SetWebTransport registers a freshly-created transport tracker for the
+// current bundle. Last-write-wins: starting a new build replaces the
+// tracker since the dashboard preview pane is single-track. Idempotent
+// across multiple identical sets.
+func (m *DevServerManager) SetWebTransport(t *webTransport) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.transportTracker = t
+}
+
+// GetWebTransport returns the current transport tracker (nil-safe; the
+// tracker's own methods all no-op on a nil receiver).
+func (m *DevServerManager) GetWebTransport() *webTransport {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.transportTracker
 }
 
 // devEventHistoryMax bounds DevServerManager.history. 200 lines covers

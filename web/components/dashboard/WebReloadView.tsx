@@ -74,6 +74,24 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     const id = setInterval(() => setWebPreviewElapsedSec((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, [webPreviewStarting]);
+
+  // Static web bundle (target=web-js-bundle) — alternative to the
+  // live-HMR sibling. Compiles once via `expo export -p web` and serves
+  // through /dev/web-bundle/. Doesn't depend on the long-running Expo
+  // Web sibling process being alive — survives agent restarts and
+  // re-clones cleanly. Tracks the post-compile transport pipeline via
+  // SSE webview/transport events.
+  const [staticBundleState, setStaticBundleState] = useState<"idle" | "building" | "ready" | "failed">("idle");
+  const [staticBundleError, setStaticBundleError] = useState<string | null>(null);
+  const [staticBundleInfo, setStaticBundleInfo] = useState<{ size: number; fileCount: number } | null>(null);
+  const [staticBundleTransport, setStaticBundleTransport] = useState<{
+    phase: string;
+    pct: number;
+    done: number;
+    total: number;
+    file?: string;
+  } | null>(null);
+  const staticBundleStartRef = useRef<number>(0);
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
@@ -394,6 +412,74 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
       setWebPreviewError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  // Compile a static web bundle on the agent (target=web-js-bundle) and
+  // load it into the iframe via /dev/web-bundle/. Independent of the
+  // sibling Expo Web process — works after agent restarts that orphan
+  // the live-HMR flow. Transport progress is rendered via the
+  // staticBundleTransport state which SSE listeners (below) drive.
+  const handleBuildStaticBundle = useCallback(async () => {
+    setStaticBundleState("building");
+    setStaticBundleError(null);
+    setStaticBundleTransport(null);
+    setStaticBundleInfo(null);
+    staticBundleStartRef.current = Date.now();
+    const projectName = activeProject?.name || selectedApp || undefined;
+    const projectPath = activeProject?.path || selectedProjectPath || undefined;
+    try {
+      const r = await agentClient.buildWebJSBundle({ projectName, projectPath });
+      if (!r.ok) {
+        setStaticBundleState("failed");
+        setStaticBundleError(r.error || "build failed");
+        return;
+      }
+      setStaticBundleInfo({ size: r.size, fileCount: r.fileCount });
+      setStaticBundleState("ready");
+    } catch (e) {
+      setStaticBundleState("failed");
+      setStaticBundleError(e instanceof Error ? e.message : String(e));
+    }
+  }, [activeProject?.name, activeProject?.path, selectedApp, selectedProjectPath]);
+
+  // Subscribe to webview/transport SSE phase events so the dashboard
+  // shows live "serving 23/142 files (16%)" progress between the
+  // build-native response and the iframe rendering.
+  useEffect(() => {
+    if (staticBundleState !== "building" && staticBundleState !== "ready") return;
+    const url = agentClient.devEventsUrl;
+    if (!url) return;
+    const es = new EventSource(url);
+    const onMsg = (ev: MessageEvent) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (data?.topic !== "webview/transport") return;
+        if (data.type === "phase") {
+          setStaticBundleTransport((prev) => ({
+            phase: data.phase,
+            pct: prev?.pct ?? 0,
+            done: prev?.done ?? 0,
+            total: prev?.total ?? 0,
+            file: prev?.file,
+          }));
+        } else if (data.type === "progress") {
+          setStaticBundleTransport({
+            phase: data.phase || "streaming",
+            pct: typeof data.pct === "number" ? data.pct : 0,
+            done: typeof data.done === "number" ? data.done : 0,
+            total: typeof data.total === "number" ? data.total : 0,
+            file: typeof data.currentFile === "string" ? data.currentFile : undefined,
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    es.addEventListener("message", onMsg as EventListener);
+    return () => {
+      es.removeEventListener("message", onMsg as EventListener);
+      es.close();
+    };
+  }, [staticBundleState]);
 
 
   const handleSendPrompt = useCallback(async () => {
@@ -883,10 +969,27 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             </div>
           ) : null}
           <WebPreviewFrame
-            // Route the iframe at the Expo Web sibling when it's running,
-            // otherwise fall back to the primary dev server preview.
-            url={devStatus?.webPort && devStatus.webPort > 0 ? agentClient.devWebPreviewUrl : previewUrl}
-            running={isRunning}
+            // URL priority: built static bundle (most stable, doesn't
+            // depend on a long-running sibling process) → live Expo Web
+            // sibling → primary dev server preview proxy.
+            url={
+              staticBundleState === "ready"
+                ? agentClient.devWebBundleUrl
+                : devStatus?.webPort && devStatus.webPort > 0
+                ? agentClient.devWebPreviewUrl
+                : previewUrl
+            }
+            onIframeLoad={
+              staticBundleState === "ready"
+                ? () => {
+                    const ms = Date.now() - (staticBundleStartRef.current || Date.now());
+                    void agentClient.ackWebBundleLoaded(ms);
+                  }
+                : undefined
+            }
+            // Static bundle is servable even when the dev server isn't
+            // running — set running=true so the iframe mounts.
+            running={staticBundleState === "ready" ? true : isRunning}
             onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
             connectionLabel={connectionLabel}
             notRenderableNotice={webPreviewStarting ? null : notRenderable}
@@ -908,7 +1011,18 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             // stares at the "mobile-only" notice or a blank iframe for
             // 20-40s wondering whether anything is happening.
             bundlingState={
-              webPreviewStarting
+              staticBundleState === "building"
+                ? {
+                    label: staticBundleTransport?.phase
+                      ? `Static bundle: ${staticBundleTransport.phase}…`
+                      : `Compiling static web bundle for ${activeProject?.name || selectedApp || "this project"}…`,
+                    detail: staticBundleTransport?.file
+                      ? `${staticBundleTransport.file} · ${staticBundleTransport.pct.toFixed(1)}% (${staticBundleTransport.done}/${staticBundleTransport.total} bytes)`
+                      : "expo export -p web → /dev/web-bundle/",
+                    elapsedSec: Math.floor((Date.now() - (staticBundleStartRef.current || Date.now())) / 1000),
+                    expectedSec: 60,
+                  }
+                : webPreviewStarting
                 ? {
                     label: `Bundling Expo Web for ${devStatus?.workDir?.split("/").slice(-1)[0] || "this project"}…`,
                     detail: `${(devStatus?.framework || "expo").toLowerCase()} · sibling of Metro :${devStatus?.port || "?"}`,
@@ -921,6 +1035,69 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
           {webPreviewError ? (
             <div className="rounded border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-200">
               Expo Web preview failed: {webPreviewError}
+            </div>
+          ) : null}
+          {/* Static-bundle target (web-js-bundle) — alternative to the
+              live HMR sibling. Compiles once via `expo export -p web`,
+              serves through /dev/web-bundle/ with a path-rewrite injected
+              into index.html so absolute asset URLs resolve through the
+              relay-prefixed origin. Survives agent restarts that kill
+              the sibling expo --web process. */}
+          {isConnected && (activeProject || selectedApp || selectedProjectPath) ? (
+            <div className="flex flex-wrap items-center gap-2 rounded border border-surface-800 bg-surface-900/40 px-3 py-1.5 text-[11px]">
+              <span className="font-mono text-surface-300">target=web-js-bundle</span>
+              <span className="text-surface-500">·</span>
+              {staticBundleState === "idle" ? (
+                <button
+                  onClick={() => void handleBuildStaticBundle()}
+                  className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-200 hover:bg-sky-500/20"
+                  title="Compile a static web bundle (expo export -p web) and load it into the iframe via /dev/web-bundle/. Doesn't depend on the sibling Expo Web process being alive — survives agent restarts cleanly."
+                >
+                  Build & render static bundle
+                </button>
+              ) : staticBundleState === "building" ? (
+                <span className="text-amber-200">
+                  Building… {staticBundleTransport?.phase ? `· ${staticBundleTransport.phase}` : ""}
+                  {staticBundleTransport && staticBundleTransport.total > 0
+                    ? ` · ${staticBundleTransport.pct.toFixed(1)}%`
+                    : ""}
+                </span>
+              ) : staticBundleState === "ready" ? (
+                <>
+                  <span className="text-emerald-200">
+                    Ready · {((staticBundleInfo?.size || 0) / 1024).toFixed(0)} KB · {staticBundleInfo?.fileCount || 0} files
+                    {staticBundleTransport?.phase === "delivered" ? " · delivered" : ""}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setStaticBundleState("idle");
+                      setStaticBundleTransport(null);
+                      setStaticBundleInfo(null);
+                    }}
+                    className="ml-auto rounded border border-surface-700 px-2 py-0.5 text-[10px] text-surface-300 hover:border-surface-500"
+                    title="Drop the static bundle and return to the live HMR / dev preview iframe"
+                  >
+                    Drop bundle
+                  </button>
+                  <button
+                    onClick={() => void handleBuildStaticBundle()}
+                    className="rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/20"
+                    title="Re-export and re-render"
+                  >
+                    Rebuild
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-red-300">Build failed: {staticBundleError || "unknown"}</span>
+                  <button
+                    onClick={() => void handleBuildStaticBundle()}
+                    className="ml-auto rounded border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-[10px] text-sky-200 hover:bg-sky-500/20"
+                  >
+                    Retry
+                  </button>
+                </>
+              )}
             </div>
           ) : null}
           {devStatus?.webPort ? (
