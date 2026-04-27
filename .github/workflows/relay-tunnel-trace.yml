@@ -40,7 +40,12 @@ jobs:
           try:
               with urllib.request.urlopen(req, timeout=10) as r:
                   s = json.load(r)
-                  rp = s.get('relayPassword', '') or ''
+                  inner = s.get('settings') if isinstance(s, dict) else None
+                  if isinstance(inner, dict):
+                      rp = inner.get('relayPassword', '') or ''
+                  else:
+                      rp = s.get('relayPassword', '') or ''
+                  sys.stderr.write(f'/settings keys: top={list(s.keys()) if isinstance(s, dict) else type(s).__name__}, settings.keys={list(inner.keys()) if isinstance(inner, dict) else None}\n')
           except Exception as e:
               sys.stderr.write(f'/settings failed: {e}\n')
           print(tok)
