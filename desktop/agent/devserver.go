@@ -1079,7 +1079,16 @@ func (e *ExpoDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	hasNativeProject := fileExists(filepath.Join(opts.WorkDir, "ios", "Podfile")) ||
 		fileExists(filepath.Join(opts.WorkDir, "android", "build.gradle"))
 
-	if !hasNativeProject {
+	// Web preview compiles JS through react-native-web — it does NOT
+	// need native ios/android scaffolding. Skip prebuild for web,
+	// otherwise we run a 30+ second android scaffold on every Expo
+	// Web start AND failed prebuilds (e.g. missing Java, sfmg's
+	// gitignored android/) bubble up as a confusing
+	// "expo prebuild failed: exit status 1" error in the dashboard
+	// even though `expo start --web` would have worked fine.
+	needsPrebuild := !hasNativeProject && opts.Platform != "web"
+
+	if needsPrebuild {
 		// No native dirs — run expo prebuild first. Pick the platform
 		// that actually builds on this OS: macOS can do iOS, Linux/WSL
 		// only really has Android. Falling back to ios on Linux used
