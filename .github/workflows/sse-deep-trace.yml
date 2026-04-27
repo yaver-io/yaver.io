@@ -1,0 +1,103 @@
+# Deep trace — tail relay journald + agent log + nginx access log
+# while we curl /dev/events through the relay. See exactly where
+# bytes stop flowing.
+name: SSE Deep Trace
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sse-deep-trace
+  cancel-in-progress: true
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render box-side trace script
+        run: |
+          cat > "$RUNNER_TEMP/trace.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$c" ]; then
+              python3 - "$c" <<'PYEOF'
+          import json, sys, urllib.request, subprocess, time, os
+          d = json.load(open(sys.argv[1]))
+          tok = d.get('auth_token', '')
+          did = d.get('device_id', '')
+          convex = d.get('convex_site_url', '')
+          rp = ''
+          try:
+              req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+              with urllib.request.urlopen(req, timeout=10) as r:
+                  rp = json.load(r).get('settings', {}).get('relayPassword', '')
+          except: pass
+
+          # Mark start of agent.log so we can grep for new lines
+          alog = '/home/yaver/.yaver/agent.log' if os.path.isfile('/home/yaver/.yaver/agent.log') else '/root/.yaver/agent.log'
+          mark = subprocess.run(['wc', '-l', alog], capture_output=True, text=True)
+          mark_lines = int(mark.stdout.split()[0]) if mark.returncode == 0 else 0
+          print(f'agent.log starting line: {mark_lines}')
+
+          url = f'https://public.yaver.io/d/{did}/dev/events?token={tok}&__rp={rp}'
+          print(f'\n--- 12s curl through public.yaver.io ---')
+          # Run curl in foreground, capture output
+          t0 = time.time()
+          p = subprocess.run([
+              'timeout', '12', 'curl', '-sN', '-i',
+              '-H', 'Accept: text/event-stream',
+              '-w', '\\n--- DONE: status=%{http_code} size=%{size_download} time=%{time_total}\\n',
+              url
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:5000])
+          print(f'(exit={p.returncode}, elapsed={time.time()-t0:.2f}s)')
+
+          # Tail agent.log lines added during the trace
+          print('\n--- agent.log NEW lines during trace ---')
+          out = subprocess.run(['tail', f'-n', f'+{mark_lines + 1}', alog], capture_output=True, text=True)
+          print(out.stdout[-3000:])
+
+          # Tail nginx access log + relay journald
+          print('\n--- nginx access log (last 5 lines) ---')
+          for log in ('/var/log/nginx/access.log',):
+              if os.path.isfile(log):
+                  out = subprocess.run(['tail', '-n', '5', log], capture_output=True, text=True)
+                  print(out.stdout)
+
+          print('\n--- relay journalctl (last 60 lines) ---')
+          out = subprocess.run(['journalctl', '-u', 'yaver-relay', '-n', '60', '--no-pager'], capture_output=True, text=True)
+          print(out.stdout[-3000:])
+          PYEOF
+              break
+            fi
+          done
+          BODY
+          chmod +x "$RUNNER_TEMP/trace.sh"
+
+      - name: Run on box (relay box, not test-ephemeral)
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          # Run on test-ephemeral (it has the agent + can curl public.yaver.io)
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/trace.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/trace-sse.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/trace-sse.sh && rm -f /tmp/trace-sse.sh"
+
+      - name: Tail relay journald (relay box)
+        run: |
+          # Relay's IP from relay-deploy-binary.yml is hardcoded as 46.224.110.38
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@46.224.110.38" \
+              "journalctl -u yaver-relay -n 80 --no-pager | tail -60; echo '--- nginx access (last 8) ---'; tail -n 8 /var/log/nginx/access.log 2>/dev/null || tail -n 8 /var/log/nginx/yaver-relay-access.log 2>/dev/null || echo '(no access log found)'; echo '--- nginx error (last 8) ---'; tail -n 8 /var/log/nginx/error.log 2>/dev/null || echo '(no error log found)'; echo '--- nginx config for SSE ---'; grep -A3 'proxy_buffering\\|location /' /etc/nginx/sites-enabled/* 2>/dev/null | head -30"
