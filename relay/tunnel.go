@@ -227,8 +227,11 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 	// hits /d/<id>/blackbox/command-stream and curl returns
 	// "exit=28 status=000". Keep this list aligned with every long-
 	// lived stream the agent serves.
+	// Hybrid SSE detection — Accept header OR path suffix.
+	// KEEP IN SYNC with relay/server.go and desktop/agent/main.go.
 	isSSE := req.Method == "GET" && req.Path != "" &&
-		(strings.HasSuffix(req.Path, "/output") ||
+		(strings.Contains(req.Headers["Accept"], "text/event-stream") ||
+			strings.HasSuffix(req.Path, "/output") ||
 			strings.HasSuffix(req.Path, "/dev/events") ||
 			strings.HasSuffix(req.Path, "/subscribe") ||
 			strings.HasSuffix(req.Path, "/blackbox/command-stream") ||

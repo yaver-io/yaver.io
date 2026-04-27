@@ -859,10 +859,26 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 	stream.Close() // signal done writing (non-WS only)
 
-	// Check if this is an SSE request (task output, dev server events, blackbox subscribe)
-	isSSE := r.Method == "GET" && (strings.Contains(forwardPath, "/output") ||
-		strings.HasSuffix(forwardPath, "/dev/events") ||
-		strings.HasSuffix(forwardPath, "/subscribe"))
+	// Check if this is an SSE request. We use a hybrid detector:
+	//   1. Accept: text/event-stream header — the canonical signal
+	//      from any compliant SSE client (EventSource, fetch, curl
+	//      with -H "Accept: text/event-stream").
+	//   2. Path-suffix allowlist — for clients that forget Accept,
+	//      and as a defense-in-depth catch.
+	// KEEP THE PATH LIST IN SYNC with relay/tunnel.go:230 and
+	// desktop/agent/main.go:7581. Hitting an SSE endpoint with
+	// neither signal causes the relay to ReadAll the response
+	// body, which never EOFs for SSE → hang until 10MB limit
+	// (~30+ min), curl exits with status=000 / exit=28.
+	isSSE := r.Method == "GET" &&
+		(strings.Contains(r.Header.Get("Accept"), "text/event-stream") ||
+			strings.Contains(forwardPath, "/output") ||
+			strings.HasSuffix(forwardPath, "/dev/events") ||
+			strings.HasSuffix(forwardPath, "/subscribe") ||
+			strings.HasSuffix(forwardPath, "/blackbox/command-stream") ||
+			strings.HasSuffix(forwardPath, "/blackbox/stream") ||
+			strings.HasSuffix(forwardPath, "/feedback/stream") ||
+			strings.Contains(forwardPath, "/streams/"))
 	if isSSE {
 		s.proxySSE(w, r, stream, tunnel.deviceID)
 		return

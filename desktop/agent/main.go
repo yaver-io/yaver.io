@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.64"
+const version = "1.99.65"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7578,13 +7578,17 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	// body and the client times out with no response. The smoke for
 	// /blackbox/command-stream surfaced this before /command-stream
 	// was added.
-	isSSE := req.Method == "GET" && (strings.Contains(req.Path, "/output") ||
-		strings.HasSuffix(req.Path, "/dev/events") ||
-		strings.HasSuffix(req.Path, "/subscribe") ||
-		strings.HasSuffix(req.Path, "/blackbox/command-stream") ||
-		strings.HasSuffix(req.Path, "/blackbox/stream") ||
-		strings.HasSuffix(req.Path, "/feedback/stream") ||
-		strings.Contains(req.Path, "/streams/"))
+	// Hybrid SSE detection — Accept header OR path suffix.
+	// KEEP IN SYNC with relay/server.go and relay/tunnel.go.
+	isSSE := req.Method == "GET" &&
+		(strings.Contains(req.Headers["Accept"], "text/event-stream") ||
+			strings.Contains(req.Path, "/output") ||
+			strings.HasSuffix(req.Path, "/dev/events") ||
+			strings.HasSuffix(req.Path, "/subscribe") ||
+			strings.HasSuffix(req.Path, "/blackbox/command-stream") ||
+			strings.HasSuffix(req.Path, "/blackbox/stream") ||
+			strings.HasSuffix(req.Path, "/feedback/stream") ||
+			strings.Contains(req.Path, "/streams/"))
 
 	if isSSE {
 		sseClient := &http.Client{Timeout: 10 * time.Minute}
