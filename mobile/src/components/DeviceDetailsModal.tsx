@@ -273,6 +273,26 @@ export default function DeviceDetailsModal({ device, visible, onClose }: DeviceD
               <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
                 RECOVERY
               </Text>
+              {/* Owner-claim: shown when the box is in bootstrap mode
+                  (needsAuth=true) and reachable via relay. Single tap
+                  re-pairs the device to your account through Convex
+                  ownership verification — no URL paste, no passkey. */}
+              {device.needsAuth ? (
+                <>
+                  <Text style={{ color: "#fde68a", fontSize: 12, fontWeight: "700", marginBottom: 4 }}>
+                    Device needs pairing
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+                    The agent is in bootstrap mode. Tap to re-pair this device with your account.
+                    No SSH or URL pasting needed.
+                  </Text>
+                  <OwnerClaimRow device={device} />
+                  <View style={{ height: 16 }} />
+                </>
+              ) : null}
+              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+                Reset auth to bootstrap mode
+              </Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
                 Wipe the agent's local auth + device id and put it back
                 into bootstrap (pairing) mode. Use this when the box

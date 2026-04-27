@@ -6025,6 +6025,55 @@ export class QuicClient {
     return { ok: false, error: lastError };
   }
 
+  /** One-click pair for a device in bootstrap mode (relay tunnel
+   *  up, no auth_token). Hits /auth/pair/owner-claim — agent
+   *  verifies ownership via Convex round-trip and splices the
+   *  bearer into the active pair session. No URL paste, no
+   *  passkey, no expiry race. Mirror of the web AgentClient's
+   *  ownerClaimDevice. */
+  async ownerClaimDevice(
+    deviceId: string,
+  ): Promise<{ ok: true; via: string; host?: string } | { ok: false; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!deviceId) return { ok: false, error: "missing deviceId" };
+    const userBearer = this.token;
+    const relayList = [...this.relayServers];
+    if (relayList.length === 0) return { ok: false, error: "no relay servers configured" };
+
+    let lastError = "no relay reached the device";
+    for (const relay of relayList) {
+      const url = `${relay.httpUrl}/d/${deviceId}/auth/pair/owner-claim` +
+        (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${userBearer}`,
+            "Content-Type": "application/json",
+            "X-Client-Platform": Platform.OS,
+          },
+          body: JSON.stringify({}),
+        }, 12000);
+        if (res.ok) {
+          let host: string | undefined;
+          try { host = (await res.json())?.host; } catch {}
+          return { ok: true, via: relay.id || relay.httpUrl, host };
+        }
+        if (res.status === 401 || res.status === 403 || res.status === 409) {
+          let body = "";
+          try { body = (await res.json())?.error || ""; } catch {
+            try { body = await res.text(); } catch {}
+          }
+          return { ok: false, error: `${res.status}: ${body || "rejected"}` };
+        }
+        lastError = `${res.status} on relay ${relay.id || relay.httpUrl}`;
+      } catch (e: unknown) {
+        lastError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    return { ok: false, error: lastError };
+  }
+
   async recoverAgent(
     secret?: string,
     mode: "pair" | "device-code" = "pair",

@@ -249,6 +249,11 @@ func runBootstrapServe(httpPort int) {
 	// signed-in mobile client. The handler is the same one used
 	// in normal serve mode (auth_recover.go).
 	mux.HandleFunc("/auth/recover", bs.handleAuthRecover)
+	// One-click owner claim for the dashboard / mobile UI. Caller's
+	// bearer is verified against Convex /devices/list (must be
+	// owner). On success we splice it into the active pair session.
+	// See auth_owner_claim.go.
+	mux.HandleFunc("/auth/pair/owner-claim", bs.handleOwnerClaim)
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf("0.0.0.0:%d", httpPort),

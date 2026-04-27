@@ -879,6 +879,30 @@ export default function DashboardPage() {
     setReauthBusy(d.id);
     setReauthMsg(null);
     try {
+      // For boxes in bootstrap mode (needsAuth=true), the agent
+      // doesn't have an auth_token so /auth/recover would 404.
+      // Use the new owner-claim flow instead — the agent verifies
+      // ownership via Convex round-trip and splices our bearer into
+      // the active pair session. One round-trip, no URL paste.
+      if (d.needsAuth) {
+        const claim = await agentClient.ownerClaimDevice(d.id);
+        if (claim.ok) {
+          setReauthMsg({
+            deviceId: d.id,
+            ok: true,
+            text: `Paired with ${claim.host || d.name}. Refreshing…`,
+          });
+          setTimeout(refreshDevices, 1500);
+          return;
+        }
+        // Owner-claim failed — fall through to the legacy reauth
+        // path so any non-bootstrap fallback still has a shot.
+        setReauthMsg({
+          deviceId: d.id,
+          ok: false,
+          text: `Pair failed: ${claim.error}. Trying recover…`,
+        });
+      }
       const r = await agentClient.reauthAgent({
         deviceId: d.id,
         hostSessionToken: token,
@@ -1356,7 +1380,7 @@ export default function DashboardPage() {
                   ? (connectedIsReauthing ? "bg-amber-400 animate-pulse" : "bg-amber-400")
                   : "bg-emerald-400";
                 return (
-                  <div className={`rounded-md border ${pillBorder} px-2 py-1.5`}>
+                  <div className={`rounded-lg border ${pillBorder} px-3 py-2.5 shadow-sm`}>
                     <div className="flex items-center gap-2">
                       <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
                       <span className="truncate text-xs font-medium text-surface-100">{liveDevice.name}</span>
@@ -1419,27 +1443,35 @@ export default function DashboardPage() {
                       if (!runnerId) return null;
                       const isCloud = !runnerId.startsWith("ollama") && runnerId !== "aider-ollama" && runnerId !== "yaver-local";
                       const authed = primaryRow ? !!primaryRow.authConfigured && !primaryRow.needsAuth : false;
-                      const authBadge = !isCloud
-                        ? { label: "local", className: "border-surface-700 text-surface-400" }
-                        : authed
-                          ? { label: "auth ✓", className: "border-emerald-500/40 text-emerald-300" }
-                          : { label: "needs sign-in", className: "border-amber-500/40 text-amber-300" };
+                      // Single-action design: when sign-in is needed
+                      // we show ONE button (the call-to-action) with
+                      // amber "Sign in {Runner}" copy. When authed,
+                      // ONE small ✓ badge (no button — there's
+                      // nothing to do). Local runners show "local".
+                      // Old design had a status badge AND a button
+                      // side-by-side which read as two separate
+                      // controls.
                       return (
-                        <div className="mt-1 flex items-center gap-2 text-[10px]">
+                        <div className="mt-1.5 flex items-center gap-2 text-[10px]">
                           <span className="text-surface-500">runner:</span>
                           <span className="font-medium text-surface-200">{runnerLabel(runnerId)}</span>
-                          <span className={`rounded-full border px-1.5 py-px text-[9px] uppercase tracking-wider ${authBadge.className}`}>
-                            {authBadge.label}
-                          </span>
-                          {isCloud && !authed ? (
+                          {!isCloud ? (
+                            <span className="ml-auto rounded-full border border-surface-700 px-1.5 py-px text-[9px] uppercase tracking-wider text-surface-400">
+                              local
+                            </span>
+                          ) : authed ? (
+                            <span className="ml-auto rounded-full border border-emerald-500/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-emerald-300">
+                              ✓ signed in
+                            </span>
+                          ) : (
                             <button
                               onClick={() => setChatRunnerAuthModal(runnerId)}
-                              className="ml-auto rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/25"
-                              title={`OAuth-sign-in to the ${runnerLabel(runnerId)} CLI on this device. This is separate from Yaver-agent auth.`}
+                              className="ml-auto rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-500/25"
+                              title={`OAuth-sign-in to the ${runnerLabel(runnerId)} CLI on this device. Separate from Yaver-agent auth.`}
                             >
                               Sign in {runnerLabel(runnerId)}
                             </button>
-                          ) : null}
+                          )}
                         </div>
                       );
                     })()}

@@ -2589,6 +2589,67 @@ export class AgentClient {
     return { ok: false, error: "no relay path reached the device" };
   }
 
+  /** One-click pair for a device that's in bootstrap mode (relay
+   *  tunnel up, no auth_token). Hits the agent's
+   *  /auth/pair/owner-claim with the user's bearer; the agent
+   *  verifies ownership via Convex round-trip and splices the
+   *  bearer into the active pair session. No URL composition,
+   *  no passkey copy-paste, no expiry races on the user.
+   *
+   *  Use case: user clicks "Pair Device" on a device card whose
+   *  state shows needsAuth=true. Replaces the multi-step
+   *  /pair URL flow that broke for kivanc tonight.
+   */
+  async ownerClaimDevice(
+    deviceId: string,
+  ): Promise<{ ok: true; via: string; host?: string } | { ok: false; status?: number; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    const userBearer = this.token;
+    const tryOne = async (
+      base: string,
+      relayPassword?: string,
+    ): Promise<{ ok: true; host?: string } | { ok: false; status: number; error: string }> => {
+      const url = `${base}/auth/pair/owner-claim` + (relayPassword ? `?__rp=${encodeURIComponent(relayPassword)}` : "");
+      try {
+        const res = await this.fetchWithTimeout(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${userBearer}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({}),
+        }, 12000);
+        if (res.ok) {
+          const data = await res.json().catch(() => ({} as Record<string, unknown>));
+          return { ok: true, host: typeof data.host === "string" ? data.host : undefined };
+        }
+        const text = await res.text().catch(() => "");
+        return { ok: false, status: res.status, error: text.slice(0, 200) || `HTTP ${res.status}` };
+      } catch (e: unknown) {
+        return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+      }
+    };
+
+    if (this.relayServers.length === 0) {
+      return { ok: false, error: "no relay servers configured" };
+    }
+    let lastError = "no relay path reached the device";
+    let lastStatus: number | undefined;
+    for (const relay of this.relayServers) {
+      const base = `${relay.httpUrl}/d/${deviceId}`;
+      const r = await tryOne(base, relay.password || undefined);
+      if (r.ok) return { ok: true, via: relay.id || base, host: r.host };
+      // 401/403/409 mean "this relay reached the agent and the
+      // agent rejected" — next relay won't change the verdict.
+      if (r.status === 401 || r.status === 403 || r.status === 409) {
+        return { ok: false, status: r.status, error: r.error };
+      }
+      lastError = r.error;
+      lastStatus = r.status;
+    }
+    return { ok: false, status: lastStatus, error: lastError };
+  }
+
   private async probeHealth(
     url: string,
     headers: Record<string, string>,
