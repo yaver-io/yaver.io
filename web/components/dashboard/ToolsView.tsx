@@ -877,6 +877,25 @@ export default function ToolsView({ devices = [] }: Props) {
             {openCodeConfig?.exists ? "" : " · file will be created on save"}
           </p>
 
+          {/* Diagnostics — surface common misconfigurations the agent
+              flagged (provider with no baseUrl, model pointing at a
+              missing provider id, etc.). Each entry is one human-
+              readable line with a fixit hint. We render them as amber
+              warnings, not red errors, because some are legitimate
+              (e.g. user is mid-edit and hasn't saved both halves yet). */}
+          {openCodeConfig?.diagnostics && openCodeConfig.diagnostics.length > 0 ? (
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200">
+                ⚠ Configuration issues
+              </div>
+              <ul className="space-y-1 text-xs text-amber-100">
+                {openCodeConfig.diagnostics.map((d, i) => (
+                  <li key={i}>• {d}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
           <div className="grid gap-3 md:grid-cols-2">
             <SecretField label="Default agent" value={openCodeConfigDraft.defaultAgent} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, defaultAgent: value }))} placeholder="build or plan" secret={false} />
             <SecretField label="Default model" value={openCodeConfigDraft.model} onChange={(value) => setOpenCodeConfigDraft((s) => ({ ...s, model: value }))} placeholder="provider/model" secret={false} />
@@ -1148,6 +1167,68 @@ function ProviderCard({
 // name, baseURL, optional API key. Custom per-model metadata is left
 // out on purpose; users who need it edit opencode.json directly or
 // invoke the MCP `opencode_config_set` tool with the full payload.
+// providerPresets pre-fills id + display name + baseURL for the
+// providers Yaver users hit most often. The user still has to paste
+// their API key — we deliberately don't ship default keys. Adding a
+// new preset only requires a row here, no UI plumbing change.
+const providerPresets: Array<{
+  label: string;
+  id: string;
+  name: string;
+  baseUrl: string;
+  hint: string;
+}> = [
+  {
+    label: "Z.ai (GLM-4)",
+    id: "glm",
+    name: "Z.ai (Zhipu)",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    hint: "GLM-4 + GLM-4V family from Zhipu. API key from open.bigmodel.cn.",
+  },
+  {
+    label: "Groq",
+    id: "groq",
+    name: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    hint: "Fast Llama / Mixtral / Qwen inference. API key from console.groq.com.",
+  },
+  {
+    label: "OpenRouter",
+    id: "openrouter",
+    name: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    hint: "Aggregator across most models. API key from openrouter.ai.",
+  },
+  {
+    label: "Together",
+    id: "together",
+    name: "Together AI",
+    baseUrl: "https://api.together.xyz/v1",
+    hint: "Open-weight models hosted by Together. Key from api.together.xyz.",
+  },
+  {
+    label: "Local Ollama",
+    id: "ollama",
+    name: "Ollama (local)",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    hint: "Local Ollama on the dev box. No API key needed.",
+  },
+  {
+    label: "Tailscale Ollama",
+    id: "ollama-tailscale",
+    name: "Ollama (Tailscale)",
+    baseUrl: "http://yaver-gpu.tailscale.net:11434/v1",
+    hint: "Remote Ollama over Tailscale — replace the host with your tailnet name.",
+  },
+  {
+    label: "DeepSeek",
+    id: "deepseek",
+    name: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    hint: "DeepSeek-Coder / DeepSeek-V3. API key from platform.deepseek.com.",
+  },
+];
+
 function AddProviderForm({
   onAdd,
 }: {
@@ -1158,8 +1239,31 @@ function AddProviderForm({
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
+  const [hint, setHint] = useState("");
   return (
-    <div className="mt-3 grid gap-2 md:grid-cols-2">
+    <div className="mt-3">
+      {/* One-click presets so users don't have to remember the Z.ai
+          base URL or which Tailscale host their Ollama runs on. */}
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {providerPresets.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            onClick={() => {
+              setId(preset.id);
+              setName(preset.name);
+              setBaseUrl(preset.baseUrl);
+              setHint(preset.hint);
+            }}
+            className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-500 hover:text-surface-100"
+            title={preset.hint}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      {hint ? <div className="mb-2 text-[11px] text-surface-500">{hint}</div> : null}
+    <div className="grid gap-2 md:grid-cols-2">
       <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500" placeholder="provider id (e.g. ollama-tailscale)" value={id} onChange={(e) => setId(e.target.value)} />
       <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500" placeholder="display name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
       <input className="rounded border border-surface-700 bg-surface-950 px-2 py-1 text-xs text-surface-100 outline-none focus:border-surface-500 md:col-span-2" placeholder="baseURL — e.g. http://100.x.x.x:11434" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
@@ -1176,7 +1280,7 @@ function AddProviderForm({
               apiKey: apiKey.trim() || undefined,
             });
             if (ok) {
-              setId(""); setName(""); setBaseUrl(""); setApiKey("");
+              setId(""); setName(""); setBaseUrl(""); setApiKey(""); setHint("");
             }
           } finally { setSaving(false); }
         }}
@@ -1184,6 +1288,7 @@ function AddProviderForm({
       >
         {saving ? "Saving…" : "Add provider"}
       </button>
+    </div>
     </div>
   );
 }

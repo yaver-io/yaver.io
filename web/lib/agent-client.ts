@@ -421,6 +421,17 @@ export interface OpenCodeProviderSummary {
   models?: OpenCodeModelSummary[];
 }
 
+export interface OpenCodeAgentSummary {
+  /** "build", "plan", or any custom agent name from opencode.json */
+  name: string;
+  /** Per-agent model override (e.g. "anthropic/claude-sonnet-4-6"). Empty
+   *  means the agent inherits the default model. */
+  model?: string;
+  description?: string;
+  /** True for build + plan; false for user-defined custom agents. */
+  isBuiltin?: boolean;
+}
+
 export interface OpenCodeConfigSummary {
   path: string;
   exists: boolean;
@@ -431,6 +442,15 @@ export interface OpenCodeConfigSummary {
   planModel?: string;
   providers?: OpenCodeProviderSummary[];
   models?: OpenCodeModelSummary[];
+  /** Full list of agent entries — built-ins (build, plan) plus any
+   *  custom agents the user has defined under `agent.<name>` in
+   *  opencode.json. The chat composer dropdown reads this so custom
+   *  agents aren't a hidden CLI-only feature. */
+  agents?: OpenCodeAgentSummary[];
+  /** Actionable misconfigurations the agent caught — provider with no
+   *  baseUrl, model pointing at a missing provider id, etc. UI renders
+   *  these as warning banners with fixit hints. */
+  diagnostics?: string[];
 }
 
 // RunnerBrowserAuthSession is defined below — single source of truth.

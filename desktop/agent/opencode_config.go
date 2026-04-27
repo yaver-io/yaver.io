@@ -25,6 +25,20 @@ type OpenCodeProviderSummary struct {
 	Models  []OpenCodeModelSummary `json:"models,omitempty"`
 }
 
+// OpenCodeAgentSummary is one entry under `agent.` (or legacy `mode.`)
+// in opencode.json. The two stock entries are "build" and "plan", but
+// users can define arbitrary additional agents — chat / review /
+// research / etc. — each with its own model + provider override. Both
+// the web composer's agent dropdown and the mobile chat picker should
+// list every entry here so a custom agent isn't a hidden CLI-only
+// power-user feature.
+type OpenCodeAgentSummary struct {
+	Name        string `json:"name"`              // "build", "plan", "review", …
+	Model       string `json:"model,omitempty"`   // e.g. "anthropic/claude-sonnet-4-6"
+	Description string `json:"description,omitempty"`
+	IsBuiltin   bool   `json:"isBuiltin,omitempty"` // true for build + plan
+}
+
 type OpenCodeConfigSummary struct {
 	Path         string                    `json:"path"`
 	Exists       bool                      `json:"exists"`
@@ -35,6 +49,15 @@ type OpenCodeConfigSummary struct {
 	PlanModel    string                    `json:"planModel,omitempty"`
 	Providers    []OpenCodeProviderSummary `json:"providers,omitempty"`
 	Models       []OpenCodeModelSummary    `json:"models,omitempty"`
+	// Agents is the full list of agent entries (built-ins + customs).
+	// Surfaced so the web + mobile chat pickers can offer the custom
+	// ones, not just hardcoded build/plan.
+	Agents []OpenCodeAgentSummary `json:"agents,omitempty"`
+	// Diagnostics flag config inconsistencies the user should fix
+	// before running a kick — e.g. a provider with no API key, an API
+	// key with no matching provider, an unknown model id. Each entry
+	// is one human-readable line with a fixit hint.
+	Diagnostics []string `json:"diagnostics,omitempty"`
 }
 
 type openCodeConfigPatch struct {
@@ -249,7 +272,158 @@ func summarizeOpenCodeConfig(path string, cfg map[string]any, exists bool) OpenC
 	summary.PlanModel = openCodeAgentModel(cfg, "plan")
 	summary.Providers = openCodeProvidersFromConfig(cfg)
 	summary.Models = openCodeModelsFromConfig(cfg)
+	summary.Agents = openCodeAgentsFromConfig(cfg)
+	summary.Diagnostics = openCodeDiagnostics(cfg, summary)
 	return summary
+}
+
+// openCodeAgentsFromConfig walks both the new `agent.<name>` keys and
+// the legacy `mode.<name>` keys, dedups by name, and returns a sorted
+// list with build + plan always first (in that order) so UIs can
+// render the stock entries above customs without a separate sort.
+func openCodeAgentsFromConfig(cfg map[string]any) []OpenCodeAgentSummary {
+	out := map[string]OpenCodeAgentSummary{}
+	collect := func(node map[string]any) {
+		for name, raw := range node {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			model, _ := stringFromMap(entry, "model")
+			desc, _ := stringFromMap(entry, "description")
+			out[name] = OpenCodeAgentSummary{
+				Name:        name,
+				Model:       model,
+				Description: desc,
+				IsBuiltin:   name == "build" || name == "plan",
+			}
+		}
+	}
+	if node, ok := cfg["agent"].(map[string]any); ok {
+		collect(node)
+	}
+	// Legacy `mode.<name>` shape — Yaver keeps reading it for users
+	// who haven't migrated. Builtins win on collision.
+	if node, ok := cfg["mode"].(map[string]any); ok {
+		for name, raw := range node {
+			if _, exists := out[name]; exists {
+				continue
+			}
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			model, _ := stringFromMap(entry, "model")
+			desc, _ := stringFromMap(entry, "description")
+			out[name] = OpenCodeAgentSummary{
+				Name:        name,
+				Model:       model,
+				Description: desc,
+				IsBuiltin:   name == "build" || name == "plan",
+			}
+		}
+	}
+	// Always-on stock entries even when opencode.json is empty — so
+	// the UI never shows a literally empty dropdown.
+	if _, ok := out["build"]; !ok {
+		out["build"] = OpenCodeAgentSummary{Name: "build", IsBuiltin: true}
+	}
+	if _, ok := out["plan"]; !ok {
+		out["plan"] = OpenCodeAgentSummary{Name: "plan", IsBuiltin: true}
+	}
+
+	list := make([]OpenCodeAgentSummary, 0, len(out))
+	// build first, plan second, custom agents alphabetically.
+	if a, ok := out["build"]; ok {
+		list = append(list, a)
+		delete(out, "build")
+	}
+	if a, ok := out["plan"]; ok {
+		list = append(list, a)
+		delete(out, "plan")
+	}
+	customNames := make([]string, 0, len(out))
+	for name := range out {
+		customNames = append(customNames, name)
+	}
+	sort.Strings(customNames)
+	for _, name := range customNames {
+		list = append(list, out[name])
+	}
+	return list
+}
+
+// openCodeDiagnostics surfaces actionable misconfigurations. Catches
+// the common GLM "key without baseURL" trap and the inverse — keys
+// in env / vault that the user clearly intended to use, but no
+// matching provider entry exists.
+//
+// Best-effort: false positives are worse than false negatives here
+// because users dismiss noisy banners. We only flag clear-cut errors:
+//   - provider with no `api_key` and no env var lookup that resolves
+//   - provider with no `baseUrl` AND `id` is not one of the known
+//     defaults (anthropic / openai / openai-compat with no base URL
+//     would never work)
+//   - non-empty buildModel / planModel that points at a provider
+//     id not present in providers[]
+func openCodeDiagnostics(cfg map[string]any, sum OpenCodeConfigSummary) []string {
+	var out []string
+	provIDs := map[string]bool{}
+	for _, p := range sum.Providers {
+		provIDs[p.ID] = true
+	}
+
+	// Stock providers that ship their own base URL via opencode's
+	// built-in config — users shouldn't have to set baseUrl for these.
+	stockProviders := map[string]bool{
+		"anthropic": true,
+		"openai":    true,
+		"google":    true,
+		"groq":      true,
+	}
+
+	for _, p := range sum.Providers {
+		if !stockProviders[p.ID] && p.BaseURL == "" {
+			out = append(out,
+				fmt.Sprintf(
+					"Provider %q has no baseUrl. For non-default providers (Z.ai/GLM, OpenRouter, custom Ollama, etc.) opencode needs a base URL — set it in the provider card.",
+					p.ID,
+				),
+			)
+		}
+	}
+
+	check := func(label, model string) {
+		if model == "" {
+			return
+		}
+		// Models are written as "<providerId>/<model>".
+		parts := strings.SplitN(model, "/", 2)
+		if len(parts) < 2 {
+			return
+		}
+		providerID := parts[0]
+		if !provIDs[providerID] && !stockProviders[providerID] {
+			out = append(out,
+				fmt.Sprintf(
+					"%s model %q references provider %q which is not in providers[]. Add it (with apiKey + baseUrl) or change the model.",
+					label, model, providerID,
+				),
+			)
+		}
+	}
+	check("default", sum.Model)
+	check("build", sum.BuildModel)
+	check("plan", sum.PlanModel)
+	check("small", sum.SmallModel)
+	for _, a := range sum.Agents {
+		if a.IsBuiltin {
+			continue
+		}
+		check(fmt.Sprintf("agent %q", a.Name), a.Model)
+	}
+
+	return out
 }
 
 func openCodeAgentModel(cfg map[string]any, agentName string) string {

@@ -134,6 +134,37 @@ export default function VibeCodingView({
   const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
   // Currently-playing clip id; opens a fullscreen <video> overlay.
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
+  // OpenCode agents discovered via /runner/opencode/config — used to
+  // populate the agent dropdown below. Includes built-ins (build,
+  // plan) plus any custom agents the user has defined under
+  // `agent.<name>` in their opencode.json. Re-fetched whenever the
+  // connected device changes so a phone driving a Mac mini sees that
+  // mac mini's local agents.
+  const [opencodeAgents, setOpencodeAgents] = useState<Array<{ name: string; model?: string; isBuiltin?: boolean }>>([]);
+
+  useEffect(() => {
+    // `connected` is declared further down; recompute it locally so this
+    // effect can run before its top-level binding without TS hoisting
+    // issues. Same expression as the const at line 216.
+    const isConnected = connState === "connected" && !!connectedDevice;
+    if (selectedRunner !== "opencode" || !isConnected) {
+      setOpencodeAgents([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cfg = await agentClient.openCodeConfig(connectedDevice?.id);
+        if (cancelled) return;
+        setOpencodeAgents((cfg?.agents || []) as any);
+      } catch {
+        // Silently fall back to hardcoded build/plan; the dropdown
+        // below tolerates an empty agents list and shows the stock
+        // entries inline.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedRunner, connState, connectedDevice?.id]);
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [deployTargets, setDeployTargets] = useState<Array<{ id: string; name: string }>>([]);
@@ -1009,27 +1040,48 @@ export default function VibeCodingView({
                     OpenCode Agent
                   </label>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {[
-                      { id: "", label: "Default" },
-                      { id: "build", label: "Build" },
-                      { id: "plan", label: "Plan" },
-                    ].map((mode) => (
-                      <button
-                        key={mode.id || "default"}
-                        onClick={() => setSelectedMode(mode.id)}
-                        className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
-                          selectedMode === mode.id
-                            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
-                            : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
-                        }`}
-                        title={mode.id ? `Run with --agent ${mode.id}` : "Use defaultAgent from opencode.json"}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
+                    {/* Default + every agent from opencode.json. The
+                        agents[] array surfaces both stock (build, plan)
+                        and custom (review, research, etc.) entries.
+                        Falls back to hardcoded build/plan when the
+                        config isn't reachable so the picker is never
+                        empty. */}
+                    {([{ name: "", isBuiltin: true } as { name: string; model?: string; isBuiltin?: boolean }]
+                      .concat(
+                        opencodeAgents.length > 0
+                          ? opencodeAgents
+                          : [
+                              { name: "build", isBuiltin: true },
+                              { name: "plan", isBuiltin: true },
+                            ],
+                      )
+                    ).map((agent) => {
+                      const id = agent.name;
+                      const label = id === "" ? "Default" : id.charAt(0).toUpperCase() + id.slice(1);
+                      const tooltip = id === ""
+                        ? "Use defaultAgent from opencode.json"
+                        : agent.model
+                          ? `Run with --agent ${id} (${agent.model})`
+                          : `Run with --agent ${id}`;
+                      return (
+                        <button
+                          key={id || "default"}
+                          onClick={() => setSelectedMode(id)}
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                            selectedMode === id
+                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                              : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
+                          } ${!agent.isBuiltin && id !== "" ? "italic" : ""}`}
+                          title={tooltip}
+                        >
+                          {label}
+                          {agent.model ? <span className="ml-1.5 text-[10px] text-surface-500">({agent.model.split("/").pop()})</span> : null}
+                        </button>
+                      );
+                    })}
                   </div>
                   <p className="mt-1 text-[10px] text-surface-500">
-                    Build for code edits · Plan for architecture / dry runs · custom agents read from your <span className="font-mono">opencode.json</span>.
+                    Build for code edits · Plan for architecture / dry runs · italic = custom agents from your <span className="font-mono">opencode.json</span>.
                   </p>
                 </>
               ) : null}
