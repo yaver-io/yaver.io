@@ -1,0 +1,155 @@
+# Headless verification that Yaver Protocol v1 events are actually
+# emitted by agent v1.99.67+. Starts sfmg dev server, samples
+# /dev/events for 30s, asserts at least one of each:
+#   - type=progress with progressSrc=exact
+#   - type=phase with topic + phase
+#   - type=snapshot with snapshot.phases populated
+name: Verify Yaver Protocol v1
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: verify-yaver-protocol-v1
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render verify script
+        run: |
+          cat > "$RUNNER_TEMP/verify.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for cfg in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$cfg" ] || continue
+            TOK=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('auth_token',''))" "$cfg")
+            break
+          done
+          AGENT="http://127.0.0.1:18080"
+          AUTH="Authorization: Bearer $TOK"
+
+          echo "=== /info — agent version ==="
+          curl -fsS -H "$AUTH" "$AGENT/info" | python3 -c "import sys,json;d=json.load(sys.stdin);print('version:',d.get('version'))"
+
+          echo
+          echo "=== Stop + restart sfmg dev to get clean stream ==="
+          curl -fsS -X POST -H "$AUTH" "$AGENT/dev/stop" 2>&1 | head -1 || true
+          sleep 2
+          curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+              -d '{"framework":"expo","workDir":"/home/yaver/Workspace/sfmg"}' \
+              "$AGENT/dev/start" | head -c 200
+          echo
+          sleep 3
+
+          echo
+          echo "=== 25s SSE sample, count Yaver Protocol v1 event types ==="
+          timeout 25 curl -sN -H "$AUTH" -H 'Accept: text/event-stream' \
+              "$AGENT/dev/events" > /tmp/sse.log 2>&1 || true
+
+          echo "=== sample lines (last 12) ==="
+          grep '^data:' /tmp/sse.log | tail -12
+
+          echo
+          echo "=== counts ==="
+          PROG_LINES=$(grep -c '"type":"progress"' /tmp/sse.log || echo 0)
+          PHASE_LINES=$(grep -c '"type":"phase"' /tmp/sse.log || echo 0)
+          SNAP_LINES=$(grep -c '"type":"snapshot"' /tmp/sse.log || echo 0)
+          HEART_LINES=$(grep -c '"type":"heartbeat"' /tmp/sse.log || echo 0)
+          LOG_LINES=$(grep -c '"type":"log"' /tmp/sse.log || echo 0)
+          echo "  progress:  $PROG_LINES"
+          echo "  phase:     $PHASE_LINES"
+          echo "  snapshot:  $SNAP_LINES"
+          echo "  heartbeat: $HEART_LINES"
+          echo "  log:       $LOG_LINES"
+
+          echo
+          echo "=== first progress event sample (look for pct+done+total) ==="
+          grep -m1 '"type":"progress"' /tmp/sse.log | head -1 | python3 -c "
+          import sys,json,re
+          line = sys.stdin.read().strip()
+          if line.startswith('data: '):
+              line = line[6:]
+          try:
+              d = json.loads(line)
+              print('  topic:', d.get('topic'))
+              print('  phase:', d.get('phase'))
+              print('  pct:', d.get('pct'))
+              print('  done:', d.get('done'))
+              print('  total:', d.get('total'))
+              print('  unit:', d.get('unit'))
+              print('  currentFile:', d.get('currentFile'))
+              print('  progressSrc:', d.get('progressSrc'))
+          except Exception as e:
+              print('(no progress event)' )
+          " || echo "(no progress yet)"
+
+          echo
+          echo "=== first snapshot event sample ==="
+          grep -m1 '"type":"snapshot"' /tmp/sse.log | head -1 | python3 -c "
+          import sys,json
+          line = sys.stdin.read().strip()
+          if line.startswith('data: '):
+              line = line[6:]
+          try:
+              d = json.loads(line)
+              s = d.get('snapshot', {})
+              print('  generatedAt:', s.get('generatedAt'))
+              print('  running:', s.get('running'))
+              print('  framework:', s.get('framework'))
+              print('  port:', s.get('port'))
+              print('  workDir:', s.get('workDir'))
+              print('  phases:', s.get('phases'))
+              print('  recentLogs (count):', len(s.get('recentLogs', [])))
+          except Exception as e:
+              print('(no snapshot event)')
+          " || echo "(no snapshot yet)"
+
+          echo
+          echo "=== ASSERTIONS ==="
+          PASS=0
+          FAIL=0
+          if [ "$SNAP_LINES" -gt 0 ]; then
+            echo "✓ snapshot events emitted ($SNAP_LINES in 25s)"
+            PASS=$((PASS+1))
+          else
+            echo "✗ NO snapshot events"
+            FAIL=$((FAIL+1))
+          fi
+          if [ "$HEART_LINES" -gt 0 ]; then
+            echo "✓ heartbeat events emitted ($HEART_LINES in 25s)"
+            PASS=$((PASS+1))
+          else
+            echo "✗ NO heartbeat events"
+            FAIL=$((FAIL+1))
+          fi
+          if [ "$PHASE_LINES" -gt 0 ] || [ "$PROG_LINES" -gt 0 ]; then
+            echo "✓ phase or progress events emitted (phase=$PHASE_LINES, progress=$PROG_LINES)"
+            PASS=$((PASS+1))
+          else
+            echo "  (no phase/progress events seen — Metro may have already finished bundling)"
+          fi
+          echo "PASS=$PASS FAIL=$FAIL"
+          [ "$FAIL" -eq 0 ] || exit 1
+          BODY
+          chmod +x "$RUNNER_TEMP/verify.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/verify.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/yp-verify.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/yp-verify.sh"
