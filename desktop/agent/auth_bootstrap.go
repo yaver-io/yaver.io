@@ -269,20 +269,33 @@ func runBootstrapServe(httpPort int) {
 		}
 	}()
 
-	// Relay tunnel: if the agent was previously authed and has
-	// relay credentials + a device ID in config.json, bring up
-	// the relay tunnel now — even without an auth token. This
-	// makes the bootstrap agent reachable from OUTSIDE the LAN
-	// (over the relay, Tailscale, etc.) so the phone can push
-	// a token remotely without SSH access.
+	// Relay tunnel: in bootstrap mode the agent should still be
+	// reachable from off-LAN so the dashboard / mobile app can
+	// pair it without anyone SSH'ing the box. The relay only
+	// validates the password — it does NOT call Convex on the
+	// register path — so a token-less agent can register a tunnel
+	// as long as it has the relay password + a device_id.
 	//
-	// The relay only validates the password, not the auth token.
-	// We send a placeholder token ("bootstrap-pending") since
-	// the relay requires a non-empty string but doesn't call
-	// Convex to validate it.
+	// device_id: persisted on first authed `yaver auth`. Factory-
+	// reset wipes it. Without one we can't register a tunnel
+	// (relay routes by deviceId). Fix: if config has no
+	// device_id but DOES have relay creds, mint a fresh UUID and
+	// save it before opening the tunnel. Pairing will overwrite
+	// it later if Convex assigns a different one — that's fine,
+	// the bootstrap window is short.
 	relayCtx, relayCancel := context.WithCancel(context.Background())
 	defer relayCancel()
-	if cfg, loadErr := LoadConfig(); loadErr == nil && cfg != nil && cfg.DeviceID != "" {
+	if cfg, loadErr := LoadConfig(); loadErr == nil && cfg != nil {
+		// Auto-mint a device_id when missing so a freshly-reset box
+		// can still come up reachable on the relay.
+		if cfg.DeviceID == "" {
+			cfg.DeviceID = uuid.New().String()
+			if saveErr := SaveConfig(cfg); saveErr != nil {
+				log.Printf("[BOOTSTRAP-RELAY] could not persist new device_id: %v (continuing with in-memory id)", saveErr)
+			} else {
+				log.Printf("[BOOTSTRAP-RELAY] minted fresh device_id %s for bootstrap-mode tunnel", cfg.DeviceID[:8])
+			}
+		}
 		agentAddr := fmt.Sprintf("127.0.0.1:%d", httpPort)
 		relayCfg := cfg.RelayServers
 		globalPw := cfg.RelayPassword
