@@ -127,11 +127,23 @@ async function proxyRelay(
 const PATH_REBASE_SCRIPT = `<script>(function(){try{var p=location.pathname;var m=p.match(/^\\/d\\/[^/]+\\/dev(\\/.*)?$/);if(m){var rest=m[1]||'/';history.replaceState(null,'',rest+location.search+location.hash);}}catch(e){}})();</script>`;
 
 function rewritePreviewBody(body: string, contentType: string, deviceId: string): string {
-  const prefix = `/d/${encodeURIComponent(deviceId)}/dev`;
+  const dPrefix = `/d/${encodeURIComponent(deviceId)}`;
+  // Path-aware prefix: if the URL's path already starts with `dev/`
+  // (the agent's static-bundle case, e.g. `<base href="/dev/web-bundle/">`),
+  // we only need to prepend `/d/<id>/`. Otherwise — the legacy
+  // live-Metro case where index.html has root-absolute paths like
+  // `src="/foo.js"` — we prepend `/d/<id>/dev/`. Without this
+  // discrimination the static-bundle case ends up with a doubled
+  // `/dev/dev/...` prefix that hits the agent's `/dev/` reverse-proxy
+  // catchall and returns 503.
+  const rewritePath = (path: string) =>
+    path.startsWith("dev/") || path === "dev"
+      ? `${dPrefix}/${path}`
+      : `${dPrefix}/dev/${path}`;
   if (/text\/html/i.test(contentType)) {
     let out = body.replace(
       /\b(src|href|action)=([\"'])\/(?!\/)([^\"']*)\2/gi,
-      (_match, attr, quote, path) => `${attr}=${quote}${prefix}/${path}${quote}`,
+      (_match, attr, quote, path) => `${attr}=${quote}${rewritePath(path)}${quote}`,
     );
     // Inject the path-rebase script right after <head ...> so it
     // executes before any framework bootstrap that reads
@@ -146,7 +158,7 @@ function rewritePreviewBody(body: string, contentType: string, deviceId: string)
   }
   if (/text\/css/i.test(contentType)) {
     return body.replace(/url\((['"]?)\/(?!\/)([^)'"]*)\1\)/gi, (_match, quote, path) => {
-      return `url(${quote}${prefix}/${path}${quote})`;
+      return `url(${quote}${rewritePath(path)}${quote})`;
     });
   }
   return body;
