@@ -129,9 +129,25 @@ jobs:
                   sys.exit(1)
               time.sleep(2)
 
-              # Click Web App toggle
+              # Wait for the WebviewView to mount + render its toggle
+              for i in range(15):
+                  try:
+                      web_app_btn = driver.find_element(By.XPATH, "//button[normalize-space()='Web App']")
+                      print(f"[selenium] +{i}s — Web App button visible")
+                      break
+                  except Exception:
+                      pass
+                  time.sleep(1)
+              else:
+                  driver.save_screenshot("/tmp/error.png")
+                  with open("/tmp/page-source.html", "w") as f:
+                      f.write(driver.page_source)
+                  body_text = driver.find_element(By.TAG_NAME, "body").text
+                  print("[selenium] FAIL — Web App button never appeared")
+                  print(f"[selenium] body snippet: {body_text[:1500]}")
+                  sys.exit(1)
+
               try:
-                  web_app_btn = driver.find_element(By.XPATH, "//button[normalize-space()='Web App']")
                   driver.execute_script("arguments[0].scrollIntoView({block:'center'});", web_app_btn)
                   driver.execute_script("arguments[0].click();", web_app_btn)
                   print("[selenium] clicked Web App toggle")
