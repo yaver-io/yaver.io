@@ -1481,54 +1481,87 @@ function EmptyPhoneState({
     return [preferred, ...projects.filter((project) => project.path !== preferredProjectPath)];
   }, [preferredProjectPath, projects]);
 
+  // Three distinct empty states. The previous implementation
+  // collapsed all of them into one generic "No projects" message,
+  // which was misleading when the agent was actually in bootstrap
+  // mode (projects request 401'd) or still scanning. Each state
+  // gets its own card so the user knows exactly what to do next.
+  const isScanning = projectsAll === null;
+  const hasNoProjects = !isScanning && projects.length === 0;
+
   return (
-    <div className="w-full h-full flex flex-col gap-3 bg-surface-950 text-surface-400 p-4 overflow-auto">
-      <div className="text-center mt-2">
-        <div className="text-3xl opacity-30">📱</div>
-        <div className="mt-1 text-xs font-medium text-surface-300">Mobile App</div>
-        <div className="text-[10px] text-surface-600">
-          Start a dev server to preview it live in this phone frame.
+    <div className="w-full h-full flex flex-col gap-2 bg-surface-950 p-4 overflow-auto">
+      <div className="rounded-lg border border-surface-800/70 bg-surface-900/40 p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-800/60 text-base">
+            📱
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-surface-100">Mobile App preview</div>
+            <div className="text-[11px] text-surface-500 mt-0.5">
+              Pick a project below — Yaver starts Metro/Expo and renders it in the phone frame on the right with hot-reload + heartbeat.
+            </div>
+          </div>
         </div>
       </div>
+
       {startError ? (
-        <div className="rounded border border-red-500/30 bg-red-500/5 px-2 py-1 text-[10px] text-red-300">
+        <div className="rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-300">
           {startError}
         </div>
       ) : null}
-      {projectsAll === null ? (
-        <div className="text-center text-[10px] text-surface-600">Scanning projects…</div>
-      ) : projects.length === 0 ? (
-        <div className="text-center text-[10px] text-surface-600 px-4">
-          No RN / Expo / Flutter / Next.js / Vite projects detected on this machine.
-          <br />
-          Start one manually from a shell with <code className="rounded bg-surface-900 px-1">yaver dev start</code>.
+
+      {isScanning ? (
+        <div className="rounded-md border border-surface-800/70 bg-surface-900/40 px-3 py-3 text-center">
+          <div className="inline-flex items-center gap-2 text-[11px] text-surface-400">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-400" />
+            Scanning the agent's workspace for RN / Expo / Flutter / Vite projects…
+          </div>
+        </div>
+      ) : hasNoProjects ? (
+        <div className="rounded-md border border-amber-500/25 bg-amber-500/5 px-3 py-3 text-[11px] text-amber-200/90 leading-relaxed">
+          <div className="font-semibold text-amber-200">No projects visible yet.</div>
+          <div className="mt-1 text-amber-200/70">
+            The agent didn't return any RN / Expo / Flutter / Next.js / Vite project. Common reasons:
+          </div>
+          <ul className="mt-1.5 list-disc pl-4 text-amber-200/80 space-y-0.5">
+            <li>The device isn't paired yet (sidebar may show "needs auth"). Pair it first.</li>
+            <li>The agent's <code className="rounded bg-surface-900 px-1 text-amber-100">workDir</code> doesn't include a recognised mobile/web project.</li>
+            <li>Start one manually with <code className="rounded bg-surface-900 px-1 text-amber-100">yaver dev start</code> from a shell on the device.</li>
+          </ul>
         </div>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          {orderedProjects.slice(0, 6).map((p) => (
-            <button
-              key={p.path}
-              onClick={() => onStart(p)}
-              disabled={startingPath === p.path}
-              className={`flex items-center gap-2 rounded border px-2 py-1.5 text-left transition-colors ${
-                startingPath === p.path
-                  ? "cursor-wait border-amber-500/30 bg-amber-500/5 text-amber-200"
-                  : p.path === preferredProjectPath
-                    ? "border-emerald-500/30 bg-emerald-500/5"
-                    : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/30 hover:bg-emerald-500/5"
-              }`}
-            >
-              <span className="text-sm">{frameworkIcon(p.framework)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[11px] font-medium text-surface-200">{p.name}</div>
-                <div className="truncate text-[9px] text-surface-600 font-mono">{p.path}</div>
-              </div>
-              <span className="shrink-0 text-[9px] uppercase tracking-wider text-surface-500">
-                {startingPath === p.path ? "starting…" : "start"}
-              </span>
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-surface-500 mt-1 mb-0.5">
+            <span>Pick a project · {projects.length}</span>
+            {preferredProjectPath ? <span className="text-emerald-400/70">★ default</span> : null}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {orderedProjects.slice(0, 6).map((p) => (
+              <button
+                key={p.path}
+                onClick={() => onStart(p)}
+                disabled={startingPath === p.path}
+                className={`flex items-center gap-2.5 rounded-md border px-2.5 py-2 text-left transition-all ${
+                  startingPath === p.path
+                    ? "cursor-wait border-amber-500/40 bg-amber-500/10 text-amber-200"
+                    : p.path === preferredProjectPath
+                      ? "border-emerald-500/35 bg-emerald-500/10 hover:border-emerald-400/50"
+                      : "border-surface-800 bg-surface-900/60 hover:border-emerald-500/40 hover:bg-emerald-500/5"
+                }`}
+              >
+                <span className="text-base shrink-0">{frameworkIcon(p.framework)}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-medium text-surface-200">{p.name}</div>
+                  <div className="truncate text-[10px] text-surface-600 font-mono">{p.path}</div>
+                </div>
+                <span className="shrink-0 rounded border border-surface-700 bg-surface-950/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-surface-300">
+                  {startingPath === p.path ? "starting…" : "▶ start"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
