@@ -44,7 +44,7 @@ jobs:
               "root@$HETZNER_TEST_SERVER_IP" \
               "for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do [ -f \$c ] && python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(\"auth_token\",\"\"));print(d.get(\"device_id\",\"\"))' \$c && break; done")
           TOKEN=$(echo "$OUT" | sed -n '1p')
-          DID=$(echo "$OUT" | sed -n '3p' || echo "$OUT" | sed -n '2p')
+          DID=$(echo "$OUT" | sed -n '2p')
           echo "::add-mask::$TOKEN"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "DID=$DID" >> "$GITHUB_ENV"
@@ -84,30 +84,63 @@ jobs:
               print(f"[selenium] injected token (len={len(TOKEN)}) + device {DID}")
 
               driver.get(BASE + "/dashboard")
-              # Wait for any app shell selector
               wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "body")))
               print(f"[selenium] dashboard loaded — title: {driver.title}")
-              time.sleep(3)
 
-              # Click Webview tab
-              try:
-                  webview_tab = driver.find_element(By.XPATH, "//*[contains(text(),'Webview') or contains(text(), '📱')]")
-                  webview_tab.click()
-                  print("[selenium] clicked Webview tab")
-                  time.sleep(2)
-              except Exception as e:
-                  print(f"[selenium] webview tab click failed: {e}")
-                  # Continue — might already be on it
+              # Wait for the dashboard SPA to fully bootstrap (auth probe,
+              # device list, agent connection — visible Devices tab implies
+              # the rest is hydrated).
+              for i in range(30):
+                  body_text = driver.find_element(By.TAG_NAME, "body").text
+                  if "Webview" in body_text and "Devices" in body_text:
+                      print(f"[selenium] +{i}s — dashboard hydrated")
+                      break
+                  time.sleep(1)
+              else:
+                  driver.save_screenshot("/tmp/error.png")
+                  with open("/tmp/page-source.html", "w") as f:
+                      f.write(driver.page_source)
+                  print("[selenium] FAIL — dashboard never showed Webview tab (likely auth issue)")
+                  print(f"[selenium] body text snippet: {body_text[:500]}")
+                  sys.exit(1)
+
+              # Click Webview tab — use multiple strategies because the
+              # exact element type varies across builds (button vs anchor
+              # vs div with onclick).
+              clicked = False
+              for sel in [
+                  "//button[contains(., 'Webview')]",
+                  "//a[contains(., 'Webview')]",
+                  "//div[@role='button' and contains(., 'Webview')]",
+                  "//*[contains(@class,'sidebar') or contains(@class,'nav')]//*[contains(text(),'Webview')]",
+              ]:
+                  try:
+                      el = driver.find_element(By.XPATH, sel)
+                      driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                      driver.execute_script("arguments[0].click();", el)
+                      print(f"[selenium] clicked Webview via xpath: {sel}")
+                      clicked = True
+                      break
+                  except Exception:
+                      continue
+              if not clicked:
+                  driver.save_screenshot("/tmp/error.png")
+                  print("[selenium] FAIL — couldn't click Webview tab")
+                  sys.exit(1)
+              time.sleep(2)
 
               # Click Web App toggle
               try:
                   web_app_btn = driver.find_element(By.XPATH, "//button[normalize-space()='Web App']")
-                  web_app_btn.click()
+                  driver.execute_script("arguments[0].scrollIntoView({block:'center'});", web_app_btn)
+                  driver.execute_script("arguments[0].click();", web_app_btn)
                   print("[selenium] clicked Web App toggle")
-                  time.sleep(2)
+                  time.sleep(3)
               except Exception as e:
-                  print(f"[selenium] Web App click failed: {e}")
                   driver.save_screenshot("/tmp/error.png")
+                  with open("/tmp/page-source.html", "w") as f:
+                      f.write(driver.page_source)
+                  print(f"[selenium] FAIL — Web App click failed: {e}")
                   sys.exit(1)
 
               # Now wait up to 60s for the bundling progress UI OR for the iframe
