@@ -4001,6 +4001,72 @@ export class AgentClient {
     } catch { return 0; }
   }
 
+  // ── Monorepo detection ─────────────────────────────────────────────
+
+  /** Classify the framework composition of a directory on the connected agent.
+   *  Mirrors the mobile QuicClient.detectMonorepo / agent's DetectMonorepo. */
+  async detectMonorepo(dir?: string, maxDepth?: number): Promise<{
+    root: string;
+    gitBranch?: string;
+    gitRemote?: string;
+    projects: Array<{
+      name: string;
+      path: string;
+      relPath: string;
+      framework: string;
+      tags?: string[];
+      hasTests: boolean;
+      hasGit: boolean;
+      manifest?: string;
+    }>;
+    isMonorepo: boolean;
+    hasManifest: boolean;
+    frameworks: string[];
+  }> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (dir) params.set('dir', dir);
+    if (maxDepth) params.set('maxDepth', String(maxDepth));
+    const qs = params.toString();
+    const res = await fetch(`${this.baseUrl}/projects/monorepo${qs ? '?' + qs : ''}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) {
+      let msg = `Monorepo detect failed: ${res.status}`;
+      try { const err = await res.json(); if (err?.error) msg = err.error; } catch { /* keep status */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
+  /** Trigger a native build (iosNative / androidNative / flutter) on the connected agent.
+   *  Mirrors the mobile QuicClient.startNativeBuild. */
+  async startNativeBuild(
+    platform: 'iosNative' | 'androidNative' | 'flutter',
+    target: 'device' | 'simulator' | 'testflight' | 'playstore' | 'local' | 'apk' | 'aab' | 'ipa' = 'device',
+    workDir?: string,
+    extras?: { scheme?: string; flavor?: string; installOnDevice?: boolean; args?: string[] },
+  ): Promise<{ id: string; platform: string; status: string; command?: string; workDir?: string }> {
+    this.assertConnected();
+    const args: string[] = [];
+    if (platform === 'iosNative' && extras?.scheme) args.push(extras.scheme);
+    if (platform === 'androidNative' && extras?.flavor) args.push(extras.flavor);
+    if (extras?.args?.length) args.push(...extras.args);
+    const installOnDevice = extras?.installOnDevice ?? (target === 'device' || target === 'simulator');
+
+    const res = await fetch(`${this.baseUrl}/builds`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, target, workDir: workDir || '', args, installOnDevice }),
+    });
+    if (!res.ok) {
+      let msg = `Native build failed: ${res.status}`;
+      try { const err = await res.json(); if (err?.error) msg = err.error; } catch { /* keep status */ }
+      throw new Error(msg);
+    }
+    return res.json();
+  }
+
   // ── Builds ────────────────────────────────────────────────────────
 
   async listBuilds(): Promise<{ id: string; platform: string; status: string; startedAt?: number; artifactName?: string }[]> {

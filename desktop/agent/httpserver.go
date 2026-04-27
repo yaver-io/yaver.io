@@ -682,6 +682,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/mobile", s.auth(s.handleMobileProjects))
 	mux.HandleFunc("/projects/web", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/projects/all", s.auth(s.handleProjectsByCapability))
+	// Monorepo detection — desktop/agent/monorepo_detect.go
+	mux.HandleFunc("/projects/monorepo", s.auth(s.handleMonorepoDetect))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 	mux.HandleFunc("/publish/config", s.auth(s.handlePublishConfig))
@@ -13780,6 +13782,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		// Native build & deploy — iosNative / androidNative / flutter (mcp_native_build.go)
 		if handled, result := dispatchNativeBuildMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
+		// Monorepo detection — mcp_monorepo.go
+		if handled, result := dispatchMonorepoMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)

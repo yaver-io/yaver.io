@@ -2926,6 +2926,46 @@ export class QuicClient {
     }
   }
 
+  // ── Monorepo detection ─────────────────────────────────────────────
+
+  /** Classify the framework composition of a directory on the connected agent.
+   *  Returns the same Monorepo shape the agent's DetectMonorepo emits — list of
+   *  DetectedProject with framework (flutter | expo | react-native | next | vite |
+   *  unity | iosNative | androidNative | swift-package | gradle-jvm) plus tags.
+   *  When `dir` is omitted, classifies the agent's current work directory. */
+  async detectMonorepo(dir?: string, maxDepth?: number): Promise<{
+    root: string;
+    gitBranch?: string;
+    gitRemote?: string;
+    projects: Array<{
+      name: string;
+      path: string;
+      relPath: string;
+      framework: string;
+      tags?: string[];
+      hasTests: boolean;
+      hasGit: boolean;
+      manifest?: string;
+    }>;
+    isMonorepo: boolean;
+    hasManifest: boolean;
+    frameworks: string[];
+  }> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (dir) params.set('dir', dir);
+    if (maxDepth) params.set('maxDepth', String(maxDepth));
+    const qs = params.toString();
+    const url = `${this.baseUrl}/projects/monorepo${qs ? '?' + qs : ''}`;
+    const resp = await this.fetchWithTimeout(url, { headers: this.authHeaders }, 15_000);
+    if (!resp.ok) {
+      let msg = `Monorepo detect failed: ${resp.status}`;
+      try { const err = await resp.json(); if (err?.error) msg = err.error; } catch { /* keep status */ }
+      throw new Error(msg);
+    }
+    return resp.json();
+  }
+
   // ── Builds ────────────────────────────────────────────────────────
 
   /** List all builds on the connected agent. */

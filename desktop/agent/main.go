@@ -421,6 +421,8 @@ func main() {
 		runUI(os.Args[2:])
 	case "phone":
 		runPhone(os.Args[2:])
+	case "monorepo":
+		runMonorepo(os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	case "version", "--version", "-v":

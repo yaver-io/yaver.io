@@ -74,6 +74,11 @@ func runCodeControl(args []string) (bool, error) {
 		return true, runCodeDevControl(args[1:])
 	case "deploy":
 		return true, runCodeDeployControl(args[1:])
+	case "monorepo":
+		runMonorepo(args[1:])
+		return true, nil
+	case "native":
+		return true, runCodeNativeControl(args[1:])
 	case "status":
 		return true, runCodeStatus()
 	case "help":
@@ -81,6 +86,29 @@ func runCodeControl(args []string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// runCodeNativeControl handles `/native ios` / `/native android` / `/native flutter`
+// from the yaver code slash palette by routing to the matching native build entrypoints.
+func runCodeNativeControl(args []string) error {
+	if len(args) == 0 {
+		fmt.Println("Usage:")
+		fmt.Println("  /native ios       [project-dir] [--target=...]")
+		fmt.Println("  /native android   [project-dir] [--target=...]")
+		fmt.Println("  /native flutter   [project-dir] [--target=...]")
+		return nil
+	}
+	switch args[0] {
+	case "ios", "iosNative", "ios-native":
+		runNativeIOS(args[1:])
+	case "android", "androidNative", "android-native":
+		runNativeAndroid(args[1:])
+	case "flutter":
+		runNativeFlutter(args[1:])
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown native target %q (use ios | android | flutter)\n", args[0])
+	}
+	return nil
 }
 
 func parseInteractiveCodeArgs(line string) ([]string, bool) {
@@ -95,7 +123,7 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 		fields[0] = strings.TrimPrefix(fields[0], "/")
 	}
 	switch fields[0] {
-	case "attach", "detach", "auth", "continue", "fork", "sessions", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help":
+	case "attach", "detach", "auth", "continue", "fork", "sessions", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help", "monorepo", "native":
 		return fields, true
 	default:
 		return nil, false
@@ -118,6 +146,11 @@ func slashMenuOptions(attached bool) []string {
 		"/get repo",
 		"/repo list",
 		"/repo refresh",
+		"/monorepo",
+		"/monorepo .",
+		"/native ios",
+		"/native android",
+		"/native flutter",
 		"/dev status",
 		"/dev reload",
 		"/status",

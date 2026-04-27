@@ -3872,6 +3872,9 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// Native build & deploy (iosNative / androidNative / flutter) — native_build.go
 	tools = append(tools, nativeBuildMCPTools()...)
 
+	// Monorepo detection — desktop/agent/monorepo_detect.go
+	tools = append(tools, monorepoMCPTools()...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}
