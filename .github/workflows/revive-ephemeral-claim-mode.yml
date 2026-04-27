@@ -1,0 +1,150 @@
+# Bring yaver-test-ephemeral back from a stranded factory-reset
+# state into "claim mode" — daemon running, relay tunnel up,
+# /auth/pair/* reachable from the dashboard. After this fires,
+# the user clicks AUTH in the web UI to pair the box back to
+# their account. No SSH needed for the actual claim.
+#
+# Why this exists: the pre-1.99.58 factory-reset wiped the entire
+# ~/.yaver/config.json (including relay_password + relay_servers)
+# and re-launched the daemon as `yaver auth` (interactive). On a
+# headless box that left it permanently invisible to the
+# dashboard. v1.99.58 fixes the source so future resets don't
+# strand the box; this workflow heals the box that's already in
+# the bad state.
+#
+# Idempotent: if the box is already in claim mode (daemon running,
+# tunnel up, no auth_token), this is a no-op + a status print.
+
+name: Revive Ephemeral (claim mode)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: revive-ephemeral-claim-mode
+  cancel-in-progress: true
+
+jobs:
+  revive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Restore claim-mode config + start daemon
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          # Stop whatever's running so we know the state we're starting from.
+          systemctl --user --machine=yaver@ stop yaver 2>/dev/null || \
+            sudo -u yaver systemctl --user stop yaver 2>/dev/null || true
+          loginctl enable-linger yaver 2>/dev/null || true
+          pkill -u yaver -f 'yaver serve' 2>/dev/null || true
+          pkill -u yaver -f 'yaver auth'  2>/dev/null || true
+          sleep 1
+
+          # Pull the shared relay password off the live yaver-relay
+          # systemd unit so the agent registers with the same secret
+          # the relay validates against. The unit's --password flag
+          # carries it; same trick the deploy-binary workflow uses.
+          RELAY_PW=$(awk -F'--password ' '/--password/ {print $2}' /etc/systemd/system/yaver-relay.service | awk '{print $1}')
+          if [ -z "$RELAY_PW" ]; then
+            echo "::error::could not read relay password from yaver-relay unit"; exit 2
+          fi
+
+          # Keep ConvexSiteURL pointing at prod (mirrors what the
+          # rest of the fleet uses).
+          CONVEX_URL="https://perceptive-minnow-557.eu-west-1.convex.site"
+
+          # Make sure the yaver user + .yaver dir exist.
+          id yaver >/dev/null 2>&1 || useradd -m yaver
+          install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
+
+          # Write a minimal claim-mode config: relay creds + Convex
+          # URL only. NO auth_token, NO device_id (agent generates
+          # a fresh one on first start). RelayServers list mirrors
+          # what platformConfig publishes; we hardcode public-free
+          # here so the box can register without a sign-in round-
+          # trip first.
+          python3 - <<PY
+          import json, os
+          cfg = {
+            "convex_site_url": "$CONVEX_URL",
+            "relay_servers": [
+              {
+                "id": "public-free",
+                "http_url": "https://public.yaver.io",
+                "quic_addr": "public.yaver.io:4433",
+                "priority": 0,
+                "password": "$RELAY_PW",
+              }
+            ],
+            "relay_password": "$RELAY_PW",
+          }
+          os.makedirs("/home/yaver/.yaver", exist_ok=True)
+          with open("/home/yaver/.yaver/config.json", "w") as f:
+            json.dump(cfg, f, indent=2)
+          os.chmod("/home/yaver/.yaver/config.json", 0o600)
+          PY
+          chown yaver:yaver /home/yaver/.yaver/config.json
+          echo "Wrote claim-mode config:"
+          cat /home/yaver/.yaver/config.json
+
+          # Start `yaver serve` as the yaver user. Daemonize so SSH
+          # exiting doesn't kill it. systemctl --user is the right
+          # path but lingers don't always cooperate on this box, so
+          # nohup is the dependable fallback.
+          sudo -u yaver bash -lc '
+            cd /home/yaver
+            nohup /usr/local/bin/yaver serve >/home/yaver/.yaver/agent.log 2>&1 &
+            disown
+          '
+          sleep 3
+
+          # Confirm the agent is running + heartbeat'd to the relay.
+          if ! pgrep -u yaver -f 'yaver serve' >/dev/null; then
+            echo "::error::yaver serve did not start; agent.log tail:"
+            tail -50 /home/yaver/.yaver/agent.log || true
+            exit 2
+          fi
+          echo "✓ yaver serve running (pid $(pgrep -u yaver -f 'yaver serve'))"
+
+          echo
+          echo "=== first 20 log lines ==="
+          tail -20 /home/yaver/.yaver/agent.log || true
+
+          echo
+          echo "=== /health (local) ==="
+          curl -sf http://127.0.0.1:18080/health | head -c 300 || echo "(no local health yet)"
+          REMOTE
+
+      - name: Probe via public.yaver.io until tunnel up (~90s budget)
+        run: |
+          echo "Waiting for relay to register tunnel from the revived agent..."
+          for i in $(seq 1 18); do
+            sleep 5
+            R=$(curl -fsS "https://public.yaver.io/health" 2>/dev/null || echo "")
+            COUNT=$(echo "$R" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("activeDevices",0))' 2>/dev/null || echo 0)
+            echo "  attempt $i: relay activeDevices=$COUNT"
+            if [ "$COUNT" -gt 0 ]; then
+              echo "✓ relay sees the agent. Probing the device endpoint…"
+              curl -fsS "https://public.yaver.io/d/fc30be6e-f87a-4e52-b340-fbad1ba1800e/health?__rp=afe47cbe5207aa99b721052bf264d96f" || true
+              echo
+              echo
+              echo "Box is in CLAIM MODE. Click AUTH in the dashboard to re-pair."
+              exit 0
+            fi
+          done
+          echo "::warning::relay never saw the agent within 90s — agent may be running with stale device_id; check agent.log via SSH"
