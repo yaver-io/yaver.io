@@ -1173,7 +1173,20 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             // Static bundle is servable even when the dev server isn't
             // running — set running=true so the iframe mounts.
             running={staticBundleState === "ready" ? true : isRunning}
-            onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
+            // Open-in-new-tab / fullscreen URL must match the iframe's
+            // src or the user gets a 503 "no dev server running" — the
+            // /dev/ proxy 503s when there's no Metro running, which is
+            // exactly the static-bundle mode. Match the URL priority
+            // chain we use for the iframe itself.
+            onOpenInNewTab={(() => {
+              const url =
+                staticBundleState === "ready"
+                  ? agentClient.devWebBundleUrl
+                  : devStatus?.webPort && devStatus.webPort > 0
+                  ? agentClient.devWebPreviewUrl
+                  : previewUrl;
+              return url ? () => window.open(url, "_blank") : undefined;
+            })()}
             connectionLabel={connectionLabel}
             // Suppress the "mobile-only" notice when the static
             // bundle path has produced a renderable artifact — the
