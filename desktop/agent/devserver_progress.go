@@ -81,8 +81,14 @@ var (
 		`(?:Transforming|\()(\/?[a-zA-Z0-9_./@\-]+\.(?:tsx?|jsx?|mjs|cjs))(?:\)|\s|$)`,
 	)
 	rxBundleComplete = regexp.MustCompile(
-		// "iOS Bundling complete 5678ms" or "Web Bundling complete 12345ms"
-		`(iOS|Android|Web)\s+Bundling\s+complete\s+(\d+)\s*ms`,
+		// Metro 0.81+ actual output is `iOS Bundled 1283ms index.ts (1088 modules)`
+		// — past-tense verb. Older Metro (pre-0.76) used the
+		// `iOS Bundling complete 5678ms` form. The first version of
+		// this regex only matched the latter, which left the dashboard
+		// progress bar stuck at 0% on every fast cached build because
+		// the tracker never saw a completion event. Match either
+		// shape and tolerate the trailing path + module count.
+		`(iOS|Android|Web)\s+(?:Bundling\s+complete|Bundled)\s+(\d+)\s*ms`,
 	)
 	rxMetroReady = regexp.MustCompile(
 		// "Waiting on http://localhost:8081"
