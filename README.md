@@ -74,44 +74,50 @@ For a WSL-based developer, that means:
 3. Open the app inside the Yaver mobile app on the phone.
 4. Use native-install paths only when you actually need a full store/native build.
 
-## The Four Pieces of Yaver
+## The Three Pieces of Yaver
 
-Yaver is built for solo developers and small teams who ship from anywhere. It has four distinct pieces — each exists for a specific reason:
+Yaver is built for solo developers and small teams who ship from anywhere. It has three distinct pieces:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                                                                             │
-│  📱 MOBILE APP (yaver.io)                    🔧 DESKTOP AGENT (yaver)      │
-│  App Store / Play Store                       brew install yaver            │
+│  📱 MOBILE APP (yaver.io)                    🔧 AGENT (yaver)              │
+│  App Store / Play Store                       npm install -g yaver-cli      │
+│                                                or brew install yaver        │
 │                                                                             │
-│  Your remote control for everything.          The brain on your dev machine.│
-│  Send tasks to AI agents, test apps on        Runs AI agents (Claude Code,  │
-│  real hardware, hot reload, visual QA.        Codex, Aider), serves P2P     │
-│  Native container for RN apps (not WebView).  connections, manages builds,  │
-│  Works from beach, coffee shop, anywhere.     MCP server with 473 tools.    │
+│  Remote control for everything.              The brain on your dev machine. │
+│  Send tasks to AI agents, test apps on       Runs AI agents (Claude Code,   │
+│  real hardware, hot reload, visual QA.       Codex, Aider). Serves P2P      │
+│  Native container for RN apps (not WebView). connections, manages builds,   │
+│  Works from beach, coffee shop, anywhere.    pushes RN bundles to phones,   │
+│                                              MCP server with 473 tools.     │
 │                                                                             │
 │  ─────────────────────────────────────────────────────────────────────────  │
 │                                                                             │
-│  📦 NPM BOOTSTRAP (`yaver-cli`)              🐛 FEEDBACK SDK               │
-│  npm install -g yaver-cli                     yaver feedback setup          │
+│  🐛 FEEDBACK SDK                                                            │
+│  yaver feedback setup                                                       │
 │                                                                             │
-│  One npm install, two surfaces:               Embed in YOUR app during dev. │
-│  `yaver serve` bootstraps the Go agent;       Shake to report bugs with     │
-│  `yaver push` handles third-party RN apps.    screenshots + voice. Black    │
-│  Bundles JS, compiles Hermes bytecode,        box flight recorder streams   │
-│  pushes over Wi-Fi. ~4 seconds.               all events to your AI agent.  │
-│  No project modifications required.           React Native, Flutter, Web.   │
+│  Embed in YOUR app during dev. Shake to report bugs with screenshots +      │
+│  voice. Black box flight recorder streams all events to your AI agent.      │
+│  React Native, Flutter, Web.                                                │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Why four pieces?** The mobile app and desktop agent are the core — phone talks to your machine P2P. The npm package (`yaver-cli`) is the umbrella install point: it gives you the `yaver` command, bootstraps the agent binary, and covers the React Native push flow. The Feedback SDK still embeds inside *your* app, but the install path is now routed through the same `yaver` command (`yaver feedback setup` / `yaver sdk add feedback`) instead of sending developers straight to raw package-manager commands first.
-
 **You might use:**
 - Just the **mobile app + agent** — control AI agents from your phone, hot reload any framework
-- Add the **npm bootstrap package** — `yaver serve` for the agent, `yaver push` for native RN testing
 - Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent
-- All four together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
+- All three together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
+
+## Yaver Protocol v1 — never feel disconnected
+
+The agent is the **producer**; the mobile app and dashboard are **consumers**. They communicate over an SSE channel at `/dev/events` using a structured protocol with three guarantees:
+
+1. **Real progress, not fake.** The agent regex-parses Metro / Expo / Hermesc stdout (`Bundling 67% (1247/2390)`) into structured `progress` events with `pct`, `done`, `total`, `currentFile`, `etaMs`, and a `progressSrc` of `exact` / `heuristic` / `unknown`. Consumer renders an indeterminate spinner for `unknown`; never fakes a percentage.
+2. **Snapshots every 5 seconds.** `snapshot` events embed the full picture: every active topic's phase, last progress, recent log tail. A reconnecting consumer reads ONE snapshot and is fully caught up.
+3. **Liveness contract decoupled from compile state.** Consumer tracks time-since-last-byte separately from compile progress. `< 6s = live · 6–15s = syncing · 15–60s = reconnecting · > 60s = lost`. Slow compiles never look like "lost" connections.
+
+Topics: `dev/start` · `webview/build` · `hermes/compile` · `bundle/push`. Phases per topic and full event schema in [`docs/yaver-protocol.md`](docs/yaver-protocol.md).
 
 ## AI + IoT Fix Architecture
 
@@ -495,13 +501,9 @@ What this does **not** mean:
 - If you want the strongest protection for a remote shared box, prefer `--containerize-guests` and run untrusted work as guest/feedback sessions rather than as the owner.
 - If you want protection against accidental repo loss even for owner tasks, use normal engineering safety nets too: git, remote origin, snapshots, or a dedicated throwaway worktree/clone.
 
-### Desktop App (GUI)
+### Raspberry Pi 5 dev-node image
 
-Download the desktop app with full GUI from the [download page](https://yaver.io/download) — available as DMG (macOS), installer (Windows), deb/AppImage (Linux).
-
-The download page also exposes the new **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI/download assets.
-The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it.
-The Pi image is intentionally a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`ollama`, `aider`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT). That keeps the downloadable image smaller and easier to update while still shipping a full dev-node product.
+The download page also exposes a **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI assets. The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it. The Pi image is a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`ollama`, `aider`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT).
 
 ## Always-Up Mode (Boots Without Auth)
 

@@ -23,6 +23,20 @@ const docs = [
     tags: ["Dev", "Build", "Architecture"],
   },
   {
+    title: "Yaver Protocol v1",
+    description:
+      "Producer/consumer messaging contract between agent and dashboard/mobile. Real progress, snapshots every 5s, liveness contract that decouples connection-health from compile state — never feel disconnected.",
+    href: "/docs/yaver-protocol",
+    tags: ["Protocol", "SSE", "Hermes", "Webview"],
+  },
+  {
+    title: "Test suite",
+    description:
+      "Critical-path headless tests against yaver-test-ephemeral, local test runners, and how to add new tests. Covers Hermes bundle, webview, SSE, and Yaver Protocol v1 verification.",
+    href: "/docs/testing",
+    tags: ["Testing", "CI", "Headless"],
+  },
+  {
     title: "Contributing guide",
     description:
       "How to contribute to Yaver — code, docs, bug reports, and feature requests.",
