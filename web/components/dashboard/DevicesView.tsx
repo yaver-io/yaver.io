@@ -642,16 +642,27 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
       return;
     }
     (async () => {
-      const base = candidates[0];
-      try {
-        const res = await fetch(`${base}/info`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(3_000),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        if (!cancelled) {
+      // Walk candidates in order until one answers /info successfully.
+      // We use a short per-attempt timeout (2s) and only setError if
+      // ALL candidates fail — otherwise the dashboard silently shows
+      // nothing the moment any one URL is unreachable (e.g. wildcard
+      // cert not yet provisioned, relay routing not yet wired, etc.).
+      let lastErr = "no candidates";
+      for (const base of candidates) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`${base}/info`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(2_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          if (cancelled) return;
           setInfo(data);
+          setError(null);
           // Opportunistic seed: if we can reach the device and it
           // reports a version string, push it to Convex so the
           // dashboard has it cached for other surfaces (mobile, other
@@ -668,11 +679,16 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
               body: JSON.stringify({ deviceId: device.id, agentVersion: seen }),
             }).catch(() => {});
           }
+          setLoading(false);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : "fetch failed";
+          // try next candidate
         }
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "fetch failed");
-      } finally {
-        if (!cancelled) setLoading(false);
+      }
+      if (!cancelled) {
+        setError(lastErr);
+        setLoading(false);
       }
     })();
     return () => { cancelled = true; };
