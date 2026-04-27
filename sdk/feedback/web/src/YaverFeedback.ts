@@ -61,6 +61,12 @@ function supportsRunnerBrowserAuth(runner: string): boolean {
  * ```
  */
 export class YaverFeedback {
+  /** Public so the rendered companion rail can show "v0.4.6" in
+   *  its header — useful when the user files an issue and we need
+   *  to know exactly which build of the SDK they're talking to.
+   *  Updated whenever package.json's version is bumped. */
+  static readonly SDK_VERSION = '0.4.6';
+
   private static config: FeedbackConfig | null = null;
   private static mediaRecorder: MediaRecorder | null = null;
   private static audioRecorder: MediaRecorder | null = null;
@@ -753,7 +759,7 @@ export class YaverFeedback {
         <div class="yvr-fb-card">
           <div class="yvr-fb-header">
             <div>
-              <h3 class="yvr-fb-title">Yaver</h3>
+              <h3 class="yvr-fb-title">Yaver<span class="yvr-fb-version">v${YaverFeedback.SDK_VERSION}</span></h3>
               <p id="yaver-fb-subtitle" class="yvr-fb-subtitle"></p>
             </div>
             <button id="yaver-fb-close" class="yvr-fb-close" type="button" aria-label="Close">×</button>
@@ -2676,7 +2682,48 @@ export class YaverFeedback {
   private static makeRailDraggable(card: HTMLElement, header: HTMLElement): void {
     if (typeof window === 'undefined' || typeof document === 'undefined') return;
     const STORAGE_KEY = 'yvr-fb-rail-pos:v1';
+    const SIZE_KEY = 'yvr-fb-rail-size:v1';
     const isPhoneViewport = () => window.matchMedia('(max-width: 640px)').matches;
+
+    // Restore saved size on mount + watch for user-driven resize
+    // (CSS `resize: both` paints the native grip; ResizeObserver
+    // catches every drag-resize so we can persist the new size).
+    if (!isPhoneViewport()) {
+      try {
+        const raw = window.localStorage.getItem(SIZE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw) as { width?: number; height?: number };
+          if (typeof saved?.width === 'number' && saved.width >= 320) {
+            card.style.width = `${saved.width}px`;
+          }
+          if (typeof saved?.height === 'number' && saved.height >= 320) {
+            card.style.height = `${saved.height}px`;
+          }
+        }
+      } catch {
+        // Storage unavailable — initial CSS dims still apply.
+      }
+      if (typeof window.ResizeObserver !== 'undefined') {
+        let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+        const ro = new window.ResizeObserver((entries) => {
+          // Debounce — `resize: both` fires on every pixel of the
+          // drag; we only need the final dimensions written.
+          if (resizeTimer) clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            const entry = entries[entries.length - 1];
+            if (!entry) return;
+            const rect = (entry.target as HTMLElement).getBoundingClientRect();
+            try {
+              window.localStorage.setItem(
+                SIZE_KEY,
+                JSON.stringify({ width: Math.round(rect.width), height: Math.round(rect.height) }),
+              );
+            } catch { /* ignore */ }
+          }, 200);
+        });
+        ro.observe(card);
+      }
+    }
 
     const applyPos = (left: number, top: number) => {
       // Clamp so the rail can't be dragged off-screen.
@@ -2792,14 +2839,25 @@ export class YaverFeedback {
       .yvr-fb-card {
         position: fixed;
         right: 16px; bottom: 16px;
-        width: min(420px, calc(100vw - 32px));
-        max-height: min(78vh, 760px);
+        /* Initial size — user can drag the bottom-right resize grip
+         * (CSS resize:both paints it natively, see the makeRail
+         * Draggable bookkeeping that persists the final dimensions
+         * to localStorage). Keep min/max generous so the user can
+         * shrink to a chat strip or stretch to a half-screen panel. */
+        width: 460px; height: min(620px, 82vh);
+        min-width: 320px; min-height: 320px;
+        max-width: calc(100vw - 32px); max-height: calc(100vh - 32px);
         overflow: auto;
+        resize: both;
         pointer-events: auto;
         background: #0f172a; color: #e2e8f0;
         border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.22);
         padding: 18px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.62);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .yvr-fb-version {
+        margin-left: 6px; font-size: 10px; color: rgba(148, 163, 184, 0.7);
+        letter-spacing: 0.04em; font-weight: 500;
       }
       .yvr-fb-card[data-dragging="true"] {
         user-select: none; cursor: grabbing;
