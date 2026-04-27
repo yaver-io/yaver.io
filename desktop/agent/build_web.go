@@ -366,17 +366,34 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 }
 
 // webBundleCommand picks the right per-package-manager invocation of
-// `expo export -p web --output-dir X`.
+// `expo export -p web --output-dir X`. Critical: --base-url controls
+// how absolute path references in the emitted HTML/CSS resolve. We
+// serve the bundle through `/d/<deviceId>/dev/web-bundle/` (the
+// dashboard's same-origin proxy injects the relay password and the
+// agent's handleServeWebBundle adds the corresponding <base href>).
+// Without `--base-url=./`, expo emits `<script src="/_expo/..."` —
+// absolute paths that the browser resolves at the proxy's origin
+// root, hitting Next.js's 404 page instead of the bundle's own
+// asset routes. Forcing relative paths makes the bundle survive
+// being served under any prefix the proxy gives it.
 func webBundleCommand(packageManager, outputDir string) *exec.Cmd {
+	// `--base-url=` (empty) tells expo to emit *relative* asset paths
+	// like `_expo/...` instead of absolute `/_expo/...`. Combined with
+	// the agent's <base href="/dev/web-bundle/" /> injection in the
+	// served index.html, the browser resolves every reference through
+	// the bundle prefix correctly even after the dashboard's relay
+	// proxy rewrites paths for /dev/* requests. Equivalent to passing
+	// `--base-url=./` on Expo SDK 53+ that supports the flag.
+	args := []string{"expo", "export", "-p", "web", "--output-dir", outputDir, "--clear", "--base-url="}
 	switch packageManager {
 	case "yarn":
-		return exec.Command("yarn", "expo", "export", "-p", "web", "--output-dir", outputDir, "--clear")
+		return exec.Command("yarn", args...)
 	case "pnpm":
-		return exec.Command("pnpm", "exec", "expo", "export", "-p", "web", "--output-dir", outputDir, "--clear")
+		return exec.Command("pnpm", append([]string{"exec"}, args...)...)
 	case "bun":
-		return exec.Command("bunx", "expo", "export", "-p", "web", "--output-dir", outputDir, "--clear")
+		return exec.Command("bunx", args...)
 	default:
-		return exec.Command("npx", "expo", "export", "-p", "web", "--output-dir", outputDir, "--clear")
+		return exec.Command("npx", args...)
 	}
 }
 
