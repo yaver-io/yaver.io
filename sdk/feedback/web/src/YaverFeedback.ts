@@ -2463,7 +2463,14 @@ export class YaverFeedback {
         background: rgba(2, 6, 23, 0.62); backdrop-filter: blur(8px); padding: 16px;
       }
       .yvr-fb-card {
-        width: min(420px, 100%);
+        /* Default 420 px is comfortable for the single-column auth /
+         * report flows but cramped for the 4-step setup wizard's
+         * 2-column git pane (Bind project + Selected machine), where
+         * cards overlapped and Discover-existing-git-auth's text
+         * wrapped over the form. 600 px gives the 2-column grid
+         * enough room without dominating the host page; the inner
+         * @media query still collapses to 1 column on narrow phones. */
+        width: min(600px, 100%);
         max-height: min(640px, calc(100vh - 32px));
         overflow: auto;
         background: #0f172a; color: #e2e8f0;
