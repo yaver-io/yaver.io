@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.63"
+const version = "1.99.64"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -3847,6 +3847,13 @@ func checkAutoUpdate(cfg *Config) {
 		return
 	}
 
+	// Tell subscribers we're alive immediately. Without this the
+	// dashboard sat on "(starting…)" until the GitHub API call below
+	// returned ~1-2s later — which on a slow link looked stuck. See
+	// the "make update logs streaming better user feels stuck" bug.
+	emitAgentUpdate("queued", "Update requested — preparing")
+	emitAgentUpdate("fetch_release", "Asking GitHub for the latest release")
+
 	log.Println("[auto-update] Checking for updates...")
 
 	type ghRelease struct {
@@ -3856,7 +3863,7 @@ func checkAutoUpdate(cfg *Config) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", updateRepo()))
 	if err != nil {
-		log.Printf("[auto-update] Failed to check for updates: %v", err)
+		emitAgentUpdate("error", "GitHub release lookup failed: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -3919,7 +3926,7 @@ func checkAutoUpdate(cfg *Config) {
 	}
 	downloadURL := fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s", updateRepo(), latestVersion, assetName)
 
-	emitAgentUpdate("download", "Downloading %s", downloadURL)
+	emitAgentUpdate("download", "Downloading %s", assetName)
 	dlResp, err := client.Get(downloadURL)
 	if err != nil {
 		emitAgentUpdate("error", "Download failed: %v", err)
@@ -3928,9 +3935,19 @@ func checkAutoUpdate(cfg *Config) {
 	defer dlResp.Body.Close()
 
 	if dlResp.StatusCode != 200 {
-		log.Printf("[auto-update] Download returned %d", dlResp.StatusCode)
+		emitAgentUpdate("error", "Download returned HTTP %d for %s", dlResp.StatusCode, assetName)
 		return
 	}
+
+	// Wrap the response body in a reader that emits download
+	// progress every ~250ms (or every 5%) so the dashboard can
+	// render a real progress bar instead of a static "downloading…"
+	// label. ContentLength is "-1" when GitHub doesn't set it; in
+	// that case we still emit periodic byte counts so the user can
+	// see something is happening.
+	totalBytes := dlResp.ContentLength
+	dlBody := newAgentUpdateProgressReader(dlResp.Body, totalBytes, "download")
+	defer dlBody.flush() // emit a final progress event with bytes_downloaded == totalBytes
 
 	// Write to a temp file next to the current binary, then replace
 	// in two stages: extract from tar.gz (macOS/Linux) or use the raw
@@ -3950,22 +3967,28 @@ func checkAutoUpdate(cfg *Config) {
 	}
 
 	if goos == "windows" {
-		if _, err := io.Copy(tmpFile, dlResp.Body); err != nil {
+		if _, err := io.Copy(tmpFile, dlBody); err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
-			log.Printf("[auto-update] Failed to write update: %v", err)
+			emitAgentUpdate("error", "Failed to write update: %v", err)
 			return
 		}
 		tmpFile.Close()
 	} else {
-		// tar.gz containing a single file named `yaver`
-		gzr, err := gzip.NewReader(dlResp.Body)
+		// tar.gz containing a single file named `yaver`. Stream the
+		// download through gzip+tar — the wrapped progress reader
+		// above keeps emitting download bytes as gzip pulls more data
+		// off the wire. Once the gzip stream EOFs we move on to
+		// the "extract" phase explicitly so the dashboard sees the
+		// transition (download → extract → replace).
+		gzr, err := gzip.NewReader(dlBody)
 		if err != nil {
 			tmpFile.Close()
 			os.Remove(tmpPath)
-			log.Printf("[auto-update] gzip open failed: %v", err)
+			emitAgentUpdate("error", "gzip open failed: %v", err)
 			return
 		}
+		emitAgentUpdate("extract", "Extracting %s", assetName)
 		defer gzr.Close()
 		tr := tar.NewReader(gzr)
 		extracted := false

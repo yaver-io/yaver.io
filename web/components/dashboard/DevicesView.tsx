@@ -149,6 +149,19 @@ function isVersionOutdated(current: string | undefined | null, latest: string | 
   return l[2] > c[2];
 }
 
+// formatBytes — module-level helper for the AgentUpdateModal
+// progress UI. Distinct from the local helper later in the file
+// (`formatBytes` inside DeviceDetailsRow returns null for 0/-1).
+// This one always returns a string.
+function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "?";
+  const k = 1024;
+  if (n < k) return `${n} B`;
+  if (n < k * k) return `${(n / k).toFixed(1)} KB`;
+  if (n < k * k * k) return `${(n / (k * k)).toFixed(1)} MB`;
+  return `${(n / (k * k * k)).toFixed(2)} GB`;
+}
+
 function lastSeenAgeMs(value: string | undefined): number | null {
   if (!value) return null;
   const ts = Date.parse(value);
@@ -1675,6 +1688,16 @@ function AgentUpdateModal({
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmedVersion, setConfirmedVersion] = useState<string | null>(null);
+  const [downloadBytes, setDownloadBytes] = useState<{ read: number; total: number } | null>(null);
+  // Tick state so the user sees something move while we wait for
+  // the first SSE event from the agent. Flips every 500ms; the
+  // spinner / shimmer in the modal reads from this.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (done || error) return;
+    const t = setInterval(() => setTick((n) => (n + 1) % 1_000_000), 500);
+    return () => clearInterval(t);
+  }, [done, error]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1743,7 +1766,20 @@ function AgentUpdateModal({
               const ev = JSON.parse(line.slice(6));
               if (ev.type === "progress" && typeof ev.phase === "string" && typeof ev.text === "string") {
                 setPhase(ev.phase);
-                setLines((prev) => [...prev.slice(-30), { phase: ev.phase, text: ev.text }]);
+                // Carry byte counts when present (download phase).
+                if (typeof ev.bytes === "number") {
+                  setDownloadBytes({ read: ev.bytes, total: typeof ev.total === "number" ? ev.total : -1 });
+                }
+                // Don't spam the log buffer with every percent tick;
+                // collapse same-phase byte events into a single line
+                // that updates in place.
+                setLines((prev) => {
+                  const last = prev[prev.length - 1];
+                  if (last && last.phase === ev.phase && (ev.phase === "download" || ev.phase === "extract")) {
+                    return [...prev.slice(0, -1), { phase: ev.phase, text: ev.text }];
+                  }
+                  return [...prev.slice(-30), { phase: ev.phase, text: ev.text }];
+                });
                 if (ev.phase === "restart") {
                   setPhase("restarting");
                   pollForNewVersion();
@@ -1798,18 +1834,85 @@ function AgentUpdateModal({
           </div>
         ) : (
           <>
-            <div className="mb-2 flex items-center gap-2 text-[11px] text-surface-400">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${phase === "error" ? "bg-red-400" : phase === "restarting" || phase === "restart" ? "bg-amber-400 animate-pulse" : "bg-indigo-400 animate-pulse"}`} />
-              <span>phase: {phase}</span>
-            </div>
-            <pre className="max-h-64 overflow-auto rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400 whitespace-pre-wrap">
-              {lines.length === 0
-                ? "(starting…)"
-                : lines.map((l) => `[${l.phase}] ${l.text}`).join("\n")}
-            </pre>
-            <p className="mt-2 text-[10px] text-surface-600">
-              The agent will restart itself once the new binary is in place. This dialog reconnects to /info to confirm the new version.
-            </p>
+            {(() => {
+              // Step model — every phase emitted by the agent maps to
+              // one of these. The progress bar shows ordinal/total
+              // and the headline reads from STEP_LABELS so the user
+              // understands what is happening right now (vs. "phase:
+              // download" which is technical jargon).
+              const STEPS: Array<{ phase: string; label: string }> = [
+                { phase: "queued",         label: "Preparing" },
+                { phase: "fetch_release",  label: "Checking GitHub for the new version" },
+                { phase: "check",          label: "Found a new version" },
+                { phase: "download",       label: "Downloading the new binary" },
+                { phase: "extract",        label: "Unpacking" },
+                { phase: "replace",        label: "Replacing the running binary" },
+                { phase: "restart",        label: "Restarting" },
+                { phase: "ready",          label: "Ready" },
+              ];
+              const idx = Math.max(0, STEPS.findIndex((s) => s.phase === phase));
+              const step = STEPS[idx] || STEPS[0];
+              const total = STEPS.length;
+              // Progress fraction: when on download phase with known
+              // byte total, blend in the byte percent; otherwise step
+              // index / total.
+              let pct = ((idx + 1) / total) * 100;
+              if (phase === "download" && downloadBytes && downloadBytes.total > 0) {
+                const dlPct = Math.max(0, Math.min(100, (downloadBytes.read * 100) / downloadBytes.total));
+                // Steps 1..idx are "done" (idx/total of the bar);
+                // download fills the slot between idx/total and (idx+1)/total.
+                pct = (idx / total + (dlPct / 100) / total) * 100;
+              }
+              const dotClass =
+                phase === "error"
+                  ? "bg-red-400"
+                  : phase === "restarting" || phase === "restart"
+                  ? "bg-amber-400 animate-pulse"
+                  : "bg-indigo-400 animate-pulse";
+              const subtitle = (() => {
+                if (phase === "starting" || phase === "queued") {
+                  // First few seconds — no agent event yet. Use the
+                  // tick spinner so the user sees motion.
+                  const dots = ".".repeat((tick % 4) + 1);
+                  return `Asking ${device.name} to start the update${dots}`;
+                }
+                if (phase === "download" && downloadBytes) {
+                  return downloadBytes.total > 0
+                    ? `${formatBytes(downloadBytes.read)} of ${formatBytes(downloadBytes.total)} (${Math.round((downloadBytes.read * 100) / downloadBytes.total)}%)`
+                    : `${formatBytes(downloadBytes.read)} downloaded`;
+                }
+                if (phase === "restart" || phase === "restarting") {
+                  return "Waiting for the agent to come back on the new version";
+                }
+                return null;
+              })();
+              return (
+                <>
+                  <div className="mb-2 flex items-center gap-2 text-[12px] text-surface-200">
+                    <span className={`inline-block h-2 w-2 rounded-full ${dotClass}`} />
+                    <span className="font-medium">{step.label}</span>
+                    <span className="ml-auto text-[10px] text-surface-500">step {Math.min(idx + 1, total)} of {total}</span>
+                  </div>
+                  <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-surface-800">
+                    <div
+                      className={`h-full ${phase === "error" ? "bg-red-500" : "bg-indigo-500"} transition-all duration-300`}
+                      style={{ width: `${Math.max(2, pct)}%` }}
+                    />
+                  </div>
+                  {subtitle ? (
+                    <p className="mb-2 text-[11px] text-surface-400">{subtitle}</p>
+                  ) : null}
+                  <pre className="max-h-48 overflow-auto rounded-lg border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400 whitespace-pre-wrap">
+                    {lines.length === 0
+                      ? `Connecting to ${device.name}…`
+                      : lines.map((l) => `[${l.phase}] ${l.text}`).join("\n")}
+                  </pre>
+                  <p className="mt-2 text-[10px] text-surface-600">
+                    The agent will restart itself once the new binary is in place. This dialog reconnects to /info to confirm the new version.
+                  </p>
+                </>
+              );
+            })()}
           </>
         )}
       </div>

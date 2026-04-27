@@ -2658,6 +2658,23 @@ export class AgentClient {
     relayId?: string,
   ): Promise<ConnectAttemptDiagnostic> {
     const started = Date.now();
+    // Browsers block fetch from https:// origins to http:// targets
+    // (mixed content). Don't even try — the browser logs a noisy
+    // error and the result is the same. Return a clean diagnostic
+    // so the caller still records that we considered this path.
+    if (
+      typeof window !== "undefined" &&
+      window.location.protocol === "https:" &&
+      /^http:\/\//i.test(url)
+    ) {
+      return {
+        path,
+        relayId,
+        ok: false,
+        error: "blocked: browser refuses http:// from https:// origin",
+        durationMs: Date.now() - started,
+      };
+    }
     try {
       const res = await this.fetchWithTimeout(`${url}/health`, { headers }, timeoutMs);
       const diag: ConnectAttemptDiagnostic = {
@@ -2696,6 +2713,14 @@ export class AgentClient {
     headers: Record<string, string>,
     timeoutMs: number,
   ): Promise<DeviceProbeInfo | null> {
+    if (
+      typeof window !== "undefined" &&
+      window.location.protocol === "https:" &&
+      /^http:\/\//i.test(url)
+    ) {
+      // Mixed content — would be blocked. See probeHealth.
+      return null;
+    }
     try {
       const res = await this.fetchWithTimeout(`${url}/info`, { headers }, timeoutMs);
       if (!res.ok) return null;
