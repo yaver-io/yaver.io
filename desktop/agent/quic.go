@@ -29,6 +29,8 @@ type IncomingMessage struct {
 	Token       string `json:"token,omitempty"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
+	Runner      string `json:"runner,omitempty"`
+	Model       string `json:"model,omitempty"`
 	TaskID      string `json:"taskId,omitempty"`
 	Input       string `json:"input,omitempty"`
 	Source      string `json:"source,omitempty"` // "mobile" or "cli"
@@ -184,7 +186,7 @@ func (s *QUICServer) handleTaskCreate(stream quic.Stream, msg IncomingMessage) {
 	if source == "" {
 		source = "mobile"
 	}
-	task, err := s.taskManager.CreateTask(msg.Title, msg.Description, "", source, "", "", nil)
+	task, err := s.taskManager.CreateTask(msg.Title, msg.Description, msg.Model, source, msg.Runner, "", nil)
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})
 		return

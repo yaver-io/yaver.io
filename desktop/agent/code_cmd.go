@@ -18,6 +18,9 @@ import (
 func runCode(args []string) {
 	if len(args) > 0 {
 		switch args[0] {
+		case "help", "-h", "--help":
+			printCodeUsage()
+			return
 		case "list", "ls":
 			runAgentMode([]string{"list"})
 			return
@@ -36,8 +39,11 @@ func runCode(args []string) {
 	fs := flag.NewFlagSet("code", flag.ExitOnError)
 	uiMode := fs.Bool("ui", false, "full-screen console mode (currently uses the interactive terminal)")
 	meshMode := fs.Bool("mesh", false, "fan work out across multiple machines using agent graph mode")
+	attachTarget := fs.String("attach", "", "attach terminal mode to a remote device ID or device name")
+	username := fs.String("username", "", "filter remote attach targets by host email")
 	workDir := fs.String("work-dir", "", "project working directory")
 	runner := fs.String("runner", "", "runner ID override")
+	agent := fs.String("agent", "", "terminal coding agent override (alias for --runner)")
 	model := fs.String("model", "", "model override")
 	template := fs.String("template", "full", "mesh template: full|ship")
 	maxParallel := fs.Int("max-parallel", 2, "mesh max concurrency")
@@ -46,8 +52,18 @@ func runCode(args []string) {
 	allowedRunners := fs.String("allowed-runners", "", "comma-separated runner allowlist for mesh nodes, e.g. ollama,opencode,codex")
 	plain := fs.Bool("plain", false, "force plain line-by-line output (no TUI)")
 	_ = fs.Parse(args)
+	if strings.TrimSpace(*agent) != "" && strings.TrimSpace(*runner) == "" {
+		*runner = normalizeRunnerID(*agent)
+	}
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if strings.TrimSpace(*attachTarget) != "" {
+		if err := runRemoteCodeAttach(prompt, *attachTarget, *username, *runner, *model); err != nil {
+			fmt.Fprintf(os.Stderr, "code: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if prompt == "" {
 		if *uiMode {
 			fmt.Println("`yaver code --ui` currently uses the interactive terminal frontend.")
@@ -63,7 +79,14 @@ func runCode(args []string) {
 			}
 			defer restore()
 		}
-		runAttach(nil)
+		attachArgs := make([]string, 0, 4)
+		if strings.TrimSpace(*runner) != "" {
+			attachArgs = append(attachArgs, "--runner", strings.TrimSpace(*runner))
+		}
+		if strings.TrimSpace(*model) != "" {
+			attachArgs = append(attachArgs, "--model", strings.TrimSpace(*model))
+		}
+		runAttach(attachArgs)
 		return
 	}
 
@@ -130,6 +153,51 @@ func runCode(args []string) {
 		fmt.Fprintf(os.Stderr, "code stream: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printCodeUsage() {
+	fmt.Print(`yaver code — terminal-first coding UX
+
+Usage:
+  yaver code [flags] [prompt...]
+  yaver code help
+
+Terminal mode:
+  yaver code
+      Open the local Yaver terminal.
+
+  yaver code --attach <deviceId|deviceName> [--username <email>]
+      Open the Yaver terminal on another machine you already own or can access.
+
+One-shot mode:
+  yaver code "fix the failing tests"
+  yaver code --agent codex --model gpt-5.4 "implement dark mode"
+
+  These run against your local repo/files on this machine.
+
+Remote one-shot mode:
+  yaver code --attach mac-mini --agent opencode --model openai/gpt-5.4 "ship the onboarding fix"
+
+  This runs against the remote machine's repo/files. Use --attach only when you
+  explicitly want the remote machine as the editing workspace.
+
+Flags:
+  --attach <device>      Attach to a remote Yaver machine by device ID or name
+  --username <email>     Filter remote attach targets by host email
+  --agent <runner>       Alias for --runner in terminal coding mode
+  --runner <runner>      Runner override: claude, codex, opencode, aider, goose, ...
+  --model <model>        Model override for the chosen runner
+  --work-dir <path>      Local work dir override
+  --mesh                 Run agent-graph mesh mode instead of a single terminal task
+  --plain                Force plain output in mesh mode
+
+Terminal behavior:
+  - direct terminal sessions default to plain text, not markdown
+  - help, tasks, agent, clear, /exit, and /quit are handled locally
+  - yaver code --agent ... without --attach edits local files
+  - yaver code --attach ... edits files on the attached remote machine
+  - mobile/web sessions keep their own response contracts
+`)
 }
 
 type CodeGraphRequest struct {
@@ -200,12 +268,13 @@ func createCodeTask(prompt, runner, model string) (string, error) {
 		"description": "",
 		"runner":      runner,
 		"model":       model,
-		"source":      "cli",
+		"source":      terminalLocalTaskSource,
 	})
 	req, _ := http.NewRequest("POST", "http://127.0.0.1:18080/tasks", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Yaver-Source", "cli")
+	req.Header.Set("X-Yaver-Source", terminalLocalTaskSource)
+	req.Header.Set("X-Yaver-Session-Mode", "terminal")
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
@@ -226,6 +295,69 @@ func createCodeTask(prompt, runner, model string) (string, error) {
 		return "", fmt.Errorf("task creation failed (status %d)", resp.StatusCode)
 	}
 	return result.TaskID, nil
+}
+
+func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) error {
+	cfg, err := LoadConfig()
+	if err != nil || cfg.AuthToken == "" {
+		return fmt.Errorf("not authenticated — run 'yaver auth'")
+	}
+	device, err := resolveCodeAttachDevice(cfg, attachTarget, username)
+	if err != nil {
+		return err
+	}
+	baseURL := resolveDeviceURL(cfg, device.DeviceID, true)
+	opts := TerminalClientOptions{
+		DefaultRunner: runner,
+		DefaultModel:  model,
+		Source:        terminalRemoteTaskSource,
+	}
+	if strings.TrimSpace(prompt) == "" {
+		ctx := context.Background()
+		return RunClientHTTP(ctx, baseURL, cfg.AuthToken, opts)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	authHeader := "Bearer " + cfg.AuthToken
+	return httpCreateTask(context.Background(), client, baseURL, authHeader, prompt, opts)
+}
+
+func resolveCodeAttachDevice(cfg *Config, attachTarget, username string) (*DeviceInfo, error) {
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	target := strings.TrimSpace(strings.ToLower(attachTarget))
+	wantEmail := strings.TrimSpace(strings.ToLower(username))
+	var exact *DeviceInfo
+	var partial *DeviceInfo
+	for i := range devices {
+		d := &devices[i]
+		if !d.IsOnline {
+			continue
+		}
+		if wantEmail != "" && strings.ToLower(strings.TrimSpace(d.HostEmail)) != wantEmail {
+			continue
+		}
+		if strings.EqualFold(d.DeviceID, attachTarget) || strings.EqualFold(d.Name, attachTarget) {
+			exact = d
+			break
+		}
+		if strings.HasPrefix(strings.ToLower(d.DeviceID), target) || strings.Contains(strings.ToLower(d.Name), target) {
+			if partial == nil {
+				partial = d
+			}
+		}
+	}
+	if exact != nil {
+		return exact, nil
+	}
+	if partial != nil {
+		return partial, nil
+	}
+	if wantEmail != "" {
+		return nil, fmt.Errorf("no online device matched %q for host %q", attachTarget, username)
+	}
+	return nil, fmt.Errorf("no online device matched %q", attachTarget)
 }
 
 func streamCodeTask(taskID, label string) error {

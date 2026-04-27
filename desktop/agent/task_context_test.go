@@ -29,3 +29,23 @@ func TestYaverDevServerContextIncludesProject(t *testing.T) {
 		t.Fatal("expected BentoApp in context")
 	}
 }
+
+func TestYaverWrapperCapabilityContextForTerminal(t *testing.T) {
+	ctx := yaverWrapperCapabilityContext("/tmp/test-project", terminalLocalTaskSource)
+	if !strings.Contains(ctx, "open the Yaver app") {
+		t.Fatal("expected Hermes guidance to mention opening the Yaver app")
+	}
+	if !strings.Contains(ctx, "iframeUrl") || !strings.Contains(ctx, "webUrl") {
+		t.Fatal("expected web preview URL guidance in wrapper context")
+	}
+	if !strings.Contains(ctx, "http://localhost:18080") {
+		t.Fatal("expected localhost agent guidance in wrapper context")
+	}
+}
+
+func TestYaverWrapperCapabilityContextForRemoteTerminal(t *testing.T) {
+	ctx := yaverWrapperCapabilityContext("/tmp/test-project", terminalRemoteTaskSource)
+	if !strings.Contains(ctx, "attached remote machine") {
+		t.Fatal("expected remote workspace wording in wrapper context")
+	}
+}

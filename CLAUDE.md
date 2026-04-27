@@ -280,7 +280,7 @@ Each client surface has a different connection strategy based on platform capabi
 | **Mobile app** | Direct-first, relay-fallback | Yes (UDP beacon + Convex IP) | Yes | N/A |
 | **Desktop Electron** | Local-first, then direct, then relay | Yes | Yes | Yes (`localhost:18080`) |
 | **Web dashboard** | Relay-only | No (browser CORS blocks localhost) | Yes | No |
-| **Go CLI** | Direct (same machine) | N/A | N/A | Always local |
+| **Go CLI** | Local daemon by default; can target remote agents explicitly | N/A | Yes, when using `connect` / `code --attach` | Always local for the daemon itself |
 
 **Mobile app** (`mobile/src/lib/quic.ts`):
 1. On WiFi: try LAN beacon IP (2s) → Convex-known IP (2s) → relay servers
@@ -300,9 +300,10 @@ Each client surface has a different connection strategy based on platform capabi
 4. This is by design — the web dashboard is for remote access (e.g., normie guest connecting to a developer's machine)
 
 **Go CLI** (`desktop/agent/`):
-1. Always runs locally — serves on `0.0.0.0:18080`
-2. Connects outbound to relay servers via QUIC tunnels
-3. No relay needed for local access
+1. The daemon itself runs locally — serves on `0.0.0.0:18080`
+2. Normal local commands (`yaver code`, `yaver attach`, `yaver status`, ...) talk to that local daemon directly
+3. Remote terminal flows such as `yaver connect` and `yaver code --attach <device>` resolve a target device and then talk to that remote agent over the same direct/relay transport stack used elsewhere
+4. The CLI still maintains the outbound QUIC relay tunnels for its own machine
 
 ### Token isolation (multi-surface auth)
 
@@ -2054,12 +2055,27 @@ cd desktop/agent
 go run . auth       # Sign in via browser (Apple/Google/Microsoft)
 go run . serve      # Start agent server
 go run . connect    # Connect to a remote agent
+go run . code       # Terminal-first coding UX (local by default, remote with --attach)
 go run . status     # Show auth status
 go run . devices    # List registered devices
 go run . relay      # Manage relay server config
 go run . guests     # Manage guest access (invite/list/remove)
 go run . help       # Show all commands
 ```
+
+### Terminal Coding Contract (`yaver code`, `yaver attach`, `yaver connect`)
+
+Direct terminal sessions are a distinct source surface in the Go agent. Do not treat them like mobile/web chats.
+
+- Terminal-origin tasks carry explicit source/session metadata instead of relying on generic client inference.
+- `terminal-local` means terminal surface + local machine workspace.
+- `terminal-remote` means terminal surface + remote machine workspace.
+- Prompt shaping for terminal-origin tasks defaults to plain terminal text:
+  no markdown headings, no canned bullet framing, no fenced blocks unless the user asked.
+- Built-in commands such as `help`, `tasks`, `agent`, `clear`, `exit`, `quit`, `/exit`, and `/quit` are handled locally by Yaver before the prompt reaches the runner.
+- `yaver code --agent ...` without `--attach` means local terminal + local repo/files.
+- `yaver code --attach ...` means local terminal + remote repo/files on the attached machine.
+- If the desired shape is "repo stays on one machine, heavy runner/infra comes from another", that belongs to the host-share borrowed-workspace flow, not the plain `--attach` path.
 
 Build a local binary: `cd desktop/agent && go build -o yaver .`
 

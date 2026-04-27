@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,10 +15,23 @@ import (
 )
 
 // runAttach connects to the running yaver agent and provides an interactive
-// terminal UI. Shows Claude output from all tasks (mobile or local), and
-// accepts keyboard input to create new tasks. Like Claude Code's terminal
-// but multiplexed with mobile input.
+// terminal UI. Shows task output from all tasks (mobile or local), and
+// accepts keyboard input to create new tasks.
 func runAttach(args []string) {
+	fs := flag.NewFlagSet("attach", flag.ExitOnError)
+	runner := fs.String("runner", "", "runner ID override for new terminal tasks")
+	agent := fs.String("agent", "", "alias for --runner")
+	model := fs.String("model", "", "model override for new terminal tasks")
+	_ = fs.Parse(args)
+	if strings.TrimSpace(*agent) != "" && strings.TrimSpace(*runner) == "" {
+		*runner = normalizeRunnerID(*agent)
+	}
+	opts := attachSessionOptions{
+		Source:        terminalLocalTaskSource,
+		DefaultRunner: strings.TrimSpace(*runner),
+		DefaultModel:  strings.TrimSpace(*model),
+	}
+
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
 		fmt.Fprintln(os.Stderr, "Not signed in. Run 'yaver auth' first.")
@@ -40,17 +54,7 @@ func runAttach(args []string) {
 		os.Exit(1)
 	}
 
-	// Header
-	fmt.Printf("\033[1;35m╭─ Yaver Attach ─────────────────────────────────╮\033[0m\n")
-	fmt.Printf("\033[1;35m│\033[0m  Host: %-40s\033[1;35m│\033[0m\n", info.Hostname)
-	fmt.Printf("\033[1;35m│\033[0m  Dir:  %-40s\033[1;35m│\033[0m\n", truncateStr(info.WorkDir, 40))
-	fmt.Printf("\033[1;35m│\033[0m  Ver:  %-40s\033[1;35m│\033[0m\n", info.Version)
-	fmt.Printf("\033[1;35m╰────────────────────────────────────────────────╯\033[0m\n")
-	fmt.Println()
-	fmt.Println("  Type a prompt and press Enter to run a task.")
-	fmt.Println("  Mobile tasks will appear here automatically.")
-	fmt.Println("  Press Ctrl+C to detach.")
-	fmt.Println()
+	printAttachWelcome(info)
 
 	// Track known tasks to detect new ones
 	knownTasks := make(map[string]bool)
@@ -102,9 +106,17 @@ func runAttach(args []string) {
 			return
 
 		case input := <-inputCh:
+			if handled, shouldExit := runAttachBuiltin(input, info, baseURL, cfg.AuthToken); handled {
+				if shouldExit {
+					fmt.Println("\nDetached from agent. Agent continues running in background.")
+					return
+				}
+				printPrompt()
+				continue
+			}
 			// Create a new task from keyboard input
 			fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", input)
-			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, input)
+			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, input, opts)
 			if err != nil {
 				fmt.Printf("\033[31mError: %v\033[0m\n", err)
 				printPrompt()
@@ -162,10 +174,23 @@ func runAttach(args []string) {
 
 // --- HTTP helpers for attach mode ---
 
+type attachRunnerInfo struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model,omitempty"`
+}
+
 type attachInfo struct {
-	Hostname string `json:"hostname"`
-	Version  string `json:"version"`
-	WorkDir  string `json:"workDir"`
+	Hostname string           `json:"hostname"`
+	Version  string           `json:"version"`
+	WorkDir  string           `json:"workDir"`
+	Runner   attachRunnerInfo `json:"runner"`
+}
+
+type attachSessionOptions struct {
+	Source        string
+	DefaultRunner string
+	DefaultModel  string
 }
 
 func attachGetInfo(baseURL, token string) (*attachInfo, error) {
@@ -203,19 +228,38 @@ func attachListTasks(baseURL, token string) ([]TaskInfo, error) {
 	return data.Tasks, nil
 }
 
-func attachCreateTask(baseURL, token, prompt string) (string, error) {
-	body := fmt.Sprintf(`{"title":%q,"description":""}`, prompt)
-	req, _ := http.NewRequest("POST", baseURL+"/tasks", strings.NewReader(body))
+func attachCreateTask(baseURL, token, prompt string, opts attachSessionOptions) (string, error) {
+	source := strings.TrimSpace(opts.Source)
+	if source == "" {
+		source = terminalLocalTaskSource
+	}
+	payload := map[string]interface{}{
+		"title":       prompt,
+		"description": prompt,
+		"source":      source,
+	}
+	if strings.TrimSpace(opts.DefaultRunner) != "" {
+		payload["runner"] = opts.DefaultRunner
+	}
+	if strings.TrimSpace(opts.DefaultModel) != "" {
+		payload["model"] = opts.DefaultModel
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequest("POST", baseURL+"/tasks", strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Yaver-Source", source)
+	req.Header.Set("X-Yaver-Session-Mode", "terminal")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		respBody, _ := io.ReadAll(resp.Body)
-		var errData struct{ Error string `json:"error"` }
+		var errData struct {
+			Error string `json:"error"`
+		}
 		json.Unmarshal(respBody, &errData)
 		if errData.Error != "" {
 			return "", fmt.Errorf("%s", errData.Error)
@@ -234,4 +278,104 @@ func truncateStr(s string, max int) string {
 		return s
 	}
 	return "..." + s[len(s)-max+3:]
+}
+
+func runAttachBuiltin(input string, info *attachInfo, baseURL, token string) (handled bool, shouldExit bool) {
+	cmd, ok := parseTerminalCommand(input)
+	if !ok {
+		return false, false
+	}
+
+	switch cmd.Kind {
+	case "help":
+		printAttachHelp(info)
+		return true, false
+	case "tasks":
+		tasks, err := attachListTasks(baseURL, token)
+		if err != nil {
+			fmt.Printf("Error: %v\n\n", err)
+			return true, false
+		}
+		if len(tasks) == 0 {
+			fmt.Println("No tasks yet.")
+			fmt.Println()
+			return true, false
+		}
+		for _, t := range tasks {
+			runner := t.RunnerID
+			if runner == "" {
+				runner = "-"
+			}
+			fmt.Printf("%-8s  %-10s  %-10s  %s\n", t.ID, t.Status, runner, t.Title)
+		}
+		fmt.Println()
+		return true, false
+	case "agent":
+		if runnerLine := attachRunnerLine(info); runnerLine != "" {
+			fmt.Printf("Current coding agent: %s\n", runnerLine)
+			fmt.Println()
+		} else {
+			fmt.Println("Current coding agent: unknown")
+			fmt.Println()
+		}
+		return true, false
+	case "clear":
+		fmt.Print("\033[2J\033[H")
+		printAttachWelcome(info)
+		return true, false
+	case "stop-task":
+		if err := attachPostTaskAction(baseURL, token, cmd.TaskID, "stop", nil); err != nil {
+			fmt.Printf("Error: %v\n\n", err)
+			return true, false
+		}
+		fmt.Printf("Stopped task %s.\n", cmd.TaskID)
+		fmt.Println()
+		return true, false
+	case "exit-task":
+		if err := attachPostTaskAction(baseURL, token, cmd.TaskID, "exit", nil); err != nil {
+			fmt.Printf("Error: %v\n\n", err)
+			return true, false
+		}
+		fmt.Printf("Gracefully exited task %s.\n", cmd.TaskID)
+		fmt.Println()
+		return true, false
+	case "continue-task":
+		body := fmt.Sprintf(`{"input":%q}`, cmd.Input)
+		if err := attachPostTaskAction(baseURL, token, cmd.TaskID, "continue", strings.NewReader(body)); err != nil {
+			fmt.Printf("Error: %v\n\n", err)
+			return true, false
+		}
+		fmt.Printf("Resumed task %s.\n", cmd.TaskID)
+		fmt.Println()
+		return true, false
+	case "detach":
+		return true, true
+	default:
+		return false, false
+	}
+}
+
+func attachPostTaskAction(baseURL, token, taskID, action string, body io.Reader) error {
+	req, _ := http.NewRequest("POST", baseURL+"/tasks/"+taskID+"/"+action, body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		var errData struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(respBody, &errData)
+		if strings.TrimSpace(errData.Error) != "" {
+			return fmt.Errorf("%s", errData.Error)
+		}
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
 }

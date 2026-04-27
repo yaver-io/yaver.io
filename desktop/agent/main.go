@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.69"
+const version = "1.99.70"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1192,12 +1192,12 @@ func runConnect(args []string) {
 		}
 
 		baseURL := fmt.Sprintf("%s/d/%s", strings.TrimRight(*relayURL, "/"), targetDeviceID)
-		if err := RunClientHTTP(ctx, baseURL, cfg.AuthToken); err != nil {
+		if err := RunClientHTTP(ctx, baseURL, cfg.AuthToken, TerminalClientOptions{Source: terminalRemoteTaskSource}); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
-		if err := RunClient(ctx, *host, *port, cfg.AuthToken); err != nil {
+		if err := RunClient(ctx, *host, *port, cfg.AuthToken, TerminalClientOptions{Source: terminalRemoteTaskSource}); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
@@ -7395,8 +7395,10 @@ var randInt63n = func(n int64) int64 {
 // looksLikeStaleRelayPassword inspects a relay-connect error and
 // decides whether re-fetching the per-user password from Convex
 // /settings is worth a try. The relay returns errors like:
-//   "registration rejected: invalid relay password"
-//   "registration rejected: invalid password"
+//
+//	"registration rejected: invalid relay password"
+//	"registration rejected: invalid password"
+//
 // We MUST be conservative — a false positive here would burn through
 // reconnect budget. So we require the literal "password" + "invalid"
 // or "rejected".

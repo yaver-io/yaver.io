@@ -1863,6 +1863,7 @@ yaver mcp           Start MCP server (--mode stdio|http)
 yaver email         Email connector (setup, test, sync, status)
 yaver acl           Agent Communication Layer (add, list, remove, tools, health)
 yaver connect       Connect to a remote agent
+yaver code          Terminal-first coding UX (local or remote workspace)
 yaver attach        Interactive terminal
 yaver set-runner    Set default AI agent (claude/codex/aider/custom)
 yaver relay         Manage relay servers (add/remove/test — hot-reload, no restart)
@@ -1889,6 +1890,34 @@ yaver logs          View agent logs
 yaver completion    Generate shell completions (bash/zsh/fish)
 yaver version       Print version
 ```
+
+### Terminal Coding (`yaver code`)
+
+`yaver code` is the terminal-first coding surface. It stays plain-text by default when you start from a terminal: no markdown layout, no mobile-style framing, and common terminal commands are handled locally instead of being forwarded to the runner.
+
+```bash
+# Local terminal + local repo/files on this machine
+yaver code
+yaver code --agent opencode --model openai/gpt-5.4
+yaver code "fix the failing tests"
+
+# Local terminal + remote repo/files on another Yaver machine
+yaver code --attach mac-mini
+yaver code --attach mac-mini --username dev@example.com --agent codex --model gpt-5.4
+yaver code --attach mac-mini "run tests, commit, push, and deploy the fix"
+
+# Built-in help
+yaver code help
+```
+
+Terminal semantics:
+
+- `yaver code` and `yaver code --agent ...` edit the local machine's repo/files.
+- `yaver code --attach ...` opens a terminal against the attached remote machine and edits that remote machine's repo/files.
+- Local commands such as `help`, `tasks`, `agent`, `clear`, `exit`, `quit`, `/exit`, and `/quit` are intercepted by Yaver locally.
+- The plain-text terminal contract affects formatting only. The coding agent can still build, test, hot reload, commit, push, deploy, and run the normal dev loop if the target machine has the required tools and credentials.
+
+If you want to keep the repo on one machine while borrowing runners or infra from another machine, use the `yaver host-share ...` borrowed-workspace flow (`attach-repo`, `sync-repo`) rather than `yaver code --attach`.
 
 ### Shell Completions
 

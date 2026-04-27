@@ -1228,6 +1228,17 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 func taskEnv(task *Task) []string {
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "PATH="+expandedPath())
+	if task != nil {
+		env = append(env, "YAVER_TASK_SOURCE="+strings.TrimSpace(task.Source))
+		switch task.Source {
+		case terminalLocalTaskSource, "attach", "cli":
+			env = append(env, "YAVER_SESSION_MODE=terminal", "YAVER_SOURCE_SURFACE=terminal", "YAVER_WORKSPACE_LOCATION=local")
+		case terminalRemoteTaskSource, "connect":
+			env = append(env, "YAVER_SESSION_MODE=terminal", "YAVER_SOURCE_SURFACE=terminal", "YAVER_WORKSPACE_LOCATION=remote")
+		default:
+			env = append(env, "YAVER_SESSION_MODE=remote", "YAVER_SOURCE_SURFACE="+firstNonEmpty(strings.TrimSpace(task.Source), "unknown"))
+		}
+	}
 	if task != nil && task.GuestUserID != "" && !task.GuestUseHostAPIKeys {
 		filtered := make([]string, 0, len(env))
 		for _, entry := range env {
@@ -1584,6 +1595,15 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// System prompt: behave as a remote terminal agent, tailored to the task source.
 	prompt += taskSourcePromptSuffix(task.Source)
 
+	contextDir := tm.workDir
+	if task.WorkDir != "" {
+		contextDir = task.WorkDir
+	}
+
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" {
+		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
+	}
+
 	prompt += formatTaskSliceContract(task.SliceContract)
 
 	// Only mobile-style tasks need the dev-server transport instructions.
@@ -1591,10 +1611,6 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// opportunistically call /dev/start and fail on placeholder values like
 	// framework="<auto>", which is unrelated to normal coding requests.
 	if task.Source == "mobile" || task.Source == "voice" {
-		contextDir := tm.workDir
-		if task.WorkDir != "" {
-			contextDir = task.WorkDir
-		}
 		prompt += yaverDevServerContext(contextDir)
 	}
 
@@ -2529,6 +2545,14 @@ func (tm *TaskManager) ResumeTask(id, input string, images []ImageAttachment) (*
 func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	prompt += taskSourcePromptSuffix(task.Source)
 
+	contextDir := tm.workDir
+	if task.WorkDir != "" {
+		contextDir = task.WorkDir
+	}
+	if task.Source == "mcp" || task.Source == terminalLocalTaskSource || task.Source == terminalRemoteTaskSource || task.Source == "attach" || task.Source == "cli" || task.Source == "console" || task.Source == "connect" {
+		prompt += yaverWrapperCapabilityContext(contextDir, task.Source)
+	}
+
 	// Append image file paths so the AI agent can read them
 	if len(task.ImagePaths) > 0 {
 		prompt += "\n\n[Attached images — use the Read tool to examine these files]\n"
@@ -2650,11 +2674,25 @@ func taskSourcePromptSuffix(source string) string {
 	switch source {
 	case "mcp":
 		return "\n\nYou are running tasks via MCP from an AI agent. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
-	case "cli":
-		return "\n\nYou are running tasks from a remote CLI terminal. Show what you are doing step by step. Use only terminal commands. Be concise. Format output in markdown."
+	case terminalLocalTaskSource, terminalRemoteTaskSource, "attach", "cli", "console", "connect":
+		return "\n\nYou are running inside an interactive terminal attached to Yaver. Show what you are doing step by step. Use terminal commands when needed. Be concise." + consoleTaskResponseContext()
 	default:
 		return "\n\nYou are running tasks from a remote mobile device. Show what you are doing step by step. Use only terminal commands. Be concise." + mobileTaskResponseContext()
 	}
+}
+
+func consoleTaskResponseContext() string {
+	return `
+
+[Console response contract]
+The human is reading this in a terminal session, not a rich markdown surface.
+- Write plain terminal text by default.
+- Do NOT use markdown headings, tables, or fenced code blocks unless the user explicitly asks for them.
+- Keep progress updates short and concrete.
+- Prefer natural status lines over template bullets.
+- If a command succeeds, summarize the result instead of dumping the full output.
+- Only show raw command output when it is the point of the answer or needed for debugging.
+- Keep the final answer brief, direct, and agent-agnostic unless the user asked about a specific tool.`
 }
 
 func mobileTaskResponseContext() string {

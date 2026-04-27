@@ -2034,6 +2034,11 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"version":  version,
 		"workDir":  s.taskMgr.workDir,
 		"hwid":     HardwareID(),
+		"runner": map[string]interface{}{
+			"id":    s.taskMgr.runner.RunnerID,
+			"name":  s.taskMgr.runner.Name,
+			"model": s.taskMgr.runner.Model,
+		},
 	}
 
 	// Project metadata
@@ -2865,6 +2870,9 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		// Fall back to header, then default
 		source = r.Header.Get("X-Yaver-Source")
+	}
+	if source == "" && strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Yaver-Session-Mode")), "terminal") {
+		source = terminalLocalTaskSource
 	}
 	if source == "" {
 		source = "mobile"

@@ -182,6 +182,44 @@ When they ask to "start", "load", "run", or "hot reload" an app on their phone:
 	return sb.String()
 }
 
+// yaverWrapperCapabilityContext teaches terminal/MCP runners that Yaver is not
+// just a generic shell: it can drive dev servers, Hermes reload, and web
+// previews on the current machine.
+func yaverWrapperCapabilityContext(workDir, source string) string {
+	workspaceLocation := "this machine"
+	switch source {
+	case terminalRemoteTaskSource, "connect":
+		workspaceLocation = "the attached remote machine"
+	}
+
+	return fmt.Sprintf(`
+
+[Yaver wrapper capabilities]
+You are running inside Yaver, not a generic terminal. Prefer Yaver-aware app/dev flows when the user asks to run, reload, preview, or inspect an app on %s.
+Working directory for these flows: %s
+
+If Yaver MCP tools are available inside the current runner, prefer them.
+Otherwise call the local Yaver agent over HTTP on this machine:
+  http://localhost:18080
+
+Mobile / Hermes rules:
+- For React Native / Expo app serving, use Yaver's dev flow (mobile_project_status, mobile_project_build, ops reload, or /dev/start + /dev/status).
+- Never tell the user to open Expo Go, scan a QR code, or use an exp:// URL.
+- After Yaver is serving the Hermes bundle successfully, tell the user plainly to open the Yaver app or tap Open App in Yaver.
+- For a normal hot reload, use ops reload with mode=dev or POST /dev/reload.
+- For a fresh Hermes rebundle + push, use POST /dev/reload-app with the work dir and bundle mode when needed.
+
+Web / WebView preview rules:
+- For browser-style preview, use web_preview_start or POST /dev/web-preview/start.
+- When the preview starts, surface the returned iframeUrl or webUrl explicitly to the user. Do not just say "server is running" — tell them the webview/browser preview URL.
+- Use web_preview_reload or the web-preview reload action when the user asks for a refresh.
+- Use web_preview_stop or POST /dev/web-preview/stop to shut the preview down.
+
+Remote visual feedback:
+- If the user wants visual confirmation of what is rendering, use vibe_preview_start, vibe_preview_status, vibe_preview_snapshot, or related Yaver preview tools instead of asking them to guess.
+`, workspaceLocation, workDir)
+}
+
 // autopilotContext returns instructions injected into task prompts when autopilot is on.
 func autopilotContext() string {
 	return `

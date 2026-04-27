@@ -17,9 +17,15 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+type TerminalClientOptions struct {
+	DefaultRunner string
+	DefaultModel  string
+	Source        string
+}
+
 // RunClient connects to a remote Yaver agent over QUIC and provides an
 // interactive terminal to submit tasks and stream output.
-func RunClient(ctx context.Context, host string, port int, token string) error {
+func RunClient(ctx context.Context, host string, port int, token string, opts TerminalClientOptions) error {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	log.Printf("Connecting to %s...", addr)
 
@@ -42,7 +48,7 @@ func RunClient(ctx context.Context, host string, port int, token string) error {
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
-	fmt.Printf("Connected to %s\n\n", deviceName)
+	printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
 
 	// Load speech config for voice commands
 	clientCfg, _ := LoadConfig()
@@ -71,17 +77,47 @@ func RunClient(ctx context.Context, host string, port int, token string) error {
 		}
 
 		// Built-in commands
-		switch {
-		case line == "exit" || line == "quit":
-			return nil
-		case line == "help":
-			printHelp()
-			continue
-		case line == "tasks" || line == "list":
-			if err := clientListTasks(ctx, conn); err != nil {
-				fmt.Printf("error: %v\n", err)
+		if cmd, ok := parseTerminalCommand(line); ok {
+			switch cmd.Kind {
+			case "detach":
+				return nil
+			case "help":
+				printAttachHelp(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
+				continue
+			case "tasks":
+				if err := clientListTasks(ctx, conn); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "agent":
+				if strings.TrimSpace(opts.DefaultRunner) != "" || strings.TrimSpace(opts.DefaultModel) != "" {
+					fmt.Printf("Current coding agent: %s\n", attachRunnerLine(&attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}}))
+					fmt.Println()
+				} else {
+					fmt.Println("Current coding agent: remote default")
+					fmt.Println()
+				}
+				continue
+			case "clear":
+				fmt.Print("\033[2J\033[H")
+				printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
+				continue
+			case "stop-task":
+				if err := clientStopTask(ctx, conn, cmd.TaskID); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "continue-task":
+				if err := clientContinueTask(ctx, conn, cmd.TaskID, cmd.Input); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "exit-task":
+				fmt.Println("graceful task exit is only available over the HTTP terminal path")
+				continue
 			}
-			continue
+		}
+		switch {
 		case line == "voice" || line == "/voice":
 			// Record and transcribe voice input
 			if speechCfg == nil || speechCfg.Provider == "" {
@@ -106,44 +142,17 @@ func RunClient(ctx context.Context, host string, port int, token string) error {
 				fmt.Println("(empty transcription, skipping)")
 				continue
 			}
-			if err := clientCreateTask(ctx, conn, text); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
-		case strings.HasPrefix(line, "stop "):
-			taskID := strings.TrimPrefix(line, "stop ")
-			if err := clientStopTask(ctx, conn, strings.TrimSpace(taskID)); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
-		case strings.HasPrefix(line, "continue "):
-			parts := strings.SplitN(line, " ", 3)
-			if len(parts) < 3 {
-				fmt.Println("usage: continue <taskId> <message>")
-				continue
-			}
-			if err := clientContinueTask(ctx, conn, parts[1], parts[2]); err != nil {
+			if err := clientCreateTask(ctx, conn, text, opts); err != nil {
 				fmt.Printf("error: %v\n", err)
 			}
 			continue
 		}
 
 		// Default: create a new task
-		if err := clientCreateTask(ctx, conn, line); err != nil {
+		if err := clientCreateTask(ctx, conn, line, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
 	}
-}
-
-func printHelp() {
-	fmt.Println(`Commands:
-  <prompt>                Submit a task to Claude
-  voice / /voice          Record voice and submit as task
-  tasks / list            List all tasks
-  stop <taskId>           Stop a running task
-  continue <id> <msg>     Continue a task with a follow-up
-  help                    Show this help
-  exit / quit             Disconnect`)
 }
 
 // clientAuth sends an auth message and waits for auth_ok.
@@ -160,7 +169,7 @@ func clientAuth(ctx context.Context, conn quic.Connection, token string) (string
 }
 
 // clientCreateTask sends a task and streams the output.
-func clientCreateTask(ctx context.Context, conn quic.Connection, prompt string) error {
+func clientCreateTask(ctx context.Context, conn quic.Connection, prompt string, opts TerminalClientOptions) error {
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
@@ -170,7 +179,9 @@ func clientCreateTask(ctx context.Context, conn quic.Connection, prompt string) 
 		Type:        "task_create",
 		Title:       prompt,
 		Description: prompt,
-		Source:      "cli",
+		Source:      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
+		Runner:      opts.DefaultRunner,
+		Model:       opts.DefaultModel,
 	}
 
 	data, _ := json.Marshal(msg)
@@ -285,11 +296,12 @@ func clientContinueTask(ctx context.Context, conn quic.Connection, taskID, input
 
 // RunClientHTTP connects to a remote Yaver agent over HTTP (via relay or direct)
 // and provides the same interactive terminal as RunClient.
-func RunClientHTTP(ctx context.Context, baseURL string, token string) error {
+func RunClientHTTP(ctx context.Context, baseURL string, token string, opts TerminalClientOptions) error {
 	log.Printf("Connecting via HTTP to %s...", baseURL)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	authHeader := "Bearer " + token
+	infoSnapshot := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}}
 
 	// Health check to verify connectivity
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/health", nil)
@@ -311,19 +323,22 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string) error {
 	req.Header.Set("Authorization", authHeader)
 	resp, err = client.Do(req)
 	if err == nil && resp.StatusCode == 200 {
-		var info struct {
-			Hostname string `json:"hostname"`
-			Version  string `json:"version"`
-			WorkDir  string `json:"workDir"`
-		}
+		var info attachInfo
 		json.NewDecoder(resp.Body).Decode(&info)
 		resp.Body.Close()
-		fmt.Printf("Connected to %s (v%s) via relay\n\n", info.Hostname, info.Version)
+		if strings.TrimSpace(opts.DefaultRunner) != "" && strings.TrimSpace(info.Runner.ID) == "" {
+			info.Runner.ID = opts.DefaultRunner
+		}
+		if strings.TrimSpace(opts.DefaultModel) != "" && strings.TrimSpace(info.Runner.Model) == "" {
+			info.Runner.Model = opts.DefaultModel
+		}
+		infoSnapshot = &info
+		printAttachWelcome(infoSnapshot)
 	} else {
 		if resp != nil {
 			resp.Body.Close()
 		}
-		fmt.Printf("Connected via relay\n\n")
+		printAttachWelcome(infoSnapshot)
 	}
 
 	// Interactive loop
@@ -345,50 +360,69 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string) error {
 			continue
 		}
 
-		switch {
-		case line == "exit" || line == "quit":
-			return nil
-		case line == "help":
-			printHelp()
-			continue
-		case line == "tasks" || line == "list":
-			if err := httpListTasks(ctx, client, baseURL, authHeader); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
-		case strings.HasPrefix(line, "stop "):
-			taskID := strings.TrimSpace(strings.TrimPrefix(line, "stop "))
-			if err := httpStopTask(ctx, client, baseURL, authHeader, taskID); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
-		case strings.HasPrefix(line, "continue "):
-			parts := strings.SplitN(line, " ", 3)
-			if len(parts) < 3 {
-				fmt.Println("usage: continue <taskId> <message>")
+		if cmd, ok := parseTerminalCommand(line); ok {
+			switch cmd.Kind {
+			case "detach":
+				return nil
+			case "help":
+				printAttachHelp(infoSnapshot)
+				continue
+			case "tasks":
+				if err := httpListTasks(ctx, client, baseURL, authHeader); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "agent":
+				if runnerLine := attachRunnerLine(infoSnapshot); runnerLine != "" {
+					fmt.Printf("Current coding agent: %s\n", runnerLine)
+					fmt.Println()
+				} else {
+					fmt.Println("Current coding agent: remote default")
+					fmt.Println()
+				}
+				continue
+			case "clear":
+				fmt.Print("\033[2J\033[H")
+				printAttachWelcome(infoSnapshot)
+				continue
+			case "stop-task":
+				if err := httpStopTask(ctx, client, baseURL, authHeader, cmd.TaskID); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "exit-task":
+				if err := httpExitTask(ctx, client, baseURL, authHeader, cmd.TaskID); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
+				continue
+			case "continue-task":
+				if err := httpContinueTask(ctx, client, baseURL, authHeader, cmd.TaskID, cmd.Input); err != nil {
+					fmt.Printf("error: %v\n", err)
+				}
 				continue
 			}
-			if err := httpContinueTask(ctx, client, baseURL, authHeader, parts[1], parts[2]); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
 		}
 
 		// Default: create a new task
-		if err := httpCreateTask(ctx, client, baseURL, authHeader, line); err != nil {
+		if err := httpCreateTask(ctx, client, baseURL, authHeader, line, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
 	}
 }
 
-func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader, prompt string) error {
+func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader, prompt string, opts TerminalClientOptions) error {
 	body, _ := json.Marshal(map[string]string{
 		"title":       prompt,
 		"description": prompt,
+		"source":      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
+		"runner":      opts.DefaultRunner,
+		"model":       opts.DefaultModel,
 	})
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/tasks", bytes.NewReader(body))
 	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Yaver-Source", firstNonEmpty(opts.Source, terminalRemoteTaskSource))
+	req.Header.Set("X-Yaver-Session-Mode", "terminal")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -487,6 +521,22 @@ func httpStopTask(ctx context.Context, client *http.Client, baseURL, authHeader,
 		return fmt.Errorf("stop failed: HTTP %d", resp.StatusCode)
 	}
 	fmt.Printf("Task %s stopped.\n", taskID)
+	return nil
+}
+
+func httpExitTask(ctx context.Context, client *http.Client, baseURL, authHeader, taskID string) error {
+	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/tasks/"+taskID+"/exit", nil)
+	req.Header.Set("Authorization", authHeader)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("graceful exit failed: HTTP %d", resp.StatusCode)
+	}
+	fmt.Printf("Task %s exited gracefully.\n", taskID)
 	return nil
 }
 
