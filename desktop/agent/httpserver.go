@@ -779,6 +779,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/provider/status", s.auth(s.handleGitProviderStatus))
 	mux.HandleFunc("/git/provider/repos", s.auth(s.handleGitProviderRepos))
 	mux.HandleFunc("/git/provider/", s.auth(s.handleGitProviderRemove))
+	// Find an existing clone of a remote URL anywhere under the
+	// agent's project-discovery roots. The Feedback SDK's git-setup
+	// wizard calls this before issuing /repos/clone so a user who
+	// already cloned the repo manually doesn't end up with a
+	// duplicate clone in a fresh location.
+	mux.HandleFunc("/git/find-repo", s.auth(s.handleGitFindRepo))
 
 	// Multi-user management (shared machines)
 	mux.HandleFunc("/users", s.auth(s.handleMultiUserList))
@@ -1010,12 +1016,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/host-share/workspace/pull-from-guest", s.auth(s.handleHostShareWorkspacePullFromGuest))
 	mux.HandleFunc("/host-share/workspace/push-to-guest", s.auth(s.handleHostShareWorkspacePushToGuest))
 
-	// Voice (real-time speech-to-speech & transcription) — SDK-accessible
-	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
-	mux.HandleFunc("/voice/transcribe", s.authSDK(s.handleVoiceTranscribe))
-	mux.HandleFunc("/voice/providers", s.authSDK(s.handleVoiceProviders))
-	mux.HandleFunc("/voice/config", s.authSDK(s.handleVoiceConfig))
-
 	// Agent context (repo switching)
 	mux.HandleFunc("/agent/workdir", s.auth(s.handleAgentWorkdir))
 	mux.HandleFunc("/agent/context", s.auth(s.handleAgentContext))
@@ -1177,7 +1177,6 @@ var hostShareAllowedPrefixes = []string{
 var scopePathPrefixes = map[string][]string{
 	"feedback":     {"/feedback"},
 	"blackbox":     {"/blackbox/"},
-	"voice":        {"/voice/"},
 	"builds":       {"/builds"},
 	"testapp":      {"/test-app/"},
 	"health":       {"/health"},
@@ -2166,25 +2165,8 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info["autoStart"] = autoStart
 
-	// Voice capability — always true (mobile can always send audio)
-	info["voiceInputEnabled"] = true
-
-	// S2S provider status
-	cfg, _ := LoadConfig()
-	if cfg != nil && cfg.Voice != nil && cfg.Voice.S2SProvider != "" {
-		if p, ok := GetVoiceProvider(cfg.Voice.S2SProvider); ok {
-			status := p.Status()
-			info["voiceProvider"] = status.Provider
-			info["voiceReady"] = status.Ready
-		}
-	}
-	// STT available
-	if cfg != nil && cfg.Speech != nil && cfg.Speech.Provider != "" {
-		info["sttProvider"] = cfg.Speech.Provider
-	}
-
 	// Feedback-only guests get a redacted /info. We still need to answer
-	// "is the agent alive + which feedback + voice endpoints are available"
+	// "is the agent alive + which feedback endpoints are available"
 	// (the SDK probes this on startup), but we strip everything that leaks
 	// the dev-machine's project layout, task activity, auto-start config,
 	// hardware id, workDir, or hostname. A malicious end-user of a host's
@@ -2192,16 +2174,8 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	// many tasks are in flight.
 	if r.Header.Get("X-Yaver-GuestScope") == GuestScopeFeedbackOnly {
 		redacted := map[string]interface{}{
-			"ok":                info["ok"],
-			"version":           info["version"],
-			"voiceInputEnabled": info["voiceInputEnabled"],
-		}
-		// Pass through voice capability fields (the SDK needs them to decide
-		// whether to show the mic button), but nothing else.
-		for _, k := range []string{"voiceProvider", "voiceReady", "sttProvider"} {
-			if v, ok := info[k]; ok {
-				redacted[k] = v
-			}
+			"ok":      info["ok"],
+			"version": info["version"],
 		}
 		// Sandbox flag is safe — feedback-only tasks get force-containerized,
 		// so the SDK can show "running sandboxed" without surfacing host config.
@@ -2951,8 +2925,8 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
 		CustomCommand string             `json:"customCommand"`  // arbitrary command — runs via sh -c
 		ProjectName   string             `json:"projectName,omitempty"`
-		Source        string             `json:"source"`        // client type: "mobile", "desktop-app", "web", "cli"
-		SpeechContext *SpeechContext     `json:"speechContext"` // voice input/output preferences
+		Source        string             `json:"source"` // client type: "mobile", "desktop-app", "web", "cli"
+		Verbosity     *int               `json:"verbosity,omitempty"`
 		Images        []ImageAttachment  `json:"images,omitempty"`
 		WorkDir       string             `json:"workDir,omitempty"`
 		SliceContract *TaskSliceContract `json:"sliceContract,omitempty"`
@@ -3084,7 +3058,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	taskOpts.VideoEnabled = body.VideoEnabled
 	taskOpts.VideoSource = strings.TrimSpace(body.VideoSource)
 
-	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, body.SpeechContext)
+	var verbosityCtx *TaskVerbosity
+	if body.Verbosity != nil {
+		verbosityCtx = &TaskVerbosity{Verbosity: body.Verbosity}
+	}
+	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
 		return
@@ -3520,18 +3498,6 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		addCheck("network", "Public recovery exposure", "pass", "Direct public HTTP recovery is blocked by the agent")
 	} else {
 		addCheck("network", "Public recovery exposure", "warn", "Direct public HTTP recovery is enabled (default). Set require-private-recovery=true to lock /auth/recover to private paths.")
-	}
-
-	// Voice
-	if cfg != nil && cfg.Speech != nil && cfg.Speech.Provider != "" {
-		addCheck("voice", "Speech provider", "pass", cfg.Speech.Provider)
-		if cfg.Speech.TTSEnabled {
-			addCheck("voice", "TTS", "pass", "Enabled")
-		} else {
-			addCheck("voice", "TTS", "pass", "Disabled")
-		}
-	} else {
-		addCheck("voice", "Speech provider", "warn", "Not configured")
 	}
 
 	// Hermes / Super-host
@@ -4333,16 +4299,16 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if args.Prompt == "" {
 			return mcpToolError("prompt is required")
 		}
-		var sc *SpeechContext
+		var vc *TaskVerbosity
 		if args.Verbosity != nil {
-			sc = &SpeechContext{Verbosity: args.Verbosity}
+			vc = &TaskVerbosity{Verbosity: args.Verbosity}
 		}
 		taskOpts := TaskCreateOptions{
 			Mode:         strings.TrimSpace(args.Mode),
 			VideoEnabled: args.VideoEnabled,
 			VideoSource:  strings.TrimSpace(args.VideoSource),
 		}
-		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, sc)
+		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, vc)
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("failed to create task: %v", err))
 		}
@@ -8754,6 +8720,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Provider           string `json:"provider"`
 			BaseURL            string `json:"base_url"`
 			OrchestrationMode  string `json:"orchestration_mode"`
+			CompressionMode        string `json:"compression_mode"`
+			HandoffCompressionMode string `json:"handoff_compression_mode"`
+			MemoryCompressionMode  string `json:"memory_compression_mode"`
 			WorkMode           string `json:"work_mode"`
 			AttachedDeviceID   string `json:"attached_device_id"`
 			AttachedDeviceName string `json:"attached_device_name"`
@@ -8778,9 +8747,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		if v := strings.TrimSpace(a.BaseURL); v != "" {
 			payload["baseUrl"] = v
-		}
-		if v := strings.TrimSpace(a.OrchestrationMode); v != "" {
-			payload["orchestrationMode"] = v
 		}
 		if v := strings.TrimSpace(a.WorkMode); v != "" {
 			payload["workMode"] = v
@@ -8829,6 +8795,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Provider:           stringPtr(a.Provider),
 			BaseURL:            stringPtr(a.BaseURL),
 			OrchestrationMode:  stringPtr(a.OrchestrationMode),
+			CompressionMode:        stringPtr(a.CompressionMode),
+			HandoffCompressionMode: stringPtr(a.HandoffCompressionMode),
+			MemoryCompressionMode:  stringPtr(a.MemoryCompressionMode),
 			WorkMode:           stringPtr(a.WorkMode),
 			AttachedDeviceID:   stringPtr(a.AttachedDeviceID),
 			AttachedDeviceName: stringPtr(a.AttachedDeviceName),
@@ -13807,6 +13776,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	default:
 		// Phone-first mini backend (desktop/agent/phone_backend.go)
 		if handled, result := dispatchPhoneMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
+		// Native build & deploy — iosNative / androidNative / flutter (mcp_native_build.go)
+		if handled, result := dispatchNativeBuildMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)

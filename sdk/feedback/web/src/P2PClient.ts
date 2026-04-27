@@ -740,6 +740,50 @@ export class P2PClient {
     return data as Awaited<ReturnType<P2PClient['cloneRepo']>>;
   }
 
+  /**
+   * Search for an existing clone of `remoteUrl` anywhere under the
+   * agent's project-discovery roots. Returns null when no match.
+   *
+   * The widget calls this BEFORE issuing /repos/clone so a user who
+   * already cloned the repo manually (often months ago, in a custom
+   * location) doesn't get a duplicate fresh clone. Agent endpoint
+   * /git/find-repo (cli 1.99.88+); older agents return 404 and the
+   * caller should fall through to a regular clone.
+   */
+  async findExistingRepo(remoteUrl: string): Promise<{
+    path: string;
+    remoteUrl: string;
+  } | null> {
+    const resp = await fetch(`${this.baseUrl}/git/find-repo`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ remoteUrl }),
+    });
+    if (resp.status === 404) {
+      // Old agent without the endpoint — caller treats as "no match"
+      // and proceeds to clone. Don't throw; the wizard would otherwise
+      // surface a confusing error.
+      return null;
+    }
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    if (!resp.ok) {
+      throw new Error(
+        typeof (data as any)?.error === 'string'
+          ? (data as any).error
+          : `[P2PClient] find-repo failed (${resp.status})`,
+      );
+    }
+    const m = (data as any)?.match;
+    if (!m || typeof m.path !== 'string' || !m.path) return null;
+    return {
+      path: m.path,
+      remoteUrl: typeof m.remoteUrl === 'string' ? m.remoteUrl : remoteUrl,
+    };
+  }
+
   async commitProject(
     opts?: { projectName?: string; projectPath?: string; bundleId?: string; message?: string },
   ): Promise<FeedbackProjectActionResult> {

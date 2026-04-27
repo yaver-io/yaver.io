@@ -1341,6 +1341,46 @@ export class YaverFeedback {
                 }
                 await client.setProjectRemote({ projectName, remoteUrl });
                 tokenInput.value = '';
+
+                // Look for an existing clone before falling through to
+                // /repos/clone — the user may have cloned this repo
+                // manually months ago. Without this check the widget
+                // would create a duplicate clone in a fresh dir, and
+                // the user would have two checkouts of the same repo
+                // racing to be the source of truth.
+                setStatus('Looking for an existing clone on this machine…');
+                let existing: Awaited<ReturnType<typeof client.findExistingRepo>> = null;
+                try {
+                  existing = await client.findExistingRepo(remoteUrl);
+                } catch {
+                  // Older agents without the endpoint return 404; we
+                  // already swallow that inside findExistingRepo. Any
+                  // other error here should not block the clone path.
+                  existing = null;
+                }
+                if (existing) {
+                  setStatus(`Reusing existing clone at ${existing.path}.`);
+                } else {
+                  // No clone on this machine yet → fetch it. We let
+                  // the agent pick the destination dir (it defaults to
+                  // ~/Workspace/<repo-name>) so the result lands under
+                  // a discovery root and `scanMobileProjects` finds
+                  // it on its next pass.
+                  setStatus(`Cloning ${remoteUrl} onto this machine — first run takes ~30–60 s for typical repos.`);
+                  try {
+                    await client.cloneRepo({ url: remoteUrl });
+                    setStatus('Clone finished. Verifying repo access…');
+                  } catch (cloneErr) {
+                    setStatus(
+                      cloneErr instanceof Error
+                        ? `Clone failed: ${cloneErr.message}. Open the dashboard's Git tab for full options.`
+                        : 'Clone failed. Open the dashboard’s Git tab for full options.',
+                    );
+                    // Don't throw — leave the binding in place; user
+                    // can retry the clone from the dashboard.
+                    return;
+                  }
+                }
                 setStatus('Project remote saved. Verifying repo access…');
               } catch (err) {
                 setStatus(err instanceof Error ? err.message : 'Could not save the project remote.');
