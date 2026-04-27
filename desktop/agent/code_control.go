@@ -8,10 +8,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
@@ -31,6 +34,11 @@ type codeRunnerRow struct {
 type codeProjectRow struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
+}
+
+type interactiveCodeResult struct {
+	Handled    bool
+	ShouldExit bool
 }
 
 func runCodeControl(args []string) (bool, error) {
@@ -65,6 +73,205 @@ func runCodeControl(args []string) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func parseInteractiveCodeArgs(line string) ([]string, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) == 0 {
+		return nil, false
+	}
+	if fields[0] == "/" {
+		return []string{"/"}, true
+	}
+	if strings.HasPrefix(fields[0], "/") && len(fields[0]) > 1 {
+		fields[0] = strings.TrimPrefix(fields[0], "/")
+	}
+	switch fields[0] {
+	case "attach", "detach", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help":
+		return fields, true
+	default:
+		return nil, false
+	}
+}
+
+func slashMenuOptions(attached bool) []string {
+	options := []string{
+		"/get agent",
+		"/set agent codex",
+		"/get model",
+		"/set model gpt-5.4",
+		"/get repo",
+		"/repo list",
+		"/repo refresh",
+		"/dev status",
+		"/dev reload",
+		"/status",
+	}
+	if attached {
+		options = append([]string{"/detach pc", "/get pc"}, options...)
+	} else {
+		options = append([]string{"/attach pc select", "/get pc"}, options...)
+	}
+	return options
+}
+
+func interactiveSlashMenu(attached bool) (string, error) {
+	options := slashMenuOptions(attached)
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Println("Slash commands:")
+		for _, option := range options {
+			fmt.Printf("  %s\n", option)
+		}
+		return "", nil
+	}
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return "", err
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	selected := 0
+	reader := bufio.NewReader(os.Stdin)
+	render := func() {
+		fmt.Print("\033[2J\033[H")
+		fmt.Println("Slash commands")
+		fmt.Println("Use ↑/↓ and Enter. Esc cancels.")
+		fmt.Println()
+		for i, option := range options {
+			prefix := "  "
+			if i == selected {
+				prefix = "> "
+			}
+			fmt.Printf("%s%s\n", prefix, option)
+		}
+	}
+	render()
+
+	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		switch b {
+		case 13, 10:
+			fmt.Print("\033[2J\033[H")
+			return options[selected], nil
+		case 3, 27:
+			// ESC may be a standalone cancel or the start of an arrow sequence.
+			if b == 27 {
+				next, _ := reader.Peek(2)
+				if len(next) == 2 && next[0] == '[' {
+					_, _ = reader.ReadByte()
+					dir, _ := reader.ReadByte()
+					switch dir {
+					case 'A':
+						if selected > 0 {
+							selected--
+						}
+						render()
+						continue
+					case 'B':
+						if selected < len(options)-1 {
+							selected++
+						}
+						render()
+						continue
+					}
+				}
+			}
+			fmt.Print("\033[2J\033[H")
+			return "", nil
+		case 'k':
+			if selected > 0 {
+				selected--
+			}
+			render()
+		case 'j':
+			if selected < len(options)-1 {
+				selected++
+			}
+			render()
+		}
+	}
+}
+
+func primeCodeConfigForInteractive(attachedDeviceID, attachedDeviceName string, runner, model string) error {
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(attachedDeviceID) != "" {
+		profile.WorkMode = codeWorkModeAttached
+		profile.AttachedDeviceID = strings.TrimSpace(attachedDeviceID)
+		profile.AttachedDeviceName = strings.TrimSpace(attachedDeviceName)
+	}
+	if strings.TrimSpace(runner) != "" {
+		profile.Runner = strings.TrimSpace(runner)
+	}
+	if strings.TrimSpace(model) != "" {
+		profile.Model = strings.TrimSpace(model)
+	}
+	return saveCodeConfig(cfg)
+}
+
+func execInteractiveCodeCommand(args []string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, append([]string{"code"}, args...)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func handleInteractiveCodeCommand(line, attachedDeviceID, attachedDeviceName string, runner, model string) (interactiveCodeResult, error) {
+	args, ok := parseInteractiveCodeArgs(line)
+	if !ok {
+		return interactiveCodeResult{}, nil
+	}
+	if len(args) == 1 && args[0] == "/" {
+		selection, err := interactiveSlashMenu(strings.TrimSpace(attachedDeviceID) != "")
+		if err != nil {
+			return interactiveCodeResult{Handled: true}, err
+		}
+		if strings.TrimSpace(selection) == "" {
+			return interactiveCodeResult{Handled: true}, nil
+		}
+		args, ok = parseInteractiveCodeArgs(selection)
+		if !ok {
+			return interactiveCodeResult{Handled: true}, nil
+		}
+	}
+	if err := primeCodeConfigForInteractive(attachedDeviceID, attachedDeviceName, runner, model); err != nil {
+		return interactiveCodeResult{Handled: true}, err
+	}
+	switch {
+	case len(args) >= 2 && args[0] == "attach" && args[1] == "pc":
+		if _, err := runCodeControl(args); err != nil {
+			return interactiveCodeResult{Handled: true}, err
+		}
+		cfg, profile, err := loadCodeConfig()
+		if err != nil {
+			return interactiveCodeResult{Handled: true}, err
+		}
+		_ = cfg
+		if strings.TrimSpace(profile.AttachedDeviceID) == "" {
+			return interactiveCodeResult{Handled: true}, nil
+		}
+		if err := runRemoteCodeAttach("", profile.AttachedDeviceID, "", runner, model); err != nil {
+			return interactiveCodeResult{Handled: true}, err
+		}
+		return interactiveCodeResult{Handled: true, ShouldExit: true}, nil
+	case len(args) >= 2 && args[0] == "detach" && args[1] == "pc":
+		if _, err := runCodeControl(args); err != nil {
+			return interactiveCodeResult{Handled: true}, err
+		}
+		return interactiveCodeResult{Handled: true, ShouldExit: strings.TrimSpace(attachedDeviceID) != ""}, nil
+	default:
+		return interactiveCodeResult{Handled: true}, execInteractiveCodeCommand(args)
+	}
 }
 
 func printCodeControlUsage() {

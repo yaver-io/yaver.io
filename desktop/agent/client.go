@@ -18,9 +18,11 @@ import (
 )
 
 type TerminalClientOptions struct {
-	DefaultRunner string
-	DefaultModel  string
-	Source        string
+	DefaultRunner      string
+	DefaultModel       string
+	Source             string
+	AttachedDeviceID   string
+	AttachedDeviceName string
 }
 
 // RunClient connects to a remote Yaver agent over QUIC and provides an
@@ -73,6 +75,21 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 
 		line = strings.TrimSpace(line)
 		if line == "" {
+			continue
+		}
+
+		if result, err := handleInteractiveCodeCommand(line, strings.TrimSpace(opts.AttachedDeviceID), firstNonEmpty(strings.TrimSpace(opts.AttachedDeviceName), deviceName), opts.DefaultRunner, opts.DefaultModel); result.Handled {
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+			if result.ShouldExit {
+				return nil
+			}
+			if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
+				opts.DefaultRunner = strings.TrimSpace(profile.Runner)
+				opts.DefaultModel = strings.TrimSpace(profile.Model)
+			}
 			continue
 		}
 
@@ -155,6 +172,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 		}
 
 		// Default: create a new task
+		fmt.Printf("⟩ %s\n\n", summarizeTerminalInputEcho(line))
 		if err := clientCreateTask(ctx, conn, line, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
@@ -366,6 +384,25 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 			continue
 		}
 
+		currentHost := ""
+		if infoSnapshot != nil {
+			currentHost = strings.TrimSpace(infoSnapshot.Hostname)
+		}
+		if result, err := handleInteractiveCodeCommand(line, strings.TrimSpace(opts.AttachedDeviceID), firstNonEmpty(strings.TrimSpace(opts.AttachedDeviceName), currentHost), opts.DefaultRunner, opts.DefaultModel); result.Handled {
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+			if result.ShouldExit {
+				return nil
+			}
+			if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
+				opts.DefaultRunner = strings.TrimSpace(profile.Runner)
+				opts.DefaultModel = strings.TrimSpace(profile.Model)
+			}
+			continue
+		}
+
 		if cmd, ok := parseTerminalCommand(line); ok {
 			switch cmd.Kind {
 			case "detach":
@@ -421,6 +458,7 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 		}
 
 		// Default: create a new task
+		fmt.Printf("⟩ %s\n\n", summarizeTerminalInputEcho(line))
 		if err := httpCreateTask(ctx, client, baseURL, authHeader, line, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}

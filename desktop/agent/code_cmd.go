@@ -338,9 +338,11 @@ func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) e
 	}
 	baseURL := resolveDeviceURL(cfg, device.DeviceID, true)
 	opts := TerminalClientOptions{
-		DefaultRunner: runner,
-		DefaultModel:  model,
-		Source:        terminalRemoteTaskSource,
+		DefaultRunner:      runner,
+		DefaultModel:       model,
+		Source:             terminalRemoteTaskSource,
+		AttachedDeviceID:   device.DeviceID,
+		AttachedDeviceName: device.Name,
 	}
 	if strings.TrimSpace(prompt) == "" {
 		ctx := context.Background()

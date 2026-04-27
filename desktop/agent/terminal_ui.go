@@ -102,7 +102,7 @@ func printAttachWelcome(info *attachInfo) {
 	}
 	fmt.Println()
 	fmt.Println("Type a task and press Enter.")
-	fmt.Println("`help` shows local terminal commands. Ctrl+C detaches.")
+	fmt.Println("`/` opens the command palette. `help` shows local terminal commands. Ctrl+C detaches.")
 	fmt.Println()
 }
 
@@ -120,6 +120,7 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("  continue <id> <msg>   continue a finished task")
 	fmt.Println("  set agent <id> [model]  change the terminal's default coding agent")
 	fmt.Println("  clear                 clear the screen")
+	fmt.Println("  /                     open the slash-command picker")
 	fmt.Println("  exit / quit / detach  leave the terminal without stopping the agent")
 	fmt.Println("  /help /exit /quit     common slash-command aliases")
 	fmt.Println("  \\exit / \\quit         common backslash-command aliases")
@@ -166,4 +167,16 @@ func attachRunnerLine(info *attachInfo) string {
 	default:
 		return ""
 	}
+}
+
+func summarizeTerminalInputEcho(input string) string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return ""
+	}
+	lineCount := 1 + strings.Count(trimmed, "\n")
+	if len(trimmed) > 500 || lineCount > 8 {
+		return fmt.Sprintf("[Pasted Content %d chars]", len(trimmed))
+	}
+	return trimmed
 }

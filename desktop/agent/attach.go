@@ -106,6 +106,23 @@ func runAttach(args []string) {
 			return
 
 		case input := <-inputCh:
+			if result, err := handleInteractiveCodeCommand(input, "", "", opts.DefaultRunner, opts.DefaultModel); result.Handled {
+				if err != nil {
+					fmt.Printf("Error: %v\n\n", err)
+					printPrompt()
+					continue
+				}
+				if result.ShouldExit {
+					fmt.Println("\nDetached from agent. Agent continues running in background.")
+					return
+				}
+				if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
+					opts.DefaultRunner = strings.TrimSpace(profile.Runner)
+					opts.DefaultModel = strings.TrimSpace(profile.Model)
+				}
+				printPrompt()
+				continue
+			}
 			if handled, shouldExit := runAttachBuiltin(input, info, baseURL, cfg.AuthToken, &opts); handled {
 				if shouldExit {
 					fmt.Println("\nDetached from agent. Agent continues running in background.")
@@ -115,7 +132,7 @@ func runAttach(args []string) {
 				continue
 			}
 			// Create a new task from keyboard input
-			fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", input)
+			fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", summarizeTerminalInputEcho(input))
 			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, input, opts)
 			if err != nil {
 				fmt.Printf("\033[31mError: %v\033[0m\n", err)

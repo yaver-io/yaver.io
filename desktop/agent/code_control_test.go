@@ -35,6 +35,16 @@ func TestParseTerminalCommandAgentQueries(t *testing.T) {
 	}
 }
 
+func TestParseInteractiveCodeArgsSlash(t *testing.T) {
+	args, ok := parseInteractiveCodeArgs("/get agent")
+	if !ok {
+		t.Fatal("slash command was not parsed")
+	}
+	if len(args) != 2 || args[0] != "get" || args[1] != "agent" {
+		t.Fatalf("unexpected args: %#v", args)
+	}
+}
+
 func TestCodeAttachedDevice(t *testing.T) {
 	if got := codeAttachedDevice(&CodeCLIConfig{WorkMode: codeWorkModeLocal, AttachedDeviceID: "abc"}); got != "" {
 		t.Fatalf("local mode returned attached device %q", got)
