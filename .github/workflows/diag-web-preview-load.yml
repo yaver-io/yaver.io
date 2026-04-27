@@ -1,0 +1,89 @@
+# End-to-end probe: trigger /dev/web-preview/start on the agent,
+# wait for webPort, then fetch /dev-web/ through the agent locally
+# AND through the relay to confirm Expo Web actually serves HTML.
+name: Diagnose Web Preview Load
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diag-web-preview-load
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render diag script
+        run: |
+          cat > "$RUNNER_TEMP/diag.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for cfg in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$cfg" ] || continue
+            TOK=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('auth_token',''))" "$cfg")
+            DID=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('device_id',''))" "$cfg")
+            CONVEX=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('convex_site_url',''))" "$cfg")
+            break
+          done
+          AGENT="http://127.0.0.1:18080"
+          AUTH="Authorization: Bearer $TOK"
+
+          echo "=== /dev/status BEFORE web-preview ==="
+          curl -fsS -H "$AUTH" "$AGENT/dev/status" | python3 -m json.tool || true
+          echo
+          echo "=== POST /dev/web-preview/start ==="
+          curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' -d '{}' "$AGENT/dev/web-preview/start" | python3 -m json.tool 2>&1 || true
+          echo
+          echo "=== Poll status for webPort (60s) ==="
+          for i in $(seq 1 30); do
+            STATUS=$(curl -fsS -H "$AUTH" "$AGENT/dev/status" 2>/dev/null)
+            WEBPORT=$(echo "$STATUS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('webPort',0))")
+            echo "  +${i}s  webPort=$WEBPORT"
+            if [ "$WEBPORT" != "0" ]; then
+              echo "  ✓ webPort populated: $WEBPORT"
+              break
+            fi
+            sleep 2
+          done
+
+          echo
+          if [ -n "$WEBPORT" ] && [ "$WEBPORT" != "0" ]; then
+            echo "=== curl /dev-web/ via local agent (chrome-like accept) ==="
+            curl -sS -i -H "$AUTH" -H 'Accept: text/html,application/xhtml+xml,*/*' \
+                "$AGENT/dev-web/" 2>&1 | head -25
+            echo
+            echo "=== content-type + first 500 bytes ==="
+            curl -sS -H "$AUTH" -H 'Accept: text/html' \
+                "$AGENT/dev-web/" 2>&1 | head -c 600
+            echo
+            echo
+            echo "=== direct curl localhost:$WEBPORT ==="
+            curl -sS -i "http://127.0.0.1:$WEBPORT/" 2>&1 | head -25
+          else
+            echo "FAIL: webPort never populated"
+            echo
+            echo "=== agent.log last 50 lines about dev:expo:web ==="
+            tail -n 200 /home/yaver/.yaver/agent.log 2>/dev/null | grep -iE 'expo|web-preview|prebuild|EACCES|ENOENT|webPort|--web' | tail -50
+          fi
+          BODY
+          chmod +x "$RUNNER_TEMP/diag.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/diag.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/diag-web-preview.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/diag-web-preview.sh && rm -f /tmp/diag-web-preview.sh"
