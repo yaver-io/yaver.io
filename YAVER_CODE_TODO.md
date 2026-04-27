@@ -236,145 +236,6 @@ Rules:
 
 The current `desktop/agent/code_hybrid_session.go` is the seed of this layer.
 
-## Optional Auto Orchestration
-
-Auto mode must be optional.
-
-Control:
-
-- `yaver code set orchestration manual`
-- `yaver code set orchestration auto`
-- `yaver code get orchestration`
-
-Default:
-
-- `manual`
-
-### Manual Mode
-
-Yaver does not make runner decisions for the user.
-
-- active runner stays active unless user changes it
-- forks happen only when explicitly requested
-- continue happens only when explicitly requested
-
-### Auto Mode
-
-Yaver may choose to:
-
-- keep work in the active runner
-- continue same task with a different runner
-- fork a child task into another runner
-- choose cheaper runners for bounded edits
-- reserve frontier runners for planning/review/high-risk work
-
-Auto mode should never be silent in a confusing way.
-
-It should emit explicit control-plane lines like:
-
-- `auto: delegating bounded UI edit to opencode`
-- `auto: keeping architecture review in claude`
-- `auto: skipping codex because weekly frontier budget is low`
-
-## Capability-Aware Routing
-
-Yaver should maintain a small runner capability model.
-
-Example dimensions:
-
-- planning quality
-- execution quality
-- refactor quality
-- speed
-- cost tier
-- local/private availability
-- auth state
-- browser-auth support
-- API-key availability
-- model family options
-
-Practical heuristics:
-
-- Claude/Codex: best for planning, architecture, non-local-reasoning, high-stakes review
-- OpenCode: good adapter when configured with multiple backends
-- OpenCode + GLM or other cheap models: good for cheap bounded work
-- Aider/Ollama local model: good for mechanical edits and privacy-sensitive cheap work
-
-This belongs in a policy layer, not hardcoded all over terminal handlers.
-
-The current `desktop/agent/code_orchestrator_policy.go` is the seed of this layer.
-
-## Budget Awareness
-
-Auto mode should be budget-aware.
-
-The first useful budget axes:
-
-- weekly frontier hours
-- daily frontier request budget
-- local/free preferred toggle
-- per-run “quality priority” vs “cost priority”
-
-Example scenario:
-
-- user has Claude/Codex but only ~5 frontier hours/week
-- OpenCode has GLM and OpenAI configured
-- local Ollama exists too
-
-Then auto mode should do something like:
-
-- planning or complex debugging: frontier
-- bounded implementation subtasks: OpenCode or local implementer
-- final review/high-risk refactor pass: frontier again
-
-This is the right place to borrow from Caveman-like thinking:
-
-- compress handoffs
-- reduce output verbosity for machine-to-machine summaries
-- avoid wasting frontier tokens on long restatements
-
-But not:
-
-- globally degrading user-visible answer quality
-
-## Caveman-Inspired Compression Layer
-
-Useful ideas from Caveman and adjacent semantic-compression work:
-
-- response verbosity levels
-- persistent memory compression
-- machine-to-machine summary compression
-- exact preservation of technical tokens
-
-Yaver should implement this as a neutral compression subsystem, not as a gimmick persona.
-
-### Compression Modes
-
-Suggested modes:
-
-- `full`
-- `normal`
-- `terse`
-- `ultra`
-
-Use cases:
-
-- user-facing parent response: `normal` by default
-- child-to-parent handoff: `terse`
-- memory compaction: `ultra`
-
-Never compress:
-
-- code blocks
-- diffs
-- commands
-- paths
-- URLs
-- stack traces
-- auth/device codes
-- env vars
-- exact error messages
-
 ## Remote / Headless Auth
 
 This is critical for headless boxes.
@@ -506,25 +367,18 @@ This means long-term `fork` should reuse graph machinery where possible.
 - wire GLM/ZAI/OpenAI/Anthropic keys through vault-backed control paths
 - surface readiness in `get agent` / `status`
 
-### Phase 4: Compression Layer
-
-- response verbosity modes
-- compact handoff summaries
-- persistent memory compaction for always-loaded Yaver context
-- never-touch exact technical tokens
-
-### Phase 5: Auto Mode
-
-- add budget policy
-- add capability policy
-- add explicit auto decision messages
-- keep it opt-in
-
-### Phase 6: Graph Unification
+### Phase 4: Graph Unification (deferred)
 
 - represent forked child tasks as graph nodes where useful
 - reuse placement / streaming / summaries
 - support remote child execution on attached or pooled machines
+
+> Phases 4 (compression / "caveman") and 5 (auto-orchestration policy)
+> were dropped 2026-04-28. Caveman-style compression risked silently
+> degrading visible answers, and the auto-orchestration policy never
+> made it past a stub. If multi-runner auto-routing is reintroduced
+> later, build it on top of the existing fork primitive — don't
+> resurrect `code_orchestrator_policy.go`.
 
 ## Engineering Constraints
 
@@ -540,7 +394,6 @@ This means long-term `fork` should reuse graph machinery where possible.
 
 Need tests for:
 
-- `set/get orchestration`
 - `fork` arg parsing
 - compact context generation
 - child prompt rendering
@@ -560,19 +413,15 @@ Need higher-level integration tests for:
 ## Immediate Next Work
 
 1. Finish `fork` end-to-end in interactive mode with overlay streaming.
-2. Add `set/get orchestration`.
-3. Expose OpenCode provider configuration through `yaver code`.
-4. Make child task compact summaries appendable back to parent session.
-5. Build the first opt-in auto policy using capability + budget hints.
+2. Expose OpenCode provider configuration through `yaver code`.
+3. Make child task compact summaries appendable back to parent session.
 
 ## Definition of Done
 
-`yaver code` is “done enough” for the next stage when all of this is true:
+`yaver code` is "done enough" for the next stage when all of this is true:
 
 - a user can attach to a headless machine and sign Claude/Codex in from terminal
 - a user can list/continue/fork sessions without leaving `yaver code`
 - a user can delegate a bounded task to OpenCode from the same terminal
 - Yaver can stream delegated child output back into the parent terminal
-- Yaver can optionally auto-route work across multiple runners
-- the auto-routing is explicit, inspectable, and easy to disable
 - the user still feels like they are using one coherent coding terminal, not juggling three tools manually

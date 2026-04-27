@@ -390,13 +390,11 @@ If you need to add a new sync path, append the new forbidden keys to `fieldsWeFo
 5. **Multi-relay redundancy** — Multiple relay servers can be configured. If one goes down, traffic routes through others. Clients try all relays in priority order.
 6. **Application-layer only** — No TUN/TAP, no VPN rights. Won't conflict with user's existing VPN.
 7. **LLM-agnostic** — Works with any terminal AI agent: Claude Code, Codex, Aider, Ollama, Qwen, etc.
-9. **Voice-first mobile** — Voice input is always available in the mobile app and Feedback SDK. Audio is recorded on-device and sent to the agent for transcription. S2S providers (PersonaPlex, OpenAI Realtime) are optional for real-time voice conversations.
-10. **Provider-agnostic voice** — Like LLM-agnosticism for coding agents, voice is provider-agnostic: PersonaPlex (free, on-prem), OpenAI Realtime (paid, cloud), or any future provider via the VoiceProvider interface.
 8. **Session Transfer** — Transfer AI agent sessions (Claude Code, Aider, Codex, Goose, Amp, OpenCode) between machines via `yaver session transfer`. Includes conversation history, agent-specific state files, and optional workspace (via git or tar). Also available as MCP tools for use directly from within AI agents.
-11. **Guest Access** — Share your machine with anyone via `yaver guests invite <email>`. No team/subscription needed. Guests get scoped access (tasks, feedback, dev server) but can't access shell, vault, or sessions. Max 5 guests per host, invitations expire in 2 days. Works from CLI, mobile app, and MCP.
-12. **Grand MCP (`ops` verb-based API)** — see [`YAVER_MCP_COVERAGE.md`](YAVER_MCP_COVERAGE.md). Single MCP tool `ops(machine, verb, payload)` collapses 744 specialist tools into one surface so vibe-coders in Cursor / Claude Desktop / Aider / Codex / Goose drive Yaver with one schema. 20 verbs: `info`, `run`, `status`, `env`, `files`, `logs`, `session`, `secrets`, `build`, `push`, `test`, `deploy`, `reload`, `provision`, `scale`, `destroy`, `workspace`, `dns`, `cert`, `backup`. Remote routing via the existing peer-proxy; `primary` alias resolves to `userSettings.primaryDeviceId`.
-13. **Monorepo manifest** — `yaver.workspace.yaml` declares apps + stacks + providers + shared infra. `yaver workspace init` wires every app (init.md scaffold, env check, autoinit hints). 16 apps detected in this repo's dogfood manifest. MCP: `workspace_init/list/status/scaffold`.
-14. **Managed toggle** — `userSettings.managed = {relay, dns, analytics, storage, email, ci, voice, llm}` — each accepts `true` (Yaver-hosted) / `false` (self-hosted) / `null` (legacy default). CLI `yaver managed get/set <sub> <val>`, MCP `managed_get/set`. Plumbing done; per-subsystem implementers pending.
+9. **Guest Access** — Share your machine with anyone via `yaver guests invite <email>`. No team/subscription needed. Guests get scoped access (tasks, feedback, dev server) but can't access shell, vault, or sessions. Max 5 guests per host, invitations expire in 2 days. Works from CLI, mobile app, and MCP.
+10. **Grand MCP (`ops` verb-based API)** — see [`YAVER_MCP_COVERAGE.md`](YAVER_MCP_COVERAGE.md). Single MCP tool `ops(machine, verb, payload)` collapses specialist tools into one surface so vibe-coders in Cursor / Claude Desktop / Aider / Codex / Goose drive Yaver with one schema. 20 verbs: `info`, `run`, `status`, `env`, `files`, `logs`, `session`, `secrets`, `build`, `push`, `test`, `deploy`, `reload`, `provision`, `scale`, `destroy`, `workspace`, `dns`, `cert`, `backup`. Remote routing via the existing peer-proxy; `primary` alias resolves to `userSettings.primaryDeviceId`.
+11. **Monorepo manifest** — `yaver.workspace.yaml` declares apps + stacks + providers + shared infra. `yaver workspace init` wires every app (init.md scaffold, env check, autoinit hints). MCP: `workspace_init/list/status/scaffold`.
+12. **Managed toggle** — `userSettings.managed = {relay, dns, analytics, storage, email, ci, llm}` — each accepts `true` (Yaver-hosted) / `false` (self-hosted) / `null` (legacy default). CLI `yaver managed get/set <sub> <val>`, MCP `managed_get/set`. Plumbing done; per-subsystem implementers pending.
 
 ## The `ops` grand-MCP surface
 
@@ -478,8 +476,8 @@ Dogfood: `/yaver.workspace.yaml` declares this repo's 16 apps.
 
 ## Per-subsystem managed toggle
 
-Every subsystem (relay, dns, analytics, storage, email, ci, voice,
-llm) runs in one of three modes:
+Every subsystem (relay, dns, analytics, storage, email, ci, llm)
+runs in one of three modes:
 - `managed: true` — use Yaver-hosted infrastructure
 - `managed: false` — user-hosted (their Cloudflare / Plausible / VPS)
 - unset — subsystem keeps its legacy behaviour until the user opts in
@@ -506,58 +504,6 @@ provider, analytics code, etc.) are a follow-up PR per subsystem.
 | `backend/convex/userSettings.ts` | `mergeManagedPatch` merge logic |
 | `desktop/agent/managed.go` | `fetchManagedSettings` + `setManagedSubsystem` |
 | `desktop/agent/managed_cmd.go` | `yaver managed` CLI |
-
-## Voice AI Architecture
-
-Yaver supports provider-agnostic real-time voice AI. Voice input is always available (mobile/SDK can always record and send audio). Speech-to-speech providers are optional enhancements.
-
-### Providers
-
-| Provider | Type | Cost | GPU | Setup |
-|----------|------|------|-----|-------|
-| NVIDIA PersonaPlex 7B | On-prem S2S | Free | NVIDIA A100/H100 or Apple Silicon | `yaver voice setup --provider personaplex` |
-| OpenAI Realtime API | Cloud S2S | Paid per token | None (cloud) | `yaver voice setup --provider openai --api-key <key>` |
-| Whisper (local) | STT only | Free | Optional | `yaver config set speech.provider whisper` |
-| OpenAI Whisper API | STT only | $0.003/min | None | `yaver config set speech.provider openai` |
-| Deepgram Nova-2 | STT only | $0.004/min | None | `yaver config set speech.provider deepgram` |
-| AssemblyAI | STT only | $0.002/min | None | `yaver config set speech.provider assemblyai` |
-
-### How Voice Flows
-
-```
-Phone (mic) → Yaver mobile/SDK → agent HTTP /voice/transcribe → Provider (S2S or STT)
-                                                                      ↓
-Phone (text result) ← agent HTTP response ← transcribed text ←───────┘
-```
-
-- **Always-on voice input**: Mobile app and Feedback SDK always show a mic button. Audio is recorded on-device.
-- **Auto-transcription**: If STT or S2S is configured on the agent, audio is transcribed automatically.
-- **Fallback**: If no provider is configured, raw audio is saved and attached to the task/feedback for the AI agent.
-- **Capability discovery**: Mobile checks `/voice/status` and `/info` (includes `voiceInputEnabled`, `voiceProvider`, `sttProvider`). Beacon includes `vc` flag.
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `desktop/agent/voice.go` | VoiceProvider interface, registry, GPU detection |
-| `desktop/agent/voice_personaplex.go` | PersonaPlex 7B provider (download, serve, stream) |
-| `desktop/agent/voice_openai.go` | OpenAI Realtime API provider |
-| `desktop/agent/voice_cmd.go` | CLI: `yaver voice setup/serve/status/test/providers` |
-| `desktop/agent/voice_http.go` | HTTP: `/voice/status`, `/voice/transcribe`, `/voice/providers`, `/voice/config` |
-| `desktop/agent/voice_test.go` | Unit tests for voice subsystem |
-| `sdk/feedback/react-native/src/types.ts` | `VoiceCapability` type, `voiceEnabled` in FeedbackConfig |
-| `sdk/feedback/react-native/src/P2PClient.ts` | `voiceStatus()`, `transcribeVoice()` methods |
-
-### Cloud Dev Machine (GPU tier)
-
-Two tiers (all dedicated, no sharing):
-- **CPU Machine** ($49/mo) — 8 vCPU / 16 GB RAM / 160 GB NVMe (Hetzner CX42). Pre-installed: Node.js, Python, Go, Rust, Docker, Expo CLI, EAS CLI, Yaver server.
-- **GPU Machine** ($449/mo) — Dedicated NVIDIA RTX 4000, 20 GB VRAM (Hetzner GEX44). Includes Ollama + Qwen 2.5 Coder 32B, PersonaPlex 7B (voice AI), Whisper (STT). Full local AI stack.
-- **Managed Relay** ($10/mo) — shared relay infra, no dedicated server.
-
-**Multi-user / Team mode**: CPU and GPU machines support `--multi-user` mode for team sharing. Each user gets isolated workspace, tasks, and sessions. GPU resources are shared across team members. See "Multi-User Mode" section below.
-
-**Important**: Never mention Hetzner, server costs, or infrastructure provider in customer-facing content (landing page, CLI output, emails). Customers buy convenience and reliability, not a reseller relationship.
 
 ## Feedback SDK (Error Capture + Black Box Streaming)
 
@@ -663,7 +609,7 @@ Shared CPU/GPU machines support multiple users with isolated workspaces. Each us
 2. Team member connects from Yaver app → token validated against Convex → team membership checked
 3. `MultiUserManager` creates isolated `UserSession` at `/var/yaver/users/yaver-{userId[:8]}/`
 4. Each user gets: own workspace, task queue, feedback reports, AI agent sessions, black box streams
-5. GPU resources (Ollama, PersonaPlex) shared across all users
+5. GPU resources (Ollama) shared across all users
 
 ### Team Management
 - Teams managed via Convex: `teams` + `teamMembers` tables
@@ -759,8 +705,8 @@ When a dev ships an app that embeds the Yaver Feedback SDK, end-users of that ap
 
 | Tier | When to use | Allowed paths | Extra hardening |
 |---|---|---|---|
-| `scope=full` (opt-in) | Teammates, trusted cousins | Classic list: `/tasks`, `/vibing`, `/dev/*`, `/builds`, `/projects`, `/todolist`, `/agent/status`, `/agent/runners`, `/shared-storage/*`, plus the feedback/voice/blackbox safe set. | Existing controls (daily limits, runner allowlist, usage mode). |
-| `scope=feedback-only` (**new default**) | End-users of your app — anyone who gets your Feedback SDK | `/feedback`, `/blackbox/*`, `/voice/*`, `/health`, `/info` **only**. | `/info` is redacted (no project list, no workDir, no hostname, no hardware id, no auto-start status, no task stats). `/projects` returns 403. Any task auto-triggered by the guest's feedback (e.g. `/feedback/{id}/fix`) is **force-containerized** regardless of the agent's `containerize_guests` flag. Task workDir is pinned to the resolved project, never guest-provided. |
+| `scope=full` (opt-in) | Teammates, trusted cousins | Classic list: `/tasks`, `/vibing`, `/dev/*`, `/builds`, `/projects`, `/todolist`, `/agent/status`, `/agent/runners`, `/shared-storage/*`, plus the feedback/blackbox safe set. | Existing controls (daily limits, runner allowlist, usage mode). |
+| `scope=feedback-only` (**new default**) | End-users of your app — anyone who gets your Feedback SDK | `/feedback`, `/blackbox/*`, `/health`, `/info` **only**. | `/info` is redacted (no project list, no workDir, no hostname, no hardware id, no auto-start status, no task stats). `/projects` returns 403. Any task auto-triggered by the guest's feedback (e.g. `/feedback/{id}/fix`) is **force-containerized** regardless of the agent's `containerize_guests` flag. Task workDir is pinned to the resolved project, never guest-provided. |
 
 **Default for new invites is `feedback-only`** — the safer choice given end-user distribution is the common case. Use `--scope=full` when inviting an actual teammate. Legacy rows (pre-`scope`) are treated as `full` at runtime so upgrading the agent in place does not silently downgrade existing grants.
 
@@ -828,7 +774,7 @@ Guests can sign in with **any** supported OAuth provider — they don't need to 
 | Path                                   | `scope=full` | `scope=feedback-only` | Owner |
 |----------------------------------------|:-:|:-:|:-:|
 | `/feedback`, `/feedback/`              | ✓ | ✓ | ✓ |
-| `/blackbox/*`, `/voice/*`              | ✓ | ✓ | ✓ |
+| `/blackbox/*`                          | ✓ | ✓ | ✓ |
 | `/health`                              | ✓ | ✓ | ✓ |
 | `/info`                                | ✓ | ✓ (redacted) | ✓ |
 | `/tasks`, `/tasks/`                    | ✓ | — | ✓ |
@@ -840,7 +786,7 @@ Guests can sign in with **any** supported OAuth provider — they don't need to 
 | `/exec`, `/vault/*`, `/session/*`, `/tmux/*`, `/git/*`, `/repos/*`, `/agent/shutdown`, `/agent/clean`, `/schedules`, `/notifications/*`, `/users`, `/sessions` | — | — | ✓ |
 
 Feedback-only guests additionally:
-- `/info` response is stripped to `{ok, version, voiceInputEnabled, voice*, stt*, sandbox.available}` — no hostname, workDir, hwid, project, taskStats, todo counts, autoStart.
+- `/info` response is stripped to `{ok, version, sandbox.available}` — no hostname, workDir, hwid, project, taskStats, todo counts, autoStart.
 - Any task they trigger via `/feedback/{id}/fix` runs in Docker (`GuestRequireIsolation=true` is forced regardless of host config).
 - If the grant carries `allowedProjects`, fix-triggers for a feedback report outside those projects return 403.
 
@@ -1554,7 +1500,7 @@ The Feedback SDK uses a dedicated token system with defense-in-depth security:
 
 | Layer | What | How |
 |-------|------|-----|
-| **Scope restriction** | SDK tokens limited to feedback/blackbox/voice/builds | `authSDK()` middleware checks path against token scopes |
+| **Scope restriction** | SDK tokens limited to feedback/blackbox/builds | `authSDK()` middleware checks path against token scopes |
 | **IP binding** | Token restricted to specific networks | `allowedCIDRs` field on sdkTokens, checked per-request |
 | **Agent IP allowlist** | Block all external IPs | `--allow-ips` flag, outer middleware before auth |
 | **Token rotation** | Rotate without downtime | `POST /sdk/token/rotate`, 5-min grace period |
@@ -1580,14 +1526,14 @@ Request → ipAllowlist → CORS → auth()/authSDK()
           Owner gets:        Endpoints:
           /tasks, /exec      /feedback
           /vault, /agent/*   /blackbox/*
-          /session/*, /tmux  /voice/*
-          /git/*, /repos/*   /builds
+          /session/*, /tmux  /builds
+          /git/*, /repos/*
               │
           Guest gets:
           /tasks, /feedback
-          /dev/*, /voice/*
-          /projects, /vibing
-          /builds, /todolist
+          /dev/*, /projects
+          /vibing, /builds
+          /todolist
           (blocked: exec,
            vault, session,
            tmux, git, repos)

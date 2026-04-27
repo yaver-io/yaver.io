@@ -101,14 +101,7 @@ func runCode(args []string) {
 			}
 			defer restore()
 		}
-		attachArgs := make([]string, 0, 4)
-		if strings.TrimSpace(*runner) != "" {
-			attachArgs = append(attachArgs, "--runner", strings.TrimSpace(*runner))
-		}
-		if strings.TrimSpace(*model) != "" {
-			attachArgs = append(attachArgs, "--model", strings.TrimSpace(*model))
-		}
-		runAttach(attachArgs)
+		runCodeTerminal(strings.TrimSpace(*runner), strings.TrimSpace(*model))
 		return
 	}
 
