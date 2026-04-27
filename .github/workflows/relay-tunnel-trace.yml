@@ -1,0 +1,78 @@
+# Trace what the relay actually does with /d/<id>/dev/events.
+# Tail relay journald while a curl hits the SSE endpoint, so we
+# see whether proxySSE was called, how many bytes flowed, etc.
+name: Relay Tunnel Trace
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: relay-tunnel-trace
+  cancel-in-progress: true
+
+jobs:
+  trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Resolve relay SSH host (where public.yaver.io runs)
+        run: |
+          # public.yaver.io resolves via Cloudflare; we need the actual
+          # origin. Pull it from the RELAY_SSH_HOST secret which is set
+          # to the relay's bare IP/hostname.
+          echo "RELAY_HOST=${{ secrets.RELAY_SSH_HOST }}" >> "$GITHUB_ENV"
+
+      - name: Pull creds from yaver-test-ephemeral
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          OUT=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do [ -f \$c ] && python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(\"auth_token\",\"\"));print(d.get(\"cached_relay_password\",\"\"));print(d.get(\"device_id\",\"\"))' \$c && break; done")
+          TOKEN=$(echo "$OUT" | sed -n '1p')
+          RP=$(echo "$OUT" | sed -n '2p')
+          DID=$(echo "$OUT" | sed -n '3p')
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "RP=$RP" >> "$GITHUB_ENV"
+          echo "DID=$DID" >> "$GITHUB_ENV"
+          echo "deviceId=$DID"
+
+      - name: Probe relay /health for version
+        run: |
+          curl -s https://public.yaver.io/health | python3 -m json.tool
+
+      - name: Curl /dev/events through relay (verbose, with -i + -w)
+        run: |
+          URL="https://public.yaver.io/d/$DID/dev/events?token=$TOKEN&__rp=$RP"
+          echo '--- 8s curl (sees response headers + body bytes received) ---'
+          set +e
+          timeout 8 curl -sN -i -H "Accept: text/event-stream" "$URL" 2>&1 | head -80
+          EC=$?
+          echo "(curl exit=$EC)"
+          echo '--- with -w stats ---'
+          timeout 8 curl -sN -H "Accept: text/event-stream" \
+            -w '\nstatus=%{http_code} size_download=%{size_download} time_total=%{time_total}\n' \
+            "$URL" 2>&1 | tail -3
+
+      - name: Curl /dev/events DIRECTLY (no relay) via tunnel-only
+        run: |
+          # Verify yaver-test-ephemeral's local agent really has events
+          # right now (sometimes Metro's idle and emits nothing, which
+          # we'd misread as "broken" via relay).
+          echo '--- localhost on box, 5s ---'
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@${{ secrets.HETZNER_TEST_SERVER_IP }}" \
+              "timeout 5 curl -sN -H \"Authorization: Bearer $TOKEN\" -H \"Accept: text/event-stream\" http://127.0.0.1:18080/dev/events 2>&1 | head -10"
