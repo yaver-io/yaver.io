@@ -570,7 +570,21 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
         // shows the build phase and goes silent during delivery, which
         // looks like the dashboard hung when actually each iframe
         // asset is being streamed through the relay.
+        //
+        // Format mirrors Metro/Expo's compile bar so the eye reads
+        // them as the same kind of thing: a 16-cell ▓░ bar followed
+        // by percent + done/total + file name.
         const ts = new Date().toLocaleTimeString();
+        const renderBar = (pct: number) => {
+          const cells = 16;
+          const filled = Math.max(0, Math.min(cells, Math.round((pct / 100) * cells)));
+          return "▓".repeat(filled) + "░".repeat(cells - filled);
+        };
+        const fmtBytes = (n: number) => {
+          if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+          if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+          return `${n} B`;
+        };
         if (data.type === "phase") {
           const file = typeof data.file === "string" ? ` · ${data.file}` : "";
           setLogs((prev) => [...prev.slice(-199), `[transport ${ts}] phase=${data.phase}${file}`]);
@@ -582,17 +596,20 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             file: prev?.file,
           }));
         } else if (data.type === "progress") {
-          const pct = typeof data.pct === "number" ? data.pct.toFixed(1) : "?";
-          const file = typeof data.currentFile === "string" ? ` · ${data.currentFile}` : "";
+          const rawPct = typeof data.pct === "number" ? data.pct : 0;
+          const pct = rawPct.toFixed(1).padStart(5);
           const done = typeof data.done === "number" ? data.done : 0;
           const total = typeof data.total === "number" ? data.total : 0;
+          const file = typeof data.currentFile === "string" ? data.currentFile : "?";
+          // Only one column in the file/path so the bar stays visually
+          // aligned even as filenames vary in length.
           setLogs((prev) => [
             ...prev.slice(-199),
-            `[transport ${ts}] ${data.phase || "streaming"} ${pct}% (${done}/${total} bytes)${file}`,
+            `[transport ${ts}] ${file}  ${renderBar(rawPct)} ${pct}% (${fmtBytes(done)}/${fmtBytes(total)})`,
           ]);
           setStaticBundleTransport({
             phase: data.phase || "streaming",
-            pct: typeof data.pct === "number" ? data.pct : 0,
+            pct: rawPct,
             done,
             total,
             file: typeof data.currentFile === "string" ? data.currentFile : undefined,
