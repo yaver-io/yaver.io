@@ -550,10 +550,16 @@ export class P2PClient {
     return resp.json();
   }
 
-  /** Fetch a task by ID — returns the agent's full task record incl.
+  /** Fetch a vibing task by ID — returns the agent's task record incl.
    *  the growing `output` blob and `status`. The chat surface polls
    *  this every ~1.5 s while the task is alive so each new agent line
-   *  paints into the transcript. */
+   *  paints into the transcript.
+   *
+   *  Hits /vibing/task/{id} (SDK-token-accessible, source-gated to
+   *  vibing tasks) instead of /tasks/{id} which requires owner auth
+   *  and 401s the SDK token. The agent reply shape is
+   *  `{ ok: true, task: TaskInfo }` — we unwrap so callers see the
+   *  flat record they expect. */
   async getTask(taskId: string): Promise<{
     id: string;
     status: string;
@@ -561,14 +567,20 @@ export class P2PClient {
     output?: string;
     resultText?: string;
   }> {
-    const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+    const resp = await fetch(`${this.baseUrl}/vibing/task/${encodeURIComponent(taskId)}`, {
       headers: this.authHeaders(),
     });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`[P2PClient] getTask failed (${resp.status}): ${text}`);
     }
-    return resp.json();
+    const data = await resp.json().catch(() => ({}));
+    // Agent always wraps in `{ok, task}` for /vibing/task; older
+    // builds may have replied with the bare task — accept both.
+    if (data && typeof data === 'object' && data.task && typeof data.task === 'object') {
+      return data.task;
+    }
+    return data;
   }
 
   /** Append a follow-up turn to an existing vibing task. Same agent,
@@ -576,7 +588,7 @@ export class P2PClient {
    *  left off. Used by the chat surface for multi-turn vibing instead
    *  of spawning a fresh task on every message. */
   async continueTask(taskId: string, input: string): Promise<{ ok?: boolean }> {
-    const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}/continue`, {
+    const resp = await fetch(`${this.baseUrl}/vibing/task/${encodeURIComponent(taskId)}/continue`, {
       method: 'POST',
       headers: {
         ...this.authHeaders(),

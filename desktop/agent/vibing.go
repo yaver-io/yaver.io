@@ -1516,3 +1516,90 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		"taskId": task.ID,
 	})
 }
+
+// handleVibingTaskByID is the SDK-accessible mirror of /tasks/{id}.
+//
+// /tasks/{id} requires owner-grade auth, so a Feedback SDK token
+// (which can call /vibing/execute) used to be unable to read its
+// own task back — leaving the chat UI's poll loop hanging on an
+// empty bubble forever. This endpoint accepts SDK / guest tokens
+// the same way /vibing/execute does, but only returns tasks whose
+// Source == "vibing" so non-vibing tasks (shell, code-cli, etc.)
+// stay owner-only.
+//
+// Routes handled:
+//
+//	GET  /vibing/task/<id>           → task info (status + output blob)
+//	POST /vibing/task/<id>/continue  → append a follow-up turn
+//
+// The reply shape mirrors the corresponding /tasks/{id} reply
+// (`{ ok: true, task: TaskInfo }`) so the SDK can share the
+// unwrap logic across both code paths.
+func (s *HTTPServer) handleVibingTaskByID(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/vibing/task/")
+	parts := strings.SplitN(rest, "/", 2)
+	taskID := parts[0]
+	action := ""
+	if len(parts) > 1 {
+		action = parts[1]
+	}
+	if taskID == "" {
+		jsonError(w, http.StatusBadRequest, "task ID required")
+		return
+	}
+
+	task, ok := s.taskMgr.GetTask(taskID)
+	if !ok {
+		jsonError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	// Tripwire: never serve non-vibing tasks through this endpoint
+	// even if the SDK guesses an unrelated task ID. Source is set by
+	// CreateTask and is immutable for the task's lifetime.
+	if !strings.EqualFold(strings.TrimSpace(task.Source), "vibing") {
+		jsonError(w, http.StatusNotFound, "task not found")
+		return
+	}
+
+	switch action {
+	case "":
+		if r.Method != http.MethodGet {
+			jsonError(w, http.StatusMethodNotAllowed, "use GET")
+			return
+		}
+		info := s.taskInfoFromTask(task, r)
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":   true,
+			"task": info,
+		})
+	case "continue":
+		if r.Method != http.MethodPost {
+			jsonError(w, http.StatusMethodNotAllowed, "use POST")
+			return
+		}
+		var body struct {
+			Input string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		input := strings.TrimSpace(body.Input)
+		if input == "" {
+			jsonError(w, http.StatusBadRequest, "input is required")
+			return
+		}
+		resumed, err := s.taskMgr.ResumeTaskWithOptions(taskID, input, nil, TaskResumeOptions{})
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("resume failed: %v", err))
+			return
+		}
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":     true,
+			"taskId": resumed.ID,
+			"status": resumed.Status,
+		})
+	default:
+		jsonError(w, http.StatusNotFound, "unknown action")
+	}
+}

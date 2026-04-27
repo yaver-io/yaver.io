@@ -695,6 +695,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vibing/commit", s.authSDKOrGuest(s.handleVibingCommit))
 	mux.HandleFunc("/vibing/deploy", s.authSDKOrGuest(s.handleVibingDeploy))
 	mux.HandleFunc("/vibing/execute", s.authSDKOrGuest(s.handleVibingExecute))
+	// SDK-accessible read-back + continue for vibing tasks. /tasks/{id}
+	// itself requires owner-auth, so without these endpoints the
+	// Feedback SDK chat surface couldn't poll its own task once
+	// /vibing/execute returned. Source-gated to "vibing" tasks only.
+	mux.HandleFunc("/vibing/task/", s.authSDKOrGuest(s.handleVibingTaskByID))
 	mux.HandleFunc("/vibing/surprise", s.authSDKOrGuest(s.handleVibingSurprise))
 	// Vibe Preview — live screenshot stream of a remote dev server, viewed
 	// from the mobile app while vibe-coding (docs/vibe-preview-streaming.md).
