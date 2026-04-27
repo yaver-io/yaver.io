@@ -31,8 +31,13 @@ export interface TransportInput {
   localIps?: string[];
   publicEndpoints?: string[];
   tunnelUrl?: string;
+  /** Only meaningful for the device the dashboard is CURRENTLY
+   *  connected to. For other devices, leave undefined or pass
+   *  isActiveDevice=false — otherwise every device card shows
+   *  the same transport label as the active one (real bug). */
   activeRelayUrl?: string | null;
   activeTunnelUrl?: string | null;
+  isActiveDevice?: boolean;
   platform?: string;
   name?: string;
 }
@@ -62,7 +67,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
   const host = (d.host || "").trim();
   const ips = [host, ...(d.localIps || [])].map((s) => (s || "").trim()).filter(Boolean);
 
-  if (d.activeRelayUrl) {
+  if (d.activeRelayUrl && d.isActiveDevice !== false) {
     if (isYaverPublicRelay(d.activeRelayUrl)) {
       return {
         primary: "yaver-public-relay", label: "Yaver public relay",
@@ -96,10 +101,14 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     };
   }
 
+  // WSL2 NAT requires Windows-shaped hostname AND Linux platform.
+  // 172.16-31 IP alone is also Docker bridge networks; without the
+  // hostname check, a Hetzner Linux box running Docker false-
+  // positives as WSL2.
   const wslIp = ips.find((ip) => WSL_NAT.test(ip));
   const platform = String(d.platform || "").toLowerCase();
   const name = String(d.name || "").trim();
-  if (wslIp || (platform === "linux" && looksWindowsLike(name))) {
+  if (platform === "linux" && looksWindowsLike(name)) {
     return {
       primary: "wsl-nat", label: "WSL2 NAT",
       detail: wslIp ? `via ${wslIp} (Hyper-V)` : "Linux on Windows host",

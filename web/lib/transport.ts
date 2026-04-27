@@ -41,10 +41,24 @@ export interface TransportInput {
   tunnelUrl?: string;
   /** Set when the dashboard's WebClient connected via relay — pass
    *  agentClient.activeRelayUrl here. Drives the public-vs-self-hosted
-   *  distinction. */
+   *  distinction.
+   *
+   *  IMPORTANT: only meaningful for the device the dashboard is
+   *  CURRENTLY CONNECTED TO. If you're classifying transport for
+   *  *other* devices in the user's account, leave this undefined —
+   *  the dashboard isn't connected to them via that URL. Pass
+   *  isActiveDevice=false for non-current devices.
+   */
   activeRelayUrl?: string | null;
   /** Same idea but for tunnel-via-Cloudflare-Access etc. */
   activeTunnelUrl?: string | null;
+  /** True if THIS device is the one the dashboard is currently
+   *  connected to. Without this, every device in the list would
+   *  inherit the active connection's transport label, which is
+   *  wrong — see the original bug where a Hetzner box showed
+   *  "Tailscale" because the dashboard happened to reach the
+   *  current device via Tailscale. */
+  isActiveDevice?: boolean;
   /** "ios"/"linux"/"darwin"/"windows"/"android" — used to spot WSL2. */
   platform?: string;
   /** Hostname — used to spot WSL2 (DESKTOP-…/LAPTOP-…/WIN-…). */
@@ -98,8 +112,11 @@ export function classifyTransport(d: TransportInput): TransportInfo {
   const host = (d.host || "").trim();
   const ips = [host, ...(d.localIps || [])].map((s) => (s || "").trim()).filter(Boolean);
 
-  // 1. Relay path
-  if (d.activeRelayUrl) {
+  // 1. Relay path — ONLY meaningful for the device the dashboard
+  // is currently connected to. For other devices in the list,
+  // activeRelayUrl describes a different connection (the active
+  // device), not theirs.
+  if (d.activeRelayUrl && d.isActiveDevice !== false) {
     if (isYaverPublicRelay(d.activeRelayUrl)) {
       return {
         primary: "yaver-public-relay",
@@ -151,11 +168,16 @@ export function classifyTransport(d: TransportInput): TransportInfo {
     };
   }
 
-  // 4. WSL2 NAT
+  // 4. WSL2 NAT — require BOTH the 172.16-31 IP AND a Windows-
+  // shaped hostname. The IP alone is also Docker bridge networks
+  // (172.17/16, 172.18/16, …), so a Linux Hetzner box running
+  // Docker would false-positive as WSL2. Only WSL2's Hyper-V
+  // bridge AND a DESKTOP-/LAPTOP-/WIN- hostname combination is
+  // a high-confidence signal.
   const wslIp = ips.find((ip) => WSL_NAT.test(ip));
   const platform = String(d.platform || "").toLowerCase();
   const name = String(d.name || "").trim();
-  if (wslIp || (platform === "linux" && looksWindowsLike(name))) {
+  if (platform === "linux" && looksWindowsLike(name)) {
     return {
       primary: "wsl-nat",
       label: "WSL2 NAT",

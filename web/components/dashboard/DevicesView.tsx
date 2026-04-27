@@ -19,14 +19,27 @@ function transportToneClasses(tone: TransportInfo["tone"]): string {
 }
 
 function transportFor(device: Device): TransportInfo {
+  // The dashboard only "owns" the relay/tunnel connection for the
+  // device it's currently active against (deviceId in the relay
+  // URL path matches). For every other device card we shouldn't
+  // claim Yaver-public-relay just because the dashboard happens
+  // to use that to reach a different device.
+  const activeRelayUrl = agentClient.activeRelayUrl ?? null;
+  const isActive = Boolean(
+    activeRelayUrl &&
+      activeRelayUrl.includes(`/d/${device.id}`),
+  ) || Boolean(
+    !activeRelayUrl && agentClient.connectionState === "connected",
+  );
   return classifyTransport({
     host: device.host,
     port: device.port,
     localIps: device.localIps,
     publicEndpoints: device.publicEndpoints,
     tunnelUrl: device.tunnelUrl,
-    activeRelayUrl: agentClient.activeRelayUrl ?? null,
-    activeTunnelUrl: agentClient.activeTunnelUrl ?? null,
+    activeRelayUrl: isActive ? activeRelayUrl : null,
+    activeTunnelUrl: isActive ? agentClient.activeTunnelUrl ?? null : null,
+    isActiveDevice: isActive,
     platform: device.platform,
     name: device.name,
   });
