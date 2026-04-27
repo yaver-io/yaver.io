@@ -86,14 +86,16 @@ jobs:
       - name: Curl /dev/events through relay (verbose)
         run: |
           URL="https://public.yaver.io/d/$DID/dev/events?token=$TOKEN&__rp=$RP"
-          echo '--- 8s curl with -i ---'
+          echo '--- 12s curl -v (full headers + body) ---'
           set +e
-          timeout 8 curl -sN -i -H "Accept: text/event-stream" "$URL" 2>&1 | head -50
+          timeout 12 curl -vN -H "Accept: text/event-stream" "$URL" 2>&1 | head -80
           EC=$?
           echo "(curl exit=$EC)"
-          echo '--- with -w stats ---'
-          timeout 8 curl -sN -H "Accept: text/event-stream" \
-            -w '\nstatus=%{http_code} size_download=%{size_download} time_total=%{time_total}\n' \
+          echo '--- xxd raw bytes ---'
+          timeout 8 curl -sN -H "Accept: text/event-stream" "$URL" 2>&1 | xxd | head -10
+          echo '--- with stats ---'
+          timeout 12 curl -sN -H "Accept: text/event-stream" \
+            -w '\nstatus=%{http_code} size_download=%{size_download} time_total=%{time_total} num_redirects=%{num_redirects}\n' \
             "$URL" 2>&1 | tail -3
 
       - name: Curl /dev/events DIRECTLY on box
