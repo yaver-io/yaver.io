@@ -1054,6 +1054,13 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, scheduleTools...)
 
+	// --- Routines (MCP-only Verb-mode schedules) ---
+	// Same Scheduler under the hood as schedule_task, but each routine
+	// targets an ops verb on any machine instead of a TaskManager
+	// task. Surface is intentionally MCP-only (no CLI / mobile / web /
+	// docs) — see routines_mcp.go header for rationale.
+	tools = append(tools, routineToolSchemas()...)
+
 	// --- Utility Tools ---
 	utilTools := []map[string]interface{}{
 		{

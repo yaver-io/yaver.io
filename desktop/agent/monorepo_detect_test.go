@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// repoRoot resolves the yaver.io repo root (where tests/fixtures/ lives) from
+// fixturesRepoRoot resolves the yaver.io repo root (where tests/fixtures/ lives) from
 // the agent test cwd by walking up until tests/fixtures/ is visible.
-func repoRoot(t *testing.T) string {
+func fixturesRepoRoot(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -32,7 +32,7 @@ func repoRoot(t *testing.T) string {
 }
 
 func TestDetectMonorepo_FixturesAsMonorepo(t *testing.T) {
-	root := repoRoot(t)
+	root := fixturesRepoRoot(t)
 	fixturesDir := filepath.Join(root, "tests", "fixtures")
 	mr, err := DetectMonorepo(fixturesDir, DetectOpts{})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestDetectMonorepo_FixturesAsMonorepo(t *testing.T) {
 }
 
 func TestDetectMonorepo_KotlinFixtureIsAndroidNative(t *testing.T) {
-	root := repoRoot(t)
+	root := fixturesRepoRoot(t)
 	dir := filepath.Join(root, "tests", "fixtures", "native-android-kotlin")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {
@@ -88,7 +88,7 @@ func TestDetectMonorepo_KotlinFixtureIsAndroidNative(t *testing.T) {
 }
 
 func TestDetectMonorepo_SwiftFixtureIsIOSNative(t *testing.T) {
-	root := repoRoot(t)
+	root := fixturesRepoRoot(t)
 	dir := filepath.Join(root, "tests", "fixtures", "native-ios-swift")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {
@@ -108,7 +108,7 @@ func TestDetectMonorepo_SwiftFixtureIsIOSNative(t *testing.T) {
 }
 
 func TestDetectMonorepo_FlutterFixture(t *testing.T) {
-	root := repoRoot(t)
+	root := fixturesRepoRoot(t)
 	dir := filepath.Join(root, "tests", "fixtures", "native-flutter-app")
 	mr, err := DetectMonorepo(dir, DetectOpts{})
 	if err != nil {

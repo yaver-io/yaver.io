@@ -6648,6 +6648,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult("Schedule cancelled: " + args.ScheduleID)
 
+	case "routine_create", "routine_list", "routine_get", "routine_delete",
+		"routine_pause", "routine_resume", "routine_run_now", "routine_update":
+		// Verb-mode routines route to a single dispatcher in
+		// routines_mcp.go so future routine_* tools land there
+		// rather than growing this switch.
+		return s.handleRoutineMCP(call.Name, call.Arguments)
+
 	case "notify":
 		var args struct {
 			Message string `json:"message"`
