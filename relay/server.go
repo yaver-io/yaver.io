@@ -353,8 +353,38 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		old.conn.CloseWithError(0, "replaced")
 	}
 
-	// Send success
-	resp, _ := json.Marshal(RegisterResp{Type: "registered", OK: true})
+	// Auto-provision a `<deviceId>.<exposeDomain>` subdomain for
+	// every connected tunnel. This gives every device a clean
+	// HTTPS-direct origin (e.g. https://abc1234.dev.yaver.io)
+	// that the dashboard / mobile app can hit without going
+	// through the /d/<id>/ path or hitting mixed-content blocks
+	// on direct LAN probes. Wildcard cert covers all subdomains;
+	// no per-box certbot.
+	//
+	// Idempotent: replacing a tunnel for the same deviceId also
+	// replaces the route. Cleared in the deferred handler below
+	// when the tunnel goes away. Skip when expose-domain isn't
+	// configured (self-hosted relay without a wildcard DNS).
+	autoSub := ""
+	if s.exposeDomain != "" {
+		autoSub = strings.ToLower(reg.DeviceID)
+		s.exposeMu.Lock()
+		s.exposeRoutes[autoSub] = &exposeRoute{
+			deviceID: reg.DeviceID,
+			port:     18080,
+		}
+		s.exposeMu.Unlock()
+		log.Printf("[RELAY] auto-registered https://%s.%s for device %s",
+			autoSub, s.exposeDomain, reg.DeviceID[:8])
+	}
+
+	// Send success — include the auto-provisioned subdomain URL
+	// so the agent can publish it as publicUrl in its heartbeat.
+	respMsg := RegisterResp{Type: "registered", OK: true}
+	if autoSub != "" {
+		respMsg.AssignedURL = "https://" + autoSub + "." + s.exposeDomain
+	}
+	resp, _ := json.Marshal(respMsg)
 	stream.Write(resp)
 	stream.Close()
 

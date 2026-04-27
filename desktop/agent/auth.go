@@ -8,6 +8,7 @@ import (
 	"net/http"
 	urlpkg "net/url"
 	"sort"
+	"sync"
 	"strings"
 	"time"
 )
@@ -1369,7 +1370,37 @@ func configuredPublicEndpoints(cfg *Config) []string {
 	for _, item := range items {
 		out = append(out, item.url)
 	}
+	// Append the relay-auto-provisioned <deviceId>.dev.yaver.io URL
+	// (or whatever the relay's expose-domain is) as the last public
+	// endpoint, lowest priority. The dashboard prefers it for probes
+	// because it's HTTPS-direct (no /d/<id>/ path, no mixed content)
+	// even when the user is behind NAT — traffic still routes
+	// through the relay's QUIC tunnel under the hood.
+	if assigned := getAssignedRelayURL(); assigned != "" && !seen[assigned] {
+		seen[assigned] = true
+		out = append(out, assigned)
+	}
 	return out
+}
+
+// assignedRelayURL is set by the relay-tunnel client after a
+// successful register that returned an AssignedURL. Read by
+// configuredPublicEndpoints so the heartbeat publishes it.
+var (
+	assignedRelayURLMu sync.RWMutex
+	assignedRelayURL   string
+)
+
+func setAssignedRelayURL(url string) {
+	assignedRelayURLMu.Lock()
+	defer assignedRelayURLMu.Unlock()
+	assignedRelayURL = url
+}
+
+func getAssignedRelayURL() string {
+	assignedRelayURLMu.RLock()
+	defer assignedRelayURLMu.RUnlock()
+	return assignedRelayURL
 }
 
 // PlatformConfig holds all platform-level config fetched from Convex /config.

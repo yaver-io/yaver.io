@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.60"
+const version = "1.99.61"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -216,6 +216,8 @@ func main() {
 		runConnect(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
+	case "register-url":
+		runRegisterURLCmd(os.Args[2:])
 	case "push":
 		runPushBridge(os.Args[2:])
 	case "permissions":
@@ -6981,6 +6983,13 @@ type relayRegisterResp struct {
 	Type    string `json:"type"`
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
+	// AssignedURL is the relay-auto-provisioned <deviceId>.<expose-
+	// domain> URL (e.g. https://abc1234.dev.yaver.io). Populated by
+	// relays running v0.1.11+. We mirror it into config + publish it
+	// as publicUrl on the next heartbeat so the dashboard can probe
+	// the device on a clean HTTPS-direct origin instead of the
+	// noisy /d/<id>/ path that triggers mixed-content blocks.
+	AssignedURL string `json:"assignedUrl,omitempty"`
 }
 
 type relayTunnelRequest struct {
@@ -7384,6 +7393,15 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 	}
 
 	log.Printf("[RELAY] Registered with relay as device %s", deviceID[:8])
+
+	// Cache the relay-assigned subdomain URL so heartbeat publishes
+	// it as publicUrl. Fire-and-forget — heartbeat reads from the
+	// same package-level variable on its next tick.
+	if regResp.AssignedURL != "" {
+		setAssignedRelayURL(regResp.AssignedURL)
+		log.Printf("[RELAY] Assigned public URL %s — publishing as publicUrl on next heartbeat",
+			regResp.AssignedURL)
+	}
 
 	// Re-register any active expose entries on the new connection
 	if exposeMgr != nil {

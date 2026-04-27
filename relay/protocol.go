@@ -33,6 +33,11 @@ type RegisterResp struct {
 	Type    string `json:"type"`              // "registered" or "error"
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
+	// AssignedURL is the auto-provisioned <deviceId>.<exposeDomain>
+	// URL the relay registered for this tunnel. Agent publishes it
+	// as publicUrl in heartbeats so the dashboard can probe it
+	// directly without going through the /d/<id>/ path.
+	AssignedURL string `json:"assignedUrl,omitempty"`
 }
 
 // TunnelRequest is sent from relay to agent over a QUIC stream.
