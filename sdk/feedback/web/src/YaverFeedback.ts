@@ -1259,7 +1259,7 @@ export class YaverFeedback {
           } else if (needsRemoteDeclaration) {
             const projectName = (eligibility as { projectName?: string }).projectName || 'this project';
             gitActions.innerHTML = `
-              <div class="yvr-fb-runner-card yvr-fb-git-card">
+              <div class="yvr-fb-runner-card yvr-fb-git-card yvr-fb-runner-card--wide">
                 <span class="yvr-fb-runner-card-kicker">Bind project</span>
                 <span class="yvr-fb-runner-card-title">Where does ${escapeHtml(projectName)} live?</span>
                 <span class="yvr-fb-runner-card-meta">Yaver stores this binding on the selected machine so eligibility, vibing, and clone-on-demand all know the canonical repo.</span>
@@ -2504,15 +2504,18 @@ export class YaverFeedback {
       }
       .yvr-fb-card {
         /* The 4-step setup wizard's git pane uses a 2-column grid
-         * (Bind project + Selected machine + Open dashboard). At 600 px
-         * each column ended up ~280 px — token placeholder text was
-         * truncated ("Personal Access Tc"), the right card's "Discover
-         * existing git auth" copy wrapped four lines deep, and the
-         * cards visually crowded each other. 760 px gives each column
-         * ~360 px so the form inputs breathe and the helper copy fits
-         * on two lines. The @media query below still collapses to a
-         * single column on phones ≤ 640 px viewport. */
-        width: min(760px, 100%);
+         * (Bind project + Selected machine + Open dashboard). 760 px
+         * worked for empty-state cards but the BIND PROJECT card
+         * grows tall when the user reaches the "paste your repo URL +
+         * PAT" form, and at ~360 px column width the inputs visually
+         * collided with the SELECTED MACHINE card next to it. 880 px
+         * + the .yvr-fb-runner-card--wide override (which makes the
+         * BIND PROJECT card span both columns when the form is shown)
+         * solves both: the form gets a full-width row and the helper
+         * cards still pair cleanly underneath. The @media query below
+         * still collapses to a single column on phones ≤ 640 px
+         * viewport. */
+        width: min(880px, 100%);
         max-height: min(640px, calc(100vh - 32px));
         overflow: auto;
         background: #0f172a; color: #e2e8f0;
@@ -2717,6 +2720,12 @@ export class YaverFeedback {
       .yvr-fb-runner-auth-row {
         display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
       }
+      /* Card-wide modifier: lets a single card claim both columns of the
+       * runner-auth-row grid. Used by the BIND PROJECT card when it has
+       * the embedded repo-URL + PAT form, so the inputs and the
+       * Save & verify button get full row width instead of fighting
+       * the SELECTED MACHINE card for ~360 px of column space. */
+      .yvr-fb-runner-card--wide { grid-column: 1 / -1; }
       .yvr-fb-runner-card {
         display: grid; gap: 4px; text-align: left;
         border-radius: 10px; border: 1px solid rgba(148,163,184,0.22);
