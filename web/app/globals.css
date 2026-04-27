@@ -152,3 +152,12 @@ body.dashboard-mode main { flex: 1; }
   0%, 100% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
 }
+
+/* Indeterminate progress slide — used when Yaver Protocol progress
+   src is "unknown" (we know SOMETHING is happening but no real
+   pct). Slides a thin gradient back and forth so the bar feels
+   alive without lying about progress. */
+@keyframes slide {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(400%); }
+}

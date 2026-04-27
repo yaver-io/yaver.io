@@ -125,18 +125,90 @@ export function DevPreview() {
             if (line.startsWith("data: ")) {
               try {
                 const event = JSON.parse(line.slice(6));
+                // Yaver Protocol v1: structured progress + snapshots
+                // for Hermes/Metro/Expo Web. The mobile DevPreview
+                // banner shows a real percentage + currentFile while
+                // a bundle compiles instead of a vague "Building…".
+                if (event.type === "progress" && typeof event.topic === "string") {
+                  const pct = typeof event.pct === "number" ? Math.round(event.pct) : 0;
+                  const cf = typeof event.currentFile === "string" ? event.currentFile.split("/").slice(-2).join("/") : "";
+                  const phaseStr = typeof event.phase === "string" ? event.phase.replace(/_/g, " ") : "compiling";
+                  setProgressState({
+                    topic: event.topic,
+                    phase: phaseStr,
+                    pct,
+                    done: typeof event.done === "number" ? event.done : 0,
+                    total: typeof event.total === "number" ? event.total : 0,
+                    unit: typeof event.unit === "string" ? event.unit : "",
+                    currentFile: cf,
+                    src: event.progressSrc === "exact" ? "exact" : "unknown",
+                    etaMs: typeof event.etaMs === "number" ? event.etaMs : 0,
+                    updatedAt: Date.now(),
+                  });
+                  setLastByteAt(Date.now());
+                  continue;
+                }
+                if (event.type === "phase" && typeof event.topic === "string") {
+                  setProgressState((prev) => {
+                    const same = prev && prev.topic === event.topic;
+                    return {
+                      topic: event.topic,
+                      phase: typeof event.phase === "string" ? event.phase.replace(/_/g, " ") : "",
+                      pct: same && prev ? prev.pct : 0,
+                      done: same && prev ? prev.done : 0,
+                      total: same && prev ? prev.total : 0,
+                      unit: same && prev ? prev.unit : "",
+                      currentFile: "",
+                      src: same && prev ? prev.src : "unknown",
+                      etaMs: 0,
+                      updatedAt: Date.now(),
+                    };
+                  });
+                  setLastByteAt(Date.now());
+                  continue;
+                }
+                if (event.type === "snapshot") {
+                  setLastByteAt(Date.now());
+                  // Render fully from the snapshot's recent_log + progress
+                  // so a reconnected client never feels behind.
+                  if (event.snapshot?.progress) {
+                    const p = event.snapshot.progress;
+                    setProgressState({
+                      topic: typeof p.topic === "string" ? p.topic : "dev/start",
+                      phase: typeof p.phase === "string" ? p.phase.replace(/_/g, " ") : "",
+                      pct: typeof p.pct === "number" ? Math.round(p.pct) : 0,
+                      done: typeof p.done === "number" ? p.done : 0,
+                      total: typeof p.total === "number" ? p.total : 0,
+                      unit: typeof p.unit === "string" ? p.unit : "",
+                      currentFile: typeof p.currentFile === "string" ? p.currentFile.split("/").slice(-2).join("/") : "",
+                      src: p.progressSrc === "exact" ? "exact" : "unknown",
+                      etaMs: typeof p.etaMs === "number" ? p.etaMs : 0,
+                      updatedAt: Date.now(),
+                    });
+                  }
+                  continue;
+                }
+                if (event.type === "heartbeat") {
+                  setLastByteAt(Date.now());
+                  continue;
+                }
                 if (event.type === "reload" || event.type === "ready") {
                   if (!mustUseNativePreview) {
                     setWebViewKey(k => k + 1);
                     setLoading(true);
                   }
                   setLastLogLine("");
+                  setProgressState(null);
+                  setLastByteAt(Date.now());
                 } else if (event.type === "building") {
                   setLastLogLine(event.message || "Building...");
+                  setLastByteAt(Date.now());
                 } else if (event.type === "log" && event.logLine) {
                   setLastLogLine(event.logLine);
+                  setLastByteAt(Date.now());
                 } else if (event.type === "error") {
                   setLastLogLine(event.message || "Build failed");
+                  setLastByteAt(Date.now());
                 }
               } catch {}
             }
@@ -153,6 +225,35 @@ export function DevPreview() {
 
   const [nativeLoading, setNativeLoading] = useState(false);
   const [lastLogLine, setLastLogLine] = useState<string>("");
+
+  // Yaver Protocol v1: per-topic structured progress + transport
+  // liveness. The DevPreview banner reads progressState to render
+  // a real percentage + currentFile while a bundle compiles. The
+  // user never sees a vague "Building…" again. lastByteAt drives
+  // a "channel: live | syncing | reconnecting | lost" indicator
+  // so even when compile is silent, the user knows transport is
+  // alive — the agent guarantees a snapshot every 5s so >6s of
+  // silence is the only "real" disconnect.
+  const [progressState, setProgressState] = useState<{
+    topic: string;
+    phase: string;
+    pct: number;
+    done: number;
+    total: number;
+    unit: string;
+    currentFile: string;
+    src: "exact" | "unknown";
+    etaMs: number;
+    updatedAt: number;
+  } | null>(null);
+  const [lastByteAt, setLastByteAt] = useState<number>(Date.now());
+  // Tick once per second so the relative-time labels refresh
+  // without waiting for new bytes.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   const mustUseNativePreview =
     isHermesNativeFramework(status) ||
     status?.devMode === "dev-client" ||

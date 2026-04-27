@@ -100,8 +100,27 @@ type DevServerStatus struct {
 }
 
 // DevServerEvent is pushed via SSE on /dev/events.
+//
+// Type taxonomy (the "Yaver Protocol v1 lite" living on the existing SSE
+// channel — full envelope is a follow-up):
+//   "phase"     — a discrete state transition for a topic
+//   "progress"  — a percentage update for the current phase
+//   "snapshot"  — the agent's current full state, emitted every 5s
+//                 even when otherwise quiet (so the consumer can render
+//                 from the latest snapshot and never feel "stuck")
+//   "log"       — a single stdout/stderr line
+//   "heartbeat" — agent is alive (kept for backwards-compat with
+//                 v1.99.<=66 consumers that don't grok snapshots)
+//   "ready"|"reload"|"error"|"stopped"|"file_changed"|"web-preview-starting"|
+//   "starting"  — legacy event types (still emitted)
+//
+// Topic taxonomy:
+//   "dev/start"      — main dev-server lifecycle (Metro/Expo/Vite/etc)
+//   "webview/build"  — Expo Web sibling
+//   "hermes/compile" — hermesc on the agent (per /dev/build-native)
+//   "bundle/push"    — yaver-cli pushing to phone
 type DevServerEvent struct {
-	Type      string `json:"type"` // "ready", "reload", "error", "stopped", "file_changed", "log", "heartbeat"
+	Type      string `json:"type"`
 	Framework string `json:"framework"`
 	BundleURL string `json:"bundleUrl,omitempty"`
 	DeepLink  string `json:"deepLink,omitempty"`
@@ -113,17 +132,56 @@ type DevServerEvent struct {
 	// DevServerManager.heartbeatLoop while a dev server is running.
 	// The point: Metro/Expo are quiet between bundle requests, so the
 	// CONSOLE used to render "0 events, last: no events yet" forever
-	// even though the box was perfectly healthy. With heartbeats the
-	// web/mobile UI can render a live "last beat 3s ago, uptime 2m
-	// 14s, pid 1234 alive" indicator instead of dead silence.
-	Pid          int    `json:"pid,omitempty"`          // OS pid of the dev server process
-	PidAlive     bool   `json:"pidAlive,omitempty"`     // true if pid responds to signal-0
-	UptimeSec    int    `json:"uptimeSec,omitempty"`    // since baseDevServer.startedAt
-	Port         int    `json:"port,omitempty"`         // dev server's bound port
-	WorkDir      string `json:"workDir,omitempty"`      // project absolute path
-	Surface      string `json:"surface,omitempty"`      // "hot-reload" | "web-reload"
-	IdleSec      int    `json:"idleSec,omitempty"`      // seconds since last non-heartbeat event
-	BeatNumber   int    `json:"beatNumber,omitempty"`   // monotonically increasing beat counter
+	// even though the box was perfectly healthy.
+	Pid        int    `json:"pid,omitempty"`        // OS pid of the dev server process
+	PidAlive   bool   `json:"pidAlive,omitempty"`   // true if pid responds to signal-0
+	UptimeSec  int    `json:"uptimeSec,omitempty"`  // since baseDevServer.startedAt
+	Port       int    `json:"port,omitempty"`       // dev server's bound port
+	WorkDir    string `json:"workDir,omitempty"`    // project absolute path
+	Surface    string `json:"surface,omitempty"`    // "hot-reload" | "web-reload"
+	IdleSec    int    `json:"idleSec,omitempty"`    // seconds since last non-heartbeat event
+	BeatNumber int    `json:"beatNumber,omitempty"` // monotonically increasing beat counter
+
+	// Yaver Protocol v1 fields (type="phase" | "progress" | "snapshot").
+	// All are omitempty so legacy event shapes still serialize cleanly.
+	Topic       string  `json:"topic,omitempty"`       // "dev/start" | "webview/build" | "hermes/compile" | "bundle/push"
+	Phase       string  `json:"phase,omitempty"`       // see file header
+	PrevPhase   string  `json:"prevPhase,omitempty"`   // for transition validation in consumer
+	Pct         float32 `json:"pct,omitempty"`         // 0..100, REAL number from compiler output
+	Done        int     `json:"done,omitempty"`        // e.g. 1247 modules
+	Total       int     `json:"total,omitempty"`       // e.g. 2390 modules
+	Unit        string  `json:"unit,omitempty"`        // "modules" | "bytes" | "files" | "tasks"
+	CurrentFile string  `json:"currentFile,omitempty"` // e.g. "node_modules/expo-router/build/Route.js"
+	ProgressSrc string  `json:"progressSrc,omitempty"` // "exact" | "heuristic" | "unknown"
+	EtaMs       int64   `json:"etaMs,omitempty"`       // estimated remaining millis (only when ProgressSrc=="exact")
+
+	// Snapshot-only fields (type="snapshot"). Lets a late or
+	// reconnecting consumer rebuild full UI state from one event
+	// instead of replaying the entire history.
+	Snapshot *DevServerSnapshot `json:"snapshot,omitempty"`
+}
+
+// DevServerSnapshot is a complete picture of every active topic + the
+// last known progress + the most recent log lines. Consumer renders
+// from this and never feels "stuck" because a fresh one arrives every
+// 5s regardless of whether anything happened.
+type DevServerSnapshot struct {
+	GeneratedAt string             `json:"generatedAt"`
+	Running     bool               `json:"running"`
+	Framework   string             `json:"framework,omitempty"`
+	Surface     string             `json:"surface,omitempty"`
+	Port        int                `json:"port,omitempty"`
+	WebPort     int                `json:"webPort,omitempty"`
+	WorkDir     string             `json:"workDir,omitempty"`
+	UptimeSec   int                `json:"uptimeSec,omitempty"`
+	Pid         int                `json:"pid,omitempty"`
+	PidAlive    bool               `json:"pidAlive,omitempty"`
+	IdleSec     int                `json:"idleSec,omitempty"`
+	Phases      map[string]string  `json:"phases,omitempty"`   // topic → current phase
+	Progress    *ProgressSnapshot  `json:"progress,omitempty"` // most recent active progress
+	WebProgress *ProgressSnapshot  `json:"webProgress,omitempty"`
+	RecentLogs  []string           `json:"recentLogs,omitempty"`     // last 8 stdout/stderr lines
+	BeatNumber  int                `json:"beatNumber,omitempty"`
 }
 
 // ─── DevServer Registry ────────────────────────────────────────────────
@@ -201,9 +259,19 @@ type DevServerManager struct {
 	// "heartbeat" DevServerEvent with the live process state so the
 	// CONSOLE / Webview pane can render real liveness instead of an
 	// empty stream when Metro is quiet between bundle requests.
-	heartbeatStop  chan struct{}
-	beatCounter    int
-	lastNonBeatAt  time.Time
+	heartbeatStop chan struct{}
+	beatCounter   int
+	lastNonBeatAt time.Time
+
+	// Per-topic progress trackers. Set when the dev server's spawn
+	// path attaches them; cleared on Stop. Used by the snapshot
+	// ticker to embed real progress in every snapshot — and by the
+	// tracker itself to emit "phase" / "progress" events.
+	devTracker     *progressTracker // topic="dev/start"
+	webTracker     *progressTracker // topic="webview/build" (Expo Web sibling)
+	hermesTracker  *progressTracker // topic="hermes/compile" (build-native)
+	recentLogTail  []string         // last 8 stdout/stderr lines for snapshots
+	recentLogMu    sync.Mutex
 }
 
 // devEventHistoryMax bounds DevServerManager.history. 200 lines covers
@@ -318,10 +386,36 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 		SetNativeBaseline(workDir, ComputeNativeFingerprint(workDir))
 	}
 
-	// Inject SSE log emitter into the dev server so build output streams to mobile
+	// Inject SSE log emitter into the dev server so build output streams to mobile.
 	if setter, ok := ds.(interface{ SetEmitFn(func(DevServerEvent)) }); ok {
 		setter.SetEmitFn(m.emit)
 	}
+
+	// Wire the structured-progress trackers + recent-log recorder so
+	// every stdout line gets parsed for "Bundling 67% (1247/2390)"
+	// shapes and surfaced as real "progress" events. The Expo Web
+	// sibling tracker is created lazily by StartWebPreview when the
+	// dashboard's Web App tab fires its auto-spawn.
+	surface := "hot-reload"
+	if platform == "web" {
+		surface = "web-reload"
+	}
+	devTracker := newProgressTracker(m.emit, frameworkName, "dev/start", surface)
+	m.devTracker = devTracker
+	m.webTracker = nil // reset; StartWebPreview will create when needed
+	m.recentLogTail = nil
+	if setter, ok := ds.(interface {
+		SetTrackers(main, web *progressTracker)
+	}); ok {
+		setter.SetTrackers(devTracker, nil)
+	}
+	if setter, ok := ds.(interface{ SetRecordLogFn(func(string)) }); ok {
+		setter.SetRecordLogFn(m.recordRecentLog)
+	}
+	// Initial phase event: queued. The next stdout line that matches
+	// "Starting Metro Bundler" or similar pushes us to metro_bundling,
+	// then "Waiting on http://..." pushes us to listening, etc.
+	devTracker.transitionPhase("queued")
 
 	log.Printf("[dev] Starting %s dev server in %s", frameworkName, workDir)
 
@@ -571,10 +665,32 @@ func (m *DevServerManager) StartWebPreview() (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("web preview sibling is only supported for Expo — active framework is %s", active.server.Name())
 	}
+
+	// Spin up the structured-progress tracker for the web sibling
+	// BEFORE the spawn so the very first stdout line gets parsed.
+	webTracker := newProgressTracker(m.emit, "expo-web", "webview/build", "web-reload")
+	webTracker.transitionPhase("queued")
+	m.mu.Lock()
+	m.webTracker = webTracker
+	m.mu.Unlock()
+	if setter, ok := active.server.(interface {
+		SetTrackers(main, web *progressTracker)
+	}); ok {
+		setter.SetTrackers(m.devTracker, webTracker)
+	}
+
 	port, err := expo.StartWebPreview(active.ctx, expo.Status().WorkDir)
 	if err != nil {
+		webTracker.transitionPhase("error")
 		return 0, err
 	}
+	// Phase events for the consumer's clarity: queued → preparing
+	// (npm verify) → web_bundling (Metro web pass) → listening (port
+	// open) → ready (HTML servable). Most transitions happen inside
+	// the tracker's regex when stdout fires; we explicitly bump
+	// "preparing" here as the agent's own marker for "we kicked it".
+	webTracker.transitionPhase("preparing")
+
 	m.emit(DevServerEvent{
 		Type:      "web-preview-starting",
 		Framework: "expo-web",
@@ -702,6 +818,12 @@ func (m *DevServerManager) stopHeartbeatLocked() {
 // requests. Five seconds is small enough to feel live without
 // flooding the SSE channel; the web UI throttles its render budget
 // to one beat-line per ~5s so the strip stays readable.
+//
+// Two events fire per tick: a legacy "heartbeat" and a new "snapshot".
+// The snapshot is the consumer's source of truth — even if every
+// progress/log delta were dropped, the next snapshot 5s later would
+// fully restore the UI. The heartbeat is kept for backwards-compat
+// with consumers that don't yet handle snapshots.
 func (m *DevServerManager) heartbeatLoop(stop <-chan struct{}) {
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
@@ -715,8 +837,10 @@ func (m *DevServerManager) heartbeatLoop(stop <-chan struct{}) {
 			return
 		case <-first.C:
 			m.emitHeartbeat()
+			m.emitSnapshot()
 		case <-t.C:
 			m.emitHeartbeat()
+			m.emitSnapshot()
 		}
 	}
 }
@@ -769,6 +893,110 @@ func (m *DevServerManager) emitHeartbeat() {
 	})
 }
 
+// emitSnapshot is the single source of truth for the UI. Every 5s,
+// regardless of activity, the agent emits a full picture of every
+// running stream + the last known progress + the most recent log
+// tail. A reconnecting consumer reads one snapshot and is fully
+// caught up — no replay storm needed. A user staring at a slow
+// compile gets a fresh snapshot every 5s with current_file and
+// pct, so they always have something to look at.
+func (m *DevServerManager) emitSnapshot() {
+	m.mu.RLock()
+	active := m.active
+	devT := m.devTracker
+	webT := m.webTracker
+	hermesT := m.hermesTracker
+	m.mu.RUnlock()
+
+	// Build phases map
+	phases := map[string]string{}
+	var devProgress, webProgress *ProgressSnapshot
+	if devT != nil {
+		ps := devT.Snapshot()
+		phases["dev/start"] = ps.Phase
+		if ps.Phase != "" {
+			devProgress = &ps
+		}
+	}
+	if webT != nil {
+		ps := webT.Snapshot()
+		phases["webview/build"] = ps.Phase
+		if ps.Phase != "" {
+			webProgress = &ps
+		}
+	}
+	if hermesT != nil {
+		ps := hermesT.Snapshot()
+		phases["hermes/compile"] = ps.Phase
+	}
+
+	snap := &DevServerSnapshot{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Phases:      phases,
+		Progress:    devProgress,
+		WebProgress: webProgress,
+	}
+
+	if active != nil {
+		st := active.server.Status()
+		snap.Running = st.Running
+		snap.Framework = active.server.Name()
+		snap.Port = st.Port
+		snap.WebPort = st.WebPort
+		snap.WorkDir = st.WorkDir
+		if base, ok := active.server.(interface{ Pid() int }); ok {
+			snap.Pid = base.Pid()
+			if snap.Pid > 0 {
+				if proc, err := os.FindProcess(snap.Pid); err == nil {
+					snap.PidAlive = proc.Signal(syscall.Signal(0)) == nil
+				}
+			}
+		}
+		if base, ok := active.server.(interface{ StartedAt() time.Time }); ok {
+			if started := base.StartedAt(); !started.IsZero() {
+				snap.UptimeSec = int(time.Since(started).Seconds())
+			}
+		}
+	}
+
+	m.subsMu.Lock()
+	snap.BeatNumber = m.beatCounter
+	if !m.lastNonBeatAt.IsZero() {
+		snap.IdleSec = int(time.Since(m.lastNonBeatAt).Seconds())
+	}
+	m.subsMu.Unlock()
+
+	m.recentLogMu.Lock()
+	if len(m.recentLogTail) > 0 {
+		// Copy to avoid mutation aliasing through SSE serialization.
+		snap.RecentLogs = append([]string{}, m.recentLogTail...)
+	}
+	m.recentLogMu.Unlock()
+
+	m.emit(DevServerEvent{
+		Type:      "snapshot",
+		Framework: snap.Framework,
+		Timestamp: snap.GeneratedAt,
+		Snapshot:  snap,
+	})
+}
+
+// recordRecentLog appends to a small ring buffer of recent stdout/stderr
+// lines. Snapshot embeds the last 8 so a fresh subscriber gets context
+// without replaying the full history.
+func (m *DevServerManager) recordRecentLog(line string) {
+	if line == "" {
+		return
+	}
+	m.recentLogMu.Lock()
+	defer m.recentLogMu.Unlock()
+	const max = 8
+	m.recentLogTail = append(m.recentLogTail, line)
+	if len(m.recentLogTail) > max {
+		m.recentLogTail = m.recentLogTail[len(m.recentLogTail)-max:]
+	}
+}
+
 // ─── Base Dev Server (shared logic) ────────────────────────────────────
 
 // baseDevServer provides shared process management for dev servers.
@@ -782,7 +1010,26 @@ type baseDevServer struct {
 	err       string
 	mu        sync.Mutex
 	emitFn    func(DevServerEvent) // set by DevServerManager to stream log lines via SSE
+	// tracker (and optional webTracker for the Expo Web sibling)
+	// receive every stdout/stderr line for structured-progress
+	// extraction. Both are nullable; falling back to plain log emission
+	// when nil keeps tests + non-Expo dev servers working unchanged.
+	tracker     *progressTracker
+	webTracker  *progressTracker
+	recordLogFn func(string) // appended to manager's recent-log ring buffer for snapshots
 }
+
+// SetTrackers wires the two progress trackers (main dev server and
+// optional Expo Web sibling) into the spawn pipeline so each output
+// line is parsed for real progress.
+func (b *baseDevServer) SetTrackers(main, web *progressTracker) {
+	b.tracker = main
+	b.webTracker = web
+}
+
+// SetRecordLogFn lets the manager capture stdout/stderr for the
+// snapshot's recent-log tail.
+func (b *baseDevServer) SetRecordLogFn(fn func(string)) { b.recordLogFn = fn }
 
 func (b *baseDevServer) Name() string                      { return b.name }
 func (b *baseDevServer) Port() int                         { return b.port }
@@ -879,12 +1126,26 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	// runtime on a fresh Linux box that never had system Node.
 	cmd.Env = append(augmentEnv(nil), env...)
 
-	// Pipe output to log with [dev] prefix, and stream to SSE subscribers
+	// Pipe output to log with [dev] prefix, stream to SSE subscribers,
+	// AND feed the structured-progress trackers so they can extract
+	// pct + current_file from Metro/Expo/webpack output.
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", b.name)}
-	if b.emitFn != nil {
-		emitFn := b.emitFn
-		framework := b.name
-		logWriter.onLogLine = func(line string) {
+	emitFn := b.emitFn
+	framework := b.name
+	tracker := b.tracker
+	webTracker := b.webTracker
+	recordLogFn := b.recordLogFn
+	logWriter.onLogLine = func(line string) {
+		if recordLogFn != nil {
+			recordLogFn(line)
+		}
+		if tracker != nil {
+			tracker.FeedLine(line)
+		}
+		if webTracker != nil {
+			webTracker.FeedLine(line)
+		}
+		if emitFn != nil {
 			emitFn(DevServerEvent{
 				Type:      "log",
 				Framework: framework,

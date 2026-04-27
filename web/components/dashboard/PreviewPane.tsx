@@ -331,6 +331,58 @@ export default function PreviewPane({
     idleSec: number;
     beatNumber: number;
   } | null>(null);
+
+  // Yaver Protocol v1: structured progress + snapshot from the agent.
+  //
+  //   topicProgress[topic] = { phase, pct, done, total, unit, currentFile, etaMs, src, updatedAt }
+  //
+  // Populated from "progress" + "phase" SSE events. Reset by "snapshot"
+  // events (snapshot is source-of-truth — if we missed deltas, snapshot
+  // restores the world). Consumer renders from this map; the strip's
+  // "Hermes 67%" / "Web bundling 42% — Route.js" badges read here.
+  type TopicProgress = {
+    phase: string;
+    pct: number;
+    done: number;
+    total: number;
+    unit: string;
+    currentFile: string;
+    etaMs: number;
+    src: "exact" | "heuristic" | "unknown";
+    updatedAt: number;
+  };
+  const [topicProgress, setTopicProgress] = useState<Record<string, TopicProgress>>({});
+  // Latest agent snapshot — full picture of every running stream.
+  // Updated from "snapshot" events every 5s. UI uses this as source
+  // of truth; deltas just make it feel snappier.
+  const [latestSnapshot, setLatestSnapshot] = useState<{
+    generatedAt: number;
+    running: boolean;
+    framework: string;
+    port: number;
+    webPort: number;
+    workDir: string;
+    uptimeSec: number;
+    idleSec: number;
+    phases: Record<string, string>;
+    recentLogs: string[];
+  } | null>(null);
+
+  // Connection-health is decoupled from compile state. Time since the
+  // last byte arrived on the SSE stream (any byte — heartbeat, log,
+  // progress, snapshot). The user sees one global "we're listening"
+  // dot; per-topic compile state is rendered separately. This is the
+  // "never feel disconnected" contract: agent guarantees a snapshot
+  // every 5s, so > 6s without a byte means transport is sick — that's
+  // the only thing that lights the connection-warning.
+  const [lastByteAt, setLastByteAt] = useState<number>(Date.now());
+  const connectionHealth: "live" | "syncing" | "reconnecting" | "lost" = (() => {
+    const ms = Date.now() - lastByteAt;
+    if (ms < 6_000) return "live";
+    if (ms < 15_000) return "syncing";
+    if (ms < 60_000) return "reconnecting";
+    return "lost";
+  })();
   // Forces the "X seconds ago" labels to refresh once per second
   // even when no new event lands. Without this the relative-time
   // strings only update when a beat arrives, undermining the
@@ -446,6 +498,13 @@ export default function PreviewPane({
         // 5s while a dev server is running). They're not log lines —
         // we update the live-status header from them instead of
         // appending to the CONSOLE log buffer (would flood it).
+        // ANY message — even keepalives + heartbeats — bumps lastByteAt
+        // so the connection-health indicator stays "live". This is the
+        // "never feel disconnected" contract: agent guarantees an event
+        // every 5s, so absence of bytes for >6s means the transport is
+        // sick — independent of whether anything is actively compiling.
+        setLastByteAt(Date.now());
+
         if (ev.type === "heartbeat") {
           setLastBeat({
             at: Date.now(),
@@ -457,6 +516,115 @@ export default function PreviewPane({
             idleSec: typeof ev.idleSec === "number" ? ev.idleSec : 0,
             beatNumber: typeof ev.beatNumber === "number" ? ev.beatNumber : 0,
           });
+          return;
+        }
+        // Yaver Protocol v1 — phase / progress / snapshot.
+        if (ev.type === "phase" && typeof ev.topic === "string" && typeof ev.phase === "string") {
+          setTopicProgress((prev) => ({
+            ...prev,
+            [ev.topic]: {
+              phase: ev.phase,
+              pct: prev[ev.topic]?.pct ?? 0,
+              done: prev[ev.topic]?.done ?? 0,
+              total: prev[ev.topic]?.total ?? 0,
+              unit: prev[ev.topic]?.unit ?? "",
+              currentFile: "",
+              etaMs: 0,
+              src: prev[ev.topic]?.src ?? "unknown",
+              updatedAt: Date.now(),
+            },
+          }));
+          return;
+        }
+        if (ev.type === "progress" && typeof ev.topic === "string") {
+          setTopicProgress((prev) => ({
+            ...prev,
+            [ev.topic]: {
+              phase: typeof ev.phase === "string" ? ev.phase : (prev[ev.topic]?.phase ?? ""),
+              pct: typeof ev.pct === "number" ? ev.pct : 0,
+              done: typeof ev.done === "number" ? ev.done : 0,
+              total: typeof ev.total === "number" ? ev.total : 0,
+              unit: typeof ev.unit === "string" ? ev.unit : "",
+              currentFile: typeof ev.currentFile === "string" ? ev.currentFile : "",
+              etaMs: typeof ev.etaMs === "number" ? ev.etaMs : 0,
+              src: ev.progressSrc === "exact" || ev.progressSrc === "heuristic"
+                ? ev.progressSrc
+                : "unknown",
+              updatedAt: Date.now(),
+            },
+          }));
+          return;
+        }
+        if (ev.type === "snapshot" && ev.snapshot && typeof ev.snapshot === "object") {
+          const s = ev.snapshot;
+          setLatestSnapshot({
+            generatedAt: Date.now(),
+            running: s.running === true,
+            framework: typeof s.framework === "string" ? s.framework : "",
+            port: typeof s.port === "number" ? s.port : 0,
+            webPort: typeof s.webPort === "number" ? s.webPort : 0,
+            workDir: typeof s.workDir === "string" ? s.workDir : "",
+            uptimeSec: typeof s.uptimeSec === "number" ? s.uptimeSec : 0,
+            idleSec: typeof s.idleSec === "number" ? s.idleSec : 0,
+            phases: s.phases && typeof s.phases === "object" ? s.phases : {},
+            recentLogs: Array.isArray(s.recentLogs) ? s.recentLogs.slice(-8) : [],
+          });
+          // Snapshot is source of truth — reconcile topicProgress
+          // entries that no longer appear in the snapshot's phases.
+          if (s.phases && typeof s.phases === "object") {
+            setTopicProgress((prev) => {
+              const next = { ...prev };
+              for (const [topic, phase] of Object.entries(s.phases as Record<string, string>)) {
+                next[topic] = {
+                  phase: phase || "",
+                  pct: prev[topic]?.pct ?? 0,
+                  done: prev[topic]?.done ?? 0,
+                  total: prev[topic]?.total ?? 0,
+                  unit: prev[topic]?.unit ?? "",
+                  currentFile: prev[topic]?.currentFile ?? "",
+                  etaMs: prev[topic]?.etaMs ?? 0,
+                  src: prev[topic]?.src ?? "unknown",
+                  updatedAt: Date.now(),
+                };
+              }
+              return next;
+            });
+          }
+          // Embed progress field directly when the snapshot includes one
+          if (s.progress && typeof s.progress === "object") {
+            const p = s.progress;
+            setTopicProgress((prev) => ({
+              ...prev,
+              [p.topic ?? "dev/start"]: {
+                phase: typeof p.phase === "string" ? p.phase : (prev[p.topic ?? "dev/start"]?.phase ?? ""),
+                pct: typeof p.pct === "number" ? p.pct : 0,
+                done: typeof p.done === "number" ? p.done : 0,
+                total: typeof p.total === "number" ? p.total : 0,
+                unit: typeof p.unit === "string" ? p.unit : "",
+                currentFile: typeof p.currentFile === "string" ? p.currentFile : "",
+                etaMs: typeof p.etaMs === "number" ? p.etaMs : 0,
+                src: p.progressSrc === "exact" || p.progressSrc === "heuristic" ? p.progressSrc : "unknown",
+                updatedAt: Date.now(),
+              },
+            }));
+          }
+          if (s.webProgress && typeof s.webProgress === "object") {
+            const p = s.webProgress;
+            setTopicProgress((prev) => ({
+              ...prev,
+              [p.topic ?? "webview/build"]: {
+                phase: typeof p.phase === "string" ? p.phase : (prev[p.topic ?? "webview/build"]?.phase ?? ""),
+                pct: typeof p.pct === "number" ? p.pct : 0,
+                done: typeof p.done === "number" ? p.done : 0,
+                total: typeof p.total === "number" ? p.total : 0,
+                unit: typeof p.unit === "string" ? p.unit : "",
+                currentFile: typeof p.currentFile === "string" ? p.currentFile : "",
+                etaMs: typeof p.etaMs === "number" ? p.etaMs : 0,
+                src: p.progressSrc === "exact" || p.progressSrc === "heuristic" ? p.progressSrc : "unknown",
+                updatedAt: Date.now(),
+              },
+            }));
+          }
           return;
         }
         const text = (ev.logLine || ev.message || ev.text || "").toString();
@@ -1447,6 +1615,9 @@ export default function PreviewPane({
               lastEventAt={lastEventAt}
               devStatus={devStatus}
               lastBeat={lastBeat}
+              connectionHealth={connectionHealth}
+              topicProgress={topicProgress}
+              latestSnapshot={latestSnapshot}
             />
             <div className="flex-1 min-h-0 overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-[10px] leading-4">
               {logLines.length === 0 ? (
@@ -1588,6 +1759,9 @@ function ConsoleStatusHeader({
   lastEventAt,
   devStatus,
   lastBeat,
+  connectionHealth,
+  topicProgress,
+  latestSnapshot,
 }: {
   connState: string;
   sseState: "idle" | "opening" | "open" | "closed" | "error";
@@ -1606,6 +1780,30 @@ function ConsoleStatusHeader({
     framework: string;
     idleSec: number;
     beatNumber: number;
+  } | null;
+  connectionHealth: "live" | "syncing" | "reconnecting" | "lost";
+  topicProgress: Record<string, {
+    phase: string;
+    pct: number;
+    done: number;
+    total: number;
+    unit: string;
+    currentFile: string;
+    etaMs: number;
+    src: "exact" | "heuristic" | "unknown";
+    updatedAt: number;
+  }>;
+  latestSnapshot: {
+    generatedAt: number;
+    running: boolean;
+    framework: string;
+    port: number;
+    webPort: number;
+    workDir: string;
+    uptimeSec: number;
+    idleSec: number;
+    phases: Record<string, string>;
+    recentLogs: string[];
   } | null;
 }) {
   const dot = (color: string) => (
@@ -1704,6 +1902,85 @@ function ConsoleStatusHeader({
           )}
         </div>
       )}
+      {/* Per-topic progress bars — Yaver Protocol v1. The agent
+          parses Metro / Expo / hermesc stdout and emits real
+          percentages with currentFile + ETA. We render one slim bar
+          per active topic so the user sees "Web bundling 42% —
+          Route.js · 18s left" instead of a fake wallclock spinner. */}
+      {Object.entries(topicProgress)
+        .filter(([, prog]) => prog.phase && prog.phase !== "ready" && prog.phase !== "stopped" && prog.phase !== "idle" && prog.phase !== "")
+        .map(([topic, prog]) => {
+          const label = topicLabel(topic);
+          const phaseLabel = phaseLabelFor(prog.phase);
+          const isExact = prog.src === "exact" && prog.total > 0;
+          const pctDisplay = Math.max(0, Math.min(100, Math.round(prog.pct)));
+          const etaSec = prog.etaMs > 0 ? Math.round(prog.etaMs / 1000) : 0;
+          return (
+            <div key={topic} className="mt-1 flex flex-col gap-0.5">
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className="text-surface-300">{label}</span>
+                <span className="text-surface-600">{phaseLabel}</span>
+                {isExact ? (
+                  <span className="font-mono text-emerald-300" style={fixedWidth(5)}>{pctDisplay}%</span>
+                ) : (
+                  <span className="text-surface-600 italic">working…</span>
+                )}
+                {prog.total > 0 && (
+                  <span className="text-surface-700" style={fixedWidth(14)}>
+                    {prog.done}/{prog.total} {prog.unit}
+                  </span>
+                )}
+                {etaSec > 0 && etaSec < 600 && (
+                  <span className="text-surface-700">~{etaSec}s left</span>
+                )}
+              </div>
+              <div className="h-0.5 w-full overflow-hidden rounded-full bg-surface-800">
+                {isExact ? (
+                  <div
+                    className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-[width] duration-300"
+                    style={{ width: `${Math.max(2, pctDisplay)}%` }}
+                  />
+                ) : (
+                  <div className="relative h-full w-full overflow-hidden">
+                    <div className="absolute inset-y-0 -left-full w-1/3 animate-[slide_1.6s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-sky-400/50 to-transparent" />
+                  </div>
+                )}
+              </div>
+              {prog.currentFile && (
+                <div className="truncate text-[9px] text-surface-700 font-mono" title={prog.currentFile}>
+                  {prog.currentFile.split("/").slice(-3).join("/")}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      {/* Connection-health chip — decoupled from compile state.
+          ALWAYS visible so user sees "we're listening". Per the
+          'never feel disconnected' contract: agent guarantees a
+          snapshot every 5s, so > 6s without a byte = real transport
+          issue. */}
+      <div className="mt-1 flex items-center gap-2 text-[10px]">
+        {(() => {
+          const map = {
+            live: { dot: "#34d399", label: "channel: live", animate: false, color: "text-emerald-300" },
+            syncing: { dot: "#fbbf24", label: "channel: syncing…", animate: true, color: "text-amber-300" },
+            reconnecting: { dot: "#fb923c", label: "channel: reconnecting…", animate: true, color: "text-orange-300" },
+            lost: { dot: "#ef4444", label: "channel: lost — Reconnect & Fix", animate: false, color: "text-red-300" },
+          } as const;
+          const m = map[connectionHealth];
+          return (
+            <>
+              <span className={`relative inline-flex h-1.5 w-1.5 items-center justify-center`}>
+                {m.animate && (
+                  <span className="absolute inset-0 animate-ping rounded-full opacity-50" style={{ background: m.dot }} />
+                )}
+                <span className="relative inline-block h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
+              </span>
+              <span className={m.color}>{m.label}</span>
+            </>
+          );
+        })()}
+      </div>
       {sseUrl && (
         <div className="mt-0.5 truncate font-mono text-[9px] text-surface-700" title={sseUrl}>
           {sseUrl}
@@ -1711,6 +1988,37 @@ function ConsoleStatusHeader({
       )}
     </div>
   );
+}
+
+// topicLabel — human-readable name for a Yaver Protocol topic.
+function topicLabel(topic: string): string {
+  switch (topic) {
+    case "dev/start": return "Dev server";
+    case "webview/build": return "Expo Web";
+    case "hermes/compile": return "Hermes";
+    case "bundle/push": return "Bundle push";
+    default: return topic;
+  }
+}
+
+// phaseLabelFor — human-readable label for a phase value.
+function phaseLabelFor(phase: string): string {
+  switch (phase) {
+    case "queued": return "queued";
+    case "preparing": return "preparing";
+    case "installing_deps": return "installing deps";
+    case "starting": return "starting";
+    case "metro_bundling": return "metro bundling";
+    case "web_bundling": return "web bundling";
+    case "hermesc_compiling": return "hermes compiling";
+    case "validating": return "validating";
+    case "listening": return "listening";
+    case "ready": return "ready";
+    case "idle": return "idle";
+    case "stopped": return "stopped";
+    case "error": return "error";
+    default: return phase;
+  }
 }
 
 function formatHeartbeatUptime(seconds: number): string {
