@@ -290,6 +290,18 @@ jobs:
       - name: Publish yaver to pub.dev
         run: |
           cd sdk/flutter
+          # Skip if pub.dev already has this exact version — pub
+          # rejects the upload with "Version X already exists" and
+          # fails the workflow even when nothing else changed. CLI
+          # releases trigger this workflow on every cli/v* tag, but
+          # the Flutter SDK version only changes when sdk/flutter/
+          # itself changes.
+          PKG_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "Local Flutter SDK version: $PKG_VERSION"
+          if curl -sfL "https://pub.dev/api/packages/yaver/versions/$PKG_VERSION" >/dev/null 2>&1; then
+            echo "yaver $PKG_VERSION already on pub.dev — skipping publish"
+            exit 0
+          fi
           dart pub publish --force
 
   publish-feedback-flutter:
@@ -320,6 +332,13 @@ jobs:
       - name: Publish yaver_feedback to pub.dev
         run: |
           cd sdk/feedback/flutter
+          # Same idempotency guard as the yaver core publish.
+          PKG_VERSION=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "Local yaver_feedback version: $PKG_VERSION"
+          if curl -sfL "https://pub.dev/api/packages/yaver_feedback/versions/$PKG_VERSION" >/dev/null 2>&1; then
+            echo "yaver_feedback $PKG_VERSION already on pub.dev — skipping publish"
+            exit 0
+          fi
           dart pub publish --force
 
   package-feedback-unity:
