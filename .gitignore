@@ -69,3 +69,5 @@ videos/
 
 # CI runtime artifacts (server-ip, server-id, logs from remote-verify)
 ci/.artifacts/
+.claude/
+IstanbulDigerK4.pdf
