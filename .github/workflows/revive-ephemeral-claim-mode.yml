@@ -41,13 +41,22 @@ jobs:
       - name: Restore claim-mode config + start daemon
         env:
           HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          RELAY_PASSWORD: ${{ secrets.RELAY_PASSWORD }}
         run: |
-          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          if [ -z "$RELAY_PASSWORD" ]; then
+            echo "::error::RELAY_PASSWORD GH secret not set"; exit 2
+          fi
+          # Build the remote script with the password baked in.
+          # Single-quoted heredoc avoids any runner-side $ expansion
+          # for the script body itself; we sed-replace a placeholder
+          # for the password right before piping to ssh.
+          cat > /tmp/revive.sh <<'REMOTE_SCRIPT'
           set -euo pipefail
+          RELAY_PW='__RELAY_PW__'
+          if [ -z "${RELAY_PW:-}" ] || [ "$RELAY_PW" = "__RELAY_PW__" ]; then
+            echo "::error::RELAY_PW placeholder not substituted"; exit 2
+          fi
 
-          # Stop whatever's running so we know the state we're starting from.
           systemctl --user --machine=yaver@ stop yaver 2>/dev/null || \
             sudo -u yaver systemctl --user stop yaver 2>/dev/null || true
           loginctl enable-linger yaver 2>/dev/null || true
@@ -55,43 +64,28 @@ jobs:
           pkill -u yaver -f 'yaver auth'  2>/dev/null || true
           sleep 1
 
-          # Pull the shared relay password off the live yaver-relay
-          # systemd unit so the agent registers with the same secret
-          # the relay validates against. The unit's --password flag
-          # carries it; same trick the deploy-binary workflow uses.
-          RELAY_PW=$(awk -F'--password ' '/--password/ {print $2}' /etc/systemd/system/yaver-relay.service | awk '{print $1}')
-          if [ -z "$RELAY_PW" ]; then
-            echo "::error::could not read relay password from yaver-relay unit"; exit 2
-          fi
-
-          # Keep ConvexSiteURL pointing at prod (mirrors what the
-          # rest of the fleet uses).
           CONVEX_URL="https://perceptive-minnow-557.eu-west-1.convex.site"
 
-          # Make sure the yaver user + .yaver dir exist.
           id yaver >/dev/null 2>&1 || useradd -m yaver
           install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
 
-          # Write a minimal claim-mode config: relay creds + Convex
-          # URL only. NO auth_token, NO device_id (agent generates
-          # a fresh one on first start). RelayServers list mirrors
-          # what platformConfig publishes; we hardcode public-free
-          # here so the box can register without a sign-in round-
-          # trip first.
-          python3 - <<PY
-          import json, os
+          # Claim-mode config: relay creds + Convex URL only. No
+          # auth_token, no device_id (agent generates one on start).
+          python3 - "$RELAY_PW" "$CONVEX_URL" <<'PY'
+          import json, os, sys
+          relay_pw, convex_url = sys.argv[1], sys.argv[2]
           cfg = {
-            "convex_site_url": "$CONVEX_URL",
+            "convex_site_url": convex_url,
             "relay_servers": [
               {
                 "id": "public-free",
                 "http_url": "https://public.yaver.io",
                 "quic_addr": "public.yaver.io:4433",
                 "priority": 0,
-                "password": "$RELAY_PW",
+                "password": relay_pw,
               }
             ],
-            "relay_password": "$RELAY_PW",
+            "relay_password": relay_pw,
           }
           os.makedirs("/home/yaver/.yaver", exist_ok=True)
           with open("/home/yaver/.yaver/config.json", "w") as f:
@@ -99,13 +93,9 @@ jobs:
           os.chmod("/home/yaver/.yaver/config.json", 0o600)
           PY
           chown yaver:yaver /home/yaver/.yaver/config.json
-          echo "Wrote claim-mode config:"
-          cat /home/yaver/.yaver/config.json
+          echo "Wrote claim-mode config (relay_password masked):"
+          python3 -c 'import json;d=json.load(open("/home/yaver/.yaver/config.json"));d["relay_password"]="***";[s.update({"password":"***"}) for s in d.get("relay_servers",[])];print(json.dumps(d,indent=2))'
 
-          # Start `yaver serve` as the yaver user. Daemonize so SSH
-          # exiting doesn't kill it. systemctl --user is the right
-          # path but lingers don't always cooperate on this box, so
-          # nohup is the dependable fallback.
           sudo -u yaver bash -lc '
             cd /home/yaver
             nohup /usr/local/bin/yaver serve >/home/yaver/.yaver/agent.log 2>&1 &
@@ -113,13 +103,13 @@ jobs:
           '
           sleep 3
 
-          # Confirm the agent is running + heartbeat'd to the relay.
           if ! pgrep -u yaver -f 'yaver serve' >/dev/null; then
             echo "::error::yaver serve did not start; agent.log tail:"
             tail -50 /home/yaver/.yaver/agent.log || true
             exit 2
           fi
-          echo "✓ yaver serve running (pid $(pgrep -u yaver -f 'yaver serve'))"
+          PID=$(pgrep -u yaver -f 'yaver serve' | head -1)
+          echo "OK yaver serve running (pid $PID)"
 
           echo
           echo "=== first 20 log lines ==="
@@ -128,7 +118,15 @@ jobs:
           echo
           echo "=== /health (local) ==="
           curl -sf http://127.0.0.1:18080/health | head -c 300 || echo "(no local health yet)"
-          REMOTE
+          REMOTE_SCRIPT
+
+          # Substitute the password placeholder. Use sed with a |
+          # delimiter so / + special chars in the password don't
+          # break parsing. Then pipe to ssh.
+          sed "s|__RELAY_PW__|$RELAY_PASSWORD|" /tmp/revive.sh \
+            | ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+                  -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                  "root@$HETZNER_TEST_SERVER_IP" bash -s
 
       - name: Probe via public.yaver.io until tunnel up (~90s budget)
         run: |
