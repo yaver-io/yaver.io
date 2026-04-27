@@ -1165,7 +1165,7 @@ export default function VibeCodingView({
                   Start Preview
                 </button>
                 <button
-                  onClick={() => void agentClient.reloadDevServer()}
+                  onClick={() => void agentClient.reloadDevServer({ mode: (devStatus?.framework || "").match(/^(expo|react-native)$/i) ? "bundle" : "dev" })}
                   disabled={!devStatus?.running}
                   className="rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
                 >
@@ -1613,7 +1613,7 @@ export default function VibeCodingView({
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => void agentClient.reloadDevServer()}
+                    onClick={() => void agentClient.reloadDevServer({ mode: (devStatus?.framework || "").match(/^(expo|react-native)$/i) ? "bundle" : "dev" })}
                     disabled={!devStatus?.running}
                     className="rounded-xl border border-surface-700 bg-surface-950 px-4 py-2 text-sm font-semibold text-surface-200 hover:border-surface-600 disabled:opacity-40"
                   >

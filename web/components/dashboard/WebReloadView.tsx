@@ -356,7 +356,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
   const handleReload = async () => {
     try {
-      await agentClient.reloadDevServer();
+      await agentClient.reloadDevServer({ mode: "dev" });
     } catch (err) {
       setStartError(err instanceof Error ? err.message : String(err));
     }

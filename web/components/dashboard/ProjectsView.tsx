@@ -231,7 +231,7 @@ export default function ProjectsView({
             ) : null}
           </div>
           <div className="flex gap-2">
-            <button onClick={() => void agentClient.reloadDevServer()} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Refresh Preview</button>
+            <button onClick={() => void agentClient.reloadDevServer({ mode: (devStatus?.framework || "").match(/^(expo|react-native)$/i) ? "bundle" : "dev" })} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Refresh Preview</button>
             <button onClick={stopDev} className="px-3 py-1 text-xs rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20">{devStatus.stopActionLabel || "Stop Serving"}</button>
           </div>
         </div>

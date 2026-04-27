@@ -831,13 +831,13 @@ export default function PreviewPane({
     setReloadNonce((n) => n + 1);
     if (isWebPreviewFramework(framework)) {
       try {
-        await agentClient.reloadDevServer();
+        await agentClient.reloadDevServer({ mode: "dev" });
       } catch {
         // Browser preview already got a hard refresh above.
       }
       return;
     }
-    await agentClient.reloadDevServer();
+    await agentClient.reloadDevServer({ mode: "bundle" });
   }, [devStatus?.framework]);
 
   const handleStop = useCallback(async () => {

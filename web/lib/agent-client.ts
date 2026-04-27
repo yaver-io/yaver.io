@@ -1486,9 +1486,9 @@ export class AgentClient {
 
   async getRunnerBrowserAuthStatus(sessionId: string): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const url = new URL(`${this.baseUrl}/runner-auth/browser/status`);
-    url.searchParams.set("id", sessionId);
-    const res = await fetch(url.toString(), { headers: this.authHeaders });
+    const base = `${this.baseUrl}/runner-auth/browser/status`;
+    const url = `${base}?id=${encodeURIComponent(sessionId)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`getRunnerBrowserAuthStatus ${res.status}: ${body || res.statusText}`);
@@ -1499,9 +1499,8 @@ export class AgentClient {
 
   async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
     this.assertConnected();
-    const url = new URL(`${this.baseUrl}/runner-auth/browser/cancel`);
-    url.searchParams.set("id", sessionId);
-    await fetch(url.toString(), { method: "POST", headers: this.authHeaders }).catch(() => {});
+    const url = `${this.baseUrl}/runner-auth/browser/cancel?id=${encodeURIComponent(sessionId)}`;
+    await fetch(url, { method: "POST", headers: this.authHeaders }).catch(() => {});
   }
 
   /**
@@ -1519,9 +1518,8 @@ export class AgentClient {
    */
   async submitRunnerBrowserAuthCode(sessionId: string, code: string): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const url = new URL(`${this.baseUrl}/runner-auth/browser/submit-code`);
-    url.searchParams.set("id", sessionId);
-    const res = await fetch(url.toString(), {
+    const url = `${this.baseUrl}/runner-auth/browser/submit-code?id=${encodeURIComponent(sessionId)}`;
+    const res = await fetch(url, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
@@ -3519,18 +3517,35 @@ export class AgentClient {
     return data;
   }
 
-  async reloadDevServer(): Promise<{
+  async reloadDevServer(opts?: { mode?: "dev" | "bundle" }): Promise<{
     ok?: boolean;
     nativeChangesDetected?: boolean;
     nativeChanges?: Array<{ path?: string; reason?: string }>;
     changeClass?: string;
+    status?: string;
+    bundleUrl?: string;
+    moduleName?: string;
     error?: string;
   }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/dev/reload`, { method: "POST", headers: this.authHeaders });
+    const mode = opts?.mode ?? "dev";
+    if (mode === "dev") {
+      const res = await fetch(`${this.baseUrl}/dev/reload`, { method: "POST", headers: this.authHeaders });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to reload dev server");
+      }
+      return data;
+    }
+
+    const res = await fetch(`${this.baseUrl}/dev/reload-app`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "bundle" }),
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data?.error || "Failed to reload dev server");
+      throw new Error(data?.error || "Failed to rebuild bundle for reload");
     }
     return data;
   }
@@ -3608,7 +3623,24 @@ export class AgentClient {
   }
 
   private appendStreamAuth(url: string): string {
-    const u = new URL(url);
+    // Defensive: when called before connect() has populated host/port/relay,
+    // baseUrl can produce strings like `http://undefined:undefined/dev/events`
+    // and `new URL()` throws synchronously, crashing the dashboard render.
+    // Fall back to manual querystring concat — the resulting URL still
+    // won't actually fetch anything until connect lands, but at least
+    // React keeps rendering and the auto-reconnect loop runs to fix it.
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      const params: string[] = [];
+      if (this.token) params.push(`token=${encodeURIComponent(this.token)}`);
+      if (this._activeRelayUrl && this.activeRelayPassword) {
+        params.push(`__rp=${encodeURIComponent(this.activeRelayPassword)}`);
+      }
+      const join = url.includes("?") ? "&" : "?";
+      return params.length ? `${url}${join}${params.join("&")}` : url;
+    }
     if (this.token) u.searchParams.set("token", this.token);
     if (this._activeRelayUrl && this.activeRelayPassword) {
       u.searchParams.set("__rp", this.activeRelayPassword);
