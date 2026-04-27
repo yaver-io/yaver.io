@@ -1,6 +1,4 @@
 # Trace what the relay actually does with /d/<id>/dev/events.
-# Tail relay journald while a curl hits the SSE endpoint, so we
-# see whether proxySSE was called, how many bytes flowed, etc.
 name: Relay Tunnel Trace
 
 on:
@@ -24,61 +22,68 @@ jobs:
           EOF
           echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Resolve relay SSH host (where public.yaver.io runs)
+      - name: Render remote-creds-fetcher script
         run: |
-          # public.yaver.io resolves via Cloudflare; we need the actual
-          # origin. Pull it from the RELAY_SSH_HOST secret which is set
-          # to the relay's bare IP/hostname.
-          echo "RELAY_HOST=${{ secrets.RELAY_SSH_HOST }}" >> "$GITHUB_ENV"
-
-      - name: Pull creds from yaver-test-ephemeral + user relay password from Convex
-        env:
-          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
-        run: |
-          OUT=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              "root@$HETZNER_TEST_SERVER_IP" "bash -s" <<'REMOTE'
+          cat > "$RUNNER_TEMP/fetch-creds.sh" <<'BODY'
+          #!/usr/bin/env bash
           set -uo pipefail
           for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
             if [ -f "$c" ]; then
-              python3 -c "
-import json, sys, urllib.request
-d = json.load(open(sys.argv[1]))
-tok = d.get('auth_token', '')
-did = d.get('device_id', '')
-convex = d.get('convex_site_url', 'https://perceptive-minnow-557.eu-west-1.convex.site')
-# Fetch /settings to get the user's relay password
-req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
-with urllib.request.urlopen(req, timeout=10) as r:
-    s = json.load(r)
-print(tok)
-print(s.get('relayPassword', ''))
-print(did)
-" "$c"
+              python3 - "$c" <<'PYEOF'
+          import json, sys, urllib.request
+          d = json.load(open(sys.argv[1]))
+          tok = d.get('auth_token', '')
+          did = d.get('device_id', '')
+          convex = d.get('convex_site_url', 'https://perceptive-minnow-557.eu-west-1.convex.site')
+          req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+          rp = ''
+          try:
+              with urllib.request.urlopen(req, timeout=10) as r:
+                  s = json.load(r)
+                  rp = s.get('relayPassword', '') or ''
+          except Exception as e:
+              sys.stderr.write(f'/settings failed: {e}\n')
+          print(tok)
+          print(rp)
+          print(did)
+          PYEOF
               break
             fi
           done
-          REMOTE
-          )
+          BODY
+          chmod +x "$RUNNER_TEMP/fetch-creds.sh"
+
+      - name: Pull creds
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/fetch-creds.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/fetch-creds.sh"
+          OUT=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/fetch-creds.sh && rm -f /tmp/fetch-creds.sh")
           TOKEN=$(echo "$OUT" | sed -n '1p')
           RP=$(echo "$OUT" | sed -n '2p')
           DID=$(echo "$OUT" | sed -n '3p')
           echo "token_len=${#TOKEN} rp_len=${#RP} did=$DID"
-          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
-          echo "RP=$RP" >> "$GITHUB_ENV"
-          echo "DID=$DID" >> "$GITHUB_ENV"
+          echo "::add-mask::$TOKEN"
+          echo "::add-mask::$RP"
+          {
+            echo "TOKEN=$TOKEN"
+            echo "RP=$RP"
+            echo "DID=$DID"
+          } >> "$GITHUB_ENV"
 
-      - name: Probe relay /health for version
-        run: |
-          curl -s https://public.yaver.io/health | python3 -m json.tool
+      - name: Probe relay /health
+        run: curl -s https://public.yaver.io/health | python3 -m json.tool
 
-      - name: Curl /dev/events through relay (verbose, with -i + -w)
+      - name: Curl /dev/events through relay (verbose)
         run: |
           URL="https://public.yaver.io/d/$DID/dev/events?token=$TOKEN&__rp=$RP"
-          echo '--- 8s curl (sees response headers + body bytes received) ---'
+          echo '--- 8s curl with -i ---'
           set +e
-          timeout 8 curl -sN -i -H "Accept: text/event-stream" "$URL" 2>&1 | head -80
+          timeout 8 curl -sN -i -H "Accept: text/event-stream" "$URL" 2>&1 | head -50
           EC=$?
           echo "(curl exit=$EC)"
           echo '--- with -w stats ---'
@@ -86,14 +91,11 @@ print(did)
             -w '\nstatus=%{http_code} size_download=%{size_download} time_total=%{time_total}\n' \
             "$URL" 2>&1 | tail -3
 
-      - name: Curl /dev/events DIRECTLY (no relay) via tunnel-only
+      - name: Curl /dev/events DIRECTLY on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
         run: |
-          # Verify yaver-test-ephemeral's local agent really has events
-          # right now (sometimes Metro's idle and emits nothing, which
-          # we'd misread as "broken" via relay).
-          echo '--- localhost on box, 5s ---'
           ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile=/dev/null \
-              "root@${{ secrets.HETZNER_TEST_SERVER_IP }}" \
-              "timeout 5 curl -sN -H \"Authorization: Bearer $TOKEN\" -H \"Accept: text/event-stream\" http://127.0.0.1:18080/dev/events 2>&1 | head -10"
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "timeout 5 curl -sN -H 'Authorization: Bearer $TOKEN' -H 'Accept: text/event-stream' http://127.0.0.1:18080/dev/events 2>&1 | head -10"
