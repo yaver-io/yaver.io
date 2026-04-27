@@ -16,6 +16,14 @@ import (
 )
 
 func runCode(args []string) {
+	if handled, err := runCodeControl(args); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "code: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if len(args) > 0 {
 		switch args[0] {
 		case "help", "-h", "--help":
@@ -52,6 +60,20 @@ func runCode(args []string) {
 	allowedRunners := fs.String("allowed-runners", "", "comma-separated runner allowlist for mesh nodes, e.g. ollama,opencode,codex")
 	plain := fs.Bool("plain", false, "force plain line-by-line output (no TUI)")
 	_ = fs.Parse(args)
+	if cfg, profile, err := loadCodeConfig(); err == nil && cfg != nil && profile != nil {
+		if strings.TrimSpace(*runner) == "" {
+			*runner = strings.TrimSpace(profile.Runner)
+		}
+		if strings.TrimSpace(*model) == "" {
+			*model = strings.TrimSpace(profile.Model)
+		}
+		if strings.TrimSpace(*workDir) == "" && !profile.RepoRemote {
+			*workDir = strings.TrimSpace(profile.RepoPath)
+		}
+		if strings.TrimSpace(*attachTarget) == "" && strings.TrimSpace(profile.WorkMode) == codeWorkModeAttached && strings.TrimSpace(profile.AttachedDeviceID) != "" {
+			*attachTarget = strings.TrimSpace(profile.AttachedDeviceID)
+		}
+	}
 	if strings.TrimSpace(*agent) != "" && strings.TrimSpace(*runner) == "" {
 		*runner = normalizeRunnerID(*agent)
 	}
@@ -193,10 +215,18 @@ Flags:
 
 Terminal behavior:
   - direct terminal sessions default to plain text, not markdown
-  - help, tasks, agent, clear, /exit, and /quit are handled locally
+  - help, tasks, agent, get agent, set agent, clear, /exit, and \exit are handled locally
   - yaver code --agent ... without --attach edits local files
   - yaver code --attach ... edits files on the attached remote machine
   - mobile/web sessions keep their own response contracts
+
+Control plane:
+  yaver code attach pc select
+  yaver code set agent codex
+  yaver code set repo <name-or-path>
+  yaver code repo clone <git-url>
+  yaver code dev reload
+  yaver code deploy frontend
 `)
 }
 

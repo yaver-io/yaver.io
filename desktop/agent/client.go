@@ -98,6 +98,12 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 					fmt.Println()
 				}
 				continue
+			case "set-agent":
+				opts.DefaultRunner = strings.TrimSpace(cmd.Runner)
+				opts.DefaultModel = strings.TrimSpace(cmd.Model)
+				info := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Name: opts.DefaultRunner, Model: opts.DefaultModel}}
+				fmt.Printf("Default coding agent set to: %s\n\n", attachRunnerLine(info))
+				continue
 			case "clear":
 				fmt.Print("\033[2J\033[H")
 				printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
@@ -380,6 +386,17 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 					fmt.Println("Current coding agent: remote default")
 					fmt.Println()
 				}
+				continue
+			case "set-agent":
+				opts.DefaultRunner = strings.TrimSpace(cmd.Runner)
+				opts.DefaultModel = strings.TrimSpace(cmd.Model)
+				if infoSnapshot == nil {
+					infoSnapshot = &attachInfo{}
+				}
+				infoSnapshot.Runner.ID = opts.DefaultRunner
+				infoSnapshot.Runner.Name = opts.DefaultRunner
+				infoSnapshot.Runner.Model = opts.DefaultModel
+				fmt.Printf("Default coding agent set to: %s\n\n", attachRunnerLine(infoSnapshot))
 				continue
 			case "clear":
 				fmt.Print("\033[2J\033[H")

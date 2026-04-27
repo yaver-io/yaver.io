@@ -106,7 +106,7 @@ func runAttach(args []string) {
 			return
 
 		case input := <-inputCh:
-			if handled, shouldExit := runAttachBuiltin(input, info, baseURL, cfg.AuthToken); handled {
+			if handled, shouldExit := runAttachBuiltin(input, info, baseURL, cfg.AuthToken, &opts); handled {
 				if shouldExit {
 					fmt.Println("\nDetached from agent. Agent continues running in background.")
 					return
@@ -280,7 +280,7 @@ func truncateStr(s string, max int) string {
 	return "..." + s[len(s)-max+3:]
 }
 
-func runAttachBuiltin(input string, info *attachInfo, baseURL, token string) (handled bool, shouldExit bool) {
+func runAttachBuiltin(input string, info *attachInfo, baseURL, token string, opts *attachSessionOptions) (handled bool, shouldExit bool) {
 	cmd, ok := parseTerminalCommand(input)
 	if !ok {
 		return false, false
@@ -318,6 +318,23 @@ func runAttachBuiltin(input string, info *attachInfo, baseURL, token string) (ha
 			fmt.Println("Current coding agent: unknown")
 			fmt.Println()
 		}
+		return true, false
+	case "set-agent":
+		if opts != nil {
+			opts.DefaultRunner = strings.TrimSpace(cmd.Runner)
+			opts.DefaultModel = strings.TrimSpace(cmd.Model)
+		}
+		if info != nil {
+			info.Runner.ID = strings.TrimSpace(cmd.Runner)
+			info.Runner.Name = strings.TrimSpace(cmd.Runner)
+			info.Runner.Model = strings.TrimSpace(cmd.Model)
+		}
+		if runnerLine := attachRunnerLine(info); runnerLine != "" {
+			fmt.Printf("Default coding agent set to: %s\n", runnerLine)
+		} else {
+			fmt.Printf("Default coding agent set to: %s\n", strings.TrimSpace(cmd.Runner))
+		}
+		fmt.Println()
 		return true, false
 	case "clear":
 		fmt.Print("\033[2J\033[H")

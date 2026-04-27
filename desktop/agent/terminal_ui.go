@@ -14,6 +14,8 @@ type terminalCommand struct {
 	Kind   string
 	TaskID string
 	Input  string
+	Runner string
+	Model  string
 }
 
 func parseTerminalCommand(line string) (terminalCommand, bool) {
@@ -26,14 +28,29 @@ func parseTerminalCommand(line string) (terminalCommand, bool) {
 	switch normalized {
 	case "help", "/help", "-h", "--help":
 		return terminalCommand{Kind: "help"}, true
-	case "exit", "/exit", "quit", "/quit", "detach", "/detach":
+	case "exit", "/exit", "\\exit", "quit", "/quit", "\\quit", "detach", "/detach", "\\detach":
 		return terminalCommand{Kind: "detach"}, true
 	case "clear", "/clear", "cls":
 		return terminalCommand{Kind: "clear"}, true
 	case "tasks", "/tasks", "list", "/list":
 		return terminalCommand{Kind: "tasks"}, true
-	case "agent", "/agent", "runner", "/runner", "which agent", "which agent is running", "which runner":
+	case "agent", "/agent", "runner", "/runner", "get agent", "/get agent", "\\get agent", "which agent", "which agent is running", "which runner":
 		return terminalCommand{Kind: "agent"}, true
+	}
+
+	for _, prefix := range []string{"set agent ", "/set agent ", "\\set agent "} {
+		if strings.HasPrefix(normalized, prefix) {
+			rest := strings.TrimSpace(raw[len(prefix):])
+			if rest == "" {
+				return terminalCommand{}, false
+			}
+			parts := strings.Fields(rest)
+			cmd := terminalCommand{Kind: "set-agent", Runner: normalizeRunnerID(parts[0])}
+			if len(parts) > 1 {
+				cmd.Model = strings.Join(parts[1:], " ")
+			}
+			return cmd, true
+		}
 	}
 
 	for _, prefix := range []string{"stop ", "/stop "} {
@@ -101,9 +118,11 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("  stop <taskId>         hard-stop a task")
 	fmt.Println("  exit-task <taskId>    graceful runner exit for a task")
 	fmt.Println("  continue <id> <msg>   continue a finished task")
+	fmt.Println("  set agent <id> [model]  change the terminal's default coding agent")
 	fmt.Println("  clear                 clear the screen")
 	fmt.Println("  exit / quit / detach  leave the terminal without stopping the agent")
 	fmt.Println("  /help /exit /quit     common slash-command aliases")
+	fmt.Println("  \\exit / \\quit         common backslash-command aliases")
 	fmt.Println("  anything else         send that text to the coding agent")
 	fmt.Println()
 	fmt.Println("Common terminal flows")

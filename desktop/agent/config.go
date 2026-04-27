@@ -103,6 +103,19 @@ type Config struct {
 	ContainerReadOnly  bool                   `json:"container_read_only,omitempty"` // Read-only root filesystem (writes only to /workspace, /tmp)
 	ContainerMounts    []string               `json:"container_mounts,omitempty"`    // Extra volume mounts e.g. ["/opt/android-sdk:/opt/android-sdk:ro"]
 	SharedStorage      []SharedStorageProfile `json:"shared_storage,omitempty"`
+	Code               *CodeCLIConfig         `json:"code,omitempty"`
+}
+
+// CodeCLIConfig persists the deterministic `yaver code` control-plane state so
+// machine/runner/repo defaults survive across separate CLI invocations.
+type CodeCLIConfig struct {
+	WorkMode           string `json:"work_mode,omitempty"` // local | attached
+	AttachedDeviceID   string `json:"attached_device_id,omitempty"`
+	AttachedDeviceName string `json:"attached_device_name,omitempty"`
+	Runner             string `json:"runner,omitempty"`
+	Model              string `json:"model,omitempty"`
+	RepoPath           string `json:"repo_path,omitempty"`
+	RepoRemote         bool   `json:"repo_remote,omitempty"`
 }
 
 // ExecConfig controls remote command execution settings.
