@@ -2500,9 +2500,15 @@ export class AgentClient {
       const result = await tryOne(`relay · ${relay.id}`, base, relay.password || undefined);
       if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };
     }
-    // Direct LAN path last (usually blocked by HTTPS → HTTP on a web origin,
-    // but works for same-machine/Electron or if the user opens yaver://… over HTTP).
-    if (this.host && this.port) {
+    // Direct LAN path last (always blocked by HTTPS → HTTP on a web origin).
+    // Skip the attempt entirely when on https — the browser logs a noisy
+    // mixed-content error and the result is the same. Still try when on
+    // http (Electron / dev / yaver://… over HTTP).
+    if (
+      this.host &&
+      this.port &&
+      (typeof window === "undefined" || window.location.protocol !== "https:")
+    ) {
       const base = `http://${this.host}:${this.port}`;
       const result = await tryOne("direct", base);
       if (result?.ok) return { ok: true, mode: result.mode, via: result.via, diagnostics };

@@ -796,30 +796,63 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Same probe-ordering rules as useDeviceRuntimeInfo: prefer
+    // HTTPS (relay path or *.yaver.io subdomain), only fall through
+    // to direct LAN when the dashboard is on http (local dev). On
+    // https://yaver.io, fetching http://<lan>/projects gets blocked
+    // and we end up with a misleading "fetch failed" error.
+    const candidates: string[] = [];
+    if (agentClient.activeRelayUrl && device.id) {
+      candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
+    }
+    const eps = (device.publicEndpoints || []).filter(Boolean);
+    for (const ep of eps) {
+      if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
+    }
+    if (typeof window !== "undefined" && window.location.protocol !== "https:") {
+      candidates.push(`http://${device.host}:${device.port}`);
+    }
+    if (candidates.length === 0) {
+      setLoading(false);
+      setError("no reachable URL");
+      return;
+    }
     (async () => {
-      try {
-        const base = `http://${device.host}:${device.port}`;
-        const res = await fetch(`${base}/projects`, {
-          headers: { Authorization: `Bearer ${token}` },
-          signal: AbortSignal.timeout(4_000),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const arr = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
-        const mapped: DeviceProjectInfo[] = arr
-          .map((p: any) => ({
-            name: String(p?.name ?? p?.slug ?? "").trim(),
-            path: typeof p?.path === "string" ? p.path : undefined,
-            branch: typeof p?.branch === "string" ? p.branch : undefined,
-            framework: typeof p?.framework === "string" ? p.framework : undefined,
-            tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
-          }))
-          .filter((p: DeviceProjectInfo) => p.name.length > 0);
-        if (!cancelled) setProjects(mapped);
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : "fetch failed");
-      } finally {
-        if (!cancelled) setLoading(false);
+      let lastErr = "no candidates";
+      for (const base of candidates) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`${base}/projects`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(3_000),
+          });
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const data = await res.json();
+          const arr = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
+          const mapped: DeviceProjectInfo[] = arr
+            .map((p: any) => ({
+              name: String(p?.name ?? p?.slug ?? "").trim(),
+              path: typeof p?.path === "string" ? p.path : undefined,
+              branch: typeof p?.branch === "string" ? p.branch : undefined,
+              framework: typeof p?.framework === "string" ? p.framework : undefined,
+              tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
+            }))
+            .filter((p: DeviceProjectInfo) => p.name.length > 0);
+          if (cancelled) return;
+          setProjects(mapped);
+          setError(null);
+          setLoading(false);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : "fetch failed";
+        }
+      }
+      if (!cancelled) {
+        setError(lastErr);
+        setLoading(false);
       }
     })();
     return () => { cancelled = true; };
