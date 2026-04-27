@@ -223,6 +223,7 @@ Terminal behavior:
 Control plane:
   yaver code attach pc select
   yaver code set agent codex
+  yaver code set byok openrouter --api-key $OPENROUTER_API_KEY --model openrouter/openai/gpt-5
   yaver code set repo <name-or-path>
   yaver code repo clone <git-url>
   yaver code dev reload
