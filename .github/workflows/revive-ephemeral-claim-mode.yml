@@ -75,19 +75,18 @@ jobs:
           id yaver >/dev/null 2>&1 || useradd -m yaver
           install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
 
-          # Preserve the box's canonical device_id so the dashboard
-          # recognizes the same device after revival (Convex stores
-          # the prior deviceId in its records — a fresh UUID would
-          # leave the box invisible to the dashboard's existing
-          # device row). Try the live config first, fall back to
-          # the test-box's known id.
-          OLD_DEVICE_ID=$(jq -r '.device_id // empty' /home/yaver/.yaver/config.json 2>/dev/null || true)
-          if [ -z "$OLD_DEVICE_ID" ]; then
-            OLD_DEVICE_ID="fc30be6e-f87a-4e52-b340-fbad1ba1800e"
-            echo "Using known test-ephemeral device_id $OLD_DEVICE_ID"
-          else
-            echo "Recovered device_id $OLD_DEVICE_ID from existing config"
-          fi
+          # The yaver-test-ephemeral box's CANONICAL deviceId per
+          # Convex is fc30be6e-... — the one the dashboard expects
+          # to find a tunnel under. Pin to it. Reading whatever's
+          # in the live config.json is wrong here because earlier
+          # revives may have let bootstrap mode mint a fresh UUID,
+          # which becomes a "stranger" deviceId Convex doesn't
+          # recognize. For this revive workflow targeting THIS
+          # specific test box, the canonical id is the only one
+          # that lets the existing dashboard device row come back
+          # online.
+          OLD_DEVICE_ID="fc30be6e-f87a-4e52-b340-fbad1ba1800e"
+          echo "Pinning to canonical test-ephemeral device_id $OLD_DEVICE_ID"
 
           # Claim-mode config: relay creds + Convex URL + preserved
           # device_id. No auth_token (that's the whole point of
