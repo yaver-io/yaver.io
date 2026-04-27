@@ -36,10 +36,37 @@ Key files:
 - [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go)
 - [`desktop/agent/auth_bootstrap.go`](../desktop/agent/auth_bootstrap.go)
 - [`desktop/agent/auth_recover.go`](../desktop/agent/auth_recover.go)
+- [`desktop/agent/code_control.go`](../desktop/agent/code_control.go)
+- [`desktop/agent/mcp_tools.go`](../desktop/agent/mcp_tools.go)
 - [`desktop/agent/vibing.go`](../desktop/agent/vibing.go)
 - [`mobile/src/context/DeviceContext.tsx`](../mobile/src/context/DeviceContext.tsx)
 - [`mobile/src/lib/quic.ts`](../mobile/src/lib/quic.ts)
 - [`backend/convex/devices.ts`](../backend/convex/devices.ts)
+
+## 1.1 `yaver code` and BYOK runner selection
+
+`yaver code` is not just a thin wrapper around `/tasks`. It persists a machine-aware control-plane state in the CLI config and can target either the local machine or an attached remote machine.
+
+Important current behavior:
+
+1. `yaver code` without `--attach` means local terminal + local repo/files.
+2. `yaver code --attach <device>` means local terminal + remote repo/files on that machine.
+3. When the active runner is `opencode`, the preferred BYOK surface is:
+   - `yaver code set byok <provider> ...`
+   - `yaver code get byok`
+   - `yaver code set/get provider`
+   - `yaver code set/get base-url`
+   - `yaver code set/get plan-model`
+   - `yaver code set/get build-model`
+4. That flow patches the local or remote OpenCode provider config instead of requiring manual edits to `opencode.json`.
+
+This is the current intended path for OpenRouter and other OpenAI-compatible BYOK backends in terminal coding mode.
+
+Code:
+
+- [`desktop/agent/code_cmd.go`](../desktop/agent/code_cmd.go)
+- [`desktop/agent/code_control.go`](../desktop/agent/code_control.go)
+- [`desktop/agent/opencode_config.go`](../desktop/agent/opencode_config.go)
 
 ## 2. Auth and re-auth
 
@@ -236,6 +263,30 @@ Code:
 - [`desktop/agent/bus.go`](../desktop/agent/bus.go:1)
 - [`desktop/agent/bus_http.go`](../desktop/agent/bus_http.go:1)
 - [`desktop/agent/heartbeat_watcher.go`](../desktop/agent/heartbeat_watcher.go:215)
+
+## 4.1 Task artifact contract and remote demo video
+
+Task APIs are now expected to return structured task objects rather than just ids plus raw output text.
+
+Important current behavior:
+
+1. MCP `create_task`, `list_tasks`, and `get_task` return structured task payloads.
+2. Task video capture is optional and controlled at creation time with:
+   - `video_enabled`
+   - `video_source`
+3. When a demo clip exists, the task may expose:
+   - `videoClipId`
+   - `videoStatus`
+   - `videoClipUrl`
+   - `videoPosterUrl`
+4. The clip URL is served by the producing machine, including for remotely executed tasks, so clients can render a watch link or embed an inline player without a separate artifact fetch protocol.
+
+Code:
+
+- [`desktop/agent/tasks.go`](../desktop/agent/tasks.go)
+- [`desktop/agent/tasks_video_summary.go`](../desktop/agent/tasks_video_summary.go)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go)
+- [`desktop/agent/mcp_tools.go`](../desktop/agent/mcp_tools.go)
 
 ## 5. Reload model: web versus mobile
 

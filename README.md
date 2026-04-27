@@ -1899,6 +1899,8 @@ yaver version       Print version
 # Local terminal + local repo/files on this machine
 yaver code
 yaver code --agent opencode --model openai/gpt-5.4
+yaver code set byok openrouter --api-key $OPENROUTER_API_KEY --model openrouter/openai/gpt-5
+yaver code get byok
 yaver code "fix the failing tests"
 
 # Local terminal + remote repo/files on another Yaver machine
@@ -1918,6 +1920,37 @@ Terminal semantics:
 - The plain-text terminal contract affects formatting only. The coding agent can still build, test, hot reload, commit, push, deploy, and run the normal dev loop if the target machine has the required tools and credentials.
 
 If you want to keep the repo on one machine while borrowing runners or infra from another machine, use the `yaver host-share ...` borrowed-workspace flow (`attach-repo`, `sync-repo`) rather than `yaver code --attach`.
+
+#### BYOK / OpenRouter in `yaver code`
+
+`yaver code` can now persist a BYOK coding setup for OpenCode-backed runs instead of forcing the user to hand-edit `opencode.json`.
+
+```bash
+# Switch terminal coding to OpenCode + OpenRouter
+yaver code set byok openrouter \
+  --api-key $OPENROUTER_API_KEY \
+  --model openrouter/openai/gpt-5
+
+# Inspect the effective provider/model/base URL
+yaver code get byok
+yaver code get provider
+yaver code get base-url
+```
+
+Notes:
+
+- BYOK settings are tied to the current `yaver code` target, so the same commands work against an attached remote machine too.
+- OpenRouter defaults to `https://openrouter.ai/api/v1`.
+- `yaver code set model ...` also updates the remembered provider when the model is namespaced like `openrouter/openai/gpt-5`.
+
+#### Remote task video artifacts
+
+Tasks can optionally capture a short demo clip after they finish. This is useful when the work happened on another machine and the user wants to watch what was actually built there.
+
+- `create_task` supports `video_enabled` and `video_source`.
+- `create_task`, `list_tasks`, and `get_task` return structured task objects.
+- When a clip exists, the task includes `videoClipId`, `videoStatus`, `videoClipUrl`, and `videoPosterUrl`.
+- The clip URL is served by the producing Yaver machine, so clients can render a watch link or an inline `<video>` player.
 
 ### Shell Completions
 

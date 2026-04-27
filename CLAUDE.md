@@ -2075,7 +2075,21 @@ Direct terminal sessions are a distinct source surface in the Go agent. Do not t
 - Built-in commands such as `help`, `tasks`, `agent`, `clear`, `exit`, `quit`, `/exit`, and `/quit` are handled locally by Yaver before the prompt reaches the runner.
 - `yaver code --agent ...` without `--attach` means local terminal + local repo/files.
 - `yaver code --attach ...` means local terminal + remote repo/files on the attached machine.
+- `yaver code set byok <provider> ...` is the preferred way to configure OpenCode-backed BYOK coding flows (OpenRouter, custom OpenAI-compatible backends, remote Ollama) instead of hand-editing `opencode.json`.
+- When the active runner is `opencode`, `yaver code get byok`, `get provider`, `get base-url`, `set base-url`, `set plan-model`, and `set build-model` should be treated as the canonical control-plane surface for provider/model selection.
 - If the desired shape is "repo stays on one machine, heavy runner/infra comes from another", that belongs to the host-share borrowed-workspace flow, not the plain `--attach` path.
+
+### MCP task artifact contract
+
+The task surfaces now carry richer structured artifacts than the old "task id only" shape.
+
+- MCP `create_task`, `list_tasks`, and `get_task` return structured task objects, not plain text summaries.
+- If task video capture is enabled and a demo clip exists, the task object may include:
+  - `videoClipId`
+  - `videoStatus`
+  - `videoClipUrl`
+  - `videoPosterUrl`
+- Those URLs are served by the producing machine. Remote/mobile/web/console clients should treat them as first-class artifacts and may embed an inline video player when appropriate.
 
 Build a local binary: `cd desktop/agent && go build -o yaver .`
 
