@@ -670,6 +670,8 @@ export default function PreviewPane({
           }
         } else if (ev.type === "stopped") {
           setDevProgress({ pct: 0, stage: "", active: false });
+          setTopicProgress({});
+          setLatestSnapshot(null);
         }
       } catch { /* ignore non-JSON keepalive comments etc. */ }
     };

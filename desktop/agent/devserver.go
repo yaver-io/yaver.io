@@ -525,6 +525,18 @@ func (m *DevServerManager) Stop() error {
 	m.active.server.Stop()
 	m.active.cancel()
 	m.active = nil
+	m.devTracker = nil
+	m.webTracker = nil
+	m.hermesTracker = nil
+	m.recentLogMu.Lock()
+	m.recentLogTail = nil
+	m.recentLogMu.Unlock()
+
+	// Drop replay history so a freshly-connecting consumer (mobile,
+	// web dashboard) doesn't see stale phase/progress/snapshot
+	// events from the session that just ended. The single "stopped"
+	// event below is enough for them to know the channel is idle.
+	m.history = nil
 
 	m.emit(DevServerEvent{
 		Type:      "stopped",
