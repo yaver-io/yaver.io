@@ -2243,6 +2243,16 @@ export class AgentClient {
     if (this._activeTunnelUrl) {
       return this._activeTunnelUrl.replace(/\/+$/, "");
     }
+    // Defensive: when host/port haven't been populated (early
+    // dashboard render before connect()), template substitution
+    // produces "http://null:null" which is a TRUTHY string but a
+    // SYNTACTICALLY-VALID-LOOKING URL. Callers like devEventsUrl
+    // then build "http://null:null/dev/events" which `new URL()`
+    // rejects ("Invalid URL") and `new EventSource()` rejects too
+    // ("Failed to construct 'EventSource'"). Returning "" turns
+    // every downstream `if (!this.baseUrl) return null` into a
+    // proper null and the EventSource never gets constructed.
+    if (!this.host || !this.port) return "";
     return `http://${this.host}:${this.port}`;
   }
 
