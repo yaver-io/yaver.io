@@ -238,10 +238,6 @@ export default function TabLayout() {
         options={{ href: null, title: "Monitor", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
-        name="hybrid"
-        options={{ href: null, title: "Hybrid", headerShown: true, headerLeft: backToMore }}
-      />
-      <Tabs.Screen
         name="agent"
         options={{ href: null, title: "Agent Mode", headerShown: true, headerLeft: backToMore }}
       />

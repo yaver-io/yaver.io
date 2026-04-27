@@ -351,7 +351,7 @@ Orchestration:
   yaver code get orchestration
 
 Agent + models:
-  yaver code set agent <runner>
+  yaver code set agent <runner>     # only claude, codex, or opencode
   yaver code get agent
   yaver code set byok <provider> [--api-key <key>] [--model <model>] [--base-url <url>] [--small-model <model>] [--plan-model <model>] [--build-model <model>]
   yaver code get byok
@@ -1101,6 +1101,12 @@ func runCodeSetAgent(args []string) error {
 	runner := normalizeRunnerID(strings.TrimSpace(args[0]))
 	if runner == "" {
 		return fmt.Errorf("runner is required")
+	}
+	switch runner {
+	case "claude", "codex", "opencode":
+		// supported
+	default:
+		return fmt.Errorf("runner %q is not a first-class agent (only claude, codex, opencode are supported through `yaver code`). Power-user runners stay accessible from `yaver autodev --runner <id>`", runner)
 	}
 	cfg, profile, err := loadCodeConfig()
 	if err != nil {

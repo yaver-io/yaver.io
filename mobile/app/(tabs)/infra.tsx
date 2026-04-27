@@ -13,12 +13,10 @@ import { listGuests, type GuestInfo } from "../../src/lib/guests";
 // a raw CLI list. Anything the agent advertises but isn't in the map
 // still renders with a neutral gear icon.
 const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
-  ollama: { emoji: "🦙", tagline: "Local LLM runtime — pull models, serve them to aider/claude." },
-  aider: { emoji: "🧑‍🔧", tagline: "Terminal pair-programmer. Pairs with Ollama for the hybrid planner." },
-  opencode: { emoji: "🪄", tagline: "Open-source coding agent, Claude-style UX." },
   "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — the frontier-quality runner." },
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
-  hybrid: { emoji: "🪢", tagline: "Meta-install: aider + ollama + qwen2.5-coder. Cheap implementer tier." },
+  opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM, or free local Ollama." },
+  ollama: { emoji: "🦙", tagline: "Local LLM runtime — install on the dev box, then point OpenCode at it for free local coding." },
   docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
   node: { emoji: "🟢", tagline: "Node.js runtime — required for Expo, Vite, Next.js builds." },
   python: { emoji: "🐍", tagline: "Python 3 — required for ML tooling, some CLIs." },

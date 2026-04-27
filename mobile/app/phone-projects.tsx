@@ -622,7 +622,7 @@ export default function PhoneProjectsScreen() {
                             id: item.runnerId,
                             label: item.title || item.runnerId,
                           }))
-                        : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "ollama", label: "Ollama" }]
+                        : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "opencode", label: "OpenCode" }]
                       ).map((item) => {
                         const active = runner === item.id;
                         return (

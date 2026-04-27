@@ -2,14 +2,6 @@ import Link from "next/link";
 
 const manuals = [
   {
-    title: "Full On-Prem Free Stack",
-    description:
-      "Yaver + Ollama + GLM-4.7-Flash + Aider — a complete AI coding setup for $0/month. SWE-bench analysis, hardware requirements, step-by-step setup, and everything you need to know about local LLMs.",
-    href: "/manuals/free-onprem",
-    tags: ["Free", "On-Prem", "SWE-bench", "GLM-4.7-Flash"],
-    featured: true,
-  },
-  {
     title: "Code from the Beach \u2014 Remote Build, Test & Deploy",
     description:
       "Develop from your phone, build on your machine, test automatically, and deploy to your phone, TestFlight, or Play Store \u2014 all over encrypted P2P connections.",
@@ -53,13 +45,6 @@ const manuals = [
       "Use Cloudflare Tunnel for a single always-on box, then share that box safely through Yaver guest access or host-share sessions. Covers machine scoping, project scoping, and the security caveats.",
     href: "/manuals/cloudflare-share",
     tags: ["Cloudflare", "Guests", "Sharing", "Security"],
-  },
-  {
-    title: "Zero-cost local AI coding setup",
-    description:
-      "Run AI coding agents entirely on your own hardware — no API keys, no cloud services, no recurring costs. Set up Ollama, a coding agent, and Tailscale for remote access.",
-    href: "/manuals/local-llm",
-    tags: ["Ollama", "Free", "Local"],
   },
   {
     title: "Integrations guide",

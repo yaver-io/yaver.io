@@ -37,8 +37,9 @@ export default function AutoDevScreen() {
   // ── Start form state ──────────────────────────────────────────────
   // Everything is pre-filled with sensible defaults so the user can
   // just tap Start. Runners come from GET /agent/runners so the dropdown
-  // only lists the runners actually installed on the remote machine —
-  // we never show aider to the user if aider isn't there.
+  // only lists runners actually installed on the remote machine, and
+  // we whitelist to the three first-class agents (claude / codex /
+  // opencode) regardless of what else is on PATH.
   const [showStart, setShowStart] = useState(!!params.path);
   const [runners, setRunners] = useState<RunnerInfo[]>([]);
   const [runnersLoading, setRunnersLoading] = useState(false);
@@ -508,7 +509,7 @@ function StartForm(props: {
               <Text style={{ color: c.textMuted, fontSize: 12 }}>Loading installed runners…</Text>
             ) : props.runners.length === 0 ? (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>
-                No runners installed on the remote agent. Install one (claude, codex, aider, ollama, …) and refresh.
+                No runners installed on the remote agent. Install one (claude, codex, opencode) and refresh.
               </Text>
             ) : (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>

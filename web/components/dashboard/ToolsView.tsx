@@ -2,8 +2,8 @@
 
 // ToolsView — dashboard tab that shows the connected machine's specs
 // (RAM / CPU / disk / GPU) alongside an install catalogue so the user
-// can one-click install ollama / aider / codex / claude-code / etc.
-// onto their dev machine (or any paired peer) without touching a
+// can one-click install claude-code / codex / opencode (and the
+// ancillary toolchains) onto their dev machine without touching a
 // terminal. Progress streams live from /streams/install:<tool>.
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -21,12 +21,10 @@ type Props = {
 };
 
 const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
-  ollama: { emoji: "🦙", tagline: "Local LLM runtime — pulls models, serves them to aider + claude-code." },
-  aider: { emoji: "🧑‍🔧", tagline: "Terminal pair-programmer. Powers the hybrid planner's implementer tier." },
-  opencode: { emoji: "🪄", tagline: "Open-source coding agent, Claude-style UX." },
   "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — frontier-quality runner." },
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
-  hybrid: { emoji: "🪢", tagline: "Meta-install: aider + ollama + qwen2.5-coder:14b." },
+  opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM, or free local Ollama." },
+  ollama: { emoji: "🦙", tagline: "Local LLM runtime — install on the dev box, then point OpenCode at it for free local coding." },
   docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
   node: { emoji: "🟢", tagline: "Node.js — required for Expo / Vite / Next.js." },
   python: { emoji: "🐍", tagline: "Python 3 — ML tooling and some CLIs." },

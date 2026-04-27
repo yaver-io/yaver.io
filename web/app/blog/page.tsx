@@ -5,7 +5,7 @@ import { blogPosts, paginate, POSTS_PER_PAGE } from "@/lib/blog";
 export const metadata: Metadata = {
   title: "Blog — Yaver",
   description:
-    "Product releases, architecture notes, and major Yaver updates. Yaver is a P2P tool that lets developers run Claude Code, Codex, Aider, or Ollama from their phone, connecting directly to their development machines.",
+    "Product releases, architecture notes, and major Yaver updates. Yaver is a P2P tool that lets developers run Claude Code, OpenAI Codex, or OpenCode (BYOK Anthropic / OpenAI / OpenRouter / GLM, or local Ollama) from their phone, connecting directly to their development machines.",
   alternates: { canonical: "https://yaver.io/blog" },
   openGraph: {
     title: "Blog — Yaver",

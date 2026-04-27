@@ -2125,7 +2125,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
             </Text>
             <TextInput
               style={[s.textInput, { color: c.textPrimary, borderColor: c.border, backgroundColor: c.bg }]}
-              placeholder="e.g. claude,aider"
+              placeholder="e.g. claude,codex,opencode"
               placeholderTextColor={c.textMuted}
               value={editRunners}
               onChangeText={setEditRunners}
@@ -2739,21 +2739,6 @@ export default function MoreScreen() {
             <View style={{ flex: 1 }}>
               <Text style={[s.label, { color: c.textPrimary }]}>Monitor</Text>
               <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Errors, uptime, releases</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {/* Hybrid — planner/implementer split runs */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/(tabs)/hybrid" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2697"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Hybrid</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Planner + implementer runs</Text>
             </View>
             <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
           </Pressable>

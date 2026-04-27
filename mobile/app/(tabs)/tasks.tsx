@@ -133,7 +133,6 @@ function preferredDefaultModelForRunner(
   }
   if (normalized === "claude") return "claude-opus-4-7";
   if (normalized === "codex") return "gpt-5.4";
-  if (normalized === "aider-ollama") return "qwen2.5-coder:14b";
   return null;
 }
 

@@ -346,13 +346,13 @@ export default function CLISetupManual() {
             />
             <CommandBlock
               name="yaver set-runner"
-              description="Choose which AI agent runs your tasks. Supports Claude Code, OpenAI Codex, Aider, or any custom CLI command."
-              example={`$ yaver set-runner claude      # Claude Code (default)\n$ yaver set-runner codex       # OpenAI Codex\n$ yaver set-runner aider       # Aider\n$ yaver set-runner custom "my-tool --auto {prompt}"`}
+              description="Choose which AI agent runs your tasks. Supports Claude Code, OpenAI Codex, OpenCode, or any custom CLI command."
+              example={`$ yaver set-runner claude      # Claude Code (default)\n$ yaver set-runner codex       # OpenAI Codex\n$ yaver set-runner opencode    # OpenCode (BYOK Anthropic / OpenAI / OpenRouter / GLM, or local Ollama)\n$ yaver set-runner custom "my-tool --auto {prompt}"`}
             />
             <CommandBlock
               name="yaver tmux"
               description="Discover and manage tmux sessions. Adopt existing sessions to control them from the mobile app — start Claude Code on your laptop, walk away, pick it up on your phone."
-              example={`$ yaver tmux list                 # List all sessions with agent detection\n  my-claude       claude        unrelated     1 window(s)\n  dev-aider       aider         unrelated     2 window(s)\n\n$ yaver tmux adopt my-claude      # Adopt as a Yaver task\n  Adopted tmux session "my-claude" as task a1b2c3d4\n\n$ yaver tmux detach a1b2c3d4      # Stop monitoring (session keeps running)`}
+              example={`$ yaver tmux list                 # List all sessions with agent detection\n  my-claude       claude        unrelated     1 window(s)\n  dev-codex       codex         unrelated     2 window(s)\n\n$ yaver tmux adopt my-claude      # Adopt as a Yaver task\n  Adopted tmux session "my-claude" as task a1b2c3d4\n\n$ yaver tmux detach a1b2c3d4      # Stop monitoring (session keeps running)`}
             />
             <CommandBlock
               name="yaver devices"

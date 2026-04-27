@@ -352,7 +352,7 @@ cloud-gpu-01        online    cloud   eu-central`}
               <Output>
                 {`USER                AGENT          STARTED         STATUS
 alice@company.com   claude-code    2h ago          active
-bob@company.com     aider          15m ago         active
+bob@company.com     opencode       15m ago         active
 carol@company.com   codex          3h ago          idle`}
               </Output>
             </Terminal>
@@ -487,7 +487,7 @@ carol@company.com   codex          3h ago          idle`}
 │       └── blackbox/
 │
 └── shared/
-    ├── ollama/                  # Shared Ollama instance
+    ├── ollama/                  # Shared Ollama (used as OpenCode's local provider)
     ├── personaplex/             # Shared PersonaPlex model
     └── whisper/                 # Shared Whisper model`}
               </pre>

@@ -2173,8 +2173,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <Output>  Token validation               ✓ Valid</Output>
             <Output>── AI Runners ──</Output>
             <Output>  Claude Code (claude)           ✓ /usr/local/bin/claude (2.1.80)</Output>
-            <Output>  Ollama (ollama)                ✓ /usr/local/bin/ollama (0.18.2)</Output>
-            <Output>  Aider (aider)                  ! Not installed — pip install aider-chat</Output>
+            <Output>  OpenCode (opencode)            ✓ /usr/local/bin/opencode (0.4.1)</Output>
+            <Output>  Codex (codex)                  ✓ /usr/local/bin/codex (1.2.0)</Output>
             <Output>── Relay Servers ──</Output>
             <Output>  Relay: My VPS                  ✓ OK (89ms, password set)</Output>
             <Output>Doctor summary: 12 passed, 3 warnings, 0 failures</Output>
@@ -2684,7 +2684,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
             <Output>Config updated for cousin@gmail.com</Output>
             <Divider />
             <Comment># Restrict to specific runners</Comment>
-            <Cmd>yaver guests config cousin@gmail.com runners=claude,aider</Cmd>
+            <Cmd>yaver guests config cousin@gmail.com runners=claude,codex</Cmd>
             <Output>Config updated for cousin@gmail.com</Output>
             <Divider />
             <Comment># View usage stats</Comment>

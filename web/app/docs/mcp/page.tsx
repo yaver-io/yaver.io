@@ -416,7 +416,7 @@ export default function McpPage() {
             <ToolCategory
               title="Tmux Session Adoption"
               tools={[
-                { name: "tmux_list_sessions", description: "List all tmux sessions with agent detection (claude, codex, aider, etc.) and relationship to Yaver" },
+                { name: "tmux_list_sessions", description: "List all tmux sessions with agent detection (claude, codex, opencode) and relationship to Yaver" },
                 { name: "tmux_adopt_session", description: "Adopt an existing tmux session as a Yaver task \u2014 output streams to mobile, input routes via send-keys" },
                 { name: "tmux_detach_session", description: "Stop monitoring an adopted session (tmux session keeps running)" },
                 { name: "tmux_send_input", description: "Send keyboard input to an adopted tmux session" },
@@ -599,8 +599,8 @@ export default function McpPage() {
 
           <div className="mb-8">
             <Terminal title="acl-examples">
-              <Comment># Connect to local Ollama</Comment>
-              <Cmd>yaver acl add ollama http://localhost:11434/mcp</Cmd>
+              <Comment># Connect to a custom MCP server (HTTP)</Comment>
+              <Cmd>yaver acl add my-mcp-server http://localhost:8765/mcp</Cmd>
               <Divider />
               <Comment># Connect to a filesystem MCP server (stdio)</Comment>
               <Cmd>

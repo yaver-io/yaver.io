@@ -109,12 +109,12 @@ func runAutodevOrTest(kind string, args []string) {
 	prompt := fs.String("prompt", "", "Focus prompt, e.g. \"focus on the purchase flow\"")
 	target := fs.String("target", "", "web|ios-sim|android-emu (auto-detected)")
 	runner := fs.String("runner", "", "Primary AI runner (default: claude-code)")
-	engine := fs.String("engine", "", "claude|codex|hybrid — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'codex' uses OpenAI Codex CLI (often more headroom on Plus/Pro plans, ~4x fewer tokens). 'hybrid' uses Claude as a planner and a local Ollama model (via aider) as the implementer to cut API spend.")
-	hybrid := fs.Bool("hybrid", false, "Shortcut for --engine hybrid")
+	engine := fs.String("engine", "", "claude|codex|opencode — high-level engine selector. 'claude' (default) uses Claude Code end-to-end. 'codex' uses OpenAI Codex CLI. 'opencode' uses the configured OpenCode provider (BYOK Anthropic / OpenAI / OpenRouter / GLM, or local Ollama).")
 	codex := fs.Bool("codex", false, "Shortcut for --engine codex")
+	opencodeFlag := fs.Bool("opencode", false, "Shortcut for --engine opencode")
 	model := fs.String("model", "", "Model alias for the runner (claude only): sonnet|opus|haiku, or a full model id like 'claude-opus-4-6'. Sonnet is the cheap default and burns the weekly bucket ~5x slower than Opus.")
-	planner := fs.String("planner", "", "Hybrid mode: planner agent (claude|claude:opus|claude:sonnet|codex). When set, forces --engine hybrid. Combine with --implementer for full agent×model layering (e.g. --planner claude:opus --implementer codex = 'Opus plans, Codex implements').")
-	implementer := fs.String("implementer", "", "Hybrid mode: implementer agent (claude|claude:sonnet|codex|aider-ollama|aider-ollama:<model>). When set, forces --engine hybrid. Default in hybrid is aider-ollama; pick claude:sonnet for cheap-but-quality, codex for token efficiency, opus for highest stakes.")
+	planner := fs.String("planner", "", "Optional planner agent (claude|claude:opus|claude:sonnet|codex|opencode).")
+	implementer := fs.String("implementer", "", "Optional implementer agent (claude|claude:sonnet|codex|opencode).")
 	to := fs.String("to", "", "Run on a remote yaver agent (device id / hostname). Spawns the loop on the target's daemon; tail it later with `yaver stream autodev:<project>-autodev --to <device>`.")
 	autoIdeas := fs.Int("auto-ideas", 999, "Maximum number of times the loop is allowed to auto-generate a fresh batch of ideas when work runs out. Default 999 = effectively unlimited so an overnight run keeps producing + implementing features until the deadline. 0 = exit the moment the checklist empties (legacy).")
 	branch := fs.String("branch", "", "Git branch to ship to (default: main)")
@@ -152,38 +152,32 @@ func runAutodevOrTest(kind string, args []string) {
 	if *infinite {
 		*hours = "infinite"
 	}
-	// Engine resolution: --hybrid is a shortcut for --engine hybrid;
-	// --engine hybrid forces runner = "hybrid" so phaseThink picks the
-	// planner+implementer adapter. Default ('' or 'claude') is a no-op
-	// and leaves --runner alone (claude-code default).
-	if *hybrid {
-		*engine = "hybrid"
-	}
+	// Engine resolution. Default ('' or 'claude') leaves --runner alone
+	// (claude-code default). --codex / --opencode are shortcuts.
 	if *codex {
 		*engine = "codex"
 	}
-	// --planner / --implementer compose into hybrid layering. Either
-	// flag forces engine=hybrid; spawnHybrid reads the env vars below
-	// and overrides HybridSpec.Planner / Implementer / Model so the
-	// user gets per-tier agent×model control.
-	if *planner != "" || *implementer != "" {
-		*engine = "hybrid"
-		if *planner != "" {
-			os.Setenv("YAVER_HYBRID_PLANNER", *planner)
-		}
-		if *implementer != "" {
-			os.Setenv("YAVER_HYBRID_IMPLEMENTER", *implementer)
-		}
+	if *opencodeFlag {
+		*engine = "opencode"
+	}
+	// --planner / --implementer thread through env vars when set, but no
+	// longer force hybrid mode — first-class engines are claude / codex /
+	// opencode only.
+	if *planner != "" {
+		os.Setenv("YAVER_HYBRID_PLANNER", *planner)
+	}
+	if *implementer != "" {
+		os.Setenv("YAVER_HYBRID_IMPLEMENTER", *implementer)
 	}
 	switch strings.ToLower(strings.TrimSpace(*engine)) {
 	case "", "claude", "claude-code":
 		// keep --runner default
 	case "codex":
 		*runner = "codex"
-	case "hybrid":
-		*runner = "hybrid"
+	case "opencode":
+		*runner = "opencode"
 	default:
-		fmt.Fprintf(os.Stderr, "%s: unknown --engine %q (want claude|codex|hybrid)\n", kind, *engine)
+		fmt.Fprintf(os.Stderr, "%s: unknown --engine %q (want claude|codex|opencode)\n", kind, *engine)
 		os.Exit(2)
 	}
 

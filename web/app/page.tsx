@@ -1026,14 +1026,6 @@ function MCPIntegrationSection() {
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200">yaver email setup</span>
               </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Connect to other MCP servers (optional)</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">
-                  yaver acl add ollama http://localhost:11434/mcp
-                </span>
-              </div>
             </div>
           </div>
         )}

@@ -142,7 +142,7 @@ export default function SchedulesView() {
           />
           <input
             className="rounded border border-surface-700 bg-surface-900 px-2 py-1.5 text-sm"
-            placeholder="runner (optional — e.g. claude-code, aider)"
+            placeholder="runner (optional — e.g. claude-code, codex, opencode)"
             value={runner}
             onChange={(e) => setRunner(e.target.value)}
           />

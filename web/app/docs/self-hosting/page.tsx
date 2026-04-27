@@ -727,19 +727,19 @@ server {
 
           <div className="mb-8">
             <Terminal title="local-llm">
-              <Comment># Install Ollama</Comment>
+              <Comment># Install Ollama on the dev machine</Comment>
               <Cmd>curl -fsSL https://ollama.com/install.sh | sh</Cmd>
               <Divider />
               <Comment># Pull a coding model</Comment>
               <Cmd>ollama pull qwen2.5-coder</Cmd>
               <Divider />
-              <Comment># Configure Yaver to use Ollama</Comment>
-              <Cmd>yaver set-runner ollama</Cmd>
+              <Comment># Point OpenCode at the local Ollama (BYOK lane)</Comment>
+              <Cmd>yaver code set byok ollama --base-url http://127.0.0.1:11434 --model qwen2.5-coder:14b</Cmd>
               <Divider />
               <Comment># Start serving (with Tailscale for zero cloud deps)</Comment>
               <Cmd>yaver serve --no-relay</Cmd>
               <Output>
-                Using Ollama (qwen2.5-coder). Ready.
+                OpenCode → ollama (qwen2.5-coder:14b). Ready.
               </Output>
             </Terminal>
           </div>

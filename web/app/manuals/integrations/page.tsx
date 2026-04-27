@@ -260,7 +260,7 @@ X-Webhook-Secret: <secret>
 
 {
   "prompt": "Task description here",
-  "runner": "claude",           // optional: claude, codex, aider, custom
+  "runner": "claude",           // optional: claude, codex, opencode, custom
   "model": "sonnet",            // optional: sonnet, opus, haiku
   "customCommand": "my-script", // optional: for runner=custom
   "metadata": {}                // optional: passed through to task
@@ -411,8 +411,8 @@ X-Webhook-Secret: <secret>
               Layer (ACL):
             </p>
             <pre className="rounded-lg bg-surface-950 p-3 text-xs text-surface-300 overflow-x-auto">
-              <code>{`# Add Ollama as an MCP peer
-yaver acl add ollama http://localhost:11434/mcp
+              <code>{`# Add a custom MCP peer
+yaver acl add my-mcp-server http://localhost:8765/mcp
 
 # Add a remote database MCP server
 yaver acl add db https://db-server:8080/mcp
