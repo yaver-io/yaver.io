@@ -1,0 +1,133 @@
+# Stop + start sfmg dev server on yaver-test-ephemeral and verify
+# SSE flows on both localhost and through relay. End-to-end test
+# of the webview Metro flow.
+name: Restart sfmg dev + verify SSE
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: restart-sfmg-dev
+  cancel-in-progress: true
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render box-side script
+        run: |
+          cat > "$RUNNER_TEMP/restart.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$c" ]; then
+              python3 - "$c" <<'PYEOF'
+          import json, sys, urllib.request, subprocess, time, os, signal
+          d = json.load(open(sys.argv[1]))
+          tok = d.get('auth_token', '')
+          did = d.get('device_id', '')
+          convex = d.get('convex_site_url', 'https://perceptive-minnow-557.eu-west-1.convex.site')
+          settings_req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+          rp = ''
+          with urllib.request.urlopen(settings_req, timeout=10) as r:
+              rp = json.load(r).get('settings', {}).get('relayPassword', '')
+
+          AGENT = 'http://127.0.0.1:18080'
+          AUTH = {'Authorization': 'Bearer ' + tok}
+
+          print('=== /info ===')
+          req = urllib.request.Request(AGENT + '/info', headers=AUTH)
+          with urllib.request.urlopen(req, timeout=10) as r:
+              info = json.load(r)
+              print(f"version={info.get('version')} hostname={info.get('hostname')} ok={info.get('ok')}")
+
+          print('\n=== /dev/status BEFORE stop ===')
+          req = urllib.request.Request(AGENT + '/dev/status', headers=AUTH)
+          with urllib.request.urlopen(req, timeout=10) as r:
+              print(json.dumps(json.load(r), indent=2))
+
+          print('\n=== POST /dev/stop ===')
+          try:
+              req = urllib.request.Request(AGENT + '/dev/stop', method='POST', headers={**AUTH, 'Content-Type': 'application/json'}, data=b'{}')
+              with urllib.request.urlopen(req, timeout=10) as r:
+                  print(json.dumps(json.load(r), indent=2))
+          except Exception as e:
+              print(f'stop: {e}')
+
+          # Kill stray Metros
+          subprocess.run(['pkill', '-f', 'expo start'], check=False)
+          subprocess.run(['pkill', '-f', 'metro'], check=False)
+          time.sleep(2)
+          print('\n=== killed stray Metros ===')
+
+          print('\n=== POST /dev/start expo /home/yaver/Workspace/sfmg ===')
+          payload = json.dumps({'framework': 'expo', 'workDir': '/home/yaver/Workspace/sfmg'}).encode()
+          req = urllib.request.Request(AGENT + '/dev/start', method='POST', headers={**AUTH, 'Content-Type': 'application/json'}, data=payload)
+          with urllib.request.urlopen(req, timeout=15) as r:
+              print(json.dumps(json.load(r), indent=2))
+
+          print('\n=== wait 8s for Metro boot ===')
+          time.sleep(8)
+
+          print('\n=== /dev/status AFTER start ===')
+          req = urllib.request.Request(AGENT + '/dev/status', headers=AUTH)
+          with urllib.request.urlopen(req, timeout=10) as r:
+              status = json.load(r)
+              print(json.dumps(status, indent=2))
+
+          print('\n=== 10s SSE sample from LOCALHOST (should see data: lines) ===')
+          p = subprocess.run([
+              'timeout', '10', 'curl', '-sN',
+              '-H', f'Authorization: Bearer {tok}',
+              '-H', 'Accept: text/event-stream',
+              AGENT + '/dev/events'
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:3000])
+          print(f'(exit={p.returncode})')
+          ldata = p.stdout.count('\ndata:') + (1 if p.stdout.startswith('data:') else 0)
+          print(f'localhost data lines: {ldata}')
+
+          print('\n=== 10s SSE sample from RELAY (the way the browser sees it) ===')
+          url = f'https://public.yaver.io/d/{did}/dev/events?token={tok}&__rp={rp}'
+          p = subprocess.run([
+              'timeout', '10', 'curl', '-sN', '-H', 'Accept: text/event-stream', url
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:3000])
+          print(f'(exit={p.returncode})')
+          rdata = p.stdout.count('\ndata:') + (1 if p.stdout.startswith('data:') else 0)
+          print(f'relay data lines: {rdata}')
+
+          print('\n=== RESULT ===')
+          if ldata > 0 and rdata > 0:
+              print('PASS — events flow on both localhost and relay')
+          elif ldata > 0:
+              print('PARTIAL — localhost works, relay broken')
+          elif rdata > 0:
+              print('PARTIAL — relay works, localhost broken (very weird)')
+          else:
+              print('FAIL — no events on either side')
+          PYEOF
+              break
+            fi
+          done
+          BODY
+          chmod +x "$RUNNER_TEMP/restart.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/restart.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/restart-sfmg.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/restart-sfmg.sh && rm -f /tmp/restart-sfmg.sh"
