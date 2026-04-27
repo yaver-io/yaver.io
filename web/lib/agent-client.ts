@@ -3649,10 +3649,13 @@ export class AgentClient {
     if (!this.baseUrl) return null;
     const direct = this.baseUrl.startsWith("http://127.0.0.1") || this.baseUrl.startsWith("http://localhost");
     if (direct) return `${this.baseUrl}/dev-web/`;
-    // Same relay-proxy rewrite pattern as devPreviewUrl.
-    const relayMatch = this.baseUrl.match(/\/d\/([^/]+)/);
-    if (!relayMatch) return `${this.baseUrl}/dev-web/`;
-    return `/api/relay/d/${relayMatch[1]}/dev-web/`;
+    // Same-origin proxy at /d/<deviceId>/[[...path]]/route.ts. The
+    // earlier /api/relay/ prefix had no Next.js handler and silently
+    // fell through to a 404 page when the iframe tried to load it.
+    if (this._activeRelayUrl && this.deviceId) {
+      return `/d/${encodeURIComponent(this.deviceId)}/dev-web/`;
+    }
+    return `${this.baseUrl}/dev-web/`;
   }
 
   /** URL for the most-recently-built static web bundle (target=web-js-bundle).
@@ -3668,9 +3671,15 @@ export class AgentClient {
     if (!this.baseUrl) return null;
     const direct = this.baseUrl.startsWith("http://127.0.0.1") || this.baseUrl.startsWith("http://localhost");
     if (direct) return `${this.baseUrl}/dev/web-bundle/`;
-    const relayMatch = this.baseUrl.match(/\/d\/([^/]+)/);
-    if (!relayMatch) return `${this.baseUrl}/dev/web-bundle/`;
-    return `/api/relay/d/${relayMatch[1]}/dev/web-bundle/`;
+    // Same-origin proxy via /d/<deviceId>/[[...path]] — that Next.js
+    // route is the one that actually exists and forwards to the relay
+    // with X-Relay-Password injected server-side. /api/relay/* has no
+    // handler; using it caused the iframe to 404 with Yaver's branded
+    // "page could not be found" page (which was very confusing).
+    if (this._activeRelayUrl && this.deviceId) {
+      return `/d/${encodeURIComponent(this.deviceId)}/dev/web-bundle/`;
+    }
+    return `${this.baseUrl}/dev/web-bundle/`;
   }
 
   /** Compile a static web bundle on the agent (target=web-js-bundle).
