@@ -43,9 +43,10 @@ jobs:
           HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
           RELAY_PASSWORD: ${{ secrets.RELAY_PASSWORD }}
         run: |
-          if [ -z "$RELAY_PASSWORD" ]; then
+          if [ -z "${RELAY_PASSWORD:-}" ]; then
             echo "::error::RELAY_PASSWORD GH secret not set"; exit 2
           fi
+          echo "RELAY_PASSWORD length: ${#RELAY_PASSWORD}"
           # Build the remote script with the password baked in.
           # Single-quoted heredoc avoids any runner-side $ expansion
           # for the script body itself; we sed-replace a placeholder
