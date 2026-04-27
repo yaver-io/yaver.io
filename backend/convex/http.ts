@@ -1289,7 +1289,7 @@ http.route({
         params: body.params,
         sourceSurface: typeof body.sourceSurface === "string" ? body.sourceSurface : undefined,
       });
-      return jsonResponse({ ok: true, ...out });
+      return jsonResponse({ ...out, ok: true });
     } catch (e: any) {
       return errorResponse(e?.message || "queue failed", 400);
     }
@@ -1353,7 +1353,7 @@ http.route({
         status: body.status,
         result: typeof body.result === "string" ? body.result.slice(0, 2048) : undefined,
       });
-      return jsonResponse({ ok: true, ...out });
+      return jsonResponse({ ...out, ok: true });
     } catch (e: any) {
       return errorResponse(e?.message || "report failed", 400);
     }
