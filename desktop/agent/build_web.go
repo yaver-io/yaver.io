@@ -703,13 +703,23 @@ func (s *HTTPServer) serveWebBundleHTML(w http.ResponseWriter, htmlPath string) 
 // /d/<id>/dev/web-bundle/ which expo-router has no route for.
 // history.replaceState happens synchronously, before the deferred
 // entry.js runs, so the bundle sees pathname "/" from frame 0.
+//
+// Defense-in-depth: we don't know whether the dashboard's relay
+// proxy already stripped /d/<id>/dev — Cloudflare can also 308
+// trailing-slashes off — so we run several normalisation passes and
+// land on "/" no matter which of those happened. Order matters:
+// strip /d/<id> first, then /dev/web-bundle{,/}, then /web-bundle{,/}.
 func injectStaticBundleRouterReset(html []byte) []byte {
 	const tag = `<script>(function(){try{` +
 		`var p=location.pathname;` +
 		// Strip the relay prefix the dashboard rewriter leaves behind.
 		`var rest=p.replace(/^\/d\/[^/]+/,'');` +
-		// Strip our own bundle path prefix.
+		// Strip our own bundle path prefix (with or without trailing /).
 		`rest=rest.replace(/^\/dev\/web-bundle\/?/, '/');` +
+		// Defense-in-depth: if the relay's PATH_REBASE_SCRIPT already
+		// stripped /dev (running before us), pathname will be just
+		// /web-bundle{,/} — handle that too.
+		`rest=rest.replace(/^\/web-bundle\/?/, '/');` +
 		// Default to "/" when nothing's left.
 		`if(!rest){rest='/';}` +
 		`if(rest!==p){history.replaceState(null,'',rest+location.search+location.hash);}` +
