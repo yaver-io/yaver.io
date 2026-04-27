@@ -1,0 +1,81 @@
+# SSE smoke test: verify /dev/events flows through public.yaver.io
+# end-to-end, the way the dashboard browser sees it. We SSH into
+# yaver-test-ephemeral, grab the auth token + relay password from
+# its config, and from a clean perspective (the runner, not the
+# box) curl the relay URL the dashboard uses. Counts events seen
+# in 8 seconds — should be > 0 if Metro is running and the relay
+# forwards SSE properly.
+name: SSE Relay Smoke
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sse-relay-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Pull auth token + relay password + deviceId from box
+        id: creds
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          OUT=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do [ -f \$c ] && python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(\"auth_token\",\"\"));print(d.get(\"cached_relay_password\",d.get(\"relay_password\",\"\")));print(d.get(\"device_id\",\"\"))' \$c && break; done")
+          TOKEN=$(echo "$OUT" | sed -n '1p')
+          RP=$(echo "$OUT" | sed -n '2p')
+          DID=$(echo "$OUT" | sed -n '3p')
+          echo "token_len=${#TOKEN}"
+          echo "rp_len=${#RP}"
+          echo "device_id=$DID"
+          echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          echo "RP=$RP" >> "$GITHUB_ENV"
+          echo "DID=$DID" >> "$GITHUB_ENV"
+
+      - name: Sample /dev/events via relay (the way the browser sees it)
+        run: |
+          URL="https://public.yaver.io/d/$DID/dev/events?token=$TOKEN&__rp=$RP"
+          echo "url: ${URL//$TOKEN/<TOKEN>}"
+          echo "--- 12 second sample ---"
+          set +e
+          OUTPUT=$(timeout 12 curl -sN -H "Accept: text/event-stream" "$URL" 2>&1)
+          EXIT_CODE=$?
+          echo "$OUTPUT" | head -50
+          echo "--- end of sample (curl exit=$EXIT_CODE) ---"
+          DATA_LINES=$(echo "$OUTPUT" | grep -c '^data:' || true)
+          KEEPALIVES=$(echo "$OUTPUT" | grep -c '^:keep-alive\|^:hello' || true)
+          echo "data lines: $DATA_LINES"
+          echo "keep-alive comments: $KEEPALIVES"
+          if [ "$DATA_LINES" -eq 0 ]; then
+            echo "::warning::no data: lines came through the relay"
+            echo "FAIL"
+            exit 1
+          fi
+          echo "PASS"
+
+      - name: Compare — sample directly from agent localhost
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        if: always()
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "TOKEN='$TOKEN' bash -c 'echo \"--- localhost /dev/events 5s ---\"; (timeout 5 curl -sN -H \"Authorization: Bearer \$TOKEN\" -H \"Accept: text/event-stream\" http://127.0.0.1:18080/dev/events 2>&1 || true) | head -20; echo \"--- end ---\"'"
