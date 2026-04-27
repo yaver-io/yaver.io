@@ -1,0 +1,99 @@
+# Test if SSE through relay works when curl uses Authorization
+# header (not ?token= query param). Isolates whether the bug is
+# in token-promote on the agent side or somewhere else.
+name: SSE With Bearer Header
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sse-with-bearer-header
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render box-side script
+        run: |
+          cat > "$RUNNER_TEMP/test.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$c" ]; then
+              python3 - "$c" <<'PYEOF'
+          import json, sys, urllib.request, subprocess
+          d = json.load(open(sys.argv[1]))
+          tok = d.get('auth_token', '')
+          did = d.get('device_id', '')
+          convex = d.get('convex_site_url', '')
+          rp = ''
+          try:
+              req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+              with urllib.request.urlopen(req, timeout=10) as r:
+                  rp = json.load(r).get('settings', {}).get('relayPassword', '')
+          except: pass
+
+          # Test 1: /dev/events through relay with Authorization HEADER (no ?token=)
+          print('=== TEST 1: relay + Authorization header ===')
+          url1 = f'https://public.yaver.io/d/{did}/dev/events?__rp={rp}'
+          p = subprocess.run([
+              'timeout', '10', 'curl', '-sN', '-i',
+              '-H', f'Authorization: Bearer {tok}',
+              '-H', 'X-Relay-Password: ' + rp,
+              '-H', 'Accept: text/event-stream',
+              url1
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:3000])
+          print(f'(exit={p.returncode})')
+          dlines = p.stdout.count('\ndata:') + (1 if p.stdout.startswith('data:') else 0)
+          print(f'data lines: {dlines}')
+
+          # Test 2: /dev/events through relay with ?token= query
+          print('\n=== TEST 2: relay + ?token= query ===')
+          url2 = f'https://public.yaver.io/d/{did}/dev/events?token={tok}&__rp={rp}'
+          p = subprocess.run([
+              'timeout', '10', 'curl', '-sN', '-i',
+              '-H', 'Accept: text/event-stream',
+              url2
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:3000])
+          print(f'(exit={p.returncode})')
+          dlines = p.stdout.count('\ndata:') + (1 if p.stdout.startswith('data:') else 0)
+          print(f'data lines: {dlines}')
+
+          # Test 3: /info through relay with Authorization header (control — non-SSE)
+          print('\n=== TEST 3: relay /info with Authorization header (control) ===')
+          url3 = f'https://public.yaver.io/d/{did}/info?__rp={rp}'
+          p = subprocess.run([
+              'timeout', '10', 'curl', '-sN', '-i',
+              '-H', f'Authorization: Bearer {tok}',
+              url3
+          ], capture_output=True, text=True, timeout=15)
+          print(p.stdout[:1500])
+          print(f'(exit={p.returncode})')
+          PYEOF
+              break
+            fi
+          done
+          BODY
+          chmod +x "$RUNNER_TEMP/test.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/test.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/sse-bearer.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/sse-bearer.sh && rm -f /tmp/sse-bearer.sh"
