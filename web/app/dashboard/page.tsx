@@ -1381,7 +1381,32 @@ export default function DashboardPage() {
                         <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300">disconnect</button>
                       </div>
                     </div>
-                    {(() => {
+                    {connectedNeedsAuth ? (
+                      // Agent itself isn't authed — runner sign-in
+                      // (Codex/Claude OAuth) can't possibly work
+                      // because /runner-auth/* are owner-protected
+                      // and the agent has no owner. Hide the runner
+                      // row entirely and surface a clear single
+                      // action: pair the agent first. Once paired,
+                      // the runner row reappears below for the
+                      // separate codex/claude OAuth flow.
+                      <div className="mt-1 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px]">
+                        <div className="font-semibold text-amber-200">
+                          Yaver agent needs auth
+                        </div>
+                        <div className="mt-0.5 text-surface-400">
+                          Pair this device to your account before signing in to Codex / Claude.
+                          Yaver auth and coding-agent auth are separate.
+                        </div>
+                        <button
+                          onClick={() => reauthDevice(liveDevice)}
+                          disabled={connectedIsReauthing}
+                          className="mt-1.5 rounded bg-amber-500/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-500/40 disabled:opacity-40"
+                        >
+                          {connectedIsReauthing ? "Pairing…" : "Pair device"}
+                        </button>
+                      </div>
+                    ) : (() => {
                       // Surface which coding agent this device defaults
                       // to + whether its cloud auth is healthy.  Lets the
                       // user spot "agent is connected but my Claude Code
@@ -1398,7 +1423,7 @@ export default function DashboardPage() {
                         ? { label: "local", className: "border-surface-700 text-surface-400" }
                         : authed
                           ? { label: "auth ✓", className: "border-emerald-500/40 text-emerald-300" }
-                          : { label: "sign in", className: "border-amber-500/40 text-amber-300" };
+                          : { label: "needs sign-in", className: "border-amber-500/40 text-amber-300" };
                       return (
                         <div className="mt-1 flex items-center gap-2 text-[10px]">
                           <span className="text-surface-500">runner:</span>
@@ -1410,8 +1435,9 @@ export default function DashboardPage() {
                             <button
                               onClick={() => setChatRunnerAuthModal(runnerId)}
                               className="ml-auto rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/25"
+                              title={`OAuth-sign-in to the ${runnerLabel(runnerId)} CLI on this device. This is separate from Yaver-agent auth.`}
                             >
-                              auth
+                              Sign in {runnerLabel(runnerId)}
                             </button>
                           ) : null}
                         </div>
