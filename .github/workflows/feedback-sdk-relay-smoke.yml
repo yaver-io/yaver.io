@@ -299,9 +299,10 @@ jobs:
           # the wire shape.
           FB_BODY=$(jq -nc \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg run "${GITHUB_RUN_ID:-local}" \
             '{summary:"feedback-sdk-relay-smoke",
               capturedAt:$ts,
-              context:{source:"ci",ciRun:env.GITHUB_RUN_ID // "local"},
+              context:{source:"ci",ciRun:$run},
               deviceInfo:{platform:"ci-replay", appName:"sfmg-or-carrotbet"}}')
           R5=$(curl -sS -m 10 -o /tmp/r5.json -w "%{http_code}" \
                 -H "$AUTH" -H "Content-Type: application/json" \
