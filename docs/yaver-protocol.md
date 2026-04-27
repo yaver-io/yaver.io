@@ -263,6 +263,56 @@ reports "Hermes WASM runtime not installed".
 | "I'm running an RN-only app with no react-native-web" | Neither | The dashboard iframe can't render it — only the phone can via the existing Hermes super-host path. |
 | "I have a heavy native dep (Camera, Skia native, BLE)" | Path 1 with `Platform.OS === "web"` guards | Branch around the missing native module on the web target. |
 
+## Dogfooding Yaver from Yaver
+
+Once any machine you're paired with has the yaver.io repo at
+`~/Workspace/yaver.io`, that box becomes a remote dev surface for
+Yaver itself. The dashboard's Webview → Web App tab auto-builds a
+static bundle of the yaver.io web app and iframes it — letting you
+develop the dashboard inside the dashboard. Same recursive pattern
+works in the mobile app via the Feedback SDK's hot-reload command
+channel: shake the phone, tap "Reload", and the iOS/Android Yaver
+app reloads its own JS bundle from the agent.
+
+Setup on a remote machine:
+```bash
+git clone https://github.com/kivanccakmak/yaver.io.git ~/Workspace/yaver.io
+cd ~/Workspace/yaver.io
+# Optional: install dependencies for editing the web dashboard
+cd web && npm install --legacy-peer-deps
+```
+
+After cloning, the agent's project scanner picks it up automatically
+(it has both `expo` (in mobile/) AND `next` (in web/)) so the project
+appears in:
+- **Webview tab → Web App** as `yaver.io` with `webCapable=true`
+- **Mobile App tab** for the `mobile/` subdir as a separate selectable
+
+Hot-reload semantics:
+- **Web (yaver.io dashboard)**: each `Build & render static bundle`
+  click compiles a fresh export and re-iframes it. The dashboard's
+  agent client supports recursive load — the inner-iframe Yaver
+  doesn't conflict with the outer Yaver because the relay path
+  carries the device id explicitly.
+- **Mobile (Yaver iOS/Android app)**: with `yaver-feedback-react-native`
+  installed, shaking the device or hitting `BlackBox.reloadApp("dev")`
+  triggers the agent's `/dev/reload-app` which broadcasts a `reload`
+  command over the Feedback SDK's command-stream SSE. The mobile
+  app's `ShakeDetector → onReload` callback fires `DevSettings.reload()`
+  and Hermes re-evaluates the JS without restarting the bridge.
+
+Why dogfood:
+- Catch dashboard regressions in real customer-shaped flows (relay
+  hop, base-href injection, transport progress events).
+- Verify the protocol stays compatible across renders (a Yaver
+  reload of Yaver shows the bug in 1.99.71's CORS allow-list
+  immediately — that's how we caught it).
+- Ship CLI / web / mobile changes from a phone without leaving the
+  Yaver app.
+
+Settings → Dogfood (in the web dashboard, web 1.1.87+) surfaces a
+quick-start card with the clone command and links into this section.
+
 ## Future (not in v1)
 
 - v2: replace the JSON-over-SSE channel with a CBOR-framed

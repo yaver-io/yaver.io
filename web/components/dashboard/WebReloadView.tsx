@@ -1038,7 +1038,18 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             running={staticBundleState === "ready" ? true : isRunning}
             onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
             connectionLabel={connectionLabel}
-            notRenderableNotice={webPreviewStarting ? null : notRenderable}
+            // Suppress the "mobile-only" notice when the static
+            // bundle path has produced a renderable artifact — the
+            // banner was written before that path existed and is now
+            // misleading. RN+RN-Web projects ARE web-renderable via
+            // /dev/web-bundle/.
+            notRenderableNotice={
+              webPreviewStarting ||
+              staticBundleState === "ready" ||
+              staticBundleState === "building"
+                ? null
+                : notRenderable
+            }
             // Expo RN projects can opt in to a sibling `expo --web`
             // process that doesn't disturb Metro's Hermes push. The
             // button only shows when we actually surfaced the

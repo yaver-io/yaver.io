@@ -597,6 +597,45 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
         <span aria-hidden>🚪</span> Sign Out
       </button>
 
+      {/* Dogfood — develop Yaver from a remote machine */}
+      <div className="card mb-6 border-sky-500/20" data-testid="dogfood-section">
+        <h3 className="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-sky-400/80">
+          <span aria-hidden>🐶</span> Dogfood
+        </h3>
+        <p className="mb-3 text-xs text-surface-500">
+          Develop Yaver itself from any paired machine. Each box you connect that has{" "}
+          <span className="font-mono text-surface-300">~/Workspace/yaver.io</span> checked out becomes
+          a remote dev surface — you can run the agent's Go tests, ship CLI / web / docs commits,
+          and even reload Yaver from inside Yaver via the Feedback SDK.
+        </p>
+        <ol className="mb-4 list-decimal space-y-1 pl-5 text-xs text-surface-400">
+          <li>
+            On the remote machine:{" "}
+            <code className="font-mono text-surface-300">git clone https://github.com/kivanccakmak/yaver.io.git ~/Workspace/yaver.io</code>
+          </li>
+          <li>
+            Open the Webview tab → pick <span className="font-mono text-surface-300">yaver.io</span> →
+            the Web App preview will auto-build a static bundle and render the dashboard inside the
+            iframe (Yaver-in-Yaver).
+          </li>
+          <li>
+            Push commits with{" "}
+            <code className="font-mono text-surface-300">yaver vibing</code> from the dashboard, or
+            tail tests via the agent's <code className="font-mono text-surface-300">go test</code>{" "}
+            integration.
+          </li>
+        </ol>
+        <a
+          href="https://yaver.io/docs/yaver-protocol#dogfooding-yaver-from-yaver"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-block rounded-md border border-sky-500/30 px-3 py-1.5 text-xs text-sky-300 transition-colors hover:bg-sky-500/10"
+          data-testid="dogfood-docs-link"
+        >
+          Dogfooding docs →
+        </a>
+      </div>
+
       {/* Delete Account */}
       <div className="card mb-6 border-red-500/20">
         <h3 className="mb-2 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-red-400/80">

@@ -1190,6 +1190,15 @@ export default function PreviewPane({
         Or switch this widget to <span className="text-surface-400">Web App</span> mode to
         render a browser preview via <span className="font-mono">expo --web</span>.
       </p>
+      <a
+        href={`https://yaver.io/docs/yaver-protocol#web-ui-rendering-paths`}
+        target="_blank"
+        rel="noreferrer"
+        className="text-[9px] text-surface-700 hover:text-surface-500 underline-offset-2 hover:underline"
+        title="Hermes-WASM browser execution is wired but experimental — runner JS pending upstream Hermes. The Web App tab's static bundle is the recommended browser-render path today."
+      >
+        experimental: try Hermes WASM in browser →
+      </a>
     </div>
   ) : devStatus?.running && previewFrameUrl ? (
     <iframe

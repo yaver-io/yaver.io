@@ -191,3 +191,47 @@ func TestDetectMonorepoLineageStandalone(t *testing.T) {
 		t.Errorf("expected standalone, got root=%q name=%q", root, name)
 	}
 }
+
+// TestDetectMonorepoLineageYaverIoDogfoodLayout — yaver.io's own repo
+// has `web/` (Next.js dashboard) + `mobile/` (Expo RN). The dogfood
+// flow (Settings → Dogfood) relies on the scanner detecting BOTH
+// subdirs as separate projects pointing at the same monorepo root.
+// This test simulates that exact layout.
+func TestDetectMonorepoLineageYaverIoDogfoodLayout(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "yaver.io")
+	web := filepath.Join(repo, "web")
+	mobile := filepath.Join(repo, "mobile")
+	if err := os.MkdirAll(web, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(mobile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Both subdirs must report the same monorepo root.
+	rootW, nameW := detectMonorepoLineage(web)
+	if rootW != repo {
+		t.Errorf("web root = %q, want %q", rootW, repo)
+	}
+	if nameW != "web" {
+		t.Errorf("web name = %q, want web", nameW)
+	}
+	rootM, nameM := detectMonorepoLineage(mobile)
+	if rootM != repo {
+		t.Errorf("mobile root = %q, want %q", rootM, repo)
+	}
+	if nameM != "mobile" {
+		t.Errorf("mobile name = %q, want mobile", nameM)
+	}
+	// Sanity: same root, different names — the dashboard uses this
+	// to group both rows under the yaver.io repo entry.
+	if rootW != rootM {
+		t.Errorf("web + mobile should share the same monorepo root: web=%q mobile=%q", rootW, rootM)
+	}
+	if nameW == nameM {
+		t.Errorf("web + mobile should have distinct app names; both = %q", nameW)
+	}
+}
