@@ -24,6 +24,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
+import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS } from "../../src/lib/speech";
@@ -160,6 +161,9 @@ export default function SettingsScreen() {
   const [openAiApiKey, setOpenAiApiKey] = useState("");
   const [glmApiKey, setGlmApiKey] = useState("");
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
+  // OpenCode config full editor — opens a sheet that hits
+  // /runner/opencode/config on the connected device.
+  const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const [mobileCodingProvider, setMobileCodingProvider] = useState<"openai" | "glm">("openai");
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [verbosity, setVerbosity] = useState(10);
@@ -3966,6 +3970,31 @@ export default function SettingsScreen() {
                 Save API keys for phone-side vibe coding. OpenAI and GLM work directly on mobile. Claude Code stays a runner on your connected machine.
               </Text>
 
+              {/* Full opencode.json editor — opens a sheet that lets the
+                  user pick agents, edit per-provider baseURLs (e.g.
+                  Tailscale Ollama), set per-agent model overrides.
+                  Drives /runner/opencode/config on the connected device,
+                  same code path the web ToolsView hits. */}
+              <Pressable
+                onPress={() => setShowOpenCodeConfig(true)}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
+                    marginTop: 12, padding: 12, borderRadius: 8,
+                    borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCardElevated,
+                  },
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13 }}>OpenCode Config</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+                    Edit opencode.json on the connected device — agents, providers, baseURLs.
+                  </Text>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 16 }}>›</Text>
+              </Pressable>
+
               <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 14 }}>Preferred mobile coding provider</Text>
               <View style={{ flexDirection: "row", gap: 8, marginTop: 8 }}>
                 {(["openai", "glm"] as const).map((provider) => {
@@ -4725,6 +4754,7 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
+      <OpenCodeConfigModal visible={showOpenCodeConfig} onClose={() => setShowOpenCodeConfig(false)} />
     </View>
   );
 }

@@ -284,6 +284,33 @@ export interface HybridEvent {
   retry?: number;
 }
 
+// Mirrors desktop/agent/opencode_config.go OpenCodeConfigSummary.
+export interface OpenCodeProviderSummary {
+  id: string;
+  name?: string;
+  baseUrl?: string;
+  models?: Array<{ id: string; name?: string }>;
+}
+export interface OpenCodeAgentSummary {
+  name: string;
+  model?: string;
+  description?: string;
+  isBuiltin?: boolean;
+}
+export interface OpenCodeConfigSummary {
+  path: string;
+  exists: boolean;
+  defaultAgent?: string;
+  model?: string;
+  smallModel?: string;
+  buildModel?: string;
+  planModel?: string;
+  providers?: OpenCodeProviderSummary[];
+  models?: Array<{ id: string; name?: string; provider?: string }>;
+  agents?: OpenCodeAgentSummary[];
+  diagnostics?: string[];
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -1188,6 +1215,55 @@ export class QuicClient {
     this.sessionTunnelServers = [];
     this._tunnelUrl = null;
     this._tunnelHeaders = {};
+  }
+
+  // ── OpenCode config API ────────────────────────────────────────────
+  // Mirrors web/lib/agent-client.ts shape. Used by the mobile
+  // OpenCode Config modal to read + edit opencode.json on the
+  // connected device. All fields are optional in the patch body —
+  // omit a key to leave it unchanged.
+
+  async getOpenCodeConfig(): Promise<OpenCodeConfigSummary | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const res = await fetch(`${this.baseUrl}/runner/opencode/config`, {
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data?.config || null) as OpenCodeConfigSummary | null;
+    } catch {
+      return null;
+    }
+  }
+
+  async saveOpenCodeConfig(patch: {
+    defaultAgent?: string;
+    model?: string;
+    smallModel?: string;
+    buildModel?: string;
+    planModel?: string;
+    providers?: Array<{
+      id: string;
+      name?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      delete?: boolean;
+    }>;
+  }): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {
+    if (!this.isConnected && !this.hasConnectionInfo) return { ok: false, error: "not connected" };
+    try {
+      const res = await fetch(`${this.baseUrl}/runner/opencode/config`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+      return { ok: true, config: data?.config };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   // ── Task API ───────────────────────────────────────────────────────
