@@ -2120,6 +2120,19 @@ export class YaverFeedback {
         resetChat();
       };
 
+      // Chat-style submit: Enter sends, Shift+Enter inserts a
+      // newline. Mirrors Claude/Codex/Cursor — typing prose without
+      // having to mouse to the Send button. We deliberately don't
+      // handle Cmd/Ctrl+Enter as a separate "force-send" because
+      // the user's hands stay on the keys this way and the modifier
+      // semantics already match every other LLM chat surface.
+      vibePrompt.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.key !== 'Enter') return;
+        if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) return;
+        event.preventDefault();
+        vibeBtn.click();
+      });
+
       vibeBtn.onclick = async () => {
         const promptText = vibePrompt.value.trim();
         if (!promptText) {
