@@ -441,25 +441,35 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     }
   }, [activeProject?.name, activeProject?.path, selectedApp, selectedProjectPath]);
 
-  // Auto-detect a pre-existing built bundle on mount (e.g. one built
-  // via curl / MCP / a prior dashboard session). Without this the
-  // dashboard's React state stays `idle` even though the agent has a
-  // bundle ready to serve, so the iframe never switches to it. Polling
-  // /dev/web-bundle/info is cheap and only runs while the user is on
-  // the Web App tab.
+  // Auto-detect a pre-existing built bundle on mount + every 5s while
+  // idle. Catches the case where the bundle is built out-of-band (curl,
+  // MCP, recovery flow, agent server-side trigger) — the dashboard's
+  // React state needs to flip to `ready` for the iframe URL to switch
+  // to /dev/web-bundle/, and without periodic polling that flip never
+  // happens since SSE doesn't fire a "bundle ready" notification on
+  // out-of-band builds.
   useEffect(() => {
     if (!isConnected) return;
     let cancelled = false;
-    void (async () => {
+    const tick = async () => {
       const info = await agentClient.getWebBundleInfo();
       if (cancelled) return;
       if (info.built && (staticBundleState === "idle" || staticBundleState === "failed")) {
         setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
         setStaticBundleState("ready");
       }
-    })();
+    };
+    void tick();
+    // Poll every 5s — only while idle/failed; once `ready` or `building`,
+    // the existing flow drives the state and the timer becomes a no-op.
+    const id = setInterval(() => {
+      if (staticBundleState === "idle" || staticBundleState === "failed") {
+        void tick();
+      }
+    }, 5000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, [isConnected, staticBundleState]);
 
