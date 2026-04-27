@@ -283,11 +283,7 @@ function runnerChipsForDevice(device: Pick<Device, "sharedRunners" | "runners">)
 const KNOWN_RUNNERS = [
   "claude",
   "codex",
-  "aider",
-  "aider-ollama",
-  "ollama",
   "opencode",
-  "goose",
 ] as const;
 
 type RunnerHealth = "ready" | "needs-auth" | "down" | "not-installed" | "unknown";
@@ -814,10 +810,34 @@ interface DeviceProjectInfo {
   monorepoApp?: string;   // app name within the monorepo
 }
 
+/**
+ * Tracks agentClient.connectionState as React state so consuming
+ * components re-run when the dashboard's active workspace flips
+ * between disconnected → connecting → connected. Otherwise hooks
+ * that branch on agentClient.connectionState would only see the
+ * stale value captured at their first render — which is exactly
+ * why the folded Git-projects rail kept saying "unavailable" even
+ * after Open Workspace finished: the device.workspaceLive registry
+ * flag flipped before agentClient.connectionState did, so the
+ * useEffect re-ran while the client was still "connecting" and the
+ * agentClient.listProjectsByCapability path threw assertConnected.
+ */
+function useAgentConnectionState(): string {
+  const [state, setState] = useState<string>(() => agentClient.connectionState);
+  useEffect(() => {
+    const unsubscribe = agentClient.on("connectionState", (s) => setState(s));
+    // Sync once in case state changed between render + subscribe.
+    setState(agentClient.connectionState);
+    return unsubscribe;
+  }, []);
+  return state;
+}
+
 function useDeviceProjects(device: Device, enabled: boolean, token: string | null | undefined) {
   const [projects, setProjects] = useState<DeviceProjectInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const agentConnectionState = useAgentConnectionState();
 
   useEffect(() => {
     if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
@@ -852,8 +872,9 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
     // their projects through the registry-backed path.
     const activeRelayUrl = agentClient.activeRelayUrl ?? null;
     const isActiveDevice =
-      Boolean(activeRelayUrl && activeRelayUrl.includes(`/d/${device.id}`)) ||
-      (agentClient.connectionState === "connected" && !!device.workspaceLive);
+      agentConnectionState === "connected" &&
+      (Boolean(activeRelayUrl && activeRelayUrl.includes(`/d/${device.id}`)) ||
+        !!device.workspaceLive);
 
     const mapAgentRow = (p: any): DeviceProjectInfo => ({
       name: String(p?.name ?? p?.slug ?? "").trim(),
@@ -925,7 +946,7 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
       }
     })();
     return () => { cancelled = true; };
-  }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive]);
+  }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive, agentConnectionState]);
 
   return { projects, error, loading };
 }
@@ -1178,7 +1199,6 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-7",
   codex: "gpt-5.4",
-  "aider-ollama": "qwen2.5-coder:14b",
 };
 
 export function isKivancAccount(email: string | null | undefined): boolean {
@@ -1342,13 +1362,6 @@ export const MODEL_OPTIONS_BY_RUNNER: Record<string, Array<{ id: string; label: 
     { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
     { id: "gpt-5-mini", label: "GPT-5 Mini", hint: "fastest, cheapest" },
     { id: "o3", label: "o3", hint: "prior reasoning line" },
-  ],
-  "aider-ollama": [
-    { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B", hint: "fits 24 GB RAM" },
-    { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B", hint: "needs 48+ GB" },
-    { id: "qwen2.5-coder:7b", label: "Qwen Coder 7B", hint: "fits 16 GB RAM" },
-    { id: "qwen2.5-coder:1.5b", label: "Qwen Coder 1.5B", hint: "smoke-test only" },
-    { id: "deepseek-coder-v2:16b", label: "DeepSeek Coder v2 16B", hint: "strong C/Go/Rust" },
   ],
 };
 
@@ -1700,13 +1713,18 @@ export default function DevicesView({
                   // "Available" = anything that's actually present on
                   // the agent. We strip "not-installed" entries so the
                   // dropdown / chip rail isn't full of dead options the
-                  // user can't act on. Test / Sign-in business logic
-                  // stays — we just route them through the existing
-                  // RunnerChipWithTest component for whichever runner
-                  // the user is currently looking at.
-                  const availableStates = states
-                    .filter((s) => s.health !== "not-installed")
-                    .filter((s) => RUNNER_WHITELIST_SET.has(s.id) || s.id === primaryId);
+                  // user can't act on. The whitelist used to also gate
+                  // this rail to the three "vibing-grade" runners
+                  // (claude/codex/opencode), which hid aider /
+                  // aider-ollama / ollama from the user even when they
+                  // were installed — confusing on a machine that
+                  // genuinely has six runners ready. Now we surface
+                  // every installed runner here; the whitelist still
+                  // governs the *primary* picker so the default vibing
+                  // experience doesn't accidentally land on a local
+                  // model. Test / Sign-in business logic is unchanged
+                  // — we just route them through RunnerChipWithTest.
+                  const availableStates = states.filter((s) => s.health !== "not-installed");
                   const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">
@@ -1774,9 +1792,10 @@ export default function DevicesView({
                           </select>
                           {/* Model selector — only surfaces when the
                               current primary runner actually has model
-                              presets (claude / codex / aider-ollama).
-                              Other runners (aider plain, ollama with a
-                              bare name, goose) skip it. */}
+                              presets (claude / codex). OpenCode picks
+                              its model through its own provider+key
+                              flow in the chat input, so it has no
+                              preset list here. */}
                           {primaryId && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
                             <select
                               value={
