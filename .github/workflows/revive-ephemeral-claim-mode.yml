@@ -75,36 +75,18 @@ jobs:
           id yaver >/dev/null 2>&1 || useradd -m yaver
           install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
 
-          # Preserve the box's previously-registered device_id if a
-          # backup of config.json still exists. Without this the
-          # bootstrap-mode agent mints a fresh UUID and Convex still
-          # has the old deviceId in its records — dashboard would
-          # never see the box under the new id. We grep the
-          # /home/yaver/.yaver/config.json.bak (created on factory-
-          # reset prior to v1.99.58, plus any historical copies) for
-          # a deviceId pattern. Falls back to "" on first run.
-          OLD_DEVICE_ID=""
-          for cand in /home/yaver/.yaver/config.json.bak /home/yaver/.yaver/config.json /var/log/yaver/last-device-id /tmp/yaver-last-device-id; do
-            if [ -f "$cand" ]; then
-              if id=$(python3 -c '
-import json, sys
-try:
-  with open(sys.argv[1]) as f: print(json.load(f).get("device_id",""))
-except Exception: pass
-' "$cand" 2>/dev/null) && [ -n "$id" ]; then
-                OLD_DEVICE_ID="$id"
-                echo "Found old device_id $id from $cand"
-                break
-              fi
-            fi
-          done
-          # The yaver-test-ephemeral box's canonical device_id is
-          # also recorded in CLAUDE.md / earlier diagnostics. Hard-
-          # code as a last-resort fallback so we don't lose the
-          # dashboard's view of this specific test box.
+          # Preserve the box's canonical device_id so the dashboard
+          # recognizes the same device after revival (Convex stores
+          # the prior deviceId in its records — a fresh UUID would
+          # leave the box invisible to the dashboard's existing
+          # device row). Try the live config first, fall back to
+          # the test-box's known id.
+          OLD_DEVICE_ID=$(jq -r '.device_id // empty' /home/yaver/.yaver/config.json 2>/dev/null || true)
           if [ -z "$OLD_DEVICE_ID" ]; then
             OLD_DEVICE_ID="fc30be6e-f87a-4e52-b340-fbad1ba1800e"
             echo "Using known test-ephemeral device_id $OLD_DEVICE_ID"
+          else
+            echo "Recovered device_id $OLD_DEVICE_ID from existing config"
           fi
 
           # Claim-mode config: relay creds + Convex URL + preserved
