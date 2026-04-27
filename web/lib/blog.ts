@@ -9,6 +9,13 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "opencode-providers-and-ollama",
+    title: "OpenCode in Yaver: Bring Your Own Key, or Run Free on Ollama",
+    date: "2026-04-28",
+    description:
+      "Yaver's chat picker now ships three coding agents: Claude Code, OpenAI Codex, and OpenCode. OpenCode is the BYOK lane — paste an Anthropic, OpenAI, OpenRouter, or GLM key and you're working. Or pick a local Ollama model and pay nothing.",
+  },
+  {
     slug: "ai-iot-fix-architecture",
     title: "AI-to-IoT Fix Loop: ...",
     date: "2026-04-25",

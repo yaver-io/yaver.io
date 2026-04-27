@@ -1229,6 +1229,100 @@ export function preferredDefaultModelForRunner(
   return DEFAULT_MODEL_BY_RUNNER[normalized] || null;
 }
 
+// First-class runners surfaced in the chat / start-task pickers across
+// web + mobile. Aider / Ollama / Aider+Qwen are still installable and
+// callable from the CLI + MCP — they just don't show up in the
+// consumer UIs. Local Ollama is reachable through OpenCode as a
+// provider.
+export const RUNNER_WHITELIST = ["claude", "codex", "opencode"] as const;
+export const RUNNER_WHITELIST_SET: ReadonlySet<string> = new Set(RUNNER_WHITELIST);
+
+// OpenCode provider catalogue — what the user picks when they choose
+// the "OpenCode" runner. Each provider lists a handful of well-known
+// coding models. Selecting any model from a `requiresKey: true`
+// provider triggers an inline API-key prompt; Ollama is keyless.
+export type OpenCodeCatalogueModel = {
+  id: string;            // model id forwarded to OpenCode (no provider prefix)
+  label: string;
+  hint?: string;
+};
+export type OpenCodeCatalogueProvider = {
+  id: string;            // matches opencode.json provider key
+  label: string;
+  baseUrl?: string;      // default base URL written into opencode.json
+  requiresKey: boolean;
+  keyEnv?: string;       // env-var hint shown next to the input
+  blurb: string;         // one-liner shown under the provider chip
+  models: OpenCodeCatalogueModel[];
+};
+export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
+  {
+    id: "anthropic",
+    label: "Anthropic",
+    requiresKey: true,
+    keyEnv: "ANTHROPIC_API_KEY",
+    blurb: "Bring your own Anthropic key. Highest quality.",
+    models: [
+      { id: "claude-sonnet-4-6", label: "Sonnet 4.6", hint: "balanced default" },
+      { id: "claude-opus-4-7", label: "Opus 4.7", hint: "highest quality, ~5× cost" },
+      { id: "claude-haiku-4-5", label: "Haiku 4.5", hint: "fastest, cheapest" },
+    ],
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    requiresKey: true,
+    keyEnv: "OPENAI_API_KEY",
+    blurb: "GPT-5 family via your OpenAI key.",
+    models: [
+      { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "agentic coding" },
+      { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
+      { id: "gpt-5-mini", label: "GPT-5 Mini", hint: "fast + cheap" },
+    ],
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    requiresKey: true,
+    keyEnv: "OPENROUTER_API_KEY",
+    blurb: "One key, hundreds of models. Good for trying things.",
+    models: [
+      { id: "anthropic/claude-sonnet-4.6", label: "Claude Sonnet 4.6" },
+      { id: "openai/gpt-5", label: "GPT-5" },
+      { id: "deepseek/deepseek-chat", label: "DeepSeek V3" },
+      { id: "qwen/qwen-2.5-coder-32b-instruct", label: "Qwen Coder 32B" },
+      { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "glm",
+    label: "GLM (Z.ai)",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    requiresKey: true,
+    keyEnv: "ZHIPU_API_KEY",
+    blurb: "Zhipu coding plan — cheap GLM-4.6 with a large context window.",
+    models: [
+      { id: "glm-4.6", label: "GLM-4.6", hint: "coding-tuned, 128k ctx" },
+      { id: "glm-4.5-air", label: "GLM-4.5 Air", hint: "lighter, faster" },
+    ],
+  },
+  {
+    id: "ollama",
+    label: "Ollama (local, free)",
+    baseUrl: "http://127.0.0.1:11434",
+    requiresKey: false,
+    blurb: "Runs entirely on this machine. No keys, no spend.",
+    models: [
+      { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B", hint: "fits 24 GB RAM" },
+      { id: "qwen2.5-coder:7b", label: "Qwen Coder 7B", hint: "fits 16 GB RAM" },
+      { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B", hint: "needs 48+ GB" },
+      { id: "deepseek-coder-v2:16b", label: "DeepSeek Coder v2 16B" },
+      { id: "llama3.3:70b", label: "Llama 3.3 70B", hint: "needs 64+ GB" },
+    ],
+  },
+];
+
 // Options shown in the per-runner model dropdown. First entry is the
 // default. Full model ids so the agent can forward them verbatim to
 // `--model` / YAVER_CLAUDE_MODEL / YAVER_CODEX_MODEL. Only real model
@@ -1610,7 +1704,9 @@ export default function DevicesView({
                   // stays — we just route them through the existing
                   // RunnerChipWithTest component for whichever runner
                   // the user is currently looking at.
-                  const availableStates = states.filter((s) => s.health !== "not-installed");
+                  const availableStates = states
+                    .filter((s) => s.health !== "not-installed")
+                    .filter((s) => RUNNER_WHITELIST_SET.has(s.id) || s.id === primaryId);
                   const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">

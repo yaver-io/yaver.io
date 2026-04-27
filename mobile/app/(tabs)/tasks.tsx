@@ -876,7 +876,8 @@ export default function TasksScreen() {
     quicClient.getRunners().then(r => {
       if (r.length > 0) {
         setAvailableRunners(r);
-        const installed = r.filter((runner) => runner.installed);
+        const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
+        const installed = r.filter((runner) => runner.installed && RUNNER_WL.has(runner.id));
         const ready = installed.filter((runner) => runner.ready !== false);
         const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
         if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
@@ -892,6 +893,7 @@ export default function TasksScreen() {
           ready.find((runner) => runner.isDefault) ||
           ready.find((runner) => runner.id === "claude") ||
           ready.find((runner) => runner.id === "codex") ||
+          ready.find((runner) => runner.id === "opencode") ||
           installed.find((runner) => runner.isDefault) ||
           installed[0];
         if (!selectedRunner && preferred) setSelectedRunner(preferred.id);
@@ -2398,15 +2400,20 @@ export default function TasksScreen() {
             </View>
             {availableRunners.length === 0 && availableModels.length === 0 && (
               <Text style={{ color: c.textMuted, fontSize: 13, paddingHorizontal: 16, paddingVertical: 20, textAlign: "center" }}>
-                Loading agents… if this persists, make sure your dev machine has a coding agent installed (claude-code, codex, aider, opencode).
+                Loading agents… if this persists, make sure your dev machine has a coding agent installed (claude, codex, opencode).
               </Text>
             )}
             {availableRunners.length > 0 && (() => {
-              // Only surface runners the connected dev machine actually has
-              // on PATH. Keep the currently-selected runner even if it's not
-              // installed (so the chip doesn't silently disappear).
+              // Only surface the three first-class coding agents in the
+              // mobile picker. Aider / Ollama are still installable from
+              // the CLI + reachable through OpenCode as a provider, but
+              // they don't get their own chip here. Keep the currently-
+              // selected runner visible even if it's outside the
+              // whitelist, so a long-lived task doesn't silently drop
+              // its chip when a user opens the picker.
+              const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
               const installed = availableRunners.filter(
-                (r) => r.installed || r.id === selectedRunner,
+                (r) => (r.installed && RUNNER_WL.has(r.id)) || r.id === selectedRunner,
               );
               if (installed.length === 0) {
                 return (
@@ -2415,7 +2422,7 @@ export default function TasksScreen() {
                     <Text style={{ color: c.textMuted, fontSize: 12, paddingHorizontal: 16, paddingBottom: 12 }}>
                       No coding agents installed on this dev machine. Install one with{"\n"}
                       <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", color: c.textSecondary }}>
-                        yaver install claude | codex | aider | opencode
+                        yaver install claude | codex | opencode
                       </Text>
                     </Text>
                   </>

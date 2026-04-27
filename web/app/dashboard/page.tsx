@@ -40,7 +40,7 @@ import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
-import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "@/components/dashboard/DevicesView";
+import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
 import SettingsView from "@/components/dashboard/SettingsView";
 import type { RunnerBrowserAuthSession } from "@/lib/agent-client";
 import webPkg from "../../package.json";
@@ -517,6 +517,13 @@ export default function DashboardPage() {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  // OpenCode-specific provider + key flow. Only used when
+  // selectedRunner === "opencode". The chosen model id is also written
+  // to selectedModel so the existing createTask path picks it up.
+  const [opencodeProvider, setOpencodeProvider] = useState<string>("anthropic");
+  const [opencodeApiKey, setOpencodeApiKey] = useState<string>("");
+  const [opencodeSaving, setOpencodeSaving] = useState(false);
+  const [opencodeSaveMsg, setOpencodeSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
@@ -803,7 +810,7 @@ export default function DashboardPage() {
   // disappears (e.g. on reconnect to a different host where the runner
   // isn't installed).
   useEffect(() => {
-    const installed = runners.filter(r => r.installed);
+    const installed = runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id));
     if (installed.length === 0) { setSelectedRunner(""); return; }
     const explicitRunner = connectedDevice ? primaryRunnerByDevice[connectedDevice.id] : "";
     if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
@@ -834,6 +841,19 @@ export default function DashboardPage() {
   }, [connectedDevice, connectedDevicePrimaryRunner, runners, selectedRunner, user?.email]);
 
   useEffect(() => {
+    if (selectedRunner !== "opencode") return;
+    const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === opencodeProvider) || OPENCODE_PROVIDER_CATALOGUE[0];
+    if (!provider) return;
+    const valid = provider.models.some((m) => `${provider.id}/${m.id}` === selectedModel);
+    if (valid) return;
+    const first = provider.models[0];
+    if (first) setSelectedModel(`${provider.id}/${first.id}`);
+  }, [selectedRunner, opencodeProvider, selectedModel]);
+
+  useEffect(() => {
+    // OpenCode owns its own provider/model selection (see the inline
+    // BYOK picker below). Don't let the generic model-syncer reset it.
+    if (selectedRunner === "opencode") return;
     const runner = runners.find((r) => r.id === selectedRunner);
     const models = Array.isArray(runner?.models) ? runner.models : [];
     if (models.length === 0) {
@@ -2112,13 +2132,13 @@ export default function DashboardPage() {
               <div className="border-t border-surface-800 bg-surface-900/50 px-4 py-3">
                 <div className="mx-auto flex max-w-5xl flex-col gap-3">
                   {(() => {
-                    const installed = runners.filter(r => r.installed);
+                    const installed = runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id));
                     const selectedRunnerRow = installed.find((r) => r.id === selectedRunner) || null;
                     const selectedRunnerModels = Array.isArray(selectedRunnerRow?.models) ? selectedRunnerRow.models : [];
                     if (installed.length === 0) {
                       return (
                         <div className="text-[11px] text-amber-400">
-                          No AI runner installed on this machine. Install one (claude, codex, aider, opencode, ollama) and reconnect.
+                          No AI runner installed on this machine. Install one of <span className="font-mono">claude</span>, <span className="font-mono">codex</span>, or <span className="font-mono">opencode</span> and reconnect.
                         </div>
                       );
                     }
@@ -2150,7 +2170,7 @@ export default function DashboardPage() {
                           })}
                         </div>
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
-                          {selectedRunnerModels.length > 0 ? (
+                          {selectedRunner !== "opencode" && selectedRunnerModels.length > 0 ? (
                             <>
                               <span>Model</span>
                               <div className="flex flex-wrap items-center gap-1.5">
@@ -2184,6 +2204,150 @@ export default function DashboardPage() {
                       </div>
                     );
                   })()}
+                  {/* OpenCode provider + model + key picker. Shows up
+                      whenever the user has OpenCode selected as the
+                      runner. Picking an Ollama model needs no key;
+                      everything else prompts for a BYOK API key that
+                      gets persisted to opencode.json on the agent. */}
+                  {selectedRunner === "opencode" ? (() => {
+                    const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === opencodeProvider) || OPENCODE_PROVIDER_CATALOGUE[0];
+                    const currentModelId = (() => {
+                      const sm = selectedModel || "";
+                      if (!sm) return "";
+                      const slash = sm.indexOf("/");
+                      return slash >= 0 ? sm.slice(slash + 1) : sm;
+                    })();
+                    const handleSaveOpenCode = async () => {
+                      if (provider.requiresKey && !opencodeApiKey.trim()) {
+                        setOpencodeSaveMsg({ ok: false, text: `${provider.label} needs an API key.` });
+                        return;
+                      }
+                      const modelId = currentModelId || provider.models[0]?.id || "";
+                      if (!modelId) return;
+                      const fullModel = `${provider.id}/${modelId}`;
+                      setOpencodeSaving(true);
+                      setOpencodeSaveMsg(null);
+                      try {
+                        const patch: Parameters<typeof agentClient.saveOpenCodeConfig>[0] = {
+                          model: fullModel,
+                          providers: [
+                            {
+                              id: provider.id,
+                              name: provider.label,
+                              ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+                              ...(opencodeApiKey.trim() ? { apiKey: opencodeApiKey.trim() } : {}),
+                              models: { [modelId]: {} },
+                            },
+                          ],
+                        };
+                        const res = await agentClient.saveOpenCodeConfig(patch);
+                        if (!res.ok) {
+                          setOpencodeSaveMsg({ ok: false, text: res.error || "Save failed" });
+                        } else {
+                          setSelectedModel(fullModel);
+                          setOpencodeApiKey("");
+                          setOpencodeSaveMsg({ ok: true, text: `Saved. Using ${provider.label} · ${modelId}.` });
+                        }
+                      } catch (err: any) {
+                        setOpencodeSaveMsg({ ok: false, text: err?.message || "Save failed" });
+                      } finally {
+                        setOpencodeSaving(false);
+                      }
+                    };
+                    return (
+                      <div className="rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-3">
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="text-surface-500">Provider</span>
+                          {OPENCODE_PROVIDER_CATALOGUE.map((p) => {
+                            const active = p.id === opencodeProvider;
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  setOpencodeProvider(p.id);
+                                  setOpencodeApiKey("");
+                                  setOpencodeSaveMsg(null);
+                                  // Seed the model with the provider's first option so the user always has a valid pre-selection.
+                                  const m = p.models[0];
+                                  if (m) setSelectedModel(`${p.id}/${m.id}`);
+                                }}
+                                title={p.blurb}
+                                className={`rounded-full border px-2.5 py-1 transition ${
+                                  active
+                                    ? "border-cyan-400/60 bg-cyan-400/10 text-cyan-100"
+                                    : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                }`}
+                              >
+                                {p.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="mt-2 text-[11px] text-surface-500">{provider.blurb}</p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="text-surface-500">Model</span>
+                          {provider.models.map((m) => {
+                            const fullId = `${provider.id}/${m.id}`;
+                            const active = fullId === selectedModel || (!selectedModel && m.id === provider.models[0].id);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => setSelectedModel(fullId)}
+                                title={m.hint || m.id}
+                                className={`rounded-full border px-2.5 py-1 transition ${
+                                  active
+                                    ? "border-fuchsia-400/60 bg-fuchsia-400/10 text-fuchsia-100"
+                                    : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                }`}
+                              >
+                                {m.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {provider.requiresKey ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] text-surface-500">{provider.keyEnv || "API key"}</span>
+                            <input
+                              type="password"
+                              value={opencodeApiKey}
+                              onChange={(e) => setOpencodeApiKey(e.target.value)}
+                              placeholder="sk-…"
+                              autoComplete="off"
+                              className="min-w-[220px] flex-1 rounded-lg border border-surface-700 bg-surface-950 px-3 py-1.5 text-[12px] font-mono text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleSaveOpenCode}
+                              disabled={opencodeSaving}
+                              className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                            >
+                              {opencodeSaving ? "Saving…" : "Save key + use"}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] text-surface-500">No key needed.</span>
+                            <button
+                              type="button"
+                              onClick={handleSaveOpenCode}
+                              disabled={opencodeSaving}
+                              className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                            >
+                              {opencodeSaving ? "Saving…" : "Use Ollama"}
+                            </button>
+                          </div>
+                        )}
+                        {opencodeSaveMsg ? (
+                          <p className={`mt-2 text-[11px] ${opencodeSaveMsg.ok ? "text-emerald-300" : "text-amber-300"}`}>
+                            {opencodeSaveMsg.text}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })() : null}
                   {activeRunnerAuthIssue ? (
                     <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-200">
                       <span>{runnerLabel(activeRunnerId)} on {connectedDevice?.name || "this machine"} is not authenticated.</span>
@@ -2210,7 +2374,7 @@ export default function DashboardPage() {
                       placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Add a task update or refinement..." : preferredSurfaceProjectPath ? "Describe what to do in this repo..." : "Describe the task you want this machine to run..."} rows={1}
                       disabled={Boolean(activeRunnerAuthIssue)}
                       className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "48px" }} />
-                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed).length === 0 || Boolean(activeRunnerAuthIssue)}
+                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id)).length === 0 || Boolean(activeRunnerAuthIssue)}
                       className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
                       {sending ? "..." : activeTask ? "Update task" : "Start task"}
                     </button>
