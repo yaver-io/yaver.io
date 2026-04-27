@@ -570,6 +570,19 @@ export class P2PClient {
     const resp = await fetch(`${this.baseUrl}/vibing/task/${encodeURIComponent(taskId)}`, {
       headers: this.authHeaders(),
     });
+    if (resp.status === 404) {
+      // Two reasons /vibing/task/{id} can 404:
+      //   a) The taskId genuinely doesn't exist on this agent.
+      //   b) The agent is older than v1.99.89 (the version that
+      //      added the endpoint). Path b is the more common one
+      //      and used to manifest as a silent empty bubble that
+      //      polled forever. Surface it with a recognisable code
+      //      so the chat surface can render a one-line "update
+      //      your agent" message instead of hanging the user.
+      const err = new Error('[P2PClient] /vibing/task/{id} not found — agent likely older than v1.99.89, please update');
+      (err as Error & { code?: string }).code = 'AGENT_TOO_OLD';
+      throw err;
+    }
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       throw new Error(`[P2PClient] getTask failed (${resp.status}): ${text}`);

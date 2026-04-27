@@ -65,7 +65,7 @@ export class YaverFeedback {
    *  its header — useful when the user files an issue and we need
    *  to know exactly which build of the SDK they're talking to.
    *  Updated whenever package.json's version is bumped. */
-  static readonly SDK_VERSION = '0.4.7';
+  static readonly SDK_VERSION = '0.4.8';
 
   private static config: FeedbackConfig | null = null;
   private static mediaRecorder: MediaRecorder | null = null;
@@ -2108,6 +2108,9 @@ export class YaverFeedback {
         try {
           const task = await YaverFeedback.getTask(currentTaskId);
           const fullOutput = task.output || '';
+          if (fullOutput.length === 0 && task.status === 'queued' && !lastSeenOutputLen) {
+            setChatStatus('Agent picking up the task…');
+          }
           if (fullOutput.length > lastSeenOutputLen) {
             // Slice everything past the last user-turn checkpoint and
             // assign it to the most recent agent bubble. We re-render
@@ -2131,8 +2134,18 @@ export class YaverFeedback {
                   : 'Agent task stopped.',
             );
           }
-        } catch {
-          // Transient fetch failures are fine; next tick retries.
+        } catch (err) {
+          // Surface the "agent too old" 404 with an actionable
+          // message so the user knows to click Update from the
+          // dashboard. Other transient errors are silently retried
+          // on the next tick — those are usually network blips
+          // that resolve on their own.
+          if (err && typeof err === 'object' && (err as { code?: string }).code === 'AGENT_TOO_OLD') {
+            stopPolling();
+            setChatStatus(
+              'Agent too old — open yaver.io/dashboard, find this machine, and click "Update to v1.99.89" (or newer). Then start a New session here.',
+            );
+          }
         }
       };
       const startPolling = () => {
