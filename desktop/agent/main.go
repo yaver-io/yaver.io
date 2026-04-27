@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.61"
+const version = "1.99.62"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7301,6 +7301,22 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 		err := relayConnectAndServe(ctx, relayAddr, agentAddr, deviceID, token, password, exposeMgr)
 		if err != nil {
 			log.Printf("[RELAY %s] Connection lost after %s: %v", relayAddr, time.Since(startedAt).Round(time.Second), err)
+			// One-shot recovery: if the rejection looks like a stale
+			// relay password (Convex rotated the per-user password
+			// server-side, our cached one is dead), refetch the
+			// fresh password from /settings and retry immediately.
+			// Without this, the agent loops forever on a stale
+			// password until someone runs `yaver repair-relay`. See
+			// the dynamic-IP / NAT audit — this is the "Convex
+			// rotates password" case.
+			if looksLikeStaleRelayPassword(err) {
+				if fresh := refreshRelayPasswordFromConvex(ctx); fresh != "" && fresh != password {
+					log.Printf("[RELAY %s] Refetched fresh relay password from Convex /settings; retrying", relayAddr)
+					password = fresh
+					backoff = time.Second // reset; we have new creds
+					continue
+				}
+			}
 		}
 
 		if ctx.Err() != nil {
@@ -7351,6 +7367,55 @@ var randInt63n = func(n int64) int64 {
 		return 0
 	}
 	return mathRand.Int63n(n)
+}
+
+// looksLikeStaleRelayPassword inspects a relay-connect error and
+// decides whether re-fetching the per-user password from Convex
+// /settings is worth a try. The relay returns errors like:
+//   "registration rejected: invalid relay password"
+//   "registration rejected: invalid password"
+// We MUST be conservative — a false positive here would burn through
+// reconnect budget. So we require the literal "password" + "invalid"
+// or "rejected".
+func looksLikeStaleRelayPassword(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	if !strings.Contains(msg, "password") {
+		return false
+	}
+	return strings.Contains(msg, "invalid") || strings.Contains(msg, "rejected") || strings.Contains(msg, "denied")
+}
+
+// refreshRelayPasswordFromConvex GETs /settings on the user's
+// Convex deployment with the current auth token and returns the
+// fresh per-user relay password (or "" if Convex is unreachable
+// or the user doesn't have one). Used as a one-shot recovery in
+// the relay-tunnel reconnect loop when the cached password
+// suddenly stops working — most often because Convex rotated it
+// server-side.
+func refreshRelayPasswordFromConvex(ctx context.Context) string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.ConvexSiteURL == "" || cfg.AuthToken == "" {
+		return ""
+	}
+	settings, err := FetchUserSettings(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil || settings == nil {
+		log.Printf("[RELAY] refresh-password: Convex /settings: %v", err)
+		return ""
+	}
+	pw := strings.TrimSpace(settings.RelayPassword)
+	if pw == "" {
+		return ""
+	}
+	// Also persist into config.json so a restart picks up the
+	// fresh password without another Convex round-trip.
+	cfg.RelayPassword = pw
+	if saveErr := SaveConfig(cfg); saveErr != nil {
+		log.Printf("[RELAY] refresh-password: SaveConfig: %v", saveErr)
+	}
+	return pw
 }
 
 func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) error {

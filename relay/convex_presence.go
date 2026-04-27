@@ -43,6 +43,12 @@ type presencePayload struct {
 	PeerAddr     string `json:"peerAddr,omitempty"`
 	ConnectedAt  int64  `json:"connectedAt,omitempty"`  // epoch ms
 	DurationSec  int    `json:"durationSec,omitempty"`  // populated on disconnect
+	// AssignedURL is the auto-provisioned <id>.<expose-domain>
+	// URL the relay just minted for this tunnel. Populated only on
+	// online=true presence pushes. Convex stores it in
+	// device.publicEndpoints so the dashboard sees it instantly,
+	// without waiting for the agent's next heartbeat (~5min).
+	AssignedURL  string `json:"assignedUrl,omitempty"`
 }
 
 // pushPresence fires a fire-and-forget update to Convex. Returns

@@ -605,13 +605,45 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
     let cancelled = false;
     setLoading(true);
     setError(null);
-    // Direct LAN first (best when browser is on the same Wi-Fi) then fall
-    // back to Convex-stored heartbeat fields we already have. We stay on
-    // the agent /info endpoint since that's what the mobile app uses for
-    // the same "everything about this device" view.
+    // Choose the BEST base URL for this probe — preferring HTTPS
+    // sources first so we don't trigger mixed-content blocks +
+    // useless 502s on every device-row expand.
+    //
+    // Order:
+    //   1. *.yaver.io publicEndpoint (relay-auto-provisioned
+    //      <id>.dev.yaver.io) — HTTPS-direct, works for browsers
+    //      behind NAT, no /d/<id>/ path noise.
+    //   2. Any other publicEndpoint (Cloudflare tunnel, etc.).
+    //   3. Active relay URL (current AgentClient session).
+    //   4. Direct LAN IP — last resort, only worth trying when
+    //      we're plausibly on the same network. From a different
+    //      LAN this is the source of the 502 + mixed-content
+    //      flood the user reported in devtools.
+    const candidates: string[] = [];
+    const eps = (device.publicEndpoints || []).filter(Boolean);
+    const yaverEp = eps.find((e) => /^https:\/\/[^/]+\.yaver\.io(\/|$)/i.test(e));
+    if (yaverEp) candidates.push(yaverEp);
+    for (const ep of eps) {
+      if (ep === yaverEp) continue;
+      if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
+    }
+    if (agentClient.activeRelayUrl && device.id) {
+      candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
+    }
+    if (typeof window !== "undefined" && window.location.protocol !== "https:") {
+      // Browser is on http (rare — local dev). Only then is the
+      // direct-LAN fetch even allowed; from https it's blocked
+      // anyway, so don't bother adding it as a candidate.
+      candidates.push(`http://${device.host}:${device.port}`);
+    }
+    if (candidates.length === 0) {
+      setError("no reachable URL");
+      setLoading(false);
+      return;
+    }
     (async () => {
+      const base = candidates[0];
       try {
-        const base = `http://${device.host}:${device.port}`;
         const res = await fetch(`${base}/info`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(3_000),

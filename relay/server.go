@@ -392,13 +392,21 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 
 	// Best-effort push to Convex so mobile/web pick up tunnel-up
 	// within the Convex reactive latency window instead of polling
-	// /presence every 30s. No-op unless CONVEX_PRESENCE_URL +
-	// CONVEX_PRESENCE_SECRET env vars are set. See convex_presence.go.
+	// /presence every 30s. Includes AssignedURL when we just auto-
+	// provisioned one — Convex stores it under device.publicEndpoints
+	// so the dashboard's transport classifier picks it up instantly.
+	// No-op unless CONVEX_PRESENCE_URL + CONVEX_PRESENCE_SECRET env
+	// vars are set. See convex_presence.go.
+	assignedFullURL := ""
+	if autoSub != "" {
+		assignedFullURL = "https://" + autoSub + "." + s.exposeDomain
+	}
 	pushPresence(presencePayload{
 		DeviceID:    reg.DeviceID,
 		Online:      true,
 		PeerAddr:    remoteAddr,
 		ConnectedAt: tunnel.connAt.UnixMilli(),
+		AssignedURL: assignedFullURL,
 	})
 
 	// Accept control streams (expose register/unregister) from agent

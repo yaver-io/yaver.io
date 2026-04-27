@@ -1339,6 +1339,11 @@ http.route({
       peerAddr: typeof body.peerAddr === "string" ? body.peerAddr : undefined,
       connectedAt: typeof body.connectedAt === "number" ? body.connectedAt : undefined,
       durationSec: typeof body.durationSec === "number" ? body.durationSec : undefined,
+      // Relay-auto-provisioned <id>.dev.yaver.io URL. Stored in
+      // device.publicEndpoints so the dashboard's transport
+      // classifier picks it instantly (no waiting for next agent
+      // heartbeat). Only sent on online=true presence pushes.
+      assignedUrl: typeof body.assignedUrl === "string" ? body.assignedUrl : undefined,
     });
     return jsonResponse({ ok: true });
   }),

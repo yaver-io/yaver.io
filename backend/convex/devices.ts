@@ -629,6 +629,10 @@ export const presenceUpdate = mutation({
     peerAddr: v.optional(v.string()),
     connectedAt: v.optional(v.number()),
     durationSec: v.optional(v.number()),
+    // Relay-auto-provisioned <id>.<expose-domain> URL — pushed by
+    // the relay on tunnel-up so the dashboard sees it instantly
+    // without waiting for the agent's next 5-min heartbeat.
+    assignedUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const device = await ctx.db
@@ -655,6 +659,18 @@ export const presenceUpdate = mutation({
     // — the agent is still alive elsewhere (maybe on LAN).
     if (args.online) {
       patch.lastHeartbeat = Date.now();
+    }
+    // Merge the relay-assigned URL into publicEndpoints. Idempotent:
+    // if it's already there, no change. Order doesn't matter for the
+    // dashboard's transport classifier — it picks the *.yaver.io
+    // subdomain by suffix match. On disconnect we LEAVE the URL in
+    // place so the dashboard can still try it (the relay just won't
+    // route until the next reconnect; the URL itself is durable).
+    if (args.online && args.assignedUrl && /^https:\/\//.test(args.assignedUrl)) {
+      const existing = (device.publicEndpoints ?? []) as string[];
+      if (!existing.includes(args.assignedUrl)) {
+        patch.publicEndpoints = [...existing, args.assignedUrl];
+      }
     }
     await ctx.db.patch(device._id, patch);
   },
@@ -1132,5 +1148,74 @@ export const removeDevice = mutation({
     }
 
     await ctx.db.delete(device._id);
+  },
+});
+
+/**
+ * One-shot backfill: assign every device a relay-auto-provisioned
+ * <deviceId>.<exposeDomain> publicEndpoint if it doesn't already
+ * have one. Run once after wildcard DNS + cert is wired so the
+ * dashboard's transport classifier picks up the clean URL for
+ * every existing box without waiting for them all to reconnect to
+ * relay v0.1.11+.
+ *
+ * Idempotent — skips devices that already have a *.exposeDomain
+ * entry. Owner-scoped mutations (caller's bearer must list each
+ * device under their account); guests can't seed someone else's.
+ *
+ * Args:
+ *   exposeDomain: the relay's expose-domain ("dev.yaver.io")
+ *
+ * Run once with:
+ *   npx convex run devices:seedAutoPublicUrls --arg exposeDomain=dev.yaver.io
+ */
+export const seedAutoPublicUrls = mutation({
+  args: {
+    exposeDomain: v.string(),
+    tokenHash: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const domain = String(args.exposeDomain || "").trim().toLowerCase();
+    if (!domain || !/^[a-z0-9.-]+$/.test(domain)) {
+      throw new Error("invalid exposeDomain");
+    }
+
+    // If a tokenHash is provided we scope to that user's devices —
+    // safer + matches the rest of the API surface. If no hash is
+    // provided we operate fleet-wide (admin one-shot via convex
+    // CLI which inherently has admin auth).
+    let scopedSession: Awaited<ReturnType<typeof validateSessionInternal>> = null;
+    if (args.tokenHash) {
+      scopedSession = await validateSessionInternal(ctx, args.tokenHash);
+      if (!scopedSession) throw new Error("Unauthorized");
+    }
+
+    const devices = scopedSession
+      ? await ctx.db
+          .query("devices")
+          .withIndex("by_userId", (q) => q.eq("userId", scopedSession!.user._id))
+          .collect()
+      : await ctx.db.query("devices").collect();
+
+    let updated = 0;
+    let skipped = 0;
+    for (const d of devices) {
+      const deviceId = (d.deviceId || "").toLowerCase().trim();
+      if (!deviceId) {
+        skipped++;
+        continue;
+      }
+      const url = `https://${deviceId}.${domain}`;
+      const eps = (d.publicEndpoints ?? []) as string[];
+      if (eps.includes(url)) {
+        skipped++;
+        continue;
+      }
+      await ctx.db.patch(d._id, {
+        publicEndpoints: [...eps, url],
+      });
+      updated++;
+    }
+    return { ok: true, updated, skipped, total: devices.length };
   },
 });
