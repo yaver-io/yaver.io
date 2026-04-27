@@ -57,13 +57,6 @@ const docs = [
     href: "/docs/unity",
     tags: ["Unity", "Games", "Self-hosted"],
   },
-  {
-    title: "Cloud machines",
-    description:
-      "Dedicated CPU ($49/mo) and GPU ($449/mo) dev machines with multi-user team access, shared GPU, and isolated workspaces.",
-    href: "/docs/cloud-machines",
-    tags: ["GPU", "Teams", "Multi-user"],
-  },
 ];
 
 const manualLinks = [

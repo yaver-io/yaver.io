@@ -699,14 +699,6 @@ export default function McpPage() {
             <code className="text-surface-300">system_info</code>, <code className="text-surface-300">web_fetch</code>.
           </p>
 
-          <h4 className="mb-2 mt-6 text-sm font-semibold text-surface-200">Managed hosting</h4>
-          <p className="text-sm text-surface-400">
-            Don&apos;t want to manage a server? Use our managed MCP hosting &mdash; zero setup, auto-updates,
-            multi-region.{" "}
-            <Link href="/pricing" className="text-surface-200 underline underline-offset-2 hover:text-surface-50">
-              See pricing
-            </Link>.
-          </p>
         </section>
 
         {/* ─── Creating Plugins ─── */}

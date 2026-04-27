@@ -94,11 +94,11 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Does Yaver manage my servers?",
-    a: "No. The default path is your phone sandbox first, then your own machine, dev box, or VPS. The only managed offering is a $10/month shared relay so you do not have to run one yourself. Everything else is self-host.",
+    a: "No. The default path is your phone sandbox first, then your own machine, dev box, or VPS. Everything is self-host. We may add optional managed features (relay, dev machines, CI) later for people who don't want to run their own — but at launch there are no paid offerings.",
   },
   {
     q: "Is this really free?",
-    a: "Yes for the local-first path: mobile app, CLI, agent, web dashboard, SDKs, and self-hosted relay. The repo uses a split license (FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one). The optional managed relay is $10/month.",
+    a: "Yes. The whole stack — mobile app, CLI, agent, web dashboard, SDKs, and relay — is free and open source. The repo uses a split license: FSL-1.1 core that auto-converts to Apache-2.0 two years per release, Apache-2.0 SDKs from day one. No paid tiers, no subscriptions, no upsell.",
   },
   {
     q: "What if I already use Vercel or Supabase Cloud?",
@@ -116,7 +116,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "What triggers the FSL restriction?",
-    a: "Hosting a commercial service that competes with Yaver's managed offering. Self-hosting, modifying for your own team, research, and consulting are all permitted uses. Each release becomes Apache-2.0 after 2 years and the restriction lifts for that version.",
+    a: "Reselling Yaver itself as a paid hosted service to third parties. Self-hosting, modifying for your own team, research, and consulting are all permitted uses. Each release becomes Apache-2.0 after 2 years and the restriction lifts for that version.",
   },
   {
     q: "I'm at a company that doesn't allow non-OSI licenses. Can I still use Yaver?",
@@ -1640,12 +1640,12 @@ return (
           </div>
 
           <div className="mt-8 space-y-2 text-center text-sm leading-relaxed text-surface-400">
-            <p><strong className="text-surface-100">A solo developer can start at $0.</strong></p>
-            <p>The wedge is local-first: phone sandbox, then your own machine, then optional cloud.</p>
-            <p>Open source and self-hosting matter. So does having a paid path for managed cloud, CI, and release distribution.</p>
+            <p><strong className="text-surface-100">A solo developer runs the whole stack at $0.</strong></p>
+            <p>The wedge is local-first: phone sandbox, then your own machine, then your own VPS or Pi.</p>
+            <p>Everything is free and open source. Self-host the entire stack — no accounts, no paid tiers, no usage caps.</p>
             <p className="mt-4 text-surface-500">
               The repo uses a <Link href="/licensing" className="underline hover:text-surface-300">split license</Link>: the core is{" "}
-              <strong className="text-surface-300">FSL-1.1</strong> (blocks competing hosted services, auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}
+              <strong className="text-surface-300">FSL-1.1</strong> (auto-converts to Apache-2.0 after 2 years), and all client SDKs are{" "}
               <strong className="text-surface-300">Apache-2.0</strong> so you can embed them in closed-source apps.
             </p>
           </div>

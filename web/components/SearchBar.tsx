@@ -7,7 +7,6 @@ import { useRouter } from "next/navigation";
 const SEARCH_INDEX = [
   { path: "/", title: "Home", tags: "p2p encrypted ai agent mobile desktop cli" },
   { path: "/download", title: "Download", tags: "install mac windows linux brew scoop homebrew" },
-  { path: "/pricing", title: "Deployment Options", tags: "relay self-host local machine cloud preview" },
   { path: "/docs", title: "Documentation", tags: "docs guide api reference" },
   { path: "/docs/developers", title: "Developer Guide", tags: "sdk api architecture build test contribute" },
   { path: "/docs/mcp", title: "MCP Protocol", tags: "mcp model context protocol tools json-rpc" },
@@ -35,7 +34,6 @@ const SEARCH_INDEX = [
   { path: "/docs/developers#sdk", title: "SDKs", tags: "sdk go python javascript typescript flutter dart npm pip pub.dev" },
   { path: "/manuals/relay-setup", title: "Self-Host Relay", tags: "self-host relay install docker one-line script curl" },
   { path: "/docs/developers#session-transfer", title: "Session Transfer API", tags: "session export import transfer api endpoint" },
-  { path: "/pricing", title: "Self-Hosted Relay", tags: "relay server docker hetzner self-host" },
   { path: "/integrations", title: "Integrations", tags: "integrations chat ai agents developer tools ci cd sdk connectivity" },
 ];
 
