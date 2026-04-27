@@ -1505,7 +1505,20 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 		prompt = ctx + "\n\nUser request:\n" + req.Prompt
 	}
 
-	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing", "", "", nil)
+	// Pick a runner that's actually ready instead of blindly trusting
+	// the configured primary. Real symptom: yaver-test-ephemeral has
+	// codex set as primary but codex isn't signed in, so the SDK chat
+	// (which earlier saw "Claude Code ready" via /vibing/eligibility)
+	// would create the task → CreateTask spawned codex → codex
+	// crashed instantly with an auth error → empty output → user
+	// stares at "Task running…" forever. Now we walk every installed
+	// builtin runner and pick the first one that passes
+	// CheckRunnerReady (binary present + auth/config check). The
+	// configured primary still wins when it's actually ready, so the
+	// behaviour for healthy machines is unchanged.
+	pickedRunner := pickReadyVibingRunner(s)
+
+	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing", pickedRunner, "", nil)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1514,7 +1527,45 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":     true,
 		"taskId": task.ID,
+		"runner": pickedRunner,
 	})
+}
+
+// pickReadyVibingRunner returns a runnerID whose binary is installed
+// AND whose runner-specific auth/config checks pass for the agent's
+// current workdir. Preference order:
+//
+//  1. The agent's configured primary runner if it's ready.
+//  2. The first builtin runner that's ready (claude / codex / opencode
+//     / etc.) in builtinRunners-iteration order.
+//  3. Empty string — let CreateTask fall through to its own defaults.
+//     (CreateTask already has a "first installed builtin" fallback,
+//     so we never block here even if nothing passes the auth check.)
+func pickReadyVibingRunner(s *HTTPServer) string {
+	if s == nil || s.taskMgr == nil {
+		return ""
+	}
+	workDir := ""
+	s.taskMgr.mu.Lock()
+	primary := s.taskMgr.runner
+	workDir = s.taskMgr.workDir
+	s.taskMgr.mu.Unlock()
+
+	if strings.TrimSpace(primary.Command) != "" {
+		if err := CheckRunnerReady(primary, workDir); err == nil {
+			return primary.RunnerID
+		}
+	}
+	// Walk every builtin and pick the first one that's actually ready.
+	for id, runner := range builtinRunners {
+		if normalizeRunnerID(id) == normalizeRunnerID(primary.RunnerID) {
+			continue
+		}
+		if err := CheckRunnerReady(runner, workDir); err == nil {
+			return id
+		}
+	}
+	return ""
 }
 
 // handleVibingTaskByID is the SDK-accessible mirror of /tasks/{id}.

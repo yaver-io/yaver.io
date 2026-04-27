@@ -65,7 +65,7 @@ export class YaverFeedback {
    *  its header — useful when the user files an issue and we need
    *  to know exactly which build of the SDK they're talking to.
    *  Updated whenever package.json's version is bumped. */
-  static readonly SDK_VERSION = '0.4.6';
+  static readonly SDK_VERSION = '0.4.7';
 
   private static config: FeedbackConfig | null = null;
   private static mediaRecorder: MediaRecorder | null = null;
@@ -903,11 +903,26 @@ export class YaverFeedback {
 
     const renderMachineView = () => {
       subtitle.textContent = 'Step 2 of 4 — Pick the machine to connect to.';
+      // The "Clear selection" pill below is the user's escape hatch
+      // when their previously-picked machine has gone unhealthy
+      // (offline / needs-auth / runner-down) and they want to swap
+      // to another. Without it the SELECTED row shows up as a
+      // disabled chip with no visible affordance to deselect, and
+      // every other row clicks in fine — which the user reads as
+      // "stuck on this machine, can't go back". Clicking Clear
+      // resets preferredDeviceId + saveSelectedDeviceId so the next
+      // row click registers cleanly without inheriting stale state.
+      const hasSelection = !!YaverFeedback.config?.preferredDeviceId;
       body.innerHTML = `
         <div class="yvr-fb-devices">
           <div class="yvr-fb-devices-head">
             <span class="yvr-fb-group-label">Your Machines</span>
-            <button id="yaver-fb-refresh" class="yvr-fb-link" type="button">Refresh</button>
+            <span style="display:flex;gap:10px;align-items:center;">
+              ${hasSelection
+                ? '<button id="yaver-fb-clear-selection" class="yvr-fb-link" type="button" title="Drop the current selection so you can pick another">Clear selection</button>'
+                : ''}
+              <button id="yaver-fb-refresh" class="yvr-fb-link" type="button">Refresh</button>
+            </span>
           </div>
           <div id="yaver-fb-owned" class="yvr-fb-devices-list"></div>
 
@@ -922,6 +937,22 @@ export class YaverFeedback {
       overlay.querySelector<HTMLButtonElement>('#yaver-fb-refresh')!.onclick = () => {
         void loadDevices();
       };
+      const clearBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-clear-selection');
+      if (clearBtn) {
+        clearBtn.onclick = () => {
+          if (busy) return;
+          if (YaverFeedback.config) {
+            YaverFeedback.config.preferredDeviceId = undefined;
+            YaverFeedback.config.agentUrl = undefined;
+          }
+          // Drop the persisted device pin so future page loads
+          // don't inherit the stale selection. clearSelectedDeviceId
+          // removes the localStorage key cleanly.
+          clearSelectedDeviceId();
+          setStatus('Selection cleared. Pick another machine.');
+          renderMachineView();
+        };
+      }
       void loadDevices();
     };
 
