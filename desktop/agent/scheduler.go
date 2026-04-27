@@ -20,6 +20,16 @@ type ScheduledTask struct {
 	Runner        string `json:"runner,omitempty"`
 	CustomCommand string `json:"customCommand,omitempty"`
 
+	// Routine mode — when Verb is non-empty, executeScheduled dispatches
+	// through the ops verb registry instead of TaskManager.CreateTask.
+	// This is what lets a routine target any machine (Machine field is
+	// passed straight to dispatchOps, so "primary"/<deviceId> proxy via
+	// the existing peer relay) and any verb already in opsRegistry.
+	// Backwards compatible: schedules without Verb behave as before.
+	Verb       string          `json:"verb,omitempty"`
+	Machine    string          `json:"machine,omitempty"`
+	OpsPayload json.RawMessage `json:"opsPayload,omitempty"`
+
 	// Scheduling
 	RunAt          string `json:"runAt,omitempty"`          // ISO8601 for one-shot scheduled tasks
 	Cron           string `json:"cron,omitempty"`           // Cron expression for recurring (e.g. "0 9 * * 1-5")
@@ -44,15 +54,42 @@ type ScheduleRun struct {
 	StartedAt string  `json:"startedAt"`
 	Duration  int     `json:"durationMs"`
 	CostUSD   float64 `json:"costUsd,omitempty"`
+	// Verb / OpsCode populated when the run was a routine (Verb-mode)
+	// dispatch rather than a TaskManager task. OpsCode mirrors
+	// OpsResult.Code so history can show "unauthorized" /
+	// "remote_failed" / "internal" without the caller having to dig
+	// through agent logs.
+	Verb     string `json:"verb,omitempty"`
+	Machine  string `json:"machine,omitempty"`
+	OpsCode  string `json:"opsCode,omitempty"`
+	OpsError string `json:"opsError,omitempty"`
 }
+
+// OpsDispatcher is the abstract entry point a routine fire uses to
+// invoke a verb. Injected by main.go after the HTTPServer + Scheduler
+// are both constructed; without it, Verb-mode schedules fail closed
+// with status "failed". Decoupled so the Scheduler doesn't import the
+// HTTPServer struct.
+type OpsDispatcher func(req OpsRequest) OpsResult
 
 // Scheduler manages scheduled and recurring tasks.
 type Scheduler struct {
-	mu        sync.RWMutex
-	tasks     map[string]*ScheduledTask
-	taskMgr   *TaskManager
-	storePath string
-	cancel    context.CancelFunc
+	mu          sync.RWMutex
+	tasks       map[string]*ScheduledTask
+	taskMgr     *TaskManager
+	storePath   string
+	cancel      context.CancelFunc
+	opsDispatch OpsDispatcher
+}
+
+// SetOpsDispatcher wires the verb dispatcher used by Verb-mode
+// schedules. Safe to call before or after Start. Calling with a nil fn
+// effectively disables routine execution while leaving classic
+// scheduled tasks untouched.
+func (s *Scheduler) SetOpsDispatcher(fn OpsDispatcher) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.opsDispatch = fn
 }
 
 // NewScheduler creates a scheduler that persists to ~/.yaver/schedules.json.
@@ -136,6 +173,16 @@ func (s *Scheduler) checkAndRun() {
 func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 	log.Printf("[scheduler] Running scheduled task %s: %s", st.ID, st.Title)
 
+	// Verb-mode (routine) — dispatch via ops registry, no TaskManager
+	// involvement. Sync result captured immediately into history so the
+	// caller doesn't need a separate stream subscription. Long-running
+	// verbs that return a streamId are recorded with the streamId in
+	// the run's TaskID slot so the user can subscribe later.
+	if st.Verb != "" {
+		s.executeRoutine(st)
+		return
+	}
+
 	task, err := s.taskMgr.CreateTask(st.Title, st.Description, st.Model, "scheduler", st.Runner, st.CustomCommand, nil, nil)
 	if err != nil {
 		log.Printf("[scheduler] Failed to create task for schedule %s: %v", st.ID, err)
@@ -210,6 +257,86 @@ func (s *Scheduler) executeScheduled(st *ScheduledTask) {
 			}
 		}
 	}()
+}
+
+// executeRoutine fires a Verb-mode schedule. Synchronous from the
+// scheduler's perspective — the verb handler decides whether to return
+// immediately (Initial) or hand back a streamId, and either way we
+// record what happened in History before returning. Failures here do
+// NOT abort the cron schedule; the next NextRunAt is still computed,
+// matching the resilience contract of TaskManager-mode schedules.
+func (s *Scheduler) executeRoutine(st *ScheduledTask) {
+	s.mu.RLock()
+	dispatch := s.opsDispatch
+	s.mu.RUnlock()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	startedAtTime := time.Now()
+
+	var result OpsResult
+	if dispatch == nil {
+		result = OpsResult{OK: false, Code: "internal", Error: "ops dispatcher not wired; routine cannot fire"}
+	} else {
+		machine := st.Machine
+		if machine == "" {
+			machine = "local"
+		}
+		result = dispatch(OpsRequest{Machine: machine, Verb: st.Verb, Payload: st.OpsPayload})
+	}
+
+	run := ScheduleRun{
+		Verb:      st.Verb,
+		Machine:   st.Machine,
+		StartedAt: now,
+		Duration:  int(time.Since(startedAtTime).Milliseconds()),
+		OpsCode:   result.Code,
+		OpsError:  result.Error,
+	}
+	if result.OK {
+		run.Status = "ok"
+	} else {
+		run.Status = "failed"
+	}
+	if result.StreamID != "" {
+		run.TaskID = result.StreamID
+	}
+
+	s.mu.Lock()
+	st.LastRunAt = now
+	st.LastTaskID = run.TaskID
+	st.RunCount++
+	st.History = append(st.History, run)
+	if len(st.History) > 50 {
+		st.History = st.History[len(st.History)-50:]
+	}
+
+	// Recompute NextRunAt + Status using the same rules as the
+	// TaskManager path above. One-shot routines complete; recurring
+	// stay scheduled.
+	if st.RepeatInterval > 0 {
+		next := time.Now().Add(time.Duration(st.RepeatInterval) * time.Minute)
+		st.NextRunAt = next.UTC().Format(time.RFC3339)
+		st.Status = "scheduled"
+	} else if st.Cron != "" {
+		next := nextCronRun(st.Cron)
+		if !next.IsZero() {
+			st.NextRunAt = next.UTC().Format(time.RFC3339)
+			st.Status = "scheduled"
+		} else {
+			st.NextRunAt = ""
+			st.Status = "completed"
+		}
+	} else {
+		st.NextRunAt = ""
+		st.Status = "completed"
+	}
+	s.mu.Unlock()
+	s.save()
+
+	if !result.OK {
+		log.Printf("[scheduler] Routine %s verb=%s machine=%s failed: code=%s err=%s",
+			st.ID, st.Verb, st.Machine, result.Code, result.Error)
+	}
 }
 
 // RunScheduleNow fires a scheduled task immediately. Used by the
@@ -315,6 +442,25 @@ func (s *Scheduler) ListSchedules() []*ScheduledTask {
 		result = append(result, st)
 	}
 	return result
+}
+
+// applyRoutineUpdate runs `mut` against the named ScheduledTask
+// inside the scheduler's write lock and persists the result. Returns
+// whatever error the mutator returned (without persisting if it
+// errors). Used by routine_update so the MCP handler doesn't have to
+// re-implement the lock dance every field at a time.
+func (s *Scheduler) applyRoutineUpdate(id string, mut func(*ScheduledTask) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.tasks[id]
+	if !ok {
+		return fmt.Errorf("schedule not found: %s", id)
+	}
+	if err := mut(st); err != nil {
+		return err
+	}
+	s.saveLocked()
+	return nil
 }
 
 // GetSchedule returns a specific schedule.
