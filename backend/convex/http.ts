@@ -1260,6 +1260,138 @@ http.route({
   }),
 });
 
+/** POST /agent-rescue/queue — Web/mobile/CLI: queue a rescue command
+ *  for a wedged device. Owner-only. Returns the existing pending row
+ *  if one with the same (deviceId, command) is still alive (5-min
+ *  TTL) so impatient double-clicks don't pile up restarts. */
+http.route({
+  path: "/agent-rescue/queue",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || typeof body.command !== "string") {
+      return errorResponse("deviceId + command required", 400);
+    }
+    if (!["restart", "reinstall-latest", "tunnel-reset", "auth-reset"].includes(body.command)) {
+      return errorResponse("unknown command", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.agentRescue.queueRescueCommand, {
+        tokenHash,
+        deviceId: body.deviceId,
+        command: body.command,
+        params: body.params,
+        sourceSurface: typeof body.sourceSurface === "string" ? body.sourceSurface : undefined,
+      });
+      return jsonResponse({ ok: true, ...out });
+    } catch (e: any) {
+      return errorResponse(e?.message || "queue failed", 400);
+    }
+  }),
+});
+
+/** POST /agent-rescue/claim — Agent: pull next pending command for
+ *  its own device. Atomically transitions pending → claimed. The
+ *  agent calls this from its heartbeat loop; null result is the
+ *  steady state (nothing to do). */
+http.route({
+  path: "/agent-rescue/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string") {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.agentRescue.claimNextRescueCommand, {
+        tokenHash,
+        deviceId: body.deviceId,
+      });
+      return jsonResponse({ ok: true, command: out });
+    } catch (e: any) {
+      return errorResponse(e?.message || "claim failed", 400);
+    }
+  }),
+});
+
+/** POST /agent-rescue/report — Agent: report claimed command's
+ *  outcome (completed/failed + short result tail). Idempotent —
+ *  retries after a network hiccup are safe. */
+http.route({
+  path: "/agent-rescue/report",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.commandId !== "string" || typeof body.status !== "string") {
+      return errorResponse("commandId + status required", 400);
+    }
+    if (!["completed", "failed"].includes(body.status)) {
+      return errorResponse("status must be completed|failed", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.agentRescue.reportRescueResult, {
+        tokenHash,
+        commandId: body.commandId as any,
+        status: body.status,
+        result: typeof body.result === "string" ? body.result.slice(0, 2048) : undefined,
+      });
+      return jsonResponse({ ok: true, ...out });
+    } catch (e: any) {
+      return errorResponse(e?.message || "report failed", 400);
+    }
+  }),
+});
+
+/** GET /agent-rescue/list?deviceId=... — UI: list recent rescue
+ *  commands for a device. Owner-only. */
+http.route({
+  path: "/agent-rescue/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") || "";
+    if (!deviceId) {
+      return errorResponse("deviceId required", 400);
+    }
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Math.max(1, Math.min(parseInt(limitParam, 10) || 10, 50)) : 10;
+    try {
+      const rows = await ctx.runQuery(api.agentRescue.listRescueCommandsForDevice, {
+        tokenHash,
+        deviceId,
+        limit,
+      });
+      return jsonResponse({ ok: true, commands: rows ?? [] });
+    } catch (e: any) {
+      return errorResponse(e?.message || "list failed", 400);
+    }
+  }),
+});
+
 /** POST /devices/report-version — Owner-side seed for agentVersion.
  *
  * The dashboard probes /info on a device it can reach, observes the

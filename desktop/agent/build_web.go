@@ -605,11 +605,61 @@ func (s *HTTPServer) serveWebBundleHTML(w http.ResponseWriter, htmlPath string) 
 	// transformation untouched and the <base href> resolves them.
 	data = relativizeAbsoluteAssetPaths(data)
 	patched := injectBaseHref(data, "/dev/web-bundle/")
+	// Reset client-side router pathname to "/". When the iframe is
+	// loaded through the relay-proxied origin (yaver.io/d/<id>/dev/
+	// web-bundle/), the dashboard's path-rebase script in the
+	// `/d/[deviceId]/[[...path]]/route.ts` proxy already strips
+	// `/d/<id>` but leaves `/dev/web-bundle/` in place — which means
+	// expo-router (and any other client-side router in the bundle)
+	// reads pathname=/dev/web-bundle/ and renders its "Unmatched
+	// Route" / blank screen. The bundle was built assuming "/" is
+	// the index route, so we override with our own rebase that
+	// always lands on "/" before the bundle's JS evaluates. Runs
+	// synchronously inside <head> so it executes before any
+	// `defer`'d script tag in <body>.
+	patched = injectStaticBundleRouterReset(patched)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	info := s.devServerMgr.GetWebBundleInfo()
 	w.Header().Set("X-Yaver-Web-Bundle", fmt.Sprintf("%s/%d", info.Target, info.Size))
 	w.Write(patched)
+}
+
+// injectStaticBundleRouterReset inserts a tiny script just after the
+// <base href> tag that resets pathname to "/" on every static-bundle
+// load. The static bundle's expo-router was built treating "/" as
+// its index route; the relay-proxied URL puts it under
+// /d/<id>/dev/web-bundle/ which expo-router has no route for.
+// history.replaceState happens synchronously, before the deferred
+// entry.js runs, so the bundle sees pathname "/" from frame 0.
+func injectStaticBundleRouterReset(html []byte) []byte {
+	const tag = `<script>(function(){try{` +
+		`var p=location.pathname;` +
+		// Strip the relay prefix the dashboard rewriter leaves behind.
+		`var rest=p.replace(/^\/d\/[^/]+/,'');` +
+		// Strip our own bundle path prefix.
+		`rest=rest.replace(/^\/dev\/web-bundle\/?/, '/');` +
+		// Default to "/" when nothing's left.
+		`if(!rest){rest='/';}` +
+		`if(rest!==p){history.replaceState(null,'',rest+location.search+location.hash);}` +
+		`}catch(e){}})();</script>`
+	// Place it right after the <base href> we just inserted so the
+	// browser's baseURI is set first (relative URL resolution wins),
+	// then we rewrite history before the bundle's deferred script
+	// has a chance to read location.pathname.
+	if idx := strings.Index(string(html), `<base href="`); idx >= 0 {
+		end := strings.Index(string(html[idx:]), `/>`)
+		if end >= 0 {
+			insertAt := idx + end + len(`/>`)
+			out := make([]byte, 0, len(html)+len(tag))
+			out = append(out, html[:insertAt]...)
+			out = append(out, []byte(tag)...)
+			out = append(out, html[insertAt:]...)
+			return out
+		}
+	}
+	// Fallback: prepend to <head> if we didn't find <base>.
+	return injectBaseHref([]byte(tag+string(html)), "/dev/web-bundle/")
 }
 
 // relativizeAbsoluteAssetPaths rewrites `src="/_expo/..."` /

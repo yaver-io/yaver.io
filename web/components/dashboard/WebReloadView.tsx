@@ -565,7 +565,15 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
       try {
         const data = JSON.parse(ev.data);
         if (data?.topic !== "webview/transport") return;
+        // Mirror every transport event into the Console panel so the
+        // user can see bytes flowing — without this the console only
+        // shows the build phase and goes silent during delivery, which
+        // looks like the dashboard hung when actually each iframe
+        // asset is being streamed through the relay.
+        const ts = new Date().toLocaleTimeString();
         if (data.type === "phase") {
+          const file = typeof data.file === "string" ? ` · ${data.file}` : "";
+          setLogs((prev) => [...prev.slice(-199), `[transport ${ts}] phase=${data.phase}${file}`]);
           setStaticBundleTransport((prev) => ({
             phase: data.phase,
             pct: prev?.pct ?? 0,
@@ -574,11 +582,19 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             file: prev?.file,
           }));
         } else if (data.type === "progress") {
+          const pct = typeof data.pct === "number" ? data.pct.toFixed(1) : "?";
+          const file = typeof data.currentFile === "string" ? ` · ${data.currentFile}` : "";
+          const done = typeof data.done === "number" ? data.done : 0;
+          const total = typeof data.total === "number" ? data.total : 0;
+          setLogs((prev) => [
+            ...prev.slice(-199),
+            `[transport ${ts}] ${data.phase || "streaming"} ${pct}% (${done}/${total} bytes)${file}`,
+          ]);
           setStaticBundleTransport({
             phase: data.phase || "streaming",
             pct: typeof data.pct === "number" ? data.pct : 0,
-            done: typeof data.done === "number" ? data.done : 0,
-            total: typeof data.total === "number" ? data.total : 0,
+            done,
+            total,
             file: typeof data.currentFile === "string" ? data.currentFile : undefined,
           });
         }

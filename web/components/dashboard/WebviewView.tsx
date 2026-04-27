@@ -51,39 +51,34 @@ export default function WebviewView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b border-surface-800 bg-surface-950/80 px-3 py-2 md:px-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className="text-lg">📱</span>
-            <div>
-              <p className="text-sm font-semibold text-surface-100">Webview</p>
-              <p className="text-[11px] text-surface-500">
-                One surface for both Mobile App and Web App previews.
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex rounded-lg border border-surface-800 bg-surface-900/70 p-1">
-            <button
-              onClick={() => setMode("mobile")}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                mode === "mobile"
-                  ? "bg-emerald-500/15 text-emerald-200"
-                  : "text-surface-400 hover:text-surface-200"
-              }`}
-            >
-              Mobile App
-            </button>
-            <button
-              onClick={() => setMode("web")}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                mode === "web"
-                  ? "bg-sky-500/15 text-sky-200"
-                  : "text-surface-400 hover:text-surface-200"
-              }`}
-            >
-              Web App
-            </button>
-          </div>
+      {/* Compact mode-switcher bar — merged with the inner view's
+          header so the iframe gets ~40px more vertical space. The
+          old "Webview / One surface for both…" title block was
+          decorative and burned vertical real estate that the
+          viewport could use. */}
+      <div className="flex flex-shrink-0 items-center gap-2 border-b border-surface-800 bg-surface-950/70 px-3 py-1.5">
+        <span className="text-[14px] leading-none">📱</span>
+        <div className="inline-flex rounded-md border border-surface-800 bg-surface-900/70 p-0.5">
+          <button
+            onClick={() => setMode("mobile")}
+            className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              mode === "mobile"
+                ? "bg-emerald-500/15 text-emerald-200"
+                : "text-surface-400 hover:text-surface-200"
+            }`}
+          >
+            Mobile App
+          </button>
+          <button
+            onClick={() => setMode("web")}
+            className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+              mode === "web"
+                ? "bg-sky-500/15 text-sky-200"
+                : "text-surface-400 hover:text-surface-200"
+            }`}
+          >
+            Web App
+          </button>
         </div>
       </div>
 

@@ -232,6 +232,50 @@ export default defineSchema({
     .index("by_deviceId", ["deviceId"])
     .index("by_hardwareId", ["hardwareId"]),
 
+  // Rescue command queue — the *only* control channel that survives a
+  // broken relay tunnel. The agent's heartbeat (independent network
+  // path from the relay) polls here for pending commands and executes
+  // them. Web UI / mobile / CLI write into this table when a device
+  // is wedged and the normal /agent/* endpoints aren't reachable.
+  //
+  // Security: command is a strict enum (no arbitrary shell), only the
+  // device's owner can queue (enforced in agentRescue.ts), 5-minute
+  // TTL caps the replay window, single-claim semantics enforced via
+  // status transition. Every queue/claim/result row is mirrored into
+  // securityEvents for the audit trail.
+  agentRescueCommands: defineTable({
+    deviceId: v.string(),
+    ownerUserId: v.id("users"),
+    // Strict enum so a compromised UI cannot inject arbitrary shell.
+    // Add new variants here AND in the agent's rescue.go dispatch.
+    command: v.union(
+      v.literal("restart"),
+      v.literal("reinstall-latest"),
+      v.literal("tunnel-reset"),
+      v.literal("auth-reset"),
+    ),
+    // Per-command params. `version` is for `reinstall-latest`.
+    // Empty for `restart`, `tunnel-reset`, `auth-reset`.
+    params: v.optional(v.object({
+      version: v.optional(v.string()),
+    })),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("claimed"),
+      v.literal("completed"),
+      v.literal("failed"),
+      v.literal("expired"),
+    ),
+    result: v.optional(v.string()),       // stdout tail or error
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    expiresAt: v.number(),                // createdAt + 5*60*1000
+    sourceSurface: v.optional(v.string()), // "web" | "mobile" | "cli" — for audit
+  })
+    .index("by_device_status", ["deviceId", "status"])
+    .index("by_owner", ["ownerUserId"]),
+
   downloads: defineTable({
     platform: v.union(
       v.literal("macos"),
