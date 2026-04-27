@@ -805,6 +805,13 @@ interface DeviceProjectInfo {
   branch?: string;
   framework?: string;
   tags?: string[];
+  // Extended fields surfaced on the device-card project chip rail.
+  // The agent's /projects endpoint already returns these; the hook
+  // mapper just needs to forward them.
+  remote?: string;        // git remote URL ("origin"); empty = no git
+  monorepoRoot?: string;  // path to repo root if this project is one
+                          // app inside a monorepo (yaver.workspace.yaml)
+  monorepoApp?: string;   // app name within the monorepo
 }
 
 function useDeviceProjects(device: Device, enabled: boolean, token: string | null | undefined) {
@@ -860,6 +867,13 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
               branch: typeof p?.branch === "string" ? p.branch : undefined,
               framework: typeof p?.framework === "string" ? p.framework : undefined,
               tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
+              remote: typeof p?.remote === "string" && p.remote.trim() ? p.remote : undefined,
+              monorepoRoot: typeof p?.monorepoRoot === "string" && p.monorepoRoot.trim()
+                ? p.monorepoRoot
+                : undefined,
+              monorepoApp: typeof p?.monorepoApp === "string" && p.monorepoApp.trim()
+                ? p.monorepoApp
+                : undefined,
             }))
             .filter((p: DeviceProjectInfo) => p.name.length > 0);
           if (cancelled) return;
@@ -1692,6 +1706,15 @@ export default function DevicesView({
                           </div>
                         </details>
                       ) : null}
+                      {/* Projects on this machine — same fold-with-count
+                          shape as "Other available agents" so the device
+                          card stays scannable. Each chip surfaces the
+                          stack badge, a git-configured marker, and a
+                          monorepo marker. Click for the richer
+                          per-project view inside the Details panel. */}
+                      {!device.isGuest ? (
+                        <DeviceProjectsRail device={device} token={token ?? null} onShowDetails={() => setExpandedId(device.id)} />
+                      ) : null}
                     </div>
                   );
                 })()}
@@ -2050,6 +2073,83 @@ function AgentUpdateModal({
         )}
       </div>
     </div>
+  );
+}
+
+// DeviceProjectsRail — folded-by-default summary on the device card.
+// Mirrors the "Other available agents (N)" pattern: small `<details>`
+// with a count, expanding to a chip rail. Each chip surfaces a stack
+// badge, a git-configured marker, and a monorepo-app marker; clicking
+// any chip jumps the user into the Details panel where the full per-
+// project view lives. Skipped entirely when the device is offline /
+// guest / has zero projects so the card stays compact for those rows.
+function DeviceProjectsRail({
+  device,
+  token,
+  onShowDetails,
+}: {
+  device: Device;
+  token: string | null;
+  onShowDetails?: () => void;
+}) {
+  const { projects, error, loading } = useDeviceProjects(device, !device.isGuest, token);
+  if (loading || error) return null;
+  if (!projects || projects.length === 0) return null;
+  return (
+    <details className="rounded-lg border border-surface-800 bg-surface-900/30">
+      <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-surface-400 hover:text-surface-200">
+        <span>Projects</span>
+        <span className="text-[10px] text-surface-500">({projects.length})</span>
+      </summary>
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-800/60 px-3 py-2">
+        {projects.map((p) => {
+          const stack = (p.framework || "").toUpperCase();
+          const hasGit = !!(p.remote && p.remote.length > 0);
+          const isMonorepoApp = !!(p.monorepoApp && p.monorepoApp.length > 0);
+          const tip = [
+            p.path,
+            stack && `stack: ${stack.toLowerCase()}`,
+            p.branch && `branch: ${p.branch}`,
+            hasGit ? `git: ${p.remote}` : "no git remote",
+            isMonorepoApp && `monorepo app: ${p.monorepoApp}`,
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <button
+              key={`pr:${device.id}:${p.name}`}
+              type="button"
+              onClick={onShowDetails}
+              className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200 hover:bg-emerald-500/20"
+              title={tip || undefined}
+            >
+              <span className="text-emerald-100">{p.name}</span>
+              {stack ? (
+                <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-normal normal-case text-emerald-300/80">
+                  {stack}
+                </span>
+              ) : null}
+              {/* Git-configured marker. The little link glyph means
+                  the project has a configured `origin` remote and is
+                  pushable; absence means the dir is on disk but has
+                  no git history yet. */}
+              {hasGit ? (
+                <span className="text-emerald-300/80" title={`git remote: ${p.remote}`}>⌬</span>
+              ) : (
+                <span className="text-surface-600" title="no git remote configured">∅</span>
+              )}
+              {/* Monorepo-app marker. Filled when the agent's
+                  workspace manifest declares this project as one app
+                  inside a multi-app yaver.workspace.yaml — distinct
+                  from a top-level repo. */}
+              {isMonorepoApp ? (
+                <span className="text-amber-300/80" title={`monorepo app · root ${p.monorepoRoot}`}>◫</span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+    </details>
   );
 }
 
