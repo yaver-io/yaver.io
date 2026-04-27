@@ -61,8 +61,28 @@ import (
 // of which tool is on the wire.
 var (
 	rxMetroPct = regexp.MustCompile(
-		// "iOS Bundling 67.3% (1247/2390)" or "Web Bundling 12% (3/100)"
-		`(?:iOS|Android|Web)\s+Bundling\s+([\d.]+)%\s+\((\d+)\/(\d+)\)`,
+		// Match the percentage progress lines Metro emits during a
+		// bundle. Two distinct shapes exist:
+		//
+		// Modern Metro (RN 0.76+ / Expo 53+) — what we actually see today:
+		//   `iOS ./index.ts ▓▓▓░░░░░░░░░░░ 21.8% (294/692)`
+		//   `iOS node_modules/expo-router/entry.js ▓▓▓ 67% (1247/2390)`
+		//
+		// Legacy Metro (pre-0.76):
+		//   `iOS Bundling 67.3% (1247/2390)`
+		//
+		// The first version of this regex required the literal token
+		// `Bundling` between the platform and the percentage, which
+		// silently stopped matching when Metro switched to the
+		// path-with-progress-bar form. Result: no progress events fired
+		// during the bundle, so the dashboard never built a topicProgress
+		// entry, and users saw a stuck-at-0% experience even though the
+		// build itself was running fine.
+		//
+		// Lazy `.*?` between the platform and the percentage allows
+		// either the path + unicode progress bar (modern) or the literal
+		// `Bundling` (legacy) — both end with `pct% (done/total)`.
+		`(?:iOS|Android|Web)\s+.*?([\d.]+)%\s+\(\s*(\d+)\s*\/\s*(\d+)\s*\)`,
 	)
 	rxBareRNPct = regexp.MustCompile(
 		// "Bundling: [============>            ]  68% (1547/2274)"
