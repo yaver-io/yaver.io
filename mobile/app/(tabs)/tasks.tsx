@@ -800,6 +800,14 @@ export default function TasksScreen() {
   // a short MP4 demo after the task finishes (vibe-preview pipeline);
   // the task row gets a "▶ Watch demo" button when ready.
   const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
+  // codeMode toggle = "yaver code mode". When ON, the task is sent
+  // with source="mobile-code" so the agent applies the same prompt
+  // wrapping the `yaver code` CLI uses (terminal-style, no markdown
+  // headings by default) instead of the mobile dev-server / Hermes
+  // wrapping. Same /tasks endpoint, same TaskManager — only the
+  // prompt prefix differs. See mobile/src/lib/quic.ts::sendTask doc
+  // for the wrapping contract.
+  const [codeModeEnabled, setCodeModeEnabled] = useState(false);
   // Inline player state — set the clipId to open the modal that plays
   // the task's recorded demo MP4. Sourced from the agent at
   // /vibing/preview/clip/<id>.
@@ -1384,6 +1392,7 @@ export default function TasksScreen() {
         projectDir || undefined,
         selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
         videoSummaryEnabled ? { enabled: true } : undefined,
+        codeModeEnabled,
       );
       setNewTaskText("");
       setAttachedImages([]);
@@ -2278,6 +2287,46 @@ export default function TasksScreen() {
                 </View>
                 <Text style={{ color: c.textSecondary, fontSize: 13 }}>
                   🎬 Record demo video when this task finishes
+                </Text>
+              </Pressable>
+              {/*
+                yaver code mode toggle — flips the agent's prompt
+                wrapping. Both modes use the same /tasks endpoint and
+                same TaskManager; they differ only in the prompt
+                prefix the agent injects:
+                  • OFF (default): mobile-style. Agent layers in the
+                    Hermes / Metro / dev-server hot-reload context
+                    so an Expo project can call /dev/start. Markdown
+                    answers, bullet framing, the works. (yaver go)
+                  • ON: terminal-style. Agent skips the dev-server
+                    prefix and instead injects the same wrapper
+                    capability context the `yaver code` CLI uses —
+                    plain terminal output, no canned formatting.
+                Pick ON when you want the runner to behave like a CLI
+                coding session; OFF for "build me an Expo screen".
+              */}
+              <Pressable
+                onPress={() => setCodeModeEnabled((v) => !v)}
+                style={({ pressed }) => [
+                  {
+                    flexDirection: "row", alignItems: "center", gap: 8,
+                    paddingVertical: 8, paddingHorizontal: 4,
+                    opacity: pressed ? 0.6 : 1,
+                  },
+                ]}
+              >
+                <View
+                  style={{
+                    width: 18, height: 18, borderRadius: 4,
+                    borderWidth: 1.5, borderColor: codeModeEnabled ? c.accent : c.border,
+                    backgroundColor: codeModeEnabled ? c.accent : "transparent",
+                    alignItems: "center", justifyContent: "center",
+                  }}
+                >
+                  {codeModeEnabled ? <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>✓</Text> : null}
+                </View>
+                <Text style={{ color: c.textSecondary, fontSize: 13 }}>
+                  ⌨️ yaver code mode (terminal-style wrapping)
                 </Text>
               </Pressable>
               <View style={s.modalButtons}>

@@ -243,31 +243,12 @@ func execProvision(state *SwitchState, step *SwitchStep) (string, error) {
 		}
 		b, _ := json.Marshal(details)
 		return "supabase cloud ready: " + string(b), nil
-	case HostNeon:
-		details, err := seamlessNeon(state.ProjectDir, filepath.Base(state.ProjectDir))
-		if err != nil {
-			return "", err
-		}
-		b, _ := json.Marshal(details)
-		return "neon ready: " + string(b), nil
-	case HostRDS:
-		return "Manual: aws rds create-db-instance … (Yaver AWS integration pending)", nil
-	case HostHetzner, HostYaverCloud:
+	case HostYaverCloud:
 		return "Manual: provision the VPS via `yaver hetzner provision`", nil
-	case HostTurso:
-		return runSwitchCmd(state.ProjectDir, "turso", "db", "create", filepath.Base(state.ProjectDir))
-	case HostCloudflareD1:
-		return runSwitchCmd(state.ProjectDir, "npx", "wrangler", "d1", "create", filepath.Base(state.ProjectDir))
 	case HostVercel:
 		return runSwitchCmd(state.ProjectDir, "npx", "vercel", "link")
-	case HostFly:
-		return runSwitchCmd(state.ProjectDir, "fly", "launch", "--no-deploy")
 	case HostCFWorkers:
 		return runSwitchCmd(state.ProjectDir, "npx", "wrangler", "deploy", "--dry-run")
-	case HostRailway:
-		return runSwitchCmd(state.ProjectDir, "railway", "init")
-	case HostRender:
-		return "Manual: connect the repo at https://dashboard.render.com", nil
 	}
 	return "", fmt.Errorf("no provisioner for host %s", target.Host)
 }
@@ -383,14 +364,6 @@ func execUpdateEnv(state *SwitchState, step *SwitchStep) (string, error) {
 			"# NEXT_PUBLIC_SUPABASE_ANON_KEY=<from Supabase dashboard>",
 			"# SUPABASE_SERVICE_ROLE_KEY=<from Supabase dashboard>",
 		)
-	case HostNeon:
-		additions = append(additions, "# Yaver switch: Neon", "# DATABASE_URL=postgresql://<neon-connection-string>")
-	case HostRDS:
-		additions = append(additions, "# Yaver switch: AWS RDS", "# DATABASE_URL=postgresql://<rds-endpoint>")
-	case HostTurso:
-		additions = append(additions, "# Yaver switch: Turso", "# TURSO_DATABASE_URL=libsql://<db>.turso.io", "# TURSO_AUTH_TOKEN=<token>")
-	case HostCloudflareD1:
-		additions = append(additions, "# Yaver switch: Cloudflare D1", "# D1 is configured in wrangler.toml, not .env")
 	case HostLocalDocker:
 		if target.Backend == BackendConvex {
 			additions = append(additions, "CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210")

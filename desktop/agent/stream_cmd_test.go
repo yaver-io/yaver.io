@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func captureStdout(t *testing.T, fn func()) string {
+func captureStdoutT(t *testing.T, fn func()) string {
 	t.Helper()
 	old := os.Stdout
 	r, w, err := os.Pipe()
@@ -31,7 +31,7 @@ func captureStdout(t *testing.T, fn func()) string {
 }
 
 func TestRenderStreamEventYaverSayNoANSIWhenPiped(t *testing.T) {
-	got := captureStdout(t, func() {
+	got := captureStdoutT(t, func() {
 		renderStreamEvent(map[string]interface{}{
 			"type": "yaver_say",
 			"text": "Working through the checklist.",
@@ -46,7 +46,7 @@ func TestRenderStreamEventYaverSayNoANSIWhenPiped(t *testing.T) {
 }
 
 func TestRenderStreamEventRunnerResultHumanReadable(t *testing.T) {
-	got := captureStdout(t, func() {
+	got := captureStdoutT(t, func() {
 		renderStreamEvent(map[string]interface{}{
 			"type":        "runner_result",
 			"runner":      "claude",
@@ -69,7 +69,7 @@ func TestRenderStreamEventRunnerResultHumanReadable(t *testing.T) {
 }
 
 func TestRenderStreamEventUnknownFallsBackToCompactJSON(t *testing.T) {
-	got := captureStdout(t, func() {
+	got := captureStdoutT(t, func() {
 		renderStreamEvent(map[string]interface{}{
 			"type": "custom_event",
 			"foo":  "bar",

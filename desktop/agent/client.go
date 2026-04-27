@@ -52,13 +52,6 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 	}
 	printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
 
-	// Load speech config for voice commands
-	clientCfg, _ := LoadConfig()
-	var speechCfg *SpeechConfig
-	if clientCfg != nil {
-		speechCfg = clientCfg.Speech
-	}
-
 	// Interactive loop
 	reader := bufio.NewReader(os.Stdin)
 
@@ -155,38 +148,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				continue
 			}
 		}
-		switch {
-		case line == "voice" || line == "/voice":
-			// Record and transcribe voice input
-			if speechCfg == nil || speechCfg.Provider == "" {
-				fmt.Println("Speech not configured. Run: yaver config set speech.provider <whisper|openai|deepgram|assemblyai>")
-				continue
-			}
-			audioPath, err := RecordAudio("")
-			if err != nil {
-				fmt.Printf("Recording error: %v\n", err)
-				continue
-			}
-			defer os.Remove(audioPath)
-			fmt.Print("Transcribing... ")
-			text, err := TranscribeAudio(audioPath, speechCfg)
-			if err != nil {
-				fmt.Printf("\nTranscription error: %v\n", err)
-				continue
-			}
-			fmt.Printf("\n> %s\n", text)
-			os.Remove(audioPath)
-			if text == "" {
-				fmt.Println("(empty transcription, skipping)")
-				continue
-			}
-			payload := buildTerminalPromptPayload(text)
-			printTerminalUserInput(payload)
-			if err := clientCreateTask(ctx, conn, payload, opts); err != nil {
-				fmt.Printf("error: %v\n", err)
-			}
-			continue
-		}
+		_ = line
 
 		payload := buildTerminalPromptPayload(line)
 		printTerminalUserInput(payload)

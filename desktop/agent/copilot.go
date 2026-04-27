@@ -145,11 +145,6 @@ func runOllamaComplete(ctx context.Context, model, prompt string, maxTokens int,
 func CompleteOnce(req CopilotRequest) (*CopilotResponse, error) {
 	model := req.Model
 	if model == "" {
-		cfg, _ := LoadConfig()
-		if cfg != nil && cfg.Speech != nil && cfg.Speech.Provider == "ollama" {
-			// Reuse the dev's configured Ollama binding when
-			// they've already set one for voice.
-		}
 		model = defaultCopilotModel
 	}
 	if req.MaxTokens <= 0 {

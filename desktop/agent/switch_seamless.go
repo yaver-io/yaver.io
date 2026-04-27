@@ -153,29 +153,8 @@ func fetchSupabaseAPIKeys(token, projectID string) (map[string]string, error) {
 	return out, nil
 }
 
-// seamlessNeon provisions a Neon project and captures the connection string,
-// eliminating the need to set PG_TARGET_DSN manually.
-func seamlessNeon(projectDir, projectName string) (map[string]string, error) {
-	if projectName == "" {
-		projectName = filepath.Base(projectDir)
-	}
-	result, err := provisionNeon(projectName, nil)
-	if err != nil {
-		return nil, err
-	}
-	if result.Manual != "" {
-		return nil, fmt.Errorf("neon manual step required: %s", result.Manual)
-	}
-	details := map[string]string{
-		"project_id":   result.ID,
-		"DATABASE_URL": result.ConnectionString,
-	}
-	if result.ConnectionString != "" {
-		_ = os.Setenv("PG_TARGET_DSN", result.ConnectionString)
-	}
-	writeSeamlessEnvBlock(projectDir, "neon", details)
-	return details, nil
-}
+// seamlessNeon was removed 2026-04-28 — Neon is no longer a supported
+// switch target in the lean stack.
 
 // readEnvValue extracts the value of KEY from .env.local / .env if present.
 func readEnvValue(projectDir, key string) string {

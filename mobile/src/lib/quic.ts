@@ -1268,8 +1268,29 @@ export class QuicClient {
 
   // ── Task API ───────────────────────────────────────────────────────
 
-  /** Send a new task to the desktop agent. */
-  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }): Promise<Task> {
+  /**
+   * Send a new task to the desktop agent.
+   *
+   * `codeMode` toggles the agent's prompt-wrapping path:
+   *
+   *   - `false` (default): source="mobile" → mobile-style task
+   *     wrapping. Picks up yaverDevServerContext (Hermes / dev-server
+   *     hot-reload context), video summary support, mobile-source
+   *     guards. This is the existing `yaver go`-style wrapping.
+   *
+   *   - `true`: source="mobile-code" → terminal-style task wrapping
+   *     (yaverWrapperCapabilityContext). Same backend code path —
+   *     same /tasks endpoint, same TaskManager.CreateTask — but the
+   *     agent shapes the prompt the way `yaver code` does:
+   *     no markdown headings by default, no canned bullet framing,
+   *     no fenced blocks unless asked. Used when the user explicitly
+   *     wants the runner to behave like a CLI coding session.
+   *
+   * Both modes are non-destructive: they share TaskManager, /tasks
+   * HTTP, the runner pool, and the same Task type. The toggle only
+   * changes which prompt-prefix the agent injects.
+   */
+  async sendTask(title: string, description: string, model?: string, runner?: string, customCommand?: string, speechContext?: { inputFromSpeech?: boolean; sttProvider?: string; ttsEnabled?: boolean; ttsProvider?: string; verbosity?: number }, images?: ImageAttachment[], workDir?: string, mode?: string, video?: { enabled?: boolean; source?: "browser" | "sim-ios" | "sim-android" | "phone" }, codeMode?: boolean): Promise<Task> {
     this.assertConnected();
     // Hard 30s timeout — without it, a stale relay tunnel (e.g. after a
     // failed device-switch attempt) makes this POST hang forever and
@@ -1282,7 +1303,9 @@ export class QuicClient {
       body: JSON.stringify({
         title,
         description,
-        source: "mobile",
+        // codeMode flips the agent's prompt-wrapping. See the doc
+        // comment on sendTask above for the wrapping difference.
+        source: codeMode ? "mobile-code" : "mobile",
         ...(model ? { model } : {}),
         ...(runner ? { runner } : {}),
         ...(mode ? { mode } : {}),

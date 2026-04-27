@@ -202,35 +202,6 @@ func TestTaskDeleteNonexistent(t *testing.T) {
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// Task with speech context & verbosity
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestTaskCreateWithSpeechContext(t *testing.T) {
-	token := "test-token-speech"
-	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
-	tm.DummyMode = true
-	baseURL, cancel := startTestServer(t, token, tm)
-	defer cancel()
-
-	body := `{
-		"title": "Speech context test",
-		"speechContext": {
-			"inputFromSpeech": true,
-			"sttProvider": "openai",
-			"ttsEnabled": true,
-			"verbosity": 3
-		}
-	}`
-	code, resp := doRequest(t, "POST", baseURL+"/tasks", token, body)
-	if code != 200 && code != 201 {
-		t.Fatalf("expected 200/201, got %d", code)
-	}
-	if resp["ok"] != true {
-		t.Fatalf("expected ok=true")
-	}
-}
-
 func TestTaskCreateWithModel(t *testing.T) {
 	token := "test-token-model"
 	tm := NewTaskManager(t.TempDir(), nil, defaultTestRunner())
@@ -644,11 +615,6 @@ func TestConfigLoadSaveRoundtrip(t *testing.T) {
 		DeviceID:      "test-device",
 		ConvexSiteURL: "https://test.convex.site",
 		RelayPassword: "test-pass",
-		Speech: &SpeechConfig{
-			Provider:   "openai",
-			APIKey:     "sk-test",
-			TTSEnabled: true,
-		},
 		RelayServers: []RelayServerConfig{
 			{ID: "r1", QuicAddr: "1.2.3.4:4433", HttpURL: "https://relay.example.com", Password: "pw"},
 		},
@@ -667,18 +633,6 @@ func TestConfigLoadSaveRoundtrip(t *testing.T) {
 	}
 	if loaded.DeviceID != cfg.DeviceID {
 		t.Fatalf("expected DeviceID=%s, got %s", cfg.DeviceID, loaded.DeviceID)
-	}
-	if loaded.Speech == nil {
-		t.Fatal("expected Speech config")
-	}
-	if loaded.Speech.Provider != "openai" {
-		t.Fatalf("expected provider openai, got %s", loaded.Speech.Provider)
-	}
-	if loaded.Speech.APIKey != "sk-test" {
-		t.Fatalf("expected api key sk-test, got %s", loaded.Speech.APIKey)
-	}
-	if !loaded.Speech.TTSEnabled {
-		t.Fatal("expected TTSEnabled=true")
 	}
 	if len(loaded.RelayServers) != 1 {
 		t.Fatalf("expected 1 relay server, got %d", len(loaded.RelayServers))
@@ -713,53 +667,6 @@ func TestConfigLoadCorrupted(t *testing.T) {
 	_, err := LoadConfig()
 	if err == nil {
 		t.Fatal("expected error for corrupted config")
-	}
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// SpeechContext in task creation
-// ═══════════════════════════════════════════════════════════════════════
-
-func TestSpeechContextParsing(t *testing.T) {
-	sc := &SpeechContext{
-		InputFromSpeech: true,
-		STTProvider:     "openai",
-		TTSEnabled:      true,
-		TTSProvider:     "device",
-	}
-	v := 5
-	sc.Verbosity = &v
-
-	data, err := json.Marshal(sc)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-
-	var parsed SpeechContext
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if !parsed.InputFromSpeech {
-		t.Fatal("expected InputFromSpeech=true")
-	}
-	if parsed.STTProvider != "openai" {
-		t.Fatalf("expected openai, got %s", parsed.STTProvider)
-	}
-	if parsed.Verbosity == nil || *parsed.Verbosity != 5 {
-		t.Fatalf("expected verbosity=5, got %v", parsed.Verbosity)
-	}
-}
-
-func TestSpeechContextNilVerbosity(t *testing.T) {
-	sc := &SpeechContext{
-		InputFromSpeech: true,
-		STTProvider:     "whisper",
-	}
-	data, _ := json.Marshal(sc)
-	var parsed SpeechContext
-	json.Unmarshal(data, &parsed)
-	if parsed.Verbosity != nil {
-		t.Fatalf("expected nil verbosity, got %v", parsed.Verbosity)
 	}
 }
 

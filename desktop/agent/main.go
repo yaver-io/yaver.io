@@ -2386,6 +2386,19 @@ func runServe(args []string) {
 
 	httpServer.execMgr = NewExecManager(taskMgr.workDir, cfg.Sandbox)
 	httpServer.scheduler = NewScheduler(taskMgr)
+	// Wire the routine ("Verb-mode") dispatcher so scheduled routines
+	// can invoke any registered ops verb on this or any peer machine.
+	// Caller is "owner" because routine creation requires owner auth at
+	// the MCP layer; firing them later is treated as an owner-initiated
+	// internal call. Background context — the cron tick has no
+	// inbound HTTP request to inherit cancellation from.
+	httpServer.scheduler.SetOpsDispatcher(func(req OpsRequest) OpsResult {
+		return dispatchOps(OpsContext{
+			Ctx:    context.Background(),
+			Server: httpServer,
+			Caller: "owner",
+		}, req)
+	})
 	// Wire the process-global TaskSupervisor to runServe's context so
 	// every SupervisedGo() ticker gets cancelled cleanly on shutdown.
 	// Must happen before any Start* call below so their Register hits

@@ -425,8 +425,7 @@ func mcpInvite(method, recipient string) interface{} {
 	case "email":
 		subject := "Check out Yaver — developer MCP server"
 		mailURL := fmt.Sprintf("mailto:%s?subject=%s&body=%s", recipient, url.QueryEscape(subject), url.QueryEscape(message))
-		mcpOpenURL(mailURL)
-		return map[string]interface{}{"ok": true, "message": "Opening email client", "url": shareURL}
+		return map[string]interface{}{"ok": true, "message": "Email URL ready", "url": shareURL, "mailto": mailURL}
 	case "slack":
 		return map[string]interface{}{"message": message, "url": shareURL, "note": "Paste this in your Slack channel"}
 	default:

@@ -18,7 +18,6 @@ type codeConfigPatchRequest struct {
 	Model              *string `json:"model,omitempty"`
 	Provider           *string `json:"provider,omitempty"`
 	BaseURL            *string `json:"baseUrl,omitempty"`
-	OrchestrationMode  *string `json:"orchestrationMode,omitempty"`
 	WorkMode           *string `json:"workMode,omitempty"`
 	AttachedDeviceID   *string `json:"attachedDeviceId,omitempty"`
 	AttachedDeviceName *string `json:"attachedDeviceName,omitempty"`
@@ -29,6 +28,15 @@ type codeConfigPatchRequest struct {
 	SmallModel         *string `json:"smallModel,omitempty"`
 	PlanModel          *string `json:"planModel,omitempty"`
 	BuildModel         *string `json:"buildModel,omitempty"`
+	// Inert fields — the orchestration / compression layer was
+	// dropped 2026-04-28 (Phase 5/4 of yaver code). Kept here so a
+	// concurrent thread that still passes them through Convex /
+	// MCP / patches doesn't break the build. Patch handlers ignore
+	// them.
+	OrchestrationMode      *string `json:"orchestrationMode,omitempty"`
+	CompressionMode        *string `json:"compressionMode,omitempty"`
+	HandoffCompressionMode *string `json:"handoffCompressionMode,omitempty"`
+	MemoryCompressionMode  *string `json:"memoryCompressionMode,omitempty"`
 }
 
 func (s *HTTPServer) handleCodeConfig(w http.ResponseWriter, r *http.Request) {
@@ -118,9 +126,6 @@ func applyCodeConfigPatch(patch codeConfigPatchRequest) (*CodeConfigSummary, err
 	}
 	if patch.BaseURL != nil {
 		profile.BaseURL = strings.TrimSpace(*patch.BaseURL)
-	}
-	if patch.OrchestrationMode != nil {
-		profile.OrchestrationMode = strings.ToLower(strings.TrimSpace(*patch.OrchestrationMode))
 	}
 	if patch.RepoPath != nil {
 		repoPath := strings.TrimSpace(*patch.RepoPath)

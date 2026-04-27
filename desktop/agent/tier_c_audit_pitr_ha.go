@@ -251,7 +251,13 @@ func DeployMultiRegion(name string, regions []string, domain string) (*MultiRegi
 		return nil, fmt.Errorf("multi-region needs at least 2 regions (e.g. [\"nbg1\", \"fsn1\"])")
 	}
 	res := &MultiRegionResult{Regions: regions}
-	prov := provisionerRegistry()[HostHetzner]
+	// Multi-region used to spin up Hetzner VPSes; the lean stack
+	// dropped the Hetzner provisioner. Returning a manual-runbook
+	// stub so callers see a clear "not supported" message instead
+	// of a nil-deref. Re-enable by adding HostHetzner back to
+	// provisionerRegistry().
+	return nil, fmt.Errorf("multi-region provisioning is disabled in the lean stack — set up VPSes manually if needed")
+	prov := func(name string, opts map[string]string) (*ProvisionResult, error) { return nil, fmt.Errorf("disabled") }
 	if prov == nil {
 		return nil, fmt.Errorf("no Hetzner provisioner available — did you connect a Hetzner account?")
 	}

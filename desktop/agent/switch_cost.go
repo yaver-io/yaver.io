@@ -97,35 +97,6 @@ func estimateTargetCost(t SwitchTarget, u ProjectUsage) CostEstimate {
 			est.Monthly = 25
 			est.Tier = "pro"
 		}
-	case HostNeon:
-		est.Tier = "free"
-		est.FreeTierOK = u.DBSizeMB < 3000
-		if !est.FreeTierOK {
-			est.Monthly = 19
-			est.Tier = "launch"
-		}
-	case HostRDS:
-		est.Monthly = 15 + (u.DBSizeMB/1024)*0.115 // rough db.t4g.micro + storage
-		est.Tier = "paid"
-	case HostCloudSQL:
-		est.Monthly = 10 + (u.DBSizeMB/1024)*0.17
-		est.Tier = "paid"
-	case HostDOManaged:
-		est.Monthly = 15
-		est.Tier = "paid"
-	case HostTurso:
-		est.Tier = "free"
-		est.FreeTierOK = u.DBSizeMB < 9000 // 9GB free tier
-		if !est.FreeTierOK {
-			est.Monthly = 29
-		}
-	case HostCloudflareD1:
-		est.Tier = "free"
-		est.FreeTierOK = u.DBSizeMB < 5000
-	case HostHetzner:
-		est.Monthly = 4 // CPX11
-		est.Tier = "vps"
-		est.Notes = "CPX11 VPS, self-managed"
 	case HostYaverCloud:
 		est.Monthly = 9
 		est.Tier = "managed"
@@ -133,16 +104,7 @@ func estimateTargetCost(t SwitchTarget, u ProjectUsage) CostEstimate {
 		est.Tier = "free"
 		est.FreeTierOK = true
 		est.Notes = "Hobby tier; Pro is $20/seat for commercial use"
-	case HostFly:
-		est.Tier = "free"
-		est.FreeTierOK = true
 	case HostCFWorkers:
-		est.Tier = "free"
-		est.FreeTierOK = true
-	case HostRailway:
-		est.Monthly = 5
-		est.Tier = "paid"
-	case HostRender:
 		est.Tier = "free"
 		est.FreeTierOK = true
 	}

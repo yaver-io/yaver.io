@@ -63,8 +63,7 @@ func buildCodeStatusPayload() (map[string]interface{}, error) {
 		return nil, err
 	}
 	payload := map[string]interface{}{
-		"code":       summary,
-		"autoPolicy": defaultCodeAutoPolicy(),
+		"code": summary,
 	}
 	if cfg.AuthToken != "" {
 		if devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {

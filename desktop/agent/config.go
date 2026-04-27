@@ -33,8 +33,11 @@ type Config struct {
 	Exec                          *ExecConfig              `json:"exec,omitempty"`
 	Email                         *EmailConfig             `json:"email,omitempty"`
 	ACLPeers                      []ACLPeerConfig          `json:"acl_peers,omitempty"`
+	// Speech is an inert JSON field. The voice surface was killed
+	// 2026-04-28 (project_lean_stack_2026_04_28.md). This field is
+	// preserved only so a concurrent thread / older config.json
+	// that still serializes it doesn't break parsing.
 	Speech                        *SpeechConfig            `json:"speech,omitempty"`
-	Voice                         *VoiceConfig             `json:"voice,omitempty"`
 	Notifications                 *NotificationConfig      `json:"notifications,omitempty"`
 	WebhookSecret                 string                   `json:"webhook_secret,omitempty"`
 	AnalyticsWebhookURL           string                   `json:"analytics_webhook_url,omitempty"`
@@ -116,9 +119,14 @@ type CodeCLIConfig struct {
 	Model              string `json:"model,omitempty"`
 	Provider           string `json:"provider,omitempty"`
 	BaseURL            string `json:"base_url,omitempty"`
-	OrchestrationMode  string `json:"orchestration_mode,omitempty"` // manual | auto
 	RepoPath           string `json:"repo_path,omitempty"`
 	RepoRemote         bool   `json:"repo_remote,omitempty"`
+	// OrchestrationMode is preserved as an inert JSON field so a
+	// concurrent thread that's still pushing it through Convex /
+	// patches doesn't break the build. The CLI / MCP no longer
+	// honors it — see project_lean_stack_2026_04_28.md (yaver code
+	// Phase 5 was dropped 2026-04-28).
+	OrchestrationMode string `json:"orchestration_mode,omitempty"`
 }
 
 // ExecConfig controls remote command execution settings.
@@ -129,11 +137,13 @@ type ExecConfig struct {
 	Shell          string `json:"shell,omitempty"`             // default: "sh"
 }
 
-// SpeechConfig holds speech-to-text and text-to-speech settings for CLI voice input.
+// SpeechConfig is preserved as an inert struct after the voice
+// surface was removed 2026-04-28. No code path consumes it any
+// more. Kept only to satisfy stale references and JSON parsing.
 type SpeechConfig struct {
-	Provider   string `json:"provider,omitempty"`    // "whisper" (local), "openai", "deepgram", "assemblyai"
-	APIKey     string `json:"api_key,omitempty"`     // API key for cloud providers
-	TTSEnabled bool   `json:"tts_enabled,omitempty"` // read responses aloud (macOS `say`, linux `espeak`)
+	Provider   string `json:"provider,omitempty"`
+	APIKey     string `json:"api_key,omitempty"`
+	TTSEnabled bool   `json:"tts_enabled,omitempty"`
 }
 
 // EmailConfig holds email provider credentials.

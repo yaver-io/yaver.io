@@ -57,8 +57,8 @@ func buildCodeCompactContext(task *Task, maxTurns int) CodeCompactContext {
 		Model:      task.Model,
 		WorkDir:    strings.TrimSpace(task.WorkDir),
 		Title:      strings.TrimSpace(task.Title),
-		UserIntent: firstNonEmpty(lastUserTurn(task.Turns), strings.TrimSpace(task.Description), strings.TrimSpace(task.Title)),
-		LastResult: truncateCodeCompactField(task.ResultText, 2400),
+		UserIntent: truncateCodeCompactField(strings.TrimSpace(firstNonEmpty(lastUserTurn(task.Turns), strings.TrimSpace(task.Description), strings.TrimSpace(task.Title))), 1200),
+		LastResult: truncateCodeCompactField(strings.TrimSpace(task.ResultText), 2400),
 	}
 	start := 0
 	if len(task.Turns) > maxTurns {
@@ -69,7 +69,7 @@ func buildCodeCompactContext(task *Task, maxTurns int) CodeCompactContext {
 		if role == "" {
 			role = "turn"
 		}
-		ctx.RecentTurns = append(ctx.RecentTurns, fmt.Sprintf("%s: %s", role, truncateCodeCompactField(turn.Content, 700)))
+		ctx.RecentTurns = append(ctx.RecentTurns, fmt.Sprintf("%s: %s", role, truncateCodeCompactField(strings.TrimSpace(turn.Content), 700)))
 	}
 	for i, path := range task.ImagePaths {
 		if i >= 4 {
@@ -133,3 +133,4 @@ func truncateCodeCompactField(s string, max int) string {
 	}
 	return strings.TrimSpace(s[:max]) + "..."
 }
+

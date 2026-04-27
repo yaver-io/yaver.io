@@ -22,6 +22,27 @@ import (
 	"time"
 )
 
+// detectGPUNameForOllama returns a short GPU name string used to
+// pick a sensible Ollama model recommendation. Best-effort: returns
+// "" when no obvious GPU detection succeeds.
+func detectGPUNameForOllama() string {
+	// NVIDIA — fastest path
+	if out, err := exec.Command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").Output(); err == nil {
+		if name := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0]); name != "" {
+			return name
+		}
+	}
+	// Apple Silicon — system_profiler is slow, but cheap to fall back on
+	if runtime.GOOS == "darwin" {
+		if out, err := exec.Command("sysctl", "-n", "machdep.cpu.brand_string").Output(); err == nil {
+			if name := strings.TrimSpace(string(out)); strings.Contains(name, "Apple") {
+				return name + " (MPS)"
+			}
+		}
+	}
+	return ""
+}
+
 const (
 	ollamaBaseURL = "http://localhost:11434"
 	ollamaPort    = 11434
@@ -365,9 +386,8 @@ func (m *ModelManager) Status() (*OllamaStatus, error) {
 		status.Models = len(models)
 	}
 
-	// GPU info (reuse the same detection helper used by voice.go)
-	_, gpuName := DetectGPU()
-	status.GPU = gpuName
+	// GPU info — best-effort; empty string if not detected.
+	status.GPU = detectGPUNameForOllama()
 
 	return status, nil
 }
@@ -435,7 +455,7 @@ func (m *ModelManager) Recommend() ([]ModelRecommendation, error) {
 	ramBytes := totalSystemRAMBytes()
 	ramGB := float64(ramBytes) / (1 << 30)
 
-	_, gpuName := DetectGPU()
+	gpuName := detectGPUNameForOllama()
 
 	type candidate struct {
 		name        string

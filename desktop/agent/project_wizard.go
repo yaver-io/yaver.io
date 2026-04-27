@@ -1807,37 +1807,288 @@ export default defineSchema({
 }
 
 func convexAuth(a map[string]string) string {
-	return fmt.Sprintf(`// Convex HTTP actions that handle OAuth callbacks for %s.
+	var b strings.Builder
+	fmt.Fprintf(&b, `// Convex HTTP actions that handle OAuth callbacks for %s.
 // Providers enabled: %s.
 //
-// Each handler receives the provider-issued code, exchanges it
-// for an access token, fetches the user profile, and upserts a
-// row into the users table. The real secret values live in Convex
-// env vars — set them with `+"`npx convex env set`"+`.
-import { httpRouter } from "convex/server";
-import { httpAction } from "./_generated/server";
+// Each handler exchanges the provider authorization code for an
+// access token, fetches the user profile, and upserts a row into
+// the users table via the internal mutation upsertUserAndSession.
+// On success the user is redirected to APP_URL with a session token
+// in the fragment so the browser-side JS can pick it up.
+//
+// Required Convex env vars (set with `+"`npx convex env set <KEY> <VALUE>`"+`):
+//   APP_URL                     — your front-end origin (e.g. https://app.example.com)
+//   CONVEX_SITE_URL             — your Convex HTTP URL (auto-set when you deploy)
+`, a["app_name"], describeAuth(a))
+
+	if a["oauth_apple"] == "true" {
+		b.WriteString("//   OAUTH_APPLE_CLIENT_ID       — Apple Services ID\n")
+		b.WriteString("//   OAUTH_APPLE_CLIENT_SECRET   — Apple-signed JWT (rotate every 6 months)\n")
+	}
+	if a["oauth_google"] == "true" {
+		b.WriteString("//   OAUTH_GOOGLE_CLIENT_ID      — Google OAuth client ID\n")
+		b.WriteString("//   OAUTH_GOOGLE_CLIENT_SECRET  — Google OAuth client secret\n")
+	}
+	if a["oauth_microsoft"] == "true" {
+		b.WriteString("//   OAUTH_MICROSOFT_CLIENT_ID   — Azure app registration client ID\n")
+		b.WriteString("//   OAUTH_MICROSOFT_CLIENT_SECRET — Azure app secret\n")
+		b.WriteString("//   OAUTH_MICROSOFT_TENANT      — tenant id (default: \"common\")\n")
+	}
+
+	b.WriteString(`import { httpRouter } from "convex/server";
+import { httpAction, internalMutation } from "./_generated/server";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
 
 const http = httpRouter();
 
-// Stub handlers — fill in with your preferred OAuth client.
-http.route({
-  path: "/auth/callback/apple",
-  method: "GET",
-  handler: httpAction(async () => new Response("TODO: apple callback")),
+// ── Shared helpers ──────────────────────────────────────────
+
+function appUrl(): string {
+  return process.env.APP_URL || "http://localhost:3000";
+}
+
+function siteUrl(): string {
+  return process.env.CONVEX_SITE_URL || "";
+}
+
+function randomToken(): string {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function redirect(url: string): Response {
+  return new Response(null, { status: 302, headers: { Location: url } });
+}
+
+function fail(message: string): Response {
+  const u = new URL(appUrl());
+  u.pathname = "/auth/error";
+  u.searchParams.set("error", message);
+  return redirect(u.toString());
+}
+
+async function exchangeJSON(url: string, body: URLSearchParams): Promise<any> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+    body: body.toString(),
+  });
+  if (!res.ok) throw new Error("token exchange failed: " + res.status);
+  return res.json();
+}
+
+async function fetchJSON(url: string, accessToken: string): Promise<any> {
+  const res = await fetch(url, { headers: { Authorization: "Bearer " + accessToken } });
+  if (!res.ok) throw new Error("userinfo failed: " + res.status);
+  return res.json();
+}
+
+// ── Internal mutation: upsert user + session ────────────────
+
+export const upsertUserAndSession = internalMutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    avatarUrl: v.optional(v.string()),
+    provider: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", args.email))
+      .unique();
+    const now = Date.now();
+    let userId;
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        name: args.name ?? existing.name,
+        avatarUrl: args.avatarUrl ?? existing.avatarUrl,
+        provider: args.provider,
+      });
+      userId = existing._id;
+    } else {
+      userId = await ctx.db.insert("users", {
+        email: args.email,
+        name: args.name,
+        avatarUrl: args.avatarUrl,
+        provider: args.provider,
+        createdAt: now,
+      });
+    }
+    const token = Array.from(crypto.getRandomValues(new Uint8Array(32)))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    await ctx.db.insert("sessions", {
+      userId,
+      token,
+      createdAt: now,
+      expiresAt: now + 30 * 24 * 60 * 60 * 1000, // 30 days
+    });
+    return token;
+  },
 });
+
+async function completeAuth(
+  ctx: any,
+  email: string,
+  name: string | undefined,
+  avatarUrl: string | undefined,
+  provider: string,
+): Promise<Response> {
+  if (!email) return fail("provider_missing_email");
+  const token: string = await ctx.runMutation(internal.auth.upsertUserAndSession, {
+    email, name, avatarUrl, provider,
+  });
+  const u = new URL(appUrl());
+  u.pathname = "/auth/callback";
+  u.hash = "token=" + token;
+  return redirect(u.toString());
+}
+`)
+
+	if a["oauth_google"] == "true" {
+		b.WriteString(`
+// ── Google ──────────────────────────────────────────────────
+
 http.route({
   path: "/auth/callback/google",
   method: "GET",
-  handler: httpAction(async () => new Response("TODO: google callback")),
+  handler: httpAction(async (ctx, req) => {
+    const code = new URL(req.url).searchParams.get("code");
+    if (!code) return fail("google_missing_code");
+    try {
+      const tok = await exchangeJSON("https://oauth2.googleapis.com/token", new URLSearchParams({
+        code,
+        client_id: process.env.OAUTH_GOOGLE_CLIENT_ID || "",
+        client_secret: process.env.OAUTH_GOOGLE_CLIENT_SECRET || "",
+        redirect_uri: siteUrl() + "/auth/callback/google",
+        grant_type: "authorization_code",
+      }));
+      const profile = await fetchJSON("https://openidconnect.googleapis.com/v1/userinfo", tok.access_token);
+      return await completeAuth(ctx, profile.email, profile.name, profile.picture, "google");
+    } catch (e: any) {
+      return fail("google_oauth_failed");
+    }
+  }),
 });
+`)
+	}
+
+	if a["oauth_microsoft"] == "true" {
+		b.WriteString(`
+// ── Microsoft ───────────────────────────────────────────────
+
 http.route({
   path: "/auth/callback/microsoft",
   method: "GET",
-  handler: httpAction(async () => new Response("TODO: microsoft callback")),
+  handler: httpAction(async (ctx, req) => {
+    const code = new URL(req.url).searchParams.get("code");
+    if (!code) return fail("microsoft_missing_code");
+    const tenant = process.env.OAUTH_MICROSOFT_TENANT || "common";
+    try {
+      const tok = await exchangeJSON("https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token", new URLSearchParams({
+        code,
+        client_id: process.env.OAUTH_MICROSOFT_CLIENT_ID || "",
+        client_secret: process.env.OAUTH_MICROSOFT_CLIENT_SECRET || "",
+        redirect_uri: siteUrl() + "/auth/callback/microsoft",
+        grant_type: "authorization_code",
+        scope: "openid email profile",
+      }));
+      const profile = await fetchJSON("https://graph.microsoft.com/oidc/userinfo", tok.access_token);
+      return await completeAuth(ctx, profile.email, profile.name, undefined, "microsoft");
+    } catch (e: any) {
+      return fail("microsoft_oauth_failed");
+    }
+  }),
 });
+`)
+	}
 
+	if a["oauth_apple"] == "true" {
+		b.WriteString(`
+// ── Apple ───────────────────────────────────────────────────
+// Apple posts back form-encoded data on the callback (POST), and
+// returns the user's email inside the id_token JWT. We decode
+// without verifying the signature here for simplicity — for
+// production, fetch Apple's JWK set and verify the RS256
+// signature against https://appleid.apple.com/auth/keys.
+
+function decodeJwtPayload(jwt: string): any {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) return null;
+  const pad = (s: string) => s + "=".repeat((4 - (s.length % 4)) % 4);
+  const b64 = pad(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+  try { return JSON.parse(atob(b64)); } catch { return null; }
+}
+
+async function appleCallback(ctx: any, req: Request): Promise<Response> {
+  let code = "", idToken = "";
+  if (req.method === "POST") {
+    const body = await req.text();
+    const params = new URLSearchParams(body);
+    code = params.get("code") || "";
+    idToken = params.get("id_token") || "";
+  } else {
+    const u = new URL(req.url);
+    code = u.searchParams.get("code") || "";
+    idToken = u.searchParams.get("id_token") || "";
+  }
+  if (!code) return fail("apple_missing_code");
+  try {
+    const tok = await exchangeJSON("https://appleid.apple.com/auth/token", new URLSearchParams({
+      code,
+      client_id: process.env.OAUTH_APPLE_CLIENT_ID || "",
+      client_secret: process.env.OAUTH_APPLE_CLIENT_SECRET || "",
+      redirect_uri: siteUrl() + "/auth/callback/apple",
+      grant_type: "authorization_code",
+    }));
+    const claims = decodeJwtPayload(tok.id_token || idToken);
+    if (!claims?.email) return fail("apple_missing_email");
+    return await completeAuth(ctx, claims.email, undefined, undefined, "apple");
+  } catch (e: any) {
+    return fail("apple_oauth_failed");
+  }
+}
+
+http.route({ path: "/auth/callback/apple", method: "GET",  handler: httpAction(appleCallback) });
+http.route({ path: "/auth/callback/apple", method: "POST", handler: httpAction(appleCallback) });
+`)
+	}
+
+	if a["oauth_email"] == "true" {
+		b.WriteString(`
+// ── Email + password (simple scaffold) ─────────────────────
+// Uses a basic SHA-256(salt + password) hash. For production,
+// switch to bcrypt / argon2 — Convex actions can call npm
+// packages. Treats this as a bootstrap pattern, not final.
+
+http.route({
+  path: "/auth/email/signup",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const { email, password, name } = await req.json();
+    if (!email || !password) return new Response("missing_fields", { status: 400 });
+    const enc = new TextEncoder();
+    const hash = await crypto.subtle.digest("SHA-256", enc.encode("yaver:" + password));
+    const passwordHash = Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+    const token: string = await ctx.runMutation(internal.auth.upsertUserAndSession, {
+      email, name, provider: "password",
+    });
+    return new Response(JSON.stringify({ token, passwordHash }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+`)
+	}
+
+	b.WriteString(`
 export default http;
-`, a["app_name"], describeAuth(a))
+`)
+	return b.String()
 }
 
 func convexPackageJSON(a map[string]string) string {
