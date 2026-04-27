@@ -731,23 +731,15 @@ export default function PreviewPane({
           appendRecovery(`warn: cache clear failed: ${e?.message || e}`);
         }
 
-        if (savedFramework) {
-          stage(0.85, `restarting dev server (${savedFramework})…`);
-          appendRecovery(`→ restarting dev server (${savedFramework})…`);
-          try {
-            await agentClient.startDevServer({
-              framework: savedFramework,
-              workDir: savedWorkDir,
-              targetDeviceId: selectedPreviewTarget?.id,
-              targetDeviceName: selectedPreviewTarget?.name,
-            });
-            appendRecovery("✓ dev server restarted");
-          } catch (e: any) {
-            appendRecovery(`✗ restart failed: ${e?.message || e}`);
-          }
-        }
+        // Don't auto-restart the previous dev server — that
+        // forces a project the user may not want any more
+        // ("auto-selects sfmg, I should select it"). After
+        // cleaning we leave the picker visible so the user
+        // chooses what to start next. To re-run the same
+        // project they just click ▶ START on its row.
+        appendRecovery(`  (cleaned — pick a project to start)`);
       } else {
-        appendRecovery("  (no dev server was running — skipping restart)");
+        appendRecovery("  (no dev server was running — pick a project to start)");
       }
 
       stage(0.95, "refreshing preview…");
@@ -849,7 +841,13 @@ export default function PreviewPane({
   }, [devStatus?.framework]);
 
   const handleStop = useCallback(async () => {
-    await agentClient.stopDevServer();
+    setLogLines((prev) => [...prev.slice(-200), `[ui] ▶ Stop & switch — sending POST /dev/stop…`]);
+    try {
+      await agentClient.stopDevServer();
+      setLogLines((prev) => [...prev.slice(-200), `[ui] ✓ /dev/stop accepted; dev server torn down`]);
+    } catch (e: any) {
+      setLogLines((prev) => [...prev.slice(-200), `[ui] ✗ /dev/stop failed: ${e?.message ?? e}`]);
+    }
     setDevStatus(null);
   }, []);
 
@@ -867,7 +865,11 @@ export default function PreviewPane({
     async (project: Project) => {
       setStartingPath(project.path);
       setStartError(null);
-      setLogLines([]);
+      setLogLines([
+        `[ui] ▶ START ${project.name} (${likelyFramework(project)})`,
+        `[ui] workDir: ${project.path}`,
+        `[ui] sending POST /dev/start …`,
+      ]);
       try {
         await agentClient.startDevServer({
           framework: likelyFramework(project),
@@ -876,9 +878,12 @@ export default function PreviewPane({
           targetDeviceId: selectedPreviewTarget?.id,
           targetDeviceName: selectedPreviewTarget?.name,
         });
+        setLogLines((prev) => [...prev, `[ui] ✓ /dev/start accepted, waiting for "ready" event…`]);
         // status poll will pick up running=true shortly
       } catch (e: any) {
-        setStartError(e?.message || "Failed to start dev server");
+        const msg = e?.message || "Failed to start dev server";
+        setStartError(msg);
+        setLogLines((prev) => [...prev, `[ui] ✗ /dev/start failed: ${msg}`]);
       }
       setStartingPath(null);
     },
