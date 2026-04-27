@@ -31,7 +31,7 @@ interface Props {
 export default function WebviewView({
   connectedDevice,
   connState,
-  preferredMode = "mobile",
+  preferredMode = "web",
   preferredProjectPath,
   mobileWorkers,
   selectedPreviewTarget,

@@ -670,6 +670,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects", s.auth(s.handleProjects))
 	mux.HandleFunc("/projects/refresh", s.auth(s.handleProjectsRefresh))
 	mux.HandleFunc("/projects/mobile", s.auth(s.handleMobileProjects))
+	mux.HandleFunc("/projects/web", s.auth(s.handleProjectsByCapability))
+	mux.HandleFunc("/projects/all", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
 	mux.HandleFunc("/projects/actions", s.auth(s.handleProjectActions))
 	mux.HandleFunc("/publish/config", s.auth(s.handlePublishConfig))

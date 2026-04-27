@@ -114,3 +114,80 @@ func writeManifestFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestDetectMonorepoLineageRecognisesAppsLayout — apps/<name> shape
+// (turbo-style monorepos). Carrotbet has `apps/web/` for example.
+func TestDetectMonorepoLineageRecognisesAppsLayout(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "carrotbet")
+	app := filepath.Join(repo, "apps", "web")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, name := detectMonorepoLineage(app)
+	if root != repo {
+		t.Errorf("root = %q, want %q", root, repo)
+	}
+	if name != "apps/web" {
+		t.Errorf("name = %q, want apps/web", name)
+	}
+}
+
+// TestDetectMonorepoLineageRecognisesMobileLayout — `mobile/` at root,
+// no `apps/` wrapper. Carrotbet's mobile RN app sits here.
+func TestDetectMonorepoLineageRecognisesMobileLayout(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "carrotbet")
+	mobile := filepath.Join(repo, "mobile")
+	if err := os.MkdirAll(mobile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, name := detectMonorepoLineage(mobile)
+	if root != repo {
+		t.Errorf("root = %q, want %q", root, repo)
+	}
+	if name != "mobile" {
+		t.Errorf("name = %q, want mobile", name)
+	}
+}
+
+// TestDetectMonorepoLineageRecognisesYaverWorkspace — yaver.workspace.yaml
+// counts as a monorepo root marker even without .git.
+func TestDetectMonorepoLineageRecognisesYaverWorkspace(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "wsproj")
+	app := filepath.Join(repo, "apps", "frontend")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "yaver.workspace.yaml"), []byte("version: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, name := detectMonorepoLineage(app)
+	if root != repo {
+		t.Errorf("root = %q, want %q", root, repo)
+	}
+	if name != "apps/frontend" {
+		t.Errorf("name = %q, want apps/frontend", name)
+	}
+}
+
+// TestDetectMonorepoLineageStandalone — single-package repo where the
+// project IS the repo root: no monorepo lineage should be reported.
+func TestDetectMonorepoLineageStandalone(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "sfmg")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, name := detectMonorepoLineage(repo)
+	if root != "" || name != "" {
+		t.Errorf("expected standalone, got root=%q name=%q", root, name)
+	}
+}

@@ -3190,6 +3190,51 @@ export class AgentClient {
     return data.projects ?? [];
   }
 
+  /** Capability-filtered project list. Agent v1.99.75+ exposes
+   *  `/projects/web` and `/projects/all` alongside the existing
+   *  `/projects/mobile`. Each project carries `webCapable` and
+   *  `mobileCapable` flags so the dashboard can populate the Web App
+   *  tab and Mobile App tab independently — and a single project
+   *  (e.g. an Expo app with `react-native-web` in deps) shows up in
+   *  both lists.
+   *
+   *  Returns full MobileProject records: name, path, framework,
+   *  capability flags, monorepoRoot/monorepoApp lineage. */
+  async listProjectsByCapability(capability: "web" | "mobile" | "all"): Promise<Array<{
+    name: string;
+    path: string;
+    framework: string;
+    sdkVersion?: string;
+    hasDevBuild?: boolean;
+    branch?: string;
+    remote?: string;
+    size?: string;
+    webCapable?: boolean;
+    mobileCapable?: boolean;
+    monorepoRoot?: string;
+    monorepoApp?: string;
+  }>> {
+    this.assertConnected();
+    const path = capability === "web" ? "/projects/web" : capability === "all" ? "/projects/all" : "/projects/mobile";
+    const res = await fetch(`${this.baseUrl}${path}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = (await res.json().catch(() => ({}))) as { projects?: unknown };
+    return Array.isArray(data?.projects) ? (data.projects as Array<Record<string, unknown>>).map((p) => ({
+      name: String(p.name ?? ""),
+      path: String(p.path ?? ""),
+      framework: String(p.framework ?? ""),
+      sdkVersion: typeof p.sdkVersion === "string" ? p.sdkVersion : undefined,
+      hasDevBuild: typeof p.hasDevBuild === "boolean" ? p.hasDevBuild : undefined,
+      branch: typeof p.branch === "string" ? p.branch : undefined,
+      remote: typeof p.remote === "string" ? p.remote : undefined,
+      size: typeof p.size === "string" ? p.size : undefined,
+      webCapable: typeof p.webCapable === "boolean" ? p.webCapable : undefined,
+      mobileCapable: typeof p.mobileCapable === "boolean" ? p.mobileCapable : undefined,
+      monorepoRoot: typeof p.monorepoRoot === "string" ? p.monorepoRoot : undefined,
+      monorepoApp: typeof p.monorepoApp === "string" ? p.monorepoApp : undefined,
+    })) : [];
+  }
+
   async getProjectActions(query: string): Promise<{ project: string; path: string; actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string; supported?: boolean; reason?: string }[] }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, { headers: this.authHeaders });

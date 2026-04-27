@@ -14,16 +14,75 @@ import (
 	"time"
 )
 
+// detectMonorepoLineage walks up from `dir` looking for a parent that
+// holds either a `.git` directory or a `yaver.workspace.yaml`. If found
+// AND the path between dir and the root passes through a well-known
+// monorepo subdir (`apps`, `packages`, `mobile`, `web`), returns the
+// root and the human-friendly in-monorepo app name. Otherwise returns
+// empty strings (project is standalone).
+func detectMonorepoLineage(dir string) (root, app string) {
+	cur := dir
+	for i := 0; i < 6; i++ { // bounded walk — never cross 6 ancestors
+		parent := filepath.Dir(cur)
+		if parent == cur || parent == "/" {
+			return "", ""
+		}
+		// Identify a monorepo root: has .git (file or dir) OR yaver.workspace.yaml.
+		// `.git` can be a directory in normal repos OR a file (a single
+		// line `gitdir: ...`) in worktrees and submodules — `os.Stat`
+		// covers both, while `projectFileExists` rejects directories.
+		hasGit := false
+		if _, err := os.Stat(filepath.Join(parent, ".git")); err == nil {
+			hasGit = true
+		}
+		hasManifest := projectFileExists(filepath.Join(parent, "yaver.workspace.yaml"))
+		if hasGit || hasManifest {
+			rel, err := filepath.Rel(parent, dir)
+			if err != nil || rel == "." {
+				return "", ""
+			}
+			parts := strings.Split(rel, string(filepath.Separator))
+			if len(parts) == 0 {
+				return "", ""
+			}
+			// Recognise common monorepo subdir layouts.
+			if len(parts) >= 2 && (parts[0] == "apps" || parts[0] == "packages") {
+				return parent, parts[0] + "/" + parts[1]
+			}
+			if len(parts) == 1 && (parts[0] == "mobile" || parts[0] == "web" || parts[0] == "client" || parts[0] == "server") {
+				return parent, parts[0]
+			}
+			// `dir` is in a monorepo root but not under a recognised
+			// subdir layout — still return the root so the dashboard
+			// can group by repo, but use the leaf as the app name.
+			return parent, filepath.Base(dir)
+		}
+		cur = parent
+	}
+	return "", ""
+}
+
 // MobileProject represents a discovered mobile project on the dev machine.
 type MobileProject struct {
 	Name        string `json:"name"`
 	Path        string `json:"path"`
-	Framework   string `json:"framework"`            // "flutter", "expo", "react-native", "unity"
+	Framework   string `json:"framework"`            // "flutter", "expo", "react-native", "unity", "next", "vite"
 	SDKVersion  string `json:"sdkVersion,omitempty"` // e.g. "52.0.0", "55.0.6"
 	HasDevBuild bool   `json:"hasDevBuild"`          // true if ios/ or android/ prebuild exists
 	Branch      string `json:"branch,omitempty"`
 	Remote      string `json:"remote,omitempty"`
 	SizeHuman   string `json:"size,omitempty"`
+	// Capabilities (Yaver Protocol v1 — surface the dashboard's mode
+	// toggle correctly per project). One project can be both web and
+	// mobile capable (RN+RN-Web) — that's why these are independent flags.
+	WebCapable    bool `json:"webCapable"`              // can be served as web (has react-native-web, expo with --web, next, vite, etc.)
+	MobileCapable bool `json:"mobileCapable"`           // can run on phone (has react-native, expo, flutter)
+	// Monorepo lineage. Set when the project lives inside a yaver.workspace.yaml-
+	// declared monorepo or under a `apps/*`, `packages/*`, `mobile/` subdir.
+	// Lets the dashboard show "carrotbet → apps/web" + "carrotbet → mobile"
+	// as separate selectable rows instead of one root-level entry.
+	MonorepoRoot string `json:"monorepoRoot,omitempty"`  // absolute path to monorepo root, or "" if standalone
+	MonorepoApp  string `json:"monorepoApp,omitempty"`   // app name within the monorepo (e.g. "web", "mobile")
 }
 
 // Known Expo SDK versions and their compatibility
@@ -130,24 +189,47 @@ func scanMobileProjects() []MobileProject {
 			}
 
 			var framework string
+			// Capability flags computed on detection so the dashboard
+			// can route Web App tab vs Mobile App tab without a second
+			// pass over the project's package.json.
+			webCapable := false
+			mobileCapable := false
 
 			switch name {
 			case "pubspec.yaml":
 				framework = "flutter"
+				mobileCapable = true
 			case "package.json":
 				data, err := os.ReadFile(path)
 				if err != nil {
 					return nil
 				}
 				content := string(data)
-				if strings.Contains(content, `"expo"`) {
+				switch {
+				case strings.Contains(content, `"expo"`):
 					framework = "expo"
-				} else if strings.Contains(content, `"react-native"`) {
+					mobileCapable = true
+					// Expo with react-native-web → also web-capable
+					// (`expo --web` / `expo export -p web` work).
+					if strings.Contains(content, `"react-native-web"`) {
+						webCapable = true
+					}
+				case strings.Contains(content, `"react-native"`):
 					// Verify it's an actual RN app (has dependencies, not just a keyword match)
 					if strings.Contains(content, `"dependencies"`) &&
 						(strings.Contains(content, `"react-native":`) || strings.Contains(content, `"react-native" :`)) {
 						framework = "react-native"
+						mobileCapable = true
+						if strings.Contains(content, `"react-native-web"`) {
+							webCapable = true
+						}
 					}
+				case strings.Contains(content, `"next":`) || strings.Contains(content, `"next" :`):
+					framework = "next"
+					webCapable = true
+				case strings.Contains(content, `"vite":`) || strings.Contains(content, `"vite" :`):
+					framework = "vite"
+					webCapable = true
 				}
 			case "ProjectVersion.txt":
 				if filepath.Base(dir) == "ProjectSettings" &&
@@ -155,6 +237,7 @@ func scanMobileProjects() []MobileProject {
 					projectFileExists(filepath.Join(filepath.Dir(dir), "Packages", "manifest.json")) {
 					dir = filepath.Dir(dir)
 					framework = "unity"
+					mobileCapable = true
 				}
 			default:
 				return nil
@@ -202,11 +285,24 @@ func scanMobileProjects() []MobileProject {
 				framework == "unity"
 
 			proj := MobileProject{
-				Name:        appName,
-				Path:        dir,
-				Framework:   framework,
-				SDKVersion:  sdkVersion,
-				HasDevBuild: hasDevBuild,
+				Name:          appName,
+				Path:          dir,
+				Framework:     framework,
+				SDKVersion:    sdkVersion,
+				HasDevBuild:   hasDevBuild,
+				WebCapable:    webCapable,
+				MobileCapable: mobileCapable,
+			}
+			// Monorepo lineage detection. If `dir` is N levels under a
+			// directory that has its own .git AND is also one of the
+			// well-known monorepo subdirs (`apps/<app>`, `packages/<pkg>`,
+			// `mobile`, `web`), record the root + the in-monorepo app
+			// name so the dashboard can show "carrotbet → mobile" and
+			// "carrotbet → apps/web" as separate rows under the same
+			// repo. Standalone repos leave both fields empty.
+			if root, app := detectMonorepoLineage(dir); root != "" {
+				proj.MonorepoRoot = root
+				proj.MonorepoApp = app
 			}
 
 			// Get git info (fast — just reads local files)
@@ -689,6 +785,72 @@ func parseUnityAppName(dir string) string {
 }
 
 // ── HTTP handler ──────────────────────────────────────────────────────
+
+// handleProjectsByCapability is a capability-aware filter on top of the
+// shared discovery cache. Same payload as /projects/mobile but filtered
+// by the URL path:
+//
+//	/projects/mobile  → MobileCapable=true (Flutter, RN, Expo, Unity)
+//	/projects/web     → WebCapable=true (Next, Vite, Expo with RN-Web,
+//	                                    bare RN with RN-Web)
+//	/projects/all     → no filter — every detected project with its
+//	                                capability flags
+//
+// Used by the dashboard to populate the Web App tab and Mobile App tab
+// independently. A single project (e.g. an Expo app with `react-native-web`
+// in deps) appears in both /projects/mobile and /projects/web because
+// its MobileCapable + WebCapable flags are both true.
+func (s *HTTPServer) handleProjectsByCapability(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	wantWeb := strings.HasSuffix(r.URL.Path, "/web")
+	wantAll := strings.HasSuffix(r.URL.Path, "/all")
+	mobileProjectCache.mu.RLock()
+	projects := mobileProjectCache.projects
+	scannedAt := mobileProjectCache.scannedAt
+	scanning := mobileProjectCache.scanning
+	mobileProjectCache.mu.RUnlock()
+	// Honest empty-state for first-call: kick a scan and tell the
+	// caller it's still running so the UI can render a spinner.
+	if (projects == nil || len(projects) == 0) && time.Since(scannedAt) > 10*time.Minute {
+		go func() {
+			mobileProjectCache.mu.Lock()
+			mobileProjectCache.cancel = false
+			mobileProjectCache.scanning = true
+			mobileProjectCache.mu.Unlock()
+			scanned := scanMobileProjects()
+			mobileProjectCache.mu.Lock()
+			mobileProjectCache.projects = scanned
+			mobileProjectCache.scannedAt = time.Now()
+			mobileProjectCache.scanning = false
+			mobileProjectCache.mu.Unlock()
+		}()
+	}
+	out := make([]MobileProject, 0, len(projects))
+	for _, p := range projects {
+		switch {
+		case wantAll:
+			out = append(out, p)
+		case wantWeb:
+			if p.WebCapable {
+				out = append(out, p)
+			}
+		default:
+			if p.MobileCapable {
+				out = append(out, p)
+			}
+		}
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":         true,
+		"projects":   out,
+		"scannedAt":  scannedAt.UTC().Format(time.RFC3339),
+		"scanning":   scanning,
+		"capability": map[bool]string{true: "web", false: "mobile"}[wantWeb],
+	})
+}
 
 // handleMobileProjects returns all mobile projects found on the machine.
 // GET /projects/mobile — scans home directory for Flutter, Expo, React Native projects.
