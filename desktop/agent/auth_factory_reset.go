@@ -17,8 +17,8 @@ func runAuthFactoryReset(args []string) {
 
 	fmt.Println("Factory-resetting Yaver auth state...")
 
-	cfg, err := LoadConfig()
-	if err == nil && cfg.AuthToken != "" {
+	cfg, loadErr := LoadConfig()
+	if loadErr == nil && cfg.AuthToken != "" {
 		runSignout()
 	} else if pid, running := isAgentRunning(); running {
 		if proc, findErr := os.FindProcess(pid); findErr == nil {
@@ -27,26 +27,46 @@ func runAuthFactoryReset(args []string) {
 		}
 	}
 
-	// Wipe every piece of local auth state. pendingAuthPath is the
-	// resume file for in-flight device-code sign-ins; leaving it
-	// around would make the next `yaver auth` try to resume a stale
-	// code and fail noisily.
-	removed := 0
-	for _, resolver := range []func() (string, error){ConfigPath, pendingAuthPath, pairedTokensPath} {
+	// Preserve relay reachability + Convex URL so the daemon stays
+	// reachable from the dashboard / mobile app after the reset.
+	// Wiping the entire config used to leave the box stranded:
+	//   • no relay_password → tunnel registration fails
+	//   • no relay_servers  → nowhere to connect outbound
+	//   • no device_id      → ephemeral, but that's fine
+	// The dashboard's pair flow needs a reachable agent. The right
+	// recovery shape is "agent stays up in claim mode" — meaning a
+	// running daemon that maintains its tunnel and exposes
+	// /auth/pair endpoints, just without an auth_token. So we do
+	// load → wipe-only-user-bound-fields → save instead of `rm`.
+	preserved := &Config{}
+	if loadErr == nil && cfg != nil {
+		preserved.ConvexSiteURL = cfg.ConvexSiteURL
+		preserved.RelayServers = cfg.RelayServers
+		preserved.RelayPassword = cfg.RelayPassword
+		preserved.CachedRelayPassword = cfg.CachedRelayPassword
+		preserved.CachedRelayServers = cfg.CachedRelayServers
+	}
+	if saveErr := SaveConfig(preserved); saveErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not write reset config: %v\n", saveErr)
+		// Fall through — try the brute-force remove path too so
+		// the next start at least sees no stale auth.
+		if path, pathErr := ConfigPath(); pathErr == nil && path != "" {
+			_ = os.Remove(path)
+		}
+	} else {
+		fmt.Println("Wiped auth state; preserved relay credentials so the dashboard can re-pair this box.")
+	}
+
+	// pendingAuthPath / pairedTokensPath are user-bound and should
+	// always be removed. They don't carry relay info.
+	for _, resolver := range []func() (string, error){pendingAuthPath, pairedTokensPath} {
 		path, pathErr := resolver()
 		if pathErr != nil || path == "" {
 			continue
 		}
-		if err := os.Remove(path); err == nil || os.IsNotExist(err) {
-			if err == nil {
-				removed++
-			}
-			continue
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", path, err)
 		}
-		fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", path, err)
-	}
-	if removed > 0 {
-		fmt.Printf("Removed %d local auth file(s).\n", removed)
 	}
 
 	nextBinary := ""
@@ -75,15 +95,31 @@ func runAuthFactoryReset(args []string) {
 		os.Exit(1)
 	}
 
-	nextArgs := []string{"auth", "--convex-url", *convexURL}
+	// Restart shape depends on whether we're recovering a running
+	// daemon (dashboard-driven, headless) vs. an interactive CLI
+	// invocation (developer typed `yaver auth factory-reset` at a
+	// prompt). The dashboard / repair-ephemeral-auth path passes
+	// --headless, in which case we re-launch `yaver serve` so the
+	// daemon stays up and the dashboard can re-pair through the
+	// preserved relay tunnel. Interactive runs fall back to the
+	// classic browser sign-in flow.
+	var nextArgs []string
 	if *headless {
-		nextArgs = append(nextArgs, "--headless")
+		// Keep the daemon listening. Bootstrap mode auth_token=""
+		// + preserved relay creds means the relay tunnel still
+		// registers, /auth/pair endpoints are reachable from the
+		// dashboard, and the user can claim the box from the web
+		// UI without touching SSH.
+		nextArgs = []string{"serve"}
+		fmt.Println()
+		fmt.Printf("Restarting daemon with %s serve so the dashboard can re-pair...\n", filepath.Base(nextBinary))
+	} else {
+		nextArgs = []string{"auth", "--convex-url", *convexURL}
+		fmt.Println()
+		fmt.Printf("Restarting sign-in with %s...\n", filepath.Base(nextBinary))
 	}
-
-	fmt.Println()
-	fmt.Printf("Restarting sign-in with %s...\n", filepath.Base(nextBinary))
 	if err := restartAuthBinary(nextBinary, nextArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: restart sign-in: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error: restart agent: %v\n", err)
 		os.Exit(1)
 	}
 	os.Exit(0)
