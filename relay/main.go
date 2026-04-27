@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.1.12"
+const version = "0.1.13"
 
 func main() {
 	if len(os.Args) < 2 {

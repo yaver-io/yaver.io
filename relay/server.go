@@ -891,14 +891,30 @@ func (s *RelayServer) proxySSE(w http.ResponseWriter, r *http.Request, stream qu
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Tell intermediaries (nginx in front of public.yaver.io,
+	// Cloudflare's edge) NOT to buffer this response. Without this
+	// nginx defaults to buffering chunked responses end-to-end and
+	// SSE bytes never reach the browser until the connection
+	// closes — symptom: dashboard sees "sse: open" but events: 0.
+	// Cloudflare honors the same header and so does Vercel/Fly.
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+
+	// Send an immediate priming byte so any proxy in the chain
+	// flushes its initial buffer (HTTP/1.1 response headers + first
+	// chunk). Without this nginx still holds the headers until the
+	// upstream sends the first body byte, and the dashboard never
+	// transitions to "open" until the agent sends an event.
+	fmt.Fprintf(w, ":relay-hello %d\n\n", time.Now().Unix())
 	flusher.Flush()
 
 	buf := make([]byte, 4096)
 	for {
 		n, err := stream.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return
+			}
 			flusher.Flush()
 		}
 		if err != nil {
