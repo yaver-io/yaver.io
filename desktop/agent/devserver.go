@@ -299,20 +299,70 @@ type WebBundleInfo struct {
 	Caller    string `json:"caller"`    // X-Yaver-Caller of the build trigger
 }
 
-// SetWebBundleInfo registers a freshly-built web bundle with the
-// manager. Subsequent /dev/web-bundle/* requests are routed there.
-func (m *DevServerManager) SetWebBundleInfo(info WebBundleInfo) {
-	m.webBundleInfoMu.Lock()
-	defer m.webBundleInfoMu.Unlock()
-	m.webBundleInfo = info
+// webBundleInfoFile is where SetWebBundleInfo persists its struct so a
+// later agent process (after auto-update / reboot / systemd restart)
+// can keep serving the on-disk bundle without losing 5 MB of asset
+// requests to a 503 because the in-memory pointer was empty.
+func webBundleInfoFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".yaver", "web-bundle-info.json")
 }
 
-// GetWebBundleInfo returns the current web bundle info (zero-value if
-// no bundle has been built yet).
+// SetWebBundleInfo registers a freshly-built web bundle with the
+// manager. Subsequent /dev/web-bundle/* requests are routed there.
+// Persists the struct to ~/.yaver/web-bundle-info.json so an agent
+// restart still serves the bundle that's already on disk.
+func (m *DevServerManager) SetWebBundleInfo(info WebBundleInfo) {
+	m.webBundleInfoMu.Lock()
+	m.webBundleInfo = info
+	m.webBundleInfoMu.Unlock()
+	path := webBundleInfoFile()
+	if path == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	if data, err := json.Marshal(info); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+// GetWebBundleInfo returns the current web bundle info. If the in-memory
+// struct is empty (e.g. the agent restarted), tries to rehydrate from
+// the persisted ~/.yaver/web-bundle-info.json — if that file points at
+// a still-existing BuildDir, the manager re-adopts it so the iframe's
+// asset requests don't 404 / 503.
 func (m *DevServerManager) GetWebBundleInfo() WebBundleInfo {
 	m.webBundleInfoMu.RLock()
-	defer m.webBundleInfoMu.RUnlock()
-	return m.webBundleInfo
+	cur := m.webBundleInfo
+	m.webBundleInfoMu.RUnlock()
+	if cur.BuildDir != "" {
+		return cur
+	}
+	path := webBundleInfoFile()
+	if path == "" {
+		return cur
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cur
+	}
+	var persisted WebBundleInfo
+	if err := json.Unmarshal(data, &persisted); err != nil || persisted.BuildDir == "" {
+		return cur
+	}
+	if st, err := os.Stat(persisted.BuildDir); err != nil || !st.IsDir() {
+		return cur
+	}
+	m.webBundleInfoMu.Lock()
+	if m.webBundleInfo.BuildDir == "" {
+		m.webBundleInfo = persisted
+	}
+	out := m.webBundleInfo
+	m.webBundleInfoMu.Unlock()
+	return out
 }
 
 // SetWebTransport registers a freshly-created transport tracker for the

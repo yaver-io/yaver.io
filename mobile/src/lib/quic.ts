@@ -4536,10 +4536,15 @@ export class QuicClient {
     targetDeviceName?: string;
     targetDeviceClass?: string;
   }): Promise<DevServerStatus | null> {
+    // `caller: "mobile"` — explicit identity tag. The agent reads it
+    // and constrains itself to the Hermes / native bundle path: it
+    // will never pivot to a static web bundle for a mobile caller,
+    // even if the project also happens to have a web target.
+    const body = { ...opts, caller: "mobile" };
     const res = await fetch(`${this.baseUrl}/dev/start`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(opts),
+      body: JSON.stringify(body),
     });
     // Agent returns 412 with structured payload when a runtime
     // dependency is missing on the dev box (e.g. no Node on a fresh

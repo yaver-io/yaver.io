@@ -792,10 +792,14 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read request body
+	// Read request body. 64 MiB cap is chosen to comfortably handle
+	// static web bundles (Expo's main entry chunk is ~5–15 MB; the
+	// JSON envelope is ~33 % bigger after base64). Bigger than this
+	// silently truncates today — a future protocol revision should
+	// stream large bodies through QUIC instead of buffering JSON.
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
+		body, _ = io.ReadAll(io.LimitReader(r.Body, 64<<20))
 	}
 
 	// Build tunnel request
@@ -884,8 +888,15 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read response
-	respData, err := io.ReadAll(io.LimitReader(stream, 10<<20))
+	// Read response. 64 MiB cap matches the request-side limit and
+	// handles full Expo static bundles end-to-end. For an oversized
+	// body, ReadAll silently stops at the limit and the JSON unmarshal
+	// below fails → 502 — better than the previous behaviour where
+	// 10 MB of base64 sometimes fit but a 9 MB raw JS asset (which
+	// becomes ~12 MB envelope) silently corrupted and the iframe got
+	// a half-truncated script. TODO: stream large bodies instead of
+	// buffering the whole envelope on both ends.
+	respData, err := io.ReadAll(io.LimitReader(stream, 64<<20))
 	if err != nil {
 		log.Printf("[RELAY] read from %s failed: %v", tunnel.deviceID[:8], err)
 		http.Error(w, "tunnel read error", http.StatusBadGateway)

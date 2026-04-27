@@ -884,6 +884,12 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		TargetDeviceID    string `json:"targetDeviceId"`
 		TargetDeviceName  string `json:"targetDeviceName"`
 		TargetDeviceClass string `json:"targetDeviceClass"`
+		// Caller identity. "web-ui" lets the agent pivot a mobile
+		// project to the static-bundle path instead of returning the
+		// legacy "mobile-only" 400 (which the iframe can't recover
+		// from). "mobile" pins to the Hermes/native path. Empty =
+		// legacy CLI behaviour.
+		Caller string `json:"caller,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -926,6 +932,22 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if req.Surface == "web-reload" && kind == DevServerKindMobile {
+			if strings.TrimSpace(req.Caller) == "web-ui" {
+				// Caller=web-ui knows how to render a static bundle — tell
+				// it to do that instead of a hard 400. UI polls
+				// /dev/web-bundle/info to know whether to kick off a build.
+				info := s.devServerMgr.GetWebBundleInfo()
+				jsonReply(w, http.StatusOK, map[string]interface{}{
+					"ok":          true,
+					"mode":        "static-bundle",
+					"bundleUrl":   "/dev/web-bundle/",
+					"bundleReady": info.BuildDir != "" && info.FileCount > 0,
+					"bundleHint":  "POST /dev/build-native target=web-js-bundle",
+					"appName":     matched.Name,
+					"kind":        string(kind),
+				})
+				return
+			}
 			jsonReply(w, http.StatusBadRequest, map[string]string{
 				"error": fmt.Sprintf("app %q is mobile-only; not available in Web Reload", matched.Name),
 			})
@@ -971,6 +993,25 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 		switch req.Surface {
 		case "web-reload":
 			if kind == DevServerKindMobile {
+				if strings.TrimSpace(req.Caller) == "web-ui" {
+					// Web UI knows how to render a static bundle — tell it
+					// to use the bundle path instead of returning 400. UI
+					// polls /dev/web-bundle/info, kicks off a build via
+					// POST /dev/build-native target=web-js-bundle when
+					// needed, then loads /dev/web-bundle/ in the iframe.
+					info := s.devServerMgr.GetWebBundleInfo()
+					jsonReply(w, http.StatusOK, map[string]interface{}{
+						"ok":          true,
+						"mode":        "static-bundle",
+						"bundleUrl":   "/dev/web-bundle/",
+						"bundleReady": info.BuildDir != "" && info.FileCount > 0,
+						"bundleHint":  "POST /dev/build-native target=web-js-bundle",
+						"projectName": req.ProjectName,
+						"workDir":     req.WorkDir,
+						"kind":        string(kind),
+					})
+					return
+				}
 				jsonReply(w, http.StatusBadRequest, map[string]string{
 					"error": "Project is mobile-only (Metro/RN); use Hot Reload + Yaver app instead of Web Reload.",
 					"kind":  string(kind),

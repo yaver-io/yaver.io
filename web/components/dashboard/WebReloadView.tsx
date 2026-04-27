@@ -357,23 +357,60 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     if (!selectedApp && !selectedProject) return;
     setStarting(true);
     setStartError(null);
+
+    // Pre-flight: detect mobile-framework projects on the client. Two
+    // reasons (1) older agents (≤1.99.79) reject /dev/start with a 400
+    // "mobile-only" error before they understand the new caller=web-ui
+    // routing, and (2) even on newer agents we'd rather skip the round
+    // trip and go straight to the static-bundle build, since that's
+    // the only Web Reload path that actually renders Expo / RN apps.
+    const projectFw = (selectedProject?.framework || "").toLowerCase();
+    const appRow = selectedApp ? apps.find((a) => a.name === selectedApp) ?? null : null;
+    const appStack = (appRow?.stack || "").toLowerCase();
+    const isMobileFramework =
+      projectFw === "expo" ||
+      projectFw === "react-native" ||
+      projectFw === "metro" ||
+      appStack === "react-native-expo" ||
+      appStack === "react-native";
+    if (isMobileFramework) {
+      setStarting(false);
+      await handleBuildStaticBundle();
+      return;
+    }
+
     try {
-      // Always start in the framework's default mode (Expo gets
-      // --dev-client, not --web) so Hot Reload (Hermes) keeps working
-      // for a parallel mobile user. The web preview itself is a
-      // sibling process the agent spawns when surface=web-reload.
+      // Web-only path: ask the agent to spin up the dev server normally.
+      // The new caller="web-ui" tag (added by agentClient.startDevServer)
+      // lets the agent's surface gate know who's calling — newer agents
+      // (≥1.99.80) may answer with `mode: "static-bundle"` even for what
+      // looks like a web framework if they detect the project is in fact
+      // RN, in which case we route through the bundle path here too.
+      let response: Awaited<ReturnType<typeof agentClient.startDevServer>> | null = null;
       if (useProjectFallback && selectedProject) {
-        await agentClient.startDevServer({
+        response = await agentClient.startDevServer({
           framework: selectedProject.framework,
           workDir: selectedProject.path,
           projectName: selectedProject.name,
           surface: "web-reload",
         });
       } else if (selectedApp) {
-        await agentClient.startDevServer({
+        response = await agentClient.startDevServer({
           app: selectedApp,
           surface: "web-reload",
         });
+      }
+      if (response?.mode === "static-bundle") {
+        // Agent told us (web-ui caller) to render via the static bundle.
+        // If a fresh build is already on disk we just flip iframe state;
+        // otherwise kick off a build. Either way, no /dev/start dev
+        // server is running — the iframe loads /dev/web-bundle/.
+        if (response.bundleReady) {
+          setStaticBundleState("ready");
+        } else {
+          await handleBuildStaticBundle();
+        }
+        return;
       }
       // Refresh status immediately; polling will pick up ongoing changes.
       const s = await agentClient.getDevServerStatus();

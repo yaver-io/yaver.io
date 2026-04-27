@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.79"
+const version = "1.99.80"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7516,7 +7516,11 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *http.Client) {
 	defer stream.Close()
 
-	data, err := io.ReadAll(io.LimitReader(stream, 10<<20))
+	// 64 MiB cap on the inbound TunnelRequest envelope — matches the
+	// relay's outbound limit. Inbound bodies (POSTs to the agent) are
+	// usually small; the room is for symmetry with the response path
+	// where a 5–15 MB JS bundle is normal.
+	data, err := io.ReadAll(io.LimitReader(stream, 64<<20))
 	if err != nil {
 		log.Printf("[RELAY] read request: %v", err)
 		return
@@ -7622,7 +7626,13 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	// 64 MiB cap matches the relay-side limits. Anything larger is
+	// silently truncated and the iframe gets a corrupt script — for
+	// real big bundles we need a streaming protocol, but bumping the
+	// cap from 10 MB → 64 MB unblocks Expo / RN web bundles which
+	// routinely sit in the 5–15 MB range. Keep this in sync with
+	// the limits in relay/server.go and the inbound limit above.
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 
 	headers := make(map[string]string)
 	for k, v := range resp.Header {

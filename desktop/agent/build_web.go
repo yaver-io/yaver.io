@@ -525,11 +525,16 @@ func jsonStringify(v interface{}) string {
 // topic=webview/transport so the dashboard CONSOLE renders a live
 // "sending bundle…" phase instead of going silent right after compile.
 func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request) {
-	if s.devServerMgr == nil {
+	// Lazy-init the manager so a fresh agent process (after a restart
+	// or auto-update) can serve a bundle that's still on disk via the
+	// persisted web-bundle-info.json. Returning 503 here used to drop
+	// every iframe asset request after a restart, with no recovery.
+	mgr := s.ensureDevServerManager()
+	if mgr == nil {
 		http.Error(w, "no dev server", http.StatusServiceUnavailable)
 		return
 	}
-	info := s.devServerMgr.GetWebBundleInfo()
+	info := mgr.GetWebBundleInfo()
 	if info.BuildDir == "" {
 		http.Error(w, "no web bundle built — POST /dev/build-native with target=web-js-bundle first", http.StatusNotFound)
 		return

@@ -3536,17 +3536,41 @@ export class AgentClient {
     targetDeviceId?: string;
     targetDeviceName?: string;
     targetDeviceClass?: string;
-  }): Promise<void> {
+  }): Promise<{
+    ok: boolean;
+    /** When the agent (v1.99.80+) detects a mobile-only framework
+     *  invoked by the Web UI on `surface=web-reload`, it doesn't
+     *  reject the start — it tells us to use the static bundle path
+     *  instead. UI sees `mode === "static-bundle"`, polls the bundle
+     *  info, and either renders the existing build or kicks off
+     *  `buildWebJSBundle()`. Older agents return `mode === undefined`
+     *  and a 400 in the legacy "mobile-only" branch. */
+    mode?: "static-bundle" | "dev-server";
+    bundleUrl?: string;
+    bundleReady?: boolean;
+    bundleHint?: string;
+  }> {
     this.assertConnected();
+    // `caller: "web-ui"` — explicit identity tag (agent reads it to
+    // route mobile-only projects through the static-bundle path
+    // instead of returning the legacy 400 "mobile-only" error).
+    const body = { ...opts, caller: "web-ui" };
     const res = await fetch(`${this.baseUrl}/dev/start`, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(opts),
+      body: JSON.stringify(body),
     });
+    const data: any = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body?.error || `Failed to start dev server (HTTP ${res.status})`);
+      throw new Error(data?.error || `Failed to start dev server (HTTP ${res.status})`);
     }
+    return {
+      ok: true,
+      mode: typeof data?.mode === "string" ? data.mode : undefined,
+      bundleUrl: typeof data?.bundleUrl === "string" ? data.bundleUrl : undefined,
+      bundleReady: data?.bundleReady === true,
+      bundleHint: typeof data?.bundleHint === "string" ? data.bundleHint : undefined,
+    };
   }
 
   // ── Workspace manifest (monorepo) ────────────────────────────────
@@ -3720,6 +3744,7 @@ export class AgentClient {
         target: opts.target ?? "web-js-bundle",
         projectName: opts.projectName ?? undefined,
         projectPath: opts.projectPath ?? undefined,
+        caller: "web-ui",
       }),
     }, 240_000);
     const body: unknown = await res.json().catch(() => ({}));
