@@ -2218,12 +2218,14 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		projects = listDiscoveredProjects()
 	}
 	type projectResp struct {
-		Name      string   `json:"name"`
-		Path      string   `json:"path"`
-		Branch    string   `json:"branch,omitempty"`
-		Framework string   `json:"framework,omitempty"`
-		GitRemote string   `json:"gitRemote,omitempty"`
-		Tags      []string `json:"tags,omitempty"`
+		Name          string   `json:"name"`
+		Path          string   `json:"path"`
+		Branch        string   `json:"branch,omitempty"`
+		Framework     string   `json:"framework,omitempty"`
+		GitRemote     string   `json:"gitRemote,omitempty"`
+		Tags          []string `json:"tags,omitempty"`
+		IsMonorepo    bool     `json:"isMonorepo,omitempty"`
+		Subframeworks []string `json:"subframeworks,omitempty"`
 	}
 	// Filter out non-deployable projects: dotfiles, editor configs, vim plugins, etc.
 	// Only show things a solo dev would actually deploy: apps, websites, backends, APIs.
@@ -2330,13 +2332,37 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		for t := range tagSet {
 			tags = append(tags, t)
 		}
+		// Monorepo fallback — if the root has no single framework marker but
+		// has multiple framework-bearing subdirs (carrotbet, yaver.io, etc),
+		// label it "monorepo" + surface the constituent frameworks so the
+		// dashboard shows MONOREPO instead of "?".
+		framework := info.Framework
+		isMonorepo := false
+		var subframeworks []string
+		if framework == "" {
+			if mfw, subs := monorepoSummaryForDir(p.Path); mfw != "" {
+				framework = mfw
+				isMonorepo = true
+				subframeworks = subs
+				for _, s := range subs {
+					tagSet[s] = true
+				}
+				tags = tags[:0]
+				for t := range tagSet {
+					tags = append(tags, t)
+				}
+			}
+		}
+
 		result = append(result, projectResp{
-			Name:      name,
-			Path:      p.Path,
-			Branch:    p.Branch,
-			Framework: info.Framework,
-			GitRemote: info.GitRemote,
-			Tags:      tags,
+			Name:          name,
+			Path:          p.Path,
+			Branch:        p.Branch,
+			Framework:     framework,
+			GitRemote:     info.GitRemote,
+			Tags:          tags,
+			IsMonorepo:    isMonorepo,
+			Subframeworks: subframeworks,
 		})
 	}
 

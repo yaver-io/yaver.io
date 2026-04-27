@@ -452,7 +452,16 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 	} else {
 		ds = detectDevServer(workDir)
 		if ds == nil {
-			return fmt.Errorf("could not detect framework in %s", workDir)
+			// Monorepo fallback — when no marker is at the root, look for sub-projects.
+			// Picks the first runnable dev server (Vite > Next > Expo > RN > Flutter)
+			// and points workDir at that sub-project. If nothing runnable exists, the
+			// returned error lists the apps so the user can pick one.
+			fallbackDS, fallbackDir, err := monorepoFallbackDevServer(workDir)
+			if err != nil {
+				return err
+			}
+			ds = fallbackDS
+			workDir = fallbackDir
 		}
 	}
 
