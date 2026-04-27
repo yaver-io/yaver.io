@@ -1610,6 +1610,25 @@ func (s *HTTPServer) handleDevWebProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	target, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%d", port))
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	// Critical for Expo SDK 54+: Expo's CorsMiddleware rejects any
+	// Origin that isn't localhost / 127.0.0.1 with HTTP 403
+	// "Unauthorized request from <origin>". Through the relay our
+	// iframe sends `Origin: https://yaver.io`, expo says no, and the
+	// HMR scripts + asset fetches all 403 — the iframe paints blank
+	// or fails to register the dev client. Rewrite the Origin (and
+	// Referer for parity) to the local target before forwarding so
+	// expo's CORS check sees its own loopback and lets the request
+	// through. Other forwarded headers stay intact.
+	originalDirector := proxy.Director
+	localOrigin := fmt.Sprintf("http://127.0.0.1:%d", port)
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.Header.Set("Origin", localOrigin)
+		if req.Header.Get("Referer") != "" {
+			req.Header.Set("Referer", localOrigin+"/")
+		}
+		req.Host = req.URL.Host
+	}
 	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "expo web unavailable", http.StatusBadGateway)
 	}
