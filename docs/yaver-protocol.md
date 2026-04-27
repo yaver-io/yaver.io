@@ -176,6 +176,93 @@ emitted as a `log` event. The same line can produce up to 3 events
   values are NEW — older consumers ignore them. They keep getting
   `heartbeat` + `log` like before.
 
+## Web UI rendering paths — two ways to put a third-party app in the dashboard iframe
+
+The dashboard's **Web App** sub-tab supports two distinct rendering
+pipelines for showing a third-party RN/Expo project inline. Both run
+through the agent — neither requires the user's phone to be online —
+but they have different runtime characteristics, and a third-party
+project supports them by meeting different sets of requirements.
+
+### Path 1 — Web JS bundle (the default, "raw binary")
+
+```
+target=web-js-bundle
+  ↓ agent runs `expo export -p web`
+  ↓ bundle written to .yaver-build-web/ (HTML + _expo/static/js/* + assets/*)
+  ↓ scanBundleManifest indexes every file by relative path + size
+  ↓ webTransport tracker spun up → emits topic=webview/transport phases
+  ↓ /dev/web-bundle/ serves files; index.html injected with <base href>
+  ↓ iframe loads and runs the bundle in V8/JSC
+```
+
+Runtime in the browser: V8/JSC + DOM + react-native-web's primitive →
+DOM mapping. Plain web app at the end of the day. **Recommended path
+— stable, fast, no external runtime dependencies.**
+
+**Third-party app requirements:**
+
+| Requirement | Why |
+|---|---|
+| `react-native-web` in dependencies | `react-native` imports get aliased to it during the web build. Without RN-Web there's no DOM renderer for `<View>` / `<Text>` / etc. |
+| `expo` in dependencies (for now) | The agent currently only supports projects that go through Expo's `expo export -p web`. Bare RN web bundling without Expo is a future path. |
+| Source code free of native-only branches | Everything that needs to run in the web bundle must either work in a browser or be guarded by `Platform.OS === "web"` no-ops. Camera, BLE, Skia native shaders, `react-native-record-screen` — these have no browser implementations. |
+| No iOS/Android-only assets in the entry path | `.ttf` / `.png` resolve via Metro, but anything pulled from `ios/`-only resource bundles will break. |
+
+This is the path the dashboard auto-builds on Webview tab open
+(`web 1.1.86+`). It's the path that just rendered sfmg's onboarding
+in the iframe end-to-end during the v1.99.74 verification pass.
+
+### Path 2 — Hermes WASM (best-effort, experimental)
+
+```
+target=web-hermes-wasm
+  ↓ agent runs `expo export:embed --platform web` (Metro web preset)
+  ↓ pipes the JS through hermesc → Hermes bytecode (HBC)
+  ↓ writes runner HTML alongside the .jsbundle
+  ↓ /dev/web-bundle/ serves the runner HTML
+  ↓ runner loads /dev/hermes-wasm-runtime (hermes.wasm) + the HBC
+  ↓ Hermes WASM evaluates the HBC in the browser
+  ↓ react-native-web still does the actual DOM rendering
+```
+
+Runtime in the browser: **hermes.wasm** (~3 MB, no JIT) +
+`react-native-web` for the renderer. Same engine as mobile, so the
+same bytecode runs in both places — useful for determinism / sandbox
+testing. Bytecode is identical to a desktop / CI compile, so semantic
+parity is enforceable across mobile and web.
+
+**Third-party app requirements (additional, on top of Path 1):**
+
+| Requirement | Why |
+|---|---|
+| All Path 1 requirements | RN-Web is the renderer regardless of engine. |
+| No JIT-required JS | Hermes' WASM build doesn't include the JIT, so heavy compute paths run interpreted (3-5× slower than V8). Avoid hot-path math libs that benchmark assuming a JIT. |
+| Tolerant of stub native modules | Hermes WASM has no native module bridge. The agent injects globals (`process`, `HermesInternal`) but `TurboModuleRegistry.getEnforcing(...)` will throw on anything sfmg-style imports of `react-native-record-screen` etc. Same intersection problem as the mobile container. |
+| HBC version match between hermesc and the runner | `hermes.wasm` shipped with the agent must match the BC version produced by the project's local hermesc. v96 today (RN 0.81 line). |
+
+**Status: experimental.** The protocol is wired (build-native target,
+serve endpoint, runner HTML, ack/error endpoints, transport tracker).
+The runner HTML's JS that wires `hermes.wasm` to the iframe DOM is a
+stub today — it surfaces a status banner indicating the engine compiled
+but full execution is pending an upstream Hermes WASM runner. The
+recommended path remains Path 1; Path 2 exists so the protocol half
+of the work doesn't need to happen twice.
+
+To enable Path 2 on a host: `yaver install hermes-wasm` (TODO) drops
+hermes.wasm at `~/.yaver/runtimes/hermes-wasm/hermes.wasm`. Without
+that file `/dev/hermes-wasm-runtime` returns 501 and the runner
+reports "Hermes WASM runtime not installed".
+
+### Decision matrix for third-party developers
+
+| Goal | Path | Why |
+|---|---|---|
+| "I want my Expo app to render in the dashboard for design review / vibe coding without the phone running" | Path 1 (web-js-bundle) | Just works, fast, browser-native. |
+| "I want byte-identical execution between mobile and web for parity testing" | Path 2 (web-hermes-wasm) | Same HBC bytecode runs in both runtimes. |
+| "I'm running an RN-only app with no react-native-web" | Neither | The dashboard iframe can't render it — only the phone can via the existing Hermes super-host path. |
+| "I have a heavy native dep (Camera, Skia native, BLE)" | Path 1 with `Platform.OS === "web"` guards | Branch around the missing native module on the web target. |
+
 ## Future (not in v1)
 
 - v2: replace the JSON-over-SSE channel with a CBOR-framed

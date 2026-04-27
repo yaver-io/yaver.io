@@ -161,3 +161,35 @@ func TestScanBundleManifestProducesForwardSlashKeys(t *testing.T) {
 		t.Fatalf("expected empty manifest, got %d entries", len(m))
 	}
 }
+
+// TestHermesWasmRunnerHTMLEmitsExpectedShape locks in the runner page
+// the agent serves for target=web-hermes-wasm. The runner JS is still
+// best-effort (upstream Hermes hasn't shipped a stable WASM runner yet),
+// so the test focuses on the contract the dashboard relies on:
+//   - it's HTML
+//   - it has a status banner the iframe can read
+//   - it loads /dev/hermes-wasm-runtime (the wasm) and
+//     /dev/web-bundle/main.jsbundle (the HBC)
+// Dropping any of those three would silently break the experimental
+// render even though the build still succeeds.
+func TestHermesWasmRunnerHTMLEmitsExpectedShape(t *testing.T) {
+	html := hermesWasmRunnerHTML
+	if !strings.Contains(html, "<!doctype html>") {
+		t.Errorf("missing doctype in runner html")
+	}
+	if !strings.Contains(html, `id="yaver-status"`) {
+		t.Errorf("status banner element missing — dashboard relies on this for UX")
+	}
+	if !strings.Contains(html, "/dev/hermes-wasm-runtime") {
+		t.Errorf("runner doesn't reference /dev/hermes-wasm-runtime — wasm engine won't load")
+	}
+	if !strings.Contains(html, "/dev/web-bundle/main.jsbundle") {
+		t.Errorf("runner doesn't reference /dev/web-bundle/main.jsbundle — HBC won't load")
+	}
+	// Defensive: the runner explicitly states it's experimental so the
+	// user sees an honest "engine compiled, full execution pending"
+	// status instead of a silent blank iframe.
+	if !strings.Contains(html, "experimental") && !strings.Contains(html, "Hermes WASM") {
+		t.Errorf("runner doesn't surface experimental status — users will think it's broken")
+	}
+}

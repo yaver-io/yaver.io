@@ -3683,7 +3683,19 @@ export class AgentClient {
    *  and `reportWebBundleError()` if the iframe surfaces a JS error,
    *  so the agent can drive the transport tracker through phase
    *  delivered/error. */
-  async buildWebJSBundle(opts: { projectName?: string; projectPath?: string }): Promise<{
+  async buildWebJSBundle(opts: {
+    projectName?: string;
+    projectPath?: string;
+    /** Defaults to the recommended `web-js-bundle` target. Pass
+     *  "web-hermes-wasm" to request the experimental Hermes-WASM
+     *  runner — same Metro bundle, hermesc-compiled HBC, served
+     *  alongside a runner HTML that loads hermes.wasm in the browser.
+     *  Best-effort: the upstream Hermes WASM runner JS isn't shipped
+     *  yet, so the experimental target surfaces a clear status pane
+     *  instead of full execution. The protocol half is wired so the
+     *  experimental render can be filled in without protocol churn. */
+    target?: "web-js-bundle" | "web-hermes-wasm";
+  }): Promise<{
     ok: boolean;
     bundleUrl: string;
     size: number;
@@ -3696,7 +3708,7 @@ export class AgentClient {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({
-        target: "web-js-bundle",
+        target: opts.target ?? "web-js-bundle",
         projectName: opts.projectName ?? undefined,
         projectPath: opts.projectPath ?? undefined,
       }),
