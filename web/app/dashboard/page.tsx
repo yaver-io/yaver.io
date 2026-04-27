@@ -2234,6 +2234,17 @@ export default function DashboardPage() {
           }}
           onCompleted={() => {
             void refreshConnectedRunners();
+            // The sidebar device card reads runner authConfigured
+            // off Convex's device list (liveDevice.runners), not
+            // off the local /agent/runners response. Without this
+            // refresh the sidebar keeps showing "Sign in {Codex}"
+            // even though sign-in just succeeded — the agent
+            // updates Convex via heartbeat after a successful
+            // runner-auth, but the dashboard needs to refetch.
+            // Wait a beat so Convex has the heartbeat-driven update,
+            // then refresh.
+            setTimeout(() => { void refreshDevices(); }, 600);
+            setTimeout(() => { void refreshDevices(); }, 1800);
             // Also re-establish the device connection in case the
             // session-expired state lingered on the dashboard side.
             if (connectedDevice) {
