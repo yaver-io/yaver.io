@@ -1,0 +1,98 @@
+# Stop any current web preview, kill all expo+metro processes,
+# restart dev server, then properly start web preview and verify
+# Expo Web actually serves HTML before declaring webPort.
+name: Reset + Test Web Preview
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: reset-test-web-preview
+  cancel-in-progress: true
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render reset+test script
+        run: |
+          cat > "$RUNNER_TEMP/reset.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for cfg in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$cfg" ] || continue
+            TOK=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('auth_token',''))" "$cfg")
+            break
+          done
+          AGENT="http://127.0.0.1:18080"
+          AUTH="Authorization: Bearer $TOK"
+
+          echo "=== STOP web preview (clears stale webPort) ==="
+          curl -fsS -X POST -H "$AUTH" "$AGENT/dev/web-preview/stop" 2>&1 | head -3 || true
+          echo
+          echo "=== STOP dev server ==="
+          curl -fsS -X POST -H "$AUTH" "$AGENT/dev/stop" 2>&1 | head -3 || true
+          sleep 2
+          echo
+          echo "=== Kill stray expo+metro processes ==="
+          pkill -f 'expo start' || true
+          pkill -f metro || true
+          sleep 2
+          echo
+          echo "=== START fresh dev server for sfmg ==="
+          curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+              -d '{"framework":"expo","workDir":"/home/yaver/Workspace/sfmg"}' \
+              "$AGENT/dev/start" | head -c 300
+          echo
+          sleep 6
+          curl -fsS -H "$AUTH" "$AGENT/dev/status" | python3 -m json.tool
+
+          echo
+          echo "=== START web preview (sibling expo --web) ==="
+          curl -fsS -X POST -H "$AUTH" "$AGENT/dev/web-preview/start" 2>&1 | head -c 300
+          echo
+          echo
+          echo "=== Poll status + curl /dev-web/ for up to 60s — pass when content-type is text/html AND body contains <html ==="
+          for i in $(seq 1 30); do
+            sleep 2
+            STATUS=$(curl -fsS -H "$AUTH" "$AGENT/dev/status" 2>/dev/null)
+            WEBPORT=$(echo "$STATUS" | python3 -c "import json,sys;print(json.load(sys.stdin).get('webPort',0))")
+            # Probe localhost:WEBPORT directly
+            if [ "$WEBPORT" != "0" ] && [ -n "$WEBPORT" ]; then
+              CT=$(curl -sS -o /tmp/web.html -w '%{content_type} %{http_code}' "http://127.0.0.1:$WEBPORT/" 2>/dev/null || echo "fail")
+              HTML_LINE=$(grep -c '<html' /tmp/web.html 2>/dev/null || echo 0)
+              echo "  +${i}s  webPort=$WEBPORT  localhost-ct=$CT  has-<html>=$HTML_LINE"
+              if [ "$HTML_LINE" -gt 0 ]; then
+                echo "  ✓ Expo Web serving HTML"
+                echo "  --- first 500 bytes of /dev-web/ ---"
+                head -c 500 /tmp/web.html
+                echo
+                exit 0
+              fi
+            fi
+          done
+          echo
+          echo "FAIL — Expo Web never served HTML in 60s"
+          echo "--- last agent log around expo:web ---"
+          tail -n 200 /home/yaver/.yaver/agent.log 2>/dev/null | grep -iE 'expo|web-preview|prebuild|EACCES|ENOENT' | tail -30
+          BODY
+          chmod +x "$RUNNER_TEMP/reset.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/reset.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/reset-web.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/reset-web.sh"
