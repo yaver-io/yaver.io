@@ -650,6 +650,11 @@ type TaskCreateOptions struct {
 	VideoSource  string
 }
 
+type TaskResumeOptions struct {
+	RunnerID string
+	Model    string
+}
+
 type Task struct {
 	ID          string             `json:"id"`
 	Title       string             `json:"title"`
@@ -1238,6 +1243,9 @@ func taskEnv(task *Task) []string {
 		default:
 			env = append(env, "YAVER_SESSION_MODE=remote", "YAVER_SOURCE_SURFACE="+firstNonEmpty(strings.TrimSpace(task.Source), "unknown"))
 		}
+		if task.runner.OutputMode == "raw" {
+			env = append(env, "TERM=xterm-256color", "CLICOLOR_FORCE=1", "FORCE_COLOR=1")
+		}
 	}
 	if task != nil && task.GuestUserID != "" && !task.GuestUseHostAPIKeys {
 		filtered := make([]string, 0, len(env))
@@ -1814,16 +1822,16 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		trackForkedPID(cmd.Process.Pid)
 
 		if runner.OutputMode == "raw" {
-			go tm.readRawOutput(task, stdout)
+			go tm.readRawOutput(task, stdout, stderr)
 		} else {
 			go tm.readStreamJSON(task, stdout)
+			go func() {
+				scanner := bufio.NewScanner(stderr)
+				for scanner.Scan() {
+					log.Printf("[task %s] [container stderr] %s", task.ID, scanner.Text())
+				}
+			}()
 		}
-		go func() {
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				log.Printf("[task %s] [container stderr] %s", task.ID, scanner.Text())
-			}
-		}()
 	} else {
 		// ── Direct execution (default) ──────────────────────────────────
 
@@ -1880,18 +1888,16 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 		// Monitor stdout based on output mode.
 		if runner.OutputMode == "raw" {
-			go tm.readRawOutput(task, stdout)
+			go tm.readRawOutput(task, stdout, stderr)
 		} else {
 			go tm.readStreamJSON(task, stdout)
+			go func() {
+				scanner := bufio.NewScanner(stderr)
+				for scanner.Scan() {
+					log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
+				}
+			}()
 		}
-
-		// Drain stderr.
-		go func() {
-			scanner := bufio.NewScanner(stderr)
-			for scanner.Scan() {
-				log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
-			}
-		}()
 	} // end else (direct execution)
 
 	// Watchdog: if no output after 30s, emit a warning to the mobile user.
@@ -2057,27 +2063,45 @@ func runnerRequiresHostRuntime(runnerID string) bool {
 }
 
 // readRawOutput reads plain text lines from stdout (for non-JSON runners).
-func (tm *TaskManager) readRawOutput(task *Task, r io.Reader) {
-	defer close(task.outputCh)
-
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
-
+func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	var output strings.Builder
+	var outputMu sync.Mutex
 	tm.mu.RLock()
 	output.WriteString(task.Output)
 	tm.mu.RUnlock()
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		tm.emit(task, &output, line+"\n")
+	var wg sync.WaitGroup
+	readStream := func(name string, r io.Reader) {
+		defer wg.Done()
+		if r == nil {
+			return
+		}
+		buf := make([]byte, 8192)
+		for {
+			n, err := r.Read(buf)
+			if n > 0 {
+				outputMu.Lock()
+				tm.emit(task, &output, string(buf[:n]))
+				outputMu.Unlock()
+			}
+			if err != nil {
+				if err != io.EOF {
+					log.Printf("[task %s] raw %s read error: %v", task.ID, name, err)
+				}
+				return
+			}
+		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("[task %s] scanner error: %v", task.ID, err)
+	wg.Add(1)
+	go readStream("stdout", stdout)
+	if stderr != nil {
+		wg.Add(1)
+		go readStream("stderr", stderr)
 	}
+	wg.Wait()
+	close(task.outputCh)
 
-	// Store final output as result text for raw runners.
 	tm.mu.Lock()
 	task.ResultText = task.Output
 	tm.mu.Unlock()
@@ -2490,6 +2514,10 @@ func (tm *TaskManager) DeleteAllTasks() int {
 // ResumeTask resumes an existing task in-place with a follow-up prompt.
 // Output is concatenated, same task ID is kept, and Claude session is resumed.
 func (tm *TaskManager) ResumeTask(id, input string, images []ImageAttachment) (*Task, error) {
+	return tm.ResumeTaskWithOptions(id, input, images, TaskResumeOptions{})
+}
+
+func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAttachment, opts TaskResumeOptions) (*Task, error) {
 	tm.mu.Lock()
 	task, ok := tm.tasks[id]
 	if !ok {
@@ -2513,6 +2541,18 @@ func (tm *TaskManager) ResumeTask(id, input string, images []ImageAttachment) (*
 	if len(images) > 0 {
 		newPaths := saveImages(id, images)
 		task.ImagePaths = append(task.ImagePaths, newPaths...)
+	}
+	if runnerID := normalizeRunnerID(opts.RunnerID); runnerID != "" {
+		prevRunner := normalizeRunnerID(task.RunnerID)
+		runner := GetRunnerConfig(runnerID)
+		task.runner = runner
+		task.RunnerID = runner.RunnerID
+		if runner.RunnerID != prevRunner {
+			task.SessionID = ""
+		}
+	}
+	if model := strings.TrimSpace(opts.Model); model != "" {
+		task.Model = model
 	}
 
 	// Clear output for the new run — turns track conversation history
@@ -2627,18 +2667,17 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 	task.StartedAt = &now
 	task.Status = TaskStatusRunning
 
-	if tm.runner.OutputMode == "raw" {
-		go tm.readRawOutput(task, stdout)
+	if runner.OutputMode == "raw" {
+		go tm.readRawOutput(task, stdout, stderr)
 	} else {
 		go tm.readStreamJSON(task, stdout)
+		go func() {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
+			}
+		}()
 	}
-
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			log.Printf("[task %s stderr] %s", task.ID, scanner.Text())
-		}
-	}()
 
 	go func() {
 		err := cmd.Wait()

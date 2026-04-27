@@ -25,15 +25,17 @@ import (
 
 // IncomingMessage is a JSON message received from the mobile client.
 type IncomingMessage struct {
-	Type        string `json:"type"`
-	Token       string `json:"token,omitempty"`
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Runner      string `json:"runner,omitempty"`
-	Model       string `json:"model,omitempty"`
-	TaskID      string `json:"taskId,omitempty"`
-	Input       string `json:"input,omitempty"`
-	Source      string `json:"source,omitempty"` // "mobile" or "cli"
+	Type        string            `json:"type"`
+	Token       string            `json:"token,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	Description string            `json:"description,omitempty"`
+	UserPrompt  string            `json:"userPrompt,omitempty"`
+	Runner      string            `json:"runner,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	TaskID      string            `json:"taskId,omitempty"`
+	Input       string            `json:"input,omitempty"`
+	Source      string            `json:"source,omitempty"` // "mobile" or "cli"
+	Images      []ImageAttachment `json:"images,omitempty"`
 }
 
 // OutgoingMessage is a JSON message sent back to the mobile client.
@@ -186,7 +188,9 @@ func (s *QUICServer) handleTaskCreate(stream quic.Stream, msg IncomingMessage) {
 	if source == "" {
 		source = "mobile"
 	}
-	task, err := s.taskManager.CreateTask(msg.Title, msg.Description, msg.Model, source, msg.Runner, "", nil)
+	task, err := s.taskManager.CreateTaskWithOptions(msg.Title, msg.Description, msg.Model, source, msg.Runner, "", msg.Images, TaskCreateOptions{
+		InitialUserPrompt: msg.UserPrompt,
+	})
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})
 		return
@@ -224,7 +228,10 @@ func (s *QUICServer) handleTaskList(stream quic.Stream) {
 }
 
 func (s *QUICServer) handleTaskContinue(stream quic.Stream, msg IncomingMessage) {
-	task, err := s.taskManager.ResumeTask(msg.TaskID, msg.Input, nil)
+	task, err := s.taskManager.ResumeTaskWithOptions(msg.TaskID, msg.Input, msg.Images, TaskResumeOptions{
+		RunnerID: msg.Runner,
+		Model:    msg.Model,
+	})
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})
 		return

@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseTerminalCommandExitAliases(t *testing.T) {
 	for _, input := range []string{"exit", "/exit", "\\exit", "quit", "\\quit", "detach"} {
@@ -65,5 +70,33 @@ func TestMatchCodeProject(t *testing.T) {
 	}
 	if got.Path != "/tmp/beta" {
 		t.Fatalf("matched %q, want /tmp/beta", got.Path)
+	}
+}
+
+func TestBuildTerminalPromptPayloadDetectsAttachments(t *testing.T) {
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "screen shot.png")
+	if err := os.WriteFile(imgPath, []byte("png"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	videoPath := filepath.Join(dir, "clip.mov")
+	if err := os.WriteFile(videoPath, []byte("mov"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	input := `please inspect "` + imgPath + `" ` + videoPath
+	payload := buildTerminalPromptPayload(input)
+
+	if len(payload.Attachments) != 2 {
+		t.Fatalf("attachments=%d, want 2", len(payload.Attachments))
+	}
+	if len(payload.Images) != 1 {
+		t.Fatalf("images=%d, want 1", len(payload.Images))
+	}
+	if !strings.Contains(payload.Prompt, "[Attached local files]") {
+		t.Fatalf("prompt missing attachment block: %q", payload.Prompt)
+	}
+	if !strings.Contains(payload.UserEcho, "screen shot.png") {
+		t.Fatalf("echo missing image filename: %q", payload.UserEcho)
 	}
 }

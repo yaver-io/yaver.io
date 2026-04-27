@@ -93,7 +93,11 @@ func runAttach(args []string) {
 
 	printPrompt := func() {
 		if activeTask == "" {
-			fmt.Print("\033[1;35myaver>\033[0m ")
+			workDir := ""
+			if info != nil {
+				workDir = strings.TrimSpace(info.WorkDir)
+			}
+			printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel)
 		}
 	}
 
@@ -131,9 +135,10 @@ func runAttach(args []string) {
 				printPrompt()
 				continue
 			}
+			payload := buildTerminalPromptPayload(input)
 			// Create a new task from keyboard input
-			fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", summarizeTerminalInputEcho(input))
-			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, input, opts)
+			printTerminalUserInput(payload)
+			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, payload, opts)
 			if err != nil {
 				fmt.Printf("\033[31mError: %v\033[0m\n", err)
 				printPrompt()
@@ -245,23 +250,27 @@ func attachListTasks(baseURL, token string) ([]TaskInfo, error) {
 	return data.Tasks, nil
 }
 
-func attachCreateTask(baseURL, token, prompt string, opts attachSessionOptions) (string, error) {
+func attachCreateTask(baseURL, token string, prompt terminalPromptPayload, opts attachSessionOptions) (string, error) {
 	source := strings.TrimSpace(opts.Source)
 	if source == "" {
 		source = terminalLocalTaskSource
 	}
-	payload := map[string]interface{}{
-		"title":       prompt,
-		"description": prompt,
+	bodyPayload := map[string]interface{}{
+		"title":       prompt.Prompt,
+		"description": prompt.Prompt,
+		"userPrompt":  prompt.OriginalText,
 		"source":      source,
 	}
 	if strings.TrimSpace(opts.DefaultRunner) != "" {
-		payload["runner"] = opts.DefaultRunner
+		bodyPayload["runner"] = opts.DefaultRunner
 	}
 	if strings.TrimSpace(opts.DefaultModel) != "" {
-		payload["model"] = opts.DefaultModel
+		bodyPayload["model"] = opts.DefaultModel
 	}
-	body, _ := json.Marshal(payload)
+	if len(prompt.Images) > 0 {
+		bodyPayload["images"] = prompt.Images
+	}
+	body, _ := json.Marshal(bodyPayload)
 	req, _ := http.NewRequest("POST", baseURL+"/tasks", strings.NewReader(string(body)))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")

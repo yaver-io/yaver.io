@@ -63,7 +63,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Print("yaver> ")
+		printInteractivePrompt("", opts.DefaultRunner, opts.DefaultModel)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -165,15 +165,17 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				fmt.Println("(empty transcription, skipping)")
 				continue
 			}
-			if err := clientCreateTask(ctx, conn, text, opts); err != nil {
+			payload := buildTerminalPromptPayload(text)
+			printTerminalUserInput(payload)
+			if err := clientCreateTask(ctx, conn, payload, opts); err != nil {
 				fmt.Printf("error: %v\n", err)
 			}
 			continue
 		}
 
-		// Default: create a new task
-		fmt.Printf("⟩ %s\n\n", summarizeTerminalInputEcho(line))
-		if err := clientCreateTask(ctx, conn, line, opts); err != nil {
+		payload := buildTerminalPromptPayload(line)
+		printTerminalUserInput(payload)
+		if err := clientCreateTask(ctx, conn, payload, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
 	}
@@ -193,7 +195,7 @@ func clientAuth(ctx context.Context, conn quic.Connection, token string) (string
 }
 
 // clientCreateTask sends a task and streams the output.
-func clientCreateTask(ctx context.Context, conn quic.Connection, prompt string, opts TerminalClientOptions) error {
+func clientCreateTask(ctx context.Context, conn quic.Connection, prompt terminalPromptPayload, opts TerminalClientOptions) error {
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
@@ -201,8 +203,10 @@ func clientCreateTask(ctx context.Context, conn quic.Connection, prompt string, 
 
 	msg := IncomingMessage{
 		Type:        "task_create",
-		Title:       prompt,
-		Description: prompt,
+		Title:       prompt.Prompt,
+		Description: prompt.Prompt,
+		UserPrompt:  prompt.OriginalText,
+		Images:      prompt.Images,
 		Source:      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
 		Runner:      opts.DefaultRunner,
 		Model:       opts.DefaultModel,
@@ -369,7 +373,11 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		fmt.Print("yaver> ")
+		workDir := ""
+		if infoSnapshot != nil {
+			workDir = strings.TrimSpace(infoSnapshot.WorkDir)
+		}
+		printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -457,18 +465,20 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 			}
 		}
 
-		// Default: create a new task
-		fmt.Printf("⟩ %s\n\n", summarizeTerminalInputEcho(line))
-		if err := httpCreateTask(ctx, client, baseURL, authHeader, line, opts); err != nil {
+		payload := buildTerminalPromptPayload(line)
+		printTerminalUserInput(payload)
+		if err := httpCreateTask(ctx, client, baseURL, authHeader, payload, opts); err != nil {
 			fmt.Printf("error: %v\n", err)
 		}
 	}
 }
 
-func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader, prompt string, opts TerminalClientOptions) error {
-	body, _ := json.Marshal(map[string]string{
-		"title":       prompt,
-		"description": prompt,
+func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader string, prompt terminalPromptPayload, opts TerminalClientOptions) error {
+	body, _ := json.Marshal(map[string]interface{}{
+		"title":       prompt.Prompt,
+		"description": prompt.Prompt,
+		"userPrompt":  prompt.OriginalText,
+		"images":      prompt.Images,
 		"source":      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
 		"runner":      opts.DefaultRunner,
 		"model":       opts.DefaultModel,

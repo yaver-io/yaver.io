@@ -350,7 +350,7 @@ func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) e
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	authHeader := "Bearer " + cfg.AuthToken
-	return httpCreateTask(context.Background(), client, baseURL, authHeader, prompt, opts)
+	return httpCreateTask(context.Background(), client, baseURL, authHeader, buildTerminalPromptPayload(prompt), opts)
 }
 
 func resolveCodeAttachDevice(cfg *Config, attachTarget, username string) (*DeviceInfo, error) {

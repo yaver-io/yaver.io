@@ -50,6 +50,14 @@ func runCodeControl(args []string) (bool, error) {
 		return true, runCodeAttachControl(args[1:])
 	case "detach":
 		return true, runCodeDetachControl(args[1:])
+	case "auth":
+		return true, runCodeAuthControl(args[1:])
+	case "continue":
+		return true, runCodeContinueControl(args[1:])
+	case "fork":
+		return true, runCodeForkControl(args[1:])
+	case "sessions":
+		return true, runCodeSessionsControl(args[1:])
 	case "get":
 		return true, runCodeGetControl(args[1:])
 	case "set":
@@ -87,7 +95,7 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 		fields[0] = strings.TrimPrefix(fields[0], "/")
 	}
 	switch fields[0] {
-	case "attach", "detach", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help":
+	case "attach", "detach", "auth", "continue", "fork", "sessions", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help":
 		return fields, true
 	default:
 		return nil, false
@@ -96,6 +104,11 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 
 func slashMenuOptions(attached bool) []string {
 	options := []string{
+		"/auth codex",
+		"/auth claude",
+		"/sessions",
+		"/set orchestration manual",
+		"/fork <task-id> --agent opencode <prompt>",
 		"/get agent",
 		"/set agent codex",
 		"/get model",
@@ -282,6 +295,22 @@ Machine:
   yaver code detach pc
   yaver code get pc
 
+Auth:
+  yaver code auth claude
+  yaver code auth codex
+  yaver code auth status <session-id>
+  yaver code auth submit <session-id> <code>
+  yaver code auth cancel <session-id>
+
+Sessions:
+  yaver code sessions
+  yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>
+  yaver code fork <task-id> --agent <runner> [--model <model>] <message>
+
+Orchestration:
+  yaver code set orchestration <manual|auto>
+  yaver code get orchestration
+
 Agent + models:
   yaver code set agent <runner>
   yaver code get agent
@@ -333,6 +362,9 @@ func loadCodeConfig() (*Config, *CodeCLIConfig, error) {
 	if strings.TrimSpace(cfg.Code.WorkMode) == "" {
 		cfg.Code.WorkMode = codeWorkModeLocal
 	}
+	if strings.TrimSpace(cfg.Code.OrchestrationMode) == "" {
+		cfg.Code.OrchestrationMode = "manual"
+	}
 	return cfg, cfg.Code, nil
 }
 
@@ -354,6 +386,465 @@ func codeAttachedDevice(profile *CodeCLIConfig) string {
 		return strings.TrimSpace(profile.AttachedDeviceID)
 	}
 	return ""
+}
+
+type codeBrowserAuthResponse struct {
+	OK      bool                     `json:"ok"`
+	Session runnerBrowserAuthSession `json:"session"`
+	Error   string                   `json:"error,omitempty"`
+}
+
+func runCodeAuthControl(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: yaver code auth <claude|codex|status|submit|cancel> ...")
+	}
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	deviceID := codeAttachedDevice(profile)
+	switch normalizeRunnerAuthName(args[0]) {
+	case "claude", "codex":
+		return runCodeBrowserAuthFlow(deviceID, normalizeRunnerAuthName(args[0]))
+	}
+	switch args[0] {
+	case "status":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: yaver code auth status <session-id>")
+		}
+		sess, err := codeRunnerBrowserAuthStatus(deviceID, args[1])
+		if err != nil {
+			return err
+		}
+		printCodeBrowserAuthSession(sess)
+		return nil
+	case "submit":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: yaver code auth submit <session-id> <code>")
+		}
+		code := strings.TrimSpace(strings.Join(args[2:], " "))
+		sess, err := codeRunnerBrowserAuthSubmit(deviceID, args[1], code)
+		if err != nil {
+			return err
+		}
+		printCodeBrowserAuthSession(sess)
+		return nil
+	case "cancel":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: yaver code auth cancel <session-id>")
+		}
+		sess, err := codeRunnerBrowserAuthCancel(deviceID, args[1])
+		if err != nil {
+			return err
+		}
+		printCodeBrowserAuthSession(sess)
+		return nil
+	default:
+		return fmt.Errorf("usage: yaver code auth <claude|codex|status|submit|cancel> ...")
+	}
+}
+
+func runCodeBrowserAuthFlow(deviceID, runner string) error {
+	sess, err := codeRunnerBrowserAuthStart(deviceID, runner)
+	if err != nil {
+		return err
+	}
+	printCodeBrowserAuthSession(sess)
+	if strings.EqualFold(sess.Runner, "claude") && sess.Status != "completed" {
+		fmt.Println("Open the link above, finish Claude sign-in, then paste the returned code/token here.")
+		fmt.Print("Auth code (leave empty to skip): ")
+		reader := bufio.NewReader(os.Stdin)
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return readErr
+		}
+		code := strings.TrimSpace(line)
+		if code != "" {
+			sess, err = codeRunnerBrowserAuthSubmit(deviceID, sess.ID, code)
+			if err != nil {
+				return err
+			}
+			printCodeBrowserAuthSession(sess)
+		}
+	}
+	return pollCodeBrowserAuth(deviceID, sess.ID)
+}
+
+func pollCodeBrowserAuth(deviceID, sessionID string) error {
+	for {
+		time.Sleep(1200 * time.Millisecond)
+		sess, err := codeRunnerBrowserAuthStatus(deviceID, sessionID)
+		if err != nil {
+			return err
+		}
+		printCodeBrowserAuthSession(sess)
+		switch sess.Status {
+		case "completed":
+			return nil
+		case "failed":
+			return errors.New(firstNonEmpty(strings.TrimSpace(sess.Error), strings.TrimSpace(sess.Detail), "runner auth failed"))
+		case "cancelled":
+			return errors.New(firstNonEmpty(strings.TrimSpace(sess.Detail), "runner auth cancelled"))
+		}
+	}
+}
+
+func printCodeBrowserAuthSession(sess *runnerBrowserAuthSession) {
+	if sess == nil {
+		return
+	}
+	fmt.Printf("Runner auth: %s [%s] session=%s\n", sess.Runner, sess.Status, sess.ID)
+	if strings.TrimSpace(sess.OpenURL) != "" {
+		fmt.Printf("Open: %s\n", sess.OpenURL)
+	}
+	if strings.TrimSpace(sess.Code) != "" {
+		fmt.Printf("Code: %s\n", sess.Code)
+	}
+	if strings.TrimSpace(sess.Detail) != "" {
+		fmt.Printf("Detail: %s\n", sess.Detail)
+	}
+	if sess.AuthConfigured && strings.TrimSpace(sess.AuthSource) != "" {
+		fmt.Printf("Auth: %s\n", sess.AuthSource)
+	}
+	fmt.Println()
+}
+
+func codeRunnerBrowserAuthStart(deviceID, runner string) (*runnerBrowserAuthSession, error) {
+	var resp codeBrowserAuthResponse
+	body := map[string]interface{}{"runner": runner}
+	var err error
+	if deviceID == "" {
+		raw, reqErr := localAgentRequest("POST", "/runner-auth/browser/start", body)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		data, _ := json.Marshal(raw)
+		err = json.Unmarshal(data, &resp)
+	} else {
+		err = remoteAgentJSONForDevice(context.Background(), deviceID, "POST", "/runner-auth/browser/start", body, &resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Session, nil
+}
+
+func codeRunnerBrowserAuthStatus(deviceID, sessionID string) (*runnerBrowserAuthSession, error) {
+	var resp codeBrowserAuthResponse
+	path := "/runner-auth/browser/status?id=" + urlQueryEscape(strings.TrimSpace(sessionID))
+	var err error
+	if deviceID == "" {
+		raw, reqErr := localAgentRequest("GET", path, nil)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		data, _ := json.Marshal(raw)
+		err = json.Unmarshal(data, &resp)
+	} else {
+		err = remoteAgentJSONForDevice(context.Background(), deviceID, "GET", path, nil, &resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Session, nil
+}
+
+func codeRunnerBrowserAuthSubmit(deviceID, sessionID, code string) (*runnerBrowserAuthSession, error) {
+	var resp codeBrowserAuthResponse
+	path := "/runner-auth/browser/submit-code?id=" + urlQueryEscape(strings.TrimSpace(sessionID))
+	body := map[string]interface{}{"code": strings.TrimSpace(code)}
+	var err error
+	if deviceID == "" {
+		raw, reqErr := localAgentRequest("POST", path, body)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		data, _ := json.Marshal(raw)
+		err = json.Unmarshal(data, &resp)
+	} else {
+		err = remoteAgentJSONForDevice(context.Background(), deviceID, "POST", path, body, &resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Session, nil
+}
+
+func codeRunnerBrowserAuthCancel(deviceID, sessionID string) (*runnerBrowserAuthSession, error) {
+	var resp codeBrowserAuthResponse
+	path := "/runner-auth/browser/cancel?id=" + urlQueryEscape(strings.TrimSpace(sessionID))
+	var err error
+	if deviceID == "" {
+		raw, reqErr := localAgentRequest("POST", path, map[string]interface{}{})
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		data, _ := json.Marshal(raw)
+		err = json.Unmarshal(data, &resp)
+	} else {
+		err = remoteAgentJSONForDevice(context.Background(), deviceID, "POST", path, map[string]interface{}{}, &resp)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Session, nil
+}
+
+func runCodeSessionsControl(args []string) error {
+	if len(args) != 0 {
+		return fmt.Errorf("usage: yaver code sessions")
+	}
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	tasks, err := codeListTasks(codeAttachedDevice(profile))
+	if err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		fmt.Println("No sessions yet.")
+		return nil
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].CreatedAt.After(tasks[j].CreatedAt)
+	})
+	for _, task := range tasks {
+		fmt.Printf("%s  %-10s  runner=%s  session=%s  %s\n",
+			task.ID,
+			task.Status,
+			firstNonEmpty(strings.TrimSpace(task.RunnerID), "-"),
+			firstNonEmpty(strings.TrimSpace(task.SessionID), "-"),
+			task.Title)
+	}
+	return nil
+}
+
+func runCodeContinueControl(args []string) error {
+	if len(args) < 2 {
+		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>")
+	}
+	taskID := strings.TrimSpace(args[0])
+	runner := ""
+	model := ""
+	var messageParts []string
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --agent")
+			}
+			runner = strings.TrimSpace(args[i+1])
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --model")
+			}
+			model = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			messageParts = append(messageParts, args[i])
+		}
+	}
+	message := strings.TrimSpace(strings.Join(messageParts, " "))
+	if taskID == "" || message == "" {
+		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>")
+	}
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	payload := buildTerminalPromptPayload(message)
+	task, err := codeContinueTask(codeAttachedDevice(profile), taskID, payload, runner, model)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Continued %s (runner=%s, session=%s, status=%s)\n",
+		task.ID,
+		firstNonEmpty(strings.TrimSpace(task.RunnerID), firstNonEmpty(strings.TrimSpace(runner), "-")),
+		firstNonEmpty(strings.TrimSpace(task.SessionID), "-"),
+		task.Status)
+	return nil
+}
+
+func runCodeForkControl(args []string) error {
+	if len(args) < 3 {
+		return fmt.Errorf("usage: yaver code fork <task-id> --agent <runner> [--model <model>] <message>")
+	}
+	parentTaskID := strings.TrimSpace(args[0])
+	runner := ""
+	model := ""
+	var messageParts []string
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --agent")
+			}
+			runner = normalizeRunnerID(args[i+1])
+			i++
+		case "--model":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --model")
+			}
+			model = strings.TrimSpace(args[i+1])
+			i++
+		default:
+			messageParts = append(messageParts, args[i])
+		}
+	}
+	if parentTaskID == "" || runner == "" || len(messageParts) == 0 {
+		return fmt.Errorf("usage: yaver code fork <task-id> --agent <runner> [--model <model>] <message>")
+	}
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	childPrompt := strings.TrimSpace(strings.Join(messageParts, " "))
+	task, err := codeForkTask(codeAttachedDevice(profile), parentTaskID, runner, model, childPrompt)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Forked child task %s from %s using %s\n", task.ID, parentTaskID, firstNonEmpty(task.RunnerID, runner))
+	return nil
+}
+
+func codeListTasks(deviceID string) ([]TaskInfo, error) {
+	var resp struct {
+		Tasks []TaskInfo `json:"tasks"`
+	}
+	if deviceID == "" {
+		raw, err := localAgentRequest("GET", "/tasks", nil)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		return resp.Tasks, nil
+	}
+	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "GET", "/tasks", nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Tasks, nil
+}
+
+func codeContinueTask(deviceID, taskID string, payload terminalPromptPayload, runner, model string) (*TaskInfo, error) {
+	var resp struct {
+		OK     bool     `json:"ok"`
+		TaskID string   `json:"taskId"`
+		Status string   `json:"status"`
+		Task   TaskInfo `json:"task"`
+	}
+	body := map[string]interface{}{
+		"input":  payload.Prompt,
+		"images": payload.Images,
+		"runner": strings.TrimSpace(runner),
+		"model":  strings.TrimSpace(model),
+	}
+	path := "/tasks/" + strings.TrimSpace(taskID) + "/continue"
+	if deviceID == "" {
+		raw, err := localAgentRequest("POST", path, body)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		return &TaskInfo{ID: resp.TaskID, Status: TaskStatus(resp.Status), RunnerID: strings.TrimSpace(runner)}, nil
+	}
+	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "POST", path, body, &resp); err != nil {
+		return nil, err
+	}
+	return &TaskInfo{ID: resp.TaskID, Status: TaskStatus(resp.Status), RunnerID: strings.TrimSpace(runner)}, nil
+}
+
+func codeForkTask(deviceID, parentTaskID, runner, model, childPrompt string) (*TaskInfo, error) {
+	parent, err := codeFetchTask(deviceID, parentTaskID)
+	if err != nil {
+		return nil, err
+	}
+	ctxPrompt := renderCodeCompactContextPrompt(buildCodeCompactContext(taskFromTaskInfo(parent), 6))
+	fullPrompt := strings.TrimSpace(ctxPrompt + "\n\n[Delegated child task]\n" + strings.TrimSpace(childPrompt))
+	return codeCreateTask(deviceID, terminalPromptPayload{
+		Prompt:       fullPrompt,
+		UserEcho:     childPrompt,
+		OriginalText: childPrompt,
+	}, runner, model)
+}
+
+func codeFetchTask(deviceID, taskID string) (*TaskInfo, error) {
+	var resp struct {
+		OK   bool     `json:"ok"`
+		Task TaskInfo `json:"task"`
+	}
+	path := "/tasks/" + strings.TrimSpace(taskID)
+	if deviceID == "" {
+		raw, err := localAgentRequest("GET", path, nil)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		return &resp.Task, nil
+	}
+	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "GET", path, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp.Task, nil
+}
+
+func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, model string) (*TaskInfo, error) {
+	var resp struct {
+		OK       bool       `json:"ok"`
+		TaskID   string     `json:"taskId"`
+		Status   TaskStatus `json:"status"`
+		RunnerID string     `json:"runnerId"`
+	}
+	body := map[string]interface{}{
+		"title":       payload.Prompt,
+		"description": payload.Prompt,
+		"userPrompt":  payload.OriginalText,
+		"images":      payload.Images,
+		"source":      terminalLocalTaskSource,
+		"runner":      strings.TrimSpace(runner),
+		"model":       strings.TrimSpace(model),
+	}
+	if deviceID == "" {
+		raw, err := localAgentRequest("POST", "/tasks", body)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		return &TaskInfo{ID: resp.TaskID, Status: resp.Status, RunnerID: resp.RunnerID}, nil
+	}
+	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "POST", "/tasks", body, &resp); err != nil {
+		return nil, err
+	}
+	return &TaskInfo{ID: resp.TaskID, Status: resp.Status, RunnerID: resp.RunnerID}, nil
+}
+
+func taskFromTaskInfo(info *TaskInfo) *Task {
+	if info == nil {
+		return nil
+	}
+	return &Task{
+		ID:          info.ID,
+		Title:       info.Title,
+		Description: info.Description,
+		Status:      info.Status,
+		RunnerID:    info.RunnerID,
+		SessionID:   info.SessionID,
+		ResultText:  info.ResultText,
+		Turns:       info.Turns,
+	}
 }
 
 func runCodeAttachControl(args []string) error {
@@ -480,7 +971,7 @@ func runCodeDetachControl(args []string) error {
 
 func runCodeGetControl(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yaver code get <pc|agent|model|plan-model|build-model|repo|work-mode>")
+		return fmt.Errorf("usage: yaver code get <pc|agent|model|plan-model|build-model|repo|work-mode|orchestration>")
 	}
 	switch args[0] {
 	case "pc":
@@ -497,6 +988,8 @@ func runCodeGetControl(args []string) error {
 		return runCodeGetRepo()
 	case "work-mode":
 		return runCodeGetWorkMode()
+	case "orchestration":
+		return runCodeGetOrchestration()
 	default:
 		return fmt.Errorf("unknown get target %q", args[0])
 	}
@@ -504,7 +997,7 @@ func runCodeGetControl(args []string) error {
 
 func runCodeSetControl(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: yaver code set <agent|model|plan-model|build-model|repo|work-mode> ...")
+		return fmt.Errorf("usage: yaver code set <agent|model|plan-model|build-model|repo|work-mode|orchestration> ...")
 	}
 	switch args[0] {
 	case "agent":
@@ -519,6 +1012,8 @@ func runCodeSetControl(args []string) error {
 		return runCodeSetRepo(args[1:])
 	case "work-mode":
 		return runCodeSetWorkMode(args[1:])
+	case "orchestration":
+		return runCodeSetOrchestration(args[1:])
 	default:
 		return fmt.Errorf("unknown set target %q", args[0])
 	}
@@ -767,6 +1262,32 @@ func runCodeSetWorkMode(args []string) error {
 		return fmt.Errorf("unsupported work-mode %q (supported: local, attached)", mode)
 	}
 	return saveCodeConfig(cfg)
+}
+
+func runCodeGetOrchestration() error {
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Orchestration: %s\n", firstNonEmpty(strings.TrimSpace(profile.OrchestrationMode), "manual"))
+	return nil
+}
+
+func runCodeSetOrchestration(args []string) error {
+	mode := strings.ToLower(strings.TrimSpace(args[0]))
+	if mode != "manual" && mode != "auto" {
+		return fmt.Errorf("unsupported orchestration mode %q (supported: manual, auto)", mode)
+	}
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	profile.OrchestrationMode = mode
+	if err := saveCodeConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Orchestration set to %s\n", mode)
+	return nil
 }
 
 func runCodeUserControl(args []string) error {

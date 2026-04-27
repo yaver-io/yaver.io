@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,6 +19,19 @@ type terminalCommand struct {
 	Input  string
 	Runner string
 	Model  string
+}
+
+type terminalPromptPayload struct {
+	Prompt       string
+	UserEcho     string
+	Images       []ImageAttachment
+	Attachments  []terminalAttachment
+	OriginalText string
+}
+
+type terminalAttachment struct {
+	Path string
+	Kind string
 }
 
 func parseTerminalCommand(line string) (terminalCommand, bool) {
@@ -179,4 +195,191 @@ func summarizeTerminalInputEcho(input string) string {
 		return fmt.Sprintf("[Pasted Content %d chars]", len(trimmed))
 	}
 	return trimmed
+}
+
+func buildTerminalPromptPayload(input string) terminalPromptPayload {
+	trimmed := strings.TrimSpace(input)
+	payload := terminalPromptPayload{
+		Prompt:       trimmed,
+		UserEcho:     summarizeTerminalInputEcho(trimmed),
+		OriginalText: trimmed,
+	}
+	attachments := detectTerminalAttachments(trimmed)
+	if len(attachments) == 0 {
+		return payload
+	}
+	payload.Attachments = attachments
+	for _, att := range attachments {
+		if att.Kind != "image" {
+			continue
+		}
+		data, err := os.ReadFile(att.Path)
+		if err != nil {
+			continue
+		}
+		payload.Images = append(payload.Images, ImageAttachment{
+			Base64:   base64.StdEncoding.EncodeToString(data),
+			MimeType: mimeTypeFromPath(att.Path),
+			Filename: filepath.Base(att.Path),
+		})
+	}
+	var extra []string
+	extra = append(extra, "", "[Attached local files]")
+	for i, att := range attachments {
+		extra = append(extra, fmt.Sprintf("%s %d: %s", strings.Title(att.Kind), i+1, att.Path))
+	}
+	extra = append(extra, "Inspect these files directly. Preserve native diffs, colors, and runner-specific progress wording when you respond.")
+	payload.Prompt = strings.TrimSpace(trimmed + "\n\n" + strings.Join(extra, "\n"))
+	if echo := summarizeTerminalAttachmentsEcho(attachments); echo != "" {
+		payload.UserEcho = echo
+	}
+	return payload
+}
+
+func summarizeTerminalAttachmentsEcho(attachments []terminalAttachment) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(attachments))
+	for _, att := range attachments {
+		parts = append(parts, fmt.Sprintf("%s %s", att.Kind, filepath.Base(att.Path)))
+	}
+	return "[Attached " + strings.Join(parts, ", ") + "]"
+}
+
+func detectTerminalAttachments(input string) []terminalAttachment {
+	tokens := splitTerminalInputTokens(input)
+	if len(tokens) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var attachments []terminalAttachment
+	for _, token := range tokens {
+		path, kind, ok := terminalAttachmentFromToken(token)
+		if !ok || seen[path] {
+			continue
+		}
+		seen[path] = true
+		attachments = append(attachments, terminalAttachment{Path: path, Kind: kind})
+	}
+	return attachments
+}
+
+func splitTerminalInputTokens(input string) []string {
+	var (
+		tokens []string
+		buf    []rune
+		quote  rune
+		escape bool
+	)
+	flush := func() {
+		if len(buf) == 0 {
+			return
+		}
+		tokens = append(tokens, string(buf))
+		buf = buf[:0]
+	}
+	for _, r := range input {
+		switch {
+		case escape:
+			buf = append(buf, r)
+			escape = false
+		case r == '\\':
+			escape = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				buf = append(buf, r)
+			}
+		case r == '"' || r == '\'':
+			quote = r
+		case r == ' ' || r == '\t' || r == '\n':
+			flush()
+		default:
+			buf = append(buf, r)
+		}
+	}
+	flush()
+	return tokens
+}
+
+func terminalAttachmentFromToken(token string) (string, string, bool) {
+	candidate := strings.TrimSpace(token)
+	if candidate == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(candidate, "~/") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			candidate = filepath.Join(home, strings.TrimPrefix(candidate, "~/"))
+		}
+	}
+	if !strings.HasPrefix(candidate, "/") && !strings.HasPrefix(candidate, "./") && !strings.HasPrefix(candidate, "../") {
+		return "", "", false
+	}
+	abs, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", "", false
+	}
+	info, err := os.Stat(abs)
+	if err != nil || info.IsDir() {
+		return "", "", false
+	}
+	switch strings.ToLower(filepath.Ext(abs)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic", ".heif":
+		return abs, "image", true
+	case ".mov", ".mp4", ".m4v", ".avi", ".mkv", ".webm":
+		return abs, "video", true
+	default:
+		return abs, "file", true
+	}
+}
+
+func printTerminalUserInput(payload terminalPromptPayload) {
+	echo := strings.TrimSpace(payload.UserEcho)
+	if echo == "" {
+		echo = summarizeTerminalInputEcho(payload.OriginalText)
+	}
+	fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", echo)
+}
+
+func renderTerminalPromptLabel(workDir, runner, model string) string {
+	wd := strings.TrimSpace(workDir)
+	if wd == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			wd = cwd
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(wd, home) {
+		wd = "~" + strings.TrimPrefix(wd, home)
+	}
+	agent := strings.TrimSpace(model)
+	if agent == "" {
+		agent = strings.TrimSpace(runner)
+	}
+	if agent == "" {
+		agent = "default"
+	}
+	switch normalizeRunnerID(runner) {
+	case "codex":
+		if strings.TrimSpace(model) == "" {
+			agent = "gpt-5.4 default"
+		}
+	case "claude":
+		if strings.TrimSpace(model) == "" {
+			agent = "claude default"
+		}
+	case "opencode":
+		if strings.TrimSpace(model) == "" {
+			agent = "opencode default"
+		}
+	}
+	if wd == "" {
+		return agent
+	}
+	return agent + " · " + wd
+}
+
+func printInteractivePrompt(workDir, runner, model string) {
+	fmt.Printf("\033[2m%s\033[0m\n\033[1;35myaver>\033[0m ", renderTerminalPromptLabel(workDir, runner, model))
 }

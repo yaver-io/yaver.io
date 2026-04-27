@@ -114,6 +114,7 @@ type CodeCLIConfig struct {
 	AttachedDeviceName string `json:"attached_device_name,omitempty"`
 	Runner             string `json:"runner,omitempty"`
 	Model              string `json:"model,omitempty"`
+	OrchestrationMode  string `json:"orchestration_mode,omitempty"` // manual | auto
 	RepoPath           string `json:"repo_path,omitempty"`
 	RepoRemote         bool   `json:"repo_remote,omitempty"`
 }

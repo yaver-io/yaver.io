@@ -630,12 +630,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Web build target outputs (target=web-js-bundle / web-hermes-wasm).
 	// Registered before the catch-all /dev/ proxy so they don't get
 	// shadowed by the dev-server reverse proxy.
-	mux.HandleFunc("/dev/web-bundle/", s.handleServeWebBundle)            // No auth — serves built web bundle (static files)
-	mux.HandleFunc("/dev/hermes-wasm-runtime", s.handleServeHermesWasm)   // No auth — serves hermes.wasm for the runner page
-	mux.HandleFunc("/dev/web-bundle/info", s.auth(s.handleWebBundleInfo)) // Owner — returns metadata about the current bundle
-	mux.HandleFunc("/dev/web-bundle/ack", s.auth(s.handleWebBundleAck))   // Owner — iframe reports successful load
+	mux.HandleFunc("/dev/web-bundle/", s.handleServeWebBundle)              // No auth — serves built web bundle (static files)
+	mux.HandleFunc("/dev/hermes-wasm-runtime", s.handleServeHermesWasm)     // No auth — serves hermes.wasm for the runner page
+	mux.HandleFunc("/dev/web-bundle/info", s.auth(s.handleWebBundleInfo))   // Owner — returns metadata about the current bundle
+	mux.HandleFunc("/dev/web-bundle/ack", s.auth(s.handleWebBundleAck))     // Owner — iframe reports successful load
 	mux.HandleFunc("/dev/web-bundle/error", s.auth(s.handleWebBundleError)) // Owner — iframe reports JS error during init
-	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves proxied dev content for browser/webview preview surfaces
+	mux.HandleFunc("/dev/", s.handleDevServerProxy)                         // No auth — serves proxied dev content for browser/webview preview surfaces
 	// Parallel Expo Web: sibling preview process so the Web Reload tab
 	// can render RN apps in a browser iframe without killing Metro's
 	// dev-client (which serves Hermes bundles to the phone via /dev/*).
@@ -3269,6 +3269,8 @@ func (s *HTTPServer) continueTask(w http.ResponseWriter, r *http.Request, id str
 	var body struct {
 		Input  string            `json:"input"`
 		Images []ImageAttachment `json:"images,omitempty"`
+		Runner string            `json:"runner,omitempty"`
+		Model  string            `json:"model,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -3279,7 +3281,10 @@ func (s *HTTPServer) continueTask(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
-	task, err := s.taskMgr.ResumeTask(id, body.Input, body.Images)
+	task, err := s.taskMgr.ResumeTaskWithOptions(id, body.Input, body.Images, TaskResumeOptions{
+		RunnerID: body.Runner,
+		Model:    body.Model,
+	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("resume failed: %v", err))
 		return
