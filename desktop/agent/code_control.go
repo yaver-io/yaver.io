@@ -111,8 +111,10 @@ func slashMenuOptions(attached bool) []string {
 		"/fork <task-id> --agent opencode <prompt>",
 		"/get agent",
 		"/set agent codex",
+		"/set byok openrouter",
 		"/get model",
 		"/set model gpt-5.4",
+		"/get provider",
 		"/get repo",
 		"/repo list",
 		"/repo refresh",
@@ -318,8 +320,14 @@ Orchestration:
 Agent + models:
   yaver code set agent <runner>
   yaver code get agent
+  yaver code set byok <provider> [--api-key <key>] [--model <model>] [--base-url <url>] [--small-model <model>] [--plan-model <model>] [--build-model <model>]
+  yaver code get byok
+  yaver code set provider <provider>
+  yaver code get provider
   yaver code set model <model>
   yaver code get model
+  yaver code set base-url <url>
+  yaver code get base-url
   yaver code set plan-model <model>
   yaver code get plan-model
   yaver code set build-model <model>
@@ -975,15 +983,21 @@ func runCodeDetachControl(args []string) error {
 
 func runCodeGetControl(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yaver code get <pc|agent|model|plan-model|build-model|repo|work-mode|orchestration>")
+		return fmt.Errorf("usage: yaver code get <pc|agent|byok|provider|model|base-url|plan-model|build-model|repo|work-mode|orchestration>")
 	}
 	switch args[0] {
 	case "pc":
 		return runCodeGetPC()
 	case "agent":
 		return runCodeGetAgent()
+	case "byok":
+		return runCodeGetBYOK()
+	case "provider":
+		return runCodeGetProvider()
 	case "model":
 		return runCodeGetModel()
+	case "base-url":
+		return runCodeGetBaseURL()
 	case "plan-model":
 		return runCodeGetOpenCodeModel("plan")
 	case "build-model":
@@ -1001,13 +1015,19 @@ func runCodeGetControl(args []string) error {
 
 func runCodeSetControl(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: yaver code set <agent|model|plan-model|build-model|repo|work-mode|orchestration> ...")
+		return fmt.Errorf("usage: yaver code set <agent|byok|provider|model|base-url|plan-model|build-model|repo|work-mode|orchestration> ...")
 	}
 	switch args[0] {
 	case "agent":
 		return runCodeSetAgent(args[1:])
+	case "byok":
+		return runCodeSetBYOK(args[1:])
+	case "provider":
+		return runCodeSetProvider(args[1:])
 	case "model":
 		return runCodeSetModel(args[1:])
+	case "base-url":
+		return runCodeSetBaseURL(args[1:])
 	case "plan-model":
 		return runCodeSetOpenCodeModel("plan", args[1:])
 	case "build-model":
@@ -1064,6 +1084,24 @@ func runCodeSetAgent(args []string) error {
 	return nil
 }
 
+func runCodeSetBYOK(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: yaver code set byok <provider> [--api-key <key>] [--model <model>] [--base-url <url>] [--small-model <model>] [--plan-model <model>] [--build-model <model>]")
+	}
+	provider := strings.TrimSpace(args[0])
+	fs := flag.NewFlagSet("yaver code set byok", flag.ContinueOnError)
+	apiKey := fs.String("api-key", "", "provider API key")
+	model := fs.String("model", "", "top-level model id")
+	baseURL := fs.String("base-url", "", "provider base URL")
+	smallModel := fs.String("small-model", "", "cheap helper model id")
+	planModel := fs.String("plan-model", "", "plan agent model id")
+	buildModel := fs.String("build-model", "", "build agent model id")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	return codeApplyBYOKProvider(provider, *apiKey, *model, *baseURL, *smallModel, *planModel, *buildModel)
+}
+
 func runCodeGetAgent() error {
 	info, _, err := codeTargetInfo()
 	if err != nil {
@@ -1071,6 +1109,53 @@ func runCodeGetAgent() error {
 	}
 	runner, _ := info["runner"].(map[string]interface{})
 	fmt.Printf("Agent: %s\n", firstNonEmpty(fmt.Sprint(runner["id"]), fmt.Sprint(runner["name"])))
+	return nil
+}
+
+func runCodeGetBYOK() error {
+	summary, profile, err := codeCurrentBYOKSummary()
+	if err != nil {
+		return err
+	}
+	if summary == nil {
+		fmt.Println("BYOK: disabled")
+		return nil
+	}
+	provider := codeSummaryProvider(summary, profile)
+	fmt.Printf("BYOK provider: %s\n", firstNonEmpty(provider, "(unset)"))
+	fmt.Printf("Model: %s\n", firstNonEmpty(summary.Model, profile.Model, "(default)"))
+	fmt.Printf("Base URL: %s\n", firstNonEmpty(codeProviderBaseURL(summary, provider), profile.BaseURL, "(default)"))
+	if summary.SmallModel != "" {
+		fmt.Printf("Small model: %s\n", summary.SmallModel)
+	}
+	if summary.PlanModel != "" {
+		fmt.Printf("Plan model: %s\n", summary.PlanModel)
+	}
+	if summary.BuildModel != "" {
+		fmt.Printf("Build model: %s\n", summary.BuildModel)
+	}
+	if len(summary.Diagnostics) > 0 {
+		fmt.Println("Diagnostics:")
+		for _, line := range summary.Diagnostics {
+			fmt.Printf("  - %s\n", line)
+		}
+	}
+	return nil
+}
+
+func runCodeSetProvider(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("provider is required")
+	}
+	return codeApplyBYOKProvider(strings.TrimSpace(args[0]), "", "", "", "", "", "")
+}
+
+func runCodeGetProvider() error {
+	summary, profile, err := codeCurrentBYOKSummary()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Provider: %s\n", firstNonEmpty(codeSummaryProvider(summary, profile), profile.Provider, "(default)"))
 	return nil
 }
 
@@ -1084,6 +1169,9 @@ func runCodeSetModel(args []string) error {
 		return err
 	}
 	profile.Model = model
+	if provider := providerFromModel(model); provider != "" {
+		profile.Provider = provider
+	}
 	if strings.EqualFold(profile.Runner, "opencode") {
 		if err := codePatchOpenCode(codeAttachedDevice(profile), map[string]string{"model": model}); err != nil {
 			return err
@@ -1110,6 +1198,49 @@ func runCodeGetModel() error {
 		return nil
 	}
 	fmt.Printf("Model: %s\n", firstNonEmpty(profile.Model, "(default)"))
+	return nil
+}
+
+func runCodeSetBaseURL(args []string) error {
+	baseURL := strings.TrimSpace(strings.Join(args, " "))
+	if baseURL == "" {
+		return fmt.Errorf("base-url is required")
+	}
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		return fmt.Errorf("base-url is only valid when agent=opencode")
+	}
+	provider := firstNonEmpty(strings.TrimSpace(profile.Provider), providerFromModel(profile.Model))
+	if provider == "" {
+		provider = "openrouter"
+	}
+	if err := codePatchOpenCodeConfig(codeAttachedDevice(profile), openCodeConfigPatch{
+		Providers: []openCodeProviderPatch{{
+			ID:      provider,
+			Name:    openCodeProviderDisplayName(provider),
+			BaseURL: baseURL,
+		}},
+	}); err != nil {
+		return err
+	}
+	profile.BaseURL = baseURL
+	if err := saveCodeConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Base URL set to %s\n", baseURL)
+	return nil
+}
+
+func runCodeGetBaseURL() error {
+	summary, profile, err := codeCurrentBYOKSummary()
+	if err != nil {
+		return err
+	}
+	provider := codeSummaryProvider(summary, profile)
+	fmt.Printf("Base URL: %s\n", firstNonEmpty(codeProviderBaseURL(summary, provider), profile.BaseURL, "(default)"))
 	return nil
 }
 
@@ -1519,6 +1650,18 @@ func runCodeStatus() error {
 	if err := runCodeGetAgent(); err != nil {
 		return err
 	}
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) == "opencode" {
+		if err := runCodeGetProvider(); err != nil {
+			return err
+		}
+		if err := runCodeGetBaseURL(); err != nil {
+			return err
+		}
+	}
 	if err := runCodeGetModel(); err != nil {
 		return err
 	}
@@ -1657,11 +1800,185 @@ func codePatchOpenCode(deviceID string, patch map[string]string) error {
 	for k, v := range patch {
 		body[k] = v
 	}
+	return codePatchOpenCodeRaw(deviceID, body)
+}
+
+func codePatchOpenCodeConfig(deviceID string, patch openCodeConfigPatch) error {
+	body := map[string]interface{}{}
+	if patch.DefaultAgent != nil {
+		body["defaultAgent"] = *patch.DefaultAgent
+	}
+	if patch.Model != nil {
+		body["model"] = *patch.Model
+	}
+	if patch.SmallModel != nil {
+		body["smallModel"] = *patch.SmallModel
+	}
+	if patch.BuildModel != nil {
+		body["buildModel"] = *patch.BuildModel
+	}
+	if patch.PlanModel != nil {
+		body["planModel"] = *patch.PlanModel
+	}
+	if len(patch.Providers) > 0 {
+		body["providers"] = patch.Providers
+	}
+	return codePatchOpenCodeRaw(deviceID, body)
+}
+
+func codePatchOpenCodeRaw(deviceID string, body map[string]interface{}) error {
 	if deviceID == "" {
 		_, err := localAgentRequest("POST", "/runner/opencode/config", body)
 		return err
 	}
 	return remoteAgentJSONForDevice(context.Background(), deviceID, "POST", "/runner/opencode/config", body, nil)
+}
+
+func codeCurrentBYOKSummary() (*OpenCodeConfigSummary, *CodeCLIConfig, error) {
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		return nil, profile, fmt.Errorf("BYOK settings are only available when agent=opencode")
+	}
+	summary, err := codeGetOpenCodeConfig(codeAttachedDevice(profile))
+	if err != nil {
+		return nil, nil, err
+	}
+	return summary, profile, nil
+}
+
+func codeApplyBYOKProvider(provider, apiKey, model, baseURL, smallModel, planModel, buildModel string) error {
+	provider = normalizeOpenCodeProvider(provider)
+	if provider == "" {
+		return fmt.Errorf("provider is required")
+	}
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		if err := codeSwitchRunner(codeAttachedDevice(profile), "opencode"); err != nil {
+			return err
+		}
+		profile.Runner = "opencode"
+	}
+	patch := openCodeConfigPatch{
+		Providers: []openCodeProviderPatch{{
+			ID:      provider,
+			Name:    openCodeProviderDisplayName(provider),
+			BaseURL: firstNonEmpty(strings.TrimSpace(baseURL), defaultOpenCodeProviderBaseURL(provider)),
+			APIKey:  strings.TrimSpace(apiKey),
+		}},
+	}
+	if model := strings.TrimSpace(model); model != "" {
+		patch.Model = &model
+		profile.Model = model
+	}
+	if small := strings.TrimSpace(smallModel); small != "" {
+		patch.SmallModel = &small
+	}
+	if plan := strings.TrimSpace(planModel); plan != "" {
+		patch.PlanModel = &plan
+	}
+	if build := strings.TrimSpace(buildModel); build != "" {
+		patch.BuildModel = &build
+	}
+	if err := codePatchOpenCodeConfig(codeAttachedDevice(profile), patch); err != nil {
+		return err
+	}
+	profile.Provider = provider
+	if trimmed := strings.TrimSpace(baseURL); trimmed != "" {
+		profile.BaseURL = trimmed
+	} else if profile.BaseURL == "" {
+		profile.BaseURL = defaultOpenCodeProviderBaseURL(provider)
+	}
+	if err := saveCodeConfig(cfg); err != nil {
+		return err
+	}
+	modelLabel := firstNonEmpty(strings.TrimSpace(model), profile.Model, "(default)")
+	fmt.Printf("BYOK coding set to %s (model=%s)\n", provider, modelLabel)
+	return nil
+}
+
+func normalizeOpenCodeProvider(provider string) string {
+	p := strings.ToLower(strings.TrimSpace(provider))
+	switch p {
+	case "or", "open-router":
+		return "openrouter"
+	case "oa":
+		return "openai"
+	default:
+		return p
+	}
+}
+
+func openCodeProviderDisplayName(provider string) string {
+	switch normalizeOpenCodeProvider(provider) {
+	case "openrouter":
+		return "OpenRouter"
+	case "openai":
+		return "OpenAI"
+	case "anthropic":
+		return "Anthropic"
+	case "ollama":
+		return "Ollama"
+	case "glm":
+		return "GLM"
+	case "zai":
+		return "Z.ai"
+	default:
+		return strings.TrimSpace(provider)
+	}
+}
+
+func defaultOpenCodeProviderBaseURL(provider string) string {
+	switch normalizeOpenCodeProvider(provider) {
+	case "openrouter":
+		return "https://openrouter.ai/api/v1"
+	default:
+		return ""
+	}
+}
+
+func codeSummaryProvider(summary *OpenCodeConfigSummary, profile *CodeCLIConfig) string {
+	if summary != nil {
+		for _, candidate := range []string{summary.Model, summary.BuildModel, summary.PlanModel} {
+			if provider := providerFromModel(candidate); provider != "" {
+				return provider
+			}
+		}
+	}
+	if profile != nil {
+		return normalizeOpenCodeProvider(profile.Provider)
+	}
+	return ""
+}
+
+func codeProviderBaseURL(summary *OpenCodeConfigSummary, provider string) string {
+	if summary == nil {
+		return ""
+	}
+	provider = normalizeOpenCodeProvider(provider)
+	for _, row := range summary.Providers {
+		if normalizeOpenCodeProvider(row.ID) == provider {
+			return strings.TrimSpace(row.BaseURL)
+		}
+	}
+	return ""
+}
+
+func providerFromModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return ""
+	}
+	parts := strings.SplitN(model, "/", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	return normalizeOpenCodeProvider(parts[0])
 }
 
 func codeCurrentAppName(deviceID string, profile *CodeCLIConfig) (string, error) {

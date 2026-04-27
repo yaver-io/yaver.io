@@ -2858,6 +2858,44 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, resp)
 }
 
+func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
+	s.taskMgr.mu.RLock()
+	defer s.taskMgr.mu.RUnlock()
+	output := task.Output
+	if len(output) > 10000 {
+		output = output[len(output)-10000:]
+	}
+	info := TaskInfo{
+		ID:             task.ID,
+		Title:          task.Title,
+		Description:    task.Description,
+		Status:         task.Status,
+		RunnerID:       task.RunnerID,
+		SessionID:      task.SessionID,
+		Output:         output,
+		ResultText:     task.ResultText,
+		CostUSD:        task.CostUSD,
+		Turns:          task.Turns,
+		Source:         task.Source,
+		TmuxSession:    task.TmuxSession,
+		IsAdopted:      task.IsAdopted,
+		CreatedAt:      task.CreatedAt,
+		StartedAt:      task.StartedAt,
+		FinishedAt:     task.FinishedAt,
+		ChainID:        task.ChainID,
+		ChainOrder:     task.ChainOrder,
+		AutoRetry:      task.AutoRetry,
+		AutoRetryCount: task.AutoRetryCount,
+		AutoRetryMax:   task.AutoRetryMax,
+		VideoEnabled:   task.VideoEnabled,
+		VideoSource:    task.VideoSource,
+		VideoClipID:    task.VideoClipID,
+		VideoStatus:    task.VideoStatus,
+	}
+	s.enrichTaskInfoVideo(&info, r)
+	return info
+}
+
 func (s *HTTPServer) enrichTaskInfoVideo(info *TaskInfo, r *http.Request) {
 	if info == nil {
 		return
@@ -3124,35 +3162,7 @@ func (s *HTTPServer) getTask(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 
-	s.taskMgr.mu.RLock()
-	output := task.Output
-	if len(output) > 10000 {
-		output = output[len(output)-10000:]
-	}
-	info := TaskInfo{
-		ID:           task.ID,
-		Title:        task.Title,
-		Description:  task.Description,
-		Status:       task.Status,
-		RunnerID:     task.RunnerID,
-		SessionID:    task.SessionID,
-		Output:       output,
-		ResultText:   task.ResultText,
-		CostUSD:      task.CostUSD,
-		Turns:        task.Turns,
-		Source:       task.Source,
-		TmuxSession:  task.TmuxSession,
-		IsAdopted:    task.IsAdopted,
-		CreatedAt:    task.CreatedAt,
-		StartedAt:    task.StartedAt,
-		FinishedAt:   task.FinishedAt,
-		VideoEnabled: task.VideoEnabled,
-		VideoSource:  task.VideoSource,
-		VideoClipID:  task.VideoClipID,
-		VideoStatus:  task.VideoStatus,
-	}
-	s.taskMgr.mu.RUnlock()
-	s.enrichTaskInfoVideo(&info, r)
+	info := s.taskInfoFromTask(task, r)
 
 	log.Printf("[HTTP] Task %s status=%s output_len=%d", id, info.Status, len(info.Output))
 	jsonReply(w, http.StatusOK, map[string]interface{}{
@@ -4329,22 +4339,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("failed to create task: %v", err))
 		}
 		log.Printf("[MCP] Task created: %s (video=%v)", task.ID, args.VideoEnabled)
-		return mcpToolResult(fmt.Sprintf("Task created successfully.\nTask ID: %s\nStatus: %s\nVideo summary: %v", task.ID, task.Status, args.VideoEnabled))
+		return mcpToolJSON(map[string]interface{}{
+			"ok":   true,
+			"task": s.taskInfoFromTask(task, nil),
+		})
 
 	case "list_tasks":
 		tasks := s.taskMgr.ListTasks()
-		if len(tasks) == 0 {
-			return mcpToolResult("No tasks found.")
+		for i := range tasks {
+			s.enrichTaskInfoVideo(&tasks[i], nil)
 		}
-		var sb strings.Builder
-		for _, t := range tasks {
-			sb.WriteString(fmt.Sprintf("- [%s] %s — %s", t.Status, t.ID, t.Title))
-			if t.Status == "running" {
-				sb.WriteString(" (running)")
-			}
-			sb.WriteString("\n")
-		}
-		return mcpToolResult(sb.String())
+		return mcpToolJSON(map[string]interface{}{"ok": true, "tasks": tasks})
 
 	case "get_task":
 		var args struct {
@@ -4355,12 +4360,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if !ok {
 			return mcpToolError("task not found: " + args.TaskID)
 		}
-		s.taskMgr.mu.RLock()
-		output := task.Output
-		status := task.Status
-		title := task.Title
-		s.taskMgr.mu.RUnlock()
-		return mcpToolResult(fmt.Sprintf("Task: %s\nStatus: %s\nTitle: %s\n\nOutput:\n%s", args.TaskID, status, title, output))
+		return mcpToolJSON(map[string]interface{}{
+			"ok":   true,
+			"task": s.taskInfoFromTask(task, nil),
+		})
 
 	case "stop_task":
 		var args struct {
