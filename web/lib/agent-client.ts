@@ -2266,13 +2266,17 @@ export class AgentClient {
   private activeRelayPassword: string | null = null;
 
   private get authHeaders(): Record<string, string> {
+    // X-Yaver-Caller as a custom header would trigger a CORS preflight
+    // on every request, and neither the relay (≤ v0.1.15) nor the agent
+    // (≤ v1.99.71) list X-Yaver-Caller in Access-Control-Allow-Headers
+    // yet — so the browser blocks the actual request and the dashboard
+    // sees "Load failed" everywhere. Until both sides ship the matching
+    // CORS update, we attribute via the ?caller= query param on SSE URLs
+    // only (where it's always allowed since EventSource never preflights).
+    // Non-SSE requests stay anonymous to the agent's logs for one
+    // release; the next agent + relay rev re-enables the header.
     const h: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
-      // X-Yaver-Caller threads our identity into the agent's logs and
-      // every emitted SSE event so server-side observability can
-      // distinguish web-dashboard from mobile-app callers. Agent v1.99.71+
-      // reads this header.
-      "X-Yaver-Caller": YAVER_CALLER_ID,
     };
     if (this._activeRelayUrl && this.activeRelayPassword) {
       h["X-Relay-Password"] = this.activeRelayPassword;
