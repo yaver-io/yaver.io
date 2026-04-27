@@ -1,0 +1,66 @@
+# One-shot fix: install react-native-web + react-dom into sfmg
+# on yaver-test-ephemeral so Expo Web preview can compile.
+name: Install sfmg Web Deps
+
+on:
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render install script
+        run: |
+          cat > "$RUNNER_TEMP/install-web.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          # Stop the agent's current Expo Web sibling so npm install
+          # doesn't clash with watch processes.
+          pkill -f 'expo start --web' || true
+          sleep 1
+
+          sudo -u yaver -i bash -c '
+            set -uo pipefail
+            cd /home/yaver/Workspace/sfmg
+            export PATH=/home/yaver/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+            echo "=== current expo + RN versions ==="
+            npm list expo react-native 2>&1 | head -10 || true
+            echo
+            echo "=== installing react-native-web + react-dom + @expo/metro-runtime ==="
+            # @expo/metro-runtime is needed for fast refresh on web
+            # in Expo SDK 53+. react-native-web @ ~0.21 matches RN 0.81.
+            # Use --save so they persist in package.json and survive
+            # the next expo prebuild --clean.
+            npm install --save \
+              react-native-web@~0.21.0 \
+              react-dom@^19.0.0 \
+              @expo/metro-runtime@~6.1.0 \
+              --legacy-peer-deps 2>&1 | tail -30
+            echo
+            echo "=== final package.json web deps ==="
+            python3 -c "import json;p=json.load(open(\"package.json\"));d=p.get(\"dependencies\",{});print({k:d.get(k) for k in [\"react-native-web\",\"react-dom\",\"@expo/metro-runtime\"]})"
+            echo
+            echo "=== try expo start --web in 25s sample ==="
+            timeout 25 npx expo start --web --port 19006 2>&1 | head -40 || true
+          '
+          BODY
+          chmod +x "$RUNNER_TEMP/install-web.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/install-web.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/install-web.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/install-web.sh && rm -f /tmp/install-web.sh"
