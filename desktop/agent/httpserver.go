@@ -257,6 +257,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/toolchain-sync/profile", s.auth(s.handleEnvironmentProfile))
 	mux.HandleFunc("/agent/toolchain-sync/apply", s.auth(s.handleEnvironmentProfileApply))
 	mux.HandleFunc("/agent/toolchain-sync/git-credentials", s.auth(s.handleToolchainGitCredentials))
+	mux.HandleFunc("/code/config", s.auth(s.handleCodeConfig))
+	mux.HandleFunc("/code/status", s.auth(s.handleCodeStatus))
+	mux.HandleFunc("/code/attach", s.auth(s.handleCodeAttach))
+	mux.HandleFunc("/code/detach", s.auth(s.handleCodeDetach))
+	mux.HandleFunc("/code/repos", s.auth(s.handleCodeRepos))
+	mux.HandleFunc("/code/repo", s.auth(s.handleCodeRepo))
+	mux.HandleFunc("/code/dev", s.auth(s.handleCodeDev))
+	mux.HandleFunc("/code/deploy", s.auth(s.handleCodeDeploy))
 
 	// Morning match-report + recording video byte-range streamer.
 	// Owner-only; deliberately NOT in guestAllowedPrefixes.
@@ -4816,16 +4824,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError("agent graphs unavailable")
 		}
 		var args struct {
-			Name            string   `json:"name"`
-			WorkDir         string   `json:"work_dir"`
-			Prompt          string   `json:"prompt"`
-			Template        string   `json:"template"`
-			Runner          string   `json:"runner"`
-			Model           string   `json:"model"`
-			MaxParallel     int      `json:"max_parallel"`
-			PreferredDevice string   `json:"preferred_device"`
-			AllowedDevices  []string `json:"allowed_devices"`
-			AllowedRunners  []string `json:"allowed_runners"`
+			Name            string                 `json:"name"`
+			WorkDir         string                 `json:"work_dir"`
+			Prompt          string                 `json:"prompt"`
+			Template        string                 `json:"template"`
+			Runner          string                 `json:"runner"`
+			Model           string                 `json:"model"`
+			MaxParallel     int                    `json:"max_parallel"`
+			PreferredDevice string                 `json:"preferred_device"`
+			AllowedDevices  []string               `json:"allowed_devices"`
+			AllowedRunners  []string               `json:"allowed_runners"`
+			Nodes           []mcpAgentGraphNodeArg `json:"nodes"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.Prompt) == "" {
@@ -4834,6 +4843,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		workDir := strings.TrimSpace(args.WorkDir)
 		if workDir == "" {
 			workDir = s.taskMgr.workDir
+		}
+		nodes, err := buildAgentGraphNodesFromMCP(args.Nodes)
+		if err != nil {
+			return mcpToolError(err.Error())
 		}
 		req := AgentGraphCreateRequest{
 			Name:            args.Name,
@@ -4846,6 +4859,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			PreferredDevice: args.PreferredDevice,
 			AllowedDevices:  args.AllowedDevices,
 			AllowedRunners:  args.AllowedRunners,
+			Nodes:           nodes,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
 		if err != nil {
@@ -4909,6 +4923,12 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		sb.WriteString("\nNodes:\n")
 		for _, node := range run.Nodes {
 			sb.WriteString(fmt.Sprintf("- %s (%s) [%s]\n", node.Spec.Title, node.Spec.Kind, node.Status))
+			if len(node.Spec.ResourceModes) > 0 {
+				sb.WriteString(fmt.Sprintf("  resources: %s\n", strings.Join(node.Spec.ResourceModes, ", ")))
+			}
+			if node.Spec.PriorDevice != "" || node.Spec.PriorRunner != "" {
+				sb.WriteString(fmt.Sprintf("  prior: device=%s runner=%s\n", firstNonEmpty(node.Spec.PriorDevice, "-"), firstNonEmpty(node.Spec.PriorRunner, "-")))
+			}
 			if node.Placement != nil {
 				sb.WriteString(fmt.Sprintf("  placement: %s", node.Placement.DeviceNameOrID()))
 				if node.Placement.Runner != "" {
@@ -4949,12 +4969,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError("agent graphs unavailable")
 		}
 		var args struct {
-			Name           string   `json:"name"`
-			WorkDir        string   `json:"work_dir"`
-			Prompt         string   `json:"prompt"`
-			MaxParallel    int      `json:"max_parallel"`
-			AllowedDevices []string `json:"allowed_devices"`
-			AllowedRunners []string `json:"allowed_runners"`
+			Name           string                 `json:"name"`
+			WorkDir        string                 `json:"work_dir"`
+			Prompt         string                 `json:"prompt"`
+			MaxParallel    int                    `json:"max_parallel"`
+			AllowedDevices []string               `json:"allowed_devices"`
+			AllowedRunners []string               `json:"allowed_runners"`
+			Nodes          []mcpAgentGraphNodeArg `json:"nodes"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if strings.TrimSpace(args.Prompt) == "" {
@@ -4968,6 +4989,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if maxParallel <= 0 {
 			maxParallel = 2
 		}
+		nodes, err := buildAgentGraphNodesFromMCP(args.Nodes)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
 		req := AgentGraphCreateRequest{
 			Name:           args.Name,
 			WorkDir:        workDir,
@@ -4976,6 +5001,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			MaxParallel:    maxParallel,
 			AllowedDevices: args.AllowedDevices,
 			AllowedRunners: args.AllowedRunners,
+			Nodes:          nodes,
 		}
 		run, err := s.agentGraphMgr.CreateRun(req)
 		if err != nil {
@@ -8698,6 +8724,366 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(fmt.Sprintf("opencode_config_get: %v", err))
 		}
 		return mcpToolJSON(map[string]interface{}{"ok": true, "config": cfg})
+
+	case "code_config_get":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			status, body, err := proxyToDevice(context.Background(), "code_config_get", strings.TrimSpace(a.DeviceID), http.MethodGet, "/code/config", nil)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_config_get: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_config_get: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		summary, err := buildCodeConfigSummary()
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_config_get: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "code": summary})
+
+	case "code_config_set":
+		var a struct {
+			DeviceID           string `json:"device_id"`
+			Runner             string `json:"runner"`
+			Model              string `json:"model"`
+			Provider           string `json:"provider"`
+			BaseURL            string `json:"base_url"`
+			OrchestrationMode  string `json:"orchestration_mode"`
+			WorkMode           string `json:"work_mode"`
+			AttachedDeviceID   string `json:"attached_device_id"`
+			AttachedDeviceName string `json:"attached_device_name"`
+			RepoPath           string `json:"repo_path"`
+			RepoRemote         *bool  `json:"repo_remote"`
+			BYOKProvider       string `json:"byok_provider"`
+			BYOKAPIKey         string `json:"byok_api_key"`
+			SmallModel         string `json:"small_model"`
+			PlanModel          string `json:"plan_model"`
+			BuildModel         string `json:"build_model"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		payload := map[string]interface{}{}
+		if v := strings.TrimSpace(a.Runner); v != "" {
+			payload["runner"] = v
+		}
+		if v := strings.TrimSpace(a.Model); v != "" {
+			payload["model"] = v
+		}
+		if v := strings.TrimSpace(a.Provider); v != "" {
+			payload["provider"] = v
+		}
+		if v := strings.TrimSpace(a.BaseURL); v != "" {
+			payload["baseUrl"] = v
+		}
+		if v := strings.TrimSpace(a.OrchestrationMode); v != "" {
+			payload["orchestrationMode"] = v
+		}
+		if v := strings.TrimSpace(a.WorkMode); v != "" {
+			payload["workMode"] = v
+		}
+		if v := strings.TrimSpace(a.AttachedDeviceID); v != "" {
+			payload["attachedDeviceId"] = v
+		}
+		if v := strings.TrimSpace(a.AttachedDeviceName); v != "" {
+			payload["attachedDeviceName"] = v
+		}
+		if v := strings.TrimSpace(a.RepoPath); v != "" {
+			payload["repoPath"] = v
+		}
+		if a.RepoRemote != nil {
+			payload["repoRemote"] = *a.RepoRemote
+		}
+		if v := strings.TrimSpace(a.BYOKProvider); v != "" {
+			payload["byokProvider"] = v
+		}
+		if v := strings.TrimSpace(a.BYOKAPIKey); v != "" {
+			payload["byokApiKey"] = v
+		}
+		if v := strings.TrimSpace(a.SmallModel); v != "" {
+			payload["smallModel"] = v
+		}
+		if v := strings.TrimSpace(a.PlanModel); v != "" {
+			payload["planModel"] = v
+		}
+		if v := strings.TrimSpace(a.BuildModel); v != "" {
+			payload["buildModel"] = v
+		}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			raw, _ := json.Marshal(payload)
+			status, body, err := proxyToDevice(context.Background(), "code_config_set", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/config", raw)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_config_set: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_config_set: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		summary, err := applyCodeConfigPatch(codeConfigPatchRequest{
+			Runner:             stringPtr(a.Runner),
+			Model:              stringPtr(a.Model),
+			Provider:           stringPtr(a.Provider),
+			BaseURL:            stringPtr(a.BaseURL),
+			OrchestrationMode:  stringPtr(a.OrchestrationMode),
+			WorkMode:           stringPtr(a.WorkMode),
+			AttachedDeviceID:   stringPtr(a.AttachedDeviceID),
+			AttachedDeviceName: stringPtr(a.AttachedDeviceName),
+			RepoPath:           stringPtr(a.RepoPath),
+			RepoRemote:         a.RepoRemote,
+			BYOKProvider:       stringPtr(a.BYOKProvider),
+			BYOKAPIKey:         stringPtr(a.BYOKAPIKey),
+			SmallModel:         stringPtr(a.SmallModel),
+			PlanModel:          stringPtr(a.PlanModel),
+			BuildModel:         stringPtr(a.BuildModel),
+		})
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_config_set: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "code": summary})
+
+	case "code_status":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			status, body, err := proxyToDevice(context.Background(), "code_status", strings.TrimSpace(a.DeviceID), http.MethodGet, "/code/status", nil)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_status: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_status: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := buildCodeStatusPayload()
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_status: %v", err))
+		}
+		return mcpToolJSON(out)
+
+	case "code_attach":
+		var a struct {
+			DeviceID string `json:"device_id"`
+			Target   string `json:"target"`
+			Username string `json:"username"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.Target) == "" {
+			return mcpToolError("target is required")
+		}
+		payload := map[string]interface{}{"target": strings.TrimSpace(a.Target)}
+		if v := strings.TrimSpace(a.Username); v != "" {
+			payload["username"] = v
+		}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			raw, _ := json.Marshal(payload)
+			status, body, err := proxyToDevice(context.Background(), "code_attach", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/attach", raw)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_attach: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_attach: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := applyCodeAttach(a.Target, a.Username)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_attach: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "result": out})
+
+	case "code_detach":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			status, body, err := proxyToDevice(context.Background(), "code_detach", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/detach", []byte(`{}`))
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_detach: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_detach: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := applyCodeDetach()
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_detach: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "code": out})
+
+	case "code_repos":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			status, body, err := proxyToDevice(context.Background(), "code_repos", strings.TrimSpace(a.DeviceID), http.MethodGet, "/code/repos", nil)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_repos: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_repos: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		repos, err := listCodeReposStructured()
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_repos: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "repos": repos})
+
+	case "code_repo_set":
+		var a struct {
+			DeviceID string `json:"device_id"`
+			Query    string `json:"query"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.Query) == "" {
+			return mcpToolError("query is required")
+		}
+		payload := map[string]interface{}{"query": strings.TrimSpace(a.Query)}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			raw, _ := json.Marshal(payload)
+			status, body, err := proxyToDevice(context.Background(), "code_repo_set", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/repo", raw)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_repo_set: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_repo_set: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := setCodeRepoStructured(a.Query)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_repo_set: %v", err))
+		}
+		return mcpToolJSON(out)
+
+	case "code_dev":
+		var a struct {
+			DeviceID string `json:"device_id"`
+			Action   string `json:"action"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.Action) == "" {
+			return mcpToolError("action is required")
+		}
+		payload := map[string]interface{}{"action": strings.TrimSpace(a.Action)}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			raw, _ := json.Marshal(payload)
+			status, body, err := proxyToDevice(context.Background(), "code_dev", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/dev", raw)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_dev: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_dev: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := runCodeDevActionStructured(a.Action)
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_dev: %v", err))
+		}
+		return mcpToolJSON(out)
+
+	case "code_deploy":
+		var a struct {
+			DeviceID   string   `json:"device_id"`
+			App        string   `json:"app"`
+			Surface    string   `json:"surface"`
+			Targets    []string `json:"targets"`
+			RepoQuery  string   `json:"repo_query"`
+			RepoPath   string   `json:"repo_path"`
+			Machine    string   `json:"machine"`
+			Distribute bool     `json:"distribute"`
+			CIProvider string   `json:"ci_provider"`
+			CIRepo     string   `json:"ci_repo"`
+			Workflow   string   `json:"workflow"`
+			Branch     string   `json:"branch"`
+			Tag        string   `json:"tag"`
+			File       string   `json:"file"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.Surface) == "" && len(a.Targets) == 0 {
+			return mcpToolError("surface or targets is required")
+		}
+		payload := map[string]interface{}{}
+		if v := strings.TrimSpace(a.App); v != "" {
+			payload["app"] = v
+		}
+		if v := strings.TrimSpace(a.Surface); v != "" {
+			payload["surface"] = v
+		}
+		if len(a.Targets) > 0 {
+			payload["targets"] = a.Targets
+		}
+		if v := strings.TrimSpace(a.RepoQuery); v != "" {
+			payload["repoQuery"] = v
+		}
+		if v := strings.TrimSpace(a.RepoPath); v != "" {
+			payload["repoPath"] = v
+		}
+		if v := strings.TrimSpace(a.Machine); v != "" {
+			payload["machine"] = v
+		}
+		if a.Distribute {
+			payload["distribute"] = true
+		}
+		if v := strings.TrimSpace(a.CIProvider); v != "" {
+			payload["ciProvider"] = v
+		}
+		if v := strings.TrimSpace(a.CIRepo); v != "" {
+			payload["ciRepo"] = v
+		}
+		if v := strings.TrimSpace(a.Workflow); v != "" {
+			payload["workflow"] = v
+		}
+		if v := strings.TrimSpace(a.Branch); v != "" {
+			payload["branch"] = v
+		}
+		if v := strings.TrimSpace(a.Tag); v != "" {
+			payload["tag"] = v
+		}
+		if v := strings.TrimSpace(a.File); v != "" {
+			payload["file"] = v
+		}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			raw, _ := json.Marshal(payload)
+			status, body, err := proxyToDevice(context.Background(), "code_deploy", strings.TrimSpace(a.DeviceID), http.MethodPost, "/code/deploy", raw)
+			if err != nil {
+				return mcpToolError(fmt.Sprintf("code_deploy: %v", err))
+			}
+			if status >= 300 {
+				return mcpToolError(fmt.Sprintf("code_deploy: remote returned %d: %s", status, string(body)))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		out, err := runCodeDeployRequestStructured(CodeDeployRequest{
+			App:        a.App,
+			Surface:    a.Surface,
+			Targets:    a.Targets,
+			RepoQuery:  a.RepoQuery,
+			RepoPath:   a.RepoPath,
+			Machine:    a.Machine,
+			Distribute: a.Distribute,
+			CIProvider: a.CIProvider,
+			CIRepo:     a.CIRepo,
+			Workflow:   a.Workflow,
+			Branch:     a.Branch,
+			Tag:        a.Tag,
+			File:       a.File,
+		})
+		if err != nil {
+			return mcpToolError(fmt.Sprintf("code_deploy: %v", err))
+		}
+		return mcpToolJSON(map[string]interface{}{"ok": true, "result": out})
 
 	case "opencode_config_set":
 		var a struct {
@@ -13431,6 +13817,121 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 	}
 }
 
+type mcpAgentGraphNodeArg struct {
+	ID                       string   `json:"id"`
+	Title                    string   `json:"title"`
+	Kind                     string   `json:"kind"`
+	Prompt                   string   `json:"prompt"`
+	DependsOn                []string `json:"depends_on"`
+	DependsOnCompat          []string `json:"dependsOn"`
+	Runner                   string   `json:"runner"`
+	Model                    string   `json:"model"`
+	Engine                   string   `json:"engine"`
+	WorkDir                  string   `json:"work_dir"`
+	WorkDirCompat            string   `json:"workDir"`
+	Project                  string   `json:"project"`
+	Target                   string   `json:"target"`
+	Load                     string   `json:"load"`
+	Hours                    string   `json:"hours"`
+	MaxIterations            int      `json:"max_iterations"`
+	MaxIterationsCompat      int      `json:"maxIterations"`
+	NoAutotest               bool     `json:"no_autotest"`
+	NoAutotestCompat         bool     `json:"noAutotest"`
+	PreferredDevice          string   `json:"preferred_device"`
+	PreferredDeviceCompat    string   `json:"preferredDevice"`
+	AllowedDevices           []string `json:"allowed_devices"`
+	AllowedDevicesCompat     []string `json:"allowedDevices"`
+	AllowedRunners           []string `json:"allowed_runners"`
+	AllowedRunnersCompat     []string `json:"allowedRunners"`
+	PriorDevice              string   `json:"prior_device"`
+	PriorDeviceCompat        string   `json:"priorDevice"`
+	PriorRunner              string   `json:"prior_runner"`
+	PriorRunnerCompat        string   `json:"priorRunner"`
+	StickyDevice             bool     `json:"sticky_device"`
+	StickyDeviceCompat       bool     `json:"stickyDevice"`
+	StickyRunner             bool     `json:"sticky_runner"`
+	StickyRunnerCompat       bool     `json:"stickyRunner"`
+	ResourceModes            []string `json:"resource_modes"`
+	ResourceModesCompat      []string `json:"resourceModes"`
+	PreferredVideoMode       string   `json:"preferred_video_mode"`
+	PreferredVideoModeCompat string   `json:"preferredVideoMode"`
+	Toughness                float64  `json:"toughness"`
+	DesignPoints             float64  `json:"design_points"`
+	DesignPointsCompat       float64  `json:"designPoints"`
+	BuildPoints              float64  `json:"build_points"`
+	BuildPointsCompat        float64  `json:"buildPoints"`
+	VerifyPoints             float64  `json:"verify_points"`
+	VerifyPointsCompat       float64  `json:"verifyPoints"`
+}
+
+func buildAgentGraphNodesFromMCP(args []mcpAgentGraphNodeArg) ([]AgentGraphNodeSpec, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	nodes := make([]AgentGraphNodeSpec, 0, len(args))
+	for _, arg := range args {
+		kind := AgentNodeKind(strings.ToLower(strings.TrimSpace(arg.Kind)))
+		if kind == "" {
+			kind = AgentNodeChat
+		}
+		switch kind {
+		case AgentNodeChat, AgentNodeAutodev, AgentNodeAutoIdeas, AgentNodeAutotest:
+		default:
+			return nil, fmt.Errorf("invalid graph node kind %q", arg.Kind)
+		}
+		node := AgentGraphNodeSpec{
+			ID:                 arg.ID,
+			Title:              arg.Title,
+			Kind:               kind,
+			Prompt:             arg.Prompt,
+			DependsOn:          firstNonEmptySlice(arg.DependsOn, arg.DependsOnCompat),
+			Runner:             arg.Runner,
+			Model:              arg.Model,
+			Engine:             arg.Engine,
+			WorkDir:            firstNonEmpty(arg.WorkDir, arg.WorkDirCompat),
+			Project:            arg.Project,
+			Target:             arg.Target,
+			Load:               arg.Load,
+			Hours:              arg.Hours,
+			MaxIterations:      firstPositiveInt(arg.MaxIterations, arg.MaxIterationsCompat),
+			NoAutotest:         arg.NoAutotest || arg.NoAutotestCompat,
+			PreferredDevice:    firstNonEmpty(arg.PreferredDevice, arg.PreferredDeviceCompat),
+			AllowedDevices:     firstNonEmptySlice(arg.AllowedDevices, arg.AllowedDevicesCompat),
+			AllowedRunners:     firstNonEmptySlice(arg.AllowedRunners, arg.AllowedRunnersCompat),
+			PriorDevice:        firstNonEmpty(arg.PriorDevice, arg.PriorDeviceCompat),
+			PriorRunner:        firstNonEmpty(arg.PriorRunner, arg.PriorRunnerCompat),
+			StickyDevice:       arg.StickyDevice || arg.StickyDeviceCompat,
+			StickyRunner:       arg.StickyRunner || arg.StickyRunnerCompat,
+			ResourceModes:      firstNonEmptySlice(arg.ResourceModes, arg.ResourceModesCompat),
+			PreferredVideoMode: firstNonEmpty(arg.PreferredVideoMode, arg.PreferredVideoModeCompat),
+			Toughness:          arg.Toughness,
+			DesignPoints:       firstPositiveFloat(arg.DesignPoints, arg.DesignPointsCompat),
+			BuildPoints:        firstPositiveFloat(arg.BuildPoints, arg.BuildPointsCompat),
+			VerifyPoints:       firstPositiveFloat(arg.VerifyPoints, arg.VerifyPointsCompat),
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, nil
+}
+
+func firstPositiveInt(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func firstPositiveFloat(values ...float64) float64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
 // mcpDoctor runs a doctor-like health check and returns results as text.
 func (s *HTTPServer) mcpDoctor() interface{} {
 	var sb strings.Builder
@@ -13766,6 +14267,15 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func firstNonEmptySlice[T any](vals ...[]T) []T {
+	for _, v := range vals {
+		if len(v) > 0 {
+			return append([]T{}, v...)
+		}
+	}
+	return nil
 }
 
 // yaverOnboardChecklist inspects the current agent state and

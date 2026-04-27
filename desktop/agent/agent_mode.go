@@ -51,24 +51,34 @@ const (
 )
 
 type AgentGraphNodeSpec struct {
-	ID              string        `json:"id"`
-	Title           string        `json:"title"`
-	Kind            AgentNodeKind `json:"kind"`
-	Prompt          string        `json:"prompt,omitempty"`
-	DependsOn       []string      `json:"dependsOn,omitempty"`
-	Runner          string        `json:"runner,omitempty"`
-	Model           string        `json:"model,omitempty"`
-	Engine          string        `json:"engine,omitempty"`
-	WorkDir         string        `json:"workDir,omitempty"`
-	Project         string        `json:"project,omitempty"`
-	Target          string        `json:"target,omitempty"`
-	Load            string        `json:"load,omitempty"`
-	Hours           string        `json:"hours,omitempty"`
-	MaxIterations   int           `json:"maxIterations,omitempty"`
-	NoAutotest      bool          `json:"noAutotest,omitempty"`
-	PreferredDevice string        `json:"preferredDevice,omitempty"`
-	AllowedDevices  []string      `json:"allowedDevices,omitempty"`
-	AllowedRunners  []string      `json:"allowedRunners,omitempty"`
+	ID                 string        `json:"id"`
+	Title              string        `json:"title"`
+	Kind               AgentNodeKind `json:"kind"`
+	Prompt             string        `json:"prompt,omitempty"`
+	DependsOn          []string      `json:"dependsOn,omitempty"`
+	Runner             string        `json:"runner,omitempty"`
+	Model              string        `json:"model,omitempty"`
+	Engine             string        `json:"engine,omitempty"`
+	WorkDir            string        `json:"workDir,omitempty"`
+	Project            string        `json:"project,omitempty"`
+	Target             string        `json:"target,omitempty"`
+	Load               string        `json:"load,omitempty"`
+	Hours              string        `json:"hours,omitempty"`
+	MaxIterations      int           `json:"maxIterations,omitempty"`
+	NoAutotest         bool          `json:"noAutotest,omitempty"`
+	PreferredDevice    string        `json:"preferredDevice,omitempty"`
+	AllowedDevices     []string      `json:"allowedDevices,omitempty"`
+	AllowedRunners     []string      `json:"allowedRunners,omitempty"`
+	PriorDevice        string        `json:"priorDevice,omitempty"`
+	PriorRunner        string        `json:"priorRunner,omitempty"`
+	StickyDevice       bool          `json:"stickyDevice,omitempty"`
+	StickyRunner       bool          `json:"stickyRunner,omitempty"`
+	ResourceModes      []string      `json:"resourceModes,omitempty"`
+	PreferredVideoMode string        `json:"preferredVideoMode,omitempty"`
+	Toughness          float64       `json:"toughness,omitempty"`
+	DesignPoints       float64       `json:"designPoints,omitempty"`
+	BuildPoints        float64       `json:"buildPoints,omitempty"`
+	VerifyPoints       float64       `json:"verifyPoints,omitempty"`
 }
 
 type AgentGraphNodeState struct {
@@ -305,36 +315,45 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 	case "full", "agent", "default":
 		return []AgentGraphNodeSpec{
 			{
-				ID:      "plan",
-				Title:   "Plan Slice",
-				Kind:    AgentNodeChat,
-				Prompt:  "Analyze the repo and task, then produce a concise implementation plan with likely files, risks, and a recommended slice boundary.\n\nTask:\n" + prompt,
-				WorkDir: workDir,
-				Project: project,
+				ID:           "plan",
+				Title:        "Plan Slice",
+				Kind:         AgentNodeChat,
+				Prompt:       "Analyze the repo and task, then produce a concise implementation plan with likely files, risks, and a recommended slice boundary.\n\nTask:\n" + prompt,
+				WorkDir:      workDir,
+				Project:      project,
+				Toughness:    0.8,
+				DesignPoints: 1.0,
 			},
 			{
-				ID:        "implement",
-				Title:     "Implement",
-				Kind:      AgentNodeChat,
-				Prompt:    prompt,
-				WorkDir:   workDir,
-				Project:   project,
-				DependsOn: []string{"plan"},
+				ID:            "implement",
+				Title:         "Implement",
+				Kind:          AgentNodeChat,
+				Prompt:        prompt,
+				WorkDir:       workDir,
+				Project:       project,
+				DependsOn:     []string{"plan"},
+				Toughness:     1.0,
+				BuildPoints:   1.0,
+				ResourceModes: []string{"build"},
 			},
 			{
-				ID:        "verify",
-				Title:     "Verify And Synthesize",
-				Kind:      AgentNodeChat,
-				Prompt:    "Inspect the repo state after implementation, run or describe the most relevant validation available in this workspace, and summarize any remaining risks or follow-up work needed before shipping.",
-				WorkDir:   workDir,
-				Project:   project,
-				DependsOn: []string{"implement"},
+				ID:                 "verify",
+				Title:              "Verify And Synthesize",
+				Kind:               AgentNodeChat,
+				Prompt:             "Inspect the repo state after implementation, run or describe the most relevant validation available in this workspace, and summarize any remaining risks or follow-up work needed before shipping.",
+				WorkDir:            workDir,
+				Project:            project,
+				DependsOn:          []string{"implement"},
+				Toughness:          0.7,
+				VerifyPoints:       1.0,
+				ResourceModes:      []string{"proof-video", "video-summary"},
+				PreferredVideoMode: "browser",
 			},
 		}
 	case "ship":
 		return []AgentGraphNodeSpec{
-			{ID: "dev", Title: "Auto Dev", Kind: AgentNodeAutodev, Prompt: prompt, WorkDir: workDir, Project: project, MaxIterations: 2},
-			{ID: "test", Title: "Auto Test", Kind: AgentNodeAutotest, Prompt: "Run a focused regression pass for the changes produced by this graph and fix any breakage before reporting done.", WorkDir: workDir, Project: project, DependsOn: []string{"dev"}, MaxIterations: 1},
+			{ID: "dev", Title: "Auto Dev", Kind: AgentNodeAutodev, Prompt: prompt, WorkDir: workDir, Project: project, MaxIterations: 2, Toughness: 1.0, BuildPoints: 1.0, ResourceModes: []string{"build"}},
+			{ID: "test", Title: "Auto Test", Kind: AgentNodeAutotest, Prompt: "Run a focused regression pass for the changes produced by this graph and fix any breakage before reporting done.", WorkDir: workDir, Project: project, DependsOn: []string{"dev"}, MaxIterations: 1, Toughness: 0.8, VerifyPoints: 1.0, ResourceModes: []string{"proof-video", "video-summary"}, PreferredVideoMode: "browser"},
 		}
 	default:
 		return nil
@@ -404,6 +423,19 @@ func isSafeGraphNodeID(id string) bool {
 }
 
 func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
+	node.ResourceModes = normalizeGraphResourceModes(node.ResourceModes)
+	if node.Toughness <= 0 {
+		switch node.Kind {
+		case AgentNodeChat:
+			node.Toughness = 0.6
+		case AgentNodeAutodev:
+			node.Toughness = 1.0
+		case AgentNodeAutotest:
+			node.Toughness = 0.8
+		default:
+			node.Toughness = 0.5
+		}
+	}
 	if strings.TrimSpace(node.Runner) != "" {
 		return node
 	}
@@ -432,6 +464,29 @@ func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
 		node.Runner = "claude-code"
 	}
 	return node
+}
+
+func normalizeGraphResourceModes(modes []string) []string {
+	if len(modes) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		m := strings.ToLower(strings.TrimSpace(mode))
+		switch m {
+		case "", "none":
+			continue
+		case "build", "deploy", "video-summary", "proof-video", "test-video", "browser", "sim-ios", "sim-android", "phone":
+		default:
+			// Preserve custom self-hosted resource labels as-is after trimming.
+		}
+		if !seen[m] {
+			out = append(out, m)
+			seen[m] = true
+		}
+	}
+	return out
 }
 
 // restrictRunnerCandidatesToAllowed filters the candidate runner list to
@@ -799,6 +854,8 @@ func (gm *AgentGraphManager) executeChatNode(ctx context.Context, runID string, 
 	task, err := gm.taskMgr.CreateTaskWithOptions(title, description, node.Spec.Model, "agent-graph", node.Spec.Runner, "", nil, TaskCreateOptions{
 		WorkDir:       workDir,
 		SliceContract: contract,
+		VideoEnabled:  graphNodeWantsAnyResource(node.Spec, "video-summary", "proof-video", "test-video"),
+		VideoSource:   graphNodeVideoSource(node.Spec),
 	}, nil)
 	if err != nil {
 		return "", err
@@ -832,6 +889,24 @@ func (gm *AgentGraphManager) executeChatNode(ctx context.Context, runID string, 
 			msg = "task failed"
 		}
 		return "", errors.New(msg)
+	}
+}
+
+func graphNodeVideoSource(node AgentGraphNodeSpec) string {
+	if v := strings.TrimSpace(node.PreferredVideoMode); v != "" {
+		return v
+	}
+	switch {
+	case graphNodeWantsResource(node, "sim-ios"):
+		return "sim-ios"
+	case graphNodeWantsResource(node, "sim-android"):
+		return "sim-android"
+	case graphNodeWantsResource(node, "phone"):
+		return "phone"
+	case graphNodeWantsResource(node, "browser"), graphNodeWantsAnyResource(node, "video-summary", "proof-video", "test-video"):
+		return "browser"
+	default:
+		return ""
 	}
 }
 

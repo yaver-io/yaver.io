@@ -1943,6 +1943,52 @@ Notes:
 - OpenRouter defaults to `https://openrouter.ai/api/v1`.
 - `yaver code set model ...` also updates the remembered provider when the model is namespaced like `openrouter/openai/gpt-5`.
 
+#### Shared code control plane
+
+The `yaver code` terminal is no longer the only surface that understands coding-session state.
+
+- HTTP now exposes `/code/status`, `/code/attach`, `/code/detach`, `/code/repos`, `/code/repo`, `/code/dev`, `/code/deploy`, and `/code/config`.
+- MCP exposes matching high-level tools:
+  - `code_status`
+  - `code_attach`
+  - `code_detach`
+  - `code_repos`
+  - `code_repo_set`
+  - `code_dev`
+  - `code_deploy`
+  - `code_config_get`
+  - `code_config_set`
+- Those surfaces all operate on the same machine-aware coding state:
+  - current runner/model/provider
+  - attached machine
+  - active repo/workdir
+  - orchestration mode
+  - recent graph runs
+  - OpenCode/BYOK config when relevant
+
+That means another coding agent can use Yaver as the control plane for multi-machine coding instead of reimplementing attach/repo/dev/deploy logic itself.
+
+#### Direct deploy first, CI optional
+
+One of Yaver's main jobs is reducing CI cost for build/test/deploy loops.
+
+- `code_deploy` and `/code/deploy` now support direct host deploys from the selected repo/machine to:
+  - `testflight`
+  - `playstore`
+  - `convex`
+  - `cloudflare`
+  - `all`
+- You can override:
+  - repo via `repo_query` or `repo_path`
+  - executor machine via `machine`
+  - placement via `machine=auto`
+  - multi-target fan-out via `distribute=true`
+- CI is still available when you want it:
+  - `ci_provider=github`
+  - `ci_provider=gitlab`
+
+So the default path is "deploy from owned machines directly, use CI only when it adds value", not "burn CI minutes for every internal test or staging push".
+
 #### Remote task video artifacts
 
 Tasks can optionally capture a short demo clip after they finish. This is useful when the work happened on another machine and the user wants to watch what was actually built there.
@@ -1951,6 +1997,47 @@ Tasks can optionally capture a short demo clip after they finish. This is useful
 - `create_task`, `list_tasks`, and `get_task` return structured task objects.
 - When a clip exists, the task includes `videoClipId`, `videoStatus`, `videoClipUrl`, and `videoPosterUrl`.
 - The clip URL is served by the producing Yaver machine, so clients can render a watch link or an inline `<video>` player.
+
+#### Graph resource modes (`agent_graph_start`, `code_mesh_start`)
+
+The graph/mesh runtime can now carry explicit self-hosted resource intent per node instead of treating every step as a generic chat task.
+
+- MCP `agent_graph_start` and `code_mesh_start` accept optional custom `nodes`.
+- Each node can request `resource_modes` like `build`, `deploy`, `browser`, `sim-ios`, `sim-android`, `phone`, `proof-video`, `video-summary`, or `test-video`.
+- Nodes can also carry `prior_device`, `prior_runner`, `sticky_device`, and `sticky_runner` so later rounds stay close to the machine/runner that already has the right repo state, build caches, devices, or credentials.
+- Verification-oriented nodes can set `preferred_video_mode` so proof/demo clips come from the right target (`browser`, `sim-ios`, `sim-android`, `phone`).
+- Those fields are persisted on the graph run, shown by `agent_graph_show`, and fed back into placement when the graph runs across local, remote, or borrowed shared machines.
+
+Example:
+
+```json
+{
+  "prompt": "ship the onboarding redesign",
+  "allowed_devices": ["mac-mini", "linux-builder"],
+  "nodes": [
+    {
+      "id": "build-ios",
+      "title": "Build iOS artifact",
+      "kind": "chat",
+      "prompt": "Implement the iOS slice and prepare a native build.",
+      "resource_modes": ["build", "sim-ios"],
+      "build_points": 1,
+      "prior_device": "mac-mini",
+      "sticky_device": true
+    },
+    {
+      "id": "proof",
+      "title": "Record proof clip",
+      "kind": "chat",
+      "depends_on": ["build-ios"],
+      "prompt": "Verify the flow and produce a short proof video.",
+      "resource_modes": ["proof-video", "video-summary", "browser"],
+      "preferred_video_mode": "browser",
+      "verify_points": 1
+    }
+  ]
+}
+```
 
 ### Shell Completions
 

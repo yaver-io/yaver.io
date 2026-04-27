@@ -59,6 +59,17 @@ Important current behavior:
    - `yaver code set/get plan-model`
    - `yaver code set/get build-model`
 4. That flow patches the local or remote OpenCode provider config instead of requiring manual edits to `opencode.json`.
+5. The same coding state is now available through shared control-plane endpoints and MCP tools:
+   - HTTP: `/code/status`, `/code/attach`, `/code/detach`, `/code/repos`, `/code/repo`, `/code/dev`, `/code/deploy`, `/code/config`
+   - MCP: `code_status`, `code_attach`, `code_detach`, `code_repos`, `code_repo_set`, `code_dev`, `code_deploy`, `code_config_get`, `code_config_set`
+6. `code_status` is the best current snapshot surface for wrapped agents: it includes the current code config, target context, online hosts, recent graph runs, and the default auto-orchestration policy.
+7. `code_deploy` / `/code/deploy` now support:
+   - direct host deploys to TestFlight, Play Store internal testing, Convex, and Cloudflare
+   - repo override by project selector or explicit path
+   - machine override, `machine=auto`, and multi-target `distribute=true`
+   - optional GitHub/GitLab CI fallback for teams that still want workflow-triggered deploys
+
+This is intentionally biased toward cost reduction: use owned machines for build/test/deploy whenever possible, and fall back to CI only when it provides real value.
 
 This is the current intended path for OpenRouter and other OpenAI-compatible BYOK backends in terminal coding mode.
 
@@ -66,7 +77,63 @@ Code:
 
 - [`desktop/agent/code_cmd.go`](../desktop/agent/code_cmd.go)
 - [`desktop/agent/code_control.go`](../desktop/agent/code_control.go)
+- [`desktop/agent/code_control_plane.go`](../desktop/agent/code_control_plane.go)
+- [`desktop/agent/code_control_http.go`](../desktop/agent/code_control_http.go)
 - [`desktop/agent/opencode_config.go`](../desktop/agent/opencode_config.go)
+
+## 1.2 Graph resource-aware execution
+
+The current graph runtime is no longer just "prompt in, generic nodes out". Graph nodes can now carry explicit self-hosted resource intent and continuity hints that feed directly into placement and execution.
+
+Important current behavior:
+
+1. `agent_graph_start` and `code_mesh_start` accept optional explicit `nodes` from MCP callers.
+2. Each node can declare `resource_modes` such as:
+   - `build`
+   - `deploy`
+   - `browser`
+   - `sim-ios`
+   - `sim-android`
+   - `phone`
+   - `proof-video`
+   - `video-summary`
+   - `test-video`
+   - custom labels for future self-hosted resource selectors
+3. Nodes can persist continuity and locality hints:
+   - `prior_device`
+   - `prior_runner`
+   - `sticky_device`
+   - `sticky_runner`
+4. Nodes can bias placement/routing with:
+   - `toughness`
+   - `design_points`
+   - `build_points`
+   - `verify_points`
+5. Proof/demo oriented nodes can set `preferred_video_mode` to choose the right capture target (`browser`, `sim-ios`, `sim-android`, `phone`).
+6. Graph chat nodes that request `proof-video`, `video-summary`, or `test-video` now automatically enable task-side clip capture so the producing machine can serve a remote watch URL back to the client.
+
+Placement currently uses those fields to prefer:
+
+- machines that already ran the node in prior rounds
+- runners that match the node's design/build/verify profile
+- iOS/Android-capable hosts for simulator or native build work
+- deploy-capable machines when the node requests deploy resources
+- proof/video-capable hosts when the node requests demo artifacts
+
+This is the current code-backed bridge between:
+
+- graph planning
+- multi-machine execution
+- self-hosted build/deploy resources
+- proof video generation
+- later-round continuity
+
+Code:
+
+- [`desktop/agent/agent_mode.go`](../desktop/agent/agent_mode.go)
+- [`desktop/agent/agent_mesh.go`](../desktop/agent/agent_mesh.go)
+- [`desktop/agent/httpserver.go`](../desktop/agent/httpserver.go)
+- [`desktop/agent/mcp_tools.go`](../desktop/agent/mcp_tools.go)
 
 ## 2. Auth and re-auth
 

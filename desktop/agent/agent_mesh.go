@@ -207,6 +207,14 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		score += 1000
 		reasons = append(reasons, "node pinned to this machine")
 	}
+	if strings.TrimSpace(node.PriorDevice) != "" && (node.PriorDevice == m.DeviceID || strings.EqualFold(node.PriorDevice, m.Name)) {
+		bonus := 180
+		if node.StickyDevice {
+			bonus = 900
+		}
+		score += bonus
+		reasons = append(reasons, "node has prior machine affinity")
+	}
 	if strings.TrimSpace(req.PreferredDevice) != "" && (req.PreferredDevice == m.DeviceID || strings.EqualFold(req.PreferredDevice, m.Name)) {
 		score += 900
 		reasons = append(reasons, "graph default machine preference")
@@ -239,6 +247,42 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		} else {
 			score -= 150
 		}
+	}
+	if node.BuildPoints >= 0.8 || graphNodeWantsResource(node, "build") {
+		score += 80
+		reasons = append(reasons, "node emphasizes build-oriented resources")
+	}
+	if node.VerifyPoints >= 0.8 || graphNodeWantsAnyResource(node, "video-summary", "proof-video", "test-video") {
+		score += 40
+		reasons = append(reasons, "node emphasizes verification/proof resources")
+	}
+	if graphNodeWantsResource(node, "deploy") {
+		score += 70
+		reasons = append(reasons, "node requests deploy-capable self-hosted resources")
+	}
+	if graphNodeWantsResource(node, "sim-ios") {
+		if machineSupportsIOS(m.Capabilities) {
+			score += 240
+			reasons = append(reasons, "video/build resource prefers iOS-capable host")
+		} else {
+			score -= 160
+		}
+	}
+	if graphNodeWantsResource(node, "sim-android") {
+		if machineSupportsAndroid(m.Capabilities) {
+			score += 220
+			reasons = append(reasons, "video/build resource prefers Android-capable host")
+		} else {
+			score -= 150
+		}
+	}
+	if graphNodeWantsResource(node, "browser") {
+		score += 35
+		reasons = append(reasons, "browser-capable resource request")
+	}
+	if graphNodeWantsResource(node, "phone") {
+		score += 25
+		reasons = append(reasons, "phone-connected proof resource request")
 	}
 	if strings.Contains(intent, "ollama") || strings.Contains(intent, "local llm") {
 		if m.Capabilities != nil && m.Capabilities.SupportsLocalLLM {
@@ -344,7 +388,17 @@ func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
 	if runner != "" {
 		return runner
 	}
+	if node.StickyRunner {
+		if sticky := normalizedPlacementRunner(node.PriorRunner); sticky != "" {
+			if len(node.AllowedRunners) == 0 || stringSliceContainsNormalized(node.AllowedRunners, sticky) {
+				return sticky
+			}
+		}
+	}
 	candidates := inferPreferredRunnerCandidates(node)
+	if sticky := normalizedPlacementRunner(node.PriorRunner); sticky != "" && !stringSliceContainsNormalized(candidates, sticky) {
+		candidates = append([]string{sticky}, candidates...)
+	}
 	if len(node.AllowedRunners) > 0 {
 		allowed := map[string]bool{}
 		for _, r := range node.AllowedRunners {
@@ -371,6 +425,15 @@ func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
 
 func inferPreferredRunnerCandidates(node AgentGraphNodeSpec) []string {
 	intent := nodeIntent(node)
+	if node.DesignPoints >= 0.8 {
+		return []string{"claude-code", "codex", "opencode", "aider"}
+	}
+	if node.BuildPoints >= 0.8 {
+		return []string{"codex", "opencode", "aider-ollama", "claude-code", "ollama"}
+	}
+	if node.VerifyPoints >= 0.8 {
+		return []string{"codex", "claude-code", "opencode", "aider-ollama"}
+	}
 	if strings.Contains(intent, "ollama") || strings.Contains(intent, "local llm") {
 		return []string{"aider-ollama", "ollama", "codex", "claude-code"}
 	}
@@ -501,7 +564,37 @@ func nodeIntent(node AgentGraphNodeSpec) string {
 		node.Prompt,
 		node.Target,
 		string(node.Kind),
+		strings.Join(node.ResourceModes, " "),
 	}, " "))
+}
+
+func graphNodeWantsResource(node AgentGraphNodeSpec, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, mode := range node.ResourceModes {
+		if strings.EqualFold(strings.TrimSpace(mode), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func graphNodeWantsAnyResource(node AgentGraphNodeSpec, wants ...string) bool {
+	for _, want := range wants {
+		if graphNodeWantsResource(node, want) {
+			return true
+		}
+	}
+	return false
+}
+
+func stringSliceContainsNormalized(values []string, want string) bool {
+	want = normalizedPlacementRunner(want)
+	for _, value := range values {
+		if normalizedPlacementRunner(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (n AgentGraphNodeSpec) KindString() string {

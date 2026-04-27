@@ -2078,6 +2078,16 @@ Direct terminal sessions are a distinct source surface in the Go agent. Do not t
 - `yaver code set byok <provider> ...` is the preferred way to configure OpenCode-backed BYOK coding flows (OpenRouter, custom OpenAI-compatible backends, remote Ollama) instead of hand-editing `opencode.json`.
 - When the active runner is `opencode`, `yaver code get byok`, `get provider`, `get base-url`, `set base-url`, `set plan-model`, and `set build-model` should be treated as the canonical control-plane surface for provider/model selection.
 - If the desired shape is "repo stays on one machine, heavy runner/infra comes from another", that belongs to the host-share borrowed-workspace flow, not the plain `--attach` path.
+- Graph-backed coding flows (`agent_graph_start`, `code_mesh_start`) now support per-node self-hosted resource requests and continuity hints:
+  - `resource_modes`: `build`, `deploy`, `browser`, `sim-ios`, `sim-android`, `phone`, `proof-video`, `video-summary`, `test-video`, or custom labels
+  - `prior_device`, `prior_runner`, `sticky_device`, `sticky_runner`
+  - `preferred_video_mode` for proof/demo capture target selection
+  - `design_points`, `build_points`, `verify_points`, `toughness` for placement/routing bias
+- Treat those node fields as persistent graph state that should be reused in later rounds, not as one-shot prompt fluff.
+- The `yaver code` control plane is now shared across CLI, HTTP, and MCP:
+  - HTTP: `/code/status`, `/code/attach`, `/code/detach`, `/code/repos`, `/code/repo`, `/code/dev`, `/code/deploy`, `/code/config`
+  - MCP: `code_status`, `code_attach`, `code_detach`, `code_repos`, `code_repo_set`, `code_dev`, `code_deploy`, `code_config_get`, `code_config_set`
+- Prefer those high-level code-control surfaces when building multi-machine or wrapped-agent flows instead of reimplementing runner switch / repo select / deploy routing manually.
 
 ### MCP task artifact contract
 
