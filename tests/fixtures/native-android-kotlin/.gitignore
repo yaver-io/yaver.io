@@ -1,0 +1,9 @@
+# Gradle / Android build artifacts
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.kotlin/
+gradle/wrapper/gradle-wrapper.jar

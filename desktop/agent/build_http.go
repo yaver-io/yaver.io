@@ -37,6 +37,36 @@ func resolveClientPlatform(platform, clientOS string) string {
 	return platform // already specific
 }
 
+// isNativeAlias returns true for the friendly native names (iosNative, androidNative,
+// flutter) — these need resolveNativePlatform with a target before reaching the build
+// pipeline.
+func isNativeAlias(p string) bool {
+	switch p {
+	case NativeIOS, "ios-native",
+		NativeAndroid, "android-native",
+		NativeFlutter:
+		return true
+	}
+	return false
+}
+
+// isIOSBoundPlatform returns true for any platform whose artifact targets iOS — so the
+// existing iOS-only auto-upgrade-to-Hermes-or-Xcode-install logic only fires for iOS.
+// Android (gradle-*) and Flutter device-install (flutter-device-install / flutter-apk)
+// must NOT be rerouted into the iOS install path.
+func isIOSBoundPlatform(p string) bool {
+	switch BuildPlatform(p) {
+	case PlatformXcodeIPA, PlatformXcodeBuild, PlatformXcodeDeviceInstall,
+		PlatformRNIOS, PlatformExpoIOS, PlatformHermesBundlePush, PlatformFlutterIPA:
+		return true
+	}
+	switch p {
+	case "ios", "iosNative", "ios-native":
+		return true
+	}
+	return false
+}
+
 // handleBuilds handles POST /builds (start) and GET /builds (list).
 func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 	if s.buildMgr == nil {
@@ -52,6 +82,7 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var req struct {
 			Platform        string   `json:"platform"`
+			Target          string   `json:"target"` // device | simulator | testflight | playstore | local
 			WorkDir         string   `json:"workDir"`
 			Args            []string `json:"args"`
 			ArtifactPath    string   `json:"artifactPath"`    // for register
@@ -62,6 +93,21 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Friendly native aliases (iosNative / androidNative / flutter) resolve via
+		// resolveNativePlatform so mobile/web/MCP can POST one shape regardless of host.
+		if isNativeAlias(req.Platform) {
+			resolved, err := resolveNativePlatform(req.Platform, req.Target)
+			if err != nil {
+				jsonReply(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			req.Platform = string(resolved)
+			// device/simulator targets imply install-on-device unless caller already said so
+			if req.Target == "device" || req.Target == "simulator" || req.Target == "emulator" || req.Target == "emu" || req.Target == "sim" {
+				req.InstallOnDevice = true
+			}
+		}
+
 		// Platform-aware: if client sends X-Client-Platform and platform ends with "-auto",
 		// resolve to the right platform for the client's OS
 		clientPlatform := r.Header.Get("X-Client-Platform")
@@ -69,8 +115,10 @@ func (s *HTTPServer) handleBuilds(w http.ResponseWriter, r *http.Request) {
 			req.Platform = resolveClientPlatform(req.Platform, clientPlatform)
 		}
 
-		// Auto-upgrade to device install: if iOS + direct LAN + installOnDevice requested
-		if req.InstallOnDevice {
+		// Auto-upgrade to device install — but ONLY for iOS-bound platforms. Android
+		// (gradle-*) and Flutter (flutter-*) already pick the right device-install
+		// constant via resolveNativePlatform, so don't clobber them here.
+		if req.InstallOnDevice && isIOSBoundPlatform(req.Platform) {
 			if !isDirectConnection(r) {
 				jsonReply(w, http.StatusBadRequest, map[string]string{"error": "direct device install requires LAN connection — use TestFlight for relay connections"})
 				return

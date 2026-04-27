@@ -2987,6 +2987,44 @@ export class QuicClient {
     return resp.json();
   }
 
+  /** Start a native iOS Swift / native Android Kotlin / Flutter build on the connected
+   *  agent. The agent resolves (platform, target) to a concrete BuildPlatform and runs
+   *  xcodebuild / gradle / flutter, optionally installing on a connected device.
+   *  Use this for non-RN apps; for React Native + Hermes use mobileProjectBuild() / dev_start. */
+  async startNativeBuild(
+    platform: 'iosNative' | 'androidNative' | 'flutter',
+    target: 'device' | 'simulator' | 'testflight' | 'playstore' | 'local' | 'apk' | 'aab' | 'ipa' = 'device',
+    workDir?: string,
+    extras?: { scheme?: string; flavor?: string; installOnDevice?: boolean; args?: string[] },
+  ): Promise<BuildInfo> {
+    this.assertConnected();
+    const args: string[] = [];
+    if (platform === 'iosNative' && extras?.scheme) args.push(extras.scheme);
+    if (platform === 'androidNative' && extras?.flavor) args.push(extras.flavor);
+    if (extras?.args?.length) args.push(...extras.args);
+
+    const installOnDevice = extras?.installOnDevice
+      ?? (target === 'device' || target === 'simulator');
+
+    const resp = await this.fetchWithTimeout(`${this.baseUrl}/builds`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform,
+        target,
+        workDir: workDir || "",
+        args,
+        installOnDevice,
+      }),
+    }, 15_000);
+    if (!resp.ok) {
+      let msg = `Native build failed: ${resp.status}`;
+      try { const err = await resp.json(); if (err?.error) msg = err.error; } catch { /* keep status */ }
+      throw new Error(msg);
+    }
+    return resp.json();
+  }
+
   /** Cancel a running build. */
   async cancelBuild(id: string): Promise<void> {
     await this.fetchWithTimeout(`${this.baseUrl}/builds/${id}`, {

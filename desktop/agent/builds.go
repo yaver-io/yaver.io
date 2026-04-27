@@ -100,6 +100,13 @@ func NewBuildManager(execMgr *ExecManager, workDir string) *BuildManager {
 
 // resolveBuildCommand returns the shell command and expected artifact patterns for a platform.
 func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []string) (command string, artifactPatterns []string) {
+	// Native build platforms (gradle-device-install, flutter-device-install)
+	// live in native_build.go; check there first so they don't need to be
+	// duplicated in the big switch below.
+	if cmd, patterns, ok := resolveNativeBuildCommand(platform, workDir, extraArgs); ok {
+		return cmd, patterns
+	}
+
 	extra := strings.Join(extraArgs, " ")
 	if extra != "" {
 		extra = " " + extra
@@ -371,37 +378,38 @@ func (bm *BuildManager) monitorBuild(build *Build, session *ExecSession, pattern
 				build.InstallStatus = "bundle_ready"
 				log.Printf("[build] %s Hermes bundle ready at %s", build.ID, build.ArtifactPath)
 			} else {
-				// Native xcode device install
+				// Native device install (iOS .app via xcrun devicectl, Android .apk via adb,
+				// Flutter falls through to whichever artifact extension was produced).
 				build.InstallStatus = "installing"
-				log.Printf("[build] %s installing on device...", build.ID)
+				log.Printf("[build] %s installing on device (platform=%s)...", build.ID, build.Platform)
 				bm.mu.Unlock()
 
 				ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-				udid, installErr := installAppOnDevice(ctx, build.ArtifactPath)
+				deviceID, installErr := dispatchDeviceInstall(ctx, build.Platform, build.ArtifactPath)
 				cancel()
 
 				bm.mu.Lock()
-				build.DeviceUDID = udid
+				build.DeviceUDID = deviceID
 				if installErr != nil {
 					build.InstallStatus = "install_failed"
 					build.InstallError = installErr.Error()
 					log.Printf("[build] %s install failed: %v", build.ID, installErr)
 				} else {
 					build.InstallStatus = "installed"
-					log.Printf("[build] %s installed on device %s", build.ID, udid[:8])
+					tag := deviceID
+					if len(tag) > 8 {
+						tag = tag[:8]
+					}
+					log.Printf("[build] %s installed on device %s", build.ID, tag)
 
-					// Auto-launch after install so Open App actually opens the app.
-					if bundleID := readBundleIDFromApp(build.ArtifactPath); bundleID != "" {
-						bm.mu.Unlock()
-						launchCtx, launchCancel := context.WithTimeout(context.Background(), 30*time.Second)
-						launchErr := launchAppOnDevice(launchCtx, udid, bundleID)
-						launchCancel()
-						bm.mu.Lock()
-						if launchErr != nil {
-							log.Printf("[build] %s launch failed (install still succeeded): %v", build.ID, launchErr)
-						}
-					} else {
-						log.Printf("[build] %s could not read bundle ID from %s — skipping auto-launch", build.ID, build.ArtifactPath)
+					// Best-effort auto-launch so the user doesn't have to tap the icon.
+					bm.mu.Unlock()
+					launchCtx, launchCancel := context.WithTimeout(context.Background(), 30*time.Second)
+					launchErr := dispatchAutoLaunch(launchCtx, build.Platform, deviceID, build.ArtifactPath)
+					launchCancel()
+					bm.mu.Lock()
+					if launchErr != nil {
+						log.Printf("[build] %s launch failed (install still succeeded): %v", build.ID, launchErr)
 					}
 				}
 			}

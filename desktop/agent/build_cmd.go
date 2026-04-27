@@ -26,7 +26,18 @@ func runBuild(args []string) {
 
 	switch args[0] {
 	case "flutter":
-		runBuildFlutter(args[1:])
+		// `yaver build flutter <apk|aab|ipa>` is the legacy form; bare
+		// `yaver build flutter [--target=...]` falls through to the new
+		// native pipeline. Disambiguate by peeking at args[1].
+		if len(args) > 1 && (args[1] == "apk" || args[1] == "aab" || args[1] == "ipa") {
+			runBuildFlutter(args[1:])
+		} else {
+			runNativeFlutter(args[1:])
+		}
+	case "iosNative", "ios-native":
+		runNativeIOS(args[1:])
+	case "androidNative", "android-native":
+		runNativeAndroid(args[1:])
 	case "gradle":
 		runBuildGradle(args[1:])
 	case "xcode":

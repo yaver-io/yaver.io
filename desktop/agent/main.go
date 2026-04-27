@@ -286,6 +286,12 @@ func main() {
 		runRunnerAuth(os.Args[2:])
 	case "build":
 		runBuild(os.Args[2:])
+	case "iosNative", "ios-native":
+		runNativeIOS(os.Args[2:])
+	case "androidNative", "android-native":
+		runNativeAndroid(os.Args[2:])
+	case "flutter":
+		runNativeFlutter(os.Args[2:])
 	case "publish":
 		runPublish(os.Args[2:])
 	case "release":
