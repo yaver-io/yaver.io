@@ -19,6 +19,31 @@ func TestParseTerminalCommandExitAliases(t *testing.T) {
 	}
 }
 
+// Cover the three local-info commands (/version, /about, /machine)
+// across their plain/slash/backslash aliases. They must all map to a
+// stable Kind so the client.go switch can render them consistently
+// regardless of how the user typed it.
+func TestParseTerminalCommandLocalInfo(t *testing.T) {
+	for _, input := range []string{"version", "/version", "\\version", "--version", "-v"} {
+		cmd, ok := parseTerminalCommand(input)
+		if !ok || cmd.Kind != "version" {
+			t.Fatalf("%q parsed as %+v ok=%v, want kind=version", input, cmd, ok)
+		}
+	}
+	for _, input := range []string{"about", "/about", "\\about"} {
+		cmd, ok := parseTerminalCommand(input)
+		if !ok || cmd.Kind != "about" {
+			t.Fatalf("%q parsed as %+v ok=%v, want kind=about", input, cmd, ok)
+		}
+	}
+	for _, input := range []string{"machine", "/machine", "\\machine", "where", "/where", "host", "/host"} {
+		cmd, ok := parseTerminalCommand(input)
+		if !ok || cmd.Kind != "machine" {
+			t.Fatalf("%q parsed as %+v ok=%v, want kind=machine", input, cmd, ok)
+		}
+	}
+}
+
 func TestParseTerminalCommandAgentQueries(t *testing.T) {
 	cmd, ok := parseTerminalCommand("get agent")
 	if !ok || cmd.Kind != "agent" {

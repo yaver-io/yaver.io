@@ -119,6 +119,10 @@ func slashMenuOptions(attached bool) []string {
 		"/dev status",
 		"/dev reload",
 		"/status",
+		"/version",
+		"/about",
+		"/machine",
+		"/help",
 	}
 	if attached {
 		options = append([]string{"/detach pc", "/get pc"}, options...)

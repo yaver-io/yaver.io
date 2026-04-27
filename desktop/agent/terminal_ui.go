@@ -52,6 +52,12 @@ func parseTerminalCommand(line string) (terminalCommand, bool) {
 		return terminalCommand{Kind: "tasks"}, true
 	case "agent", "/agent", "runner", "/runner", "get agent", "/get agent", "\\get agent", "which agent", "which agent is running", "which runner":
 		return terminalCommand{Kind: "agent"}, true
+	case "version", "/version", "\\version", "--version", "-v":
+		return terminalCommand{Kind: "version"}, true
+	case "about", "/about", "\\about":
+		return terminalCommand{Kind: "about"}, true
+	case "machine", "/machine", "\\machine", "where", "/where", "host", "/host":
+		return terminalCommand{Kind: "machine"}, true
 	}
 
 	for _, prefix := range []string{"set agent ", "/set agent ", "\\set agent "} {
@@ -136,7 +142,10 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("  continue <id> <msg>   continue a finished task")
 	fmt.Println("  set agent <id> [model]  change the terminal's default coding agent")
 	fmt.Println("  clear                 clear the screen")
-	fmt.Println("  /                     open the slash-command picker")
+	fmt.Println("  version               show the agent's version")
+	fmt.Println("  about                 show what `yaver code` is + key shortcuts")
+	fmt.Println("  machine               show which host is running this session")
+	fmt.Println("  /                     open the slash-command picker (↑/↓ + Enter, Esc cancels)")
 	fmt.Println("  exit / quit / detach  leave the terminal without stopping the agent")
 	fmt.Println("  /help /exit /quit     common slash-command aliases")
 	fmt.Println("  \\exit / \\quit         common backslash-command aliases")
@@ -162,6 +171,77 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("    yaver runner-auth setup claude --target <deviceId> --anthropic-api-key $ANTHROPIC_API_KEY")
 	fmt.Println("    yaver runner-auth setup opencode --target <deviceId>")
 	fmt.Println()
+}
+
+// printTerminalVersion prints a compact "yaver vX.Y.Z" line plus the
+// remote agent version when the terminal is attached. Local CLI
+// version is the canonical "what binary am I running"; agentVersion
+// is what the host on the other end of an attach reports — they can
+// drift if the user upgraded one side without the other.
+func printTerminalVersion(agentVersion string) {
+	fmt.Printf("yaver %s\n", version)
+	agentVersion = strings.TrimSpace(agentVersion)
+	if agentVersion != "" && agentVersion != version {
+		fmt.Printf("agent  %s\n", agentVersion)
+	}
+	fmt.Println()
+}
+
+// printTerminalAbout prints a short blurb explaining what `yaver code`
+// is and the key shortcuts the user is most likely to need next. Kept
+// short so it doesn't drown out the prompt; longer guidance lives in
+// `help` and YAVER_CODE_TODO.md.
+func printTerminalAbout() {
+	fmt.Println("yaver code — terminal-native coding session")
+	fmt.Println()
+	fmt.Println("  Local commands run on this machine. `--attach <device>`")
+	fmt.Println("  edits files on a remote Yaver host through the same prompt.")
+	fmt.Println("  Every session maps to a Task — `tasks` lists them, `continue`")
+	fmt.Println("  resumes one, `/sessions` shows recent runner sessions.")
+	fmt.Println()
+	fmt.Println("Key shortcuts:")
+	fmt.Println("  /              open the slash-command picker (arrow keys)")
+	fmt.Println("  Tab            cycle slash matches in the picker")
+	fmt.Println("  Ctrl+C         detach without stopping the agent")
+	fmt.Println("  Ctrl+L / clear clear the screen")
+	fmt.Println()
+}
+
+// printTerminalMachine prints what host (and identity) the current
+// terminal session is talking to. Local mode says "this machine";
+// attached mode names the device + connection mode.
+func printTerminalMachine(info *attachInfo) {
+	if info == nil || strings.TrimSpace(info.Hostname) == "" {
+		host := strings.TrimSpace(localHostname())
+		if host == "" {
+			host = "this machine"
+		}
+		fmt.Printf("Local terminal · %s\n", host)
+		fmt.Println("  Type `yaver code --attach <device>` to drive a remote host instead.")
+		fmt.Println()
+		return
+	}
+	fmt.Printf("Attached to %s\n", strings.TrimSpace(info.Hostname))
+	if v := strings.TrimSpace(info.Version); v != "" {
+		fmt.Printf("  agent     %s\n", v)
+	}
+	if wd := strings.TrimSpace(info.WorkDir); wd != "" {
+		fmt.Printf("  cwd       %s\n", wd)
+	}
+	if rl := attachRunnerLine(info); rl != "" {
+		fmt.Printf("  runner    %s\n", rl)
+	}
+	fmt.Println()
+}
+
+// localHostname returns os.Hostname() but defaults to "" on error so
+// we never print a noisy fallback string.
+func localHostname() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return h
 }
 
 func attachRunnerLine(info *attachInfo) string {

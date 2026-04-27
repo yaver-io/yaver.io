@@ -125,6 +125,21 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				fmt.Print("\033[2J\033[H")
 				printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
 				continue
+			case "version":
+				// QUIC client doesn't fetch /info up-front, so it only
+				// has the local CLI version to print. The HTTP client
+				// path passes the remote /info.version through.
+				printTerminalVersion("")
+				continue
+			case "about":
+				printTerminalAbout()
+				continue
+			case "machine":
+				printTerminalMachine(&attachInfo{
+					Hostname: deviceName,
+					Runner:   attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel},
+				})
+				continue
 			case "stop-task":
 				if err := clientStopTask(ctx, conn, cmd.TaskID); err != nil {
 					fmt.Printf("error: %v\n", err)
@@ -446,6 +461,15 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 			case "clear":
 				fmt.Print("\033[2J\033[H")
 				printAttachWelcome(infoSnapshot)
+				continue
+			case "version":
+				printTerminalVersion(infoSnapshot.Version)
+				continue
+			case "about":
+				printTerminalAbout()
+				continue
+			case "machine":
+				printTerminalMachine(infoSnapshot)
 				continue
 			case "stop-task":
 				if err := httpStopTask(ctx, client, baseURL, authHeader, cmd.TaskID); err != nil {
