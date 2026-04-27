@@ -2503,14 +2503,16 @@ export class YaverFeedback {
         background: rgba(2, 6, 23, 0.62); backdrop-filter: blur(8px); padding: 16px;
       }
       .yvr-fb-card {
-        /* Default 420 px is comfortable for the single-column auth /
-         * report flows but cramped for the 4-step setup wizard's
-         * 2-column git pane (Bind project + Selected machine), where
-         * cards overlapped and Discover-existing-git-auth's text
-         * wrapped over the form. 600 px gives the 2-column grid
-         * enough room without dominating the host page; the inner
-         * @media query still collapses to 1 column on narrow phones. */
-        width: min(600px, 100%);
+        /* The 4-step setup wizard's git pane uses a 2-column grid
+         * (Bind project + Selected machine + Open dashboard). At 600 px
+         * each column ended up ~280 px — token placeholder text was
+         * truncated ("Personal Access Tc"), the right card's "Discover
+         * existing git auth" copy wrapped four lines deep, and the
+         * cards visually crowded each other. 760 px gives each column
+         * ~360 px so the form inputs breathe and the helper copy fits
+         * on two lines. The @media query below still collapses to a
+         * single column on phones ≤ 640 px viewport. */
+        width: min(760px, 100%);
         max-height: min(640px, calc(100vh - 32px));
         overflow: auto;
         background: #0f172a; color: #e2e8f0;
