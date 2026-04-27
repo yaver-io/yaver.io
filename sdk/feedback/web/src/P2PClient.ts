@@ -550,6 +550,47 @@ export class P2PClient {
     return resp.json();
   }
 
+  /** Fetch a task by ID — returns the agent's full task record incl.
+   *  the growing `output` blob and `status`. The chat surface polls
+   *  this every ~1.5 s while the task is alive so each new agent line
+   *  paints into the transcript. */
+  async getTask(taskId: string): Promise<{
+    id: string;
+    status: string;
+    title?: string;
+    output?: string;
+    resultText?: string;
+  }> {
+    const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+      headers: this.authHeaders(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] getTask failed (${resp.status}): ${text}`);
+    }
+    return resp.json();
+  }
+
+  /** Append a follow-up turn to an existing vibing task. Same agent,
+   *  same workdir, same conversation — the runner picks up where it
+   *  left off. Used by the chat surface for multi-turn vibing instead
+   *  of spawning a fresh task on every message. */
+  async continueTask(taskId: string, input: string): Promise<{ ok?: boolean }> {
+    const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}/continue`, {
+      method: 'POST',
+      headers: {
+        ...this.authHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ input }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`[P2PClient] continueTask failed (${resp.status}): ${text}`);
+    }
+    return resp.json().catch(() => ({ ok: true }));
+  }
+
   async getVibingEligibility(
     opts?: { projectName?: string; projectPath?: string; bundleId?: string },
   ): Promise<{

@@ -526,6 +526,25 @@ export class YaverFeedback {
     return client.vibing(prompt, YaverFeedback.projectIdentity());
   }
 
+  /** Fetch a task by ID. Used by the chat surface to poll output growth
+   *  on the active vibing turn. */
+  static async getTask(taskId: string): Promise<{
+    id: string;
+    status: string;
+    title?: string;
+    output?: string;
+    resultText?: string;
+  }> {
+    const client = await YaverFeedback.getClient();
+    return client.getTask(taskId);
+  }
+
+  /** Append a follow-up message to an existing vibing task. */
+  static async continueVibing(taskId: string, input: string): Promise<{ ok?: boolean }> {
+    const client = await YaverFeedback.getClient();
+    return client.continueTask(taskId, input);
+  }
+
   static async getRunnerAuthStatus(): Promise<RunnerAuthStatus[]> {
     const client = await YaverFeedback.getClient();
     return client.getRunnerAuthStatus();
@@ -752,6 +771,10 @@ export class YaverFeedback {
       </div>
     `;
     document.body.appendChild(overlay);
+
+    const card = overlay.querySelector<HTMLElement>('.yvr-fb-card')!;
+    const header = overlay.querySelector<HTMLElement>('.yvr-fb-header')!;
+    YaverFeedback.makeRailDraggable(card, header);
 
     const subtitle = overlay.querySelector<HTMLElement>('#yaver-fb-subtitle')!;
     const authStrip = overlay.querySelector<HTMLElement>('#yaver-fb-auth-strip')!;
@@ -1242,20 +1265,29 @@ export class YaverFeedback {
             ${stageDetail}
           `;
           if (gitReady) {
+            // Auto-advance to step 4 (vibing) the moment the user
+            // reaches a git-ready state. Used to render a manual
+            // "Repo access / Git configured / Next" card and force
+            // the user to click Next — but the only thing that card
+            // ever does is call setView('actions'), so we just do
+            // that ourselves after a brief confirmation flash. We
+            // still leave a thin "going to vibing…" message in
+            // gitActions so the user sees something is happening
+            // during the transition (the eligibility refetch can
+            // take ~200 ms over relay).
             gitActions.innerHTML = `
-              <button type="button" class="yvr-fb-runner-card yvr-fb-git-card" data-git-action="next">
+              <div class="yvr-fb-runner-card yvr-fb-git-card yvr-fb-runner-card--wide">
                 <span class="yvr-fb-runner-card-kicker">Repo access</span>
-                <span class="yvr-fb-runner-card-title">Git configured</span>
-                <span class="yvr-fb-runner-card-meta">This machine can use the repo for this project.</span>
-                <span class="yvr-fb-runner-card-action">Next</span>
-              </button>
+                <span class="yvr-fb-runner-card-title">Git configured ✓</span>
+                <span class="yvr-fb-runner-card-meta">Opening vibing…</span>
+              </div>
             `;
-            gitActions.querySelector<HTMLButtonElement>('[data-git-action="next"]')!.onclick = () => {
+            window.setTimeout(() => {
               if (!busy) {
                 setStatus('');
                 setView('actions');
               }
-            };
+            }, 600);
           } else if (needsRemoteDeclaration) {
             const projectName = (eligibility as { projectName?: string }).projectName || 'this project';
             gitActions.innerHTML = `
@@ -1615,11 +1647,18 @@ export class YaverFeedback {
             </div>
           </div>
 
-          <div class="yvr-fb-vibe-block">
+          <div class="yvr-fb-vibe-block yvr-fb-chat">
             <div id="yaver-fb-vibe-gate" class="yvr-fb-vibe-gate" style="display:none;"></div>
             <button id="yaver-fb-vibe-repair" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;">Continue Setup</button>
-            <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Describe what Yaver should work on next..."></textarea>
-            <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Start Vibing Task</button>
+            <div id="yaver-fb-chat-transcript" class="yvr-fb-chat-transcript" aria-live="polite"></div>
+            <p id="yaver-fb-chat-status" class="yvr-fb-chat-status"></p>
+            <div class="yvr-fb-chat-composer">
+              <textarea id="yaver-fb-vibe-prompt" class="yvr-fb-vibe-input" placeholder="Vibe with the agent — describe a change, ask a question, request a deploy…"></textarea>
+              <div class="yvr-fb-chat-actions">
+                <button id="yaver-fb-vibe-reset" class="yvr-fb-action yvr-fb-action-secondary" type="button" style="display:none;">New session</button>
+                <button id="yaver-fb-vibe" class="yvr-fb-action yvr-fb-action-vibe" type="button">Send</button>
+              </div>
+            </div>
           </div>
         </div>
       `;
@@ -1980,30 +2019,150 @@ export class YaverFeedback {
         }
       };
 
+      // ── Chat state for multi-turn vibing ──────────────────────────
+      //
+      // Each vibing session = one agent task. The first Send creates
+      // the task via /vibing/execute; subsequent Sends append to it
+      // via /tasks/{id}/continue. We poll the task's growing output
+      // every 1.5 s and append the new bytes to the agent bubble for
+      // the most recent turn — that gives a "live transcript" feel
+      // without an SSE channel (which we'd need for true streaming).
+      //
+      // outputCheckpoints separates one agent reply from the next:
+      // before sending turn N+1 we record the current output.length,
+      // and any output beyond that becomes the (N+1)-th agent bubble.
+      const transcriptEl = overlay.querySelector<HTMLDivElement>('#yaver-fb-chat-transcript')!;
+      const chatStatus = overlay.querySelector<HTMLParagraphElement>('#yaver-fb-chat-status')!;
+      const resetBtn = overlay.querySelector<HTMLButtonElement>('#yaver-fb-vibe-reset')!;
+      let currentTaskId: string | null = null;
+      let outputCheckpoints: number[] = [0];
+      let agentBubbles: HTMLDivElement[] = [];
+      let pollHandle: number | null = null;
+      let lastSeenOutputLen = 0;
+
+      const setChatStatus = (text: string) => {
+        chatStatus.textContent = text;
+      };
+      const appendUserBubble = (text: string) => {
+        const el = document.createElement('div');
+        el.className = 'yvr-fb-chat-bubble yvr-fb-chat-bubble--user';
+        el.textContent = text;
+        transcriptEl.appendChild(el);
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+      };
+      const appendAgentBubble = () => {
+        const el = document.createElement('div');
+        el.className = 'yvr-fb-chat-bubble yvr-fb-chat-bubble--agent';
+        el.textContent = '';
+        transcriptEl.appendChild(el);
+        agentBubbles.push(el);
+        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+        return el;
+      };
+
+      const stopPolling = () => {
+        if (pollHandle !== null) {
+          window.clearInterval(pollHandle);
+          pollHandle = null;
+        }
+      };
+      const tick = async () => {
+        if (!currentTaskId) return;
+        try {
+          const task = await YaverFeedback.getTask(currentTaskId);
+          const fullOutput = task.output || '';
+          if (fullOutput.length > lastSeenOutputLen) {
+            // Slice everything past the last user-turn checkpoint and
+            // assign it to the most recent agent bubble. We re-render
+            // from the latest checkpoint each tick (rather than
+            // appending only the new delta) so partial UTF-8 chars
+            // and ANSI escapes don't visually corrupt mid-stream.
+            const turnStart = outputCheckpoints[outputCheckpoints.length - 1] || 0;
+            const turnText = fullOutput.slice(turnStart);
+            const bubble = agentBubbles[agentBubbles.length - 1];
+            if (bubble) bubble.textContent = turnText;
+            lastSeenOutputLen = fullOutput.length;
+            transcriptEl.scrollTop = transcriptEl.scrollHeight;
+          }
+          if (task.status === 'completed' || task.status === 'failed' || task.status === 'stopped') {
+            stopPolling();
+            setChatStatus(
+              task.status === 'completed'
+                ? 'Agent finished. Send another message to continue.'
+                : task.status === 'failed'
+                  ? 'Agent task failed — see transcript for details.'
+                  : 'Agent task stopped.',
+            );
+          }
+        } catch {
+          // Transient fetch failures are fine; next tick retries.
+        }
+      };
+      const startPolling = () => {
+        stopPolling();
+        pollHandle = window.setInterval(() => { void tick(); }, 1500);
+      };
+
+      const resetChat = () => {
+        stopPolling();
+        currentTaskId = null;
+        outputCheckpoints = [0];
+        agentBubbles = [];
+        lastSeenOutputLen = 0;
+        transcriptEl.innerHTML = '';
+        setChatStatus('');
+        resetBtn.style.display = 'none';
+        vibePrompt.placeholder = 'Vibe with the agent — describe a change, ask a question, request a deploy…';
+      };
+
+      resetBtn.onclick = () => {
+        if (busy) return;
+        resetChat();
+      };
+
       vibeBtn.onclick = async () => {
         const promptText = vibePrompt.value.trim();
         if (!promptText) {
-          setStatus('Enter a vibing prompt first.');
+          setChatStatus('Type something to send.');
           return;
         }
         setActionsBusy(true);
-        setStatus('Checking vibing access…');
         try {
-          const eligibility = await YaverFeedback.getVibingEligibility();
-          if (!eligibility.canVibe) {
-            setStatus(
-              eligibility.guidance && eligibility.guidance.trim()
-                ? `${eligibility.reason ?? 'Vibing unavailable.'} ${eligibility.guidance}`
-                : eligibility.reason ?? 'Vibing unavailable.',
-            );
-            return;
+          if (currentTaskId === null) {
+            // First turn — create the task. We don't gate on the
+            // eligibility check here; the agent already enforces it
+            // and surfaces the precise reason in the response. That
+            // keeps the chat composer non-blocking for the user.
+            setChatStatus('Creating vibing task…');
+            const result = await YaverFeedback.vibing(promptText);
+            currentTaskId = result.taskId;
+            appendUserBubble(promptText);
+            appendAgentBubble();
+            outputCheckpoints.push(0);
+            lastSeenOutputLen = 0;
+            vibePrompt.value = '';
+            resetBtn.style.display = '';
+            vibePrompt.placeholder = 'Send a follow-up…';
+            setChatStatus(`Task ${result.taskId.slice(0, 8)} running…`);
+            startPolling();
+          } else {
+            // Follow-up turn — checkpoint output length, mark the
+            // composer empty, append a fresh agent bubble for the
+            // upcoming reply, and call /tasks/{id}/continue.
+            setChatStatus('Sending follow-up…');
+            const task = await YaverFeedback.getTask(currentTaskId).catch(() => null);
+            const checkpoint = task?.output ? task.output.length : 0;
+            outputCheckpoints.push(checkpoint);
+            lastSeenOutputLen = checkpoint;
+            appendUserBubble(promptText);
+            appendAgentBubble();
+            vibePrompt.value = '';
+            await YaverFeedback.continueVibing(currentTaskId, promptText);
+            setChatStatus('Agent thinking…');
+            startPolling();
           }
-          setStatus('Creating vibing task…');
-          const result = await YaverFeedback.vibing(promptText);
-          setStatus(`Vibing task created: ${result.taskId}`);
-          vibePrompt.value = '';
         } catch (err) {
-          setStatus(err instanceof Error ? err.message : 'Vibing failed.');
+          setChatStatus(err instanceof Error ? err.message : 'Send failed.');
         } finally {
           setActionsBusy(false);
         }
@@ -2492,38 +2651,158 @@ export class YaverFeedback {
     return true;
   }
 
+  /** Wires up rail drag-and-drop + restores last position from
+   *  localStorage so the user's preferred placement persists across
+   *  page loads and even across tabs. We track absolute top/left
+   *  while dragging (instead of using right/bottom anchors) because
+   *  CSS-anchor switching mid-drag is jumpy; on mount we read the
+   *  saved coords and apply them as inline styles, otherwise the
+   *  bottom-right defaults from the stylesheet take over. Skipped
+   *  on phones (< 640 px) where we render as a centered modal — see
+   *  the @media block in injectReportStyles. */
+  private static makeRailDraggable(card: HTMLElement, header: HTMLElement): void {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const STORAGE_KEY = 'yvr-fb-rail-pos:v1';
+    const isPhoneViewport = () => window.matchMedia('(max-width: 640px)').matches;
+
+    const applyPos = (left: number, top: number) => {
+      // Clamp so the rail can't be dragged off-screen.
+      const w = card.offsetWidth || 380;
+      const h = card.offsetHeight || 200;
+      const maxLeft = Math.max(8, window.innerWidth - w - 8);
+      const maxTop = Math.max(8, window.innerHeight - h - 8);
+      const clampedLeft = Math.min(Math.max(8, left), maxLeft);
+      const clampedTop = Math.min(Math.max(8, top), maxTop);
+      card.style.left = `${clampedLeft}px`;
+      card.style.top = `${clampedTop}px`;
+      card.style.right = 'auto';
+      card.style.bottom = 'auto';
+    };
+
+    // Restore saved position on mount.
+    if (!isPhoneViewport()) {
+      try {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const saved = JSON.parse(raw) as { left?: number; top?: number };
+          if (typeof saved?.left === 'number' && typeof saved?.top === 'number') {
+            // Defer one frame so the card has measurable
+            // offsetWidth/offsetHeight before we clamp.
+            requestAnimationFrame(() => applyPos(saved.left!, saved.top!));
+          }
+        }
+      } catch {
+        // Storage might be disabled in incognito-like sessions; the
+        // CSS bottom-right default still applies so this is fine.
+      }
+    }
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startLeft = 0;
+    let startTop = 0;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (isPhoneViewport()) return;
+      // Don't initiate drag from interactive header children (the
+      // close button is the only one today, but be defensive about
+      // future additions).
+      if ((e.target as HTMLElement).closest('button, input, textarea, a, select')) {
+        return;
+      }
+      dragging = true;
+      const rect = card.getBoundingClientRect();
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      card.dataset.dragging = 'true';
+      header.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      applyPos(startLeft + dx, startTop + dy);
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (!dragging) return;
+      dragging = false;
+      delete card.dataset.dragging;
+      try { header.releasePointerCapture(e.pointerId); } catch { /* noop */ }
+      const rect = card.getBoundingClientRect();
+      try {
+        window.localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({ left: Math.round(rect.left), top: Math.round(rect.top) }),
+        );
+      } catch { /* storage disabled */ }
+    };
+
+    header.addEventListener('pointerdown', onPointerDown);
+    header.addEventListener('pointermove', onPointerMove);
+    header.addEventListener('pointerup', onPointerUp);
+    header.addEventListener('pointercancel', onPointerUp);
+  }
+
   private static injectReportStyles(): void {
     if (YaverFeedback.reportStyleInjected || typeof document === 'undefined') return;
     const style = document.createElement('style');
     style.id = 'yaver-feedback-report-style';
     style.textContent = `
+      /* Vibing companion rail (v0.4.3+).
+       *
+       * Goal: while the user is vibing, they want to keep watching
+       * their actual app — see colours change, refresh the canvas,
+       * scroll the page, click a button. The earlier centered-modal
+       * layout with a full-screen backdrop blur made that impossible:
+       * the page froze, lost focus, and the user had to dismiss the
+       * widget every time they wanted to interact with their site.
+       *
+       * Now the shell is non-blocking — pointer-events:none means
+       * clicks fall through to the page. The actual card is a
+       * draggable rail anchored bottom-right by default, with its
+       * own pointer-events:auto so it captures interaction inside
+       * itself. position is restored from localStorage on mount and
+       * saved on dragend, so each user pins it where they want.
+       *
+       * @media phones (≤ 640 px) keeps the legacy centered modal
+       * because there's no useful "rail" position on a 380 px wide
+       * viewport — see the rule at the bottom of this stylesheet. */
       .yvr-fb-shell {
         position: fixed; inset: 0; z-index: 99998;
-        display: flex; align-items: center; justify-content: center;
-        background: rgba(2, 6, 23, 0.62); backdrop-filter: blur(8px); padding: 16px;
+        pointer-events: none;
+        background: transparent;
       }
       .yvr-fb-card {
-        /* The 4-step setup wizard's git pane uses a 2-column grid
-         * (Bind project + Selected machine + Open dashboard). 760 px
-         * worked for empty-state cards but the BIND PROJECT card
-         * grows tall when the user reaches the "paste your repo URL +
-         * PAT" form, and at ~360 px column width the inputs visually
-         * collided with the SELECTED MACHINE card next to it. 880 px
-         * + the .yvr-fb-runner-card--wide override (which makes the
-         * BIND PROJECT card span both columns when the form is shown)
-         * solves both: the form gets a full-width row and the helper
-         * cards still pair cleanly underneath. The @media query below
-         * still collapses to a single column on phones ≤ 640 px
-         * viewport. */
-        width: min(880px, 100%);
-        max-height: min(640px, calc(100vh - 32px));
+        position: fixed;
+        right: 16px; bottom: 16px;
+        width: min(420px, calc(100vw - 32px));
+        max-height: min(78vh, 760px);
         overflow: auto;
+        pointer-events: auto;
         background: #0f172a; color: #e2e8f0;
-        border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.18);
-        padding: 18px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.52);
+        border-radius: 14px; border: 1px solid rgba(148, 163, 184, 0.22);
+        padding: 18px; box-shadow: 0 24px 60px rgba(15, 23, 42, 0.62);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
-      .yvr-fb-header { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .yvr-fb-card[data-dragging="true"] {
+        user-select: none; cursor: grabbing;
+      }
+      .yvr-fb-card[data-dragging="true"] * { pointer-events: none; }
+      .yvr-fb-header {
+        display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px;
+        cursor: grab;
+        /* Tiny vertical drag-grip cue so users know the header is the
+         * handle. The "::" prefix lives on the title row only. */
+      }
+      .yvr-fb-header::before {
+        content: "⋮⋮"; color: rgba(148,163,184,0.45); font-size: 14px; letter-spacing: -2px;
+        align-self: center; margin-right: 4px;
+      }
+      .yvr-fb-header:active { cursor: grabbing; }
       .yvr-fb-title { margin: 0; font-size: 16px; }
       .yvr-fb-subtitle { margin: 4px 0 0; font-size: 12px; color: #94a3b8; line-height: 1.45; }
       .yvr-fb-close {
@@ -2785,7 +3064,70 @@ export class YaverFeedback {
       .yvr-fb-status, .yvr-fb-last-report { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: #cbd5e1; }
       .yvr-fb-last-report { color: #94a3b8; }
 
+      /* Chat surface — multi-turn vibing transcript + composer.
+       * Replaces the old single-shot textarea. Bubbles are stacked
+       * vertically with user turns right-aligned and agent turns
+       * left-aligned; agent text uses ui-monospace + preserves
+       * whitespace because Claude Code's output is structured /
+       * line-prefixed. The transcript is the scroll viewport — it
+       * caps at 50vh so the composer stays visible. */
+      .yvr-fb-chat { display: grid; gap: 10px; }
+      .yvr-fb-chat-transcript {
+        display: flex; flex-direction: column; gap: 8px;
+        max-height: min(50vh, 440px); overflow-y: auto;
+        padding: 8px 4px; border-radius: 10px;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+      }
+      .yvr-fb-chat-transcript:empty { display: none; }
+      .yvr-fb-chat-bubble {
+        max-width: 92%; padding: 8px 10px; border-radius: 10px;
+        font-size: 12px; line-height: 1.5;
+      }
+      .yvr-fb-chat-bubble--user {
+        align-self: flex-end;
+        background: rgba(99, 102, 241, 0.18);
+        border: 1px solid rgba(99, 102, 241, 0.32);
+        color: #e0e7ff;
+      }
+      .yvr-fb-chat-bubble--agent {
+        align-self: flex-start;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(148, 163, 184, 0.18);
+        color: #cbd5e1;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap; word-break: break-word;
+      }
+      .yvr-fb-chat-status {
+        font-size: 11px; color: #94a3b8;
+        padding: 4px 6px;
+      }
+      .yvr-fb-chat-composer {
+        display: grid; gap: 6px;
+      }
+      .yvr-fb-chat-composer textarea.yvr-fb-vibe-input {
+        min-height: 70px; max-height: 180px;
+      }
+      .yvr-fb-chat-actions {
+        display: flex; gap: 6px; justify-content: flex-end;
+      }
+      .yvr-fb-chat-actions .yvr-fb-action {
+        padding: 8px 12px; font-size: 12px;
+      }
+
       @media (max-width: 640px) {
+        /* On phones, fall back to the centered modal layout — a
+         * "rail" on a 380 px viewport just is the modal. */
+        .yvr-fb-shell {
+          pointer-events: auto;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(2, 6, 23, 0.62);
+          padding: 16px;
+        }
+        .yvr-fb-card {
+          position: relative; right: auto; bottom: auto;
+          width: 100%; max-height: calc(100vh - 32px);
+        }
         .yvr-fb-vibe-topline { grid-template-columns: 1fr; display: grid; }
         .yvr-fb-runner-summary { max-width: none; text-align: left; }
         .yvr-fb-runner-auth-row { grid-template-columns: 1fr; }
