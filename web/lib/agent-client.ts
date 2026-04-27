@@ -2770,7 +2770,16 @@ export class AgentClient {
       }
     }
 
-    for (const tunnelUrl of (opts.tunnelUrls || []).map((u) => String(u || "").trim()).filter(Boolean)) {
+    for (const tunnelUrl of (opts.tunnelUrls || [])
+      .map((u) => String(u || "").trim())
+      .filter(Boolean)
+      // Skip <id>.dev.yaver.io URLs while the wildcard cert isn't
+      // wired (Cloudflare universal SSL only covers *.yaver.io,
+      // one level deep). Probing them fails at TLS handshake and
+      // floods the console with mixed-content / "access control
+      // checks" errors. See web 1.1.72 + the dev-yaver-io comment
+      // in DevicesView.tsx::isUsablePublicEndpoint.
+      .filter((u) => !/^https?:\/\/[^/]+\.dev\.yaver\.io(\/|$)/i.test(u))) {
       const normalized = tunnelUrl.replace(/\/+$/, "");
       const diag = await this.probeHealth(normalized, baseHeaders, 8000, "tunnel");
       diagnostics.push(diag);

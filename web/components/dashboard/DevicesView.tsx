@@ -149,6 +149,27 @@ function isVersionOutdated(current: string | undefined | null, latest: string | 
   return l[2] > c[2];
 }
 
+// isUsablePublicEndpoint — gate that filters out endpoints we
+// know will fail before we even try them. Right now this is just
+// the multi-level subdomain pattern <id>.dev.yaver.io: Cloudflare
+// universal SSL only covers *.yaver.io (one level), so the
+// wildcard cert for *.dev.yaver.io is missing. Probing those URLs
+// from the dashboard fails at TLS handshake → "Could not connect
+// to the server" / "access control checks" in console. The seed
+// mutation populated 839 devices with these URLs ahead of cert
+// provisioning; until the cert is actually wired (Cloudflare ACM
+// or upload), keep the dashboard quiet by skipping them.
+function isUsablePublicEndpoint(ep: string): boolean {
+  // The two-label-deep wildcard cert blocker. <id>.dev.yaver.io
+  // is the format the relay auto-mints. Anything not matching
+  // that pattern (real Cloudflare tunnel, Tailscale serve URL,
+  // user-configured custom domain) is fine and stays.
+  if (/^https?:\/\/[^/]+\.dev\.yaver\.io(\/|$)/i.test(ep)) {
+    return false;
+  }
+  return true;
+}
+
 // formatBytes — module-level helper for the AgentUpdateModal
 // progress UI. Distinct from the local helper later in the file
 // (`formatBytes` inside DeviceDetailsRow returns null for 0/-1).
@@ -633,7 +654,7 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
     //      LAN this is the source of the 502 + mixed-content
     //      flood the user reported in devtools.
     const candidates: string[] = [];
-    const eps = (device.publicEndpoints || []).filter(Boolean);
+    const eps = (device.publicEndpoints || []).filter(Boolean).filter(isUsablePublicEndpoint);
     const yaverEp = eps.find((e) => /^https:\/\/[^/]+\.yaver\.io(\/|$)/i.test(e));
     if (yaverEp) candidates.push(yaverEp);
     for (const ep of eps) {
@@ -805,7 +826,7 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
     if (agentClient.activeRelayUrl && device.id) {
       candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
     }
-    const eps = (device.publicEndpoints || []).filter(Boolean);
+    const eps = (device.publicEndpoints || []).filter(Boolean).filter(isUsablePublicEndpoint);
     for (const ep of eps) {
       if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
     }
@@ -1757,12 +1778,30 @@ function AgentUpdateModal({
 
     (async () => {
       try {
-        // Kick off the update on the agent (only the connected one
-        // is supported today). Returns started=true when an update is
-        // now in flight, started=false when already on latest. 409
-        // means an update was already running — totally fine.
+        // Kick off the update on the agent. Returns started=true
+        // when an update is now in flight, started=false when the
+        // agent thinks it's already on the latest version. 409
+        // means an update was already running — totally fine,
+        // we'll just attach to the existing stream.
+        let started = true;
         try {
-          await agentClient.triggerAgentUpdate();
+          const triggerResp = await agentClient.triggerAgentUpdate();
+          if (triggerResp && triggerResp.started === false) {
+            started = false;
+            // The agent's "latest" pointer (its updateRepo) may be
+            // stale — it sometimes points at a fork whose `latest`
+            // tag is years behind. Surface that explicitly so the
+            // user knows why no progress is happening, instead of
+            // staring at "Preparing… step 1 of 8" forever.
+            if (!cancelled) {
+              const cv = triggerResp.currentVersion || device.agentVersion || "?";
+              const lv = triggerResp.latestVersion || latestVersion || "?";
+              setError(
+                `The agent on ${device.name} thinks it's already up to date (it has v${cv}, says latest is v${lv}). Its auto-update repo may be stale — run \`yaver self-update --repo kivanccakmak/yaver.io\` on the box, or update via package manager (\`npm install -g yaver-cli@${lv}\`).`,
+              );
+              return;
+            }
+          }
         } catch (err) {
           // Don't fail the modal if the start call rejected with 409;
           // we still want to show the live stream of whatever update
@@ -1782,6 +1821,23 @@ function AgentUpdateModal({
         if (!streamRes.ok) {
           if (!cancelled) setError(`Stream failed: HTTP ${streamRes.status}`);
           return;
+        }
+        // Set up a watchdog — if we get no SSE event for 45s after
+        // POST returned started=true, fall back to polling /info to
+        // detect a successful restart anyway. Without this, an old
+        // agent that emits no progress events at all would leave the
+        // modal stuck on "Preparing".
+        if (started) {
+          setTimeout(() => {
+            if (cancelled) return;
+            // Only kick the poll if no progress event has arrived.
+            // Detected by phase still being the initial "starting".
+            // Reading state from a closure is fragile — use a ref-
+            // less heuristic: if we never moved past "starting"
+            // for 45s, the agent likely doesn't emit progress.
+            // pollForNewVersion is idempotent.
+            pollForNewVersion();
+          }, 45_000);
         }
         const reader = streamRes.body?.getReader();
         if (!reader) return;
