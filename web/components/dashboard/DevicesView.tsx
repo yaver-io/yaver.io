@@ -824,6 +824,7 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
     let cancelled = false;
     setLoading(true);
     setError(null);
+
     // Same probe-ordering rules as useDeviceRuntimeInfo: prefer
     // HTTPS (relay path or *.yaver.io subdomain), only fall through
     // to direct LAN when the dashboard is on http (local dev). On
@@ -840,12 +841,60 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
     if (typeof window !== "undefined" && window.location.protocol !== "https:") {
       candidates.push(`http://${device.host}:${device.port}`);
     }
-    if (candidates.length === 0) {
-      setLoading(false);
-      setError("no reachable URL");
-      return;
-    }
+
+    // If the device is the dashboard's currently-active workspace, the
+    // most reliable transport is `agentClient` itself — same baseUrl
+    // + authHeaders that already serve /info, /tasks, /agent/runners
+    // etc. Hand-rolled relay URL + raw Bearer token returns 401
+    // because the relay-side auth contract differs from the agent's
+    // session-token contract. Try agentClient first, fall back to
+    // candidate URLs if it errors so non-active rows still surface
+    // their projects through the registry-backed path.
+    const activeRelayUrl = agentClient.activeRelayUrl ?? null;
+    const isActiveDevice =
+      Boolean(activeRelayUrl && activeRelayUrl.includes(`/d/${device.id}`)) ||
+      (agentClient.connectionState === "connected" && !!device.workspaceLive);
+
+    const mapAgentRow = (p: any): DeviceProjectInfo => ({
+      name: String(p?.name ?? p?.slug ?? "").trim(),
+      path: typeof p?.path === "string" ? p.path : undefined,
+      branch: typeof p?.branch === "string" ? p.branch : undefined,
+      framework: typeof p?.framework === "string" ? p.framework : undefined,
+      tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
+      remote: typeof p?.remote === "string" && p.remote.trim() ? p.remote : undefined,
+      monorepoRoot:
+        typeof p?.monorepoRoot === "string" && p.monorepoRoot.trim() ? p.monorepoRoot : undefined,
+      monorepoApp:
+        typeof p?.monorepoApp === "string" && p.monorepoApp.trim() ? p.monorepoApp : undefined,
+    });
+
     (async () => {
+      // Live-workspace happy path.
+      if (isActiveDevice) {
+        try {
+          const list = await agentClient.listProjectsByCapability("all");
+          if (cancelled) return;
+          const mapped = (list || []).map(mapAgentRow).filter((p) => p.name.length > 0);
+          setProjects(mapped);
+          setError(null);
+          setLoading(false);
+          return;
+        } catch (err) {
+          // Fall through — try candidate URLs too. We still want the
+          // "Load failed" string captured in case all paths fail.
+          // (Don't surface this fall-through error directly; the
+          // candidates probe gets the last word.)
+        }
+      }
+
+      if (candidates.length === 0) {
+        if (!cancelled) {
+          setError("no reachable URL");
+          setLoading(false);
+        }
+        return;
+      }
+
       let lastErr = "no candidates";
       for (const base of candidates) {
         if (cancelled) return;
@@ -859,23 +908,8 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
             continue;
           }
           const data = await res.json();
-          const arr = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
-          const mapped: DeviceProjectInfo[] = arr
-            .map((p: any) => ({
-              name: String(p?.name ?? p?.slug ?? "").trim(),
-              path: typeof p?.path === "string" ? p.path : undefined,
-              branch: typeof p?.branch === "string" ? p.branch : undefined,
-              framework: typeof p?.framework === "string" ? p.framework : undefined,
-              tags: Array.isArray(p?.tags) ? p.tags.map(String) : undefined,
-              remote: typeof p?.remote === "string" && p.remote.trim() ? p.remote : undefined,
-              monorepoRoot: typeof p?.monorepoRoot === "string" && p.monorepoRoot.trim()
-                ? p.monorepoRoot
-                : undefined,
-              monorepoApp: typeof p?.monorepoApp === "string" && p.monorepoApp.trim()
-                ? p.monorepoApp
-                : undefined,
-            }))
-            .filter((p: DeviceProjectInfo) => p.name.length > 0);
+          const arr: any[] = Array.isArray(data) ? data : Array.isArray(data?.projects) ? data.projects : [];
+          const mapped: DeviceProjectInfo[] = arr.map(mapAgentRow).filter((p: DeviceProjectInfo) => p.name.length > 0);
           if (cancelled) return;
           setProjects(mapped);
           setError(null);
