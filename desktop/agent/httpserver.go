@@ -627,6 +627,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/dev/build-native", s.authSDKOrGuest(s.handleBuildNativeBundle))
 	mux.HandleFunc("/dev/native-bundle", s.handleServeNativeBundle) // No auth — serves compiled bundle
 	mux.HandleFunc("/dev/native-assets", s.handleServeNativeAssets) // No auth — serves compiled assets
+	// Web build target outputs (target=web-js-bundle / web-hermes-wasm).
+	// Registered before the catch-all /dev/ proxy so they don't get
+	// shadowed by the dev-server reverse proxy.
+	mux.HandleFunc("/dev/web-bundle/", s.handleServeWebBundle)            // No auth — serves built web bundle (static files)
+	mux.HandleFunc("/dev/hermes-wasm-runtime", s.handleServeHermesWasm)   // No auth — serves hermes.wasm for the runner page
+	mux.HandleFunc("/dev/web-bundle/info", s.auth(s.handleWebBundleInfo)) // Owner — returns metadata about the current bundle
 	mux.HandleFunc("/dev/", s.handleDevServerProxy)                 // No auth — serves proxied dev content for browser/webview preview surfaces
 	// Parallel Expo Web: sibling preview process so the Web Reload tab
 	// can render RN apps in a browser iframe without killing Metro's

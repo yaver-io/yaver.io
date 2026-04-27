@@ -1813,13 +1813,67 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// broadcast reload_bundle on a never-built bundle.
 		ProjectName string `json:"projectName"`
 		ProjectPath string `json:"projectPath"`
+		// Target controls compile output:
+		//   "" / "mobile-hermes"   — Metro bundle + hermesc → HBC
+		//                            served via /dev/native-bundle
+		//                            (default — mobile super-host load)
+		//   "web-js-bundle"        — `expo export -p web` → static web bundle
+		//                            served via /dev/web-bundle
+		//                            (default for caller=web-dashboard/*)
+		//   "web-hermes-wasm"      — Metro bundle (web platform) + hermesc → HBC
+		//                            served alongside hermes.wasm runner
+		//                            via /dev/web-bundle
+		//                            (experimental — same HBC executes in
+		//                             browser via Hermes WASM build)
+		// Platform field still picks ios|android for mobile-hermes;
+		// it's ignored when target is web-*.
+		Target string `json:"target"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
 	}
-	if req.Platform == "" {
-		req.Platform = "ios"
+	caller := extractCaller(r)
+
+	// Resolve the build target. Explicit `target` field always wins.
+	// Otherwise default by caller surface so existing mobile callers
+	// (no `target` field) keep their current behavior, and web-dashboard
+	// callers automatically get the web JS bundle path.
+	buildTarget := strings.TrimSpace(req.Target)
+	if buildTarget == "" {
+		if strings.HasPrefix(caller, "web-dashboard/") {
+			buildTarget = "web-js-bundle"
+		} else {
+			buildTarget = "mobile-hermes"
+		}
 	}
+	switch buildTarget {
+	case "mobile-hermes", "web-js-bundle", "web-hermes-wasm":
+		// ok
+	default:
+		jsonReply(w, http.StatusBadRequest, map[string]string{
+			"error": fmt.Sprintf("unknown target %q — must be mobile-hermes, web-js-bundle, or web-hermes-wasm", buildTarget),
+		})
+		return
+	}
+
+	if buildTarget == "mobile-hermes" {
+		if req.Platform == "" {
+			req.Platform = "ios"
+		}
+		if req.Platform != "ios" && req.Platform != "android" {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("platform %q invalid for mobile-hermes — must be ios or android", req.Platform),
+			})
+			return
+		}
+	} else {
+		// Web targets always compile for the web platform; ignore any
+		// stale `platform: ios` left over from a mobile-app caller's
+		// boilerplate body.
+		req.Platform = "web"
+	}
+	log.Printf("[build-native] caller=%s target=%s platform=%s project=%s path=%s",
+		caller, buildTarget, req.Platform, req.ProjectName, req.ProjectPath)
 
 	// Resolve workDir in priority order:
 	//   1. explicit projectPath in body
@@ -1853,8 +1907,33 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		}
 		workDir = status.WorkDir
 	}
-	buildDir := filepath.Join(workDir, ".yaver-build")
+	// Pick output dir per target so concurrent mobile+web builds for
+	// the same project don't trash each other's bundles.
+	var buildDir string
+	switch buildTarget {
+	case "web-js-bundle":
+		buildDir = filepath.Join(workDir, ".yaver-build-web")
+	case "web-hermes-wasm":
+		buildDir = filepath.Join(workDir, ".yaver-build-web-hermes")
+	default:
+		buildDir = filepath.Join(workDir, ".yaver-build")
+	}
 	bundlePath := filepath.Join(buildDir, "main.jsbundle")
+
+	// Web targets short-circuit out to their own builders. Everything
+	// below this point is the existing mobile-hermes pipeline; keeping
+	// the diff that small means we cannot regress mobile.
+	if buildTarget == "web-js-bundle" || buildTarget == "web-hermes-wasm" {
+		s.handleBuildWebTarget(w, r, buildWebRequest{
+			Target:      buildTarget,
+			Caller:      caller,
+			WorkDir:     workDir,
+			BuildDir:    buildDir,
+			ProjectName: req.ProjectName,
+		})
+		return
+	}
+
 	target := DevServerTarget{}
 	if s.devServerMgr != nil {
 		target = s.devServerMgr.PreferredTarget()
@@ -2018,6 +2097,25 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	s.emitBuildProgress("Compiling Hermes bytecode...", "hermes")
 	s.upsertDevOperation("build_native", "running", "hermes", "Compiling Hermes bytecode…", workDir, target.DeviceID, phaseProgress("hermes"), map[string]interface{}{"platform": req.Platform})
 
+	// Yaver Protocol v1: emit a structured `topic=hermes/compile`
+	// progress event so the dashboard CONSOLE can render the bytecode
+	// compile as its own phase row instead of just an inline stdout line.
+	// We don't have per-byte progress from hermesc (its stdout is
+	// silent on success), so this is a coarse two-phase signal:
+	// hermesc_compiling → ready (or → error). Real progress would
+	// require parsing hermesc's `--progress` output, which the upstream
+	// binary doesn't ship today.
+	if mgr := s.devServerMgr; mgr != nil {
+		if mgr.hermesTracker == nil {
+			frameworkName := "expo"
+			if st := mgr.Status(); st != nil && st.Framework != "" {
+				frameworkName = st.Framework
+			}
+			mgr.hermesTracker = newProgressTracker(mgr.emit, frameworkName, "hermes/compile", "build-native")
+		}
+		mgr.hermesTracker.transitionPhase("hermesc_compiling")
+	}
+
 	info := detectHermesRuntimeInfo(workDir)
 	hermescPath, hermescErr := resolveHermesc(workDir)
 	if hermescErr != nil {
@@ -2046,6 +2144,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
 			incident := s.appendDevIncident("build", ReasonBuildHermesFailed, "Hermes compilation failed", "Hermes bytecode compilation failed on the host.", err.Error(), "Inspect the Hermes compiler output and retry after fixing the host-side build issue.", workDir, target.DeviceID, req.Platform, IncidentSeverityWarn, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
 			s.upsertDevOperation("build_native", "running", "hermes", "Hermes compilation failed; falling back to plain JS bundle.", workDir, target.DeviceID, 0.8, map[string]interface{}{"platform": req.Platform}, incident.ID)
+			if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
+				mgr.hermesTracker.transitionPhase("error")
+			}
 		} else {
 			os.Remove(tmpPath)
 			log.Printf("[super-host] hermesc compile complete")
@@ -2056,6 +2157,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				ProjectPath: strings.TrimSpace(workDir),
 				Target:      strings.TrimSpace(req.Platform),
 			}, "Hermes compilation recovered.")
+			if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
+				mgr.hermesTracker.transitionPhase("ready")
+			}
 		}
 	}
 

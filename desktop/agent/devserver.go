@@ -272,6 +272,40 @@ type DevServerManager struct {
 	hermesTracker  *progressTracker // topic="hermes/compile" (build-native)
 	recentLogTail  []string         // last 8 stdout/stderr lines for snapshots
 	recentLogMu    sync.Mutex
+	// webBundleInfo records the most recent web target build so the
+	// /dev/web-bundle/* handler knows which directory to serve from.
+	// Set by build_web.go on completion; cleared on Stop.
+	webBundleInfo   WebBundleInfo
+	webBundleInfoMu sync.RWMutex
+}
+
+// WebBundleInfo describes the currently-served web bundle (target =
+// web-js-bundle or web-hermes-wasm). The /dev/web-bundle handler reads
+// it to pick the right on-disk dir to serve.
+type WebBundleInfo struct {
+	Target    string `json:"target"`    // "web-js-bundle" | "web-hermes-wasm"
+	BuildDir  string `json:"buildDir"`  // absolute path on host
+	IndexFile string `json:"indexFile"` // typically "index.html"
+	Size      int64  `json:"size"`      // total bundle bytes
+	FileCount int    `json:"fileCount"` // file count for js-bundle target
+	BuiltAt   string `json:"builtAt"`   // RFC3339 build completion timestamp
+	Caller    string `json:"caller"`    // X-Yaver-Caller of the build trigger
+}
+
+// SetWebBundleInfo registers a freshly-built web bundle with the
+// manager. Subsequent /dev/web-bundle/* requests are routed there.
+func (m *DevServerManager) SetWebBundleInfo(info WebBundleInfo) {
+	m.webBundleInfoMu.Lock()
+	defer m.webBundleInfoMu.Unlock()
+	m.webBundleInfo = info
+}
+
+// GetWebBundleInfo returns the current web bundle info (zero-value if
+// no bundle has been built yet).
+func (m *DevServerManager) GetWebBundleInfo() WebBundleInfo {
+	m.webBundleInfoMu.RLock()
+	defer m.webBundleInfoMu.RUnlock()
+	return m.webBundleInfo
 }
 
 // devEventHistoryMax bounds DevServerManager.history. 200 lines covers

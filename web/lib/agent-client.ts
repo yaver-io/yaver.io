@@ -8,6 +8,13 @@
 
 import { getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 import { CONVEX_URL } from "@/lib/constants";
+import webPkg from "../package.json";
+
+// X-Yaver-Caller surface identifier sent on every agent request.
+// Format: "<surface>/<version>" — agent v1.99.71+ logs + threads it
+// onto SSE events so the dashboard CONSOLE can attribute each phase
+// event back to the originating client.
+const YAVER_CALLER_ID = `web-dashboard/${(webPkg as { version?: string }).version ?? "unknown"}`;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -2259,7 +2266,14 @@ export class AgentClient {
   private activeRelayPassword: string | null = null;
 
   private get authHeaders(): Record<string, string> {
-    const h: Record<string, string> = { Authorization: `Bearer ${this.token}` };
+    const h: Record<string, string> = {
+      Authorization: `Bearer ${this.token}`,
+      // X-Yaver-Caller threads our identity into the agent's logs and
+      // every emitted SSE event so server-side observability can
+      // distinguish web-dashboard from mobile-app callers. Agent v1.99.71+
+      // reads this header.
+      "X-Yaver-Caller": YAVER_CALLER_ID,
+    };
     if (this._activeRelayUrl && this.activeRelayPassword) {
       h["X-Relay-Password"] = this.activeRelayPassword;
     }
@@ -3655,6 +3669,11 @@ export class AgentClient {
     if (this._activeRelayUrl && this.activeRelayPassword) {
       u.searchParams.set("__rp", this.activeRelayPassword);
     }
+    // EventSource can't set custom headers, so we pass the caller
+    // surface as ?caller= and the agent treats it equivalently to
+    // X-Yaver-Caller. Lets dev/events emissions show "[web-dashboard]"
+    // attribution on every SSE frame.
+    u.searchParams.set("caller", YAVER_CALLER_ID);
     return u.toString();
   }
 

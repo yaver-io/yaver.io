@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -16,8 +17,26 @@ import (
 // nodeInstallVersion is the Node.js LTS shipped by the on-demand
 // installer. Pinning avoids an extra HTTP call to nodejs.org/dist on
 // every request and gives a stable baseline above the modern Expo SDK
-// floor (Node ≥ 18).
-const nodeInstallVersion = "v20.18.0"
+// floor.
+//
+// Floor required by Expo SDK 53/54: Node ≥ 20.19.4. We deliberately
+// ship the active LTS line (v22.x) instead of grazing the floor with
+// v20.19.x because every customer-side Expo bump for the next year+
+// would otherwise re-trigger this incident. v22 is the currently-active
+// LTS and supports Expo 54 + RN 0.81 cleanly.
+const nodeInstallVersion = "v22.12.0"
+
+// nodeMinimumMajor / nodeMinimumMinor define the minimum Node version
+// the agent considers acceptable for an Expo-aware project. If the
+// existing binary at ~/.yaver/runtimes/node/bin/node is below this
+// floor, installNodeRuntime re-downloads even though "something" is
+// already present — otherwise customers stay stuck on stale runtimes
+// after a single yaver upgrade.
+const (
+	nodeMinimumMajor = 20
+	nodeMinimumMinor = 19
+	nodeMinimumPatch = 4
+)
 
 // installNodeRuntime downloads the Node.js LTS tarball for the current
 // platform into ~/.yaver/runtimes/node, sudo-free, so a fresh
@@ -43,17 +62,21 @@ func installNodeRuntime(ctx context.Context, progress func(string)) (string, err
 	binDir := filepath.Join(target, "bin")
 
 	if existing := nodeRuntimeExisting(binDir); existing != "" {
-		if err := ensureNodeCurrentSymlink(target); err != nil {
-			return "", err
+		if nodeVersionMeetsFloor(existing) {
+			if err := ensureNodeCurrentSymlink(target); err != nil {
+				return "", err
+			}
+			if err := ensureUserShellPathSetup(progress); err != nil {
+				return "", err
+			}
+			if err := configureNpmUserPrefix(binDir, progress); err != nil {
+				return "", err
+			}
+			logf(fmt.Sprintf("Node already installed at %s (%s)", binDir, existing))
+			return binDir, nil
 		}
-		if err := ensureUserShellPathSetup(progress); err != nil {
-			return "", err
-		}
-		if err := configureNpmUserPrefix(binDir, progress); err != nil {
-			return "", err
-		}
-		logf(fmt.Sprintf("Node already installed at %s (%s)", binDir, existing))
-		return binDir, nil
+		logf(fmt.Sprintf("Node at %s is %s — below Expo SDK floor (need ≥ v%d.%d.%d). Reinstalling.",
+			binDir, existing, nodeMinimumMajor, nodeMinimumMinor, nodeMinimumPatch))
 	}
 
 	if err := os.MkdirAll(root, 0o755); err != nil {
@@ -160,6 +183,55 @@ func nodeTarballForPlatform(version string) (string, string, bool) {
 		return name, fmt.Sprintf("%s/%s", version, name), true
 	}
 	return "", "", false
+}
+
+// nodeVersionMeetsFloor returns true when the version string (e.g. "v20.19.4"
+// or "v22.12.0") is at or above the Expo SDK 53/54 minimum. Symlinks like
+// the test box's "/usr/bin/node v22.x" go through fine; old vendored Node
+// installs at v20.18.x are flagged for reinstall.
+func nodeVersionMeetsFloor(version string) bool {
+	v := strings.TrimSpace(version)
+	v = strings.TrimPrefix(v, "v")
+	parts := strings.SplitN(v, ".", 3)
+	if len(parts) < 1 {
+		return false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false
+	}
+	if major > nodeMinimumMajor {
+		return true
+	}
+	if major < nodeMinimumMajor {
+		return false
+	}
+	if len(parts) < 2 {
+		return false
+	}
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false
+	}
+	if minor > nodeMinimumMinor {
+		return true
+	}
+	if minor < nodeMinimumMinor {
+		return false
+	}
+	if len(parts) < 3 {
+		return false
+	}
+	// patch may be "4", "4-darwin", or "4 (build ...)"
+	patchToken := parts[2]
+	if i := strings.IndexAny(patchToken, "-+ \t"); i >= 0 {
+		patchToken = patchToken[:i]
+	}
+	patch, err := strconv.Atoi(patchToken)
+	if err != nil {
+		return false
+	}
+	return patch >= nodeMinimumPatch
 }
 
 // nodeRuntimeExisting returns the version string from `node --version`
