@@ -1229,6 +1229,12 @@ export default function DevicesView({
   const [updateModalDevice, setUpdateModalDevice] = useState<Device | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [authModal, setAuthModal] = useState<{ device: Device; runner: string } | null>(null);
+  // The "Rescue" inline panel — Convex-backed command queue that
+  // works even when a device's relay tunnel is wedged (the agent's
+  // heartbeat polls Convex on a separate path). Tracks which device's
+  // panel is open + the latest queued command for status feedback.
+  const [rescueOpenDeviceId, setRescueOpenDeviceId] = useState<string | null>(null);
+  const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
   const [showDormantDevices, setShowDormantDevices] = useState(false);
   const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
   const dormantDevices = devices.filter((device) => isDormantUnreachableDevice(device));
@@ -1419,6 +1425,15 @@ export default function DevicesView({
                         {primaryDeviceId === device.id ? "Primary" : "Set as primary"}
                       </button>
                     ) : null}
+                    {!device.isGuest ? (
+                      <button
+                        onClick={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:border-amber-500/60 hover:bg-amber-500/20"
+                        title="Recover a wedged agent — works even when the relay tunnel is broken"
+                      >
+                        🩹 Rescue
+                      </button>
+                    ) : null}
                     <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-surface-800 bg-surface-900/40 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-700 hover:bg-surface-800/60 hover:text-surface-100"
@@ -1432,6 +1447,35 @@ export default function DevicesView({
                     </button>
                   </div>
                 </div>
+                {rescueOpenDeviceId === device.id ? (
+                  <RescueInlinePanel
+                    device={device}
+                    statusMsg={rescueStatus[device.id]}
+                    onQueue={async (command) => {
+                      setRescueStatus((prev) => ({
+                        ...prev,
+                        [device.id]: { msg: `Queueing ${command}…`, tone: "info" },
+                      }));
+                      try {
+                        const res = await agentClient.queueRescueCommand(device.id, command);
+                        const tail = res.deduped ? "(already pending)" : `(id ${res.commandId.slice(0, 8)}…)`;
+                        setRescueStatus((prev) => ({
+                          ...prev,
+                          [device.id]: {
+                            msg: `Queued ${command} ${tail} — agent picks up next heartbeat`,
+                            tone: "ok",
+                          },
+                        }));
+                      } catch (e: any) {
+                        setRescueStatus((prev) => ({
+                          ...prev,
+                          [device.id]: { msg: e?.message || "queue failed", tone: "err" },
+                        }));
+                      }
+                    }}
+                    onClose={() => setRescueOpenDeviceId(null)}
+                  />
+                ) : null}
                 {device.edgeProfile ? (
                   <p className="text-xs text-surface-500">
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
@@ -2762,4 +2806,96 @@ class DeviceDetailsBoundary extends React.Component<{ device: Device; children: 
     }
     return this.props.children;
   }
+}
+
+// RescueInlinePanel — the four rescue commands as buttons, plus the
+// last queue status. Inline (not a modal) so the user stays anchored
+// to the device card while picking. The panel posts to the
+// Convex-backed rescue queue (web/lib/agent-client.ts queueRescueCommand);
+// the agent picks the command up on its next heartbeat (~30 s) so
+// this works even when the device's relay tunnel is wedged.
+function RescueInlinePanel({
+  device,
+  statusMsg,
+  onQueue,
+  onClose,
+}: {
+  device: Device;
+  statusMsg?: { msg: string; tone: "info" | "ok" | "err" };
+  onQueue: (command: "restart" | "reinstall-latest" | "tunnel-reset" | "auth-reset") => void;
+  onClose: () => void;
+}) {
+  const [confirmReset, setConfirmReset] = useState(false);
+  const tone = statusMsg?.tone || "info";
+  const toneCls =
+    tone === "ok"
+      ? "text-emerald-300"
+      : tone === "err"
+        ? "text-red-300"
+        : "text-amber-200";
+  return (
+    <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-300">
+          Rescue {device.name}
+        </p>
+        <button
+          onClick={onClose}
+          className="text-[10px] text-amber-300/60 hover:text-amber-200"
+          title="Close"
+        >
+          close
+        </button>
+      </div>
+      <p className="mb-3 text-[11px] text-amber-200/70">
+        These commands ride on Convex (not the relay), so they work
+        even when the agent&apos;s tunnel is broken. The agent picks
+        the command up on its next heartbeat (~30 s).
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => onQueue("restart")}
+          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+          title="systemctl restart yaver-agent (Linux) — clears stale tunnels, picks up new config"
+        >
+          ↻ Restart
+        </button>
+        <button
+          onClick={() => onQueue("reinstall-latest")}
+          className="rounded border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] text-sky-200 hover:bg-sky-500/20"
+          title="Download latest .deb from GitHub releases + dpkg -i + restart (Linux only)"
+        >
+          ⬇ Reinstall latest
+        </button>
+        <button
+          onClick={() => onQueue("tunnel-reset")}
+          className="rounded border border-indigo-500/40 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-200 hover:bg-indigo-500/20"
+          title="Drop the relay tunnel and reconnect — same effect as restart today; lighter once the relay client gets a public Reset hook"
+        >
+          ⟳ Reset tunnel
+        </button>
+        <button
+          onClick={() => {
+            if (!confirmReset) {
+              setConfirmReset(true);
+              return;
+            }
+            setConfirmReset(false);
+            onQueue("auth-reset");
+          }}
+          className={`rounded border px-2.5 py-1 text-[11px] ${
+            confirmReset
+              ? "border-red-500/60 bg-red-500/20 text-red-100 hover:bg-red-500/30"
+              : "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+          }`}
+          title="Move ~/.yaver/config.json aside — device becomes unauthenticated; requires re-pair on next boot"
+        >
+          {confirmReset ? "Confirm Reset Auth?" : "⚠ Reset Auth"}
+        </button>
+      </div>
+      {statusMsg ? (
+        <p className={`mt-3 break-all text-[11px] ${toneCls}`}>{statusMsg.msg}</p>
+      ) : null}
+    </div>
+  );
 }

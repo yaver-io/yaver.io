@@ -5901,6 +5901,80 @@ export class AgentClient {
     }
     return out;
   }
+
+  // ── Rescue command queue ─────────────────────────────────────────
+  //
+  // Convex-backed control channel for wedged remote agents. The
+  // dashboard's normal /agent/* path goes through the relay; if the
+  // tunnel is down, queueing a rescue command via Convex still works
+  // because the agent's heartbeat runs on a separate network path.
+  // Pairs with backend/convex/agentRescue.ts and
+  // desktop/agent/rescue.go.
+
+  /** Queue a rescue command for one of the user's devices. The
+   *  agent will pick it up on its next heartbeat (~30 s). Returns
+   *  the existing pending row when one of the same kind is still
+   *  alive (5-min TTL) so impatient double-clicks dedupe. */
+  async queueRescueCommand(
+    deviceId: string,
+    command: "restart" | "reinstall-latest" | "tunnel-reset" | "auth-reset",
+    params?: { version?: string },
+  ): Promise<{ commandId: string; deduped: boolean }> {
+    if (!this.token) throw new Error("not signed in");
+    const res = await fetch(`${CONVEX_URL}/agent-rescue/queue`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        deviceId,
+        command,
+        params,
+        sourceSurface: "web",
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `rescue queue HTTP ${res.status}`);
+    }
+    return {
+      commandId: typeof data?.commandId === "string" ? data.commandId : "",
+      deduped: data?.deduped === true,
+    };
+  }
+
+  /** Poll the rescue history for a device. UI subscribes by polling
+   *  every few seconds while a command is still pending/claimed —
+   *  cheap enough that we don't bother with a Convex live query. */
+  async listRescueCommands(
+    deviceId: string,
+    limit?: number,
+  ): Promise<Array<{
+    _id: string;
+    command: string;
+    params?: { version?: string };
+    status: "pending" | "claimed" | "completed" | "failed" | "expired";
+    result?: string;
+    createdAt: number;
+    claimedAt?: number;
+    completedAt?: number;
+    sourceSurface?: string;
+  }>> {
+    if (!this.token) return [];
+    const url = new URL(`${CONVEX_URL}/agent-rescue/list`);
+    url.searchParams.set("deviceId", deviceId);
+    if (typeof limit === "number" && limit > 0) {
+      url.searchParams.set("limit", String(limit));
+    }
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${this.token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return Array.isArray(data?.commands) ? data.commands : [];
+  }
 }
 
 // ── Phone-first mini backend types (mirror desktop/agent/phone_backend.go) ──

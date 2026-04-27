@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.82"
+const version = "1.99.83"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6915,6 +6915,11 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 				clearAuthExpiredNotify()
 			}
 		}
+		// Claim + execute any rescue command queued in Convex. Always
+		// runs after a successful heartbeat (which proves Convex is
+		// reachable and our token is valid). Best-effort: errors are
+		// logged but never break the heartbeat loop.
+		go claimAndExecuteRescueCommandSingleFlight(baseURL, currentToken(), deviceID)
 	}
 
 	var kickChan <-chan struct{}
