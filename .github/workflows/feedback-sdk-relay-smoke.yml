@@ -293,11 +293,12 @@ jobs:
           ##################################################################
           echo
           echo "=== [Both SDKs] POST /feedback contract probe ==="
-          # Mirrors P2PClient.uploadFeedback. We send a minimal
-          # text-only feedback bundle and assert the agent accepts
-          # it (200/202). No screenshot, no audio, no logs — just
-          # the wire shape.
-          FB_BODY=$(jq -nc \
+          # Mirrors P2PClient.uploadFeedback. The agent's /feedback
+          # handler requires multipart/form-data with a `metadata`
+          # JSON field (no plain JSON body — see
+          # desktop/agent/feedback_http.go::handleFeedback). Match
+          # that shape with curl -F.
+          METADATA=$(jq -nc \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg run "${GITHUB_RUN_ID:-local}" \
             '{summary:"feedback-sdk-relay-smoke",
@@ -305,8 +306,9 @@ jobs:
               context:{source:"ci",ciRun:$run},
               deviceInfo:{platform:"ci-replay", appName:"sfmg-or-carrotbet"}}')
           R5=$(curl -sS -m 10 -o /tmp/r5.json -w "%{http_code}" \
-                -H "$AUTH" -H "Content-Type: application/json" \
-                -X POST -d "$FB_BODY" "$(rp /feedback)")
+                -H "$AUTH" \
+                -F "metadata=$METADATA" \
+                -X POST "$(rp /feedback)")
           echo "  HTTP $R5 — body:"
           jq . /tmp/r5.json 2>/dev/null || cat /tmp/r5.json
           case "$R5" in
