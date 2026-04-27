@@ -1155,8 +1155,18 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             // URL priority: built static bundle (most stable, doesn't
             // depend on a long-running sibling process) → live Expo Web
             // sibling → primary dev server preview proxy.
+            //
+            // Critical: stay on the bundle URL while we're *rebuilding*
+            // too, not just when state is "ready". Falling back to
+            // previewUrl during rebuild shows the agent's `/dev/`
+            // reverse-proxy catchall — which serves the running dev
+            // server's response, or the agent's own dashboard if
+            // nothing's up. Either way it's not what the user asked
+            // for. The bundlingState overlay covers the iframe during
+            // a rebuild, so showing a brief 404 underneath while the
+            // rebuild completes is fine.
             url={
-              staticBundleState === "ready"
+              staticBundleState === "ready" || staticBundleState === "building"
                 ? agentClient.devWebBundleUrl
                 : devStatus?.webPort && devStatus.webPort > 0
                 ? agentClient.devWebPreviewUrl
@@ -1180,7 +1190,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             // chain we use for the iframe itself.
             onOpenInNewTab={(() => {
               const url =
-                staticBundleState === "ready"
+                staticBundleState === "ready" || staticBundleState === "building"
                   ? agentClient.devWebBundleUrl
                   : devStatus?.webPort && devStatus.webPort > 0
                   ? agentClient.devWebPreviewUrl
