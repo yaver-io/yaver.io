@@ -1942,24 +1942,34 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	var workDir string
 	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
 	if guestUID != "" {
-		resolved, err := s.guestResolveDevWorkDir(r, req.ProjectName, "")
-		if err != nil {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
-			return
+		if strings.TrimSpace(req.ProjectName) != "" {
+			resolved, err := s.guestResolveDevWorkDir(r, req.ProjectName, "")
+			if err != nil {
+				jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+				return
+			}
+			workDir = resolved
+		} else if strings.TrimSpace(req.ProjectPath) != "" {
+			workDir = strings.TrimSpace(req.ProjectPath)
+			if !s.guestAllowedDevWorkDir(guestUID, workDir) {
+				jsonReply(w, http.StatusForbidden, map[string]string{"error": "guest cannot access this project path"})
+				return
+			}
 		}
-		workDir = resolved
-	} else if req.ProjectPath != "" {
-		workDir = req.ProjectPath
-	} else if req.ProjectName != "" {
-		if mp := findMobileProjectByName(req.ProjectName); mp != nil {
-			workDir = mp.Path
-		} else {
+	} else if req.ProjectPath != "" || req.ProjectName != "" {
+		if ref, err := resolveProjectRef(req.ProjectName, req.ProjectPath); err == nil {
+			workDir = ref.Path
+			if strings.TrimSpace(req.ProjectName) == "" {
+				req.ProjectName = ref.Name
+			}
+		} else if req.ProjectName != "" {
 			jsonReply(w, http.StatusBadRequest, map[string]string{
 				"error": fmt.Sprintf("no mobile project named %q on this machine — check `yaver projects mobile`", req.ProjectName),
 			})
 			return
 		}
-	} else {
+	}
+	if workDir == "" {
 		status := s.devServerMgr.Status()
 		if status == nil || status.WorkDir == "" {
 			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first OR pass projectName / projectPath in the body"})
@@ -2143,12 +2153,12 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			LastError:    fmt.Sprintf("bundle failed: %v", err),
 		})
 		jsonReply(w, http.StatusInternalServerError, map[string]interface{}{
-			"error":      fmt.Sprintf("bundle failed: %v", err),
-			"phase":      "bundle",
-			"command":    cmd.Args,
-			"workDir":    workDir,
-			"output":     strings.Join(tailLines, "\n"),
-			"helpHint":   "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause.",
+			"error":    fmt.Sprintf("bundle failed: %v", err),
+			"phase":    "bundle",
+			"command":  cmd.Args,
+			"workDir":  workDir,
+			"output":   strings.Join(tailLines, "\n"),
+			"helpHint": "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause.",
 		})
 		return
 	}

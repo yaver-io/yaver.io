@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -110,6 +111,10 @@ func (s *HTTPServer) handleHostShareWorkspaceAttachRepo(w http.ResponseWriter, r
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	if !hostShareRequestAllowsWorkspacePath(r, body.RootPath) {
+		jsonError(w, http.StatusForbidden, "requested guest repo is outside the host-share allowed project scope")
+		return
+	}
 	ws, root, stats, err := hostShareImportGuestRootIntoWorkspace(sessionID, deviceID, body.RootID, body.RootPath)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -139,6 +144,9 @@ func (s *HTTPServer) handleHostShareWorkspacePullFromGuest(w http.ResponseWriter
 	deviceID := s.hostShareGuestDeviceIDForRequest(r)
 	if sessionID == "" || deviceID == "" {
 		jsonError(w, http.StatusBadRequest, "host-share session binding is incomplete")
+		return
+	}
+	if !s.hostShareWorkspaceSessionAllowed(w, r, sessionID) {
 		return
 	}
 	ws, root, stats, err := hostShareImportGuestRootIntoWorkspace(sessionID, deviceID, "", "")
@@ -172,6 +180,9 @@ func (s *HTTPServer) handleHostShareWorkspacePushToGuest(w http.ResponseWriter, 
 		jsonError(w, http.StatusBadRequest, "host-share session binding is incomplete")
 		return
 	}
+	if !s.hostShareWorkspaceSessionAllowed(w, r, sessionID) {
+		return
+	}
 	ws, stats, err := hostShareExportWorkspaceToGuest(sessionID, deviceID, "")
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
@@ -186,4 +197,27 @@ func (s *HTTPServer) handleHostShareWorkspacePushToGuest(w http.ResponseWriter, 
 			"deleted": stats.Deleted,
 		},
 	})
+}
+
+func hostShareRequestAllowsWorkspacePath(r *http.Request, rootPath string) bool {
+	rootPath = strings.TrimSpace(rootPath)
+	if rootPath == "" {
+		return true
+	}
+	return hostShareCanAccessProject(r, filepath.Base(rootPath)) || hostShareCanAccessProject(r, rootPath)
+}
+
+func (s *HTTPServer) hostShareWorkspaceSessionAllowed(w http.ResponseWriter, r *http.Request, sessionID string) bool {
+	if s.hostShareWorkspaceMgr == nil {
+		return true
+	}
+	ws, err := s.hostShareWorkspaceMgr.GetWorkspace(sessionID)
+	if err != nil || ws == nil {
+		return true
+	}
+	if !hostShareRequestAllowsWorkspacePath(r, ws.GuestRootPath) {
+		jsonError(w, http.StatusForbidden, "bound guest repo is outside the host-share allowed project scope")
+		return false
+	}
+	return true
 }

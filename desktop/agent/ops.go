@@ -8,8 +8,7 @@ package main
 //
 // Verbs live in individual ops_<verb>.go files and register themselves
 // here via registerOpsVerb in their init(). The dispatcher picks the
-// handler by name, enforces the machine-routing policy (local first
-// pass; remote peer routing lands in a follow-up), and returns a
+// handler by name, enforces the machine-routing policy, and returns a
 // uniform {ok, streamId?, initial?, error?, code?} shape so the
 // caller never has to branch on verb-specific success shapes.
 //
@@ -27,16 +26,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 )
 
 // OpsRequest is the single input shape every ops call takes.
 type OpsRequest struct {
-	// Machine: "local" (this agent), a full deviceId, an alias
-	// ("primary", "gpu", "mac-mini"), or a fan-out sentinel
-	// ("all-owned", "team:<teamId>"). Only "local" is honoured in
-	// this first cut; remote routing is wired in a follow-up.
+	// Machine: "local" (this agent), "auto" (project-aware best
+	// effort placement), a full deviceId, or an alias such as
+	// "primary".
 	Machine string `json:"machine"`
 	// Verb: name registered via registerOpsVerb.
 	Verb string `json:"verb"`
@@ -62,11 +61,14 @@ type OpsResult struct {
 // (auth, task manager, project manager, etc.) without couplig it to
 // package-global state. Every verb handler takes this.
 type OpsContext struct {
-	Ctx    context.Context
-	Server *HTTPServer
+	Ctx            context.Context
+	Server         *HTTPServer
+	RequestHeaders http.Header
+	ActorUserID    string
 	// Caller: "owner" (session-tied), "guest" (scoped guest session),
-	// "support" (TeamViewer-style bearer) — derived from the request's
-	// auth. Verbs can refuse based on caller role.
+	// "support" (TeamViewer-style bearer), or "host-share" (borrowed
+	// workspace / tooling session) — derived from the request's auth.
+	// Verbs can refuse based on caller role.
 	Caller string
 }
 
@@ -136,11 +138,24 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 		machine = "local"
 	}
 
+	executionPlan := buildOpsExecutionPlan(octx, req)
+	if denied := authorizeOpsExecution(octx, req, executionPlan); denied != nil {
+		return *denied
+	}
+
+	autoDecision := autoMachineDecision{}
+	if machine == "auto" {
+		autoDecision = autoMachineDecision{
+			Machine: executionPlan.ResolvedMachine,
+			Reason:  executionPlan.SelectionReason,
+		}
+		machine = autoDecision.Machine
+	}
+
 	// Resolve aliases to deviceIds before we decide between local and
 	// remote dispatch. "primary" follows userSettings.primaryDeviceId;
 	// "local" is always the local dispatcher. Full deviceIds pass
-	// through unchanged. Other aliases (e.g. "gpu", "mac-mini") are
-	// follow-up work: a per-user aliases table keyed off device tags.
+	// through unchanged.
 	if machine == "primary" {
 		if octx.Server == nil {
 			return OpsResult{OK: false, Code: "invalid_machine", Error: "primary alias needs a server context to resolve"}
@@ -194,7 +209,7 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 			if err := json.Unmarshal(body, &forwarded); err != nil {
 				return OpsResult{OK: false, Code: "remote_malformed", Error: "peer returned a non-OpsResult body: " + string(body)}
 			}
-			return forwarded
+			return annotateOpsResultMachine(forwarded, autoDecision)
 		}
 	}
 
@@ -217,5 +232,5 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 		}
 	}
 
-	return spec.Handler(octx, req.Payload)
+	return annotateOpsResultMachine(spec.Handler(octx, req.Payload), autoDecision)
 }

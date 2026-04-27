@@ -11,8 +11,10 @@ package main
 // running app" without remembering which endpoint handles which mode.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -71,18 +73,36 @@ func opsReloadHandler(c OpsContext, payload json.RawMessage) OpsResult {
 			"reloaded":  true,
 		}}
 	case "bundle":
-		// Full Hermes rebundle → push. The canonical pipeline lives
-		// behind /dev/reload-app so agents call that directly; this
-		// verb surfaces the pointer instead of duplicating it.
 		workDir := p.WorkDir
 		if workDir == "" {
-			workDir = "."
+			workDir = workDirFromEnv()
 		}
-		return OpsResult{OK: true, Initial: map[string]interface{}{
-			"hint":    fmt.Sprintf("POST /dev/reload-app with {workDir:%q, mode:\"bundle\"} — rebuilds Hermes bytecode + pushes to the phone", workDir),
+		body, _ := json.Marshal(map[string]string{
 			"mode":    "bundle",
 			"workDir": workDir,
-		}}
+		})
+		req, _ := http.NewRequest(http.MethodPost, "/dev/reload-app", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := newCapturingResponseWriter()
+		c.Server.handleReloadApp(rec, req)
+		if rec.Status() >= 300 {
+			return OpsResult{
+				OK:    false,
+				Code:  "reload_failed",
+				Error: fmt.Sprintf("reload-app returned HTTP %d: %s", rec.Status(), strings.TrimSpace(string(rec.Body()))),
+			}
+		}
+		var initial map[string]interface{}
+		if err := json.Unmarshal(rec.Body(), &initial); err != nil {
+			initial = map[string]interface{}{
+				"mode":    "bundle",
+				"workDir": workDir,
+				"raw":     strings.TrimSpace(string(rec.Body())),
+			}
+		}
+		initial["mode"] = "bundle"
+		initial["workDir"] = workDir
+		return OpsResult{OK: true, Initial: initial}
 	default:
 		return OpsResult{OK: false, Code: "bad_payload", Error: "mode must be dev or bundle"}
 	}

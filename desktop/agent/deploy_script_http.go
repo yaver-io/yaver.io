@@ -116,14 +116,14 @@ func (s *HTTPServer) handleDeployGenerate(w http.ResponseWriter, r *http.Request
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "app and target are required"})
 		return
 	}
-	// Auto-resolve stack + path from workspace manifest if not provided.
 	if body.Stack == "" || body.Path == "" {
-		stack, path, _ := resolveAppFromWorkspaceFull(body.App)
-		if body.Stack == "" {
-			body.Stack = stack
-		}
-		if body.Path == "" {
-			body.Path = path
+		if ref, err := resolveProjectRef(body.App, body.Path); err == nil {
+			if body.Stack == "" {
+				body.Stack = ref.Stack
+			}
+			if body.Path == "" {
+				body.Path = ref.Path
+			}
 		}
 	}
 	if body.Stack == "" {

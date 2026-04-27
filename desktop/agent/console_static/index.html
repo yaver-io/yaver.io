@@ -271,13 +271,38 @@ function fmtBytes(n) {
 async function renderOverview() {
   const m = await api("/console/metrics");
   const c = await api("/console/containers?all=1");
+  const t = await api("/tasks?limit=6");
   const running = (c.containers || []).filter(x => x.state === "running").length;
+  const recentTasks = ((t.tasks || []).slice(0, 6)).map(task => {
+    const video = task.videoClipUrl && task.videoStatus === "ready"
+      ? `<div style="margin-top:8px">
+           <video controls preload="metadata" poster="${task.videoPosterUrl || ''}" style="width:100%;max-width:420px;border-radius:8px;border:1px solid #1f2937;background:#05070a">
+             <source src="${task.videoClipUrl}" type="video/mp4">
+           </video>
+         </div>`
+      : (task.videoClipUrl
+        ? `<div class="muted" style="margin-top:6px">Video: ${task.videoStatus || 'processing'}</div>`
+        : "");
+    return `<div class="row" style="display:block">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="tag ${task.status === 'completed' ? 'ok' : (task.status === 'failed' ? 'down' : '')}">${task.status}</span>
+        <span class="name">${task.title || task.id}</span>
+        <span class="muted">${task.runnerId || ''}</span>
+      </div>
+      ${task.resultText ? `<div class="muted" style="margin-top:6px">${task.resultText}</div>` : ""}
+      ${video}
+    </div>`;
+  }).join("");
   view.innerHTML = `
     <div class="grid">
       <div class="card"><h3>CPU</h3><div class="v">${(m.cpuPct || 0).toFixed(1)}%</div><div class="s">${m.cores || 0} cores</div></div>
       <div class="card"><h3>RAM</h3><div class="v">${(m.ramPct || 0).toFixed(0)}%</div><div class="s">${fmtBytes(m.ramUsed)} / ${fmtBytes(m.ramTotal)}</div></div>
       <div class="card"><h3>Disk</h3><div class="v">${(m.diskPct || 0).toFixed(0)}%</div><div class="s">${fmtBytes(m.diskUsed)} / ${fmtBytes(m.diskTotal)}</div></div>
       <div class="card"><h3>Containers</h3><div class="v">${running}</div><div class="s">${(c.containers || []).length} total</div></div>
+    </div>
+    <div style="margin-top:16px">
+      <h3 style="font-size:11px;text-transform:uppercase;color:#737373;margin-bottom:8px">Recent Tasks</h3>
+      ${recentTasks || '<p class="muted">No recent tasks.</p>'}
     </div>
     <p class="tip">Standalone in-agent console. Full dashboard with richer UI: <a href="https://yaver.io/dashboard" style="color:#818cf8">yaver.io/dashboard</a></p>
   `;

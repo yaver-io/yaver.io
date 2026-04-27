@@ -3,6 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -78,6 +82,191 @@ func TestOpsInfoLocal(t *testing.T) {
 		if _, present := m[k]; !present {
 			t.Errorf("info output missing %q", k)
 		}
+	}
+}
+
+func TestOpsInfoAutoFallsBackLocal(t *testing.T) {
+	octx := OpsContext{Ctx: context.Background(), Caller: "owner"}
+	res := dispatchOps(octx, OpsRequest{Machine: "auto", Verb: "info"})
+	if !res.OK {
+		t.Fatalf("info failed: %s (%s)", res.Error, res.Code)
+	}
+	m, ok := res.Initial.(map[string]interface{})
+	if !ok {
+		t.Fatalf("initial not a map, got %T", res.Initial)
+	}
+	if got := strings.TrimSpace(fmt.Sprint(m["selectedMachine"])); got != "local" {
+		t.Fatalf("expected selectedMachine=local, got %q", got)
+	}
+	if !strings.Contains(strings.ToLower(fmt.Sprint(m["selectionReason"])), "local") {
+		t.Fatalf("expected local fallback reason, got %v", m["selectionReason"])
+	}
+}
+
+func TestBuildOpsExecutionPlanAutoFallsBackLocal(t *testing.T) {
+	plan := buildOpsExecutionPlan(OpsContext{Ctx: context.Background(), Caller: "owner"}, OpsRequest{
+		Machine: "auto",
+		Verb:    "info",
+	})
+	if !plan.OK {
+		t.Fatal("expected OK=true")
+	}
+	if plan.ResolvedMachine != "local" {
+		t.Fatalf("expected local machine, got %q", plan.ResolvedMachine)
+	}
+	if !strings.Contains(strings.ToLower(plan.SelectionReason), "local") {
+		t.Fatalf("expected local selection reason, got %q", plan.SelectionReason)
+	}
+}
+
+func TestBuildOpsExecutionPlanIncludesGuestPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "sample-app")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mgr := NewGuestConfigManager(tmp)
+	mgr.UpdateConfigs([]GuestConfig{{
+		GuestUserID:               "guest-1",
+		GuestEmail:                "guest@example.com",
+		Scope:                     GuestScopeDeploy,
+		AllowedProjects:           []string{"sample-app"},
+		AllowedRunners:            []string{"codex"},
+		ResourcePreset:            "balanced",
+		AllowDesktopControl:       boolPtr(true),
+		AllowBrowserControl:       boolPtr(true),
+		AllowTunnelForward:        boolPtr(false),
+		RequireIsolation:          boolPtr(true),
+		UseHostAPIKeys:            boolPtr(true),
+		AllowGuestProvidedAPIKeys: boolPtr(false),
+	}})
+	server := &HTTPServer{guestConfigMgr: mgr}
+	headers := http.Header{}
+	headers.Set("X-Yaver-GuestScope", GuestScopeDeploy)
+	plan := buildOpsExecutionPlan(OpsContext{
+		Ctx:            context.Background(),
+		Server:         server,
+		RequestHeaders: headers,
+		ActorUserID:    "guest-1",
+		Caller:         "guest",
+	}, OpsRequest{
+		Machine: "auto",
+		Verb:    "deploy",
+		Payload: json.RawMessage(fmt.Sprintf(`{"target":"vercel","workDir":%q}`, workDir)),
+	})
+	if plan.Access.Caller != "guest" {
+		t.Fatalf("expected guest caller, got %q", plan.Access.Caller)
+	}
+	if plan.Access.GuestScope != GuestScopeDeploy {
+		t.Fatalf("expected guest scope %q, got %q", GuestScopeDeploy, plan.Access.GuestScope)
+	}
+	if len(plan.Access.AllowedProjects) != 1 || plan.Access.AllowedProjects[0] != "sample-app" {
+		t.Fatalf("unexpected allowed projects: %#v", plan.Access.AllowedProjects)
+	}
+	if len(plan.Access.AllowedRunners) != 1 || plan.Access.AllowedRunners[0] != "codex" {
+		t.Fatalf("unexpected allowed runners: %#v", plan.Access.AllowedRunners)
+	}
+	if plan.Project == nil || plan.Project.WorkDir != workDir {
+		t.Fatalf("expected project workDir %q, got %#v", workDir, plan.Project)
+	}
+	if plan.Project == nil || plan.Project.Name != "sample-app" {
+		t.Fatalf("expected project name sample-app, got %#v", plan.Project)
+	}
+	if !plan.Access.RequireIsolation {
+		t.Fatal("expected requireIsolation=true")
+	}
+}
+
+func TestDispatchOpsGuestDeployScopeRejectsNonDeployVerb(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("X-Yaver-GuestScope", GuestScopeDeploy)
+	res := dispatchOps(OpsContext{
+		Ctx:            context.Background(),
+		Caller:         "guest",
+		RequestHeaders: headers,
+	}, OpsRequest{
+		Machine: "local",
+		Verb:    "reload",
+	})
+	if res.OK {
+		t.Fatal("expected OK=false")
+	}
+	if res.Code != "unauthorized" {
+		t.Fatalf("expected unauthorized, got %q", res.Code)
+	}
+}
+
+func TestDispatchOpsGuestDeployScopeAllowsDeploy(t *testing.T) {
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "sample-app")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mgr := NewGuestConfigManager(tmp)
+	mgr.UpdateConfigs([]GuestConfig{{
+		GuestUserID:     "guest-1",
+		Scope:           GuestScopeDeploy,
+		AllowedProjects: []string{"sample-app"},
+	}})
+	server := &HTTPServer{guestConfigMgr: mgr}
+	headers := http.Header{}
+	headers.Set("X-Yaver-GuestScope", GuestScopeDeploy)
+	res := dispatchOps(OpsContext{
+		Ctx:            context.Background(),
+		Server:         server,
+		Caller:         "guest",
+		ActorUserID:    "guest-1",
+		RequestHeaders: headers,
+	}, OpsRequest{
+		Machine: "auto",
+		Verb:    "deploy",
+		Payload: json.RawMessage(fmt.Sprintf(`{"target":"cloud","workDir":%q}`, workDir)),
+	})
+	if !res.OK {
+		t.Fatalf("expected OK=true, got %s (%s)", res.Error, res.Code)
+	}
+}
+
+func TestDispatchOpsHostShareRejectsDisallowedVerb(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("X-Yaver-HostShare", "true")
+	res := dispatchOps(OpsContext{
+		Ctx:            context.Background(),
+		Caller:         "host-share",
+		RequestHeaders: headers,
+	}, OpsRequest{
+		Machine: "local",
+		Verb:    "run",
+	})
+	if res.OK {
+		t.Fatal("expected OK=false")
+	}
+	if res.Code != "unauthorized" {
+		t.Fatalf("expected unauthorized, got %q", res.Code)
+	}
+}
+
+func TestDispatchOpsHostShareDeployHonorsProjectAndInfraPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	workDir := filepath.Join(tmp, "sample-app")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	headers := http.Header{}
+	headers.Set("X-Yaver-HostShare", "true")
+	headers.Set("X-Yaver-HostShareAllowInfra", "true")
+	headers.Set("X-Yaver-HostShareAllowedProjects", "sample-app")
+	res := dispatchOps(OpsContext{
+		Ctx:            context.Background(),
+		Caller:         "host-share",
+		RequestHeaders: headers,
+	}, OpsRequest{
+		Machine: "auto",
+		Verb:    "deploy",
+		Payload: json.RawMessage(fmt.Sprintf(`{"target":"cloud","workDir":%q}`, workDir)),
+	})
+	if !res.OK {
+		t.Fatalf("expected OK=true, got %s (%s)", res.Error, res.Code)
 	}
 }
 

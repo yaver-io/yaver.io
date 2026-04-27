@@ -67,6 +67,9 @@ func MaybeRecordTaskSummary(t *Task) {
 	// authoritative signal for "video is watchable now".
 	t.VideoClipID = rec.ID
 	t.VideoStatus = "recording"
+	if tm := ActiveTaskManager(); tm != nil {
+		tm.SetTaskVideoState(t.ID, rec.ID, "recording")
+	}
 	log.Printf("[task-video] %s: started clip %s (source=%s, project=%s)",
 		t.ID, rec.ID, source, project)
 }

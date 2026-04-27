@@ -366,8 +366,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Owner-only control plane:
 	// Grand MCP: unified verb-based ops API. See ops.go.
 	// /ops           — POST {machine, verb, payload} -> {ok, streamId?, initial?, error?, code?}
+	// /ops/plan      — POST {machine, verb, payload} -> execution plan without side effects
 	// /ops/verbs     — GET list of registered verbs + their payload schemas
 	mux.HandleFunc("/ops", s.auth(s.handleOps))
+	mux.HandleFunc("/ops/plan", s.auth(s.handleOpsPlan))
 	mux.HandleFunc("/ops/verbs", s.auth(s.handleOpsVerbs))
 	mux.HandleFunc("/support/start", s.auth(s.handleSupportStart))
 	mux.HandleFunc("/support/stop", s.auth(s.handleSupportStop))
@@ -1147,6 +1149,8 @@ var hostShareAllowedPrefixes = []string{
 	"/info",
 	"/agent/status",
 	"/agent/runners",
+	"/ops",
+	"/ops/plan",
 	"/ws/terminal",
 	"/host-share/workspace/status",
 	"/host-share/workspace/attach-repo",
@@ -1544,7 +1548,14 @@ func (s *HTTPServer) allowHostShare(w http.ResponseWriter, r *http.Request, uid 
 	r.Header.Set("X-Yaver-HostShareSessionID", access.SessionID)
 	r.Header.Set("X-Yaver-HostShareGuestDeviceID", access.GuestDeviceID)
 	r.Header.Set("X-Yaver-HostShareToolingPreset", access.Policy.ToolingPreset)
+	r.Header.Set("X-Yaver-HostShareResourcePreset", access.Policy.ResourcePreset)
 	r.Header.Set("X-Yaver-HostShareAllowedProjects", strings.Join(access.Policy.AllowedProjects, ","))
+	r.Header.Set("X-Yaver-HostShareAllowedRunners", strings.Join(access.Policy.AllowedRunners, ","))
+	r.Header.Set("X-Yaver-HostShareAllowInfra", fmt.Sprintf("%t", access.Policy.AllowInfra))
+	r.Header.Set("X-Yaver-HostShareAllowTerminal", fmt.Sprintf("%t", access.Policy.AllowTerminal))
+	r.Header.Set("X-Yaver-HostShareAllowTunnel", fmt.Sprintf("%t", access.Policy.AllowTunnel))
+	r.Header.Set("X-Yaver-HostShareUseHostAgentTools", fmt.Sprintf("%t", access.Policy.UseHostAgentTools))
+	r.Header.Set("X-Yaver-HostShareUseHostInfra", fmt.Sprintf("%t", access.Policy.UseHostInfra))
 	next(w, r)
 	return true
 }
@@ -2821,6 +2832,9 @@ func (s *HTTPServer) handleTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 	tasks := s.taskMgr.ListTasks()
+	for i := range tasks {
+		s.enrichTaskInfoVideo(&tasks[i], r)
+	}
 
 	// Support ?limit=N to reduce payload size for web dashboard polling
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
@@ -2842,6 +2856,43 @@ func (s *HTTPServer) listTasks(w http.ResponseWriter, r *http.Request) {
 		resp["todoTotal"] = len(s.todolistMgr.ListItems())
 	}
 	jsonReply(w, http.StatusOK, resp)
+}
+
+func (s *HTTPServer) enrichTaskInfoVideo(info *TaskInfo, r *http.Request) {
+	if info == nil {
+		return
+	}
+	if strings.TrimSpace(info.VideoClipID) == "" {
+		return
+	}
+	if s.vibePreviewMgr != nil {
+		if clip := s.vibePreviewMgr.ClipByID(info.VideoClipID); clip != nil {
+			if strings.TrimSpace(clip.Status) != "" {
+				info.VideoStatus = strings.TrimSpace(clip.Status)
+			}
+		}
+	}
+	base := ""
+	if r != nil {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		} else if proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); proto != "" {
+			scheme = proto
+		}
+		host := strings.TrimSpace(r.Host)
+		if host != "" {
+			base = scheme + "://" + host
+		}
+	}
+	path := "/vibing/preview/clip/" + urlQueryEscape(strings.TrimSpace(info.VideoClipID))
+	posterPath := path + "/poster"
+	info.VideoClipURL = path
+	info.VideoPosterURL = posterPath
+	if base != "" {
+		info.VideoClipURL = base + path
+		info.VideoPosterURL = base + posterPath
+	}
 }
 
 func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
@@ -3012,18 +3063,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveGuestTaskProjectPath(projectName string) (string, error) {
-	projectName = strings.TrimSpace(projectName)
-	if projectName == "" {
-		return "", fmt.Errorf("projectName is required")
-	}
-	if mp := findMobileProjectByName(projectName); mp != nil && strings.TrimSpace(mp.Path) != "" {
-		return mp.Path, nil
-	}
-	path, err := findProject(projectName)
+	ref, err := resolveProjectRef(projectName, "")
 	if err != nil {
-		return "", fmt.Errorf("could not resolve project %q: %w", projectName, err)
+		return "", fmt.Errorf("could not resolve project %q: %w", strings.TrimSpace(projectName), err)
 	}
-	return path, nil
+	return ref.Path, nil
 }
 
 // handleTaskByID routes /tasks/{id}, /tasks/{id}/output, /tasks/{id}/stop, /tasks/{id}/continue
@@ -3086,24 +3130,29 @@ func (s *HTTPServer) getTask(w http.ResponseWriter, r *http.Request, id string) 
 		output = output[len(output)-10000:]
 	}
 	info := TaskInfo{
-		ID:          task.ID,
-		Title:       task.Title,
-		Description: task.Description,
-		Status:      task.Status,
-		RunnerID:    task.RunnerID,
-		SessionID:   task.SessionID,
-		Output:      output,
-		ResultText:  task.ResultText,
-		CostUSD:     task.CostUSD,
-		Turns:       task.Turns,
-		Source:      task.Source,
-		TmuxSession: task.TmuxSession,
-		IsAdopted:   task.IsAdopted,
-		CreatedAt:   task.CreatedAt,
-		StartedAt:   task.StartedAt,
-		FinishedAt:  task.FinishedAt,
+		ID:           task.ID,
+		Title:        task.Title,
+		Description:  task.Description,
+		Status:       task.Status,
+		RunnerID:     task.RunnerID,
+		SessionID:    task.SessionID,
+		Output:       output,
+		ResultText:   task.ResultText,
+		CostUSD:      task.CostUSD,
+		Turns:        task.Turns,
+		Source:       task.Source,
+		TmuxSession:  task.TmuxSession,
+		IsAdopted:    task.IsAdopted,
+		CreatedAt:    task.CreatedAt,
+		StartedAt:    task.StartedAt,
+		FinishedAt:   task.FinishedAt,
+		VideoEnabled: task.VideoEnabled,
+		VideoSource:  task.VideoSource,
+		VideoClipID:  task.VideoClipID,
+		VideoStatus:  task.VideoStatus,
 	}
 	s.taskMgr.mu.RUnlock()
+	s.enrichTaskInfoVideo(&info, r)
 
 	log.Printf("[HTTP] Task %s status=%s output_len=%d", id, info.Status, len(info.Output))
 	jsonReply(w, http.StatusOK, map[string]interface{}{
@@ -10264,6 +10313,15 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
 		out := dispatchOps(octx, req)
 		body, _ := json.MarshalIndent(out, "", "  ")
+		return mcpToolResult(string(body))
+
+	case "ops_plan":
+		var req OpsRequest
+		if err := json.Unmarshal(call.Arguments, &req); err != nil {
+			return mcpToolError("invalid ops request: " + err.Error())
+		}
+		octx := OpsContext{Ctx: context.Background(), Server: s, Caller: "owner"}
+		body, _ := json.MarshalIndent(buildOpsExecutionPlan(octx, req), "", "  ")
 		return mcpToolResult(string(body))
 
 	// --- SDK-token MCP ---

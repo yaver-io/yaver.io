@@ -14,6 +14,8 @@ import (
 type opsDeployPayload struct {
 	// Target: cloud | cloudflare | vercel | fly | netlify | railway |
 	// firebase | platform | testflight | playstore | convex | eas.
+	// When ops is called with machine=auto, the dispatcher uses this
+	// target plus workDir/project metadata to pick the best executor.
 	Target  string `json:"target"`
 	WorkDir string `json:"workDir,omitempty"`
 	// Env: production / staging / preview / custom.
@@ -42,7 +44,7 @@ func init() {
 		},
 		Handler:    opsDeployHandler,
 		Streaming:  true,
-		AllowGuest: false,
+		AllowGuest: true,
 	})
 }
 

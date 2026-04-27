@@ -6,6 +6,7 @@ package main
 //
 //   yaver ops                            # list registered verbs
 //   yaver ops verbs                      # same, explicit
+//   yaver ops plan <verb>                # inspect execution plan
 //   yaver ops info                       # run `info` on local agent
 //   yaver ops <verb> --machine=<id> --payload='{"k":"v"}'
 //   yaver ops run --cmd="uname -a"       # run a shell command
@@ -36,6 +37,8 @@ func runOps(args []string) {
 		opsUsage()
 	case "verbs", "list":
 		runOpsListVerbs()
+	case "plan":
+		runOpsPlan(args[1:])
 	default:
 		// Everything else is "run this verb". Support lightweight
 		// flags so common verbs are ergonomic without JSON on the
@@ -52,6 +55,8 @@ func opsUsage() {
 Usage:
   yaver ops                                  List registered verbs
   yaver ops verbs                            Same, explicit
+  yaver ops plan <verb> [--machine=<id>] [--payload='{"...":"..."}']
+                                             Resolve execution plan without running
   yaver ops <verb> [--machine=<id>] [--payload='{"...":"..."}']
                                              Run one verb on a machine
   yaver ops info                             Specs snapshot of the local agent
@@ -110,83 +115,24 @@ func runOpsListVerbs() {
 		}
 	}
 	fmt.Println("\nRun: yaver ops <verb> [--machine=<id>] [--payload='{...}']")
+	fmt.Println("Plan: yaver ops plan <verb> [--machine=<id>] [--payload='{...}']")
 }
 
 func runOpsInvoke(args []string) {
-	verb := args[0]
-	var machine, payloadJSON string
+	req := opsCLIRequestFromArgs(args)
+	verb := req.Verb
 	// Ergonomic flags per common verb.
-	var runCmd, runWorkDir string
-	var runTimeout int
-
-	i := 1
-	for i < len(args) {
-		a := args[i]
-		switch {
-		case strings.HasPrefix(a, "--machine="):
-			machine = strings.TrimPrefix(a, "--machine=")
-		case a == "--machine" && i+1 < len(args):
-			machine = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--payload="):
-			payloadJSON = strings.TrimPrefix(a, "--payload=")
-		case a == "--payload" && i+1 < len(args):
-			payloadJSON = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--cmd="):
-			runCmd = strings.TrimPrefix(a, "--cmd=")
-		case a == "--cmd" && i+1 < len(args):
-			runCmd = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--workDir="):
-			runWorkDir = strings.TrimPrefix(a, "--workDir=")
-		case a == "--workDir" && i+1 < len(args):
-			runWorkDir = args[i+1]
-			i++
-		case strings.HasPrefix(a, "--timeoutSec="):
-			fmt.Sscanf(strings.TrimPrefix(a, "--timeoutSec="), "%d", &runTimeout)
-		case a == "--timeoutSec" && i+1 < len(args):
-			fmt.Sscanf(args[i+1], "%d", &runTimeout)
-			i++
-		}
-		i++
+	if verb == "" {
+		fmt.Fprintln(os.Stderr, "usage: yaver ops <verb> [--machine=<id>] [--payload='{...}']")
+		os.Exit(1)
 	}
-
-	if machine == "" {
-		machine = "local"
-	}
-
-	// Build payload. Verb-specific flags override --payload if both given.
-	var payload interface{}
-	switch verb {
-	case "run":
-		if runCmd == "" && payloadJSON == "" {
+	if verb == "run" {
+		if req.RunCmd == "" && req.PayloadJSON == "" {
 			fmt.Fprintln(os.Stderr, "run needs --cmd='...' or --payload='{\"command\":\"...\"}'")
 			os.Exit(1)
 		}
-		if runCmd != "" {
-			payload = map[string]interface{}{
-				"command":    runCmd,
-				"workDir":    runWorkDir,
-				"timeoutSec": runTimeout,
-			}
-		}
 	}
-	if payload == nil && payloadJSON != "" {
-		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
-			fmt.Fprintf(os.Stderr, "invalid --payload JSON: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
-	reqBody := map[string]interface{}{
-		"machine": machine,
-		"verb":    verb,
-	}
-	if payload != nil {
-		reqBody["payload"] = payload
-	}
-	buf, _ := json.Marshal(reqBody)
+	buf := req.Marshal()
 
 	token, err := opsLoadToken()
 	if err != nil {
@@ -216,6 +162,110 @@ func runOpsInvoke(args []string) {
 	if !parsed.OK {
 		os.Exit(1)
 	}
+}
+
+func runOpsPlan(args []string) {
+	req := opsCLIRequestFromArgs(args)
+	if req.Verb == "" {
+		fmt.Fprintln(os.Stderr, "usage: yaver ops plan <verb> [--machine=<id>] [--payload='{...}']")
+		os.Exit(1)
+	}
+	token, err := opsLoadToken()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	body, status := opsLocalRequest(context.Background(), "POST", "/ops/plan", token, req.Marshal())
+	if status >= 400 {
+		fmt.Fprintf(os.Stderr, "HTTP %d\n%s\n", status, string(body))
+		os.Exit(1)
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, body, "", "  "); err == nil {
+		os.Stdout.Write(pretty.Bytes())
+		os.Stdout.WriteString("\n")
+		return
+	}
+	os.Stdout.Write(body)
+}
+
+type opsCLIRequest struct {
+	Verb        string
+	Machine     string
+	PayloadJSON string
+	RunCmd      string
+	RunWorkDir  string
+	RunTimeout  int
+}
+
+func opsCLIRequestFromArgs(args []string) opsCLIRequest {
+	req := opsCLIRequest{}
+	if len(args) == 0 {
+		return req
+	}
+	req.Verb = args[0]
+	i := 1
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "--machine="):
+			req.Machine = strings.TrimPrefix(a, "--machine=")
+		case a == "--machine" && i+1 < len(args):
+			req.Machine = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--payload="):
+			req.PayloadJSON = strings.TrimPrefix(a, "--payload=")
+		case a == "--payload" && i+1 < len(args):
+			req.PayloadJSON = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--cmd="):
+			req.RunCmd = strings.TrimPrefix(a, "--cmd=")
+		case a == "--cmd" && i+1 < len(args):
+			req.RunCmd = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--workDir="):
+			req.RunWorkDir = strings.TrimPrefix(a, "--workDir=")
+		case a == "--workDir" && i+1 < len(args):
+			req.RunWorkDir = args[i+1]
+			i++
+		case strings.HasPrefix(a, "--timeoutSec="):
+			fmt.Sscanf(strings.TrimPrefix(a, "--timeoutSec="), "%d", &req.RunTimeout)
+		case a == "--timeoutSec" && i+1 < len(args):
+			fmt.Sscanf(args[i+1], "%d", &req.RunTimeout)
+			i++
+		}
+		i++
+	}
+	if req.Machine == "" {
+		req.Machine = "local"
+	}
+	return req
+}
+
+func (r opsCLIRequest) Marshal() []byte {
+	var payload interface{}
+	if r.Verb == "run" && r.RunCmd != "" {
+		payload = map[string]interface{}{
+			"command":    r.RunCmd,
+			"workDir":    r.RunWorkDir,
+			"timeoutSec": r.RunTimeout,
+		}
+	}
+	if payload == nil && r.PayloadJSON != "" {
+		if err := json.Unmarshal([]byte(r.PayloadJSON), &payload); err != nil {
+			fmt.Fprintf(os.Stderr, "invalid --payload JSON: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	reqBody := map[string]interface{}{
+		"machine": r.Machine,
+		"verb":    r.Verb,
+	}
+	if payload != nil {
+		reqBody["payload"] = payload
+	}
+	buf, _ := json.Marshal(reqBody)
+	return buf
 }
 
 // opsLoadToken reads ~/.yaver/config.json for the bearer token. Same

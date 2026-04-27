@@ -127,6 +127,12 @@ var exitCommands = map[string]string{
 	"opencode":     "/quit",
 }
 
+var activeTaskManager *TaskManager
+
+func ActiveTaskManager() *TaskManager {
+	return activeTaskManager
+}
+
 // builtinRunners defines all known runner configurations.
 var builtinRunners = map[string]RunnerConfig{
 	"claude": {
@@ -790,6 +796,12 @@ type TaskInfo struct {
 	AutoRetry      bool               `json:"autoRetry,omitempty"`
 	AutoRetryCount int                `json:"autoRetryCount,omitempty"`
 	AutoRetryMax   int                `json:"autoRetryMax,omitempty"`
+	VideoEnabled   bool               `json:"videoEnabled,omitempty"`
+	VideoSource    string             `json:"videoSource,omitempty"`
+	VideoClipID    string             `json:"videoClipId,omitempty"`
+	VideoStatus    string             `json:"videoStatus,omitempty"`
+	VideoClipURL   string             `json:"videoClipUrl,omitempty"`
+	VideoPosterURL string             `json:"videoPosterUrl,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.
@@ -853,6 +865,7 @@ func NewTaskManager(workDir string, store *TaskStore, runner RunnerConfig) *Task
 		store:   store,
 		runner:  runner,
 	}
+	activeTaskManager = tm
 	tm.persist()
 	return tm
 }
@@ -2784,6 +2797,10 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			AutoRetry:      t.AutoRetry,
 			AutoRetryCount: t.AutoRetryCount,
 			AutoRetryMax:   t.AutoRetryMax,
+			VideoEnabled:   t.VideoEnabled,
+			VideoSource:    t.VideoSource,
+			VideoClipID:    t.VideoClipID,
+			VideoStatus:    t.VideoStatus,
 		})
 	}
 	return result
@@ -2795,6 +2812,22 @@ func (tm *TaskManager) GetTask(id string) (*Task, bool) {
 	defer tm.mu.RUnlock()
 	t, ok := tm.tasks[id]
 	return t, ok
+}
+
+func (tm *TaskManager) SetTaskVideoState(id, clipID, status string) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	task, ok := tm.tasks[id]
+	if !ok || task == nil {
+		return
+	}
+	if strings.TrimSpace(clipID) != "" {
+		task.VideoClipID = strings.TrimSpace(clipID)
+	}
+	if strings.TrimSpace(status) != "" {
+		task.VideoStatus = strings.TrimSpace(status)
+	}
+	tm.persist()
 }
 
 // BroadcastControlSignal injects a control signal JSON line into all running tasks' output.

@@ -10,6 +10,7 @@
 
 import type * as access from "../access.js";
 import type * as admin from "../admin.js";
+import type * as agentRescue from "../agentRescue.js";
 import type * as agentSync from "../agentSync.js";
 import type * as aiModels from "../aiModels.js";
 import type * as aiRunners from "../aiRunners.js";
@@ -54,6 +55,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   access: typeof access;
   admin: typeof admin;
+  agentRescue: typeof agentRescue;
   agentSync: typeof agentSync;
   aiModels: typeof aiModels;
   aiRunners: typeof aiRunners;

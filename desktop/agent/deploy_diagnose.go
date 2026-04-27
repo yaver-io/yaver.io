@@ -26,16 +26,16 @@ import (
 // DiagnoseReport is the machine-readable output. Text rendering is
 // done by printDeployDiagnose.
 type DiagnoseReport struct {
-	App        string               `json:"app"`
-	Target     string               `json:"target"`
-	Stack      string               `json:"stack,omitempty"`
-	Path       string               `json:"path,omitempty"`
-	PathExists bool                 `json:"path_exists"`
-	Workspace  string               `json:"workspace_root,omitempty"`
-	Doctor     BuildDoctorReport    `json:"doctor"`
-	Secrets    []DiagnoseSecret     `json:"secrets"`
-	Notes      []string             `json:"notes,omitempty"`
-	OK         bool                 `json:"ok"`
+	App        string            `json:"app"`
+	Target     string            `json:"target"`
+	Stack      string            `json:"stack,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	PathExists bool              `json:"path_exists"`
+	Workspace  string            `json:"workspace_root,omitempty"`
+	Doctor     BuildDoctorReport `json:"doctor"`
+	Secrets    []DiagnoseSecret  `json:"secrets"`
+	Notes      []string          `json:"notes,omitempty"`
+	OK         bool              `json:"ok"`
 }
 
 // DiagnoseSecret is a per-key presence record. Mirrors
@@ -63,21 +63,20 @@ func RunDeployDiagnose(app, target string, vs *VaultStore) (DiagnoseReport, erro
 
 	report := DiagnoseReport{App: app, Target: target, OK: true}
 
-	// Workspace resolution — mirrors what /deploy/ship does when no
-	// stack/path override is passed.
-	stack, path, root := resolveAppFromWorkspaceFull(app)
-	report.Stack = stack
-	report.Path = path
-	report.Workspace = root
-	if stack == "" || path == "" {
+	ref, rerr := resolveProjectRef(app, "")
+	if rerr == nil {
+		report.Stack = ref.Stack
+		report.Path = ref.Path
+		report.Workspace = ref.WorkspaceRoot
+	} else {
 		report.OK = false
 		report.Notes = append(report.Notes,
-			fmt.Sprintf("Could not resolve app %q in yaver.workspace.yaml — declare it or run `yaver deploy ship --app %s --target %s --stack ... --path ...` as owner.", app, app, target))
+			fmt.Sprintf("Could not resolve app %q from workspace/discovery data — declare it in yaver.workspace.yaml, ensure it is discoverable locally, or run `yaver deploy ship --app %s --target %s --stack ... --path ...` as owner.", app, app, target))
 	}
 	// Anchor path to an absolute location so existence checks work.
-	absPath := path
+	absPath := report.Path
 	if absPath != "" && !filepath.IsAbs(absPath) {
-		base := root
+		base := report.Workspace
 		if base == "" {
 			cwd, _ := os.Getwd()
 			base = cwd

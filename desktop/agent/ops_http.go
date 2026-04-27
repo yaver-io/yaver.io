@@ -3,6 +3,7 @@ package main
 // ops_http.go — HTTP surfaces for the unified verb API.
 //
 //   POST /ops        — dispatch a single verb on this (or a routed) machine
+//   POST /ops/plan   — resolve machine/project/access plan without executing
 //   GET  /ops/verbs  — list every registered verb with its payload schema
 //
 // Both routes are owner-authed at registration time (auth() middleware in
@@ -13,6 +14,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
@@ -31,11 +33,19 @@ func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
 	caller := "owner"
 	if r.Header.Get("X-Yaver-Support") == "true" {
 		caller = "support"
+	} else if r.Header.Get("X-Yaver-HostShare") == "true" {
+		caller = "host-share"
 	} else if r.Header.Get("X-Yaver-Guest") == "true" {
 		caller = "guest"
 	}
 
-	octx := OpsContext{Ctx: r.Context(), Server: s, Caller: caller}
+	octx := OpsContext{
+		Ctx:            r.Context(),
+		Server:         s,
+		RequestHeaders: r.Header.Clone(),
+		ActorUserID:    strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")),
+		Caller:         caller,
+	}
 	out := dispatchOps(octx, req)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -44,6 +54,35 @@ func (s *HTTPServer) handleOps(w http.ResponseWriter, r *http.Request) {
 	// the structured body as authoritative; HTTP 4xx/5xx is reserved
 	// for transport-level failures (malformed JSON, method wrong).
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *HTTPServer) handleOpsPlan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	var req OpsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	caller := "owner"
+	if r.Header.Get("X-Yaver-Support") == "true" {
+		caller = "support"
+	} else if r.Header.Get("X-Yaver-HostShare") == "true" {
+		caller = "host-share"
+	} else if r.Header.Get("X-Yaver-Guest") == "true" {
+		caller = "guest"
+	}
+	octx := OpsContext{
+		Ctx:            r.Context(),
+		Server:         s,
+		RequestHeaders: r.Header.Clone(),
+		ActorUserID:    strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")),
+		Caller:         caller,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(buildOpsExecutionPlan(octx, req))
 }
 
 func (s *HTTPServer) handleOpsVerbs(w http.ResponseWriter, r *http.Request) {

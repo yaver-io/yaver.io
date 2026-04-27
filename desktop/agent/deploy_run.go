@@ -541,31 +541,27 @@ func normaliseTargetList(targets []string, target string) []string {
 // absolutisation) that the old inline code did. Extracted so both
 // single and composite paths behave identically.
 func resolveDeployStackPath(app, stack, path string) (string, string, error) {
-	var workspaceRoot string
-	if stack == "" || path == "" {
-		ms, mp, root := resolveAppFromWorkspaceFull(app)
-		if stack == "" {
-			stack = ms
-		}
-		if path == "" {
-			path = mp
-		}
-		workspaceRoot = root
-	}
-	if stack == "" || path == "" {
-		return "", "", fmt.Errorf("could not resolve stack and path from workspace manifest — declare the app in yaver.workspace.yaml or pass --stack --path (owner only)")
-	}
-	if !filepath.IsAbs(path) {
-		base := workspaceRoot
-		if base == "" {
-			if cwd, err := os.Getwd(); err == nil {
-				base = cwd
+	if stack != "" && path != "" {
+		if !filepath.IsAbs(path) {
+			if abs, err := filepath.Abs(path); err == nil {
+				path = abs
 			}
 		}
-		path = filepath.Join(base, path)
+		return stack, path, nil
 	}
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
+
+	ref, err := resolveProjectRef(app, path)
+	if err != nil {
+		return "", "", fmt.Errorf("could not resolve stack and path for %q — declare the app in yaver.workspace.yaml, ensure it is discoverable locally, or pass --stack --path (owner only)", app)
+	}
+	if stack == "" {
+		stack = ref.Stack
+	}
+	if path == "" {
+		path = ref.Path
+	}
+	if stack == "" || path == "" {
+		return "", "", fmt.Errorf("could not resolve stack and path for %q — declare the app in yaver.workspace.yaml, ensure it is discoverable locally, or pass --stack --path (owner only)", app)
 	}
 	return stack, path, nil
 }

@@ -34,9 +34,9 @@ import (
 // "feedback-only" on the Convex side.
 
 const (
-	GuestScopeFull          = "full"
-	GuestScopeFeedbackOnly  = "feedback-only"
-	GuestScopeSDKProject    = "sdk-project"
+	GuestScopeFull         = "full"
+	GuestScopeFeedbackOnly = "feedback-only"
+	GuestScopeSDKProject   = "sdk-project"
 	// GuestScopeDeploy — narrow tier for shared-machine deploys: the
 	// guest can trigger yaver-managed deploy scripts for projects in
 	// their allowedProjects list, but cannot read code, run tasks, or
@@ -102,6 +102,8 @@ var guestFeedbackOnlyAllowedPrefixes = []string{
 // Enough to run a scripted deploy for a scoped project, nothing more.
 // The handler enforces allowedProjects on top of this allow-list.
 var guestDeployAllowedPrefixes = []string{
+	"/ops",
+	"/ops/plan",
 	"/deploy/ship",
 	"/deploy/runs", // list + detail; filtered to the guest's own runs
 	"/deploy/templates",

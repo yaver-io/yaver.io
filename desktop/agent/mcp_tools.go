@@ -2256,7 +2256,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, primaryTools...)
 
-	// --- Grand MCP: ops + ops_verbs ---
+	// --- Grand MCP: ops + ops_plan + ops_verbs ---
 	// Unified verb-based API (see YAVER_MCP_COVERAGE.md). Agents that
 	// want one schema instead of 744 specialist tools call `ops`; they
 	// discover available verbs via `ops_verbs`. The specialist tools
@@ -2271,7 +2271,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{
 					"machine": map[string]interface{}{
 						"type":        "string",
-						"description": "Target: \"local\" (this agent) or a deviceId / alias. Remote routing (cross-machine) is a follow-up; today only \"local\" runs.",
+						"description": "Target: \"local\", \"auto\", \"primary\", or a deviceId / alias. Cross-machine routing is supported; \"auto\" uses project-aware placement for deploy/reload and otherwise prefers the primary device before falling back to local.",
 						"default":     "local",
 					},
 					"verb": map[string]interface{}{
@@ -2281,6 +2281,30 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"payload": map[string]interface{}{
 						"type":        "object",
 						"description": "Verb-specific payload. Shape depends on verb.",
+					},
+				},
+				"additionalProperties": false,
+			},
+		},
+		{
+			"name":        "ops_plan",
+			"description": "Resolve the execution plan for one ops verb without running it. Returns project context, machine placement, and caller access policy so agents can inspect deploy/reload routing and guest/share constraints ahead of time.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"verb"},
+				"properties": map[string]interface{}{
+					"machine": map[string]interface{}{
+						"type":        "string",
+						"description": "Target: \"local\", \"auto\", \"primary\", or a deviceId / alias. Same semantics as `ops`.",
+						"default":     "local",
+					},
+					"verb": map[string]interface{}{
+						"type":        "string",
+						"description": "Verb name to plan for.",
+					},
+					"payload": map[string]interface{}{
+						"type":        "object",
+						"description": "Verb-specific payload used for workDir / target / placement inference.",
 					},
 				},
 				"additionalProperties": false,
