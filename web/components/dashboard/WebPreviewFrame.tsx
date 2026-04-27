@@ -33,9 +33,18 @@ interface Props {
    *  "Start Expo Web preview". When provided, renders a solid button
    *  above the secondary "Open raw response anyway" link. */
   notRenderableAction?: { label: string; onClick: () => void; disabled?: boolean } | null;
+  /** When set, replaces the iframe area with an animated bundling
+   *  progress UI. Used while a sibling dev server (e.g. Expo Web) is
+   *  starting up and isn't yet ready to render HTML. */
+  bundlingState?: {
+    label: string;            // e.g. "Bundling Expo Web for sfmg…"
+    detail?: string;          // sub-line, e.g. framework + estimated wait
+    elapsedSec?: number;      // counts up while bundling
+    expectedSec?: number;     // typical bundle time (~30s for Expo Web)
+  } | null;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction }: Props) {
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState }: Props) {
   const [viewport, setViewport] = useState<ViewportId>("fluid");
   const [reloadNonce, setReloadNonce] = useState(0);
 
@@ -144,8 +153,52 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
             )}
           </div>
 
-          {/* Iframe, non-renderable notice, or placeholder */}
-          {frameUrl && running && notRenderableNotice ? (
+          {/* Iframe, bundling progress, non-renderable notice, or placeholder */}
+          {bundlingState ? (
+            (() => {
+              const elapsed = bundlingState.elapsedSec ?? 0;
+              const expected = bundlingState.expectedSec ?? 30;
+              const pct = Math.max(2, Math.min(95, Math.round((elapsed / expected) * 100)));
+              return (
+                <div
+                  className="flex flex-col items-center justify-center gap-4 px-6 text-center"
+                  style={{ height: `calc(100% - 41px)`, minHeight: 300 }}
+                >
+                  {/* Animated dot ring */}
+                  <div className="relative flex h-16 w-16 items-center justify-center">
+                    <div className="absolute inset-0 animate-spin rounded-full border-2 border-sky-500/20 border-t-sky-400/80" />
+                    <div className="absolute inset-2 animate-pulse rounded-full bg-sky-500/10" />
+                    <span className="relative text-2xl">⚡</span>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[13px] font-medium text-surface-100">{bundlingState.label}</p>
+                    {bundlingState.detail ? (
+                      <p className="text-[11px] text-surface-400">{bundlingState.detail}</p>
+                    ) : null}
+                  </div>
+                  {/* Progress bar */}
+                  <div className="w-72 max-w-full">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-800">
+                      <div
+                        className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-[width] duration-500"
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-center justify-between text-[10px] text-surface-500">
+                      <span>{elapsed}s elapsed</span>
+                      <span>~{expected}s typical</span>
+                    </div>
+                  </div>
+                  <p className="max-w-xs text-[10px] leading-5 text-surface-600">
+                    Spawning a sibling <span className="font-mono">expo --web</span> process on
+                    the remote box. Metro stays untouched so the phone keeps getting Hermes
+                    bundles. The iframe will swap to the live web build the moment the
+                    bundle resolves.
+                  </p>
+                </div>
+              );
+            })()
+          ) : frameUrl && running && notRenderableNotice ? (
             <div
               className="flex flex-col items-center justify-center gap-3 px-6 text-center text-[12px] text-surface-300"
               style={{ height: `calc(100% - 41px)`, minHeight: 300 }}

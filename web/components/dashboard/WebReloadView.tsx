@@ -65,6 +65,15 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   // authoritative; these flags drive the CTA state.
   const [webPreviewStarting, setWebPreviewStarting] = useState(false);
   const [webPreviewError, setWebPreviewError] = useState<string | null>(null);
+  // Tick a counter while the Expo Web sibling is bundling so the
+  // progress UI shows time elapsed. Reset on start, freeze on done.
+  const [webPreviewElapsedSec, setWebPreviewElapsedSec] = useState(0);
+  useEffect(() => {
+    if (!webPreviewStarting) return;
+    setWebPreviewElapsedSec(0);
+    const id = setInterval(() => setWebPreviewElapsedSec((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [webPreviewStarting]);
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
@@ -386,6 +395,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
     }
   };
 
+
   const handleSendPrompt = useCallback(async () => {
     const prompt = composer.trim();
     if (!prompt || sending) return;
@@ -589,6 +599,29 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
   const previewUrl = agentClient.devPreviewUrl;
   const isRunning = !!devStatus?.running;
+
+  // Auto-start the Expo Web sibling whenever the user lands on the Web
+  // App tab and Metro is already running for an Expo/RN project but no
+  // sibling has been spawned yet. Skips if a start is already in flight,
+  // already failed (don't loop on a broken setup), or if Metro is not
+  // an Expo/RN dev server (vite/next/etc. render their own HTML).
+  // Auto-start makes Web App mode "click and see" instead of "click,
+  // wait, click another button, wait again".
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (!isRunning) return;
+    if (webPreviewStarting) return;
+    if (webPreviewError) return;
+    if (devStatus?.webPort && devStatus.webPort > 0) return;
+    const fw = (devStatus?.framework || "").toLowerCase();
+    if (fw !== "expo" && fw !== "react-native" && fw !== "metro") return;
+    autoStartedRef.current = true;
+    void handleStartWebPreview();
+  }, [isRunning, devStatus?.framework, devStatus?.webPort, webPreviewStarting, webPreviewError]);
+  useEffect(() => {
+    if (!isRunning) autoStartedRef.current = false;
+  }, [isRunning]);
   const switchPending =
     isRunning &&
     !!devStatus?.workDir &&
@@ -856,17 +889,31 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             running={isRunning}
             onOpenInNewTab={previewUrl ? () => window.open(previewUrl, "_blank") : undefined}
             connectionLabel={connectionLabel}
-            notRenderableNotice={notRenderable}
+            notRenderableNotice={webPreviewStarting ? null : notRenderable}
             // Expo RN projects can opt in to a sibling `expo --web`
             // process that doesn't disturb Metro's Hermes push. The
             // button only shows when we actually surfaced the
             // mobile-only notice AND the sibling isn't up yet.
             notRenderableAction={
-              notRenderable && (devStatus?.framework || "").toLowerCase() === "expo" && !devStatus?.webPort
+              notRenderable && !webPreviewStarting && (devStatus?.framework || "").toLowerCase() === "expo" && !devStatus?.webPort
                 ? {
-                    label: webPreviewStarting ? "Starting Expo Web…" : "Start Expo Web preview (sibling of Metro)",
+                    label: "Start Expo Web preview (sibling of Metro)",
                     onClick: () => void handleStartWebPreview(),
-                    disabled: webPreviewStarting,
+                    disabled: false,
+                  }
+                : null
+            }
+            // While the sibling Expo Web process is bundling we replace
+            // the iframe area with a progress UI — without this the user
+            // stares at the "mobile-only" notice or a blank iframe for
+            // 20-40s wondering whether anything is happening.
+            bundlingState={
+              webPreviewStarting
+                ? {
+                    label: `Bundling Expo Web for ${devStatus?.workDir?.split("/").slice(-1)[0] || "this project"}…`,
+                    detail: `${(devStatus?.framework || "expo").toLowerCase()} · sibling of Metro :${devStatus?.port || "?"}`,
+                    elapsedSec: webPreviewElapsedSec,
+                    expectedSec: 30,
                   }
                 : null
             }
