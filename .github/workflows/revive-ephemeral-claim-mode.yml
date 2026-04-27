@@ -53,9 +53,14 @@ jobs:
           # for the password right before piping to ssh.
           cat > /tmp/revive.sh <<'REMOTE_SCRIPT'
           set -euo pipefail
-          RELAY_PW='__RELAY_PW__'
-          if [ -z "${RELAY_PW:-}" ] || [ "$RELAY_PW" = "__RELAY_PW__" ]; then
-            echo "::error::RELAY_PW placeholder not substituted"; exit 2
+          # The placeholder-token below is replaced by sed before this
+          # script reaches the box. Verification is intentionally only
+          # a length check — testing equality against the literal
+          # placeholder fails because sed would substitute the check
+          # too (placeholder appears once, that's the assignment).
+          RELAY_PW='@@SENTINEL_RELAY_PW@@'
+          if [ -z "${RELAY_PW:-}" ] || [ "${#RELAY_PW}" -lt 16 ]; then
+            echo "::error::RELAY_PW too short or empty after substitution (len=${#RELAY_PW})"; exit 2
           fi
 
           systemctl --user --machine=yaver@ stop yaver 2>/dev/null || \
@@ -121,10 +126,10 @@ jobs:
           curl -sf http://127.0.0.1:18080/health | head -c 300 || echo "(no local health yet)"
           REMOTE_SCRIPT
 
-          # Substitute the password placeholder. Use sed with a |
-          # delimiter so / + special chars in the password don't
-          # break parsing. Then pipe to ssh.
-          sed "s|__RELAY_PW__|$RELAY_PASSWORD|" /tmp/revive.sh \
+          # Substitute the sentinel before piping to ssh. `|` is the
+          # sed delimiter so / + : in the password don't break the
+          # command (relay passwords are usually hex but defensive).
+          sed "s|@@SENTINEL_RELAY_PW@@|$RELAY_PASSWORD|" /tmp/revive.sh \
             | ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
                   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                   "root@$HETZNER_TEST_SERVER_IP" bash -s
