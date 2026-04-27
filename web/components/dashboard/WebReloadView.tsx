@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentClient, type WorkspaceAppView } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { WebAppSelector } from "./WebAppSelector";
-import { WebPreviewFrame } from "./WebPreviewFrame";
+import { WebPreviewFrame, WEB_PREVIEW_VIEWPORTS, type ViewportId } from "./WebPreviewFrame";
 
 interface ProjectRow {
   name: string;
@@ -112,6 +112,13 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const [consoleExpanded, setConsoleExpanded] = useState(false);
   const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [vibingExpanded, setVibingExpanded] = useState(false);
+  // Viewport state lifted out of WebPreviewFrame so the picker can
+  // render inline with the device-row header — saves ~40 px of
+  // vertical space the iframe gets back. WebPreviewFrame is now in
+  // controlled mode; its internal picker is suppressed.
+  const [viewport, setViewport] = useState<ViewportId>("fluid");
+  const activeViewport =
+    WEB_PREVIEW_VIEWPORTS.find((v) => v.id === viewport) ?? WEB_PREVIEW_VIEWPORTS[0];
   const [rightColumnWidth, setRightColumnWidth] = useState(320);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const handleDividerDragStart = useCallback(
@@ -930,12 +937,38 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
   return (
     <div className="flex h-full flex-col gap-3 p-3 md:p-4">
-      {/* Header — device, app selector trigger, global actions */}
+      {/* Header — device, viewport picker, global actions, all on one
+          row. Inline viewport saves ~40 px of vertical space the
+          iframe gets back. */}
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-surface-800 bg-surface-900/40 px-3 py-2">
         <div className="flex items-center gap-2 text-xs">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
           <span className="font-medium text-surface-100">{connectedDevice?.name}</span>
           <span className="text-[10px] uppercase tracking-widest text-surface-500">{connectionLabel}</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] uppercase tracking-widest text-surface-500">View</span>
+          <div className="flex rounded-md border border-surface-800 bg-surface-900">
+            {WEB_PREVIEW_VIEWPORTS.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setViewport(v.id)}
+                className={`px-2 py-0.5 text-[10px] transition-colors first:rounded-l-md last:rounded-r-md ${
+                  viewport === v.id
+                    ? "bg-indigo-500/20 text-indigo-200"
+                    : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
+                }`}
+                title={v.id === "fluid" ? "Fill container" : `${v.width}×${v.height}`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          {viewport !== "fluid" ? (
+            <span className="text-[9px] text-surface-500">
+              {activeViewport.width}×{activeViewport.height}
+            </span>
+          ) : null}
         </div>
         <div className="ml-auto flex items-center gap-2">
           {onRepairRelay && (
@@ -1116,6 +1149,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             </div>
           ) : null}
           <WebPreviewFrame
+            hideViewportSelector
+            viewport={viewport}
+            onViewportChange={setViewport}
             // URL priority: built static bundle (most stable, doesn't
             // depend on a long-running sibling process) → live Expo Web
             // sibling → primary dev server preview proxy.

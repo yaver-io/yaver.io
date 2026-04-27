@@ -30,12 +30,21 @@ import (
 
 // buildWebRequest is the input the build-native handler hands off to
 // the web target builder once it has resolved workDir / caller / target.
+//
+// ExpectReact / ExpectReactDom / ClientVersion let the caller declare
+// the compat baseline they were built against. The agent's preflight
+// uses these to fail fast when a project's installed react drifts off
+// what the caller knows how to render. Empty fields = no opinion =
+// the agent's own intra-bundle integrity checks still run.
 type buildWebRequest struct {
-	Target      string
-	Caller      string
-	WorkDir     string
-	BuildDir    string
-	ProjectName string
+	Target         string
+	Caller         string
+	WorkDir        string
+	BuildDir       string
+	ProjectName    string
+	ClientVersion  string // e.g. "web/1.1.96" — for telemetry + audit
+	ExpectReact    string // e.g. "^19.0.0"
+	ExpectReactDom string // e.g. "^19.0.0"
 }
 
 // handleBuildWebTarget dispatches between the two web compile flows.
@@ -114,6 +123,68 @@ func (s *HTTPServer) buildWebJSBundle(w http.ResponseWriter, r *http.Request, re
 		errMsg := "web bundle requires an Expo project (no `expo` dependency in package.json). " +
 			"Bare RN web bundling without Expo is not supported by this endpoint."
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": errMsg, "code": "WEB_BUNDLE_REQUIRES_EXPO"})
+		return
+	}
+
+	// Preflight integrity check on the dep tree — mirrors mobile's
+	// HBC validation step but for the web target. Catches the
+	// recurring failure mode (react ≠ react-dom drift, multiple
+	// react copies, RN peer-dep violation) BEFORE the 60 s
+	// expo export burns wall-time only to ship a bundle that
+	// crashes on init with React #527.
+	preflight := preflightWebBundle(workDir)
+	if s.devServerMgr != nil {
+		s.devServerMgr.EmitLog(fmt.Sprintf(
+			"[web-js-bundle] preflight: react=%s react-dom=%s rn=%s expo=%s ok=%v",
+			preflight.ReactVersion, preflight.ReactDomVersion,
+			preflight.RNVersion, preflight.ExpoVersion, preflight.OK,
+		))
+		for _, w := range preflight.Warnings {
+			s.devServerMgr.EmitLog("[web-js-bundle] preflight warning: " + w)
+		}
+	}
+	if !preflight.OK {
+		errMsg := strings.Join(preflight.Errors, " | ")
+		if s.devServerMgr != nil {
+			for _, e := range preflight.Errors {
+				s.devServerMgr.EmitLog("[web-js-bundle] preflight error: " + e)
+			}
+		}
+		s.upsertDevOperation("build_web_js", "failed", "preflight",
+			"Preflight check rejected the bundle (intra-bundle dependency drift).",
+			workDir, target.DeviceID, 1,
+			map[string]interface{}{
+				"target":    "web-js-bundle",
+				"caller":    req.Caller,
+				"preflight": preflight,
+			})
+		jsonReply(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     errMsg,
+			"code":      "WEB_BUNDLE_PREFLIGHT_FAILED",
+			"preflight": preflight,
+		})
+		return
+	}
+
+	// Caller-supplied compat baseline (web UI sends this so a
+	// client running an old protocol can surface an obvious
+	// mismatch before we burn the 60 s build). Currently only
+	// react/react-dom are checked; expand the struct as the
+	// dashboard learns to declare more.
+	if req.ExpectReact != "" && preflight.ReactVersion != "" &&
+		!peerDepSatisfied(req.ExpectReact, preflight.ReactVersion) {
+		errMsg := fmt.Sprintf(
+			"caller %q expected react %s but project has react@%s",
+			req.Caller, req.ExpectReact, preflight.ReactVersion,
+		)
+		if s.devServerMgr != nil {
+			s.devServerMgr.EmitLog("[web-js-bundle] compat error: " + errMsg)
+		}
+		jsonReply(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     errMsg,
+			"code":      "WEB_BUNDLE_CALLER_COMPAT_MISMATCH",
+			"preflight": preflight,
+		})
 		return
 	}
 

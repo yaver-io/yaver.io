@@ -8,15 +8,17 @@
 
 import { useMemo, useState } from "react";
 
-type ViewportId = "desktop" | "laptop" | "tablet" | "mobile" | "fluid";
+export type ViewportId = "desktop" | "laptop" | "tablet" | "mobile" | "fluid";
 
-const VIEWPORTS: { id: ViewportId; label: string; width: number; height: number }[] = [
+export const WEB_PREVIEW_VIEWPORTS: { id: ViewportId; label: string; width: number; height: number }[] = [
   { id: "fluid",   label: "Fluid",   width: 0,    height: 0   }, // uses container width
   { id: "desktop", label: "Desktop", width: 1440, height: 900 },
   { id: "laptop",  label: "Laptop",  width: 1280, height: 800 },
   { id: "tablet",  label: "Tablet",  width: 768,  height: 1024 },
   { id: "mobile",  label: "Mobile",  width: 390,  height: 844 },
 ];
+
+const VIEWPORTS = WEB_PREVIEW_VIEWPORTS;
 
 interface Props {
   url: string | null;
@@ -47,10 +49,29 @@ interface Props {
    *  so the agent's transport tracker transitions to phase=delivered
    *  with measured ms_to_load. */
   onIframeLoad?: () => void;
+  /** Hide the internal viewport picker — the parent (WebReloadView)
+   *  may render its own inline with the device-row header to save
+   *  ~40 px of vertical space. The active viewport is still
+   *  controlled internally; the parent and child sync via the
+   *  controlled prop pair below. */
+  hideViewportSelector?: boolean;
+  /** Controlled viewport from the parent. When supplied the parent
+   *  drives the value; otherwise WebPreviewFrame keeps its own
+   *  local state. */
+  viewport?: ViewportId;
+  onViewportChange?: (v: ViewportId) => void;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState, onIframeLoad }: Props) {
-  const [viewport, setViewport] = useState<ViewportId>("fluid");
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState, onIframeLoad, hideViewportSelector, viewport: controlledViewport, onViewportChange }: Props) {
+  const [internalViewport, setInternalViewport] = useState<ViewportId>("fluid");
+  const viewport = controlledViewport ?? internalViewport;
+  const setViewport = (v: ViewportId) => {
+    if (onViewportChange) {
+      onViewportChange(v);
+    } else {
+      setInternalViewport(v);
+    }
+  };
   const [reloadNonce, setReloadNonce] = useState(0);
 
   // Append a reload nonce so the iframe re-fetches cleanly when the
@@ -77,31 +98,34 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
 
   return (
     <div className="flex h-full flex-col gap-2">
-      {/* Viewport picker */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[10px] uppercase tracking-widest text-surface-500">Viewport</span>
-        <div className="flex rounded-md border border-surface-800 bg-surface-900">
-          {VIEWPORTS.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => setViewport(v.id)}
-              className={`px-2.5 py-1 text-[11px] transition-colors first:rounded-l-md last:rounded-r-md ${
-                viewport === v.id
-                  ? "bg-indigo-500/20 text-indigo-200"
-                  : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
-              }`}
-              title={v.id === "fluid" ? "Fill container" : `${v.width}×${v.height}`}
-            >
-              {v.label}
-            </button>
-          ))}
+      {/* Viewport picker — suppressed when the parent renders its
+          own version inline with the device-row header. */}
+      {!hideViewportSelector ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[10px] uppercase tracking-widest text-surface-500">Viewport</span>
+          <div className="flex rounded-md border border-surface-800 bg-surface-900">
+            {VIEWPORTS.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setViewport(v.id)}
+                className={`px-2.5 py-1 text-[11px] transition-colors first:rounded-l-md last:rounded-r-md ${
+                  viewport === v.id
+                    ? "bg-indigo-500/20 text-indigo-200"
+                    : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
+                }`}
+                title={v.id === "fluid" ? "Fill container" : `${v.width}×${v.height}`}
+              >
+                {v.label}
+              </button>
+            ))}
+          </div>
+          {!fluid && (
+            <span className="text-[10px] text-surface-500">
+              {activeVp.width} × {activeVp.height}
+            </span>
+          )}
         </div>
-        {!fluid && (
-          <span className="text-[10px] text-surface-500">
-            {activeVp.width} × {activeVp.height}
-          </span>
-        )}
-      </div>
+      ) : null}
 
       {/* Boxed browser chrome */}
       <div className="flex min-h-0 flex-1 items-start justify-center overflow-auto rounded-lg border border-surface-800 bg-surface-950/40 p-4">

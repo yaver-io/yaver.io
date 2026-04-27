@@ -1888,6 +1888,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// Platform field still picks ios|android for mobile-hermes;
 		// it's ignored when target is web-*.
 		Target string `json:"target"`
+		// Caller compat baseline — only consumed by web targets.
+		// Web UI sends `clientVersion: "web/1.1.96"` plus the React
+		// range it knows how to render (today: a single major).
+		// Agent's preflight uses these to fail fast when the
+		// project's installed deps drift outside what the caller
+		// supports. Mirrors mobile's HBC-vs-manifest validation.
+		ClientVersion  string `json:"clientVersion,omitempty"`
+		ExpectReact    string `json:"expectReact,omitempty"`
+		ExpectReactDom string `json:"expectReactDom,omitempty"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -1995,11 +2004,14 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// the diff that small means we cannot regress mobile.
 	if buildTarget == "web-js-bundle" || buildTarget == "web-hermes-wasm" {
 		s.handleBuildWebTarget(w, r, buildWebRequest{
-			Target:      buildTarget,
-			Caller:      caller,
-			WorkDir:     workDir,
-			BuildDir:    buildDir,
-			ProjectName: req.ProjectName,
+			Target:         buildTarget,
+			Caller:         caller,
+			WorkDir:        workDir,
+			BuildDir:       buildDir,
+			ProjectName:    req.ProjectName,
+			ClientVersion:  strings.TrimSpace(req.ClientVersion),
+			ExpectReact:    strings.TrimSpace(req.ExpectReact),
+			ExpectReactDom: strings.TrimSpace(req.ExpectReactDom),
 		})
 		return
 	}

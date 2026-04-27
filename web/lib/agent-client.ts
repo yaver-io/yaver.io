@@ -3745,6 +3745,13 @@ export class AgentClient {
         projectName: opts.projectName ?? undefined,
         projectPath: opts.projectPath ?? undefined,
         caller: "web-ui",
+        // Compat baseline. Mirrors mobile's HBC manifest contract —
+        // the agent's preflight rejects builds where the project's
+        // installed react drifts off this range, instead of letting
+        // the iframe white-screen on React error #527.
+        clientVersion: YAVER_CALLER_ID,
+        expectReact: "^19.0.0",
+        expectReactDom: "^19.0.0",
       }),
     }, 240_000);
     const body: unknown = await res.json().catch(() => ({}));
