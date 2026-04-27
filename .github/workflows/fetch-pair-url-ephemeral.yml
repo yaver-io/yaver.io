@@ -1,0 +1,78 @@
+# Fetch the latest bootstrap pair URL printed by yaver-test-
+# ephemeral's agent.log so a remote user can click it and claim
+# the box from their browser without SSH access. The passkey
+# rotates every ~10min — if expired, the agent prints a fresh
+# one and we grep that.
+
+name: Fetch Pair URL (test-ephemeral)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: fetch-pair-url-ephemeral
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Grep latest pair URL
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          echo "Asking the agent for its current bootstrap state…"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+          LOG=/home/yaver/.yaver/agent.log
+          if [ ! -f "$LOG" ]; then
+            echo "::error::no agent.log at $LOG"
+            exit 2
+          fi
+
+          # Grab the most recent pair URL line. The agent prints
+          # `https://yaver.io/pair?code=...&host=...&...` in its
+          # bootstrap banner. Take the LAST one in the log so we
+          # always show the freshest passkey, in case the agent
+          # rotated it after a 10min expiry.
+          URL=$(grep -oE 'https://yaver\.io/pair\?[^[:space:]]+' "$LOG" | tail -1 || true)
+          PASSKEY=$(grep -oE 'Passkey expires.*' "$LOG" | tail -1 || true)
+          PRINTED_CODE=$(grep -B1 'Passkey expires' "$LOG" | grep -oE '\b[A-Z0-9]{6}\b' | tail -1 || true)
+
+          echo
+          echo "============================================================"
+          echo "  Yaver test-ephemeral — bootstrap pair info"
+          echo "============================================================"
+          echo
+          if [ -n "$URL" ]; then
+            echo "  Click this URL in any browser already signed in to yaver.io:"
+            echo
+            echo "    $URL"
+            echo
+            echo "  ($PASSKEY)"
+          else
+            echo "  Could not find a pair URL in the agent log."
+            echo "  agent.log tail:"
+            tail -30 "$LOG"
+          fi
+
+          echo
+          echo "  Or enter the 6-char passkey on the dashboard pair flow:"
+          if [ -n "$PRINTED_CODE" ]; then
+            echo "    $PRINTED_CODE"
+          fi
+          echo
+          echo "============================================================"
+          REMOTE
