@@ -1,0 +1,84 @@
+# Box-side curl through relay — proves relay-agent QUIC SSE forwarding
+# in isolation, no nginx/Cloudflare/browser variables.
+name: SSE Loopback Test
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sse-loopback
+  cancel-in-progress: true
+
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render box-side SSE test script
+        run: |
+          cat > "$RUNNER_TEMP/sse-test.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$c" ]; then
+              python3 - "$c" <<'PYEOF'
+          import json, sys, urllib.request, subprocess, time
+          d = json.load(open(sys.argv[1]))
+          tok = d.get('auth_token', '')
+          did = d.get('device_id', '')
+          convex = d.get('convex_site_url', 'https://perceptive-minnow-557.eu-west-1.convex.site')
+          req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+          with urllib.request.urlopen(req, timeout=10) as r:
+              s = json.load(r)
+              rp = s.get('settings', {}).get('relayPassword', '')
+
+          print(f'box: token_len={len(tok)} rp_len={len(rp)} did={did}')
+
+          url = f'https://public.yaver.io/d/{did}/dev/events?token={tok}&__rp={rp}'
+          print(f'\n--- 25s curl through relay (FROM THE BOX, hitting public.yaver.io) ---')
+          # Box hits relay externally, exercises the same nginx/QUIC/proxy path
+          p = subprocess.run([
+              'timeout', '25', 'curl', '-sN', '-i', '-H', 'Accept: text/event-stream', url
+          ], capture_output=True, text=True, timeout=30)
+          print(p.stdout[:4000])
+          print(f'(curl exit={p.returncode})')
+
+          print(f'\n--- 25s curl from localhost direct (control) ---')
+          p2 = subprocess.run([
+              'timeout', '25', 'curl', '-sN', '-H', f'Authorization: Bearer {tok}',
+              '-H', 'Accept: text/event-stream', 'http://127.0.0.1:18080/dev/events'
+          ], capture_output=True, text=True, timeout=30)
+          print(p2.stdout[:4000])
+          print(f'(curl exit={p2.returncode})')
+
+          # Tail agent.log for any SSE-related lines in last 30s
+          import os
+          print('\n--- agent.log tail (last 80 lines) ---')
+          for log in ('/home/yaver/.yaver/agent.log', '/root/.yaver/agent.log'):
+              if os.path.isfile(log):
+                  os.system(f'tail -n 80 {log}')
+                  break
+          PYEOF
+              break
+            fi
+          done
+          BODY
+          chmod +x "$RUNNER_TEMP/sse-test.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/sse-test.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/sse-test.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/sse-test.sh && rm -f /tmp/sse-test.sh"
