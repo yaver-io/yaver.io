@@ -1,0 +1,70 @@
+# Diagnose why `expo prebuild` (or `expo start --web`) fails for
+# sfmg on yaver-test-ephemeral. Captures node version, project
+# dependencies, and the actual stderr from a manual run.
+name: Diagnose Expo Prebuild
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diag-expo-prebuild
+  cancel-in-progress: true
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Render diag script
+        run: |
+          cat > "$RUNNER_TEMP/diag.sh" <<'BODY'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          cd /home/yaver/Workspace/sfmg 2>/dev/null || { echo "no /home/yaver/Workspace/sfmg"; exit 0; }
+          echo '=== node + npm + npx ==='
+          sudo -u yaver -i bash -c 'export PATH=/home/yaver/.npm-global/bin:$PATH; node --version; npm --version; npx --version'
+          echo
+          echo '=== files in workspace ==='
+          ls -la | head -25
+          echo
+          echo '=== package.json dev script + deps relevant to web ==='
+          cat package.json | python3 -c "import json,sys;p=json.load(sys.stdin);print('scripts:',p.get('scripts'));print('expo:',p.get('dependencies',{}).get('expo'));print('react-native-web:',p.get('dependencies',{}).get('react-native-web'));print('react-dom:',p.get('dependencies',{}).get('react-dom'));"
+          echo
+          echo '=== app.json web config ==='
+          if [ -f app.json ]; then
+            python3 -c "import json;j=json.load(open('app.json'));print(json.dumps(j.get('expo',{}).get('web',{}), indent=2))"
+          fi
+          echo
+          echo '=== agent log lines about web preview / prebuild (last 60) ==='
+          tail -n 500 /home/yaver/.yaver/agent.log 2>/dev/null \
+            | grep -iE 'expo|prebuild|web-preview|EACCES|ENOENT|webPort|--web' \
+            | tail -60
+          echo
+          echo '=== manual run: npx expo start --web (30s sample) ==='
+          sudo -u yaver -i bash -c '
+            cd /home/yaver/Workspace/sfmg
+            export PATH=/home/yaver/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+            export CI=
+            timeout 30 npx expo start --web --port 19007 --offline 2>&1 | head -60
+          '
+          echo '=== end ==='
+          BODY
+          chmod +x "$RUNNER_TEMP/diag.sh"
+
+      - name: Run on box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          scp -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "$RUNNER_TEMP/diag.sh" "root@$HETZNER_TEST_SERVER_IP:/tmp/diag-prebuild.sh"
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              "root@$HETZNER_TEST_SERVER_IP" "bash /tmp/diag-prebuild.sh && rm -f /tmp/diag-prebuild.sh"
