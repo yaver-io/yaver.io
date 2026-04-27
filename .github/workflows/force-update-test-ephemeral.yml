@@ -1,0 +1,118 @@
+# One-shot fix when the agent on yaver-test-ephemeral has a stale
+# auto-update repo pointer (default historical pointer was
+# kivanccakmak/yaver-cli, whose `latest` tag drifted to v1.37.0 —
+# so a current 1.99.x agent thinks it's already up to date and
+# silently refuses to update). This workflow SSHs in, installs the
+# latest yaver-cli from npm, restarts the systemd service, and
+# reports the new version. Manually triggered.
+name: Force Update yaver-test-ephemeral
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "yaver-cli version to install (default = latest in versions.json)"
+        required: false
+        default: ""
+
+concurrency:
+  group: force-update-test-ephemeral
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve target version
+        id: target
+        run: |
+          V='${{ github.event.inputs.version }}'
+          if [ -z "$V" ]; then
+            V=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).cli)")
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "Will install yaver-cli@$V"
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: SSH in, npm-install yaver-cli, restart agent
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+          TARGET_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" \
+              "TARGET_VERSION='$TARGET_VERSION' bash -s" <<'REMOTE'
+          set -uo pipefail
+
+          echo "=== current state ==="
+          which yaver || true
+          yaver --version || true
+
+          echo
+          echo "=== installing yaver-cli@$TARGET_VERSION via npm ==="
+          # The agent on this box runs as the `yaver` user under
+          # systemd --user. yaver-cli is a global npm package; we
+          # install it into the same node prefix the user shell
+          # uses so `which yaver` resolves correctly after.
+          if id yaver >/dev/null 2>&1; then
+            sudo -u yaver -i bash <<INNER
+            set -uo pipefail
+            export PATH="/home/yaver/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+            npm install -g "yaver-cli@$TARGET_VERSION" 2>&1 | tail -20
+            which yaver
+            yaver --version
+INNER
+          else
+            # Fallback for boxes where the agent runs as root
+            npm install -g "yaver-cli@$TARGET_VERSION" 2>&1 | tail -20
+          fi
+
+          echo
+          echo "=== restarting systemd unit ==="
+          if systemctl --user list-units 2>/dev/null | grep -q yaver; then
+            systemctl --user restart yaver
+          elif id yaver >/dev/null 2>&1 && sudo -u yaver -i systemctl --user list-units 2>/dev/null | grep -q yaver; then
+            sudo -u yaver -i systemctl --user restart yaver
+          elif systemctl list-units --type=service 2>/dev/null | grep -q yaver; then
+            systemctl restart yaver
+          else
+            echo "(no systemd unit found — assuming the next login or manual yaver serve will pick up the new binary)"
+          fi
+
+          echo
+          echo "=== post-restart state ==="
+          sleep 3
+          if id yaver >/dev/null 2>&1; then
+            sudo -u yaver -i bash -c 'yaver --version || true'
+          else
+            yaver --version || true
+          fi
+
+          echo
+          echo "=== /info from local agent ==="
+          for cfg in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$cfg" ]; then
+              TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('auth_token',''))" "$cfg")
+              if [ -n "$TOKEN" ]; then
+                curl -fsS -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:18080/info" 2>&1 \
+                  | python3 -c "import sys,json;d=json.load(sys.stdin);print('  version:',d.get('version'));print('  hostname:',d.get('hostname'));print('  ok:',d.get('ok'))" 2>&1 || \
+                  echo "(agent not yet responding)"
+              fi
+              break
+            fi
+          done
+          REMOTE
