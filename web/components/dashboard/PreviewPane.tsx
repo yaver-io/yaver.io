@@ -1623,8 +1623,22 @@ function ConsoleStatusHeader({
     return `${Math.floor(ageMs / 3_600_000)}h ago`;
   })();
 
+  // Stabilise the layout: every counter that changes per-second
+  // (events, last X ago, beat number, uptime, idle) gets a fixed
+  // min-width + tabular-nums so digits don't shift sibling tokens
+  // when their width changes (`9s` → `10s`, `45s` → `50s`, etc).
+  // Without this the whole CONSOLE strip jitters every render of
+  // the 1 Hz rerenderTick — the user reported it as
+  // "annoyingly up and down."
+  const numStyle = { fontVariantNumeric: "tabular-nums" as const };
+  const fixedWidth = (ch: number) => ({
+    ...numStyle,
+    minWidth: `${ch}ch`,
+    display: "inline-block" as const,
+    textAlign: "left" as const,
+  });
   return (
-    <div className="border-b border-surface-800/50 bg-surface-950/50 px-3 py-1.5 text-[10px] text-surface-500">
+    <div className="border-b border-surface-800/50 bg-surface-950/50 px-3 py-1.5 text-[10px] text-surface-500" style={numStyle}>
       <div className="flex items-center gap-3">
         <span className="flex items-center gap-1.5">
           {connDot}
@@ -1634,8 +1648,12 @@ function ConsoleStatusHeader({
           {sseDot}
           <span>sse: {sseState}{sseAttempts > 1 ? ` (#${sseAttempts})` : ""}</span>
         </span>
-        <span className="text-surface-600">events: {totalEvents}</span>
-        <span className="text-surface-600">last: {lastEventLabel}</span>
+        <span className="text-surface-600">
+          events: <span style={fixedWidth(5)}>{totalEvents}</span>
+        </span>
+        <span className="text-surface-600">
+          last: <span style={fixedWidth(8)}>{lastEventLabel}</span>
+        </span>
       </div>
       {(sseError || (devStatus && devStatus.running)) && (
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -1664,24 +1682,24 @@ function ConsoleStatusHeader({
             <span className="text-emerald-300">agent live</span>
           </span>
           <span className="text-surface-500">
-            beat #{lastBeat.beatNumber}{" "}
+            beat <span style={fixedWidth(5)}>#{lastBeat.beatNumber}</span>{" "}
             <span className="text-surface-700">
-              ({Math.max(0, Math.floor((Date.now() - lastBeat.at) / 1000))}s ago)
+              (<span style={fixedWidth(4)}>{Math.max(0, Math.floor((Date.now() - lastBeat.at) / 1000))}s</span> ago)
             </span>
           </span>
           {lastBeat.uptimeSec > 0 && (
             <span className="text-surface-500">
-              uptime: <span className="text-surface-300">{formatHeartbeatUptime(lastBeat.uptimeSec)}</span>
+              uptime: <span className="text-surface-300" style={fixedWidth(7)}>{formatHeartbeatUptime(lastBeat.uptimeSec)}</span>
             </span>
           )}
           {lastBeat.pid > 0 && (
             <span className="text-surface-500">
-              pid {lastBeat.pid} <span className={lastBeat.pidAlive ? "text-emerald-400" : "text-red-400"}>{lastBeat.pidAlive ? "✓" : "✗"}</span>
+              pid <span style={fixedWidth(7)}>{lastBeat.pid}</span> <span className={lastBeat.pidAlive ? "text-emerald-400" : "text-red-400"}>{lastBeat.pidAlive ? "✓" : "✗"}</span>
             </span>
           )}
           {lastBeat.idleSec > 0 && (
             <span className="text-surface-700">
-              idle {lastBeat.idleSec}s
+              idle <span style={fixedWidth(5)}>{lastBeat.idleSec}s</span>
             </span>
           )}
         </div>
