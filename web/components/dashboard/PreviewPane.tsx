@@ -370,19 +370,39 @@ export default function PreviewPane({
 
   // Connection-health is decoupled from compile state. Time since the
   // last byte arrived on the SSE stream (any byte — heartbeat, log,
-  // progress, snapshot). The user sees one global "we're listening"
-  // dot; per-topic compile state is rendered separately. This is the
+  // progress, snapshot). User sees one global "we're listening" dot;
+  // per-topic compile state is rendered separately. This is the
   // "never feel disconnected" contract: agent guarantees a snapshot
-  // every 5s, so > 6s without a byte means transport is sick — that's
-  // the only thing that lights the connection-warning.
+  // every 5s WHEN A DEV SERVER IS RUNNING, so > 6s without a byte
+  // during an active run means transport is sick. When no dev server
+  // is running, the agent legitimately doesn't emit heartbeats —
+  // silence is expected, channel is "idle", not "reconnecting".
   const [lastByteAt, setLastByteAt] = useState<number>(Date.now());
-  const connectionHealth: "live" | "syncing" | "reconnecting" | "lost" = (() => {
+  const connectionHealth: "live" | "idle" | "syncing" | "reconnecting" | "lost" = (() => {
     const ms = Date.now() - lastByteAt;
+    const noDev = !devStatus?.running;
+    if (noDev) {
+      // Agent isn't producing snapshots because nothing's running.
+      // Until SSE EventSource actually closes (sseState becomes
+      // "error" / "closed"), assume transport is fine.
+      if (sseState === "error" || sseState === "closed") return "lost";
+      if (ms < 5_000) return "live";
+      return "idle";
+    }
     if (ms < 6_000) return "live";
     if (ms < 15_000) return "syncing";
     if (ms < 60_000) return "reconnecting";
     return "lost";
   })();
+  // Clear stale per-topic progress when dev server stops — otherwise
+  // "Dev server / listening / working…" lingers from the previous
+  // session forever.
+  useEffect(() => {
+    if (!devStatus?.running) {
+      setTopicProgress({});
+      setLatestSnapshot(null);
+    }
+  }, [devStatus?.running]);
   // Forces the "X seconds ago" labels to refresh once per second
   // even when no new event lands. Without this the relative-time
   // strings only update when a beat arrives, undermining the
@@ -1781,7 +1801,7 @@ function ConsoleStatusHeader({
     idleSec: number;
     beatNumber: number;
   } | null;
-  connectionHealth: "live" | "syncing" | "reconnecting" | "lost";
+  connectionHealth: "live" | "idle" | "syncing" | "reconnecting" | "lost";
   topicProgress: Record<string, {
     phase: string;
     pct: number;
@@ -1906,7 +1926,18 @@ function ConsoleStatusHeader({
           parses Metro / Expo / hermesc stdout and emits real
           percentages with currentFile + ETA. We render one slim bar
           per active topic so the user sees "Web bundling 42% —
-          Route.js · 18s left" instead of a fake wallclock spinner. */}
+          Route.js · 18s left" instead of a fake wallclock spinner.
+
+          Phase rendering rules — be honest:
+          - "listening" + no real progress → calm "idle" line, NO bar
+            (Metro is just waiting; no compile is happening; no
+            bar should pretend otherwise).
+          - "queued" / "preparing" / "*_bundling" + no exact pct →
+            indeterminate slide bar (something IS happening, we
+            just don't have a number yet).
+          - any phase + exact pct → real progress bar with
+            modules done/total + currentFile + ETA.
+       */}
       {Object.entries(topicProgress)
         .filter(([, prog]) => prog.phase && prog.phase !== "ready" && prog.phase !== "stopped" && prog.phase !== "idle" && prog.phase !== "")
         .map(([topic, prog]) => {
@@ -1915,6 +1946,21 @@ function ConsoleStatusHeader({
           const isExact = prog.src === "exact" && prog.total > 0;
           const pctDisplay = Math.max(0, Math.min(100, Math.round(prog.pct)));
           const etaSec = prog.etaMs > 0 ? Math.round(prog.etaMs / 1000) : 0;
+          // "listening" without a real progress event is just idle —
+          // no compile is happening. Show a calm message and skip
+          // the bar entirely so the user doesn't see a fake spinner
+          // for a process that's literally just sitting there.
+          const isListeningIdle = prog.phase === "listening" && !isExact;
+          if (isListeningIdle) {
+            return (
+              <div key={topic} className="mt-1 flex items-center gap-2 text-[10px]">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+                <span className="text-surface-300">{label}</span>
+                <span className="text-surface-500">listening · idle</span>
+                <span className="text-surface-700 italic">waiting for bundle request</span>
+              </div>
+            );
+          }
           return (
             <div key={topic} className="mt-1 flex flex-col gap-0.5">
               <div className="flex items-center gap-2 text-[10px]">
@@ -1934,7 +1980,7 @@ function ConsoleStatusHeader({
                   <span className="text-surface-700">~{etaSec}s left</span>
                 )}
               </div>
-              <div className="h-0.5 w-full overflow-hidden rounded-full bg-surface-800">
+              <div className="h-1 w-full overflow-hidden rounded-full bg-surface-800">
                 {isExact ? (
                   <div
                     className="h-full bg-gradient-to-r from-sky-500 to-emerald-400 transition-[width] duration-300"
@@ -1942,7 +1988,7 @@ function ConsoleStatusHeader({
                   />
                 ) : (
                   <div className="relative h-full w-full overflow-hidden">
-                    <div className="absolute inset-y-0 -left-full w-1/3 animate-[slide_1.6s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-sky-400/50 to-transparent" />
+                    <div className="absolute inset-y-0 left-0 h-full w-1/4 animate-[slide_1.6s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-sky-400 to-transparent" />
                   </div>
                 )}
               </div>
@@ -1963,6 +2009,7 @@ function ConsoleStatusHeader({
         {(() => {
           const map = {
             live: { dot: "#34d399", label: "channel: live", animate: false, color: "text-emerald-300" },
+            idle: { dot: "#64748b", label: "channel: idle (no dev server)", animate: false, color: "text-surface-500" },
             syncing: { dot: "#fbbf24", label: "channel: syncing…", animate: true, color: "text-amber-300" },
             reconnecting: { dot: "#fb923c", label: "channel: reconnecting…", animate: true, color: "text-orange-300" },
             lost: { dot: "#ef4444", label: "channel: lost — Reconnect & Fix", animate: false, color: "text-red-300" },

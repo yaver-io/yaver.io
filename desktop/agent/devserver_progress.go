@@ -32,6 +32,10 @@ package main
 
 import (
 	"bufio"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -145,6 +149,17 @@ func (p *progressTracker) FeedLine(line string) {
 	}
 	if m := rxMetroReady.FindStringSubmatch(line); m != nil {
 		p.transitionPhase("listening")
+		// Trigger an immediate bundle request so Metro starts a
+		// compile right now and emits real "Bundling 67% (1247/2390)"
+		// progress lines — instead of waiting for a phone to fetch
+		// the bundle, leaving the dashboard's UI staring at "idle"
+		// for minutes. The bundle URL is the standard /index.bundle
+		// shape; we discard the response, we just want compile to
+		// fire so the consumer sees real numbers.
+		port := atoiSafe(m[1])
+		if port > 0 {
+			go warmMetroBundle(port)
+		}
 		return
 	}
 	if m := rxBundleComplete.FindStringSubmatch(line); m != nil {
@@ -386,4 +401,36 @@ func atoiSafe(s string) int {
 func atofSafe(s string) float32 {
 	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 32)
 	return float32(f)
+}
+
+// warmMetroBundle fires a single GET to Metro's /index.bundle URL so
+// Metro starts compiling immediately on dev-server boot. Without this,
+// Metro sits idle until a phone connects — which means the dashboard
+// progress UI stays in "listening · idle" forever, even though the
+// user wants to SEE the compile. This issue is on Yaver's side: the
+// dashboard is browser-only; nothing else triggers a bundle fetch.
+//
+// The bundle response is discarded. The whole point is the side-
+// effect: Metro emits "iOS Bundling 67% (1247/2390)" lines that
+// the progress tracker captures and surfaces to the consumer.
+//
+// Wraps in a goroutine + best-effort: if the request fails (Metro
+// not yet bound, slow startup, etc.) the next stdout line will
+// still trigger phase transitions — this is purely an optimisation.
+func warmMetroBundle(port int) {
+	// Wait a moment for Metro to actually bind the listen socket.
+	// "Waiting on http://localhost:8081" prints just before bind
+	// completes; a beat of slack avoids EOF/refused.
+	time.Sleep(750 * time.Millisecond)
+	url := fmt.Sprintf("http://127.0.0.1:%d/index.bundle?platform=ios&dev=true&minify=false", port)
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		log.Printf("[dev:progress] warm bundle request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	// Consume body so connection can be reused / GC properly.
+	_, _ = io.Copy(io.Discard, resp.Body)
+	log.Printf("[dev:progress] warm bundle returned %d", resp.StatusCode)
 }
