@@ -104,13 +104,13 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const taskStreamStopRef = useRef<(() => void) | null>(null);
   const taskPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Right-column layout. Console (logs) is what the user actually
-  // needs while debugging — start it expanded; fold Projects + Vibing
-  // so the console gets vertical room. The whole column is also
-  // drag-resizable on xl screens so the user can give more space
-  // either to the iframe or to the panels.
-  const [consoleExpanded, setConsoleExpanded] = useState(true);
-  const [projectsExpanded, setProjectsExpanded] = useState(false);
+  // Right-column layout. The first thing a user does on this tab is
+  // pick a project — so Projects starts expanded. Console + Vibing
+  // are tools you reach for after the iframe is up, so they fold
+  // away by default and the user expands them on demand. The whole
+  // column is drag-resizable on xl screens.
+  const [consoleExpanded, setConsoleExpanded] = useState(false);
+  const [projectsExpanded, setProjectsExpanded] = useState(true);
   const [vibingExpanded, setVibingExpanded] = useState(false);
   const [rightColumnWidth, setRightColumnWidth] = useState(320);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
