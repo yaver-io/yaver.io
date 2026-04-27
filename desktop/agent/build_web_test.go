@@ -26,6 +26,67 @@ func TestInjectBaseHrefHeadWithAttrs(t *testing.T) {
 	}
 }
 
+// TestRelativizeAbsoluteAssetPaths verifies the bundle path rewriter
+// strips leading `/` from absolute asset references so the dashboard's
+// relay proxy doesn't double-prefix them and our <base href> can
+// resolve them through the bundle's serve location.
+func TestRelativizeAbsoluteAssetPaths(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			"absolute src is relativised",
+			`<script src="/_expo/static/js/foo.js"></script>`,
+			`<script src="_expo/static/js/foo.js"></script>`,
+		},
+		{
+			"absolute href is relativised",
+			`<link href="/_expo/static/css/main.css" rel="stylesheet">`,
+			`<link href="_expo/static/css/main.css" rel="stylesheet">`,
+		},
+		{
+			"absolute action is relativised",
+			`<form action="/submit">`,
+			`<form action="submit">`,
+		},
+		{
+			"protocol-relative URLs are NOT touched (would break CDN refs)",
+			`<script src="//cdn.example.com/lib.js"></script>`,
+			`<script src="//cdn.example.com/lib.js"></script>`,
+		},
+		{
+			"full URLs are NOT touched",
+			`<script src="https://example.com/lib.js"></script>`,
+			`<script src="https://example.com/lib.js"></script>`,
+		},
+		{
+			"already-relative paths stay relative",
+			`<script src="./already-relative.js"></script>`,
+			`<script src="./already-relative.js"></script>`,
+		},
+		{
+			"single-quoted attributes work too",
+			`<script src='/_expo/foo.js'></script>`,
+			`<script src='_expo/foo.js'></script>`,
+		},
+		{
+			"multiple attrs in one tag",
+			`<link href="/foo.css" rel="stylesheet" /><script src="/bar.js"></script>`,
+			`<link href="foo.css" rel="stylesheet" /><script src="bar.js"></script>`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := string(relativizeAbsoluteAssetPaths([]byte(tc.in)))
+			if got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestInjectBaseHrefIdempotentOnNoHead returns input unchanged when
 // there's no <head> tag (very unusual but defensive).
 func TestInjectBaseHrefIdempotentOnNoHead(t *testing.T) {

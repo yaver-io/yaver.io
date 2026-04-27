@@ -377,14 +377,7 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 // asset routes. Forcing relative paths makes the bundle survive
 // being served under any prefix the proxy gives it.
 func webBundleCommand(packageManager, outputDir string) *exec.Cmd {
-	// `--base-url=` (empty) tells expo to emit *relative* asset paths
-	// like `_expo/...` instead of absolute `/_expo/...`. Combined with
-	// the agent's <base href="/dev/web-bundle/" /> injection in the
-	// served index.html, the browser resolves every reference through
-	// the bundle prefix correctly even after the dashboard's relay
-	// proxy rewrites paths for /dev/* requests. Equivalent to passing
-	// `--base-url=./` on Expo SDK 53+ that supports the flag.
-	args := []string{"expo", "export", "-p", "web", "--output-dir", outputDir, "--clear", "--base-url="}
+	args := []string{"expo", "export", "-p", "web", "--output-dir", outputDir, "--clear"}
 	switch packageManager {
 	case "yarn":
 		return exec.Command("yarn", args...)
@@ -585,20 +578,84 @@ func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request
 	http.ServeFile(w, r, full)
 }
 
-// serveWebBundleHTML reads index.html, injects <base href="/dev/web-bundle/">
-// inside <head>, and writes it.
+// serveWebBundleHTML reads index.html, rewrites absolute asset paths
+// to relative + injects `<base href="/dev/web-bundle/">` inside <head>.
+// Why both: (1) the relative-path rewrite makes the bundle survive
+// the dashboard's relay proxy which rewrites `/foo` → `/d/<id>/dev/foo`
+// (we don't want that prefix being injected) and (2) the <base href>
+// then resolves the now-relative `_expo/static/js/...` references
+// through the bundle's actual serve path, regardless of where the
+// proxy mounted us. Belt + suspenders so the iframe renders cleanly
+// whether requested directly, through the relay, or through the
+// dashboard's same-origin /d/<id>/dev/web-bundle/ proxy.
 func (s *HTTPServer) serveWebBundleHTML(w http.ResponseWriter, htmlPath string) {
 	data, err := os.ReadFile(htmlPath)
 	if err != nil {
 		http.Error(w, "read html: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// Rewrite absolute paths to relative BEFORE injecting <base>. The
+	// proxy's body-rewriter only matches `src="/foo"` style absolute
+	// paths; once we strip the leading `/` they survive proxy
+	// transformation untouched and the <base href> resolves them.
+	data = relativizeAbsoluteAssetPaths(data)
 	patched := injectBaseHref(data, "/dev/web-bundle/")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	info := s.devServerMgr.GetWebBundleInfo()
 	w.Header().Set("X-Yaver-Web-Bundle", fmt.Sprintf("%s/%d", info.Target, info.Size))
 	w.Write(patched)
+}
+
+// relativizeAbsoluteAssetPaths rewrites `src="/_expo/..."` /
+// `href="/_expo/..."` / `action="/..."` references to drop the leading
+// `/`, so they become relative and our <base href> can resolve them.
+// Skips protocol-relative (`//cdn`) and full URLs (`https://...`).
+// Compiled regex evaluated once at init for cheap re-use.
+var rxAbsoluteAssetPath = mustCompileBundleRegex()
+
+func mustCompileBundleRegex() *bundlePathRewriter {
+	return &bundlePathRewriter{}
+}
+
+type bundlePathRewriter struct{}
+
+func (r *bundlePathRewriter) rewrite(html []byte) []byte {
+	// Hand-written byte scan: faster than full regex on multi-MB HTML
+	// and easier to reason about for the protocol-relative edge case
+	// (`//cdn.example.com/foo` must NOT lose its leading slashes).
+	out := make([]byte, 0, len(html))
+	i := 0
+	keys := []string{`src="/`, `src='/`, `href="/`, `href='/`, `action="/`, `action='/`}
+	for i < len(html) {
+		matched := false
+		for _, k := range keys {
+			if i+len(k) <= len(html) && string(html[i:i+len(k)]) == k {
+				// Look at the byte AFTER the leading `/`. If it's
+				// another `/`, this is protocol-relative — skip.
+				if i+len(k) < len(html) && html[i+len(k)] == '/' {
+					out = append(out, html[i:i+len(k)]...)
+					i += len(k)
+					matched = true
+					break
+				}
+				// Drop the leading slash.
+				out = append(out, html[i:i+len(k)-1]...)
+				i += len(k)
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, html[i])
+			i++
+		}
+	}
+	return out
+}
+
+func relativizeAbsoluteAssetPaths(html []byte) []byte {
+	return rxAbsoluteAssetPath.rewrite(html)
 }
 
 // injectBaseHref inserts <base href="..."> right after the opening
