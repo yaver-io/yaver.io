@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
-import type { Device } from "../context/DeviceContext";
+import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
 import { quicClient } from "../lib/quic";
 import {
@@ -110,11 +110,69 @@ function FactoryResetAuthRow({ device }: { device: Device }) {
 
 export interface DeviceDetailsModalProps {
   device: Device | null;
+  agentVersion?: string | null;
   visible: boolean;
   onClose: () => void;
 }
 
-export default function DeviceDetailsModal({ device, visible, onClose }: DeviceDetailsModalProps) {
+function OwnerClaimAuthRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { refreshDevices } = useDevice();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const onPress = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const res = await quicClient.ownerClaimDevice(device.id);
+      if (res.ok) {
+        setMsg(`✓ claimed via ${res.via}${res.host ? ` (${res.host})` : ""}`);
+        setTimeout(() => { refreshDevices().catch(() => {}); }, 1000);
+      } else {
+        setMsg(`✗ ${res.error}`);
+      }
+    } catch (e: any) {
+      setMsg(`✗ ${e?.message ?? String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={busy}
+        style={{
+          alignSelf: "flex-start",
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: "rgba(34,197,94,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(34,197,94,0.45)",
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        <Text style={{ color: "#bbf7d0", fontSize: 12, fontWeight: "700" }}>
+          {busy ? "Recovering..." : "Recover Yaver Auth"}
+        </Text>
+      </Pressable>
+      {msg ? (
+        <Text style={{
+          marginTop: 8,
+          fontSize: 11,
+          color: msg.startsWith("✓") ? "#a7f3d0" : "#fecdd3",
+        }}>
+          {msg}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
   const c = useColors();
   const t = device ? transportFor(device) : null;
   const [relayHealth, setRelayHealth] = useState<{ version?: string; tunnels?: number; activeDevices?: number } | null>(null);
@@ -236,6 +294,7 @@ export default function DeviceDetailsModal({ device, visible, onClose }: DeviceD
               RUNTIME
             </Text>
             <Row label="Status" value={device.online ? "Online" : "Offline"} />
+            {agentVersion ? <Row label="Yaver version" value={`v${agentVersion}`} mono /> : null}
             {device.needsAuth ? <Row label="Auth" value="Needs auth" /> : null}
             <Row label="Last agent signal" value={timeAgo(device.lastSeen)} />
             {device.lastTunnelEvent?.at ? (
@@ -273,22 +332,23 @@ export default function DeviceDetailsModal({ device, visible, onClose }: DeviceD
               <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
                 RECOVERY
               </Text>
-              {/* Owner-claim: shown when the box is in bootstrap mode
-                  (needsAuth=true) and reachable via relay. Single tap
-                  re-pairs the device to your account through Convex
-                  ownership verification — no URL paste, no passkey. */}
-              {/* Owner-claim row was referenced from a removed file;
-                  factory-reset row below covers the same recovery
-                  path for bootstrap-mode devices. */}
+              {device.needsAuth ? (
+                <>
+                  <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+                    Recover Yaver auth without wiping the machine
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+                    This box is already in bootstrap mode. Claim it back to your account over relay without factory-resetting the agent identity or touching projects.
+                  </Text>
+                  <OwnerClaimAuthRow device={device} />
+                  <View style={{ height: 14 }} />
+                </>
+              ) : null}
               <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
-                Reset auth to bootstrap mode
+                Factory-reset Yaver auth
               </Text>
               <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
-                Wipe the agent's local auth + device id and put it back
-                into bootstrap (pairing) mode. Use this when the box
-                rejects your session ("token belongs to a different
-                user") and Recover Auth doesn't fix it. Projects, vault,
-                and workspace files are preserved.
+                Wipe the agent's local auth + device id and put it back into bootstrap mode. Use this only when normal Yaver recovery fails or the machine belongs to a different account. Projects, vault, and workspace files are preserved.
               </Text>
               <FactoryResetAuthRow device={device} />
             </View>

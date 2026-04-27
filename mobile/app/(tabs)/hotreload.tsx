@@ -65,6 +65,7 @@ export default function HotReloadScreen() {
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsScanning, setProjectsScanning] = useState(false);
+  const [scanStopping, setScanStopping] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   // Tail of log lines streamed from /dev/events SSE. Bounded to 40
   // so a chatty Metro bundle doesn't blow up state; the card shows
@@ -232,7 +233,13 @@ export default function HotReloadScreen() {
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
-        throw new Error(buildResult.error || "Build failed");
+        const detail = [
+          buildResult.phase ? `phase: ${buildResult.phase}` : null,
+          buildResult.error || "build failed",
+          buildResult.helpHint || null,
+          buildResult.output ? `\n${String(buildResult.output).trim()}` : null,
+        ].filter(Boolean).join("\n");
+        throw new Error(detail);
       }
 
       const sizeKB = Math.round((buildResult.size || 0) / 1024);
@@ -286,6 +293,20 @@ export default function HotReloadScreen() {
         }
       },
     ]);
+  }, []);
+
+  const handleStopDiscovery = useCallback(async () => {
+    try {
+      setScanStopping(true);
+      const baseUrl = (quicClient as any).baseUrl;
+      const headers = (quicClient as any).authHeaders;
+      await fetch(`${baseUrl}/projects/mobile`, { method: "DELETE", headers });
+      setProjectsScanning(false);
+    } catch {
+      Alert.alert("Stop failed", "Could not stop project discovery right now.");
+    } finally {
+      setScanStopping(false);
+    }
   }, []);
 
   const handleSelectTarget = useCallback(async (deviceId: string | null) => {
@@ -634,6 +655,17 @@ export default function HotReloadScreen() {
                   {projectsScanning ? "Discovering..." : "Rediscover"}
                 </Text>
               </Pressable>
+              {projectsScanning ? (
+                <Pressable
+                  style={[s.rediscoverBtn, { borderColor: "#ef444466", backgroundColor: "#ef444411" }]}
+                  onPress={() => { void handleStopDiscovery(); }}
+                  disabled={scanStopping}
+                >
+                  <Text style={[s.rediscoverBtnText, { color: "#f87171" }]}>
+                    {scanStopping ? "Stopping..." : "Stop Discovery"}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           }
         />

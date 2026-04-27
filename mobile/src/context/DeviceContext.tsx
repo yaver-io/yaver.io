@@ -1600,6 +1600,22 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: "Not signed in" };
     }
 
+    if (device.needsAuth === true) {
+      const claimed = await quicClient.ownerClaimDevice(device.id);
+      if (claimed.ok) {
+        quicClient.agentAuthExpired = false;
+        setAgentAuthExpired(false);
+        clearDeviceUnreachable(device.id);
+        appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via owner claim`);
+        setTimeout(() => refreshDevices(), 800);
+        return {
+          ok: true,
+          targetUrl: claimed.host,
+        };
+      }
+      appLog("warn", `Owner-claim recovery failed for ${device.name}: ${claimed.error}`);
+    }
+
     quicClient.primeTarget(
       device.host,
       device.port,

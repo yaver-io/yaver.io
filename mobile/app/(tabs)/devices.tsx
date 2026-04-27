@@ -16,7 +16,7 @@ import { TextInput } from "react-native";
 import { Device, RunnerInfo, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient } from "../../src/lib/quic";
+import { quicClient, type RunnerAuthStatusRow } from "../../src/lib/quic";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import DeviceDetailsModal from "../../src/components/DeviceDetailsModal";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
@@ -68,9 +68,17 @@ type DeviceProjectSummary = {
   total: number;
 };
 
+type DeviceRuntimeSummary = {
+  version: string | null;
+  authExpired: boolean;
+  mode: string | null;
+};
+
 type MachineSummary = {
   gitProviders: GitProviderSummary | null;
   projectSummary: DeviceProjectSummary | null;
+  runtime: DeviceRuntimeSummary | null;
+  runnerAuthRows: RunnerAuthStatusRow[];
   fetchedAt: number;
 };
 
@@ -155,10 +163,34 @@ function ScopeChip({
   );
 }
 
+function buildDeviceRequestContext(
+  device: Pick<Device, "id" | "host" | "port">,
+  token: string | null,
+): { baseUrl: string; headers: Record<string, string> } | null {
+  if (!token) return null;
+  const relay = quicClient.getRelayServers()[0];
+  if (relay?.httpUrl) {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      "X-Client-Platform": Platform.OS,
+    };
+    if (relay.password) headers["X-Relay-Password"] = relay.password;
+    return {
+      baseUrl: `${relay.httpUrl}/d/${encodeURIComponent(device.id)}`,
+      headers,
+    };
+  }
+  return {
+    baseUrl: `http://${device.host}:${device.port}`,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-Client-Platform": Platform.OS,
+    },
+  };
+}
+
 function buildDeviceUrl(device: Device, token: string | null): string | null {
-  const relays = quicClient.getRelayServers();
-  if (relays.length > 0) return `${relays[0].httpUrl}/d/${device.id}`;
-  return `http://${device.host}:${device.port}`;
+  return buildDeviceRequestContext(device, token)?.baseUrl ?? null;
 }
 
 function inferGitProvidersFromProjects(
@@ -175,20 +207,35 @@ function inferGitProvidersFromProjects(
 }
 
 async function fetchMachineSummary(baseUrl: string, token: string): Promise<MachineSummary> {
-  const cacheKey = `${baseUrl}|${token}`;
+  return fetchMachineSummaryWithHeaders(baseUrl, {
+    Authorization: `Bearer ${token}`,
+    "X-Client-Platform": Platform.OS,
+  });
+}
+
+async function fetchMachineSummaryWithHeaders(
+  baseUrl: string,
+  headers: Record<string, string>,
+  opts?: { force?: boolean },
+): Promise<MachineSummary> {
+  const cacheKey = `${baseUrl}|${JSON.stringify(headers)}`;
   const cached = machineSummaryCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < MACHINE_SUMMARY_TTL_MS) {
+  if (!opts?.force && cached && Date.now() - cached.fetchedAt < MACHINE_SUMMARY_TTL_MS) {
     return cached;
   }
-
-  const headers = { Authorization: `Bearer ${token}` };
   const [projectsRes, providersRes] = await Promise.allSettled([
     fetch(`${baseUrl}/projects`, { headers, signal: AbortSignal.timeout(5000) }),
     fetch(`${baseUrl}/git/provider/status`, { headers, signal: AbortSignal.timeout(5000) }),
   ]);
+  const [infoRes, runnerAuthRes] = await Promise.allSettled([
+    fetch(`${baseUrl}/info`, { headers, signal: AbortSignal.timeout(5000) }),
+    fetch(`${baseUrl}/runner-auth/status`, { headers, signal: AbortSignal.timeout(5000) }),
+  ]);
 
   let projectSummary: DeviceProjectSummary | null = null;
   let inferredProviders: GitProviderSummary | null = null;
+  let runtime: DeviceRuntimeSummary | null = null;
+  let runnerAuthRows: RunnerAuthStatusRow[] = [];
 
   if (projectsRes.status === "fulfilled" && projectsRes.value.ok) {
     const projectsJson = await projectsRes.value.json();
@@ -218,13 +265,54 @@ async function fetchMachineSummary(baseUrl: string, token: string): Promise<Mach
     };
   }
 
+  if (infoRes.status === "fulfilled" && infoRes.value.ok) {
+    const infoJson = await infoRes.value.json().catch(() => ({}));
+    runtime = {
+      version: typeof infoJson?.version === "string" ? infoJson.version : null,
+      authExpired: infoJson?.authExpired === true,
+      mode: typeof infoJson?.mode === "string" ? infoJson.mode : null,
+    };
+  }
+
+  if (runnerAuthRes.status === "fulfilled" && runnerAuthRes.value.ok) {
+    const authJson = await runnerAuthRes.value.json().catch(() => ({}));
+    runnerAuthRows = Array.isArray(authJson?.runners) ? authJson.runners : [];
+  }
+
   const summary: MachineSummary = {
     gitProviders,
     projectSummary,
+    runtime,
+    runnerAuthRows,
     fetchedAt: Date.now(),
   };
   machineSummaryCache.set(cacheKey, summary);
   return summary;
+}
+
+function runnerStatusRow(rows: RunnerAuthStatusRow[], id: "claude" | "codex"): RunnerAuthStatusRow | null {
+  return rows.find((row) => row.id === id || (id === "claude" && row.id === "claude-code")) ?? null;
+}
+
+function runnerAuthState(row: RunnerAuthStatusRow | null): "not-installed" | "ready" | "expired" | "unknown" {
+  if (!row) return "unknown";
+  if (!row.installed) return "not-installed";
+  if (row.ready) return "ready";
+  return "expired";
+}
+
+function runnerStateLabel(row: RunnerAuthStatusRow | null, fallbackName: string): string {
+  const name = row?.name || fallbackName;
+  switch (runnerAuthState(row)) {
+    case "ready":
+      return `${name} ready`;
+    case "expired":
+      return `${name} expired`;
+    case "not-installed":
+      return `${name} not installed`;
+    default:
+      return `${name} unknown`;
+  }
 }
 
 function DeviceCard({
@@ -255,9 +343,13 @@ function DeviceCard({
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [killing, setKilling] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
+  const [refreshingState, setRefreshingState] = useState(false);
   const [runtimeLabel, setRuntimeLabel] = useState<string | null>(null);
   const [gitProviders, setGitProviders] = useState<GitProviderSummary | null>(null);
   const [projectSummary, setProjectSummary] = useState<DeviceProjectSummary | null>(null);
+  const [agentVersion, setAgentVersion] = useState<string | null>(null);
+  const [remoteAuthExpired, setRemoteAuthExpired] = useState(false);
+  const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
   // Re-auth a remote runner CLI (claude / codex) on this device by
   // running the same /runner-auth/browser flow the web UI uses.
   // `runnerAuthOpenFor` is the runner id when the modal is open.
@@ -271,7 +363,7 @@ function DeviceCard({
   // Three-state status: green / yellow / gray. The old binary
   // online|offline missed the "Convex thinks live, we can't reach"
   // case which flickered between two wrong answers.
-  const authRecoverable = needsAuth || authExpired;
+  const authRecoverable = needsAuth || authExpired || remoteAuthExpired;
   const hasLiveSignal = hasRecentLiveSignal(device);
   const hasBusLiveSignal = device.peerState === "online";
   const hasBusStaleSignal = device.peerState === "stale";
@@ -288,35 +380,49 @@ function DeviceCard({
   }, [device.id]);
 
   useEffect(() => {
-    const baseUrl = buildDeviceUrl(device, token);
-    if (!baseUrl || !token) {
+    const ctx = buildDeviceRequestContext(device, token);
+    if (!ctx || !token) {
       setGitProviders(null);
       setProjectSummary(null);
+      setAgentVersion(null);
+      setRemoteAuthExpired(false);
+      setRunnerAuthRows([]);
       return;
     }
 
     let cancelled = false;
 
-    const loadMachineSummary = async () => {
+    const loadMachineSummary = async (force = false) => {
       try {
-        const cached = machineSummaryCache.get(`${baseUrl}|${token}`);
+        const cacheKey = `${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`;
+        const cached = machineSummaryCache.get(cacheKey);
         if (cached && !cancelled) {
           setGitProviders(cached.gitProviders);
           setProjectSummary(cached.projectSummary);
+          setAgentVersion(cached.runtime?.version ?? null);
+          setRemoteAuthExpired(cached.runtime?.authExpired === true);
+          setRunnerAuthRows(cached.runnerAuthRows || []);
         }
 
         if (!device.online && cached) return;
 
-        const summary = await fetchMachineSummary(baseUrl, token);
+        const summary = await fetchMachineSummaryWithHeaders(ctx.baseUrl, ctx.headers, { force });
         if (!cancelled) {
           setGitProviders(summary.gitProviders);
           setProjectSummary(summary.projectSummary);
+          setAgentVersion(summary.runtime?.version ?? null);
+          setRemoteAuthExpired(summary.runtime?.authExpired === true);
+          setRunnerAuthRows(summary.runnerAuthRows || []);
         }
       } catch {
-        const cached = machineSummaryCache.get(`${baseUrl}|${token}`);
+        const cacheKey = `${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`;
+        const cached = machineSummaryCache.get(cacheKey);
         if (!cancelled) {
           setGitProviders(cached?.gitProviders ?? null);
           setProjectSummary(cached?.projectSummary ?? null);
+          setAgentVersion(cached?.runtime?.version ?? null);
+          setRemoteAuthExpired(cached?.runtime?.authExpired === true);
+          setRunnerAuthRows(cached?.runnerAuthRows ?? []);
         }
       }
     };
@@ -350,6 +456,9 @@ function DeviceCard({
         const info = await res.json();
         const inBootstrap = info.needsAuth === true || info.mode === "bootstrap";
         const autoStartType = String(info?.autoStart?.type || "").trim().toLowerCase();
+        if (typeof info?.version === "string" && !cancelled) {
+          setAgentVersion(info.version);
+        }
         if (autoStartType.startsWith("wsl-") && !cancelled) {
           setRuntimeLabel("WSL");
         }
@@ -397,6 +506,10 @@ function DeviceCard({
     const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [device.host, device.port, device.publicKey, token]);
+  const claudeRow = runnerStatusRow(runnerAuthRows, "claude");
+  const codexRow = runnerStatusRow(runnerAuthRows, "codex");
+  const claudeState = runnerAuthState(claudeRow);
+  const codexState = runnerAuthState(codexRow);
   const runners = device.runners || [];
   const activeRunners = runners.filter((r) => r.status === "running");
   const shareSummary = accessSummary(device);
@@ -443,6 +556,26 @@ function DeviceCard({
       }
     }
     setPingState({ pinging: false, ok: false });
+  };
+
+  const handleRefreshState = async () => {
+    const ctx = buildDeviceRequestContext(device, token);
+    if (!ctx) return;
+    setRefreshingState(true);
+    try {
+      machineSummaryCache.delete(`${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`);
+      const summary = await fetchMachineSummaryWithHeaders(ctx.baseUrl, ctx.headers, { force: true });
+      setGitProviders(summary.gitProviders);
+      setProjectSummary(summary.projectSummary);
+      setAgentVersion(summary.runtime?.version ?? null);
+      setRemoteAuthExpired(summary.runtime?.authExpired === true);
+      setRunnerAuthRows(summary.runnerAuthRows || []);
+      if (summary.runtime?.mode !== "bootstrap") {
+        setNeedsAuth(false);
+      }
+    } finally {
+      setRefreshingState(false);
+    }
   };
 
   const killTask = async (taskId: string) => {
@@ -582,19 +715,19 @@ function DeviceCard({
               }}>
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PAIRING…</Text>
               </View>
-            ) : authExpired ? (
+            ) : authExpired || remoteAuthExpired ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
               }}>
-                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>AUTH EXPIRED</Text>
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>YAVER EXPIRED</Text>
               </View>
             ) : needsAuth ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866",
               }}>
-                <Text style={{ color: "#eab308", fontSize: 10, fontWeight: "700" }}>NEEDS AUTH</Text>
+                <Text style={{ color: "#eab308", fontSize: 10, fontWeight: "700" }}>YAVER NEEDS AUTH</Text>
               </View>
             ) : isOnline ? (
               <View style={{
@@ -626,9 +759,14 @@ function DeviceCard({
               Relay live signal {timeSince(device.lastTunnelEvent?.at || 0)}
             </Text>
           ) : null}
-          {authExpired ? (
+          {authExpired || remoteAuthExpired ? (
             <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
               This machine is reachable, but its Yaver session expired. Recover it from the phone.
+            </Text>
+          ) : null}
+          {agentVersion ? (
+            <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+              Yaver v{agentVersion}
             </Text>
           ) : null}
           {device.edgeProfile ? (
@@ -692,6 +830,22 @@ function DeviceCard({
               </View>
             </View>
           ) : null}
+          <View style={styles.machineSummarySection}>
+            <View style={styles.scopeRow}>
+              {claudeState !== "unknown" ? (
+                <ScopeChip
+                  label={runnerStateLabel(claudeRow, "Claude Code").toUpperCase()}
+                  color={claudeState === "ready" ? "#a78bfa" : claudeState === "expired" ? "#f59e0b" : c.textMuted}
+                />
+              ) : null}
+              {codexState !== "unknown" ? (
+                <ScopeChip
+                  label={runnerStateLabel(codexRow, "Codex").toUpperCase()}
+                  color={codexState === "ready" ? "#22d3ee" : codexState === "expired" ? "#f59e0b" : c.textMuted}
+                />
+              ) : null}
+            </View>
+          </View>
         </View>
         <View style={styles.cardRight}>
           {/* Explicit three-state status — never flickers between
@@ -726,7 +880,7 @@ function DeviceCard({
               },
             ]}
           >
-            {authRecoverable ? "needs auth" : hasBusLiveSignal ? "bus live" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : (hasBusStaleSignal || isStale) ? "stale" : "offline"}
+            {needsAuth ? "yaver needs auth" : (authExpired || remoteAuthExpired) ? "yaver expired" : hasBusLiveSignal ? "bus live" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : (hasBusStaleSignal || isStale) ? "stale" : "offline"}
           </Text>
           {device.lastSeen > 0 && (
             <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
@@ -787,13 +941,14 @@ function DeviceCard({
             <Text style={[styles.runnerMeta, { color: c.textMuted, paddingVertical: 4 }]}>No active runners</Text>
           )}
           <View style={[styles.menuActions, { borderTopColor: c.border }]}>
-            {(needsAuth || authExpired) && (
+            {(needsAuth || authExpired || remoteAuthExpired) && (
               <Pressable
                 style={[styles.menuActionBtn, { backgroundColor: "#f59e0b18" }]}
                 onPress={async () => {
                   setRecovering(true);
                   try {
                     await onRecoverAuth();
+                    await handleRefreshState();
                   } finally {
                     setRecovering(false);
                   }
@@ -801,7 +956,7 @@ function DeviceCard({
                 disabled={recovering}
               >
                 <Text style={[styles.menuActionText, { color: "#f59e0b" }]}>
-                  {recovering ? "Recovering..." : "Recover Auth"}
+                  {recovering ? "Recovering..." : "Recover Yaver"}
                 </Text>
               </Pressable>
             )}
@@ -813,6 +968,7 @@ function DeviceCard({
                 through (skip offline guests). */}
             {!device.isGuest && (isOnline || directReachable) ? (
               <>
+                {claudeState === "expired" ? (
                 <Pressable
                   style={[styles.menuActionBtn, { backgroundColor: "#8b5cf618" }]}
                   onPress={() => setRunnerAuthOpenFor("claude")}
@@ -821,6 +977,8 @@ function DeviceCard({
                     Sign in: Claude Code
                   </Text>
                 </Pressable>
+                ) : null}
+                {codexState === "expired" ? (
                 <Pressable
                   style={[styles.menuActionBtn, { backgroundColor: "#06b6d418" }]}
                   onPress={() => setRunnerAuthOpenFor("codex")}
@@ -829,8 +987,18 @@ function DeviceCard({
                     Sign in: Codex
                   </Text>
                 </Pressable>
+                ) : null}
               </>
             ) : null}
+            <Pressable
+              style={[styles.menuActionBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
+              onPress={handleRefreshState}
+              disabled={refreshingState}
+            >
+              <Text style={[styles.menuActionText, { color: c.textPrimary }]}>
+                {refreshingState ? "Refreshing..." : "Refresh State"}
+              </Text>
+            </Pressable>
             <Pressable
               style={[styles.menuActionBtn, { backgroundColor: c.accent + "18" }]}
               onPress={() => setDetailsOpen(true)}
@@ -929,16 +1097,18 @@ function DeviceCard({
         visible={runnerAuthOpenFor !== null}
         runner={runnerAuthOpenFor || ""}
         deviceName={device.name || device.hostName || "this machine"}
+        target={isActive ? undefined : device.id}
+        baseUrl={buildDeviceRequestContext(device, token)?.baseUrl || ""}
+        headers={buildDeviceRequestContext(device, token)?.headers || {}}
         onClose={() => setRunnerAuthOpenFor(null)}
         onCompleted={() => {
-          // Modal handles its own close-on-success; nothing else to
-          // do here — the agent's /info poll picks up the new
-          // authConfigured state on its next tick and drops the
-          // [SIGN IN] badge automatically.
+          void handleRefreshState();
+          setRunnerAuthOpenFor(null);
         }}
       />
       <DeviceDetailsModal
         device={device}
+        agentVersion={agentVersion}
         visible={detailsOpen}
         onClose={() => setDetailsOpen(false)}
       />
@@ -1148,6 +1318,14 @@ export default function DevicesScreen() {
       online: peer.state === "online" ? true : device.online,
       lastSeen: peer.lastSeen && peer.lastSeen > device.lastSeen ? peer.lastSeen : device.lastSeen,
     };
+  }).sort((a, b) => {
+    const aActive = activeDevice?.id === a.id ? 1 : 0;
+    const bActive = activeDevice?.id === b.id ? 1 : 0;
+    if (aActive !== bActive) return bActive - aActive;
+    const aPrimary = primaryDeviceId === a.id ? 1 : 0;
+    const bPrimary = primaryDeviceId === b.id ? 1 : 0;
+    if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+    return 0;
   });
 
   const handleAdoptBootstrap = useCallback(

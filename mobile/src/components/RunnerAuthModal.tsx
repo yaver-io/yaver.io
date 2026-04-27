@@ -30,6 +30,8 @@ interface Props {
   visible: boolean;
   runner: string;          // "claude" | "codex"
   deviceName: string;      // e.g. "yaver-test-ephemeral"
+  baseUrl?: string;
+  headers?: Record<string, string>;
   /** When provided, runner-auth requests are routed via /peer/<id>
    *  to the named device instead of the connected agent. Use this
    *  when the device the user wants to re-auth is NOT the same
@@ -51,6 +53,8 @@ export default function RunnerAuthModal({
   visible,
   runner,
   deviceName,
+  baseUrl,
+  headers,
   target,
   onClose,
   onCompleted,
@@ -62,6 +66,42 @@ export default function RunnerAuthModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const startedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const normalizedRunner = (runner || "").toLowerCase();
+  const needsPasteCode = normalizedRunner === "claude" || normalizedRunner === "claude-code";
+
+  const callRunnerAuth = async (
+    path: "start" | "status" | "cancel" | "submit-code",
+    init?: RequestInit,
+    sessionId?: string,
+  ): Promise<any> => {
+    const trimmedBaseUrl = String(baseUrl || "").trim();
+    const requestHeaders = { ...(headers || {}) };
+    if (trimmedBaseUrl) {
+      const url = new URL(`${trimmedBaseUrl}/runner-auth/browser/${path}`);
+      if (sessionId) url.searchParams.set("id", sessionId);
+      const res = await fetch(url.toString(), {
+        ...init,
+        headers: {
+          ...requestHeaders,
+          ...(init?.headers || {}),
+        },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || `runner auth ${path} ${res.status}`);
+      return data;
+    }
+    if (path === "start") return quicClient.startRunnerBrowserAuth(runner, target);
+    if (path === "status") return quicClient.getRunnerBrowserAuthStatus(sessionId || "", target);
+    if (path === "submit-code") {
+      return quicClient.submitRunnerBrowserAuthCode(
+        sessionId || "",
+        JSON.parse(String(init?.body || "{}")).code || "",
+        target,
+      );
+    }
+    await quicClient.cancelRunnerBrowserAuth(sessionId || "", target);
+    return null;
+  };
 
   // Reset on close so re-opening always starts fresh.
   useEffect(() => {
@@ -84,13 +124,17 @@ export default function RunnerAuthModal({
     startedRef.current = true;
     (async () => {
       try {
-        const started = await quicClient.startRunnerBrowserAuth(runner, target);
+        const started = await callRunnerAuth("start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runner }),
+        });
         setSession(started);
       } catch (err) {
         setStartError(err instanceof Error ? err.message : String(err));
       }
     })();
-  }, [visible, runner, target]);
+  }, [visible, runner, target, baseUrl, JSON.stringify(headers || {})]);
 
   // Poll for completion. Mirrors the web modal's 1.5s cadence.
   useEffect(() => {
@@ -105,8 +149,12 @@ export default function RunnerAuthModal({
     }
     pollRef.current = setInterval(async () => {
       try {
-        const next = await quicClient.getRunnerBrowserAuthStatus(session.id, target);
+        const next = await callRunnerAuth("status", undefined, session.id);
         setSession(next);
+        if (next?.status === "completed") {
+          onCompleted?.();
+          onClose();
+        }
       } catch {
         // best-effort
       }
@@ -117,7 +165,7 @@ export default function RunnerAuthModal({
         pollRef.current = null;
       }
     };
-  }, [session, target, onCompleted]);
+  }, [session, target, onCompleted, onClose, baseUrl, JSON.stringify(headers || {})]);
 
   const terminal = session && ["completed", "failed", "cancelled"].includes(session.status);
 
@@ -140,11 +188,11 @@ export default function RunnerAuthModal({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const next = await quicClient.submitRunnerBrowserAuthCode(
-        session.id,
-        pasteCode.trim(),
-        target,
-      );
+      const next = await callRunnerAuth("submit-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: session.id, code: pasteCode.trim() }),
+      });
       setSession(next);
       setPasteCode("");
     } catch (err) {
@@ -156,7 +204,7 @@ export default function RunnerAuthModal({
 
   const cancel = async () => {
     if (session && !terminal) {
-      await quicClient.cancelRunnerBrowserAuth(session.id, target).catch(() => {});
+      await callRunnerAuth("cancel", { method: "POST" }, session.id).catch(() => {});
     }
     onClose();
   };
@@ -205,7 +253,9 @@ export default function RunnerAuthModal({
             ) : (
               <View>
                 <Text style={styles.help}>
-                  Yaver started the remote {runnerLabel(runner)} login flow on this machine. Tap the link below to authorize, then paste the resulting code back here.
+                  {needsPasteCode
+                    ? `Yaver started the remote ${runnerLabel(runner)} login flow on this machine. Tap the link below to authorize, then paste the resulting code back here.`
+                    : `Yaver started the remote ${runnerLabel(runner)} device-auth flow on this machine. Tap the link below, enter the code if prompted, and this dialog will turn green automatically.`}
                 </Text>
                 {session.openUrl ? (
                   <TouchableOpacity onPress={openAuthUrl} style={styles.urlButton}>
@@ -221,46 +271,46 @@ export default function RunnerAuthModal({
 
                 {session.code ? (
                   <View style={styles.codeBox}>
-                    <Text style={styles.codeLabel}>Enter this code (Codex)</Text>
+                    <Text style={styles.codeLabel}>Enter this code</Text>
                     <Text style={styles.codeValue}>{session.code}</Text>
                   </View>
                 ) : null}
 
-                <View style={styles.pasteBox}>
-                  <Text style={styles.pasteLabel}>Paste the code from {runnerLabel(runner)}</Text>
-                  <Text style={styles.pasteHint}>
-                    {(runner === "claude" || runner === "claude-code")
-                      ? "After clicking Authorize on platform.claude.com, copy the code from the callback page and paste it here."
-                      : runner === "codex"
-                        ? "After signing into ChatGPT, copy the code shown after sign-in and paste it here."
-                        : "Copy the code shown by your browser after sign-in and paste it here."}
-                  </Text>
-                  <View style={styles.pasteRow}>
-                    <TextInput
-                      value={pasteCode}
-                      onChangeText={(t) => { setPasteCode(t); setSubmitError(null); }}
-                      placeholder="paste code here"
-                      placeholderTextColor="#64748b"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      spellCheck={false}
-                      style={styles.pasteInput}
-                    />
-                    <TouchableOpacity
-                      disabled={!pasteCode.trim() || submitting}
-                      onPress={submitCode}
-                      style={[styles.submitBtn, (!pasteCode.trim() || submitting) && styles.submitBtnDisabled]}
-                    >
-                      <Text style={styles.submitBtnText}>{submitting ? "…" : "Submit"}</Text>
-                    </TouchableOpacity>
+                {needsPasteCode ? (
+                  <View style={styles.pasteBox}>
+                    <Text style={styles.pasteLabel}>Paste the code from {runnerLabel(runner)}</Text>
+                    <Text style={styles.pasteHint}>
+                      After clicking Authorize on platform.claude.com, copy the code from the callback page and paste it here.
+                    </Text>
+                    <View style={styles.pasteRow}>
+                      <TextInput
+                        value={pasteCode}
+                        onChangeText={(t) => { setPasteCode(t); setSubmitError(null); }}
+                        placeholder="paste code here"
+                        placeholderTextColor="#64748b"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        spellCheck={false}
+                        style={styles.pasteInput}
+                      />
+                      <TouchableOpacity
+                        disabled={!pasteCode.trim() || submitting}
+                        onPress={submitCode}
+                        style={[styles.submitBtn, (!pasteCode.trim() || submitting) && styles.submitBtnDisabled]}
+                      >
+                        <Text style={styles.submitBtnText}>{submitting ? "…" : "Submit"}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    {submitError ? (
+                      <Text style={styles.submitError}>{submitError}</Text>
+                    ) : null}
                   </View>
-                  {submitError ? (
-                    <Text style={styles.submitError}>{submitError}</Text>
-                  ) : null}
-                </View>
+                ) : null}
 
                 <Text style={styles.footer}>
-                  This dialog auto-completes once the remote CLI confirms the token.
+                  {needsPasteCode
+                    ? "This dialog auto-completes once the remote CLI confirms the token."
+                    : "This dialog auto-completes once the remote CLI finishes the device-auth flow."}
                 </Text>
               </View>
             )}

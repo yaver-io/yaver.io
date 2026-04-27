@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -40,7 +41,10 @@ var mobileProjectCache struct {
 	projects  []MobileProject
 	scannedAt time.Time
 	scanning  bool
+	cancel    bool
 }
+
+var errStopMobileScan = errors.New("mobile project scan cancelled")
 
 // scanMobileProjects walks workspace roots looking for mobile projects.
 // Detects: pubspec.yaml (Flutter), package.json with expo/react-native,
@@ -82,7 +86,13 @@ func scanMobileProjects() []MobileProject {
 		}
 		seenRoot[root] = true
 
-		filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			mobileProjectCache.mu.RLock()
+			cancelled := mobileProjectCache.cancel
+			mobileProjectCache.mu.RUnlock()
+			if cancelled {
+				return errStopMobileScan
+			}
 			if err != nil {
 				return filepath.SkipDir
 			}
@@ -217,6 +227,10 @@ func scanMobileProjects() []MobileProject {
 			projects = append(projects, proj)
 			return nil
 		})
+		if errors.Is(err, errStopMobileScan) {
+			log.Printf("[mobile-scan] Scan cancelled while walking %s", root)
+			return projects
+		}
 	}
 
 	return projects
@@ -684,6 +698,7 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 		// Force re-scan
 		go func() {
 			mobileProjectCache.mu.Lock()
+			mobileProjectCache.cancel = false
 			mobileProjectCache.scanning = true
 			mobileProjectCache.mu.Unlock()
 
@@ -705,8 +720,21 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if r.Method == http.MethodDelete {
+		mobileProjectCache.mu.Lock()
+		wasScanning := mobileProjectCache.scanning
+		mobileProjectCache.cancel = true
+		mobileProjectCache.scanning = false
+		mobileProjectCache.mu.Unlock()
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"ok":      true,
+			"message": map[bool]string{true: "scan stop requested", false: "no scan was running"}[wasScanning],
+		})
+		return
+	}
+
 	if r.Method != http.MethodGet {
-		jsonError(w, http.StatusMethodNotAllowed, "use GET or POST")
+		jsonError(w, http.StatusMethodNotAllowed, "use GET, POST, or DELETE")
 		return
 	}
 
@@ -731,6 +759,7 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 	// No cache or stale — scan synchronously (first time), then cache
 	if projects == nil || len(projects) == 0 {
 		mobileProjectCache.mu.Lock()
+		mobileProjectCache.cancel = false
 		mobileProjectCache.scanning = true
 		mobileProjectCache.mu.Unlock()
 
@@ -749,6 +778,7 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 		// Stale cache — return stale data but trigger background refresh
 		go func() {
 			mobileProjectCache.mu.Lock()
+			mobileProjectCache.cancel = false
 			mobileProjectCache.scanning = true
 			mobileProjectCache.mu.Unlock()
 
