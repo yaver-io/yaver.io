@@ -31,22 +31,43 @@ jobs:
           # to the relay's bare IP/hostname.
           echo "RELAY_HOST=${{ secrets.RELAY_SSH_HOST }}" >> "$GITHUB_ENV"
 
-      - name: Pull creds from yaver-test-ephemeral
+      - name: Pull creds from yaver-test-ephemeral + user relay password from Convex
         env:
           HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
         run: |
           OUT=$(ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
               -o StrictHostKeyChecking=no \
               -o UserKnownHostsFile=/dev/null \
-              "root@$HETZNER_TEST_SERVER_IP" \
-              "for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do [ -f \$c ] && python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d.get(\"auth_token\",\"\"));print(d.get(\"cached_relay_password\",\"\"));print(d.get(\"device_id\",\"\"))' \$c && break; done")
+              "root@$HETZNER_TEST_SERVER_IP" "bash -s" <<'REMOTE'
+          set -uo pipefail
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            if [ -f "$c" ]; then
+              python3 -c "
+import json, sys, urllib.request
+d = json.load(open(sys.argv[1]))
+tok = d.get('auth_token', '')
+did = d.get('device_id', '')
+convex = d.get('convex_site_url', 'https://perceptive-minnow-557.eu-west-1.convex.site')
+# Fetch /settings to get the user's relay password
+req = urllib.request.Request(convex.rstrip('/') + '/settings', headers={'Authorization': 'Bearer ' + tok})
+with urllib.request.urlopen(req, timeout=10) as r:
+    s = json.load(r)
+print(tok)
+print(s.get('relayPassword', ''))
+print(did)
+" "$c"
+              break
+            fi
+          done
+          REMOTE
+          )
           TOKEN=$(echo "$OUT" | sed -n '1p')
           RP=$(echo "$OUT" | sed -n '2p')
           DID=$(echo "$OUT" | sed -n '3p')
+          echo "token_len=${#TOKEN} rp_len=${#RP} did=$DID"
           echo "TOKEN=$TOKEN" >> "$GITHUB_ENV"
           echo "RP=$RP" >> "$GITHUB_ENV"
           echo "DID=$DID" >> "$GITHUB_ENV"
-          echo "deviceId=$DID"
 
       - name: Probe relay /health for version
         run: |
