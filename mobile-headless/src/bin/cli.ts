@@ -13,7 +13,7 @@ import { MobileClient } from "../mobile-client.js";
 
 async function main() {
   const argv = minimist(process.argv.slice(2), {
-    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir", "bootstrap-secret", "mode"],
+    string: ["token", "email", "password", "device", "target", "platform", "data-dir", "tool", "preset", "parent-dir", "convex-url", "relay", "verb", "machine", "payload", "name", "template", "slug", "prompt", "base-url", "target-token", "on-conflict", "bundle-url", "module-name", "repo-url", "branch", "commit", "manifest-url", "workflow", "run-id", "provider", "out", "dir", "bootstrap-secret", "mode", "agent-url", "scheme", "flavor"],
     alias: { t: "token", d: "device" },
   });
 
@@ -28,6 +28,7 @@ async function main() {
     convexUrl: argv["convex-url"],
     authToken: argv.token,
     platform: (argv.platform as any) || undefined,
+    agentBaseUrl: argv["agent-url"] ?? process.env.YMH_AGENT_URL,
   });
 
   switch (command) {
@@ -101,6 +102,33 @@ async function main() {
         catch { die("--payload must be valid JSON"); }
       }
       out(await mobile.ops(String(verb), payload, String(machine)));
+      break;
+    }
+    case "monorepo":
+    case "monorepo-detect": {
+      // GET /projects/monorepo on the connected agent. --dir defaults to the
+      // agent's cwd. Useful in CI to verify a fixture/multi-app repo gets
+      // classified correctly. Requires --agent-url or `connect` first.
+      const dir = (argv as any).dir ?? rest[0];
+      const maxDepthRaw = (argv as any)["max-depth"];
+      const maxDepth = maxDepthRaw === undefined ? undefined : Number(maxDepthRaw);
+      out(await mobile.detectMonorepo(dir ? String(dir) : undefined, maxDepth));
+      break;
+    }
+    case "native-build": {
+      // POST /builds with platform=iosNative|androidNative|flutter.
+      const platform = (argv as any).platform ?? rest[0];
+      if (!platform) die("native-build needs --platform=iosNative|androidNative|flutter");
+      const target = (argv as any).target ?? "device";
+      const dir = (argv as any).dir;
+      const scheme = (argv as any).scheme;
+      const flavor = (argv as any).flavor;
+      out(await mobile.startNativeBuild(
+        String(platform) as "iosNative" | "androidNative" | "flutter",
+        String(target) as any,
+        dir ? String(dir) : undefined,
+        { scheme, flavor },
+      ));
       break;
     }
     case "connect": {
