@@ -52,7 +52,11 @@ on:
         default: true
 
 permissions:
-  contents: read
+  # write needed by package-feedback-unity (and the C-lib build)
+  # which `gh release upload` artifacts onto the release tag.
+  # Without this the upload step fails with HTTP 403:
+  # "Resource not accessible by integration".
+  contents: write
 
 jobs:
   publish-npm:
