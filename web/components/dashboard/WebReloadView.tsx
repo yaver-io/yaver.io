@@ -104,6 +104,42 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const taskStreamStopRef = useRef<(() => void) | null>(null);
   const taskPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Right-column layout. Console (logs) is what the user actually
+  // needs while debugging — start it expanded; fold Projects + Vibing
+  // so the console gets vertical room. The whole column is also
+  // drag-resizable on xl screens so the user can give more space
+  // either to the iframe or to the panels.
+  const [consoleExpanded, setConsoleExpanded] = useState(true);
+  const [projectsExpanded, setProjectsExpanded] = useState(false);
+  const [vibingExpanded, setVibingExpanded] = useState(false);
+  const [rightColumnWidth, setRightColumnWidth] = useState(320);
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const handleDividerDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragRef.current = { startX: e.clientX, startW: rightColumnWidth };
+      const onMove = (ev: MouseEvent) => {
+        if (!dragRef.current) return;
+        const dx = ev.clientX - dragRef.current.startX;
+        // Aside is on the right — drag right shrinks it, drag left grows it.
+        const next = Math.min(720, Math.max(240, dragRef.current.startW - dx));
+        setRightColumnWidth(next);
+      };
+      const onUp = () => {
+        dragRef.current = null;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [rightColumnWidth],
+  );
+
   const isConnected = connState === "connected" && !!connectedDevice;
   const needsAuth = !!connectedDevice?.needsAuth;
   const statusError = devStatus?.error || null;
@@ -962,9 +998,11 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
         </div>
       )}
 
-      {/* Split body */}
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="relative flex min-h-0 flex-col gap-2">
+      {/* Split body — flex on xl so the divider between iframe and
+          panels is drag-resizable. Below xl it stacks vertically and
+          the divider is hidden. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 xl:flex-row xl:gap-2">
+        <div className="relative flex min-h-0 flex-col gap-2 xl:flex-1 xl:min-w-0">
           {/* Recovery overlay — progress bar + streaming log. Absolute
               so it doesn't reflow the preview frame when it mounts. */}
           {(recovering || recoveryLog.length > 0 || recoveryProgress.active) ? (
@@ -1166,92 +1204,158 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
 
         </div>
 
-        {/* Right column — app selector + meta */}
-        <aside className="flex min-h-0 flex-col gap-3">
-          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">
-                {useProjectFallback ? "Projects" : "Web apps in workspace"}
-              </p>
-              <span className="text-[10px] text-surface-600">
-                {(useProjectFallback ? projects.length : apps.length) || 0} total
-              </span>
-            </div>
-            <div className="max-h-[15.5rem] overflow-auto pr-1">
-              {useProjectFallback ? (
-                <ScannedProjectSelector
-                  projects={projects}
-                  selectedProjectPath={selectedProjectPath}
-                  activeProjectPath={activeProject?.path ?? null}
-                  onSelect={setSelectedProjectPath}
-                  loading={projectsLoading}
-                  workspaceError={workspaceError}
-                />
-              ) : (
-                <WebAppSelector
-                  apps={apps}
-                  selectedApp={selectedApp}
-                  activeApp={activeApp}
-                  onSelect={setSelectedApp}
-                  loading={workspaceLoading}
-                  error={workspaceError}
-                />
-              )}
-            </div>
-          </div>
+        {/* Drag divider — only on xl, where the layout is side-by-side.
+            Drag left to give the panel column more room, drag right to
+            give the iframe more room. */}
+        <div
+          onMouseDown={handleDividerDragStart}
+          className="hidden xl:flex w-1.5 shrink-0 cursor-col-resize items-stretch justify-center bg-transparent hover:bg-indigo-500/40 active:bg-indigo-500/60 transition-colors group"
+          title="Drag to resize"
+        >
+          <div className="my-auto h-12 w-0.5 rounded bg-surface-800 group-hover:bg-indigo-400 transition-colors" />
+        </div>
 
-          <div className="flex min-h-0 flex-1 flex-col rounded-md border border-surface-800 bg-surface-900/40 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-surface-500">Vibing</p>
-              {activeTaskStream ? (
-                <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-surface-300">
-                  {activeTaskStream.status}
+        {/* Right column — Console (top, expanded) → Projects (folded)
+            → Vibing (folded). Width is drag-controlled on xl. */}
+        <aside
+          style={{ "--right-w": `${rightColumnWidth}px` } as React.CSSProperties}
+          className="flex min-h-0 flex-col gap-3 xl:w-[var(--right-w)] xl:flex-shrink-0"
+        >
+          {/* Console — primary debugging surface, starts expanded.
+              Stretches to fill remaining vertical space when expanded so
+              long log streams don't squish the rest of the column. */}
+          <div
+            className={`rounded-md border border-surface-800 bg-surface-900/40 ${
+              consoleExpanded ? "flex min-h-0 flex-1 flex-col p-3" : "p-2.5"
+            }`}
+          >
+            <button
+              onClick={() => setConsoleExpanded((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-widest text-surface-400 hover:text-surface-200"
+              title={consoleExpanded ? "Collapse" : "Expand"}
+            >
+              <span className="flex items-center gap-2">
+                <span>Console</span>
+                <span className="rounded bg-surface-800 px-1.5 py-0.5 text-[9px] normal-case tracking-normal text-surface-400">
+                  {logs.length}
                 </span>
-              ) : null}
-            </div>
-            <div className="mb-3 text-[11px] text-surface-500">
-              Send a repo-scoped task for the selected web app and keep the live output here.
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto rounded-md border border-surface-800 bg-surface-950/70 p-3">
-              {activeTaskStream ? (
-                <div className="space-y-2">
-                  <div className="text-[11px] font-semibold text-surface-100">{activeTaskStream.title}</div>
-                  <pre className="whitespace-pre-wrap font-mono text-[10px] leading-5 text-surface-300">
-                    {activeTaskStream.lines.length === 0 ? "(waiting for output…)" : activeTaskStream.lines.join("\n")}
-                  </pre>
-                </div>
-              ) : (
-                <div className="text-[11px] text-surface-500">Start a task and the runner stream will stay here.</div>
-              )}
-            </div>
-            <textarea
-              value={composer}
-              onChange={(event) => setComposer(event.target.value)}
-              placeholder="Fix the selected app, reload it here, and tell me the remote dev URL."
-              className="mt-3 min-h-28 w-full rounded-2xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 outline-none focus:border-indigo-500"
-            />
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="text-[11px] text-surface-500">
-                {selectedProject?.name || selectedApp || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
+              </span>
+              <span className="text-surface-500">{consoleExpanded ? "▾" : "▸"}</span>
+            </button>
+            {consoleExpanded ? (
+              <pre className="mt-2 min-h-0 flex-1 overflow-auto rounded-md border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
+                {logs.length === 0 ? "(waiting for events…)" : logs.join("\n")}
+              </pre>
+            ) : null}
+          </div>
+
+          {/* Projects / Web apps — folded by default. */}
+          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2.5">
+            <button
+              onClick={() => setProjectsExpanded((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-widest text-surface-400 hover:text-surface-200"
+              title={projectsExpanded ? "Collapse" : "Expand"}
+            >
+              <span className="flex items-center gap-2">
+                <span>{useProjectFallback ? "Projects" : "Web apps in workspace"}</span>
+                <span className="rounded bg-surface-800 px-1.5 py-0.5 text-[9px] normal-case tracking-normal text-surface-400">
+                  {(useProjectFallback ? projects.length : apps.length) || 0}
+                </span>
+                {(selectedProject?.name || selectedApp) ? (
+                  <span className="truncate normal-case tracking-normal text-[10px] text-indigo-300/80">
+                    · {selectedProject?.name || selectedApp}
+                  </span>
+                ) : null}
+              </span>
+              <span className="text-surface-500">{projectsExpanded ? "▾" : "▸"}</span>
+            </button>
+            {projectsExpanded ? (
+              <div className="mt-2 max-h-[15.5rem] overflow-auto pr-1">
+                {useProjectFallback ? (
+                  <ScannedProjectSelector
+                    projects={projects}
+                    selectedProjectPath={selectedProjectPath}
+                    activeProjectPath={activeProject?.path ?? null}
+                    onSelect={setSelectedProjectPath}
+                    loading={projectsLoading}
+                    workspaceError={workspaceError}
+                  />
+                ) : (
+                  <WebAppSelector
+                    apps={apps}
+                    selectedApp={selectedApp}
+                    activeApp={activeApp}
+                    onSelect={setSelectedApp}
+                    loading={workspaceLoading}
+                    error={workspaceError}
+                  />
+                )}
               </div>
-              <button
-                onClick={() => void handleSendPrompt()}
-                disabled={!composer.trim() || sending || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
-                className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
-              >
-                {sending ? "Sending…" : "Send"}
-              </button>
-            </div>
-            {sendStatus ? <div className="mt-2 text-[11px] text-surface-400">{sendStatus}</div> : null}
+            ) : null}
           </div>
 
-          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-3">
-            <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Console</p>
-            <pre className="max-h-52 overflow-auto rounded-md border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-400">
-              {logs.length === 0 ? "(waiting for events…)" : logs.join("\n")}
-            </pre>
+          {/* Vibing — folded by default. */}
+          <div
+            className={`rounded-md border border-surface-800 bg-surface-900/40 ${
+              vibingExpanded ? "flex min-h-0 flex-col p-3" : "p-2.5"
+            }`}
+          >
+            <button
+              onClick={() => setVibingExpanded((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-widest text-surface-400 hover:text-surface-200"
+              title={vibingExpanded ? "Collapse" : "Expand"}
+            >
+              <span className="flex items-center gap-2">
+                <span>Vibing</span>
+                {activeTaskStream ? (
+                  <span className="rounded-full border border-surface-700 bg-surface-950 px-2 py-0.5 text-[9px] normal-case tracking-[0.16em] text-surface-300">
+                    {activeTaskStream.status}
+                  </span>
+                ) : null}
+              </span>
+              <span className="text-surface-500">{vibingExpanded ? "▾" : "▸"}</span>
+            </button>
+            {vibingExpanded ? (
+              <>
+                <div className="mt-2 mb-3 text-[11px] text-surface-500">
+                  Send a repo-scoped task for the selected web app and keep the live output here.
+                </div>
+                <div className="min-h-0 max-h-64 overflow-auto rounded-md border border-surface-800 bg-surface-950/70 p-3">
+                  {activeTaskStream ? (
+                    <div className="space-y-2">
+                      <div className="text-[11px] font-semibold text-surface-100">{activeTaskStream.title}</div>
+                      <pre className="whitespace-pre-wrap font-mono text-[10px] leading-5 text-surface-300">
+                        {activeTaskStream.lines.length === 0 ? "(waiting for output…)" : activeTaskStream.lines.join("\n")}
+                      </pre>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-surface-500">Start a task and the runner stream will stay here.</div>
+                  )}
+                </div>
+                <textarea
+                  value={composer}
+                  onChange={(event) => setComposer(event.target.value)}
+                  placeholder="Fix the selected app, reload it here, and tell me the remote dev URL."
+                  className="mt-3 min-h-24 w-full rounded-2xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 outline-none focus:border-indigo-500"
+                />
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="text-[11px] text-surface-500">
+                    {selectedProject?.name || selectedApp || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
+                  </div>
+                  <button
+                    onClick={() => void handleSendPrompt()}
+                    disabled={!composer.trim() || sending || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
+                    className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
+                  >
+                    {sending ? "Sending…" : "Send"}
+                  </button>
+                </div>
+                {sendStatus ? <div className="mt-2 text-[11px] text-surface-400">{sendStatus}</div> : null}
+              </>
+            ) : null}
           </div>
 
+          {/* Running — kept as a small always-visible status footer. */}
           <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2 text-[11px]">
             <p className="text-[10px] uppercase tracking-widest text-surface-500">Running</p>
             <p className="mt-1 font-medium text-surface-100">

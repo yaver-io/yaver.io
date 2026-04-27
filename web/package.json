@@ -1,6 +1,6 @@
 {
   "name": "yaver-web",
-  "version": "1.1.89",
+  "version": "1.1.90",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
