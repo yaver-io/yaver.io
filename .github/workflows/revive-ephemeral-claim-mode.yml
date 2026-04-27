@@ -75,13 +75,49 @@ jobs:
           id yaver >/dev/null 2>&1 || useradd -m yaver
           install -d -o yaver -g yaver -m 0700 /home/yaver/.yaver
 
-          # Claim-mode config: relay creds + Convex URL only. No
-          # auth_token, no device_id (agent generates one on start).
-          python3 - "$RELAY_PW" "$CONVEX_URL" <<'PY'
+          # Preserve the box's previously-registered device_id if a
+          # backup of config.json still exists. Without this the
+          # bootstrap-mode agent mints a fresh UUID and Convex still
+          # has the old deviceId in its records — dashboard would
+          # never see the box under the new id. We grep the
+          # /home/yaver/.yaver/config.json.bak (created on factory-
+          # reset prior to v1.99.58, plus any historical copies) for
+          # a deviceId pattern. Falls back to "" on first run.
+          OLD_DEVICE_ID=""
+          for cand in /home/yaver/.yaver/config.json.bak /home/yaver/.yaver/config.json /var/log/yaver/last-device-id /tmp/yaver-last-device-id; do
+            if [ -f "$cand" ]; then
+              if id=$(python3 -c '
+import json, sys
+try:
+  with open(sys.argv[1]) as f: print(json.load(f).get("device_id",""))
+except Exception: pass
+' "$cand" 2>/dev/null) && [ -n "$id" ]; then
+                OLD_DEVICE_ID="$id"
+                echo "Found old device_id $id from $cand"
+                break
+              fi
+            fi
+          done
+          # The yaver-test-ephemeral box's canonical device_id is
+          # also recorded in CLAUDE.md / earlier diagnostics. Hard-
+          # code as a last-resort fallback so we don't lose the
+          # dashboard's view of this specific test box.
+          if [ -z "$OLD_DEVICE_ID" ]; then
+            OLD_DEVICE_ID="fc30be6e-f87a-4e52-b340-fbad1ba1800e"
+            echo "Using known test-ephemeral device_id $OLD_DEVICE_ID"
+          fi
+
+          # Claim-mode config: relay creds + Convex URL + preserved
+          # device_id. No auth_token (that's the whole point of
+          # claim mode). The agent boots in bootstrap, registers the
+          # tunnel under THIS device_id, and the dashboard sees the
+          # same device row come back online with needsAuth=true.
+          python3 - "$RELAY_PW" "$CONVEX_URL" "$OLD_DEVICE_ID" <<'PY'
           import json, os, sys
-          relay_pw, convex_url = sys.argv[1], sys.argv[2]
+          relay_pw, convex_url, device_id = sys.argv[1], sys.argv[2], sys.argv[3]
           cfg = {
             "convex_site_url": convex_url,
+            "device_id": device_id,
             "relay_servers": [
               {
                 "id": "public-free",
