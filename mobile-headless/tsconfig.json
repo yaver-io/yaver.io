@@ -20,6 +20,7 @@
       "react-native-udp": ["./src/shims/react-native-udp.ts"],
       "@react-native-async-storage/async-storage": ["./src/shims/async-storage.ts"],
       "expo-secure-store": ["./src/shims/expo-secure-store.ts"],
+      "expo-file-system": ["./src/shims/expo-file-system.ts"],
       "expo-device": ["./src/shims/expo-device.ts"],
       "expo-constants": ["./src/shims/expo-constants.ts"],
       "expo-application": ["./src/shims/expo-application.ts"],
