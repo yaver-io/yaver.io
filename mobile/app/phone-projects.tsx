@@ -44,6 +44,98 @@ type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
 type GitMode = "skip" | "later" | "providers-now";
 type CodingMode = "phone" | "runner";
 type MobileAiProvider = "openai" | "glm";
+type GitProvider = "github" | "gitlab";
+type RepoVisibility = "private" | "public";
+
+// Survey is the optional Step 3. Questions are intentionally short
+// + multiple-choice so the user can finish in 30 s on a phone, and
+// each answer maps to a paragraph that gets concatenated into the
+// description prompt sent to the LLM. Skipping the survey is a
+// first-class option — if the user just types a description, the
+// flow still works.
+type SurveyAnswers = {
+  platform?: "web" | "mobile" | "both";
+  audience?: "myself" | "friends" | "customers" | "public";
+  auth?: "none" | "apple" | "google" | "email";
+  persistence?: "persist" | "ephemeral";
+  theme?: "minimal" | "playful" | "professional";
+};
+
+const SURVEY_QUESTIONS: Array<{
+  key: keyof SurveyAnswers;
+  title: string;
+  options: Array<{ value: string; label: string; sub?: string }>;
+}> = [
+  {
+    key: "platform",
+    title: "Where will it run?",
+    options: [
+      { value: "web", label: "Web only", sub: "Browser, no app store" },
+      { value: "mobile", label: "Mobile only", sub: "iOS + Android" },
+      { value: "both", label: "Web and mobile", sub: "Both ship together" },
+    ],
+  },
+  {
+    key: "audience",
+    title: "Who's the user?",
+    options: [
+      { value: "myself", label: "Just me", sub: "Personal tool" },
+      { value: "friends", label: "Friends or team", sub: "Small group" },
+      { value: "customers", label: "Paying customers", sub: "Public + billing" },
+      { value: "public", label: "Anyone", sub: "Public, free" },
+    ],
+  },
+  {
+    key: "auth",
+    title: "How do users sign in?",
+    options: [
+      { value: "none", label: "No sign-in", sub: "Anonymous use" },
+      { value: "apple", label: "Apple", sub: "Sign in with Apple" },
+      { value: "google", label: "Google", sub: "Sign in with Google" },
+      { value: "email", label: "Email + password", sub: "Classic" },
+    ],
+  },
+  {
+    key: "persistence",
+    title: "Does it save data between sessions?",
+    options: [
+      { value: "persist", label: "Yes, remember everything", sub: "DB-backed" },
+      { value: "ephemeral", label: "No, ephemeral only", sub: "Resets on reload" },
+    ],
+  },
+  {
+    key: "theme",
+    title: "Visual style?",
+    options: [
+      { value: "minimal", label: "Clean & minimal", sub: "Functional" },
+      { value: "playful", label: "Playful & colorful", sub: "Game-like" },
+      { value: "professional", label: "Professional & dark", sub: "Pro tool" },
+    ],
+  },
+];
+
+function buildSurveyParagraph(answers: SurveyAnswers): string {
+  if (!answers || Object.keys(answers).length === 0) return "";
+  const lines: string[] = [];
+  if (answers.platform) {
+    lines.push(`Target: ${answers.platform === "both" ? "web + mobile" : answers.platform}`);
+  }
+  if (answers.audience) {
+    lines.push(`Users: ${answers.audience}`);
+  }
+  if (answers.auth) {
+    lines.push(`Auth: ${answers.auth === "none" ? "none / anonymous" : answers.auth}`);
+  }
+  if (answers.persistence) {
+    lines.push(
+      `Data: ${answers.persistence === "persist" ? "persist between sessions" : "ephemeral, no DB"}`,
+    );
+  }
+  if (answers.theme) {
+    lines.push(`Style: ${answers.theme}`);
+  }
+  return lines.length > 0 ? `[Survey]\n${lines.join("\n")}\n` : "";
+}
 
 const YAVER_CLOUD_BASE = getYaverCloudBaseUrl();
 
@@ -94,6 +186,26 @@ export default function PhoneProjectsScreen() {
   const [glmKey, setGlmKey] = useState("");
 
   const [startMode, setStartMode] = useState<StartMode>("this-phone");
+  // Step 1 — Git config (optional). gitMode === "skip" means the
+  // user explicitly bypassed git setup; in that case the
+  // gitProvider/repoVisibility/repoName fields are ignored at create
+  // time. Repo name auto-fills from the slug of the project name so
+  // the user rarely has to type it.
+  const [gitProvider, setGitProvider] = useState<GitProvider>("github");
+  const [repoVisibility, setRepoVisibility] = useState<RepoVisibility>("private");
+  const [repoName, setRepoName] = useState<string>("");
+  const repoNameSlug = useMemo(() => {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }, [name]);
+  // Step 3 — Survey (skippable). When skipped, surveyAnswers stays
+  // empty and the description prompt is the user's text alone.
+  const [surveyIndex, setSurveyIndex] = useState(0);
+  const [surveySkipped, setSurveySkipped] = useState(false);
+  const [surveyAnswers, setSurveyAnswers] = useState<SurveyAnswers>({});
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
@@ -247,7 +359,14 @@ export default function PhoneProjectsScreen() {
       Alert.alert("Phone Backend", "Project name is required");
       return;
     }
-    const effectivePrompt = mergeImportedConversationPrompt(prompt, importedConversation);
+    // Survey answers (when not skipped) get prepended to the prompt
+    // as a structured "[Survey]\nKey: value\n…" header so the LLM
+    // wrapper has both the user's prose AND the multiple-choice
+    // intent in one blob.
+    const surveyParagraph = surveySkipped ? "" : buildSurveyParagraph(surveyAnswers);
+    const effectivePrompt = surveyParagraph
+      ? `${surveyParagraph}\n${mergeImportedConversationPrompt(prompt, importedConversation)}`
+      : mergeImportedConversationPrompt(prompt, importedConversation);
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
     if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey) {
       Alert.alert(
@@ -347,6 +466,10 @@ export default function PhoneProjectsScreen() {
       setImportedConversation("");
       setRunner(availableRunners[0]?.runnerId ?? "");
       setGitMode("skip");
+      setRepoName("");
+      setSurveyAnswers({});
+      setSurveyIndex(0);
+      setSurveySkipped(false);
       setStep(0);
       setShowForm(false);
       await load();
@@ -426,15 +549,21 @@ export default function PhoneProjectsScreen() {
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
             <Text style={[styles.stepTitle, { color: c.textPrimary }]}>
-              {["Name your app", "Describe the app", "Who will code?", "Where should it live?", "Git setup"][step]}
+              {[
+                "1. Name your app",
+                "2. Git (optional)",
+                "3. Who will code?",
+                "4. Quick survey (optional)",
+                "5. Describe the app",
+              ][step]}
             </Text>
             <Text style={[styles.stepSubtitle, { color: c.textMuted }]}>
               {[
-                "Start with a short project name.",
-                "Add a short brief and pick a starting template.",
-                "Choose phone-side kickoff or a remote runner.",
-                "Pick the backend location for the sandbox.",
-                "Git is optional. Connect it now or skip it.",
+                "A short project name. We slugify it for git, paths, and the SQLite file.",
+                "GitHub or GitLab, public or private. You can skip — Yaver works without git.",
+                "Phone-side LLM (BYOK) or a remote Yaver runner you've signed in.",
+                "Five quick multiple-choice questions. Skip if you'd rather just type.",
+                "Required. Tell Yaver what you're building, in your own words.",
               ][step]}
             </Text>
             <View style={styles.stepDots}>
@@ -469,82 +598,111 @@ export default function PhoneProjectsScreen() {
 
             {step === 1 ? (
               <>
-                <Text style={[styles.label, { color: c.textMuted }]}>Describe the app</Text>
-                <TextInput
-                  value={prompt}
-                  onChangeText={setPrompt}
-                  placeholder={`Tell Yaver what you're building, conversationally. A few prompts that help:
-
-  • Is this web only, mobile only, or both?
-  • What's the one thing a user does first?
-  • Who's the user — yourself, friends, paying customers?
-  • Any auth (Apple / Google / email) or just open?
-  • Any data the app needs to remember between sessions?
-
-You can keep it short. Example: "Web + iOS chess app where two friends play on the same board, no login, games persist for 24 h."`}
-                  placeholderTextColor={c.textMuted}
-                  multiline
-                  style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
-                />
-                <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Template</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingTop: 6 }}>
-                  {templates.map((t) => (
-                    <Pressable
-                      key={t.id}
-                      onPress={() => setTemplate(t.id)}
-                      style={[
-                        styles.choiceCard,
-                        {
-                          width: 168,
-                          marginRight: 10,
-                          backgroundColor: template === t.id ? c.accent + "18" : c.bg,
-                          borderColor: template === t.id ? c.accent : c.border,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{t.label}</Text>
-                      <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={3}>
-                        {t.description}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-                <View style={[styles.importCard, { backgroundColor: c.bg, borderColor: c.border }]}>
-                  <Text style={[styles.label, { color: c.textMuted }]}>Add conversation or share URL (optional)</Text>
-                  <TextInput
-                    value={importedConversation}
-                    onChangeText={setImportedConversation}
-                    placeholder="Optional: paste a Claude/ChatGPT/Codex share URL or copied conversation."
-                    placeholderTextColor={c.textMuted}
-                    multiline
-                    style={[styles.input, styles.importInput, { color: c.textPrimary, borderColor: c.border }]}
-                  />
-                  {importedBrief ? (
-                    <View style={styles.importMetaRow}>
-                      <View style={[styles.importPill, { backgroundColor: c.accent + "18", borderColor: c.accent + "33" }]}>
-                        <Text style={[styles.importPillText, { color: c.textPrimary }]}>{importedBrief.sourceLabel}</Text>
-                      </View>
-                      <Text style={[styles.muted, { color: c.textMuted, flex: 1 }]}>
-                        {importedBrief.title || `${importedBrief.charCount} chars imported`}
-                      </Text>
-                    </View>
-                  ) : (
-                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-                      Start with just your own app brief, or add a conversation/share URL if you want Yaver to infer the technical plan from it.
-                    </Text>
-                  )}
-                  <Pressable
-                    onPress={() => void applyImportedConversation()}
-                    disabled={analyzingImport}
-                    style={[styles.btnSecondary, { borderColor: c.border, marginTop: 10, opacity: analyzingImport ? 0.6 : 1 }]}
-                  >
-                    {analyzingImport ? (
-                      <ActivityIndicator color={c.textPrimary} />
-                    ) : (
-                      <Text style={[styles.btnText, { color: c.textPrimary }]}>Analyze thread and generate technical plan</Text>
-                    )}
-                  </Pressable>
+                {/* Git is optional. Skip path sets gitMode === "skip"
+                 * and the create() flow ignores the provider /
+                 * visibility / repo-name fields. The reasoned default
+                 * is GitHub + private, which is what most solo
+                 * developers want. */}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 4 }}>
+                  {[
+                    { id: "skip" as GitMode, label: "Skip git" },
+                    { id: "providers-now" as GitMode, label: "Configure now" },
+                  ].map((opt) => {
+                    const active = gitMode === opt.id;
+                    return (
+                      <Pressable
+                        key={opt.id}
+                        onPress={() => setGitMode(opt.id)}
+                        style={[
+                          styles.modeChip,
+                          {
+                            backgroundColor: active ? c.accent : c.bgCard,
+                            borderColor: active ? c.accent : c.border,
+                            flex: 1,
+                          },
+                        ]}
+                      >
+                        <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600", textAlign: "center" }}>
+                          {opt.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
+                {gitMode !== "skip" ? (
+                  <>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 14 }]}>Provider</Text>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {([
+                        { id: "github" as GitProvider, label: "GitHub" },
+                        { id: "gitlab" as GitProvider, label: "GitLab" },
+                      ]).map((opt) => {
+                        const active = gitProvider === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            onPress={() => setGitProvider(opt.id)}
+                            style={[
+                              styles.modeChip,
+                              {
+                                backgroundColor: active ? c.accent : c.bgCard,
+                                borderColor: active ? c.accent : c.border,
+                                flex: 1,
+                              },
+                            ]}
+                          >
+                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600", textAlign: "center" }}>
+                              {opt.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Visibility</Text>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      {([
+                        { id: "private" as RepoVisibility, label: "Private", sub: "Only you" },
+                        { id: "public" as RepoVisibility, label: "Public", sub: "Anyone can read" },
+                      ]).map((opt) => {
+                        const active = repoVisibility === opt.id;
+                        return (
+                          <Pressable
+                            key={opt.id}
+                            onPress={() => setRepoVisibility(opt.id)}
+                            style={[
+                              styles.choiceCard,
+                              {
+                                backgroundColor: active ? c.accent + "22" : "transparent",
+                                borderColor: active ? c.accent : c.border,
+                                flex: 1,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                            <Text style={[styles.muted, { color: c.textMuted }]}>{opt.sub}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Repo name</Text>
+                    <TextInput
+                      value={repoName || repoNameSlug}
+                      onChangeText={setRepoName}
+                      placeholder={repoNameSlug || "my-app"}
+                      placeholderTextColor={c.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                    />
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                      Defaults to {repoNameSlug || "the slug of your project name"}. Leave blank to use that.
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={[styles.muted, { color: c.textMuted, marginTop: 12 }]}>
+                    No git for now. You can connect a provider later from the project's Git tab.
+                  </Text>
+                )}
               </>
             ) : null}
 
@@ -669,107 +827,140 @@ You can keep it short. Example: "Web + iOS chess app where two friends play on t
             ) : null}
 
             {step === 3 ? (
+              // Survey is optional and one-question-at-a-time. The
+              // surveyIndex tracks which question is shown; the user
+              // can skip from any point. surveyAnswers are
+              // concatenated into the description prompt at create
+              // time via buildSurveyParagraph(). When surveySkipped
+              // is true we render a "Survey skipped" hint and the
+              // Next button just advances to the description step.
               <>
-                <Text style={[styles.label, { color: c.textMuted }]}>Where should it live?</Text>
-                {(
-                  [
-                    {
-                      id: "this-phone" as StartMode,
-                      label: "This phone",
-                      sub: "Local SQLite sandbox",
-                    },
-                    {
-                      id: "current-agent" as StartMode,
-                      label: "Current Yaver Agent",
-                      sub: activeDevice?.name || "Connected agent",
-                      disabled: !connected,
-                    },
-                    {
-                      id: "dev-hw" as StartMode,
-                      label: "Your dev machine",
-                      sub: selectedDevMachine ? selectedDevMachine.name : "Pick a paired machine",
-                      disabled: !connected || devMachines.length === 0,
-                      onLongPress: pickDevMachine,
-                    },
-                    ...(canUseYaverCloud
-                      ? [{
-                          id: "yaver-cloud" as StartMode,
-                          label: "Yaver Cloud",
-                          sub: canUseCloudPreview ? "Private preview" : "Managed machine",
-                          disabled: !connected,
-                        }]
-                      : []),
-                  ] as const
-                ).map((opt) => (
-                  <Pressable
-                    key={opt.id}
-                    onPress={() => {
-                      if ((opt as any).disabled) {
-                        (opt as any).onLongPress?.();
-                        return;
-                      }
-                      setStartMode(opt.id);
-                      if (opt.id === "dev-hw" && devMachines.length > 1) {
-                        pickDevMachine();
-                      }
-                    }}
-                    onLongPress={(opt as any).onLongPress}
-                    style={[
-                      styles.choiceCard,
-                      {
-                        backgroundColor: startMode === opt.id ? c.accent + "22" : "transparent",
-                        borderColor: startMode === opt.id ? c.accent : c.border,
-                        opacity: (opt as any).disabled ? 0.5 : 1,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
-                    <Text style={[styles.muted, { color: c.textMuted }]} numberOfLines={1}>{opt.sub}</Text>
-                  </Pressable>
-                ))}
-                <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-                  Phone-first works immediately. Agent, machine, and cloud targets can take over later for remote coding, app runs/tests on a dev box, and live mobile viewing of that box.
-                </Text>
+                {!surveySkipped && surveyIndex < SURVEY_QUESTIONS.length ? (
+                  <>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+                      <Text style={[styles.label, { color: c.textMuted }]}>
+                        Question {surveyIndex + 1} of {SURVEY_QUESTIONS.length}
+                      </Text>
+                      <Pressable onPress={() => setSurveySkipped(true)}>
+                        <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Skip survey</Text>
+                      </Pressable>
+                    </View>
+                    <Text style={[styles.stepTitle, { color: c.textPrimary, marginBottom: 8 }]}>
+                      {SURVEY_QUESTIONS[surveyIndex].title}
+                    </Text>
+                    {SURVEY_QUESTIONS[surveyIndex].options.map((opt) => {
+                      const key = SURVEY_QUESTIONS[surveyIndex].key;
+                      const active = (surveyAnswers as any)[key] === opt.value;
+                      return (
+                        <Pressable
+                          key={opt.value}
+                          onPress={() => {
+                            // Record + auto-advance. Last question
+                            // doesn't auto-advance; the user has to
+                            // tap Next so they can review.
+                            setSurveyAnswers((prev) => ({ ...prev, [key]: opt.value as any }));
+                            if (surveyIndex < SURVEY_QUESTIONS.length - 1) {
+                              setSurveyIndex(surveyIndex + 1);
+                            }
+                          }}
+                          style={[
+                            styles.choiceCard,
+                            {
+                              backgroundColor: active ? c.accent + "22" : "transparent",
+                              borderColor: active ? c.accent : c.border,
+                            },
+                          ]}
+                        >
+                          <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
+                          {opt.sub ? (
+                            <Text style={[styles.muted, { color: c.textMuted }]}>{opt.sub}</Text>
+                          ) : null}
+                        </Pressable>
+                      );
+                    })}
+                    {surveyIndex > 0 ? (
+                      <Pressable
+                        onPress={() => setSurveyIndex(Math.max(0, surveyIndex - 1))}
+                        style={{ marginTop: 8 }}
+                      >
+                        <Text style={{ color: c.textMuted, fontSize: 12 }}>← Previous question</Text>
+                      </Pressable>
+                    ) : null}
+                  </>
+                ) : (
+                  <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                    <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
+                      {surveySkipped ? "Survey skipped" : "Survey done"}
+                    </Text>
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                      {surveySkipped
+                        ? "No survey answers will be added to your prompt."
+                        : "Your answers will be folded into the description as a header on the next step."}
+                    </Text>
+                    {!surveySkipped ? (
+                      <Pressable
+                        onPress={() => setSurveyIndex(0)}
+                        style={{ marginTop: 8 }}
+                      >
+                        <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Edit answers</Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        onPress={() => {
+                          setSurveySkipped(false);
+                          setSurveyIndex(0);
+                        }}
+                        style={{ marginTop: 8 }}
+                      >
+                        <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Take the survey</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                )}
               </>
             ) : null}
 
             {step === 4 ? (
+              // Description is mandatory — the create() flow gates on
+              // a non-empty prompt OR a non-empty importedConversation
+              // brief, so the user can't ship a no-context skeleton.
+              // Survey answers (if taken) appear above the textarea
+              // as a plain-text recap, and get prepended to the
+              // prompt at submit time via buildSurveyParagraph().
               <>
-                <Text style={[styles.label, { color: c.textMuted }]}>Git</Text>
-                {(
-                  [
-                    { id: "skip" as GitMode, label: "Skip Git", sub: "Create the sandbox first" },
-                    { id: "later" as GitMode, label: "Later", sub: "Connect providers when ready" },
-                    { id: "providers-now" as GitMode, label: "Connect now", sub: "Open Git Providers after create", disabled: !connected },
-                  ] as const
-                ).map((opt) => (
-                  <Pressable
-                    key={opt.id}
-                    onPress={() => !(opt as any).disabled && setGitMode(opt.id)}
-                    style={[
-                      styles.choiceCard,
-                      {
-                        backgroundColor: gitMode === opt.id ? c.accent + "22" : "transparent",
-                        borderColor: gitMode === opt.id ? c.accent : c.border,
-                        opacity: (opt as any).disabled ? 0.5 : 1,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.templateLabel, { color: c.textPrimary }]}>{opt.label}</Text>
-                    <Text style={[styles.muted, { color: c.textMuted }]}>{opt.sub}</Text>
-                  </Pressable>
-                ))}
-                <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border }]}>
+                {!surveySkipped && Object.keys(surveyAnswers).length > 0 ? (
+                  <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginBottom: 12 }]}>
+                    <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>From your survey</Text>
+                    <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                      {buildSurveyParagraph(surveyAnswers).replace(/^\[Survey\]\n/, "")}
+                    </Text>
+                  </View>
+                ) : null}
+                <Text style={[styles.label, { color: c.textMuted }]}>Describe the app *</Text>
+                <TextInput
+                  value={prompt}
+                  onChangeText={setPrompt}
+                  placeholder={`Tell Yaver what you're building, in your own words. Required.
+
+Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter code into the same URL and play. Persistent across reloads for 24 h. No accounts. Looks playful and colourful."`}
+                  placeholderTextColor={c.textMuted}
+                  multiline
+                  style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border, minHeight: 180 }]}
+                />
+                <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
+                  Yaver will use this (plus the survey, if you took it) to draft the schema, seed data, and a starter UI.
+                </Text>
+                <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
                   <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>Ready to create</Text>
                   <Text style={[styles.muted, { color: c.textMuted }]}>
-                    {name.trim() || "Untitled"} · {codingMode === "phone" ? "Phone AI" : "Remote runner"} ·{" "}
-                    {startMode === "this-phone"
-                      ? "This phone"
-                      : startMode === "current-agent"
-                        ? "Current agent"
-                        : startMode === "dev-hw"
-                          ? (selectedDevMachine?.name || "Dev machine")
-                          : "Yaver Cloud"}
+                    {name.trim() || "Untitled"} ·{" "}
+                    {gitMode === "skip"
+                      ? "no git"
+                      : `${gitProvider} (${repoVisibility})`} ·{" "}
+                    {codingMode === "phone" ? `Phone AI (${mobileAiProvider.toUpperCase()})` : "Remote runner"} ·{" "}
+                    {surveySkipped || Object.keys(surveyAnswers).length === 0
+                      ? "no survey"
+                      : `${Object.keys(surveyAnswers).length}-Q survey`}
                   </Text>
                 </View>
               </>
@@ -788,26 +979,49 @@ You can keep it short. Example: "Web + iOS chess app where two friends play on t
               >
                 <Text style={[styles.btnText, { color: c.textPrimary }]}>{step === 0 ? "Cancel" : "Back"}</Text>
               </Pressable>
-              {step < 4 ? (
-                <Pressable
-                  onPress={() => setStep((prev) => Math.min(4, prev + 1))}
-                  style={[styles.btn, { backgroundColor: c.accent, flex: 1 }]}
-                >
-                  <Text style={[styles.btnText, { color: c.bg }]}>Next</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  onPress={create}
-                  disabled={creating}
-                  style={[styles.btn, { backgroundColor: c.accent, flex: 1, opacity: creating ? 0.6 : 1 }]}
-                >
-                  {creating ? (
-                    <ActivityIndicator color={c.bg} />
-                  ) : (
-                    <Text style={[styles.btnText, { color: c.bg }]}>Create</Text>
-                  )}
-                </Pressable>
-              )}
+              {step < 4 ? (() => {
+                // Per-step validation. Mandatory steps: 0 (name) and
+                // 4 (description, gated separately on the Create
+                // button). 1 (git), 2 (LLM placement), 3 (survey)
+                // all have safe defaults so Next is always
+                // available there.
+                const nameOk = name.trim().length > 0;
+                const canAdvance = step === 0 ? nameOk : true;
+                return (
+                  <Pressable
+                    disabled={!canAdvance}
+                    onPress={() => setStep((prev) => Math.min(4, prev + 1))}
+                    style={[
+                      styles.btn,
+                      { backgroundColor: c.accent, flex: 1, opacity: canAdvance ? 1 : 0.4 },
+                    ]}
+                  >
+                    <Text style={[styles.btnText, { color: c.bg }]}>
+                      {!canAdvance && step === 0 ? "Name required" : "Next"}
+                    </Text>
+                  </Pressable>
+                );
+              })() : (() => {
+                const descOk = prompt.trim().length > 0;
+                return (
+                  <Pressable
+                    onPress={create}
+                    disabled={creating || !descOk}
+                    style={[
+                      styles.btn,
+                      { backgroundColor: c.accent, flex: 1, opacity: creating || !descOk ? 0.4 : 1 },
+                    ]}
+                  >
+                    {creating ? (
+                      <ActivityIndicator color={c.bg} />
+                    ) : (
+                      <Text style={[styles.btnText, { color: c.bg }]}>
+                        {!descOk ? "Description required" : "Create"}
+                      </Text>
+                    )}
+                  </Pressable>
+                );
+              })()}
             </View>
           </View>
         )}
