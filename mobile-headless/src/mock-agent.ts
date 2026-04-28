@@ -22,12 +22,35 @@ export interface MockAgentHandle {
    *              agent to die first
    */
   setBuildNativeMode: (mode: "ok" | "hang" | "fail" | "slow", slowMs?: number) => void;
+  /**
+   * Switch /dev/stop behaviour at runtime so tests can exercise the
+   * Stop-UX state machine in mobile/web without spinning a real agent.
+   *
+   *   "verified"      — agent 1.99.93+ shape: ok=true, verified=true,
+   *                     buildsCancelled=N (default 0). The mobile UI
+   *                     should show the green "Dev server stopped" pill.
+   *   "not-verified"  — ok=true but verified=false (subprocess didn't
+   *                     confirm exit within 7s). Mobile UI should show
+   *                     the red ⚠ "Stop incomplete" pill.
+   *   "fail"          — non-2xx with an error body. Mobile UI should
+   *                     fall back to the error pill with the message.
+   *   "legacy"        — pre-1.99.93 shape (no verified / buildsCancelled
+   *                     fields). Mobile UI should still treat the call
+   *                     as success and show the green pill.
+   */
+  setStopMode: (
+    mode: "verified" | "not-verified" | "fail" | "legacy",
+    opts?: { buildsCancelled?: number; message?: string },
+  ) => void;
 }
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
   let buildNativeMode: "ok" | "hang" | "fail" | "slow" = "ok";
   let buildNativeSlowMs = 0;
+  let stopMode: "verified" | "not-verified" | "fail" | "legacy" = "verified";
+  let stopBuildsCancelled = 0;
+  let stopMessage = "";
   // Track in-flight "hang" responses so we can release them on close —
   // otherwise server.close() blocks forever waiting for them and the
   // test's afterAll hangs.
@@ -211,6 +234,52 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
         message: `queued: ${String(body.prompt || "").slice(0, 80)}`,
       });
     }
+    if (path === "/dev/stop" && req.method === "POST") {
+      // Drain body for connection hygiene, even though /dev/stop ignores it.
+      for await (const chunk of req) { void chunk; }
+      switch (stopMode) {
+        case "fail":
+          return json(500, {
+            ok: false,
+            stoppedServing: false,
+            error: stopMessage || "mock: stop failed",
+          });
+        case "not-verified":
+          return json(200, {
+            ok: false,
+            stoppedServing: true,
+            previouslyServing: true,
+            verified: false,
+            buildsCancelled: stopBuildsCancelled,
+            framework: "expo",
+            workDir: "/mock/sfmg",
+            message:
+              stopMessage ||
+              "Dev server failed to stop within 7s — subprocess may still be running.",
+          });
+        case "legacy":
+          return json(200, {
+            ok: true,
+            stoppedServing: true,
+            previouslyServing: true,
+            framework: "expo",
+            workDir: "/mock/sfmg",
+            message: "Stopped serving the active preview.",
+          });
+        case "verified":
+        default:
+          return json(200, {
+            ok: true,
+            stoppedServing: true,
+            previouslyServing: true,
+            verified: true,
+            buildsCancelled: stopBuildsCancelled,
+            framework: "expo",
+            workDir: "/mock/sfmg",
+            message: "Stopped serving the active preview.",
+          });
+      }
+    }
     if (path === "/dev/build-native" && req.method === "POST") {
       // Drain the request body so the connection is half-closed correctly.
       const chunks: Buffer[] = [];
@@ -342,6 +411,11 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
     setBuildNativeMode: (mode, slowMs) => {
       buildNativeMode = mode;
       buildNativeSlowMs = slowMs ?? 0;
+    },
+    setStopMode: (mode, opts) => {
+      stopMode = mode;
+      stopBuildsCancelled = opts?.buildsCancelled ?? 0;
+      stopMessage = opts?.message ?? "";
     },
   };
 }

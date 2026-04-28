@@ -4934,8 +4934,21 @@ export class QuicClient {
     return () => ctrl.abort();
   }
 
-  /** Stop serving the active preview/dev server. */
-  async stopDevServer(): Promise<{ ok?: boolean; stoppedServing?: boolean; previouslyServing?: boolean; message?: string; error?: string } | null> {
+  /** Stop serving the active preview/dev server.
+   *  Agent (1.99.93+) returns `verified` (true once subprocess is down)
+   *  and `buildsCancelled` (count of in-flight Hermes builds aborted).
+   *  Older agents just return `{ok, stoppedServing, previouslyServing}`. */
+  async stopDevServer(): Promise<{
+    ok?: boolean;
+    stoppedServing?: boolean;
+    previouslyServing?: boolean;
+    verified?: boolean;
+    buildsCancelled?: number;
+    framework?: string;
+    workDir?: string;
+    message?: string;
+    error?: string;
+  } | null> {
     try {
       const res = await fetch(`${this.baseUrl}/dev/stop`, {
         method: "POST",

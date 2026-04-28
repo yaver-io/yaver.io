@@ -74,6 +74,14 @@ export default function HotReloadScreen() {
   const [reloadIncidents, setReloadIncidents] = useState<IncidentEvent[]>([]);
   const [reloadOperations, setReloadOperations] = useState<OperationState[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  // Stop UX state: "idle" → "stopping" (after Stop tapped) → "stopped" (post
+  // /dev/stop with verified=true). Snaps back to "idle" after a 2s success
+  // banner so the user gets a clear "agent really stopped" confirmation
+  // without a permanent extra UI element. "error" surfaces when the agent
+  // returns ok=false (e.g. subprocess didn't die within 7s).
+  const [stopState, setStopState] = useState<"idle" | "stopping" | "stopped" | "error">("idle");
+  const [stopMessage, setStopMessage] = useState<string>("");
+  const [stopBuildsCancelled, setStopBuildsCancelled] = useState<number>(0);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
 
@@ -302,8 +310,39 @@ export default function HotReloadScreen() {
       { text: "Cancel", style: "cancel" },
       {
         text: "Stop", style: "destructive", onPress: async () => {
-          await quicClient.stopDevServer();
+          // Optimistic "Stopping…" pill so the user sees the agent is
+          // working immediately. The card stays visible during this
+          // window — no flicker into the project list and back out.
+          setStopState("stopping");
+          setStopMessage("");
+          setStopBuildsCancelled(0);
+          const res = await quicClient.stopDevServer();
           setDevStatus(null);
+          if (!res || res.ok === false) {
+            setStopState("error");
+            setStopMessage(res?.error || res?.message || "Stop failed — check agent logs.");
+            // Auto-dismiss the error banner after 5s so it doesn't pin
+            // forever and confuse the next interaction.
+            setTimeout(() => setStopState("idle"), 5000);
+            return;
+          }
+          // Successful stop. agent 1.99.93+ returns verified + buildsCancelled.
+          // Surface buildsCancelled when >0 so the user knows the in-flight
+          // Hermes build was actually aborted (not just the dev server).
+          setStopState("stopped");
+          setStopBuildsCancelled(res.buildsCancelled || 0);
+          if (res.verified === false) {
+            setStopMessage("Sent SIGINT + SIGKILL but subprocess didn't confirm exit in 7s.");
+            setStopState("error");
+            setTimeout(() => setStopState("idle"), 5000);
+            return;
+          }
+          // 2s success banner, then back to idle.
+          setTimeout(() => {
+            setStopState("idle");
+            setStopMessage("");
+            setStopBuildsCancelled(0);
+          }, 2000);
         }
       },
     ]);
@@ -597,9 +636,57 @@ export default function HotReloadScreen() {
                   <Text style={s.reloadBtnText}>Retry</Text>
                 </Pressable>
               )}
-              <Pressable style={[s.actionBtn, s.stopBtn]} onPress={handleStop}>
-                <Text style={s.stopBtnText}>Stop</Text>
+              <Pressable
+                style={[s.actionBtn, s.stopBtn, stopState === "stopping" && { opacity: 0.6 }]}
+                onPress={handleStop}
+                disabled={stopState === "stopping"}
+              >
+                {stopState === "stopping" ? (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    <ActivityIndicator size="small" color="#fff" />
+                    <Text style={s.stopBtnText}>Stopping…</Text>
+                  </View>
+                ) : (
+                  <Text style={s.stopBtnText}>Stop</Text>
+                )}
               </Pressable>
+            </View>
+          </View>
+        )}
+
+        {/* Stop confirmation banner — surfaces "agent really stopped"
+            after /dev/stop returns verified=true. Stays visible 2s, then
+            self-dismisses. The card above this is gone (devStatus=null
+            optimistic), so this banner is the only post-stop signal —
+            without it the user has no idea whether the agent honored
+            the request. */}
+        {(stopState === "stopped" || stopState === "error") && (
+          <View
+            style={{
+              marginHorizontal: 16,
+              marginTop: 12,
+              padding: 12,
+              borderRadius: 10,
+              borderWidth: StyleSheet.hairlineWidth,
+              backgroundColor: stopState === "stopped" ? "#0f3a1f" : "#3a1f1f",
+              borderColor: stopState === "stopped" ? "#16a34a" : "#dc2626",
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <Text style={{ fontSize: 18 }}>{stopState === "stopped" ? "✓" : "⚠"}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>
+                {stopState === "stopped" ? "Dev server stopped" : "Stop incomplete"}
+              </Text>
+              <Text style={{ color: "#cbd5e1", fontSize: 11, marginTop: 2 }}>
+                {stopState === "stopped"
+                  ? stopBuildsCancelled > 0
+                    ? `Subprocess confirmed exit. Cancelled ${stopBuildsCancelled} in-flight build${stopBuildsCancelled === 1 ? "" : "s"}.`
+                    : "Subprocess confirmed exit. Tap a project to start again."
+                  : stopMessage}
+              </Text>
             </View>
           </View>
         )}

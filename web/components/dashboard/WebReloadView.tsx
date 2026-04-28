@@ -59,6 +59,13 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const [recovering, setRecovering] = useState(false);
   const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
   const [recoveryProgress, setRecoveryProgress] = useState<{ pct: number; stage: string; active: boolean }>({ pct: 0, stage: "", active: false });
+  // Stop UX state — drives the "Stopping…" / "Stopped ✓" feedback after
+  // /dev/stop. agent 1.99.93+ returns verified + buildsCancelled so we
+  // can show the user the agent really stopped, not just "the request
+  // was acknowledged". Banner self-dismisses after 2.5s.
+  const [stopState, setStopState] = useState<"idle" | "stopping" | "stopped" | "error">("idle");
+  const [stopMessage, setStopMessage] = useState("");
+  const [stopBuildsCancelled, setStopBuildsCancelled] = useState(0);
   // Sibling Expo Web preview — spawned on demand so RN/Expo projects
   // can render in the browser iframe without touching Metro (which
   // keeps serving Hermes bundles to the phone). Status.webPort is
@@ -430,11 +437,38 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   };
 
   const handleStop = async () => {
+    setStopState("stopping");
+    setStopMessage("");
+    setStopBuildsCancelled(0);
     try {
-      await agentClient.stopDevServer();
+      const res: any = await agentClient.stopDevServer();
       const s = await agentClient.getDevServerStatus();
       setDevStatus(s);
-    } catch { /* surface via polling */ }
+      if (!res || res.ok === false) {
+        setStopState("error");
+        setStopMessage(res?.error || res?.message || "Stop failed — check agent logs.");
+        setTimeout(() => setStopState("idle"), 5000);
+        return;
+      }
+      // verified=false means SIGINT+SIGKILL didn't confirm exit in 7s.
+      if (res.verified === false) {
+        setStopState("error");
+        setStopMessage("Subprocess did not confirm exit within 7s. The agent issued SIGKILL.");
+        setTimeout(() => setStopState("idle"), 5000);
+        return;
+      }
+      setStopBuildsCancelled(res.buildsCancelled || 0);
+      setStopState("stopped");
+      setTimeout(() => {
+        setStopState("idle");
+        setStopMessage("");
+        setStopBuildsCancelled(0);
+      }, 2500);
+    } catch (err) {
+      setStopState("error");
+      setStopMessage(err instanceof Error ? err.message : "Stop request failed.");
+      setTimeout(() => setStopState("idle"), 5000);
+    }
   };
 
   // Stop the active dev server and immediately start the currently
@@ -1013,10 +1047,18 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               )}
               <button
                 onClick={handleStop}
-                className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/20"
-                title="Stop serving this preview and return to the project picker"
+                disabled={stopState === "stopping"}
+                className="rounded border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/20 disabled:opacity-60 disabled:cursor-wait"
+                title="Stop serving this preview, cancel any in-flight Hermes build, and clear stale incidents"
               >
-                {devStatus?.stopActionLabel || "Stop & switch"}
+                {stopState === "stopping" ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 animate-spin rounded-full border border-red-200/40 border-t-red-200" />
+                    Stopping…
+                  </span>
+                ) : (
+                  devStatus?.stopActionLabel || "Stop & switch"
+                )}
               </button>
             </>
           ) : (
@@ -1035,16 +1077,47 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
               {(devStatus?.workDir || statusError) && (
                 <button
                   onClick={handleStop}
-                  className="rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/15"
+                  disabled={stopState === "stopping"}
+                  className="rounded border border-red-500/40 bg-red-500/5 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/15 disabled:opacity-60 disabled:cursor-wait"
                   title="Force-stop any dev server the agent might still be running"
                 >
-                  Force Stop
+                  {stopState === "stopping" ? "Stopping…" : "Force Stop"}
                 </button>
               )}
             </>
           )}
         </div>
       </div>
+
+      {/* Stop confirmation banner — gives the user explicit feedback that
+          the agent really stopped (not just that the request was sent).
+          Only renders for 2.5s on success, or until the next attempt /
+          5s on error. agent 1.99.93+ provides verified + buildsCancelled
+          fields; older agents fall back to a generic success message. */}
+      {(stopState === "stopped" || stopState === "error") && (
+        <div
+          className={`flex items-start gap-2 rounded-md border px-3 py-2 text-[11px] ${
+            stopState === "stopped"
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/50 bg-red-500/10 text-red-200"
+          }`}
+          role="status"
+        >
+          <span className="text-[14px] leading-none">{stopState === "stopped" ? "✓" : "⚠"}</span>
+          <div className="flex-1">
+            <div className="font-medium">
+              {stopState === "stopped" ? "Dev server stopped" : "Stop incomplete"}
+            </div>
+            <div className="text-surface-300/90">
+              {stopState === "stopped"
+                ? stopBuildsCancelled > 0
+                  ? `Subprocess confirmed exit. Cancelled ${stopBuildsCancelled} in-flight build${stopBuildsCancelled === 1 ? "" : "s"}. Stale build incidents cleared.`
+                  : "Subprocess confirmed exit. Stale build incidents cleared."
+                : stopMessage || "Stop did not complete. Try Force Stop, or check agent logs."}
+            </div>
+          </div>
+        </div>
+      )}
 
       {needsAuth && (
         <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">

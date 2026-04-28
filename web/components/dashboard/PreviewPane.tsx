@@ -170,6 +170,12 @@ export default function PreviewPane({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
   const [recoveryLog, setRecoveryLog] = useState<string[]>([]);
+  // Stop UX state — same shape as the mobile/web hot-reload tab. Drives
+  // the "Stopping…" pill on the button + a 2.5s success/error banner so
+  // the user has visible confirmation that /dev/stop verified=true.
+  const [stopState, setStopState] = useState<"idle" | "stopping" | "stopped" | "error">("idle");
+  const [stopMessage, setStopMessage] = useState("");
+  const [stopBuildsCancelled, setStopBuildsCancelled] = useState(0);
   // Dev-server boot/recovery progress, mirrored from the same
   // /dev/events SSE stream the mobile app consumes. The heuristic
   // (keyword → percent) matches mobile/app/(tabs)/apps.tsx so the two
@@ -1031,14 +1037,46 @@ export default function PreviewPane({
   }, [devStatus?.framework]);
 
   const handleStop = useCallback(async () => {
+    setStopState("stopping");
+    setStopMessage("");
+    setStopBuildsCancelled(0);
     setLogLines((prev) => [...prev.slice(-200), `[ui] ▶ Stop & switch — sending POST /dev/stop…`]);
     try {
-      await agentClient.stopDevServer();
-      setLogLines((prev) => [...prev.slice(-200), `[ui] ✓ /dev/stop accepted; dev server torn down`]);
+      const res: any = await agentClient.stopDevServer();
+      setDevStatus(null);
+      if (!res || res.ok === false) {
+        const msg = res?.error || res?.message || "Stop failed.";
+        setStopState("error");
+        setStopMessage(msg);
+        setLogLines((prev) => [...prev.slice(-200), `[ui] ✗ /dev/stop failed: ${msg}`]);
+        setTimeout(() => setStopState("idle"), 5000);
+        return;
+      }
+      if (res.verified === false) {
+        setStopState("error");
+        setStopMessage("Subprocess didn't confirm exit within 7s (agent issued SIGKILL).");
+        setLogLines((prev) => [...prev.slice(-200), `[ui] ⚠ /dev/stop returned verified=false`]);
+        setTimeout(() => setStopState("idle"), 5000);
+        return;
+      }
+      setStopBuildsCancelled(res.buildsCancelled || 0);
+      setStopState("stopped");
+      setLogLines((prev) => [
+        ...prev.slice(-200),
+        `[ui] ✓ /dev/stop verified · ${res.buildsCancelled || 0} build(s) cancelled`,
+      ]);
+      setTimeout(() => {
+        setStopState("idle");
+        setStopMessage("");
+        setStopBuildsCancelled(0);
+      }, 2500);
     } catch (e: any) {
+      setStopState("error");
+      setStopMessage(e?.message ?? String(e));
       setLogLines((prev) => [...prev.slice(-200), `[ui] ✗ /dev/stop failed: ${e?.message ?? e}`]);
+      setDevStatus(null);
+      setTimeout(() => setStopState("idle"), 5000);
     }
-    setDevStatus(null);
   }, []);
 
   const handleRequestScreenshot = useCallback(async () => {
@@ -1298,14 +1336,45 @@ export default function PreviewPane({
             </button>
             <button
               onClick={handleStop}
-              className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20"
-              title="Stop the dev server and return to the project picker"
+              disabled={stopState === "stopping"}
+              className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20 disabled:opacity-60 disabled:cursor-wait"
+              title="Stop the dev server, cancel any in-flight Hermes build, clear stale incidents"
             >
-              ■ Stop & switch
+              {stopState === "stopping" ? (
+                <span className="inline-flex items-center gap-1">
+                  <span className="h-2 w-2 animate-spin rounded-full border border-red-200/40 border-t-red-200" />
+                  Stopping…
+                </span>
+              ) : (
+                "■ Stop & switch"
+              )}
             </button>
           </>
         ) : null}
       </div>
+
+      {/* Post-stop banner — explicit confirmation that the agent verified
+          the subprocess exited (or surfaced a problem). Self-dismisses
+          on success. agent 1.99.93+ provides verified + buildsCancelled. */}
+      {(stopState === "stopped" || stopState === "error") && (
+        <div
+          className={`flex items-start gap-2 border-b px-3 py-1.5 text-[10px] ${
+            stopState === "stopped"
+              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
+              : "border-red-500/30 bg-red-500/5 text-red-200"
+          }`}
+          role="status"
+        >
+          <span className="font-mono leading-none">{stopState === "stopped" ? "✓" : "⚠"}</span>
+          <span className="flex-1">
+            {stopState === "stopped"
+              ? stopBuildsCancelled > 0
+                ? `Dev server stopped — subprocess confirmed exit. Cancelled ${stopBuildsCancelled} in-flight build${stopBuildsCancelled === 1 ? "" : "s"}.`
+                : "Dev server stopped — subprocess confirmed exit."
+              : stopMessage || "Stop did not complete."}
+          </span>
+        </div>
+      )}
 
       {previewError ? (
         <div className="flex items-start gap-2 border-b border-red-500/20 bg-red-500/5 px-3 py-1.5 text-[10px] text-red-300">

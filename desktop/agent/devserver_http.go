@@ -20,10 +20,66 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/mod/semver"
 )
+
+// activeBuildRegistry tracks in-flight /dev/build-native builds so /dev/stop
+// can cancel them. Keyed by workDir+platform so concurrent builds for
+// different projects don't collide. Calling the handle's cancel kills the
+// bundler subprocess via exec.CommandContext and unblocks the request.
+type activeBuildHandle struct {
+	cancel context.CancelFunc
+}
+
+var (
+	activeBuildsMu sync.Mutex
+	activeBuilds   = map[string]*activeBuildHandle{}
+)
+
+func activeBuildKey(workDir, platform string) string {
+	return strings.TrimSpace(workDir) + "\x00" + strings.TrimSpace(platform)
+}
+
+// registerActiveBuild stores cancel so /dev/stop can call it. Returns a
+// release func to remove the entry on normal completion. If a previous build
+// for the same (workDir, platform) is still registered (e.g. mobile retried
+// before the prior request returned), it gets cancelled first.
+func registerActiveBuild(workDir, platform string, cancel context.CancelFunc) func() {
+	h := &activeBuildHandle{cancel: cancel}
+	key := activeBuildKey(workDir, platform)
+	activeBuildsMu.Lock()
+	if prev, ok := activeBuilds[key]; ok && prev != nil && prev.cancel != nil {
+		prev.cancel()
+	}
+	activeBuilds[key] = h
+	activeBuildsMu.Unlock()
+	return func() {
+		activeBuildsMu.Lock()
+		if cur, ok := activeBuilds[key]; ok && cur == h {
+			delete(activeBuilds, key)
+		}
+		activeBuildsMu.Unlock()
+	}
+}
+
+// cancelAllActiveBuilds cancels every registered build and clears the
+// registry. Returns the number of builds cancelled.
+func cancelAllActiveBuilds() int {
+	activeBuildsMu.Lock()
+	defer activeBuildsMu.Unlock()
+	n := 0
+	for k, h := range activeBuilds {
+		if h != nil && h.cancel != nil {
+			h.cancel()
+			n++
+		}
+		delete(activeBuilds, k)
+	}
+	return n
+}
 
 type nativeBuildStatus struct {
 	State         string `json:"state"`
@@ -783,23 +839,39 @@ func (s *HTTPServer) handleDevServerStatus(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *HTTPServer) stopServingPreviewResult() map[string]interface{} {
+	// An explicit user Stop should always (a) cancel in-flight Hermes
+	// builds, (b) tear down the dev server, (c) clear outstanding
+	// build/reload incidents so the UI doesn't keep showing a stale
+	// "current blocker" pill, and (d) verify the server is really
+	// down before returning.
+	cancelledBuilds := cancelAllActiveBuilds()
+
 	if s.devServerMgr == nil {
 		return map[string]interface{}{
 			"ok":                false,
 			"stoppedServing":    false,
 			"previouslyServing": false,
+			"buildsCancelled":   cancelledBuilds,
 			"message":           "Dev server manager not available.",
 		}
 	}
+
 	status := s.devServerMgr.Status()
 	if status == nil || !status.Running {
+		// Even if no dev server is running, the user clicked Stop —
+		// resolve any open build incidents so the UI returns to a
+		// clean idle state.
+		s.resolveOpenDevIncidents("", "")
 		return map[string]interface{}{
 			"ok":                true,
 			"stoppedServing":    false,
 			"previouslyServing": false,
+			"buildsCancelled":   cancelledBuilds,
 			"message":           "Nothing is being served right now.",
+			"verified":          true,
 		}
 	}
+
 	result := map[string]interface{}{
 		"ok":                true,
 		"stoppedServing":    true,
@@ -807,14 +879,92 @@ func (s *HTTPServer) stopServingPreviewResult() map[string]interface{} {
 		"framework":         status.Framework,
 		"kind":              status.Kind,
 		"workDir":           status.WorkDir,
+		"buildsCancelled":   cancelledBuilds,
 		"message":           "Stopped serving the active preview.",
 	}
+	stoppedWorkDir := status.WorkDir
 	if err := s.devServerMgr.Stop(); err != nil {
 		result["ok"] = false
 		result["stoppedServing"] = false
 		result["message"] = err.Error()
+		return result
 	}
+
+	// Verify the manager really has no active server. Stop() is
+	// SIGINT → 5s wait → SIGKILL inside baseDevServer.Stop, so this
+	// loop is effectively waiting for the post-kill state flip; in
+	// practice it returns immediately. Bounded so a misbehaving
+	// subprocess can't pin the request open forever.
+	deadline := time.Now().Add(7 * time.Second)
+	verified := false
+	for time.Now().Before(deadline) {
+		st := s.devServerMgr.Status()
+		if st == nil || !st.Running {
+			verified = true
+			break
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	result["verified"] = verified
+	if !verified {
+		result["ok"] = false
+		result["message"] = "Dev server failed to stop within 7s — subprocess may still be running. The agent issued SIGINT and SIGKILL."
+	}
+
+	// Clear any "Bundle validation failed" / "Bundle rebuild failed"
+	// incidents so the mobile + web UIs don't keep showing a stale red
+	// pill after the user has Stop'd. Pass empty (workDir, target) for
+	// the wildcard sweep — user-initiated Stop is "clean slate" intent,
+	// not "clear only this project". stoppedWorkDir is preserved here
+	// in case a future call site wants to do scoped resolution instead.
+	_ = stoppedWorkDir
+	s.resolveOpenDevIncidents("", "")
+
 	return result
+}
+
+// resolveOpenDevIncidents clears every open category=build /
+// category=reload incident with a recognised dev-server reason code.
+// If projectPath/target is non-empty the resolve is project-scoped via
+// ResolveOpenByKey (used by automatic post-build success). If both are
+// empty (the case for a user-initiated /dev/stop) we walk the full open
+// list and resolve every matching entry regardless of which project /
+// target it was opened against — explicit Stop = clean slate.
+func (s *HTTPServer) resolveOpenDevIncidents(projectPath, target string) {
+	store := GlobalIncidentStore()
+	if store == nil {
+		return
+	}
+	codes := map[string]string{
+		ReasonBuildNativeFailed:           "build",
+		ReasonBuildHermesFailed:           "build",
+		ReasonReloadDevServerUnavailable:  "reload",
+		ReasonReloadNativeRebuildRequired: "reload",
+		ReasonReloadPreviewWorkerOffline:  "reload",
+	}
+
+	scoped := strings.TrimSpace(projectPath) != "" || strings.TrimSpace(target) != ""
+	if scoped {
+		for code, category := range codes {
+			store.ResolveOpenByKey(IncidentKey{
+				Category:    category,
+				Code:        code,
+				ProjectPath: strings.TrimSpace(projectPath),
+				Target:      strings.TrimSpace(target),
+			}, "Cleared by user Stop.")
+		}
+		return
+	}
+
+	for _, ev := range store.List(IncidentFilter{IncludeResolved: false}) {
+		if _, ok := codes[ev.Code]; !ok {
+			continue
+		}
+		if ev.Resolved {
+			continue
+		}
+		store.Resolve(ev.ID, "Cleared by user Stop.")
+	}
 }
 
 // handleDevServerTarget gets or updates the preferred dev preview target.
@@ -2134,6 +2284,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// dedicated build_failed status to the mobile DevPreview / hot reload UI.
 	bundleCtx, bundleCancel := context.WithTimeout(r.Context(), bundleBuildTimeout)
 	defer bundleCancel()
+	// Register so /dev/stop can interrupt a hung Metro/expo subprocess
+	// without waiting for bundleBuildTimeout (8m default) to expire.
+	releaseActiveBuild := registerActiveBuild(workDir, req.Platform, bundleCancel)
+	defer releaseActiveBuild()
 	assetsDir := filepath.Join(buildDir, "assets")
 	var cmd *exec.Cmd
 	if isExpo {
@@ -2264,6 +2418,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// hang it; without this the /dev/build-native HTTP request would
 		// stay open indefinitely after a successful Metro bundle.
 		hermesCtx, hermesCancel := context.WithTimeout(r.Context(), hermesCompileTimeout)
+		// Re-register under the hermesc cancel so /dev/stop can also
+		// interrupt the compile phase, not just the Metro bundle phase.
+		releaseHermesBuild := registerActiveBuild(workDir, req.Platform, hermesCancel)
 		hermesCmd := exec.CommandContext(hermesCtx, hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
 		hermesCmd.Dir = workDir
 		hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
@@ -2272,6 +2429,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 		hermesErr := hermesCmd.Run()
 		hermesCancel()
+		releaseHermesBuild()
 		if err := hermesErr; err != nil {
 			if hermesCtx.Err() == context.DeadlineExceeded {
 				err = fmt.Errorf("hermesc timed out after %s (subprocess killed)", hermesCompileTimeout)
@@ -2339,6 +2497,21 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	meta.HermesRef = info.HermesRef
 	log.Printf("[super-host] bundle validated: %d bytes, MD5=%s, BC%d, module=%s",
 		meta.Size, meta.MD5, meta.HermesBCVersion, meta.ModuleName)
+
+	// A successful build clears any prior native-build / native-reload
+	// incidents for the same (deviceID, projectPath, target). Six different
+	// paths above can open a ReasonBuildNativeFailed incident (manifest
+	// missing, tools missing, deps missing, deps install failed, bundler
+	// error, validation failed); without this, a stale failure pill sticks
+	// in the mobile/web UI even after subsequent builds succeed.
+	resolveKey := IncidentKey{
+		Category:    "build",
+		Code:        ReasonBuildNativeFailed,
+		DeviceID:    strings.TrimSpace(target.DeviceID),
+		ProjectPath: strings.TrimSpace(workDir),
+		Target:      strings.TrimSpace(req.Platform),
+	}
+	GlobalIncidentStore().ResolveOpenByKey(resolveKey, "Native bundle build recovered.")
 
 	// Store metadata for the /dev/native-bundle endpoint to attach as header
 	s.devServerMgr.SetBundleMetadata(meta.JSON())

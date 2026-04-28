@@ -3599,6 +3599,10 @@ export class AgentClient {
     ok?: boolean;
     stoppedServing?: boolean;
     previouslyServing?: boolean;
+    /** agent 1.99.93+: true when the subprocess actually exited within 7s of SIGINT/SIGKILL. */
+    verified?: boolean;
+    /** agent 1.99.93+: number of in-flight /dev/build-native runs cancelled. */
+    buildsCancelled?: number;
     framework?: string;
     kind?: string;
     workDir?: string;
