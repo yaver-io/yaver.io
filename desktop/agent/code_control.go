@@ -134,8 +134,10 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 
 func slashMenuOptions(attached bool) []string {
 	options := []string{
-		"/auth codex",
+		"/auth yaver",
 		"/auth claude",
+		"/auth codex",
+		"/auth opencode",
 		"/sessions",
 		"/set orchestration manual",
 		"/fork <task-id> --agent opencode <prompt>",
@@ -346,8 +348,10 @@ Machine:
   yaver code get pc
 
 Auth:
+  yaver code auth yaver
   yaver code auth claude
   yaver code auth codex
+  yaver code auth opencode
   yaver code auth status <session-id>
   yaver code auth submit <session-id> <code>
   yaver code auth cancel <session-id>
@@ -452,7 +456,7 @@ type codeBrowserAuthResponse struct {
 
 func runCodeAuthControl(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yaver code auth <claude|codex|status|submit|cancel> ...")
+		return fmt.Errorf("usage: yaver code auth <yaver|claude|codex|opencode|status|submit|cancel> ...")
 	}
 	_, profile, err := loadCodeConfig()
 	if err != nil {
@@ -460,8 +464,18 @@ func runCodeAuthControl(args []string) error {
 	}
 	deviceID := codeAttachedDevice(profile)
 	switch normalizeRunnerAuthName(args[0]) {
+	case "yaver":
+		runAuth(args[1:])
+		return nil
 	case "claude", "codex":
 		return runCodeBrowserAuthFlow(deviceID, normalizeRunnerAuthName(args[0]))
+	case "opencode":
+		// opencode auth is BYOK — route to the runner-auth setup
+		// flow which writes API keys into the host vault and (when
+		// available) installs opencode + wires Yaver as an MCP
+		// server in opencode's config.
+		runRunnerAuthSetup(append([]string{"opencode"}, args[1:]...))
+		return nil
 	}
 	switch args[0] {
 	case "status":
@@ -496,7 +510,7 @@ func runCodeAuthControl(args []string) error {
 		printCodeBrowserAuthSession(sess)
 		return nil
 	default:
-		return fmt.Errorf("usage: yaver code auth <claude|codex|status|submit|cancel> ...")
+		return fmt.Errorf("usage: yaver code auth <yaver|claude|codex|opencode|status|submit|cancel> ...")
 	}
 }
 

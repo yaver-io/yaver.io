@@ -85,7 +85,7 @@ func (s *HTTPServer) infraSummary(ctx context.Context) InfraSummary {
 }
 
 // detectPackageManagers probes the PATH for package managers the AI
-// runner (claude-code / codex / aider) and the install catalogue can
+// runner (claude-code / codex / opencode) and the install catalogue can
 // use. Returned in priority order so the caller can pick the first
 // match. Kept tiny on purpose — distro-specific ones like `zypper` or
 // `emerge` can be added on demand, but every entry here has to map

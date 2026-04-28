@@ -367,8 +367,7 @@ think:
   runner: %s
   fallback:
     - codex
-    - aider
-    - ollama:qwen2.5-coder:32b
+    - opencode
   max_kicks_per_run: 2
   respect_session_limits: %s
   prompt_inline: |
@@ -633,7 +632,7 @@ func printAutodevPlan(p autodevPlan) {
 	} else {
 		fmt.Printf("  load:          %s (burst — competes with your interactive sessions)\n", p.Load)
 	}
-	fmt.Printf("  runner:        %s (falls back to codex → aider → ollama)\n", p.Runner)
+	fmt.Printf("  runner:        %s (falls back to codex → opencode)\n", p.Runner)
 	fmt.Printf("  branch:        %s\n", p.Branch)
 	fmt.Printf("  kick interval: %ds (multi-kick loop)\n", p.TickSleepSec)
 	fmt.Printf("  daily budget:  %d iterations (enforced even under --infinite)\n", p.MaxIterDay)
@@ -715,8 +714,7 @@ think:
   runner: %s
   fallback:
     - codex
-    - aider
-    - ollama:qwen2.5-coder:32b
+    - opencode
   max_kicks_per_run: 3
   respect_session_limits: %s
   prompt_inline: |
@@ -747,8 +745,7 @@ think:
   runner: %s
   fallback:
     - codex
-    - aider
-    - ollama:qwen2.5-coder:32b
+    - opencode
   max_kicks_per_run: 5
   respect_session_limits: %s
   prompt_inline: |
@@ -1419,7 +1416,7 @@ Defaults (zero-config — "yaver %s sfmg" just works):
   --hours 8             nightly sweet spot. Use --infinite for forever.
   --lite                respects Claude/Codex session windows (safe while you work).
                         Use --heavy to override.
-  runner=claude-code    falls back to codex → aider → ollama:qwen2.5-coder:32b.
+  runner=claude-code    falls back to codex → opencode.
   branch=main           commits land on main unless you pass --branch.
   deploy=auto           mobile repos default to testflight at the end.
 

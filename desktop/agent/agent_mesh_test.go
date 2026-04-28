@@ -105,7 +105,7 @@ func TestChooseNodePlacementPrefersLocalLLMWhenRequested(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "local-dev",
 		Kind:   AgentNodeAutodev,
-		Prompt: "Use ollama to do a local LLM coding pass",
+		Prompt: "Use opencode with local LLM (BYOK) for the coding pass",
 	}
 	machines := []MachineInfo{
 		{
@@ -113,7 +113,7 @@ func TestChooseNodePlacementPrefersLocalLLMWhenRequested(t *testing.T) {
 			Name:     "mac-mini",
 			IsOnline: true,
 			Capabilities: &MachineCapabilities{
-				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				Runners:          []MachineRunnerCapability{{ID: "opencode", Ready: true}},
 				SupportsLocalLLM: true,
 			},
 		},
@@ -131,8 +131,8 @@ func TestChooseNodePlacementPrefersLocalLLMWhenRequested(t *testing.T) {
 	if placement.DeviceID != "mac-mini" {
 		t.Fatalf("expected local-llm machine, got %q", placement.DeviceID)
 	}
-	if placement.Runner != "ollama" && placement.Runner != "aider-ollama" {
-		t.Fatalf("expected local runner, got %q", placement.Runner)
+	if placement.Runner != "opencode" {
+		t.Fatalf("expected opencode runner for BYOK local-LLM path, got %q", placement.Runner)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "local-dev",
 		Kind:   AgentNodeAutodev,
-		Prompt: "Use ollama to do a local LLM coding pass",
+		Prompt: "Use opencode with local LLM (BYOK) for the coding pass",
 	}
 	machines := []MachineInfo{
 		{
@@ -206,19 +206,20 @@ func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
 			Name:     "my-linux",
 			IsOnline: true,
 			Capabilities: &MachineCapabilities{
-				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				Runners:          []MachineRunnerCapability{{ID: "opencode", Ready: true}},
 				SupportsLocalLLM: true,
 			},
 		},
 		{
-			DeviceID:     "friends-mac",
-			Name:         "friends-mac",
-			IsOnline:     true,
-			IsShared:     true,
-			HostName:     "Alex",
-			PriorityMode: "spare-capacity",
+			DeviceID:                  "friends-mac",
+			Name:                      "friends-mac",
+			IsOnline:                  true,
+			IsShared:                  true,
+			HostName:                  "Alex",
+			PriorityMode:              "spare-capacity",
+			AllowGuestProvidedAPIKeys: true,
 			Capabilities: &MachineCapabilities{
-				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				Runners:          []MachineRunnerCapability{{ID: "opencode", Ready: true}},
 				SupportsLocalLLM: true,
 			},
 		},
@@ -242,22 +243,23 @@ func TestChooseNodePlacementFallsThroughToSharedWhenOwnSaturated(t *testing.T) {
 			Capabilities: &MachineCapabilities{
 				Hardware:         HardwareProfile{MaxParallel: 1},
 				MaxTaskSlots:     1,
-				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				Runners:          []MachineRunnerCapability{{ID: "opencode", Ready: true}},
 				SupportsLocalLLM: true,
 				LowPower:         true,
 			},
 		},
 		{
-			DeviceID:     "friends-mac",
-			Name:         "friends-mac",
-			IsOnline:     true,
-			IsShared:     true,
-			HostName:     "Alex",
-			PriorityMode: "spare-capacity",
+			DeviceID:                  "friends-mac",
+			Name:                      "friends-mac",
+			IsOnline:                  true,
+			IsShared:                  true,
+			HostName:                  "Alex",
+			PriorityMode:              "spare-capacity",
+			AllowGuestProvidedAPIKeys: true,
 			Capabilities: &MachineCapabilities{
 				Hardware:         HardwareProfile{MaxParallel: 8, RAM: 64 * 1024 * 1024 * 1024},
 				MaxTaskSlots:     4,
-				Runners:          []MachineRunnerCapability{{ID: "ollama", Ready: true}},
+				Runners:          []MachineRunnerCapability{{ID: "opencode", Ready: true}},
 				SupportsLocalLLM: true,
 			},
 		},
@@ -312,14 +314,12 @@ func TestChooseNodePlacementBlocksSharedWhenNoAPIKeyAccess(t *testing.T) {
 
 func TestRunnerNeedsHostedAPIKey(t *testing.T) {
 	cases := map[string]bool{
-		"claude-code":  true,
-		"claude":       true,
-		"codex":        true,
-		"opencode":     true,
-		"aider":        true,
-		"ollama":       false,
-		"aider-ollama": false,
-		"":             false,
+		"claude-code": true,
+		"claude":      true,
+		"codex":       true,
+		"opencode":    true,
+		"":            false,
+		"unknown":     false,
 	}
 	for runner, want := range cases {
 		if got := runnerNeedsHostedAPIKey(runner); got != want {

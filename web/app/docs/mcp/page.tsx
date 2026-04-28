@@ -230,12 +230,13 @@ export default function McpPage() {
         {/* ─── Section 3: Local MCP (stdio) ─── */}
         <section className="mb-20">
           <SectionHeading id="local-mcp">
-            Local MCP (stdio) &mdash; for Claude Desktop, Cursor, VS Code &amp; more
+            Local MCP (stdio) &mdash; for Claude Code, Codex &amp; opencode
           </SectionHeading>
           <Prose>
             The stdio transport runs Yaver as a local process that communicates
-            over standard input/output. This is the simplest setup for Claude
-            Desktop, Cursor, VS Code, Windsurf, Zed, and other local MCP clients.
+            over standard input/output. Yaver registers itself as an MCP server
+            inside its three first-class runner CLIs &mdash; Claude Code, Codex,
+            and opencode &mdash; so any of them can call Yaver tools directly.
           </Prose>
 
           <SubHeading>One-Command Setup</SubHeading>
@@ -245,23 +246,19 @@ export default function McpPage() {
 
           <div className="mb-8">
             <Terminal title="terminal">
-              <Cmd>yaver mcp setup claude</Cmd>
-              <Output>Added Yaver MCP server to Claude Desktop.</Output>
-              <Output>Config: ~/Library/Application Support/Claude/claude_desktop_config.json</Output>
-              <Output>Restart Claude Desktop to activate.</Output>
+              <Cmd>yaver mcp setup claude-code</Cmd>
+              <Output>Added Yaver to Claude Code user MCP config.</Output>
               <Divider />
-              <Comment>Also supports: cursor, vscode, windsurf, zed</Comment>
-              <Cmd>yaver mcp setup cursor</Cmd>
-              <Cmd>yaver mcp setup vscode</Cmd>
-              <Cmd>yaver mcp setup windsurf</Cmd>
-              <Cmd>yaver mcp setup zed</Cmd>
+              <Comment># Also: codex (Codex CLI), opencode (opencode)</Comment>
+              <Cmd>yaver mcp setup codex</Cmd>
+              <Cmd>yaver mcp setup opencode</Cmd>
             </Terminal>
           </div>
 
           <SubHeading>Manual Configuration</SubHeading>
           <Prose>
-            Or add the following to your{" "}
-            <InlineCode>claude_desktop_config.json</InlineCode> manually:
+            Or run the equivalent commands directly. Each runner has its own
+            config surface, but the JSON Yaver writes is shaped the same:
           </Prose>
 
           <div className="mb-8">
@@ -271,7 +268,7 @@ export default function McpPage() {
                 <div className="terminal-dot bg-[#febc2e]" />
                 <div className="terminal-dot bg-[#28c840]" />
                 <span className="ml-3 text-xs text-surface-500">
-                  claude_desktop_config.json
+                  yaver MCP server entry
                 </span>
               </div>
               <div className="terminal-body text-[13px] leading-relaxed">
@@ -292,26 +289,25 @@ export default function McpPage() {
           <div className="space-y-4">
             <div className="card">
               <h4 className="mb-2 text-sm font-medium text-surface-200">
-                Config file location
+                Where Yaver writes the entry
               </h4>
               <ul className="space-y-2 text-sm text-surface-400">
                 <li>
-                  &bull; macOS:{" "}
+                  &bull; Claude Code:{" "}
                   <InlineCode>
-                    ~/Library/Application
-                    Support/Claude/claude_desktop_config.json
+                    claude mcp add --scope user yaver -- yaver mcp
                   </InlineCode>
                 </li>
                 <li>
-                  &bull; Windows:{" "}
+                  &bull; Codex:{" "}
                   <InlineCode>
-                    %APPDATA%\Claude\claude_desktop_config.json
+                    codex mcp add yaver -- yaver mcp
                   </InlineCode>
                 </li>
                 <li>
-                  &bull; Linux:{" "}
+                  &bull; opencode:{" "}
                   <InlineCode>
-                    ~/.config/Claude/claude_desktop_config.json
+                    ~/.config/opencode/opencode.json &mdash; mcp.yaver
                   </InlineCode>
                 </li>
               </ul>
@@ -322,7 +318,7 @@ export default function McpPage() {
                 How it works
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
-                Claude Desktop launches <InlineCode>yaver mcp</InlineCode> as a
+                The runner CLI launches <InlineCode>yaver mcp</InlineCode> as a
                 child process. The MCP protocol runs over stdin/stdout using
                 JSON-RPC. No network ports are opened &mdash; everything stays
                 local.
@@ -395,10 +391,10 @@ export default function McpPage() {
           </SectionHeading>
           <Prose>
             Yaver exposes 473 tools through MCP, organized by category. AI
-            agents can discover and use these tools automatically. This means
-            Claude Code, Aider, Codex, or any MCP-compatible agent can manage
-            tasks, adopt tmux sessions, configure relay servers, and more &mdash;
-            programmatically.
+            agents can discover and use these tools automatically. Yaver's
+            three first-class runners (Claude Code, Codex, opencode) can
+            manage tasks, adopt tmux sessions, configure relay servers, and
+            more &mdash; programmatically.
           </Prose>
 
           <div className="space-y-4">

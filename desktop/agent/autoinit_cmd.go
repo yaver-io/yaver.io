@@ -133,8 +133,8 @@ func runAutoInit(args []string) {
 }
 
 // autoinitGenerate asks whichever AI runner the user has configured
-// (claude / codex / aider / ollama, picked by RunAIGenerator) to
-// read the project and emit a structured init.md body. We bracket
+// (claude / codex / opencode, picked by RunAIGenerator) to read the
+// project and emit a structured init.md body. We bracket
 // the AI-written portion with markers so the next regen can replace
 // it without touching the human-written prose between them.
 func autoinitGenerate(engine, runner, extraPrompt, project, outPath, wd string, force bool) error {
@@ -318,7 +318,7 @@ func autoinitContextBlock(workDir string) string {
 	read("Remaining work", "remained.md")
 
 	// Append a compact "what package managers exist on this host" line
-	// so runners like claude-code / codex / aider pick the right
+	// so runners like claude-code / codex / opencode pick the right
 	// install command instead of guessing. Cached because `exec.LookPath`
 	// across a dozen names costs <1ms on a warm box but we don't want
 	// to re-do it on every kick.

@@ -15,8 +15,7 @@ import { listGuests, type GuestInfo } from "../../src/lib/guests";
 const TOOL_META: Record<string, { emoji: string; tagline: string }> = {
   "claude-code": { emoji: "🤖", tagline: "Anthropic's CLI agent — the frontier-quality runner." },
   codex: { emoji: "🧠", tagline: "OpenAI Codex CLI — token-efficient daily driver." },
-  opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM, or free local Ollama." },
-  ollama: { emoji: "🦙", tagline: "Local LLM runtime — install on the dev box, then point OpenCode at it for free local coding." },
+  opencode: { emoji: "🪄", tagline: "Open-source coding agent — BYOK Anthropic / OpenAI / OpenRouter / GLM / Ollama, or any other provider." },
   docker: { emoji: "🐳", tagline: "Containerise tasks — required for guest isolation + sandbox mode." },
   node: { emoji: "🟢", tagline: "Node.js runtime — required for Expo, Vite, Next.js builds." },
   python: { emoji: "🐍", tagline: "Python 3 — required for ML tooling, some CLIs." },
@@ -165,8 +164,8 @@ export default function InfraScreen() {
 
   const machineOptions = useMemo(() => {
     // Only online peer agents (desktop-ish) are installable targets.
-    // Filter out edge-mobile (phones) because pushing `ollama` onto
-    // a phone is a recipe for 24-hour builds and tears.
+    // Filter out edge-mobile (phones) because installing the runner
+    // CLIs on a phone is a non-starter.
     const desktops = devices.filter(
       (d) => d.online && d.deviceClass !== "edge-mobile",
     );

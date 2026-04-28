@@ -10,15 +10,15 @@ func TestApplyAgentNodeExecutionPolicyRespectsAllowedRunners(t *testing.T) {
 		ID:             "chat",
 		Kind:           AgentNodeChat,
 		WorkDir:        t.TempDir(),
-		AllowedRunners: []string{"ollama", "codex"},
+		AllowedRunners: []string{"opencode", "codex"},
 	}
 	got := applyAgentNodeExecutionPolicy(node)
 	if got.Runner == "" {
 		t.Fatalf("expected a runner, got empty")
 	}
 	normalized := strings.ToLower(got.Runner)
-	if normalized != "ollama" && normalized != "codex" && normalized != "aider-ollama" {
-		t.Fatalf("runner %q escaped allowlist {ollama,codex}", got.Runner)
+	if normalized != "opencode" && normalized != "codex" {
+		t.Fatalf("runner %q escaped allowlist {opencode,codex}", got.Runner)
 	}
 	if got.Runner == "claude" || got.Runner == "claude-code" {
 		t.Fatalf("claude must not be picked when allowlist forbids it, got %q", got.Runner)
@@ -31,7 +31,7 @@ func TestApplyAgentNodeExecutionPolicyRespectsExplicitRunner(t *testing.T) {
 		Kind:           AgentNodeChat,
 		Runner:         "codex",
 		WorkDir:        t.TempDir(),
-		AllowedRunners: []string{"ollama"},
+		AllowedRunners: []string{"opencode"},
 	}
 	got := applyAgentNodeExecutionPolicy(node)
 	if got.Runner != "codex" {

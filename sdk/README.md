@@ -64,7 +64,7 @@ Connects to a Yaver agent's HTTP API on port 18080.
 ```typescript
 {
   model?: string;           // "sonnet", "opus", "haiku", "o3-mini"
-  runner?: string;          // "claude", "codex", "aider", "custom"
+  runner?: string;          // "claude", "codex", "opencode", "custom"
   customCommand?: string;   // arbitrary shell command (for runner="custom")
   speechContext?: {
     inputFromSpeech?: boolean;  // task was dictated

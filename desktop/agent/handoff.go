@@ -180,7 +180,7 @@ func resolveHandoffRunner(engine, runner string) (string, error) {
 		return "hybrid", nil
 	case "runner":
 		if runner == "" {
-			return "", fmt.Errorf("engine=runner requires --runner (e.g. aider, codex, ollama:qwen2.5-coder:14b)")
+			return "", fmt.Errorf("engine=runner requires --runner (e.g. claude-code, codex, opencode)")
 		}
 		return runner, nil
 	default:

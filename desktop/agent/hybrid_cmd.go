@@ -20,45 +20,36 @@ import (
 func runHybrid(args []string) {
 	fs := flag.NewFlagSet("hybrid", flag.ExitOnError)
 	var (
-		planner     = fs.String("planner", "claude", "planner runner ID (claude | codex | opencode | ...)")
-		implementer = fs.String("implementer", "aider-ollama", "implementer runner ID (aider-ollama | aider | ...)")
-		model       = fs.String("model", "", "override implementer model (e.g. ollama_chat/qwen2.5-coder:14b)")
-		baseURL     = fs.String("base-url", "", "override implementer base URL (e.g. http://host:11434)")
+		planner     = fs.String("planner", "claude", "planner runner ID (claude | codex | opencode)")
+		implementer = fs.String("implementer", "opencode", "implementer runner ID (claude | codex | opencode)")
+		model       = fs.String("model", "", "override implementer model (forwarded as --model)")
 		workDir     = fs.String("workdir", "", "project root (default: cwd)")
 		maxSubs     = fs.Int("max-subtasks", 20, "cap on subtasks the planner is allowed to emit")
 		timeout     = fs.Duration("timeout", 30*time.Minute, "overall run timeout")
 		jsonOut     = fs.Bool("json", false, "emit the full HybridReport as JSON")
-		checkOnly   = fs.Bool("check", false, "run preflight only (aider + ollama + model) and exit")
+		checkOnly   = fs.Bool("check", false, "run preflight only (planner + implementer binary check) and exit")
 	)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Usage:
   yaver hybrid [flags] "<feature prompt>"
 
-Plans with an expensive frontier model, implements with a cheap local one.
-The planner is asked to break the request into narrow, file-scoped subtasks
-the implementer can finish in one edit pass.
+Plans with one runner, implements with another. The planner is asked
+to break the request into narrow, file-scoped subtasks the implementer
+can finish in one edit pass. Both must be one of yaver's three
+first-class runners (claude, codex, opencode).
 
 Flags:`)
 		fs.PrintDefaults()
 		fmt.Fprintln(os.Stderr, `
 Example:
-  yaver hybrid --planner claude --implementer aider-ollama \
-    --model ollama_chat/qwen2.5-coder:14b \
+  yaver hybrid --planner claude --implementer opencode \
     "Add a Convex mutation to create a portfolio with starting cash"`)
 	}
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
 	}
 	if *checkOnly {
-		m := *model
-		if m == "" {
-			m = "ollama_chat/qwen2.5-coder:14b"
-		}
-		b := *baseURL
-		if b == "" {
-			b = "http://127.0.0.1:11434"
-		}
-		pf := checkHybrid(*implementer, m, b)
+		pf := checkHybrid(*planner, *implementer)
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(pf)
@@ -91,7 +82,6 @@ Example:
 		Planner:     *planner,
 		Implementer: *implementer,
 		Model:       *model,
-		BaseURL:     *baseURL,
 		WorkDir:     wd,
 		Prompt:      prompt,
 		MaxSubtasks: *maxSubs,

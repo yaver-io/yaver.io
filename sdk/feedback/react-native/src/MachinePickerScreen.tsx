@@ -120,8 +120,8 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
     // yellows from phone↔backend clock skew around the 89-90 s mark.
     //
     // `runnerDown` intentionally does NOT flip the dot. That flag
-    // tracks whether the AI runner (claude-code, aider, ...) is
-    // healthy — a separate concern from "can I reach this machine?"
+    // tracks whether the AI runner (claude-code / codex / opencode)
+    // is healthy — a separate concern from "can I reach this machine?"
     // Mobile app surfaces runner issues via a separate badge, not
     // this dot. Picker's job is reachability, nothing more.
     const effectivelyReachable = probe?.reachable === true;

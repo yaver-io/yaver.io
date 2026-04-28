@@ -26,7 +26,6 @@ type hybridRunRequest struct {
 	Planner                string `json:"planner,omitempty"`
 	Implementer            string `json:"implementer,omitempty"`
 	Model                  string `json:"model,omitempty"`
-	BaseURL                string `json:"baseUrl,omitempty"`
 	WorkDir                string `json:"workDir"`
 	Prompt                 string `json:"prompt"`
 	MaxSubtasks            int    `json:"maxSubtasks,omitempty"`
@@ -40,7 +39,6 @@ func (req hybridRunRequest) toSpec() HybridSpec {
 		Planner:                req.Planner,
 		Implementer:            req.Implementer,
 		Model:                  req.Model,
-		BaseURL:                req.BaseURL,
 		WorkDir:                req.WorkDir,
 		Prompt:                 req.Prompt,
 		MaxSubtasks:            req.MaxSubtasks,

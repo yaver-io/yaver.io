@@ -79,12 +79,8 @@ func RunAIGenerator(spec AIGeneratorSpec) (string, error) {
 		return runAIGeneratorCodex(ctx, spec)
 	case "opencode":
 		return runAIGeneratorOpenCode(ctx, spec)
-	case "aider":
-		return runAIGeneratorAider(ctx, spec)
-	case "ollama":
-		return runAIGeneratorOllama(ctx, spec)
 	default:
-		return "", fmt.Errorf("ai-generator: unsupported CLI %q", cli)
+		return "", fmt.Errorf("ai-generator: unsupported CLI %q (use claude, codex, or opencode)", cli)
 	}
 }
 
@@ -102,18 +98,9 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 		if have("codex") {
 			return "codex"
 		}
-	case "aider", "aider-ollama":
-		if have("aider") {
-			return "aider"
-		}
 	case "opencode":
 		if have("opencode") {
 			return "opencode"
-		}
-	}
-	if strings.HasPrefix(strings.ToLower(spec.Runner), "ollama") {
-		if have("ollama") {
-			return "ollama"
 		}
 	}
 
@@ -123,8 +110,8 @@ func pickAIGeneratorCLI(spec AIGeneratorSpec) string {
 		// Planner = claude; fall through to standard order if missing.
 	}
 
-	// Fallback chain.
-	for _, bin := range []string{"claude", "codex", "opencode", "aider", "ollama"} {
+	// Fallback chain — yaver's three first-class runners only.
+	for _, bin := range []string{"claude", "codex", "opencode"} {
 		if have(bin) {
 			return bin
 		}
@@ -182,40 +169,6 @@ func runAIGeneratorCodex(ctx context.Context, spec AIGeneratorSpec) (string, err
 	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("codex: %w", err)
-	}
-	return buf.String(), nil
-}
-
-func runAIGeneratorAider(ctx context.Context, spec AIGeneratorSpec) (string, error) {
-	args := []string{"--no-pretty", "--yes-always"}
-	if _, model := splitAgentSpec(spec.Runner); model != "" {
-		args = append(args, "--model", model)
-	}
-	args = append(args, "--message", spec.Prompt)
-	cmd := osexec.CommandContext(ctx, "aider", args...)
-	cmd.Dir = spec.WorkDir
-	cmd.Stderr = os.Stderr
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("aider: %w", err)
-	}
-	return buf.String(), nil
-}
-
-func runAIGeneratorOllama(ctx context.Context, spec AIGeneratorSpec) (string, error) {
-	model := envOr("YAVER_OLLAMA_MODEL", "qwen2.5-coder:14b")
-	if _, runnerModel := splitAgentSpec(spec.Runner); runnerModel != "" {
-		model = runnerModel
-	}
-	cmd := osexec.CommandContext(ctx, "ollama", "run", model)
-	cmd.Dir = spec.WorkDir
-	cmd.Stdin = strings.NewReader(spec.Prompt)
-	cmd.Stderr = os.Stderr
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(&buf, os.Stderr)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("ollama: %w", err)
 	}
 	return buf.String(), nil
 }

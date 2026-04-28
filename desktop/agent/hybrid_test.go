@@ -3,7 +3,8 @@ package main
 // hybrid_test.go — unit + integration tests for the planner/implementer
 // orchestrator. The integration test uses shell script stand-ins for
 // the planner and implementer so the suite is hermetic — no API calls,
-// no Ollama dependency, and fast enough to run in CI on every push.
+// no external runner dependency, and fast enough to run in CI on
+// every push.
 
 import (
 	"context"
@@ -90,9 +91,7 @@ func TestApplyHybridDefaults_Requires(t *testing.T) {
 }
 
 // TestApplyHybridDefaults_Fills verifies the defaults: claude planner,
-// opencode implementer (yaver only first-classes claude/codex/opencode
-// now; opencode wraps the long tail via BYOK so users still reach
-// Ollama / OpenRouter / etc. through it).
+// opencode implementer.
 func TestApplyHybridDefaults_Fills(t *testing.T) {
 	spec := HybridSpec{WorkDir: t.TempDir(), Prompt: "do a thing"}
 	if err := applyHybridDefaults(&spec); err != nil {
@@ -109,34 +108,29 @@ func TestApplyHybridDefaults_Fills(t *testing.T) {
 	}
 }
 
-// TestApplyHybridDefaults_AiderOllamaOptIn checks that the legacy
-// aider-ollama implementer is still reachable when explicitly named
-// (so pre-existing HybridSpec serializations keep working) and that
-// it still pulls in the Qwen model + Ollama base URL.
-func TestApplyHybridDefaults_AiderOllamaOptIn(t *testing.T) {
-	spec := HybridSpec{WorkDir: t.TempDir(), Prompt: "do a thing", Implementer: "aider-ollama"}
-	if err := applyHybridDefaults(&spec); err != nil {
-		t.Fatalf("defaults: %v", err)
+// TestApplyHybridDefaults_RejectsUnsupported makes sure an
+// unsupported runner id is bounced with a clear error rather than
+// silently running an unknown binary.
+func TestApplyHybridDefaults_RejectsUnsupported(t *testing.T) {
+	spec := HybridSpec{WorkDir: t.TempDir(), Prompt: "do a thing", Implementer: "aider"}
+	err := applyHybridDefaults(&spec)
+	if err == nil {
+		t.Fatal("expected error for unsupported implementer")
 	}
-	if !strings.Contains(spec.Model, "qwen2.5-coder") {
-		t.Errorf("aider-ollama model default: %q", spec.Model)
-	}
-	if spec.BaseURL == "" {
-		t.Errorf("aider-ollama base URL default missing")
+	if !strings.Contains(err.Error(), "claude, codex, or opencode") {
+		t.Errorf("error should name the supported runners: %v", err)
 	}
 }
 
-// TestPlannerPrompt_WarnsAboutWeakImplementer locks in the prompt's
-// core contract: the planner is told the implementer is a weak local
-// model. If someone edits plannerPrompt and drops this warning, the
-// downstream Qwen will get underspecified tasks and fail silently.
-// This is the guardrail.
-func TestPlannerPrompt_WarnsAboutWeakImplementer(t *testing.T) {
-	p := plannerPrompt("/tmp/x", "build thing", "aider-ollama", "ollama_chat/qwen2.5-coder:14b", 10)
+// TestPlannerPrompt_Contract locks in the prompt's core contract:
+// the planner is told the implementer is less capable, must emit
+// hyper-explicit subtasks, and must stick to JSON. If someone edits
+// plannerPrompt and drops these guardrails, the implementer will get
+// underspecified tasks and fail silently.
+func TestPlannerPrompt_Contract(t *testing.T) {
+	p := plannerPrompt("/tmp/x", "build thing", "opencode", "anthropic/claude-sonnet-4-6", 10)
 	must := []string{
 		"TWO-AGENT",
-		"small, local, open-weights",
-		"tiny context window",
 		"WILL hallucinate",
 		"hyper-explicit",
 		"ONE file per subtask",
@@ -152,11 +146,11 @@ func TestPlannerPrompt_WarnsAboutWeakImplementer(t *testing.T) {
 }
 
 // TestRunHybrid_FakePlannerAndImplementer is the integration test.
-// We stub the `claude` and `aider` commands with tiny shell scripts in
-// a temp dir that's prepended to PATH. The fake planner writes a
-// 2-subtask plan to stdout; the fake implementer just touches the
-// files named by the subtask so the test can verify wiring (files
-// passed in, model/base-url exported, exit code respected).
+// We stub the `claude` and `opencode` commands with tiny shell scripts
+// in a temp dir that's prepended to PATH. The fake planner writes a
+// 2-subtask plan to stdout; the fake implementer touches the files
+// named in its prompt so the test can verify wiring (prompt forwarding,
+// file scope inclusion, exit code respected).
 //
 // Skipped on Windows — the stubs are bash scripts.
 func TestRunHybrid_FakePlannerAndImplementer(t *testing.T) {
@@ -176,21 +170,18 @@ cat <<'EOF'
 `+plannerOut+`
 EOF
 `)
-	// The implementer stub records its argv + env so we can assert
-	// --model and OLLAMA_API_BASE flow through, then touches every
-	// trailing positional arg (aider treats those as files to edit).
-	writeStub(t, filepath.Join(stubDir, "aider"), `#!/bin/bash
+	// The implementer stub records its argv + the prompt it received,
+	// then touches every file mentioned in the "Files in scope:" prefix
+	// the orchestrator builds. That preface is how runImplementer
+	// communicates the planner's file scope to the runner.
+	writeStub(t, filepath.Join(stubDir, "opencode"), `#!/bin/bash
 echo "ARGV: $@"
-echo "OLLAMA_API_BASE=${OLLAMA_API_BASE}"
-# Touch any positional file args — skip flag values.
-skip_next=0
-for a in "$@"; do
-  if [ $skip_next -eq 1 ]; then skip_next=0; continue; fi
-  case "$a" in
-    --model|--message) skip_next=1;;
-    --*) ;;
-    *) touch -- "$a" || true;;
-  esac
+# Last positional arg holds the prompt (yaver builds opencode argv as
+# `+"`run --dangerously-skip-permissions <prompt>`"+`).
+prompt="${@: -1}"
+# Pull every "  - <path>" line from the Files-in-scope preface.
+echo "$prompt" | awk '/^  - /{print $2}' | while read -r f; do
+  [ -n "$f" ] && touch -- "$(pwd)/$f"
 done
 `)
 
@@ -199,9 +190,7 @@ done
 
 	spec := HybridSpec{
 		Planner:     "claude",
-		Implementer: "aider-ollama",
-		Model:       "ollama_chat/qwen2.5-coder:14b",
-		BaseURL:     "http://127.0.0.1:11434",
+		Implementer: "opencode",
 		WorkDir:     workDir,
 		Prompt:      "make two files",
 		Timeout:     30 * time.Second,
@@ -221,24 +210,12 @@ done
 		t.Fatalf("want clean run, failed=%d ok=%v", rep.FailedSteps, rep.OK)
 	}
 	// The implementer stub touched the scoped files; verify the
-	// file-scope plumbing (planner→orchestrator→aider positional
-	// args) actually works.
+	// file-scope plumbing (planner→orchestrator→prompt preface→
+	// implementer) actually works.
 	for _, f := range []string{"a.txt", "b.txt"} {
 		if _, err := os.Stat(filepath.Join(workDir, f)); err != nil {
 			t.Errorf("expected implementer to create %s: %v", f, err)
 		}
-	}
-	// OLLAMA_API_BASE must have reached the aider child — otherwise
-	// litellm would talk to the wrong endpoint in production.
-	joined := ""
-	for _, r := range rep.Results {
-		joined += r.Output
-	}
-	if !strings.Contains(joined, "OLLAMA_API_BASE=http://127.0.0.1:11434") {
-		t.Errorf("implementer did not receive OLLAMA_API_BASE; got output:\n%s", joined)
-	}
-	if !strings.Contains(joined, "--model ollama_chat/qwen2.5-coder:14b") {
-		t.Errorf("implementer did not receive --model flag; got output:\n%s", joined)
 	}
 }
 
@@ -254,10 +231,13 @@ func TestRunHybrid_PlannerEmitsGarbage(t *testing.T) {
 	writeStub(t, filepath.Join(stubDir, "claude"), `#!/bin/bash
 echo "hello world, no JSON here"
 `)
+	writeStub(t, filepath.Join(stubDir, "opencode"), `#!/bin/bash
+exit 0
+`)
 	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
 
 	rep, err := RunHybrid(context.Background(), HybridSpec{
-		Planner: "claude", Implementer: "aider-ollama",
+		Planner: "claude", Implementer: "opencode",
 		WorkDir: workDir, Prompt: "x", Timeout: 10 * time.Second,
 	})
 	if err == nil {
@@ -296,8 +276,8 @@ EOF
 `)
 	// Stub implementer counts invocations via a marker file. Fails
 	// on first call, succeeds on second — the retry path must kick.
-	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
-COUNT_FILE="`+workDir+`/aider_invocations"
+	writeStub(t, filepath.Join(stubDir, "opencode"), `#!/usr/bin/env bash
+COUNT_FILE="`+workDir+`/opencode_invocations"
 n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
 n=$((n+1))
 echo $n > "$COUNT_FILE"
@@ -311,8 +291,7 @@ echo "ok"
 	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
 
 	rep, err := RunHybrid(context.Background(), HybridSpec{
-		Planner: "claude", Implementer: "aider-ollama",
-		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		Planner: "claude", Implementer: "opencode",
 		WorkDir: workDir, Prompt: "do it",
 		MaxRetries: 1, Timeout: 30 * time.Second,
 	})
@@ -325,7 +304,7 @@ echo "ok"
 	if rep.Retries != 1 {
 		t.Errorf("want Retries=1, got %d", rep.Retries)
 	}
-	invocations, _ := os.ReadFile(filepath.Join(workDir, "aider_invocations"))
+	invocations, _ := os.ReadFile(filepath.Join(workDir, "opencode_invocations"))
 	if strings.TrimSpace(string(invocations)) != "2" {
 		t.Errorf("want implementer called twice, counter says %q", invocations)
 	}
@@ -345,7 +324,7 @@ func TestRunHybrid_ReplanKicksIn(t *testing.T) {
 
 	// Planner stub: returns 2 bad subtasks on first call, 1 good
 	// subtask on the replan. "Good" means the subtask title signals
-	// the aider stub to succeed.
+	// the implementer stub to succeed.
 	writeStub(t, filepath.Join(stubDir, "claude"), `#!/usr/bin/env bash
 COUNT_FILE="`+workDir+`/plan_invocations"
 n=$(cat "$COUNT_FILE" 2>/dev/null || echo 0)
@@ -364,17 +343,11 @@ cat <<'EOF'
 EOF
 fi
 `)
-	// Aider stub: fails when the subtask title starts with "bad",
-	// succeeds when it starts with "good". Argv parsing is primitive
-	// but sufficient for the test — we look at --message's next arg.
-	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
-msg=""
-next=0
-for a in "$@"; do
-  if [ $next -eq 1 ]; then msg="$a"; next=0; continue; fi
-  if [ "$a" = "--message" ]; then next=1; fi
-done
-case "$msg" in
+	// Implementer stub: fails when the prompt contains "fail",
+	// succeeds otherwise. Last positional arg holds the full prompt.
+	writeStub(t, filepath.Join(stubDir, "opencode"), `#!/usr/bin/env bash
+prompt="${@: -1}"
+case "$prompt" in
   *fail*) exit 1 ;;
   *) touch "$(pwd)/c.txt"; exit 0 ;;
 esac
@@ -382,10 +355,9 @@ esac
 	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
 
 	rep, err := RunHybrid(context.Background(), HybridSpec{
-		Planner: "claude", Implementer: "aider-ollama",
-		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		Planner: "claude", Implementer: "opencode",
 		WorkDir: workDir, Prompt: "x",
-		MaxRetries: 0, // no per-step retry so replan threshold triggers cleanly
+		MaxRetries:             0, // no per-step retry so replan threshold triggers cleanly
 		MaxConsecutiveFailures: 2,
 		Timeout:                30 * time.Second,
 	})
@@ -422,15 +394,14 @@ cat <<'EOF'
 {"subtasks":[{"title":"s","files":["x"],"prompt":"p"}]}
 EOF
 `)
-	writeStub(t, filepath.Join(stubDir, "aider"), `#!/usr/bin/env bash
+	writeStub(t, filepath.Join(stubDir, "opencode"), `#!/usr/bin/env bash
 exit 0
 `)
 	t.Setenv("PATH", stubDir+":"+os.Getenv("PATH"))
 
 	var types []string
 	_, err := RunHybridWithProgress(context.Background(), HybridSpec{
-		Planner: "claude", Implementer: "aider-ollama",
-		Model: "ollama_chat/x", BaseURL: "http://127.0.0.1:11434",
+		Planner: "claude", Implementer: "opencode",
 		WorkDir: workDir, Prompt: "x",
 		Timeout: 30 * time.Second,
 	}, func(ev HybridEvent) {
@@ -451,13 +422,14 @@ exit 0
 	}
 }
 
-// TestHybridPreflight_ReportsMissing checks that a nonsense base URL
-// leads to ollamaOk=false and a helpful hint. Aider presence depends
-// on the host; skip aider assertions if the test environment has it.
+// TestHybridPreflight_ReportsMissing verifies the preflight returns a
+// helpful hint when the planner or implementer binary is missing.
 func TestHybridPreflight_ReportsMissing(t *testing.T) {
-	pf := checkHybrid("aider-ollama", "ollama_chat/bogus:does-not-exist", "http://127.0.0.1:1")
-	if pf.OllamaOK {
-		t.Errorf("expected OllamaOK=false at unreachable URL, got %+v", pf)
+	// Empty PATH guarantees neither claude nor opencode can be found.
+	t.Setenv("PATH", "")
+	pf := checkHybrid("claude", "opencode")
+	if pf.PlannerOK || pf.ImplementerOK {
+		t.Errorf("expected both probes to fail on empty PATH, got %+v", pf)
 	}
 	if pf.Hint == "" {
 		t.Errorf("expected a hint, got empty")

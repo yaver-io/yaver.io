@@ -200,7 +200,7 @@ Flags:
   --attach <device>      Attach to a remote Yaver machine by device ID or name
   --username <email>     Filter remote attach targets by host email
   --agent <runner>       Alias for --runner in terminal coding mode
-  --runner <runner>      Runner override: claude, codex, opencode, aider, goose, ...
+  --runner <runner>      Runner override: claude, codex, or opencode
   --model <model>        Model override for the chosen runner
   --work-dir <path>      Local work dir override
   --mesh                 Run agent-graph mesh mode instead of a single terminal task

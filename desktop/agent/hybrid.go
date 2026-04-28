@@ -3,29 +3,27 @@ package main
 // hybrid.go — planner/implementer orchestration for cost-efficient
 // autonomous coding.
 //
-// The idea: expensive frontier models (Claude Code / Codex) are
-// excellent at turning a fuzzy user goal into a concrete, ordered
-// task list. Cheap local models (Qwen-Coder 14B via Ollama + Aider)
-// are perfectly capable of executing a well-scoped single-file edit.
-// Splitting those phases keeps the dollar spend on the 100:1 compression
-// step (planning) and pushes the bulky file-editing work down to a
-// free, private, on-device implementer.
+// The idea: an expensive frontier runner (Claude Code) is excellent
+// at turning a fuzzy user goal into a concrete, ordered task list. A
+// cheaper or token-leaner runner (Codex / opencode with whatever
+// provider the user has BYOK'd) is perfectly capable of executing a
+// well-scoped single-file edit. Splitting those phases keeps the
+// dollar spend on the 100:1 compression step (planning) and pushes
+// the bulky file-editing work down to the implementer.
 //
 // Flow
 //
-//   ┌─────────────┐ plan JSON ┌────────────────────────┐ edits ┌──────────┐
-//   │  Planner    │──────────►│  Hybrid orchestrator   │──────►│ workdir  │
-//   │ (claude /   │           │  (this file)           │       │ (git)    │
-//   │  codex)     │           │                        │       └──────────┘
-//   └─────────────┘           │ for each subtask:      │
-//                             │   aider --model        │
-//                             │     ollama_chat/qwen…  │
-//                             └────────────────────────┘
+//   ┌──────────────┐ plan JSON ┌────────────────────────┐ edits ┌──────────┐
+//   │  Planner     │──────────►│  Hybrid orchestrator   │──────►│ workdir  │
+//   │ (claude /    │           │  (this file)           │       │ (git)    │
+//   │  codex /     │           │                        │       └──────────┘
+//   │  opencode)   │           │ for each subtask:      │
+//   └──────────────┘           │   implementer.run(…)   │
+//                              └────────────────────────┘
 //
 // The planner is asked for a single JSON array of subtasks with
-// {title, files, prompt} — the contract is deliberately minimal so
-// even a compact Qwen could stand in as the planner if the user
-// wants fully-local operation.
+// {title, files, prompt}. Both planner and implementer must be one
+// of yaver's three first-class runners (claude, codex, opencode).
 //
 // Nothing here writes to Convex. Task data is conversation-local;
 // the caller is responsible for persisting HybridReport if desired.
@@ -67,26 +65,23 @@ type HybridEvent struct {
 // client rather than stalling the run.
 type HybridProgress func(HybridEvent)
 
-// HybridSpec describes a single hybrid run. Zero values fall back to
-// sensible defaults for a laptop with Ollama + qwen2.5-coder:14b.
+// HybridSpec describes a single hybrid run.
 type HybridSpec struct {
-	// Planner is a runner ID from builtinRunners that can emit a
-	// structured JSON task list. Defaults to "claude". Any tool-using
-	// runner works — the planner does not edit files.
+	// Planner is a runner ID from builtinRunners that emits a
+	// structured JSON task list. Defaults to "claude". Must be one
+	// of yaver's first-class runners (claude, codex, opencode).
 	Planner string `json:"planner"`
 	// Implementer is the runner used to execute each subtask.
-	// Defaults to "opencode" — yaver only first-classes
-	// claude/codex/opencode now, and opencode wraps the rest of the
-	// long tail (BYOK Ollama / OpenRouter / etc.) so users who want a
-	// local model still get it through opencode's config.
+	// Defaults to "opencode". Must be one of yaver's first-class
+	// runners (claude, codex, opencode). opencode in particular
+	// wraps the long tail of providers (Anthropic / OpenAI /
+	// OpenRouter / Ollama / GLM / ZAI / …) via its own BYOK config,
+	// so users who want a specific model still reach it through
+	// opencode rather than through a yaver-shipped wrapper.
 	Implementer string `json:"implementer"`
-	// Model overrides the implementer's LLM backend. For
-	// aider-ollama this becomes the --model flag (e.g.
-	// "ollama_chat/qwen2.5-coder:14b").
+	// Model overrides the implementer's LLM backend (forwarded as
+	// --model to claude/codex; an opencode model id for opencode).
 	Model string `json:"model,omitempty"`
-	// BaseURL overrides the implementer's LLM endpoint. For
-	// aider-ollama this is exported as OLLAMA_API_BASE.
-	BaseURL string `json:"baseUrl,omitempty"`
 	// WorkDir is the project root. Must exist and be writable.
 	WorkDir string `json:"workDir"`
 	// Prompt is the user's feature request in plain English.
@@ -109,8 +104,9 @@ type HybridSpec struct {
 }
 
 // HybridSubtask is one unit of implementer work, as returned by the
-// planner. `Files` is the list of paths aider should add to its
-// editable set so it does not wander outside its scope.
+// planner. `Files` is the list of paths the implementer is allowed
+// to touch — passed to the implementer as a "Files in scope" preface
+// to the prompt so it does not wander outside its scope.
 type HybridSubtask struct {
 	Title  string   `json:"title"`
 	Files  []string `json:"files"`
@@ -145,9 +141,10 @@ type HybridReport struct {
 	FailedSteps int       `json:"failedSteps"`
 }
 
-// applyHybridDefaults fills zero-valued fields with defaults chosen
-// for a 24 GB Apple Silicon laptop. Kept small on purpose — defaults
-// belong here, not scattered across callers.
+// applyHybridDefaults fills zero-valued fields with sensible defaults
+// (claude planner, opencode implementer) and rejects unsupported
+// runner ids. Kept small on purpose — defaults belong here, not
+// scattered across callers.
 func applyHybridDefaults(s *HybridSpec) error {
 	if strings.TrimSpace(s.WorkDir) == "" {
 		return errors.New("hybrid: workDir is required")
@@ -161,16 +158,13 @@ func applyHybridDefaults(s *HybridSpec) error {
 	if s.Implementer == "" {
 		s.Implementer = "opencode"
 	}
-	if s.Implementer == "aider-ollama" {
-		// Legacy implementer kept reachable when explicitly named, so
-		// pre-existing HybridSpec serializations keep working. Default
-		// flipped to opencode above; this branch only fires on opt-in.
-		if s.Model == "" {
-			s.Model = "ollama_chat/qwen2.5-coder:14b"
-		}
-		if s.BaseURL == "" {
-			s.BaseURL = "http://127.0.0.1:11434"
-		}
+	s.Planner = normalizeRunnerID(s.Planner)
+	s.Implementer = normalizeRunnerID(s.Implementer)
+	if !IsSupportedRunner(s.Planner) {
+		return fmt.Errorf("hybrid: planner %q is not supported (use claude, codex, or opencode)", s.Planner)
+	}
+	if !IsSupportedRunner(s.Implementer) {
+		return fmt.Errorf("hybrid: implementer %q is not supported (use claude, codex, or opencode)", s.Implementer)
 	}
 	if s.MaxSubtasks == 0 {
 		s.MaxSubtasks = 20
@@ -207,21 +201,22 @@ func plannerPrompt(workDir, userPrompt, implementer, model string, maxSubtasks i
 		impl = impl + " driving " + model
 	}
 	return fmt.Sprintf(`You are the PLANNER in a TWO-AGENT coding system.
-You are the smart one. The IMPLEMENTER is not.
+You are the smart one. Treat the IMPLEMENTER as a separate, less
+context-aware agent — possibly a token-efficient frontier runner,
+possibly a small local open-weights model the user has BYOK'd into
+opencode. Plan as if it were the weaker of the two.
 
 WHO EXECUTES YOUR PLAN
   The implementer is: %s
-  It is a small, local, open-weights model with NO reasoning chain,
-  NO web access, NO repo-wide context, and a tiny context window
-  (roughly 16K tokens). It will faithfully follow instructions but
+  Treat it as a diligent intern with NO repo-wide context and a
+  tiny working window. It will faithfully follow instructions but
   it WILL fail if you give it:
     - vague goals ("add validation", "clean up the component")
     - cross-file reasoning ("make sure this matches the schema in X")
     - architectural decisions ("pick the best pattern")
     - anything that requires reading more than 1–2 short files
-  Assume the implementer has the IQ of a diligent intern who has
-  never seen this repo before. If the instruction is not obvious
-  from the file contents alone, the implementer WILL hallucinate.
+  If the instruction is not obvious from the file contents alone,
+  the implementer WILL hallucinate.
 
 YOUR JOB
   Convert the user request into AT MOST %d hyper-explicit subtasks.
@@ -233,7 +228,8 @@ CONTRACT PER SUBTASK
   - "title": <8 words, imperative, e.g. "Add zod schema for Portfolio">
   - "files": EXACT relative paths the implementer will touch.
       Prefer ONE file per subtask. Never more than 3.
-      If a file must be created, include it anyway (aider creates it).
+      If a file must be created, include it anyway (the implementer
+      will create it).
   - "prompt": the full instruction. This is what the implementer sees.
       It MUST include:
         (a) the precise change to make, function-by-function or
@@ -335,15 +331,18 @@ func runPlanner(ctx context.Context, spec HybridSpec) (string, error) {
 	return string(out), err
 }
 
-// runImplementer invokes Aider (or a future implementer) for one
-// subtask. Files named by the planner are added to aider's editable
-// set via positional args — this is the correct way to scope aider's
-// attention in a one-shot run.
+// runImplementer invokes the implementer runner for one subtask.
+// It uses the runner's standard Args template (the same one tasks.go
+// uses for normal task spawns), injecting the subtask prompt via the
+// {prompt} placeholder. The planner is responsible for naming the
+// target files inside the prompt text — claude/codex/opencode all
+// read the workdir directly, so there's no need to forward a
+// separate file list as positional args.
 func runImplementer(ctx context.Context, spec HybridSpec, st HybridSubtask) HybridStepResult {
 	started := time.Now()
 	result := HybridStepResult{Subtask: st}
 
-	cfg, ok := builtinRunners[spec.Implementer]
+	cfg, ok := builtinRunners[normalizeRunnerID(spec.Implementer)]
 	if !ok {
 		result.Status = "error"
 		result.Error = fmt.Sprintf("unknown implementer %q", spec.Implementer)
@@ -352,35 +351,42 @@ func runImplementer(ctx context.Context, spec HybridSpec, st HybridSubtask) Hybr
 	}
 	if _, err := exec.LookPath(cfg.Command); err != nil {
 		result.Status = "error"
-		result.Error = fmt.Sprintf("%s not on PATH — run `yaver install aider`", cfg.Command)
+		result.Error = fmt.Sprintf("%s not on PATH — run `yaver install %s`", cfg.Command, cfg.RunnerID)
 		result.Duration = time.Since(started)
 		return result
 	}
 
-	// Build argv from the runner template, injecting the subtask
-	// prompt and the files the planner scoped. For aider the
-	// pattern is: <base-args> --model X --message <prompt> <files...>
-	argv := make([]string, 0, len(cfg.Args)+8)
-	for _, a := range cfg.Args {
-		if strings.Contains(a, "{prompt}") {
-			argv = append(argv, strings.ReplaceAll(a, "{prompt}", st.Prompt))
-		} else {
-			argv = append(argv, a)
+	prompt := st.Prompt
+	if len(st.Files) > 0 {
+		// Surface the planner's file scope inside the prompt so the
+		// implementer knows which files to touch without yaver
+		// having to inject CLI-specific positional args.
+		var b strings.Builder
+		b.WriteString("Files in scope (edit only these):\n")
+		for _, f := range st.Files {
+			if strings.TrimSpace(f) == "" {
+				continue
+			}
+			b.WriteString("  - ")
+			b.WriteString(f)
+			b.WriteString("\n")
 		}
+		b.WriteString("\n")
+		b.WriteString(prompt)
+		prompt = b.String()
 	}
+
+	argv := buildRunnerArgs(cfg, prompt)
+
 	model := spec.Model
 	if model == "" {
 		model = cfg.Model
 	}
 	if model != "" {
-		// Prepend --model so it applies before --message.
+		// Forward as --model. claude/codex/opencode all accept this
+		// flag pattern. Prepending puts it ahead of the runner's
+		// positional prompt so the CLI parses it as expected.
 		argv = append([]string{"--model", model}, argv...)
-	}
-	for _, f := range st.Files {
-		if strings.TrimSpace(f) == "" {
-			continue
-		}
-		argv = append(argv, f)
 	}
 
 	cmd := exec.CommandContext(ctx, cfg.Command, argv...)
@@ -389,13 +395,6 @@ func runImplementer(ctx context.Context, spec HybridSpec, st HybridSubtask) Hybr
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Env = os.Environ()
-	base := spec.BaseURL
-	if base == "" {
-		base = cfg.BaseURL
-	}
-	if base != "" && strings.HasPrefix(strings.ToLower(model), "ollama") {
-		cmd.Env = append(cmd.Env, "OLLAMA_API_BASE="+base)
-	}
 
 	if err := cmd.Run(); err != nil {
 		result.Status = "error"
@@ -553,7 +552,7 @@ func retryReminder(attempt int) string {
 	return fmt.Sprintf(`IMPORTANT — ATTEMPT %d.
 Your previous attempt produced output that did not achieve the goal.
 Before writing any code, re-read the instruction below in full.
-Output ONLY the final file contents as aider would. No markdown
+Output ONLY the final file contents. No markdown
 fences. No prose. No preamble. If the instruction says "exactly
 these lines", it means EXACTLY those lines with no additions.`, attempt+1)
 }
@@ -564,7 +563,7 @@ these lines", it means EXACTLY those lines with no additions.`, attempt+1)
 // identical subtasks that will just fail again.
 func replan(ctx context.Context, spec HybridSpec, results []HybridStepResult) ([]HybridSubtask, error) {
 	// Summarise failures compactly — the planner doesn't need full
-	// aider stdout, just what was attempted and how it went.
+	// implementer stdout, just what was attempted and how it went.
 	var b strings.Builder
 	b.WriteString("PREVIOUS ATTEMPT FAILED. Results so far:\n")
 	for i, r := range results {

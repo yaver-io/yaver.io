@@ -242,12 +242,12 @@ export default function PhoneProjectsScreen() {
     [importedConversation],
   );
   const availableRunners = useMemo(() => {
-    // Only the three vibing-grade runners surface in the mobile UI.
-    // Aider / aider-ollama / ollama are still installable on the
-    // agent for advanced users from the CLI, but they're hidden here
-    // because they don't fit the chat-style flow this app drives —
-    // local Ollama models hallucinate file paths and Aider's
-    // streaming format is too noisy for the mobile transcript.
+    // Yaver's three first-class runners — the only ones we surface
+    // anywhere in the product. opencode wraps the long tail of
+    // providers (Anthropic / OpenAI / OpenRouter / Ollama / GLM /
+    // ZAI / …) via its own BYOK config, so users who want a specific
+    // model still reach it through opencode rather than yaver
+    // shipping a wrapper for every CLI.
     const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
     const runners = activeDevice?.runners ?? [];
     return runners

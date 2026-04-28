@@ -70,7 +70,8 @@ const (
 	TaskStatusFailed   TaskStatus = "failed"
 )
 
-// RunnerConfig describes how to invoke an AI runner (Claude or a custom tool).
+// RunnerConfig describes how to invoke one of yaver's three first-class
+// runners: claude-code, codex, or opencode.
 type RunnerConfig struct {
 	RunnerID        string   `json:"runnerId"`
 	Name            string   `json:"name"`
@@ -79,16 +80,11 @@ type RunnerConfig struct {
 	OutputMode      string   `json:"outputMode"` // "stream-json" or "raw"
 	ResumeSupported bool     `json:"resumeSupported"`
 	ResumeArgs      []string `json:"resumeArgs,omitempty"`
-	ExitCommand     string   `json:"exitCommand,omitempty"` // e.g. "/exit" for Claude, "/quit" for Aider
-	// Model is the LLM backing this runner when it supports a
-	// selectable backend (e.g. aider with --model ollama/qwen…).
-	// Empty = runner's default. Consumed by spawnAider and the
-	// hybrid orchestrator.
+	ExitCommand     string   `json:"exitCommand,omitempty"` // e.g. "/exit" for Claude Code, "/quit" for opencode
+	// Model overrides the runner's default LLM. For claude/codex this
+	// is forwarded as `--model`; for opencode it's an opencode model
+	// id. Empty = runner's default.
 	Model string `json:"model,omitempty"`
-	// BaseURL points the runner at a non-default LLM endpoint.
-	// For ollama-backed runs this is exported as OLLAMA_API_BASE
-	// (default http://127.0.0.1:11434).
-	BaseURL string `json:"baseUrl,omitempty"`
 	// Mode is a runner-specific subcommand selector. Currently only
 	// honored by opencode where it maps to `--agent <mode>` (build /
 	// plan / any custom agent the user has defined in their
@@ -119,12 +115,9 @@ var defaultRunner = RunnerConfig{
 
 // exitCommands maps runner IDs to their graceful exit commands.
 var exitCommands = map[string]string{
-	"claude":       "/exit",
-	"codex":        "exit",
-	"aider":        "/quit",
-	"aider-ollama": "/quit",
-	"goose":        "exit",
-	"opencode":     "/quit",
+	"claude":   "/exit",
+	"codex":    "exit",
+	"opencode": "/quit",
 }
 
 var activeTaskManager *TaskManager
@@ -133,7 +126,11 @@ func ActiveTaskManager() *TaskManager {
 	return activeTaskManager
 }
 
-// builtinRunners defines all known runner configurations.
+// builtinRunners defines yaver's three first-class runner configurations.
+// claude-code, codex, and opencode are the only runners we ship support
+// for; everything else (Ollama, OpenRouter, GLM, ZAI, …) reaches the
+// system through opencode's BYOK provider config rather than yaver
+// shipping a dedicated wrapper for each CLI.
 var builtinRunners = map[string]RunnerConfig{
 	"claude": {
 		RunnerID: "claude",
@@ -157,69 +154,17 @@ var builtinRunners = map[string]RunnerConfig{
 		Args:       []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
 		OutputMode: "raw",
 	},
-	"aider": {
-		RunnerID:    "aider",
-		Name:        "Aider",
-		Command:     "aider",
-		Args:        []string{"--yes-always", "--no-git", "--message", "{prompt}"},
-		OutputMode:  "raw",
-		ExitCommand: "/quit",
-	},
-	"goose": {
-		RunnerID:    "goose",
-		Name:        "Goose",
-		Command:     "goose",
-		Args:        []string{"run", "--text", "{prompt}"},
-		OutputMode:  "raw",
-		ExitCommand: "exit",
-	},
-	"ollama": {
-		RunnerID: "ollama",
-		Name:     "Ollama",
-		Command:  "ollama",
-		// {model} is substituted from task.Model via buildRunnerArgs.
-		// Falls back to a reasonable small default when the caller
-		// doesn't specify one so `runner=ollama` without a model
-		// still works. The previous hardcoded "llama3" silently
-		// broke CI because ubuntu-latest runners only pulled
-		// qwen2.5-coder:1.5b and ollama does not auto-download.
-		Args:       []string{"run", "{model}", "{prompt}"},
-		Model:      "qwen2.5-coder:1.5b",
-		OutputMode: "raw",
-	},
-	"amp": {
-		RunnerID:   "amp",
-		Name:       "Amp",
-		Command:    "amp",
-		Args:       []string{"run", "{prompt}"},
-		OutputMode: "raw",
-	},
 	"opencode": {
 		RunnerID: "opencode",
-		Name:     "OpenCode",
+		Name:     "opencode",
 		Command:  "opencode",
 		// Newer opencode (sst/opencode) uses `opencode run <message>` for
 		// non-interactive mode. The old `--message` flag was removed.
 		// --dangerously-skip-permissions is required so it doesn't block
 		// on permission prompts when run from the agent.
-		Args:       []string{"run", "--dangerously-skip-permissions", "{prompt}"},
-		OutputMode: "raw",
-	},
-	// aider-ollama: Aider driven by a local Ollama model. File-editing
-	// stays with aider; the LLM is whatever qwen2.5-coder variant the
-	// user has pulled locally. Default model fits a 24 GB Apple
-	// Silicon machine; override with RunnerConfig.Model (e.g.
-	// "qwen2.5-coder:7b" on smaller boxes). spawnAider / hybrid.go
-	// prepend --model + export OLLAMA_API_BASE at invocation time.
-	"aider-ollama": {
-		RunnerID:    "aider-ollama",
-		Name:        "Aider + Qwen (local, free)",
-		Command:     "aider",
-		Args:        []string{"--yes-always", "--no-git", "--no-pretty", "--no-stream", "--message", "{prompt}"},
+		Args:        []string{"run", "--dangerously-skip-permissions", "{prompt}"},
 		OutputMode:  "raw",
 		ExitCommand: "/quit",
-		Model:       "ollama_chat/qwen2.5-coder:14b",
-		BaseURL:     "http://127.0.0.1:11434",
 	},
 }
 
@@ -239,10 +184,6 @@ func GetRunnerConfig(runnerID string) RunnerConfig {
 // is installed, letting the caller surface a clean error instead of crashing
 // in a retry loop.
 func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
-	// Yaver only first-classes claude / codex / opencode now —
-	// opencode wraps the long tail (Ollama, OpenRouter, …) so users
-	// who want a different model go through opencode's BYOK config
-	// instead of yaver shipping a dedicated wrapper.
 	for _, id := range supportedRunnerIDs {
 		r, ok := builtinRunners[id]
 		if !ok {
@@ -257,11 +198,9 @@ func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
 
 // supportedRunnerIDs is the canonical list of runner IDs yaver
 // advertises in user-facing UX (slash menu, capability inventory,
-// /autodev/options, hybrid implementer pick). Other entries in
-// builtinRunners (aider, goose, amp, ollama, aider-ollama) remain
-// reachable when explicitly named — they just don't show up by
-// default. Order is the preference order for "default installed runner"
-// fallbacks.
+// /autodev/options, hybrid implementer pick). These are the only
+// runners yaver ships first-class support for. Order is the preference
+// order for "default installed runner" fallbacks.
 var supportedRunnerIDs = []string{"claude", "codex", "opencode"}
 
 // IsSupportedRunner reports whether a runner ID is in the canonical
@@ -475,7 +414,7 @@ func (tm *TaskManager) GetRunnerInfos() []RunnerInfo {
 	// runner's auth check passed; "needs-auth" means the binary is there but
 	// the user still has to sign in; "down" means DetectRunnerRuntimeStatus
 	// returned a hard error. Duplicates of running-task entries are skipped.
-	knownRunnerIDs := []string{"claude", "codex", "aider", "aider-ollama", "ollama", "opencode", "goose"}
+	knownRunnerIDs := supportedRunnerIDs
 	for _, id := range knownRunnerIDs {
 		if seenRunner[normalizeRunnerID(id)] {
 			continue
@@ -1499,10 +1438,11 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 // Supported placeholders:
 //
 //	{prompt} — always required
-//	{model}  — substituted from the runner config's Model field (used
-//	           by the ollama runner so `yaver tasks --runner ollama
-//	           --model qwen2.5-coder:7b` lands on the right model
-//	           instead of the previous hardcoded "llama3").
+//	{model}  — optional, substituted from the runner config's Model
+//	           field. None of the first-class runners use this in their
+//	           default Args today (claude/codex/opencode all consume
+//	           --model as a separate flag), but it's kept so callers can
+//	           build custom RunnerConfigs without losing the substitution.
 func buildRunnerArgs(runner RunnerConfig, prompt string) []string {
 	args := make([]string, len(runner.Args))
 	for i, a := range runner.Args {
@@ -1691,10 +1631,9 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	task.cancel = cancel
 
 	runner := task.runner
-	// Per-task model override flows into {model} substitution for
-	// runners that template it (currently the ollama runner). Must
-	// happen before buildRunnerArgs or the placeholder lands in the
-	// argv literally.
+	// Per-task model override flows into the runner's {model}
+	// placeholder (if any). Must happen before buildRunnerArgs or
+	// the placeholder lands in the argv literally.
 	if task.Model != "" {
 		runner.Model = task.Model
 	}
@@ -2066,7 +2005,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 func runnerRequiresHostRuntime(runnerID string) bool {
 	switch normalizeRunnerID(runnerID) {
-	case "claude", "codex", "opencode", "aider", "aider-ollama", "goose", "amp":
+	case "claude", "codex", "opencode":
 		return true
 	default:
 		return false

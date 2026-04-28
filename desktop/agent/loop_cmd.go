@@ -120,9 +120,9 @@ func (p *LoopPlaytest) playtestEnabled(mode LoopMode) bool {
 }
 
 type LoopThink struct {
-	Runner         string   `yaml:"runner" json:"runner"`                                           // claude-code | codex | aider | aider-ollama | ollama:<model>
-	Model          string   `yaml:"model,omitempty" json:"model,omitempty"`                         // optional override, e.g. ollama_chat/qwen2.5-coder:14b for aider-ollama
-	BaseURL        string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`                   // for ollama-backed runs, sets OLLAMA_API_BASE at spawn time
+	Runner         string   `yaml:"runner" json:"runner"`                                           // claude-code | codex | opencode
+	Model          string   `yaml:"model,omitempty" json:"model,omitempty"`                         // optional override, forwarded as --model
+	BaseURL        string   `yaml:"base_url,omitempty" json:"base_url,omitempty"`                   // optional override; opencode picks it up via env when set
 	Fallback       []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`                   // provider chain when primary is rate-limited
 	Prompt         string   `yaml:"prompt,omitempty" json:"prompt,omitempty"`                       // path to prompt file
 	PromptInline   string   `yaml:"prompt_inline,omitempty" json:"prompt_inline,omitempty"`         // inline prompt embedded in the spec
@@ -198,7 +198,8 @@ type ProviderLimits struct {
 	SharedWithInteractive bool `json:"shared_with_interactive"`
 }
 
-// defaultProviderLimits returns the baked-in defaults for well-known runners.
+// defaultProviderLimits returns the baked-in defaults for yaver's
+// three first-class runners.
 func defaultProviderLimits(runner string) ProviderLimits {
 	r := strings.ToLower(runner)
 	switch {
@@ -206,10 +207,11 @@ func defaultProviderLimits(runner string) ProviderLimits {
 		return ProviderLimits{SessionWindow: "5h", SoftCapPercent: 80, SharedWithInteractive: true}
 	case r == "codex":
 		return ProviderLimits{SessionWindow: "1h", SoftCapPercent: 80, SharedWithInteractive: true}
-	case r == "aider":
-		return ProviderLimits{SessionWindow: "1h", SoftCapPercent: 90, SharedWithInteractive: false}
-	case strings.HasPrefix(r, "ollama"):
-		return ProviderLimits{SessionWindow: "", SoftCapPercent: 100, SharedWithInteractive: false}
+	case r == "opencode":
+		// opencode's effective limits depend on the BYOK provider the
+		// user has wired up; SessionWindow is a placeholder, the
+		// provider-specific rate limiter does the real enforcement.
+		return ProviderLimits{SessionWindow: "1h", SoftCapPercent: 80, SharedWithInteractive: false}
 	default:
 		return ProviderLimits{SessionWindow: "1h", SoftCapPercent: 80, SharedWithInteractive: true}
 	}
@@ -985,7 +987,7 @@ func validateLoopSpec(s *LoopSpec) error {
 		return fmt.Errorf("spec is missing required field: target")
 	}
 	if s.Think.Runner == "" {
-		return fmt.Errorf("think.runner is required (claude-code | codex | aider | ollama:<model>)")
+		return fmt.Errorf("think.runner is required (claude-code | codex | opencode)")
 	}
 	if s.Knobs.RadicalnessUI < 0 || s.Knobs.RadicalnessUI > 10 {
 		return fmt.Errorf("knobs.radicalness_ui must be in 0..10")
@@ -1096,8 +1098,6 @@ func warnLoopDependencies(s *LoopSpec) {
 		check("claude", "`claude` CLI not on PATH — install Claude Code from https://claude.com/product/claude-code")
 	case "codex":
 		check("codex", "`codex` CLI not on PATH")
-	case "aider":
-		check("aider", "`aider` CLI not on PATH — `pip install aider-chat`")
 	case "opencode":
 		check("opencode", "`opencode` CLI not on PATH — `curl -fsSL https://opencode.ai/install | bash`")
 	case "hybrid":
@@ -1107,9 +1107,10 @@ func warnLoopDependencies(s *LoopSpec) {
 		check("claude", "hybrid: `claude` CLI not on PATH (planner) — install Claude Code")
 		check("opencode", "hybrid: `opencode` CLI not on PATH (implementer) — `curl -fsSL https://opencode.ai/install | bash`")
 	default:
-		if strings.HasPrefix(strings.ToLower(s.Think.Runner), "ollama") {
-			check("ollama", "`ollama` CLI not on PATH")
-		}
+		// Only claude-code, codex, opencode, and hybrid are first-class.
+		// Anything else triggers a generic warning so the loop fails
+		// fast instead of trying to spawn a missing binary.
+		check(s.Think.Runner, fmt.Sprintf("unknown runner %q (use claude-code, codex, or opencode)", s.Think.Runner))
 	}
 
 	// Typecheck green-gate needs the project's typechecker — usually tsc

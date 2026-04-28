@@ -33,10 +33,9 @@ func ifFocus(focus, s string) string {
 }
 
 // autodevRefillIdeas appends fresh checklist items to p.RemainedFile.
-// Runner-agnostic via RunAIGenerator (claude / codex / aider /
-// ollama). Best-effort: returns an error only when nothing usable
-// was produced — the caller decides whether to keep going or end
-// the run.
+// Runner-agnostic via RunAIGenerator (claude / codex / opencode).
+// Best-effort: returns an error only when nothing usable was
+// produced — the caller decides whether to keep going or end the run.
 func autodevRefillIdeas(p autodevPlan) error {
 	wd, _ := os.Getwd()
 

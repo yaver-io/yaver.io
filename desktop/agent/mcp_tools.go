@@ -24,11 +24,11 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"runner": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"", "claude", "codex", "opencode"},
-						"description": "Runner ID — claude / codex / opencode. Empty = agent default. (Other runners are still available from the CLI for power users but are not first-class through MCP.)",
+						"description": "Runner ID — claude / codex / opencode. Empty = agent default.",
 					},
 					"model": map[string]interface{}{
 						"type":        "string",
-						"description": "Model id forwarded to the runner (e.g. claude-opus-4-7, gpt-5-codex, qwen2.5-coder:14b). Empty = runner default.",
+						"description": "Model id forwarded to the runner (e.g. claude-opus-4-7, gpt-5-codex, or any opencode-configured provider/model). Empty = runner default.",
 					},
 					"mode": map[string]interface{}{
 						"type":        "string",
@@ -186,7 +186,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"harden":              map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}, "description": "Autodev hardening preset — sets a curated focus prompt (security audit, leak hunt, perf passes, code-quality cleanup, or all four)."},
 					"model":               map[string]interface{}{"type": "string", "description": "Model alias (sonnet|opus|haiku) or full id. Sonnet burns the Max weekly bucket ~5x slower than Opus."},
 					"planner":             map[string]interface{}{"type": "string", "description": "Hybrid layering: planner agent[:model], e.g. 'claude:opus'. Set this OR implementer to force engine=hybrid."},
-					"implementer":         map[string]interface{}{"type": "string", "description": "Hybrid layering: implementer agent[:model], e.g. 'claude:sonnet', 'codex', 'aider-ollama:qwen2.5-coder:14b'."},
+					"implementer":         map[string]interface{}{"type": "string", "description": "Hybrid layering: implementer agent[:model], e.g. 'claude:sonnet', 'codex', or 'opencode:<provider>/<model>'."},
 				},
 			},
 		},
@@ -2821,36 +2821,35 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sandboxTools...)
 
-	// --- Hybrid Mode (planner + local implementer) ---
+	// --- Hybrid Mode (planner + implementer) ---
 	hybridTools := []map[string]interface{}{
 		{
 			"name":        "hybrid_check",
-			"description": "Preflight the hybrid runner chain — verifies aider is installed, the Ollama daemon responds, and the requested model is pulled. Returns an actionable hint if anything is missing.",
+			"description": "Preflight the hybrid runner chain — verifies the planner and implementer CLIs are on PATH. Returns an actionable hint if anything is missing.",
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"model": map[string]interface{}{
+					"planner": map[string]interface{}{
 						"type":        "string",
-						"description": "LLM identifier to verify (default: ollama_chat/qwen2.5-coder:14b)",
+						"description": "Planner runner ID (claude | codex | opencode). Default: claude.",
 					},
-					"baseUrl": map[string]interface{}{
+					"implementer": map[string]interface{}{
 						"type":        "string",
-						"description": "Ollama base URL (default: http://127.0.0.1:11434)",
+						"description": "Implementer runner ID (claude | codex | opencode). Default: opencode.",
 					},
 				},
 			},
 		},
 		{
 			"name":        "hybrid_plan",
-			"description": "Ask the expensive planner (default: claude) to decompose a feature request into file-scoped subtasks for the cheap local implementer. Does NOT execute — returns the subtask list for preview/editing before calling hybrid_run.",
+			"description": "Ask the planner (default: claude) to decompose a feature request into file-scoped subtasks for the implementer (default: opencode). Does NOT execute — returns the subtask list for preview/editing before calling hybrid_run.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"workDir", "prompt"},
 				"properties": map[string]interface{}{
-					"planner":     map[string]interface{}{"type": "string", "description": "Planner runner ID (default: claude)"},
-					"implementer": map[string]interface{}{"type": "string", "description": "Implementer runner ID (default: aider-ollama)"},
-					"model":       map[string]interface{}{"type": "string", "description": "Override implementer model"},
-					"baseUrl":     map[string]interface{}{"type": "string", "description": "Override implementer base URL"},
+					"planner":     map[string]interface{}{"type": "string", "description": "Planner runner ID (claude | codex | opencode). Default: claude."},
+					"implementer": map[string]interface{}{"type": "string", "description": "Implementer runner ID (claude | codex | opencode). Default: opencode."},
+					"model":       map[string]interface{}{"type": "string", "description": "Override implementer model (forwarded as --model)"},
 					"workDir":     map[string]interface{}{"type": "string", "description": "Absolute path to the project root"},
 					"prompt":      map[string]interface{}{"type": "string", "description": "The feature request in plain English"},
 					"maxSubtasks": map[string]interface{}{"type": "integer", "description": "Cap on subtasks the planner emits (default: 20)"},
@@ -2859,7 +2858,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "hybrid_run",
-			"description": "Plan AND execute a hybrid run end-to-end. The planner emits subtasks; aider + a local Qwen model implements each one. Returns a report with per-step status, output, and duration. Can take many minutes — use hybrid_plan first if you want to review the plan before committing.",
+			"description": "Plan AND execute a hybrid run end-to-end. The planner (default: claude) emits subtasks; the implementer (default: opencode) executes each one. Returns a report with per-step status, output, and duration. Can take many minutes — use hybrid_plan first if you want to review the plan before committing.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"workDir", "prompt"},
@@ -2867,7 +2866,6 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"planner":     map[string]interface{}{"type": "string"},
 					"implementer": map[string]interface{}{"type": "string"},
 					"model":       map[string]interface{}{"type": "string"},
-					"baseUrl":     map[string]interface{}{"type": "string"},
 					"workDir":     map[string]interface{}{"type": "string"},
 					"prompt":      map[string]interface{}{"type": "string"},
 					"maxSubtasks": map[string]interface{}{"type": "integer"},

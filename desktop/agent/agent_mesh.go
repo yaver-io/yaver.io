@@ -284,10 +284,10 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		score += 25
 		reasons = append(reasons, "phone-connected proof resource request")
 	}
-	if strings.Contains(intent, "ollama") || strings.Contains(intent, "local llm") {
+	if strings.Contains(intent, "local llm") || strings.Contains(intent, "byok") {
 		if m.Capabilities != nil && m.Capabilities.SupportsLocalLLM {
 			score += 260
-			reasons = append(reasons, "local LLM requested")
+			reasons = append(reasons, "local-LLM-capable machine for BYOK runner")
 		} else {
 			score -= 120
 		}
@@ -300,9 +300,9 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 			reasons = append(reasons, "planning/classification favors Claude")
 		}
 	case AgentNodeAutodev, AgentNodeAutotest:
-		if runner == "codex" || runner == "aider-ollama" || runner == "ollama" {
+		if runner == "codex" || runner == "opencode" {
 			score += 140
-			reasons = append(reasons, "implementation path prefers cheaper/high-throughput runner")
+			reasons = append(reasons, "implementation path prefers token-leaner runner")
 		}
 		if m.Capabilities != nil && m.Capabilities.LowPower {
 			score -= 70
@@ -426,27 +426,27 @@ func chooseCandidateRunner(node AgentGraphNodeSpec, m MachineInfo) string {
 func inferPreferredRunnerCandidates(node AgentGraphNodeSpec) []string {
 	intent := nodeIntent(node)
 	if node.DesignPoints >= 0.8 {
-		return []string{"claude-code", "codex", "opencode", "aider"}
+		return []string{"claude-code", "codex", "opencode"}
 	}
 	if node.BuildPoints >= 0.8 {
-		return []string{"codex", "opencode", "aider-ollama", "claude-code", "ollama"}
+		return []string{"codex", "opencode", "claude-code"}
 	}
 	if node.VerifyPoints >= 0.8 {
-		return []string{"codex", "claude-code", "opencode", "aider-ollama"}
+		return []string{"codex", "claude-code", "opencode"}
 	}
-	if strings.Contains(intent, "ollama") || strings.Contains(intent, "local llm") {
-		return []string{"aider-ollama", "ollama", "codex", "claude-code"}
+	if strings.Contains(intent, "local llm") || strings.Contains(intent, "byok") {
+		return []string{"opencode", "codex", "claude-code"}
 	}
 	if strings.Contains(intent, "testflight") || strings.Contains(intent, "ios") {
-		return []string{"claude-code", "codex", "aider-ollama", "ollama"}
+		return []string{"claude-code", "codex", "opencode"}
 	}
 	switch node.Kind {
 	case AgentNodeChat:
-		return []string{"claude-code", "codex", "opencode", "aider"}
+		return []string{"claude-code", "codex", "opencode"}
 	case AgentNodeAutoIdeas:
-		return []string{"claude-code", "codex", "opencode", "ollama"}
+		return []string{"claude-code", "codex", "opencode"}
 	case AgentNodeAutodev, AgentNodeAutotest:
-		return []string{"codex", "aider-ollama", "claude-code", "ollama", "opencode"}
+		return []string{"codex", "claude-code", "opencode"}
 	default:
 		return []string{"claude-code", "codex"}
 	}
@@ -473,10 +473,6 @@ func choosePlacementModel(node AgentGraphNodeSpec, runner string) string {
 			return "claude-opus-4-6"
 		}
 		return "claude-sonnet-4-6"
-	case "ollama":
-		return "qwen2.5-coder:14b"
-	case "aider-ollama":
-		return "ollama_chat/qwen2.5-coder:14b"
 	default:
 		return ""
 	}
@@ -507,12 +503,12 @@ func machineSupportsAndroid(caps *MachineCapabilities) bool {
 }
 
 // runnerNeedsHostedAPIKey reports whether the runner calls an external
-// paid model API (Anthropic, OpenAI Codex, etc.) and therefore requires
-// either the host's API key or a guest-provided key to run on a shared
-// machine. Local-only runners (ollama, aider-ollama) return false.
+// paid model API (Anthropic, OpenAI Codex, or whichever provider the
+// user has BYOK'd into opencode) and therefore requires either the
+// host's API key or a guest-provided key to run on a shared machine.
 func runnerNeedsHostedAPIKey(runner string) bool {
 	switch normalizedPlacementRunner(runner) {
-	case "claude-code", "codex", "opencode", "aider":
+	case "claude-code", "codex", "opencode":
 		return true
 	default:
 		return false
@@ -521,15 +517,16 @@ func runnerNeedsHostedAPIKey(runner string) bool {
 
 func machineRunnerGlobalLimit(runner string, caps *MachineCapabilities) int {
 	switch normalizedPlacementRunner(runner) {
-	case "claude-code", "codex", "opencode":
+	case "claude-code", "codex":
+		// Anthropic/OpenAI rate-limit aggressively per-account, so
+		// keep these single-instance per machine.
 		return 1
-	case "aider":
-		return 2
-	case "aider-ollama", "ollama":
-		if caps == nil {
-			return 2
-		}
-		if caps.LowPower {
+	case "opencode":
+		// opencode's effective limit depends on the BYOK provider
+		// the user has wired up. Allow modest parallelism by default;
+		// the provider's own rate limiter handles real backpressure.
+		// Scale with hardware so bigger boxes do more.
+		if caps == nil || caps.LowPower {
 			return 1
 		}
 		if caps.Hardware.MaxParallel >= 8 {

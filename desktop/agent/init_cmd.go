@@ -52,7 +52,7 @@ func runInit(args []string) {
 
 	// Step 2 — default runner
 	fmt.Println("Step 2 of 7 — default AI runner")
-	fmt.Println("  Options: claude, codex, aider, goose, amp, opencode, ollama")
+	fmt.Println("  Options: claude, codex, opencode")
 	runner := prompt(r, "Default runner", "claude")
 	if runner != "" && cfg != nil {
 		runSetRunner([]string{runner})

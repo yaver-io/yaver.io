@@ -319,7 +319,7 @@ export interface Task {
   output: string[];
   resultText?: string;    // Extracted clean result from Claude
   costUsd?: number;       // Total API cost in USD
-  runnerId?: string;      // Which runner executed this task (claude, codex, aider)
+  runnerId?: string;      // Which runner executed this task (claude, codex, opencode)
   source?: string;        // Task origin: "mobile", "mcp", "cli", "vibing", "vibing-cache", "todolist"
   turns?: ConversationTurn[];  // Full conversation history
   createdAt: number;
@@ -1391,11 +1391,13 @@ export class QuicClient {
   }
 
   // ── Hybrid Mode API ──────────────────────────────────────────────
-  // Planner + local-implementer orchestration. Endpoints live in
-  // desktop/agent/hybrid_http.go. See CLAUDE.md "Hybrid Mode" for
-  // why (cost) and how (aider + ollama). We intentionally keep these
-  // as ad-hoc methods rather than the Task subsystem — hybrid runs
-  // block for minutes and return a structured report, not a stream.
+  // Planner + implementer orchestration across yaver's three first-class
+  // runners (claude, codex, opencode). Endpoints live in
+  // desktop/agent/hybrid_http.go. See CLAUDE.md "Hybrid Mode" for why
+  // (cost: cheap planner + token-leaner implementer) and how. We
+  // intentionally keep these as ad-hoc methods rather than the Task
+  // subsystem — hybrid runs block for minutes and return a structured
+  // report, not a stream.
 
   async hybridPlan(req: HybridRunRequest): Promise<HybridPlanResult> {
     this.assertConnected();

@@ -189,10 +189,6 @@ func profileInstallTarget(name string) (string, bool) {
 		return "sqlite3", true
 	case "node", "npm", "pnpm", "yarn", "bun":
 		return "node", true
-	case "ollama":
-		return "ollama", true
-	case "aider":
-		return "aider", true
 	case "opencode":
 		return "opencode", true
 	case "chrome", "google-chrome", "google-chrome-stable":

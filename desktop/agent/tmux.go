@@ -24,7 +24,7 @@ type TmuxSession struct {
 	Created      string `json:"created"`
 	Attached     bool   `json:"attached"`
 	Relationship string `json:"relationship"`          // "adopted", "forked-by-yaver", "unrelated"
-	AgentType    string `json:"agentType,omitempty"`    // "claude", "aider", "codex", "ollama", etc.
+	AgentType    string `json:"agentType,omitempty"`    // "claude", "codex", "opencode"
 	MainPID      int    `json:"mainPid,omitempty"`      // PID of the main process in the active pane
 	PanePreview  string `json:"panePreview,omitempty"`  // last ~20 lines of pane output
 	TaskID       string `json:"taskId,omitempty"`       // set if adopted as a Yaver task
@@ -40,13 +40,10 @@ type TmuxManager struct {
 }
 
 // knownAgentBinaries maps binary substrings to friendly agent type names.
+// Only yaver's three first-class runners are recognised here.
 var knownAgentBinaries = map[string]string{
 	"claude":   "claude",
 	"codex":    "codex",
-	"aider":    "aider",
-	"ollama":   "ollama",
-	"goose":    "goose",
-	"amp":      "amp",
 	"opencode": "opencode",
 }
 

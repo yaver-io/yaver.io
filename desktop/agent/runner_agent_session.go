@@ -178,8 +178,8 @@ func resolveAgentSessionRunner(engine, runner string) string {
 		return "claude-code"
 	case "codex":
 		return "codex"
-	case "aider":
-		return "aider"
+	case "opencode":
+		return "opencode"
 	case "hybrid":
 		return "hybrid"
 	default:

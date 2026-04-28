@@ -445,13 +445,13 @@ func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
 	fallbackModel := ""
 	switch node.Kind {
 	case AgentNodeChat:
-		candidates = [][2]string{{"claude", "claude-opus-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}}
+		candidates = [][2]string{{"claude", "claude-opus-4-6"}, {"codex", ""}, {"opencode", ""}}
 		fallbackModel = "claude-opus-4-6"
 	case AgentNodeAutoIdeas:
-		candidates = [][2]string{{"claude", "claude-sonnet-4-6"}, {"codex", ""}, {"opencode", ""}, {"goose", ""}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}}
+		candidates = [][2]string{{"claude", "claude-sonnet-4-6"}, {"codex", ""}, {"opencode", ""}}
 		fallbackModel = "claude-sonnet-4-6"
 	case AgentNodeAutodev, AgentNodeAutotest:
-		candidates = [][2]string{{"codex", ""}, {"claude", "claude-sonnet-4-6"}, {"aider-ollama", "ollama_chat/qwen2.5-coder:14b"}, {"aider", ""}, {"ollama", "qwen2.5-coder:14b"}, {"opencode", ""}}
+		candidates = [][2]string{{"codex", ""}, {"claude", "claude-sonnet-4-6"}, {"opencode", ""}}
 		fallbackModel = "claude-sonnet-4-6"
 	}
 

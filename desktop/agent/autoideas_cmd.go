@@ -229,7 +229,7 @@ endLoop:
 // autoIdeasGenerate is a thin wrapper around RunAIGenerator that
 // formats the prompt, parses the JSON array of titles, and appends
 // them to the output file. Runner-agnostic — works with claude /
-// codex / aider / ollama via the picker in ai_generator.go.
+// codex / opencode via the picker in ai_generator.go.
 func autoIdeasGenerate(engine, runner, focus, outputPath, wd string) error {
 	focusBlock := ""
 	f := strings.TrimSpace(focus)

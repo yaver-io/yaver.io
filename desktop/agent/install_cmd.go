@@ -275,25 +275,8 @@ var integrations = []installPlan{
 		},
 	},
 	{
-		name:        "ollama",
-		description: "Ollama — local LLM provider for $0 visual inspection (alternative to Mistral/OpenAI/Anthropic)",
-		macOS:       []string{"brew install ollama"},
-		linux: []linuxStep{
-			{"curl", "curl -fsSL https://ollama.com/install.sh | sh"},
-		},
-	},
-	{
-		name:        "aider",
-		description: "Aider — file-editing AI CLI; pairs with Ollama/Qwen for the hybrid mode implementer",
-		macOS:       []string{"python3 -m pip install --user --upgrade aider-chat"},
-		linux: []linuxStep{
-			{"pip3", "pip3 install --user --upgrade aider-chat"},
-			{"pipx", "pipx install aider-chat"},
-		},
-	},
-	{
 		name:        "opencode",
-		description: "OpenCode — alternative terminal AI coding agent; usable as a hybrid planner or implementer",
+		description: "opencode — yaver's third first-class runner. BYOK any provider (Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) via opencode.json.",
 		macOS:       []string{"brew install opencode"},
 		linux: []linuxStep{
 			{"npm", "npm install -g opencode-ai"},
@@ -527,8 +510,6 @@ func checkInstalled(name string) string {
 		"android-sdk":       {"adb"},
 		"appium":            {"appium"},
 		"maestro":           {"maestro"},
-		"ollama":            {"ollama"},
-		"aider":             {"aider"},
 		"opencode":          {"opencode"},
 		"hybrid":            {"opencode"}, // presence of opencode is our cheapest proxy
 		"pre-commit":        {"pre-commit"},
@@ -558,7 +539,7 @@ func compositeInstallSatisfied(name string) bool {
 	required := map[string][]string{
 		"tdd":          {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
 		"backend-dev":  {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
-		"pi-dev-node":  {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"},
+		"pi-dev-node":  {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "opencode", "tdd", "backend-dev"},
 		"vibe-preview": {"chromium", "ffmpeg", "maestro", "appium", "android-sdk"},
 	}
 	targets, ok := required[name]
@@ -736,7 +717,7 @@ func integrationsHelpText(name string) string {
 }
 
 func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
-	planNames := []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "ollama", "aider", "opencode", "tdd", "backend-dev"}
+	planNames := []string{"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "opencode", "tdd", "backend-dev"}
 	for _, name := range planNames {
 		plan, ok := metaInstallPlan(name)
 		if !ok {
@@ -1093,29 +1074,10 @@ func metaInstallPlan(name string) (installPlan, bool) {
 				{"pacman", "sudo pacman -S --noconfirm android-tools"},
 			},
 		}, true
-	case "ollama":
-		return installPlan{
-			name:        "ollama",
-			description: "Ollama — local LLM provider for $0 visual inspection (alternative to Mistral/OpenAI/Anthropic)",
-			macOS:       []string{"brew install ollama"},
-			linux: []linuxStep{
-				{"curl", "curl -fsSL https://ollama.com/install.sh | sh"},
-			},
-		}, true
-	case "aider":
-		return installPlan{
-			name:        "aider",
-			description: "Aider — file-editing AI CLI; pairs with Ollama/Qwen for the hybrid mode implementer",
-			macOS:       []string{"python3 -m pip install --user --upgrade aider-chat"},
-			linux: []linuxStep{
-				{"pip3", "pip3 install --user --upgrade aider-chat"},
-				{"pipx", "pipx install aider-chat"},
-			},
-		}, true
 	case "opencode":
 		return installPlan{
 			name:        "opencode",
-			description: "OpenCode — alternative terminal AI coding agent; usable as a hybrid planner or implementer",
+			description: "opencode — yaver's third first-class runner. BYOK any provider (Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) via opencode.json.",
 			macOS:       []string{"brew install opencode"},
 			linux: []linuxStep{
 				{"npm", "npm install -g opencode-ai"},

@@ -193,9 +193,7 @@ func DiscoverBinary(name string) string {
 func knownProbeBinaries() []string {
 	return []string{
 		// AI runners
-		"claude", "codex", "aider", "opencode",
-		// Model runtimes
-		"ollama",
+		"claude", "codex", "opencode",
 		// Language runtimes
 		"node", "npm", "pnpm", "yarn", "bun",
 		"python3", "python", "pip3", "pip", "uv", "pipx",

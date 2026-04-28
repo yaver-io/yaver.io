@@ -12,8 +12,9 @@
 //      YAVER_SKIP_PREUNINSTALL_WIPE=1 if a user wants `npm uninstall +
 //      reinstall` without losing their device row.
 //
-//   2. `yaver mcp unregister` — removes Claude Desktop / Claude Code /
-//      Codex / Cursor / VS Code / Windsurf / Zed entries.
+//   2. `yaver mcp unregister` — removes the Yaver MCP server entry
+//      from Claude Code / Codex / opencode configs (yaver's three
+//      first-class runners).
 //
 // Must NEVER fail the uninstall. If yaver is not on PATH, silently succeed.
 

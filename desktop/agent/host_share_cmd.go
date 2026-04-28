@@ -48,8 +48,8 @@ func defaultHostShareRunners(cfg *Config) []string {
 	if hostShareCommandExists("codex") {
 		out = append(out, "codex")
 	}
-	if hostShareCommandExists("aider") {
-		out = append(out, "aider")
+	if hostShareCommandExists("opencode") {
+		out = append(out, "opencode")
 	}
 	sort.Strings(out)
 	return out

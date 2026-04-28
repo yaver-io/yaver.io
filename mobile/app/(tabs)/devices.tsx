@@ -510,10 +510,8 @@ function DeviceCard({
   const codexRow = runnerStatusRow(runnerAuthRows, "codex");
   const claudeState = runnerAuthState(claudeRow);
   const codexState = runnerAuthState(codexRow);
-  // Mobile shows only the three vibing-grade runners — aider /
-  // aider-ollama / ollama still install via the agent CLI but the
-  // mobile UX is chat-driven and those don't fit. Same allowlist
-  // used by phone-projects.tsx + tasks.tsx.
+  // Yaver's three first-class runners — the only runners we surface
+  // anywhere. Same allowlist used by phone-projects.tsx + tasks.tsx.
   const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
   const runners = (device.runners || []).filter((r) => RUNNER_WL.has((r.runnerId || "").toLowerCase()));
   const activeRunners = runners.filter((r) => r.status === "running");

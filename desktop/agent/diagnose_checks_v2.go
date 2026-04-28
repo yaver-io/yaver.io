@@ -316,8 +316,6 @@ func checkRunners(ctx context.Context, emit DiagEmit) {
 	runners := []runnerProbe{
 		{Name: "claude", Command: "claude", ProbeArgs: []string{"--version"}, AuthHint: "run `claude /login` to re-auth"},
 		{Name: "codex", Command: "codex", ProbeArgs: []string{"--version"}, AuthHint: "run `codex login` to re-auth"},
-		{Name: "aider", Command: "aider", ProbeArgs: []string{"--version"}, AuthHint: "set OPENAI_API_KEY / ANTHROPIC_API_KEY"},
-		{Name: "ollama", Command: "ollama", ProbeArgs: []string{"list"}, AuthHint: "`ollama pull <model>` first; requires `ollama serve` running"},
 		{Name: "opencode", Command: "opencode", ProbeArgs: []string{"--version"}, AuthHint: "`opencode auth login` or set provider API key"},
 	}
 	anyPresent := false
@@ -363,7 +361,7 @@ func checkRunners(ctx context.Context, emit DiagEmit) {
 			Type:     "finding",
 			Check:    "runners",
 			Severity: DiagWarning,
-			Message:  "No AI coding runners on PATH. `yaver install claude-code` / `yaver install codex` / `yaver install aider` / `yaver install ollama` as needed.",
+			Message:  "No AI coding runners on PATH. Install claude-code, codex, or opencode (e.g. `yaver install claude-code`).",
 		})
 	}
 	_ = runtime.GOOS // keep import stable across refactors

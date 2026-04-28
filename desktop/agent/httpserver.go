@@ -2558,12 +2558,6 @@ func fallbackRunnerModels(runnerID string) []runnerModelInfo {
 			{ID: "gpt-5.4-mini", Name: "GPT-5.4 Mini", Source: "builtin", IsDefault: false},
 			{ID: "gpt-5.3-codex", Name: "GPT-5.3 Codex", Source: "builtin", IsDefault: false},
 		}
-	case "aider-ollama":
-		return []runnerModelInfo{
-			{ID: "qwen2.5-coder:14b", Name: "Qwen Coder 14B", Source: "builtin", IsDefault: true},
-			{ID: "qwen2.5-coder:7b", Name: "Qwen Coder 7B", Source: "builtin", IsDefault: false},
-			{ID: "qwen2.5-coder:1.5b", Name: "Qwen Coder 1.5B", Source: "builtin", IsDefault: false},
-		}
 	default:
 		return nil
 	}
@@ -2607,7 +2601,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, runnerID := range []string{"claude", "codex", "aider-ollama"} {
+	for _, runnerID := range []string{"claude", "codex", "opencode"} {
 		if len(modelsByRunner[runnerID]) == 0 {
 			if fallback := fallbackRunnerModels(runnerID); len(fallback) > 0 {
 				modelsByRunner[runnerID] = fallback
@@ -2666,7 +2660,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		addRunner(r)
 	}
 	// Then rest in stable order
-	for _, id := range []string{"claude", "codex", "aider", "goose", "ollama", "amp", "opencode"} {
+	for _, id := range []string{"claude", "codex", "opencode"} {
 		if r, ok := builtinRunners[id]; ok {
 			addRunner(r)
 		}
@@ -2984,7 +2978,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Description   string             `json:"description"`
 		UserPrompt    string             `json:"userPrompt,omitempty"`
 		Model         string             `json:"model"`
-		Runner        string             `json:"runner"`         // runner ID: "claude", "codex", "aider" — empty uses default
+		Runner        string             `json:"runner"`         // runner ID: "claude", "codex", "opencode" — empty uses default
 		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
 		CustomCommand string             `json:"customCommand"`  // arbitrary command — runs via sh -c
 		ProjectName   string             `json:"projectName,omitempty"`
@@ -3475,15 +3469,11 @@ func (s *HTTPServer) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		addCheck("agent", "HTTP server", "warn", "Not reachable on port 18080")
 	}
 
-	// AI Runners
+	// AI Runners — yaver's three first-class runners.
 	runners := []struct{ id, name, cmd, install string }{
 		{"claude", "Claude Code", "claude", "npm install -g @anthropic-ai/claude-code"},
 		{"codex", "OpenAI Codex", "codex", "npm install -g @openai/codex"},
-		{"aider", "Aider", "aider", "pip install aider-chat"},
-		{"ollama", "Ollama", "ollama", "brew install ollama"},
-		{"goose", "Goose", "goose", "pip install goose-ai"},
-		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
-		{"opencode", "OpenCode", "opencode", "npm install -g opencode-ai"},
+		{"opencode", "opencode", "opencode", "curl -fsSL https://opencode.ai/install | bash"},
 	}
 	for _, runner := range runners {
 		p, err := osexec.LookPath(runner.cmd)
@@ -3638,13 +3628,7 @@ func (s *HTTPServer) handleTools(w http.ResponseWriter, r *http.Request) {
 	tools := []struct{ id, name, cmd, install string }{
 		{"claude", "Claude Code", "claude", "npm install -g @anthropic-ai/claude-code"},
 		{"codex", "OpenAI Codex", "codex", "npm install -g @openai/codex"},
-		{"aider", "Aider", "aider", "pip install aider-chat"},
-		{"ollama", "Ollama", "ollama", "brew install ollama"},
-		{"goose", "Goose", "goose", "pip install goose-ai"},
-		{"amp", "Amp", "amp", "npm install -g @anthropic/amp"},
-		{"opencode", "OpenCode", "opencode", "npm install -g opencode-ai"},
-		{"qwen", "Qwen", "qwen", "pip install qwen-agent"},
-		{"cursor", "Cursor", "cursor", "https://cursor.com"},
+		{"opencode", "opencode", "opencode", "curl -fsSL https://opencode.ai/install | bash"},
 	}
 
 	var result []toolInfo
@@ -11448,17 +11432,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "hybrid_check":
 		var args struct {
-			Model   string `json:"model"`
-			BaseURL string `json:"baseUrl"`
+			Planner     string `json:"planner"`
+			Implementer string `json:"implementer"`
 		}
 		json.Unmarshal(call.Arguments, &args)
-		if args.Model == "" {
-			args.Model = "ollama_chat/qwen2.5-coder:14b"
+		if args.Planner == "" {
+			args.Planner = "claude"
 		}
-		if args.BaseURL == "" {
-			args.BaseURL = "http://127.0.0.1:11434"
+		if args.Implementer == "" {
+			args.Implementer = "opencode"
 		}
-		return mcpToolJSON(checkHybrid("aider-ollama", args.Model, args.BaseURL))
+		return mcpToolJSON(checkHybrid(args.Planner, args.Implementer))
 
 	case "hybrid_plan":
 		var req hybridRunRequest
@@ -14052,11 +14036,7 @@ func (s *HTTPServer) mcpDoctor() interface{} {
 	runners := []struct{ id, name, cmd string }{
 		{"claude", "Claude Code", "claude"},
 		{"codex", "OpenAI Codex", "codex"},
-		{"aider", "Aider", "aider"},
-		{"ollama", "Ollama", "ollama"},
-		{"goose", "Goose", "goose"},
-		{"amp", "Amp", "amp"},
-		{"opencode", "OpenCode", "opencode"},
+		{"opencode", "opencode", "opencode"},
 	}
 	for _, r := range runners {
 		path, err := osexec.LookPath(r.cmd)
@@ -14375,15 +14355,15 @@ func yaverOnboardChecklist() string {
 	emailOK := cfg != nil && cfg.Email != nil && (cfg.Email.SMTPHost != "" || cfg.Email.GoogleRefreshToken != "")
 	mark(emailOK, "Email provider wired (needed for forms/newsletter/mail)", "yaver email setup   (or use mail_onboard_start from mobile)")
 
-	// 6. Runner installed
+	// 6. Runner installed — yaver's three first-class runners.
 	runnerFound := ""
-	for _, r := range []string{"claude", "codex", "aider", "goose", "amp", "ollama", "opencode"} {
+	for _, r := range []string{"claude", "codex", "opencode"} {
 		if _, err := osexecLookPath(r); err == nil {
 			runnerFound = r
 			break
 		}
 	}
-	mark(runnerFound != "", "AI runner installed ("+runnerFound+")", "npm i -g @anthropic-ai/claude-code   or any other supported runner")
+	mark(runnerFound != "", "AI runner installed ("+runnerFound+")", "npm i -g @anthropic-ai/claude-code   or `yaver install codex` / `yaver install opencode`")
 
 	// 7. Auto-start
 	autoStartReady := false
@@ -14426,7 +14406,7 @@ func yaverOnboardChecklist() string {
 	case !emailOK:
 		b.WriteString("connect Gmail/O365 (POST /mail/onboard/start from the mobile app, or `yaver email setup`)")
 	case runnerFound == "":
-		b.WriteString("install an AI runner — claude / codex / aider / ollama")
+		b.WriteString("install an AI runner — claude-code / codex / opencode")
 	default:
 		b.WriteString("you're set up — call `yaver_help` with topic=solo-stack to see what's possible")
 	}
@@ -14442,12 +14422,12 @@ func yaverHelpText(topic string) string {
 
 Yaver can discover and adopt existing tmux sessions, making them visible and
 controllable from the mobile app. This is useful when you start an AI agent
-(Claude Code, Aider, Codex, etc.) in tmux and want to monitor/interact with
+(Claude Code, Codex, opencode) in tmux and want to monitor/interact with
 it from your phone.
 
 How it works:
 1. Start a tmux session: tmux new -s my-agent
-2. Run an AI agent inside it (e.g., claude, aider, codex)
+2. Run an AI agent inside it (e.g., claude, codex, opencode)
 3. Yaver detects it: yaver tmux list (or tmux_list_sessions MCP tool)
 4. Adopt it: yaver tmux adopt my-agent (or tmux_adopt_session MCP tool)
 5. The session now appears as a task in the mobile app
@@ -14461,7 +14441,7 @@ MCP Tools:
 - tmux_send_input: Send keyboard input to an adopted session
 
 Agent detection: Yaver inspects the process tree in each pane to identify
-running agents (claude, codex, aider, ollama, goose, amp, opencode).`
+yaver's three first-class runners (claude, codex, opencode).`
 
 	case "relay":
 		return `Relay Servers
@@ -14560,14 +14540,10 @@ Use yaver_help with a topic for details on any category.`
 Yaver supports multiple AI coding agents. You can switch between them per-task
 or set a default.
 
-Built-in runners:
+First-class runners (the only runners Yaver supports natively):
 - claude: Claude Code (default) — npm i -g @anthropic-ai/claude-code
 - codex: OpenAI Codex — npm i -g @openai/codex
-- aider: Aider — pip install aider-chat
-- ollama: Ollama — brew install ollama
-- goose: Goose — pip install goose-ai
-- amp: Amp — npm i -g @anthropic/amp
-- opencode: OpenCode — npm i -g opencode-ai
+- opencode: opencode (BYOK any provider — Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) — curl -fsSL https://opencode.ai/install | bash
 
 Custom runners:
   yaver set-runner custom "my-tool --auto {prompt}"

@@ -508,10 +508,8 @@ function StartForm(props: {
             {props.runnersLoading ? (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>Loading installed runners…</Text>
             ) : (() => {
-              // Hide runners outside the vibing-grade trio so mobile
-              // users don't see aider / ollama options that don't fit
-              // the chat-style flow. Same allowlist used by tasks.tsx
-              // and phone-projects.tsx.
+              // Yaver's three first-class runners. Same allowlist
+              // used by tasks.tsx and phone-projects.tsx.
               const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
               const allowed = props.runners.filter((r) => RUNNER_WL.has((r.id || "").toLowerCase()));
               return allowed.length === 0 ? (

@@ -474,7 +474,7 @@ New installs should now be both usable and protected by default.
 - Yaver does not need root for normal daily use. `yaver auth`, `yaver serve`, hot reload, vibe coding, feedback, and most build/deploy flows are designed to run as a normal user.
 - Root is only needed for machine-level setup: installing OS packages, writing system services, changing Linux sysctls, enabling Docker for a service user, or provisioning a fresh remote box.
 - The Yaver agent stays host-native. That keeps hot reload, dev servers, Xcode, Gradle, Hermes, Expo/EAS, deploy flows, relay, and device bridging attached to the real machine.
-- Owner coding flows stay host-native too. Hosted coding CLIs like `claude`, `codex`, `opencode`, and `aider` are not blindly forced into Yaver's Docker sandbox for normal owner tasks, because that breaks real auth/toolchain access on many machines.
+- Owner coding flows stay host-native too. Yaver's three first-class runners (`claude`, `codex`, `opencode`) are not blindly forced into Yaver's Docker sandbox for normal owner tasks, because that breaks real auth/toolchain access on many machines.
 - Guest and feedback-only tasks are the place where hard isolation matters most. Yaver keeps the guest restrictions there and can additionally containerize those tasks when Docker isolation is enabled.
 - On Linux, Yaver now prefers explicit blocked state over false readiness. If a runner is installed but the host still blocks its own sandbox prerequisites, the UI marks that runner as blocked instead of letting tasks hang and fail later.
 
@@ -503,7 +503,7 @@ What this does **not** mean:
 
 ### Raspberry Pi 5 dev-node image
 
-The download page also exposes a **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI assets. The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it. The Pi image is a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`ollama`, `aider`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT).
+The download page also exposes a **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI assets. The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it. The Pi image is a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`claude-code`, `codex`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT).
 
 ## Always-Up Mode (Boots Without Auth)
 
@@ -868,12 +868,12 @@ Hand off an in-progress AI session — Claude Code, Codex, Aider, anything — t
 # Default: claude-code finishes the work locally
 yaver handoff
 
-# Cheap: planner + local implementer (Aider + Ollama/Qwen)
+# Cheap: planner + token-leaner implementer (Claude plans, opencode implements)
 yaver handoff --engine hybrid
 
 # Specific runner
-yaver handoff --engine runner --runner aider
-yaver handoff --engine runner --runner ollama:qwen2.5-coder:14b
+yaver handoff --engine runner --runner codex
+yaver handoff --engine runner --runner opencode
 
 # Hand a specific Yaver task or session file
 yaver handoff --from <taskId>
@@ -901,8 +901,8 @@ yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadli
 | Engine | Runner | When to use |
 |--------|--------|-------------|
 | `claude` (default) | `claude-code` | Highest quality, frontier model end-to-end |
-| `hybrid` | planner=claude, implementer=aider+ollama | 80–95% cheaper on feature loops |
-| `runner` | any (`aider`, `codex`, `ollama:<model>`, …) | You know exactly which runner you want |
+| `hybrid` | planner=claude, implementer=opencode | Cheaper on long feature loops; opencode routes to whichever provider you've BYOK'd |
+| `runner` | one of `claude-code` / `codex` / `opencode` | You know exactly which runner you want |
 
 **Surfaces:** CLI (`yaver handoff`), MCP tool (`session_handoff`), HTTP (`POST /session/handoff`). Same arguments across all three.
 
@@ -1018,7 +1018,7 @@ yaver guests invite cousin@gmail.com
 
 # Configure guest limits
 yaver guests config cousin@gmail.com limit=3600 mode=scheduled
-yaver guests config cousin@gmail.com runners=claude,aider
+yaver guests config cousin@gmail.com runners=claude,opencode
 yaver guests config cousin@gmail.com machines=mac-mini,laptop
 yaver guests config cousin@gmail.com guestkeys=false tunnels=false
 yaver guests config cousin@gmail.com isolation=true
@@ -1865,7 +1865,7 @@ yaver acl           Agent Communication Layer (add, list, remove, tools, health)
 yaver connect       Connect to a remote agent
 yaver code          Terminal-first coding UX (local or remote workspace)
 yaver attach        Interactive terminal
-yaver set-runner    Set default AI agent (claude/codex/aider/custom)
+yaver set-runner    Set default AI agent (claude/codex/opencode/custom)
 yaver relay         Manage relay servers (add/remove/test — hot-reload, no restart)
 yaver tunnel        Manage Cloudflare Tunnels
 yaver config        Get/set configuration
@@ -2198,8 +2198,7 @@ Yaver Doctor
 ── AI Runners ──
   Claude Code (claude)           ✓ /usr/local/bin/claude (2.1.80)
   OpenAI Codex (codex)           ! Not installed — npm install -g @openai/codex
-  Aider (aider)                  ! Not installed — pip install aider-chat
-  Ollama (ollama)                ✓ /usr/local/bin/ollama (0.18.2)
+  opencode (opencode)            ! Not installed — npm install -g opencode
 
 ── Relay Servers ──
   Relay: My VPS                  ✓ OK (89ms, password set)
@@ -2466,14 +2465,14 @@ Tailscale client is open source (BSD 3-Clause). For a fully self-hosted alternat
 
 Projects and tools in the same problem space. Yaver is compatible with most of these and can be used alongside them. Items marked `[OSS]` are open-source software.
 
-### AI Coding Agents
+### AI Coding Agents (Yaver's first-class runners)
+Yaver supports exactly three coding runners. opencode wraps the long
+tail of providers (Anthropic / OpenAI / OpenRouter / Ollama / GLM /
+ZAI / …) via its own BYOK config, so anything you can reach from
+opencode you can reach from Yaver.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — Anthropic's agentic coding tool
 - [OpenAI Codex CLI](https://github.com/openai/codex) `[OSS]` — OpenAI's terminal coding agent
-- [Aider](https://aider.chat) `[OSS]` — AI pair programming in your terminal
-- [Goose](https://github.com/block/goose) `[OSS]` — autonomous coding agent by Block
-- [Amp](https://github.com/nichochar/amp) `[OSS]` — terminal-native AI coding agent
-- [OpenCode](https://github.com/opencode-ai/opencode) `[OSS]` — AI coding in the terminal
-- [Continue](https://continue.dev) `[OSS]` — AI code assistant for IDEs
+- [opencode](https://opencode.ai) `[OSS]` — open-source coding agent with BYOK provider config
 
 ### Local LLMs & Inference
 - [Ollama](https://ollama.com) `[OSS]` — run LLMs locally with one command

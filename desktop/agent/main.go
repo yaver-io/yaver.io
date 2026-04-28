@@ -4173,7 +4173,7 @@ func runSetRunner(args []string) {
 		fmt.Println("Usage:")
 		fmt.Println("  yaver set-runner claude           Use Claude Code (default)")
 		fmt.Println("  yaver set-runner codex            Use OpenAI Codex")
-		fmt.Println("  yaver set-runner aider            Use Aider")
+		fmt.Println("  yaver set-runner opencode         Use opencode (BYOK)")
 		fmt.Printf("  yaver set-runner custom \"cmd\"      Use a custom command\n")
 		fmt.Println()
 		fmt.Println("Tip: You can also pick the AI agent from the Yaver mobile app when")

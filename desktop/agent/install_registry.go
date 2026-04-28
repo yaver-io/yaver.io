@@ -245,7 +245,7 @@ func runRegistryInstall(ctx context.Context, tool string, step *PackageRegistryS
 //   - armEchoSuppression() drops the next line of PTY output so a
 //     buggy wrapper that uses `read -p` instead of `read -s` cannot
 //     bleed the password into the stream either.
-//   - No coding agent (claude-code / codex / aider) ever consumes
+//   - No coding agent (claude-code / codex / opencode) ever consumes
 //     `streams/install:*` — installs run outside AI context on
 //     purpose. Do not change that contract.
 func respondToInstallSudo(tool, password string) error {
