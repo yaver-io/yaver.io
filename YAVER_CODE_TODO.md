@@ -367,18 +367,26 @@ This means long-term `fork` should reuse graph machinery where possible.
 - wire GLM/ZAI/OpenAI/Anthropic keys through vault-backed control paths
 - surface readiness in `get agent` / `status`
 
-### Phase 4: Graph Unification (deferred)
+### Phase 4 & 5 — DROPPED 2026-04-28
 
-- represent forked child tasks as graph nodes where useful
-- reuse placement / streaming / summaries
-- support remote child execution on attached or pooled machines
+The original plan had two more phases:
 
-> Phases 4 (compression / "caveman") and 5 (auto-orchestration policy)
-> were dropped 2026-04-28. Caveman-style compression risked silently
-> degrading visible answers, and the auto-orchestration policy never
-> made it past a stub. If multi-runner auto-routing is reintroduced
-> later, build it on top of the existing fork primitive — don't
-> resurrect `code_orchestrator_policy.go`.
+- **Phase 4: Graph Unification** — represent forked child tasks as
+  graph nodes; reuse placement / streaming / summaries; support remote
+  child execution on attached or pooled machines.
+- **Phase 5: Auto-Orchestration Policy** — automatic multi-runner
+  routing based on cost / capability / load.
+
+Both were cut as part of the lean stack pass (commit `7c3d826e`
+"lean stack cut: kill voice + Phase 4/5"). The earlier "caveman"
+compression idea bundled into Phase 4 was also dropped — it risked
+silently degrading visible answers. The auto-orchestration policy
+never made it past a stub.
+
+If multi-runner auto-routing is reintroduced later, build it on top
+of the existing fork primitive (Phase 2) — don't resurrect
+`code_orchestrator_policy.go`. If graph unification comes back, it
+should sit alongside the active session model, not replace it.
 
 ## Engineering Constraints
 

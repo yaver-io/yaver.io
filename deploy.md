@@ -20,7 +20,7 @@ command here fails, read the error carefully and consult the
    then tag.** CI validators refuse to release if the tag's version
    does not match `versions.json` for that component.
 
-## The 7 deploy targets
+## The 9 deploy targets
 
 | Target | Trigger | Surface | Script (manual) | Workflow (CI) |
 |--------|---------|---------|-----------------|----------------|
