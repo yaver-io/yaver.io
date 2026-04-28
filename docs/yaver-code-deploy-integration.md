@@ -308,3 +308,310 @@ all of this is true:
 When these hold, the developer takes a phone-sandbox project from
 "made it on the phone" to "live on Cloudflare with a typed SDK" in
 one terminal.
+
+---
+
+## Unified Export/Import Layer (the "dual mode" extension)
+
+> A user follow-up reframed Slice A: before adding `yaver code`
+> verbs, define the **unified export/import layer** that treats all
+> three runtime tiers (mobile sandbox, self-hosted, cloud) as
+> interchangeable, AND makes the project's source code a co-equal
+> editing surface inside the same git repo. Self-hosted and cloud
+> are the same tier — both run the same agent binary — so the layer
+> only has to distinguish two tiers: **sandbox-on-phone** and
+> **agent-on-machine**.
+
+### The mental model
+
+A phone project has three coexisting representations:
+
+1. **Live runtime** — schema, auth, seed, and CRUD data executing
+   in one of the runtime tiers. Source of truth for live data.
+2. **Source export** — a git-friendly directory tree of YAML/JSON
+   files that fully describes the project. Source of truth for
+   schema, auth, and seed when the runtime is offline.
+3. **Consuming app code** — the React Native / Web / Node app that
+   reads through `yaver-sdk` against the runtime. Lives next to the
+   source export in the same repo.
+
+Today (1) is real, (2) is a tarball that can't be diffed, (3) is
+created by hand. The unified layer makes (2) a first-class
+git-checkable directory and lets the developer move freely between
+all three.
+
+### The repo layout (dual mode)
+
+A project in the repo looks like:
+
+```
+my-todo-app/
+├── .yaver/
+│   ├── project.yaml          # slug, name, current target bindings
+│   ├── schema.yaml           # tables + columns (canonical)
+│   ├── auth.yaml             # apple/google/microsoft providers
+│   ├── seed.yaml             # initial rows for empty tables
+│   ├── tokens.lock.yaml      # token labels + scopes (NO secrets)
+│   └── snapshots/            # optional: live-data dumps for offline work
+│       └── 2026-04-28T12-00.jsonl
+├── src/                      # consuming app (RN, web, Node)
+│   ├── App.tsx
+│   └── ...
+├── package.json
+├── yaver.json                # SDK config (slug, baseUrl resolver)
+└── README.md
+```
+
+Hard rules:
+- `.yaver/` files are **plain text** (YAML/JSON), git-diffable, no
+  binary blobs. Snapshots are JSONL, line-per-row.
+- **No secrets** in `.yaver/`. API tokens live in
+  `~/.yaver/phone-projects/<slug>/tokens.yaml` (per-machine, never
+  committed). `tokens.lock.yaml` has labels + scopes only.
+- Schema migrations are derived diffs against the runtime, not
+  hand-written SQL. The agent computes the migration plan when
+  syncing.
+- `seed.yaml` is the initial-state contract. `snapshots/` is an
+  optional offline-work artifact a developer can opt into and clean
+  up before committing.
+
+This shape is what `yaver code phone export <slug>` writes, and
+what `yaver code phone import <dir>` reads. The same shape works
+for both tiers.
+
+### The two-tier interface
+
+Go side (proposed `desktop/agent/projectstore/`):
+
+```go
+type ProjectStore interface {
+    // List projects this store knows about.
+    List(ctx context.Context) ([]ProjectMeta, error)
+
+    // Read the canonical project files into memory.
+    Read(ctx context.Context, slug string) (Project, error)
+
+    // Write a project bundle into the store. If slug exists,
+    // ConflictPolicy decides reject / rename / overwrite.
+    Write(ctx context.Context, p Project, opts WriteOptions) (ProjectMeta, error)
+
+    // Snapshot the live data (optional — sandbox tier may skip).
+    Snapshot(ctx context.Context, slug string, opts SnapshotOptions) (Snapshot, error)
+
+    // Apply a snapshot back onto the live runtime.
+    ApplySnapshot(ctx context.Context, slug string, snap Snapshot) error
+}
+
+type Project struct {
+    Slug        string
+    Schema      Schema       // from schema.yaml
+    Auth        AuthConfig   // from auth.yaml
+    Seed        SeedRows     // from seed.yaml
+    Targets     []TargetBind // current bindings (dev-hw, cloud, workers)
+    TokenLabels []TokenLabel // labels + scopes only, no secrets
+}
+```
+
+Implementations:
+
+- `agentProjectStore` — backed by `~/.yaver/phone-projects/<slug>/`
+  on a self-hosted or cloud agent box. Same binary runs both tiers.
+- `repoProjectStore` — backed by `.yaver/` inside a git repo on
+  any developer machine. Pure-text I/O; no SQLite dependency.
+- (Phone is special — see "Phone-side mirror" below.)
+
+The runtime tier (agent) keeps SQLite as its source of truth and
+projects `.yaver/` files on every write. The repo tier keeps
+`.yaver/` as its source of truth and replays into SQLite via
+`Write` when imported.
+
+TS side (proposed `mobile/src/lib/projectStore.ts` +
+`sdk/js/src/projectStore.ts`):
+
+```ts
+export interface ProjectStore {
+  list(): Promise<ProjectMeta[]>
+  read(slug: string): Promise<Project>
+  write(p: Project, opts?: WriteOptions): Promise<ProjectMeta>
+  snapshot(slug: string, opts?: SnapshotOptions): Promise<Snapshot>
+  applySnapshot(slug: string, snap: Snapshot): Promise<void>
+}
+
+export const phoneSandboxStore: ProjectStore   // local SQLite on phone
+export const repoStore: (root: string) => ProjectStore  // .yaver/ in a repo
+export const agentStore: (baseUrl: string, headers: Record<string,string>) => ProjectStore
+```
+
+### Phone-side mirror
+
+The phone has a third implementation: `phoneSandboxStore`, backed
+by `expo-sqlite` (same DB the offline phone-project sandbox already
+uses). The phone gains:
+
+- `phoneSandboxStore.write(project)` — accept an imported bundle
+  from a repo / agent, materialise it into the on-device sandbox
+- `phoneSandboxStore.read(slug)` — produce the same `Project`
+  shape an agent or repo would
+- pull from agent: `phoneSandboxStore.write(await agentStore(baseUrl,headers).read(slug))`
+- push to agent: `agentStore(baseUrl,headers).write(await phoneSandboxStore.read(slug))`
+
+Today the phone only has push. The pull direction (agent → phone
+sandbox) doesn't exist; this layer adds it.
+
+### Movement matrix (verbs across tiers)
+
+| From → To | Verb | What runs |
+|-----------|------|-----------|
+| repo → agent (self-hosted or cloud) | `code phone push <slug> --to <target>` | `repoStore.read` → `agentStore.write` |
+| agent → repo | `code phone pull <slug> [--repo .]` | `agentStore.read` → `repoStore.write` |
+| repo → phone sandbox | mobile UI "Receive into sandbox" | `repoStore.read` → `phoneSandboxStore.write` |
+| phone sandbox → repo | mobile UI "Export to repo" + agent receive | `phoneSandboxStore.read` → `repoStore.write` (via agent relay) |
+| phone sandbox → agent | mobile UI [Your Dev Machine] / [Yaver Cloud] | `phoneSandboxStore.read` → `agentStore.write` |
+| agent → phone sandbox | mobile UI "Pull from agent" (NEW) | `agentStore.read` → `phoneSandboxStore.write` |
+| repo ↔ Cloudflare Workers | `code phone deploy workers <slug>` | `repoStore.read` → workers-specific provisioner |
+
+All seven flows reduce to two primitives: `read(slug)` and
+`write(project)`. The CLI / UI verbs are sugar on top of those
+primitives plus an HTTP transport when the tiers don't live in the
+same process.
+
+### Dual-mode editing
+
+A repo with `.yaver/` plus app source under `src/` lets the
+developer edit either side and reconcile:
+
+1. **Source-mode edit**: `vim .yaver/schema.yaml` adds a column.
+   Run `yaver code phone push` — the agent reads the schema diff,
+   computes the migration, applies it on the bound runtime, reseeds
+   if requested. The live runtime catches up to the repo.
+2. **Runtime-mode edit**: developer edits the schema from the phone
+   or via the agent's own UI. A subsequent `yaver code phone pull`
+   reads the runtime's current schema and updates `.yaver/`. Then
+   `git diff` shows exactly what the runtime change was. Commit.
+3. **Both at once** (the dual mode the user asked for): the
+   developer can keep iterating on the consuming app code in `src/`
+   AND on the schema in `.yaver/` in the same `yaver code` session.
+   The session knows it's a dual-mode workdir (presence of
+   `.yaver/project.yaml` AND a `package.json` next to it) and the
+   `/phone status` header reflects both sides:
+
+```
+todo-app · dual-mode (repo + dev-hw)
+schema:    3 tables · 1 unpushed change to Tag
+app:       react-native · 12 files dirty
+runtime:   dev-hw bound · last sync 4 min ago · in sync ✓
+```
+
+`/phone push` then becomes a coordinated action: stage schema
+changes, run TypeScript codegen against the new schema, and push
+the runtime — all before the user makes the next edit.
+
+### File contracts
+
+Each `.yaver/` file has a stable schema so the import side never
+has to guess.
+
+- `project.yaml`:
+  ```yaml
+  slug: todo-app
+  name: Todo App
+  createdAt: 2026-04-17T...
+  defaultRunner: claude
+  targets:
+    dev-hw:
+      bound: true
+      lastSync: 2026-04-28T...
+    yaver-cloud:
+      bound: false
+    cloudflare-workers:
+      bound: false
+  ```
+- `schema.yaml` (exists today; add a `version:` field):
+  ```yaml
+  version: 1
+  tables:
+    Todo: { id: string!, title: string!, done: bool, tagId: ref<Tag> }
+    Tag:  { id: string!, name: string!, color: string }
+  ```
+- `auth.yaml`:
+  ```yaml
+  providers: [apple, google]
+  apple:    { clientId: ${APPLE_CLIENT_ID} }
+  google:   { clientId: ${GOOGLE_CLIENT_ID} }
+  ```
+- `seed.yaml`:
+  ```yaml
+  Tag:  [{ id: t1, name: home }, { id: t2, name: work }]
+  Todo: [{ id: 1, title: "buy milk", tagId: t1 }]
+  ```
+- `tokens.lock.yaml` (labels only — secrets in
+  `~/.yaver/phone-projects/<slug>/tokens.yaml`, never in repo):
+  ```yaml
+  tokens:
+    - id: tok_a1b2c3
+      label: web-prod
+      scopes: [read, write]
+      cors: ["https://my-app.com"]
+    - id: tok_d4e5f6
+      label: mobile-debug
+      scopes: [read]
+  ```
+
+### Where this lives
+
+| New file | Tier | Purpose |
+|----------|------|---------|
+| `desktop/agent/projectstore/store.go` | agent | `ProjectStore` interface + types |
+| `desktop/agent/projectstore/agent.go` | agent | `agentProjectStore` impl (today's `phone_backend.go` refactor) |
+| `desktop/agent/projectstore/repo.go` | agent | `repoProjectStore` impl (read/write `.yaver/` directories) |
+| `desktop/agent/projectstore/store_test.go` | agent | round-trip tests: agent → repo → agent must yield identical bytes |
+| `mobile/src/lib/projectStore.ts` | mobile | `ProjectStore` TS interface + `phoneSandboxStore` |
+| `mobile/src/lib/projectStoreAgent.ts` | mobile | `agentStore(baseUrl, headers)` HTTP impl |
+| `sdk/js/src/projectStore.ts` | sdk | `repoStore(root)` for use in CI / dev tooling |
+
+Existing files refactored, not rewritten:
+
+- `desktop/agent/phone_backend.go` — `ImportPhoneProject` becomes a
+  thin wrapper over `agentProjectStore.Write`. `ExportPhoneProject`
+  becomes `agentProjectStore.Read` + tarball serializer.
+- `mobile/src/lib/phoneProjects.ts` — `pushPhoneProject` becomes a
+  thin wrapper that wires `phoneSandboxStore.read` into
+  `agentStore(target).write`.
+- `mobile/src/lib/phoneSandboxLocal.ts` — exposes its CRUD as the
+  `phoneSandboxStore` ProjectStore implementation; today the API is
+  function-shaped, not interface-shaped.
+
+### Sequencing (revised Slice A → D)
+
+The earlier four-slice plan still holds. The unified layer adds two
+upstream slices:
+
+- **Slice 0 — define the layer** (1-2 days): write the Go interface,
+  add `repoProjectStore`, refactor today's agent code into
+  `agentProjectStore` behind it. Round-trip test:
+  `agentStore.Read → repoStore.Write → repoStore.Read → agentStore.Write`
+  must equal the original on every field.
+- **Slice 0.5 — phone-side mirror** (1 day): wrap
+  `phoneSandboxLocal.ts` as `phoneSandboxStore`, add the missing
+  pull-from-agent direction, expose "Receive into sandbox" in the
+  mobile UI.
+- Slices A-D (status / token / push / workers / guardrails) then
+  layer cleanly on top because they all speak `ProjectStore`.
+
+### Why this matters
+
+- Today the developer cannot edit a phone project offline in their
+  editor. The schema is locked inside SQLite on the agent.
+- Today the phone is push-only. If a teammate pushes a schema
+  change to the agent, the phone has no way to pull it.
+- Today consuming app code lives in a separate repo, divorced from
+  the schema it depends on. Refactoring across both is manual.
+- After Slice 0/0.5: a single git repo holds the schema, the seed,
+  the auth config, the token labels, AND the consuming app source.
+  `git log` shows real schema diffs. CI can run schema tests.
+  Onboarding a teammate is `git clone` + `yaver code phone push
+  --to dev-hw`.
+
+This is the foundation that makes `yaver code` "perfect for usage
+with yaver-based deploy" — not just a deploy tool, but an editing
+surface that respects how developers already work with code.
