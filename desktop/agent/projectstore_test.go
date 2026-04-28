@@ -25,7 +25,7 @@ func TestNewProjectNotFoundIsDetectedThroughWrapping(t *testing.T) {
 	if !errors.Is(wrapped, ErrProjectNotFound) {
 		t.Fatal("wrapping with fmt.Errorf must preserve sentinel; HTTP boundary needs this to map 404")
 	}
-	if !contains(wrapped.Error(), "todo-app") {
+	if !errMessageContains(wrapped.Error(), "todo-app") {
 		t.Fatalf("error must keep the slug for human-facing messages; got %q", wrapped.Error())
 	}
 }
@@ -61,7 +61,9 @@ func TestProjectMetaTierIsFreeForm(t *testing.T) {
 	}
 }
 
-func contains(haystack, needle string) bool {
+// errMessageContains is a tiny local substring check kept inside the
+// _test file so it doesn't compete with pipeline_cmd.go's `contains`.
+func errMessageContains(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {
 			return true
