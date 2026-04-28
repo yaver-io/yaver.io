@@ -507,13 +507,20 @@ function StartForm(props: {
           <FormField label="Runner (from this machine)" c={c}>
             {props.runnersLoading ? (
               <Text style={{ color: c.textMuted, fontSize: 12 }}>Loading installed runners…</Text>
-            ) : props.runners.length === 0 ? (
-              <Text style={{ color: c.textMuted, fontSize: 12 }}>
-                No runners installed on the remote agent. Install one (claude, codex, opencode) and refresh.
-              </Text>
-            ) : (
+            ) : (() => {
+              // Hide runners outside the vibing-grade trio so mobile
+              // users don't see aider / ollama options that don't fit
+              // the chat-style flow. Same allowlist used by tasks.tsx
+              // and phone-projects.tsx.
+              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
+              const allowed = props.runners.filter((r) => RUNNER_WL.has((r.id || "").toLowerCase()));
+              return allowed.length === 0 ? (
+                <Text style={{ color: c.textMuted, fontSize: 12 }}>
+                  No runners installed on the remote agent. Install one (claude, codex, opencode) and refresh.
+                </Text>
+              ) : (
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
-                {props.runners.map((r) => {
+                {allowed.map((r) => {
                   const active = props.runner === r.id;
                   return (
                     <Pressable
@@ -531,7 +538,8 @@ function StartForm(props: {
                   );
                 })}
               </View>
-            )}
+              );
+            })()}
           </FormField>
 
           <FormField label="Deploy" c={c}>

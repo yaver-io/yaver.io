@@ -113,8 +113,17 @@ export default function PhoneProjectsScreen() {
     [importedConversation],
   );
   const availableRunners = useMemo(() => {
+    // Only the three vibing-grade runners surface in the mobile UI.
+    // Aider / aider-ollama / ollama are still installable on the
+    // agent for advanced users from the CLI, but they're hidden here
+    // because they don't fit the chat-style flow this app drives —
+    // local Ollama models hallucinate file paths and Aider's
+    // streaming format is too noisy for the mobile transcript.
+    const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
     const runners = activeDevice?.runners ?? [];
-    return runners.filter((item) => item.status === "running" || item.status === "queued" || item.status === "completed");
+    return runners
+      .filter((item) => RUNNER_WL.has((item.runnerId || "").toLowerCase()))
+      .filter((item) => item.status === "running" || item.status === "queued" || item.status === "completed");
   }, [activeDevice?.runners]);
   useEffect(() => {
     if (!runner && availableRunners.length) {
@@ -464,7 +473,15 @@ export default function PhoneProjectsScreen() {
                 <TextInput
                   value={prompt}
                   onChangeText={setPrompt}
-                  placeholder="A simple app idea is enough. Example: Todo app with login"
+                  placeholder={`Tell Yaver what you're building, conversationally. A few prompts that help:
+
+  • Is this web only, mobile only, or both?
+  • What's the one thing a user does first?
+  • Who's the user — yourself, friends, paying customers?
+  • Any auth (Apple / Google / email) or just open?
+  • Any data the app needs to remember between sessions?
+
+You can keep it short. Example: "Web + iOS chess app where two friends play on the same board, no login, games persist for 24 h."`}
                   placeholderTextColor={c.textMuted}
                   multiline
                   style={[styles.input, styles.promptInput, { color: c.textPrimary, borderColor: c.border }]}
