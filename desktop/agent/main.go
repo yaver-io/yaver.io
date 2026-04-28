@@ -5764,7 +5764,7 @@ func runDoctor() {
 	// Android SDK (emulator + adb) for Android Emulator (M5)
 	check("Android SDK (adb)")
 	if path, ver := detectBinaryWithVersion("adb", "--version"); path != "" {
-		pass(fmt.Sprintf("%s (%s)", path, firstLine(ver)))
+		pass(fmt.Sprintf("%s (%s)", path, firstLineRaw(ver)))
 	} else {
 		warning("adb not found — install Android Studio / Android SDK for Android Emulator (M5)")
 	}

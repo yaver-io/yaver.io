@@ -249,7 +249,7 @@ func probeTool(t buildTool) BuildToolResult {
 	if err == nil || len(out) > 0 {
 		// Many tools (java) print version to stderr with non-zero exit;
 		// CombinedOutput captures it either way.
-		res.Version = firstLine(strings.TrimSpace(string(out)))
+		res.Version = firstLineRaw(strings.TrimSpace(string(out)))
 	}
 	return res
 }

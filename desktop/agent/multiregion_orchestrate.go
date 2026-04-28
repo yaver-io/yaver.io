@@ -128,7 +128,7 @@ func bootstrapRemoteHost(ip, rootPassword, projectDir, gitRepo string) ([]string
 
 	// Clone the project repo to ~/project so `yaver serve` has something to work on.
 	if gitRepo != "" {
-		cmd := fmt.Sprintf("cd /root && rm -rf project && git clone %s project", shellEscape(gitRepo))
+		cmd := fmt.Sprintf("cd /root && rm -rf project && git clone %s project", bashSingleQuote(gitRepo))
 		if out, err := runSSH(ip, rootPassword, cmd); err != nil {
 			return append(steps, "git clone failed: "+out), fmt.Errorf("clone: %w", err)
 		}
@@ -198,8 +198,13 @@ func runSSH(ip, rootPassword, script string) (string, error) {
 	return string(out), err
 }
 
-// shellEscape quotes a string for safe interpolation into a bash command.
-func shellEscape(s string) string {
+// bashSingleQuote quotes a string for safe interpolation into a bash
+// command. Renamed from shellEscape to avoid colliding with the
+// runner-sandbox helper of the same name (which has slightly different
+// escape rules — `'\''` vs the `'"'"'` form here, and an empty-string
+// special-case). Both are valid POSIX-shell escapes; we keep both to
+// preserve callers' existing tested output.
+func bashSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 

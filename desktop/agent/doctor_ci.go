@@ -78,7 +78,7 @@ func probeBrowserVersion(bin string) string {
 	if err != nil {
 		return "unknown"
 	}
-	return firstLine(strings.TrimSpace(string(out)))
+	return firstLineRaw(strings.TrimSpace(string(out)))
 }
 
 // detectBinaryWithVersion looks up `name` in PATH and asks it for its
@@ -94,7 +94,7 @@ func detectBinaryWithVersion(name, versionFlag string) (path, version string) {
 	if err != nil {
 		return p, "unknown"
 	}
-	return p, firstLine(strings.TrimSpace(string(out)))
+	return p, firstLineRaw(strings.TrimSpace(string(out)))
 }
 
 func detectUnityEditor() (path, version string) {
@@ -137,7 +137,15 @@ func detectUnityEditor() (path, version string) {
 	return "", ""
 }
 
-func firstLine(s string) string {
+// firstLineRaw is the doctor-suite "everything before the first
+// newline" helper. Renamed from firstLine to avoid colliding with
+// the agent-session helper of the same name (which does smart
+// 80-char truncation + non-blank skipping). Both live in package
+// main; Go won't allow two top-level decls with identical names,
+// and the two have genuinely different semantics — doctor wants a
+// strict prefix-up-to-newline (versions are short and shouldn't
+// be reformatted), agent-session wants a UI-friendly summary.
+func firstLineRaw(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]
 	}
