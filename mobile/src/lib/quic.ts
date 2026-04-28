@@ -3653,6 +3653,57 @@ export class QuicClient {
     return res.json();
   }
 
+  /** Create a brand-new GitHub or GitLab repo on the user's behalf
+   *  using a previously-stored PAT (set via /git/provider/setup).
+   *  When writeSandbox is true the agent also seeds a starter
+   *  yaver.workspace.yaml that flags the repo as Yaver-mobile-
+   *  sandbox-aware. Returns the clone URL the caller can record on
+   *  the project. Used by the phone-projects wizard's
+   *  "Configure now" git path. */
+  async gitProviderRepoCreate(args: {
+    provider: 'github' | 'gitlab';
+    host?: string;
+    name: string;
+    visibility: 'private' | 'public';
+    description?: string;
+    writeSandbox?: boolean;
+  }): Promise<{
+    cloneUrl: string;
+    sshUrl: string;
+    fullName: string;
+    sandboxWritten: boolean;
+  } | null> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/provider/repo/create`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: args.provider,
+        host: args.host,
+        name: args.name,
+        visibility: args.visibility,
+        description: args.description,
+        writeSandbox: args.writeSandbox !== false,
+      }),
+    });
+    // 404 = agent is older than the build that added this endpoint.
+    // We return null instead of throwing so the wizard can fall
+    // through to "preference recorded, configure later" without
+    // failing the whole project create.
+    if (res.status === 404) return null;
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`gitProviderRepoCreate ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    return {
+      cloneUrl: typeof data.cloneUrl === 'string' ? data.cloneUrl : '',
+      sshUrl: typeof data.sshUrl === 'string' ? data.sshUrl : '',
+      fullName: typeof data.fullName === 'string' ? data.fullName : '',
+      sandboxWritten: !!data.sandboxWritten,
+    };
+  }
+
   /** Pop stashed changes. */
   async gitStashPop(workDir?: string): Promise<{success: boolean; output: string}> {
     this.assertConnected();

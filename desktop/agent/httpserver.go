@@ -789,6 +789,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))
 	mux.HandleFunc("/git/provider/status", s.auth(s.handleGitProviderStatus))
 	mux.HandleFunc("/git/provider/repos", s.auth(s.handleGitProviderRepos))
+	// New repo creation — used by the mobile sandbox wizard's
+	// "Configure now" git step. Owner-only (uses the user's stored
+	// PAT to call the provider API on their behalf + commit a
+	// yaver.workspace.yaml). Not opened to SDK / guest tokens.
+	mux.HandleFunc("/git/provider/repo/create", s.auth(s.handleGitProviderRepoCreate))
 	mux.HandleFunc("/git/provider/", s.auth(s.handleGitProviderRemove))
 	// Find an existing clone of a remote URL anywhere under the
 	// agent's project-discovery roots. The Feedback SDK's git-setup

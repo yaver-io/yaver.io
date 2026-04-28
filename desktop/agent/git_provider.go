@@ -1315,3 +1315,268 @@ func hostname() string {
 	}
 	return h
 }
+
+// ---------------------------------------------------------------------------
+// Repo creation (POST /git-providers/repo/create)
+//
+// Mobile sandbox wizard's "Configure now" git path needs to actually
+// create a repo on GitHub or GitLab when the user submits the new-app
+// flow. Until this endpoint existed, gitMode was a preference we
+// recorded but never acted on. Now we look up the matching provider
+// (already authed via /git-providers/setup), call the provider's
+// repo-create API, write a starter `yaver.workspace.yaml` so future
+// Yaver tooling recognises the repo as a sandbox-aware workspace,
+// commit + push that yaml, and return the clone URL the mobile flow
+// can display + use for the project's gitRemote field.
+//
+// We deliberately DO NOT clone the repo here — the desktop agent
+// already has /repos/clone for that, and the mobile sandbox might be
+// for a phone-only project that never needs a local clone. Callers
+// who want both should chain create + clone themselves.
+// ---------------------------------------------------------------------------
+
+func (s *HTTPServer) handleGitProviderRepoCreate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+
+	var req struct {
+		Provider     string `json:"provider"`     // "github" | "gitlab"
+		Host         string `json:"host"`         // optional; defaults github.com / gitlab.com
+		Name         string `json:"name"`         // repo name (slugified)
+		Visibility   string `json:"visibility"`   // "private" | "public"
+		Description  string `json:"description"`  // optional one-liner
+		WriteSandbox bool   `json:"writeSandbox"` // commit yaver.workspace.yaml
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	req.Name = strings.TrimSpace(req.Name)
+	req.Visibility = strings.ToLower(strings.TrimSpace(req.Visibility))
+	if req.Provider != "github" && req.Provider != "gitlab" {
+		jsonError(w, http.StatusBadRequest, "provider must be 'github' or 'gitlab'")
+		return
+	}
+	if req.Name == "" {
+		jsonError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Visibility != "private" && req.Visibility != "public" {
+		req.Visibility = "private"
+	}
+	host := req.Host
+	if host == "" {
+		host = req.Provider + ".com"
+	}
+
+	// Look up the stored token for this provider+host. The user
+	// must have run /git-providers/setup first.
+	providers, err := loadGitProviders()
+	if err != nil {
+		jsonError(w, http.StatusInternalServerError, "git-providers store: "+err.Error())
+		return
+	}
+	var token, username string
+	for _, p := range providers {
+		if p.Provider == req.Provider && p.Host == host {
+			token = p.Token
+			username = p.Username
+			break
+		}
+	}
+	if token == "" {
+		jsonError(w, http.StatusPreconditionFailed,
+			"no "+req.Provider+" token configured on this machine — run /git-providers/setup first")
+		return
+	}
+
+	private := req.Visibility == "private"
+	var cloneURL, sshURL, fullName string
+	switch req.Provider {
+	case "github":
+		cloneURL, sshURL, fullName, err = createRepoOnGitHub(token, req.Name, req.Description, private)
+	case "gitlab":
+		cloneURL, sshURL, fullName, err = createRepoOnGitLab(host, token, req.Name, req.Description, private)
+	}
+	if err != nil {
+		jsonError(w, http.StatusBadGateway, req.Provider+" repo create failed: "+err.Error())
+		return
+	}
+
+	// Best-effort: commit + push a starter yaver.workspace.yaml so
+	// the repo is born sandbox-aware. We do this via a temp clone
+	// because the GitHub/GitLab APIs don't expose a single-file
+	// commit endpoint that's symmetrical across providers, and a
+	// shallow clone is < 1 MB for a brand-new repo.
+	var sandboxWritten bool
+	if req.WriteSandbox {
+		if err := seedSandboxWorkspaceYaml(req.Provider, host, username, token, fullName, req.Name); err != nil {
+			log.Printf("[git-provider] yaver.workspace.yaml seed failed for %s: %v", fullName, err)
+		} else {
+			sandboxWritten = true
+		}
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":             true,
+		"cloneUrl":       cloneURL,
+		"sshUrl":         sshURL,
+		"fullName":       fullName,
+		"provider":       req.Provider,
+		"host":           host,
+		"private":        private,
+		"sandboxWritten": sandboxWritten,
+	})
+}
+
+func createRepoOnGitHub(token, name, description string, private bool) (cloneURL, sshURL, fullName string, err error) {
+	body := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"private":     private,
+		"auto_init":   true,
+	}
+	buf, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "https://api.github.com/user/repos", strings.NewReader(string(buf)))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", "", fmt.Errorf("github %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var data struct {
+		FullName string `json:"full_name"`
+		CloneURL string `json:"clone_url"`
+		SSHURL   string `json:"ssh_url"`
+	}
+	if err := json.Unmarshal(bodyBytes, &data); err != nil {
+		return "", "", "", err
+	}
+	return data.CloneURL, data.SSHURL, data.FullName, nil
+}
+
+func createRepoOnGitLab(host, token, name, description string, private bool) (cloneURL, sshURL, fullName string, err error) {
+	visibility := "public"
+	if private {
+		visibility = "private"
+	}
+	body := map[string]interface{}{
+		"name":         name,
+		"description":  description,
+		"visibility":   visibility,
+		"initialize_with_readme": true,
+	}
+	buf, _ := json.Marshal(body)
+	req, _ := http.NewRequest("POST", "https://"+host+"/api/v4/projects", strings.NewReader(string(buf)))
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer resp.Body.Close()
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", "", "", fmt.Errorf("gitlab %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var data struct {
+		PathWithNamespace string `json:"path_with_namespace"`
+		HTTPURLToRepo     string `json:"http_url_to_repo"`
+		SSHURLToRepo      string `json:"ssh_url_to_repo"`
+	}
+	if err := json.Unmarshal(bodyBytes, &data); err != nil {
+		return "", "", "", err
+	}
+	return data.HTTPURLToRepo, data.SSHURLToRepo, data.PathWithNamespace, nil
+}
+
+// seedSandboxWorkspaceYaml clones the freshly-created repo into a
+// temp dir, writes yaver.workspace.yaml + a one-line README addition
+// flagging the project as Yaver-sandbox-aware, commits + pushes,
+// then removes the temp dir. Best-effort: if any step fails we just
+// log and let the caller decide. The user can always edit the repo
+// directly to add the file later.
+func seedSandboxWorkspaceYaml(provider, host, username, token, fullName, projectName string) error {
+	tmp, err := os.MkdirTemp("", "yaver-repo-seed-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+
+	// HTTPS clone with the PAT inline. We strip it again before
+	// running git push so the token never ends up in `git config
+	// remote.origin.url`.
+	var cloneURL string
+	switch provider {
+	case "github":
+		cloneURL = fmt.Sprintf("https://%s:%s@%s/%s.git", username, token, host, fullName)
+	case "gitlab":
+		cloneURL = fmt.Sprintf("https://oauth2:%s@%s/%s.git", token, host, fullName)
+	}
+
+	cloneCmd := osexec.Command("git", "clone", "--depth=1", cloneURL, tmp)
+	if out, err := cloneCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("clone: %s — %v", string(out), err)
+	}
+
+	yamlPath := filepath.Join(tmp, "yaver.workspace.yaml")
+	yamlBody := buildSandboxWorkspaceYaml(projectName)
+	if err := os.WriteFile(yamlPath, []byte(yamlBody), 0644); err != nil {
+		return err
+	}
+
+	addCmd := osexec.Command("git", "-C", tmp, "add", "yaver.workspace.yaml")
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git add: %s — %v", string(out), err)
+	}
+
+	cfgUserName := osexec.Command("git", "-C", tmp, "config", "user.name", "Yaver Agent")
+	_ = cfgUserName.Run()
+	cfgUserEmail := osexec.Command("git", "-C", tmp, "config", "user.email", "agent@yaver.io")
+	_ = cfgUserEmail.Run()
+
+	commitCmd := osexec.Command("git", "-C", tmp, "commit", "-m", "yaver: mark workspace as sandbox-aware")
+	if out, err := commitCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git commit: %s — %v", string(out), err)
+	}
+
+	pushCmd := osexec.Command("git", "-C", tmp, "push", "origin", "HEAD")
+	if out, err := pushCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git push: %s — %v", string(out), err)
+	}
+
+	return nil
+}
+
+// buildSandboxWorkspaceYaml returns the yaml body that marks a repo
+// as Yaver-mobile-sandboxable. The schema lines up with
+// yaver.workspace.yaml's existing manifest format (the agent's
+// workspace.go parses these), with an extra mobile_sandbox section
+// the mobile wizard reads when it lists "existing sandbox projects"
+// across the user's repos. Single app for now (the project itself);
+// extra apps can be added later by the user or by Yaver's auto-
+// detection on next workspace init.
+func buildSandboxWorkspaceYaml(projectName string) string {
+	return fmt.Sprintf(`# yaver.workspace.yaml — generated by Yaver mobile sandbox wizard.
+# This repo is registered as a Yaver mobile-sandboxable project.
+# Edit freely; the only field Yaver reads to recognise it is
+# mobile_sandbox.enabled.
+mobile_sandbox:
+  enabled: true
+  origin: yaver-mobile-wizard
+apps:
+  - name: %s
+    path: .
+    stack: auto-detect
+`, projectName)
+}

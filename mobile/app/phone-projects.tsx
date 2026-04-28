@@ -469,6 +469,46 @@ export default function PhoneProjectsScreen() {
       }
 
       if (!p) throw new Error("target returned no project");
+
+      // Real GitHub / GitLab repo creation when the user picked
+      // "Configure now" in step 1. Best-effort: we surface the
+      // clone URL via Alert when it succeeds and silently skip
+      // when the agent is too old (returns null) or no PAT is
+      // configured for the chosen provider (the agent returns
+      // 412 which becomes a thrown error; we catch + show it).
+      // The project is already saved at this point — the repo
+      // creation enriches it but doesn't gate it.
+      if (gitMode === "providers-now" && connected) {
+        try {
+          const repo = await quicClient.gitProviderRepoCreate({
+            provider: gitProvider,
+            name: (repoName.trim() || repoNameSlug || p.slug),
+            visibility: repoVisibility,
+            description: prompt.trim().slice(0, 200),
+            writeSandbox: true,
+          });
+          if (repo) {
+            Alert.alert(
+              "Repo created",
+              `${repo.fullName} on ${gitProvider}.com${repo.sandboxWritten ? "\n\nyaver.workspace.yaml committed — repo flagged as Yaver-sandbox-aware." : ""}\n\n${repo.cloneUrl}`,
+            );
+          } else {
+            // Agent too old for this endpoint — record the
+            // preference and let the user create the repo via the
+            // dashboard later.
+            console.warn("[phone-projects] git/provider/repo/create unavailable on this agent (older than v1.99.91)");
+          }
+        } catch (gitErr: any) {
+          // Don't kill the project create on a repo-create failure.
+          // Most common cause: no PAT set for the chosen provider.
+          Alert.alert(
+            "Project saved, repo not created",
+            gitErr?.message?.includes("412")
+              ? `No ${gitProvider} token is set up on this machine. Add one from the dashboard's Git tab, then run the wizard's "Configure now" path again or push from the project later.`
+              : (gitErr?.message ?? "Repo creation failed; project itself is saved."),
+          );
+        }
+      }
       setName("");
       setPrompt("");
       setImportedConversation("");
@@ -971,18 +1011,68 @@ export default function PhoneProjectsScreen() {
                     </Text>
                   </View>
                 ) : null}
-                <Text style={[styles.label, { color: c.textMuted }]}>Logo URL (optional)</Text>
-                <TextInput
-                  value={logoUrl}
-                  onChangeText={setLogoUrl}
-                  placeholder="https://… raw image URL Yaver can fetch"
-                  placeholderTextColor={c.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  spellCheck={false}
-                  keyboardType="url"
-                  style={[styles.input, { color: c.textPrimary, borderColor: c.border, marginBottom: 12 }]}
-                />
+                <Text style={[styles.label, { color: c.textMuted }]}>Logo (optional)</Text>
+                <View style={{ flexDirection: "row", gap: 8 }}>
+                  <TextInput
+                    value={logoUrl}
+                    onChangeText={setLogoUrl}
+                    placeholder="https://… or pick from gallery →"
+                    placeholderTextColor={c.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    spellCheck={false}
+                    keyboardType="url"
+                    style={[styles.input, { color: c.textPrimary, borderColor: c.border, flex: 1 }]}
+                  />
+                  <Pressable
+                    onPress={async () => {
+                      try {
+                        // Defer the import so we don't add 200 KB
+                        // of expo-image-picker overhead to the
+                        // initial bundle if the user never opens
+                        // the wizard.
+                        const ImagePicker = await import("expo-image-picker");
+                        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                        if (!perm.granted) {
+                          Alert.alert("Photo permission needed", "Allow access from your phone settings to pick a logo.");
+                          return;
+                        }
+                        const result = await ImagePicker.launchImageLibraryAsync({
+                          mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                          allowsEditing: true,
+                          aspect: [1, 1],
+                          quality: 0.9,
+                          base64: false,
+                        });
+                        if (!result.canceled && result.assets?.[0]?.uri) {
+                          // We store the local file URI (file://...)
+                          // and let the LLM pipeline upload+rewrite
+                          // it later. For phone-only projects this
+                          // is enough; remote-runner projects will
+                          // need a future upload step.
+                          setLogoUrl(result.assets[0].uri);
+                        }
+                      } catch (err: any) {
+                        Alert.alert("Image picker", err?.message ?? "Could not open image picker.");
+                      }
+                    }}
+                    style={[
+                      styles.btnSecondary,
+                      { borderColor: c.border, paddingHorizontal: 14, justifyContent: "center" },
+                    ]}
+                  >
+                    <Text style={[styles.btnText, { color: c.textPrimary }]}>📷</Text>
+                  </Pressable>
+                </View>
+                {logoUrl ? (
+                  <Text style={[styles.muted, { color: c.textMuted, marginTop: 4, marginBottom: 12 }]} numberOfLines={1}>
+                    {logoUrl.startsWith("file://") ? "Local file selected" : logoUrl}
+                  </Text>
+                ) : (
+                  <Text style={[styles.muted, { color: c.textMuted, marginTop: 4, marginBottom: 12 }]}>
+                    Paste a public URL or tap 📷 to pick from your photos.
+                  </Text>
+                )}
                 <Text style={[styles.label, { color: c.textMuted }]}>Describe the app *</Text>
                 <TextInput
                   value={prompt}
