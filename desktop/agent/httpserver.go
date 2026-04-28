@@ -54,6 +54,10 @@ type HTTPServer struct {
 	// allocation happens on first use via the ensureDeploy* helpers.
 	deployHistory      *DeployHistory
 	deployLimiter      *deployLimiter
+	runnerStore        *RunnerStore         // unified Runner abstraction (RUNNER_DEV.md Phase 1)
+	runnerLimiter      *runnerLimiter       // per-caller in-flight cap (mirror of deployLimiter)
+	sandboxMgr         *SandboxManager      // long-lived Docker sandboxes (RUNNER_DEV.md Phase 2)
+	agentSessionMgr    *AgentSessionManager // Devin-shape coding agent sessions (RUNNER_DEV.md Phase 2)
 	containerRunner    *ContainerRunner     // nil if Docker not available
 	containerizeGuests bool                 // run guest tasks in containers
 	containerizeHost   bool                 // run host tasks in containers
@@ -1050,6 +1054,20 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy/runs", s.auth(s.handleDeployRuns))
 	mux.HandleFunc("/deploy/runs/", s.auth(s.handleDeployRunDetail))
 	mux.HandleFunc("/deploy/diagnose", s.auth(s.handleDeployDiagnose))
+
+	// Unified Runner surface (RUNNER_DEV.md Phase 1 + Phase 2). Owner-auth on
+	// every path; guest tiers (RunnerView / RunnerSubmit) defined in
+	// guest_scope.go control which subset a guest can reach. Sandboxes
+	// and agent sessions are owner-only in Phase 2.
+	mux.HandleFunc("/runner/jobs", s.auth(s.handleRunnerJobs))
+	mux.HandleFunc("/runner/jobs/", s.auth(s.handleRunnerJobByID))
+	mux.HandleFunc("/runner/runs", s.auth(s.handleRunnerRuns))
+	mux.HandleFunc("/runner/runs/", s.auth(s.handleRunnerRunByID))
+	mux.HandleFunc("/runner/pools", s.auth(s.handleRunnerPools))
+	mux.HandleFunc("/runner/sandboxes", s.auth(s.handleRunnerSandboxes))
+	mux.HandleFunc("/runner/sandboxes/", s.auth(s.handleRunnerSandboxByID))
+	mux.HandleFunc("/runner/agent/sessions", s.auth(s.handleRunnerAgentSessions))
+	mux.HandleFunc("/runner/agent/sessions/", s.auth(s.handleRunnerAgentSessionByID))
 
 	mux.HandleFunc("/vault/list", s.rateLimit(s.auth(s.handleVaultList)))
 	mux.HandleFunc("/vault/get", s.rateLimit(s.auth(s.handleVaultGet)))
@@ -8754,25 +8772,25 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "code_config_set":
 		var a struct {
-			DeviceID           string `json:"device_id"`
-			Runner             string `json:"runner"`
-			Model              string `json:"model"`
-			Provider           string `json:"provider"`
-			BaseURL            string `json:"base_url"`
-			OrchestrationMode  string `json:"orchestration_mode"`
+			DeviceID               string `json:"device_id"`
+			Runner                 string `json:"runner"`
+			Model                  string `json:"model"`
+			Provider               string `json:"provider"`
+			BaseURL                string `json:"base_url"`
+			OrchestrationMode      string `json:"orchestration_mode"`
 			CompressionMode        string `json:"compression_mode"`
 			HandoffCompressionMode string `json:"handoff_compression_mode"`
 			MemoryCompressionMode  string `json:"memory_compression_mode"`
-			WorkMode           string `json:"work_mode"`
-			AttachedDeviceID   string `json:"attached_device_id"`
-			AttachedDeviceName string `json:"attached_device_name"`
-			RepoPath           string `json:"repo_path"`
-			RepoRemote         *bool  `json:"repo_remote"`
-			BYOKProvider       string `json:"byok_provider"`
-			BYOKAPIKey         string `json:"byok_api_key"`
-			SmallModel         string `json:"small_model"`
-			PlanModel          string `json:"plan_model"`
-			BuildModel         string `json:"build_model"`
+			WorkMode               string `json:"work_mode"`
+			AttachedDeviceID       string `json:"attached_device_id"`
+			AttachedDeviceName     string `json:"attached_device_name"`
+			RepoPath               string `json:"repo_path"`
+			RepoRemote             *bool  `json:"repo_remote"`
+			BYOKProvider           string `json:"byok_provider"`
+			BYOKAPIKey             string `json:"byok_api_key"`
+			SmallModel             string `json:"small_model"`
+			PlanModel              string `json:"plan_model"`
+			BuildModel             string `json:"build_model"`
 		}
 		json.Unmarshal(call.Arguments, &a)
 		payload := map[string]interface{}{}
@@ -8830,24 +8848,24 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolJSON(json.RawMessage(body))
 		}
 		summary, err := applyCodeConfigPatch(codeConfigPatchRequest{
-			Runner:             stringPtr(a.Runner),
-			Model:              stringPtr(a.Model),
-			Provider:           stringPtr(a.Provider),
-			BaseURL:            stringPtr(a.BaseURL),
-			OrchestrationMode:  stringPtr(a.OrchestrationMode),
+			Runner:                 stringPtr(a.Runner),
+			Model:                  stringPtr(a.Model),
+			Provider:               stringPtr(a.Provider),
+			BaseURL:                stringPtr(a.BaseURL),
+			OrchestrationMode:      stringPtr(a.OrchestrationMode),
 			CompressionMode:        stringPtr(a.CompressionMode),
 			HandoffCompressionMode: stringPtr(a.HandoffCompressionMode),
 			MemoryCompressionMode:  stringPtr(a.MemoryCompressionMode),
-			WorkMode:           stringPtr(a.WorkMode),
-			AttachedDeviceID:   stringPtr(a.AttachedDeviceID),
-			AttachedDeviceName: stringPtr(a.AttachedDeviceName),
-			RepoPath:           stringPtr(a.RepoPath),
-			RepoRemote:         a.RepoRemote,
-			BYOKProvider:       stringPtr(a.BYOKProvider),
-			BYOKAPIKey:         stringPtr(a.BYOKAPIKey),
-			SmallModel:         stringPtr(a.SmallModel),
-			PlanModel:          stringPtr(a.PlanModel),
-			BuildModel:         stringPtr(a.BuildModel),
+			WorkMode:               stringPtr(a.WorkMode),
+			AttachedDeviceID:       stringPtr(a.AttachedDeviceID),
+			AttachedDeviceName:     stringPtr(a.AttachedDeviceName),
+			RepoPath:               stringPtr(a.RepoPath),
+			RepoRemote:             a.RepoRemote,
+			BYOKProvider:           stringPtr(a.BYOKProvider),
+			BYOKAPIKey:             stringPtr(a.BYOKAPIKey),
+			SmallModel:             stringPtr(a.SmallModel),
+			PlanModel:              stringPtr(a.PlanModel),
+			BuildModel:             stringPtr(a.BuildModel),
 		})
 		if err != nil {
 			return mcpToolError(fmt.Sprintf("code_config_set: %v", err))

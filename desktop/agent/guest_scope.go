@@ -76,6 +76,16 @@ var guestFullAllowedPrefixes = []string{
 	"/deploy/generate",
 	"/deploy/diagnose",
 	"/doctor/build",
+	// Unified Runner surface (RUNNER_DEV.md). Full-tier guests reach
+	// every read + manual-trigger path. Job authoring (POST
+	// /runner/jobs) is owner-only and refused inside the handler
+	// regardless of allow-list. Run history is guest-filtered by
+	// TriggeredBy so a guest only sees their own runs. Agent
+	// sessions and sandboxes stay owner-only — too broad to scope
+	// safely in Phase 2.
+	"/runner/jobs",
+	"/runner/runs",
+	"/runner/pools",
 }
 
 // guestFeedbackOnlyAllowedPrefixes is the hardened end-user surface.
@@ -111,6 +121,13 @@ var guestDeployAllowedPrefixes = []string{
 	"/doctor/build",
 	"/info",
 	"/health",
+	// Same shape as /deploy/runs: deploy-tier guests can list/inspect
+	// their own runner runs but cannot author jobs (handler refuses
+	// the POST regardless of the allow-list). Sandboxes + agent
+	// sessions stay owner-only.
+	"/runner/jobs",
+	"/runner/runs",
+	"/runner/pools",
 }
 
 // guestScopeOrDefault normalizes a cached scope string to one of the two

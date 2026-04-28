@@ -282,6 +282,8 @@ func main() {
 		runHandoff(os.Args[2:])
 	case "vault":
 		runVault(os.Args[2:])
+	case "runner":
+		runRunner(os.Args[2:])
 	case "runner-auth":
 		runRunnerAuth(os.Args[2:])
 	case "build":

@@ -29,13 +29,13 @@ import (
 // drive-by commit.
 var fieldsWeForbidInAnyConvexPayload = []string{
 	// Filesystem
-	"path",        // absolute FS path — includes username
-	"absPath",     // explicit abs path
-	"workDir",     // working directory — same problem
+	"path",    // absolute FS path — includes username
+	"absPath", // explicit abs path
+	"workDir", // working directory — same problem
 	"sourcePath",
 	"filePath",
 	// Secrets
-	"token",        // raw bearer
+	"token", // raw bearer
 	"rawToken",
 	"secret",
 	"password",
@@ -50,7 +50,7 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"taskOutput",
 	"fileContent",
 	"fileBytes",
-	"body",         // often carries user input bodies (not to be confused with HTTP bodies here — this is arg key)
+	"body", // often carries user input bodies (not to be confused with HTTP bodies here — this is arg key)
 	// Vibe Preview frame + clip data. Frames + clips + summaries
 	// flow agent→client P2P only; Convex must only ever see counters.
 	"previewFrame",
@@ -68,6 +68,33 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"previewSummary",
 	"exerciseScript",
 	"crashSnippet",
+	// Unified Runner — Phase 1 (RUNNER_DEV.md). Output, full log,
+	// and per-job working directory stay on the executing host;
+	// any future cross-machine sync must be metadata-only.
+	"runner_output",
+	"runner_log",
+	"runner_workdir",
+	"runnerOutput",
+	"runnerLog",
+	"runnerWorkDir",
+	"outputTail",
+	"logPath",
+	// Unified Runner — Phase 2 (sandbox + agent sessions). Exec
+	// output, file content, agent message text, agent prompt /
+	// result text, and the chained TaskManager output all stay
+	// on-host.
+	"sandbox_output",
+	"sandboxOutput",
+	"sandbox_stdout",
+	"sandboxStdout",
+	"sandbox_file_content",
+	"sandboxFileContent",
+	"agent_session_messages",
+	"agentSessionMessages",
+	"agent_message_text",
+	"agentMessageText",
+	"messageText",
+	"resultText",
 }
 
 type recordedMutation struct {
