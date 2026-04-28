@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -389,6 +390,22 @@ func runAttachBuiltin(input string, info *attachInfo, baseURL, token string, opt
 			return true, false
 		}
 		fmt.Printf("Resumed task %s.\n", cmd.TaskID)
+		fmt.Println()
+		return true, false
+	case "phone-status":
+		// Resolve workdir: prefer attachInfo.WorkDir (the remote agent
+		// reports the cwd it was started in), fall back to local cwd
+		// so /phone status still works in the local-only path.
+		workDir := ""
+		if info != nil {
+			workDir = strings.TrimSpace(info.WorkDir)
+		}
+		out, err := renderPhoneStatus(context.Background(), workDir)
+		if err != nil {
+			fmt.Printf("phone status error: %v\n\n", err)
+			return true, false
+		}
+		fmt.Println(out)
 		fmt.Println()
 		return true, false
 	case "detach":

@@ -146,6 +146,15 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 			case "exit-task":
 				fmt.Println("graceful task exit is only available over the HTTP terminal path")
 				continue
+			case "phone-status":
+				out, err := renderPhoneStatus(ctx, "")
+				if err != nil {
+					fmt.Printf("phone status error: %v\n\n", err)
+					continue
+				}
+				fmt.Println(out)
+				fmt.Println()
+				continue
 			}
 		}
 		_ = line
@@ -447,6 +456,19 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 				if err := httpContinueTask(ctx, client, baseURL, authHeader, cmd.TaskID, cmd.Input); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
+				continue
+			case "phone-status":
+				workDir := ""
+				if infoSnapshot != nil {
+					workDir = strings.TrimSpace(infoSnapshot.WorkDir)
+				}
+				out, err := renderPhoneStatus(ctx, workDir)
+				if err != nil {
+					fmt.Printf("phone status error: %v\n\n", err)
+					continue
+				}
+				fmt.Println(out)
+				fmt.Println()
 				continue
 			}
 		}

@@ -58,6 +58,12 @@ func parseTerminalCommand(line string) (terminalCommand, bool) {
 		return terminalCommand{Kind: "about"}, true
 	case "machine", "/machine", "\\machine", "where", "/where", "host", "/host":
 		return terminalCommand{Kind: "machine"}, true
+	case "/phone", "phone", "/phone status", "phone status":
+		// Default verb for the phone surface is `status` — same shape
+		// as `/agent` printing the current runner. Future phone verbs
+		// (push, pull, token *) are added below as prefix matches so
+		// they can carry arguments without bloating this switch.
+		return terminalCommand{Kind: "phone-status"}, true
 	}
 
 	for _, prefix := range []string{"set agent ", "/set agent ", "\\set agent "} {
