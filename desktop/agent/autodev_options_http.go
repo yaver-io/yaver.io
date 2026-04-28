@@ -124,8 +124,7 @@ func BuildAutodevOptions() autodevOptions {
 
 	hasClaude := have("claude")
 	hasCodex := have("codex")
-	hasAider := have("aider")
-	hasOllama := have("ollama")
+	hasOpencode := have("opencode")
 
 	engines := []autodevEngineOption{
 		{
@@ -144,18 +143,18 @@ func BuildAutodevOptions() autodevOptions {
 		},
 		{
 			Value:       "hybrid",
-			Label:       "Hybrid (Claude planner + local Aider/Ollama)",
-			Description: "Claude plans up to 5 file-scoped subtasks per kick; a local Ollama model executes them via Aider. ~80–95 % cheaper, quality varies with the local model. Best for overnight runs where the planner cost is amortised across many local-model implementations.",
-			Available:   hasClaude && hasAider && hasOllama,
-			Missing:     missing("claude", "aider", "ollama"),
+			Label:       "Hybrid (Claude planner + opencode implementer)",
+			Description: "Claude plans up to 5 file-scoped subtasks per kick; opencode (with whichever provider you've configured — Anthropic / OpenRouter / Ollama via BYOK) implements them. Lets you split planner cost from implementer cost without yaver having to ship a wrapper for every CLI.",
+			Available:   hasClaude && hasOpencode,
+			Missing:     missing("claude", "opencode"),
 		},
 	}
 
 	runners := []autodevRunnerOption{
 		{Value: "claude-code", Label: "Claude Code", Available: hasClaude, Missing: ifNot(hasClaude, "claude")},
 		{Value: "codex", Label: "OpenAI Codex", Available: hasCodex, Missing: ifNot(hasCodex, "codex")},
-		{Value: "aider-ollama", Label: "Aider + Ollama (local)", Available: hasAider && hasOllama, Missing: firstMissing(hasAider, "aider", hasOllama, "ollama")},
-		{Value: "hybrid", Label: "Hybrid (planner+implementer)", Available: hasClaude && hasAider && hasOllama, Missing: firstMissing(hasClaude, "claude", hasAider && hasOllama, "aider+ollama")},
+		{Value: "opencode", Label: "opencode (BYOK)", Available: hasOpencode, Missing: ifNot(hasOpencode, "opencode")},
+		{Value: "hybrid", Label: "Hybrid (claude planner + opencode implementer)", Available: hasClaude && hasOpencode, Missing: firstMissing(hasClaude, "claude", hasOpencode, "opencode")},
 	}
 
 	hardens := []autodevHardenOption{
@@ -171,7 +170,7 @@ func BuildAutodevOptions() autodevOptions {
 		{Value: "default", Label: "Default (no slicing)", Description: "Single engine end-to-end. Picks the user's --engine choice.", Planner: "", Implementer: "", Available: true},
 		{Value: "opus-plan-sonnet-impl", Label: "Opus plans · Sonnet implements", Description: "Cheap-default with high-quality planning. Best when your Claude Max bucket is tight on Opus but you still want premium reasoning on the planning subtask.", Planner: "claude:opus", Implementer: "claude:sonnet", Available: hasClaude},
 		{Value: "opus-plan-codex-impl", Label: "Opus plans · Codex implements", Description: "Premium planning, token-efficient implementation. Best for hours-long unattended runs.", Planner: "claude:opus", Implementer: "codex", Available: hasClaude && hasCodex},
-		{Value: "opus-plan-aider-impl", Label: "Opus plans · Aider+Ollama implements", Description: "Premium planning, free local implementation. Quality of edits varies with the local Ollama model.", Planner: "claude:opus", Implementer: "aider-ollama", Available: hasClaude && hasAider && hasOllama},
+		{Value: "opus-plan-opencode-impl", Label: "Opus plans · opencode implements", Description: "Premium planning, opencode-driven implementation (route through whichever provider you've BYOK'd into opencode — Anthropic / OpenRouter / Ollama / etc.).", Planner: "claude:opus", Implementer: "opencode", Available: hasClaude && hasOpencode},
 		{Value: "codex-end-to-end", Label: "Codex end-to-end", Description: "No Anthropic spend. Codex plans + implements every kick.", Planner: "codex", Implementer: "codex", Available: hasCodex},
 		{Value: "opus-bug-fix", Label: "Opus everywhere (bug-fix mode)", Description: "Highest stakes both tiers. Use with --max-iterations 1 + a focused --prompt.", Planner: "claude:opus", Implementer: "claude:opus", Available: hasClaude},
 	}

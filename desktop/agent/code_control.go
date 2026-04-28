@@ -138,7 +138,9 @@ func slashMenuOptions(attached bool) []string {
 		"/set orchestration manual",
 		"/fork <task-id> --agent opencode <prompt>",
 		"/get agent",
+		"/set agent claude",
 		"/set agent codex",
+		"/set agent opencode",
 		"/set byok openrouter",
 		"/get model",
 		"/set model gpt-5.4",
@@ -163,6 +165,13 @@ func slashMenuOptions(attached bool) []string {
 		options = append([]string{"/detach pc", "/get pc"}, options...)
 	} else {
 		options = append([]string{"/attach pc select", "/get pc"}, options...)
+	}
+	// Bare-word yaver subcommands. Listed without the leading "/" so
+	// the discovery menu doubles as documentation for the
+	// `verb [args...]` argv-passthrough surface — same dispatcher as
+	// `yaver <verb>` from the shell.
+	for _, verb := range SafeArgvSubcommandList() {
+		options = append(options, verb)
 	}
 	return options
 }

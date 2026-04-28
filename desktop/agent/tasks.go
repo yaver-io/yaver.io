@@ -239,9 +239,11 @@ func GetRunnerConfig(runnerID string) RunnerConfig {
 // is installed, letting the caller surface a clean error instead of crashing
 // in a retry loop.
 func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
-	// Stable preference order: frontier CLIs first, then local/free runners.
-	order := []string{"claude", "codex", "aider", "opencode", "goose", "amp", "ollama", "aider-ollama"}
-	for _, id := range order {
+	// Yaver only first-classes claude / codex / opencode now —
+	// opencode wraps the long tail (Ollama, OpenRouter, …) so users
+	// who want a different model go through opencode's BYOK config
+	// instead of yaver shipping a dedicated wrapper.
+	for _, id := range supportedRunnerIDs {
 		r, ok := builtinRunners[id]
 		if !ok {
 			continue
@@ -251,6 +253,28 @@ func firstInstalledBuiltinRunner() (RunnerConfig, bool) {
 		}
 	}
 	return RunnerConfig{}, false
+}
+
+// supportedRunnerIDs is the canonical list of runner IDs yaver
+// advertises in user-facing UX (slash menu, capability inventory,
+// /autodev/options, hybrid implementer pick). Other entries in
+// builtinRunners (aider, goose, amp, ollama, aider-ollama) remain
+// reachable when explicitly named — they just don't show up by
+// default. Order is the preference order for "default installed runner"
+// fallbacks.
+var supportedRunnerIDs = []string{"claude", "codex", "opencode"}
+
+// IsSupportedRunner reports whether a runner ID is in the canonical
+// user-facing set. Use this anywhere you'd otherwise enumerate the
+// IDs by hand to keep the surface trim consistent.
+func IsSupportedRunner(id string) bool {
+	id = normalizeRunnerID(id)
+	for _, s := range supportedRunnerIDs {
+		if id == s {
+			return true
+		}
+	}
+	return false
 }
 
 // cachedModels stores models fetched from Convex for the /agent/runners endpoint.

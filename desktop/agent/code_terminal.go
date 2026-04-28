@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -32,30 +34,64 @@ func runCodeTerminal(runner, model string) {
 		return
 	}
 
-	cfg, err := LoadConfig()
-	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
-		fmt.Fprintln(os.Stderr, "Not signed in. Run 'yaver auth' first.")
-		os.Exit(1)
-	}
-	if _, running := isAgentRunning(); !running {
-		fmt.Fprintln(os.Stderr, "Agent is not running. Run 'yaver serve' or 'yaver auth' first.")
-		os.Exit(1)
+	cfg, _ := LoadConfig()
+	authToken := ""
+	if cfg != nil {
+		authToken = strings.TrimSpace(cfg.AuthToken)
 	}
 
 	baseURL := "http://127.0.0.1:18080"
-	info, err := attachGetInfo(baseURL, cfg.AuthToken)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Cannot connect to agent: %v\n", err)
-		os.Exit(1)
+	var (
+		info       *attachInfo
+		offline    bool
+		offlineMsg string
+	)
+
+	switch {
+	case authToken == "":
+		offline = true
+		offlineMsg = "no auth token (run `yaver auth` to pair); local-only mode"
+	default:
+		_, running := isAgentRunning()
+		if !running {
+			offline = true
+			offlineMsg = "agent not running; local-only mode (`yaver serve` to enable remote tasks)"
+		} else {
+			i, err := attachGetInfo(baseURL, authToken)
+			if err != nil {
+				offline = true
+				offlineMsg = fmt.Sprintf("agent unreachable (%v); local-only mode", err)
+			} else {
+				info = i
+			}
+		}
+	}
+
+	// Last-used runner from code-config. Falls through to first
+	// installed of the supported set if the recorded runner isn't
+	// available on PATH any more.
+	lastRunner := ""
+	if _, profile, err := loadCodeConfig(); err == nil && profile != nil {
+		lastRunner = strings.TrimSpace(profile.Runner)
+	}
+	wd, _ := os.Getwd()
+	inventory := ProbeLocalInventory(ProbeContext{WorkDir: wd, LastUsedRunner: lastRunner})
+
+	chosenRunner := strings.TrimSpace(runner)
+	if chosenRunner == "" {
+		chosenRunner = inventory.PreferredRunner
 	}
 
 	sess := &codeTerminalSession{
 		baseURL: baseURL,
-		token:   cfg.AuthToken,
+		token:   authToken,
 		info:    info,
+		offline: offline,
+		offlineReason: offlineMsg,
+		inventory:     inventory,
 		opts: attachSessionOptions{
 			Source:        terminalLocalTaskSource,
-			DefaultRunner: strings.TrimSpace(runner),
+			DefaultRunner: chosenRunner,
 			DefaultModel:  strings.TrimSpace(model),
 		},
 		knownTasks:    map[string]bool{},
@@ -73,6 +109,15 @@ type codeTerminalSession struct {
 	token   string
 	info    *attachInfo
 	opts    attachSessionOptions
+
+	// offline is true when we couldn't reach a local agent at startup.
+	// Submit branches on this: connected → POST /tasks; offline →
+	// spawn the picked runner directly with its yolo flag and stream
+	// stdout into the TUI scrollback. Polling for remote-task updates
+	// is disabled.
+	offline       bool
+	offlineReason string
+	inventory     InventoryReport
 
 	// editor state — owned by main goroutine
 	buf    []rune
@@ -112,16 +157,33 @@ func (s *codeTerminalSession) run() error {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
-	// Welcome banner. printAttachWelcome uses fmt.Println which emits
-	// "\n" — that's still fine in raw mode because the terminal driver
-	// turns line-feeds into CRLF when ONLCR is the default. We force
-	// CR ourselves below for safety on terminals that don't.
-	s.writeRaw(rawifyLines(captureStdout(func() { printAttachWelcome(s.info) })))
+	// Welcome banner — capability inventory first (positions yaver as
+	// orchestrator, not just a code-agent wrapper), then either the
+	// usual /info-derived block or the offline banner.
+	s.writeRaw(rawifyLines(RenderInventoryBanner(s.inventory, "")))
+	s.writeRaw("\r\n")
+	if s.offline {
+		s.writeRaw(rawifyLines(fmt.Sprintf("\033[33m⚠ %s\033[0m\n", s.offlineReason)))
+		if s.opts.DefaultRunner != "" {
+			s.writeRaw(rawifyLines(fmt.Sprintf("\033[2m  Submits will spawn %s directly with its yolo flag.\033[0m\n", s.opts.DefaultRunner)))
+		} else {
+			s.writeRaw(rawifyLines("\033[2m  No supported runner installed locally — install claude / codex / opencode to submit prompts.\033[0m\n"))
+		}
+		s.writeRaw("\r\n")
+	} else {
+		s.writeRaw(rawifyLines(captureStdout(func() { printAttachWelcome(s.info) })))
+	}
 
-	if tasks, err := attachListTasks(s.baseURL, s.token); err == nil {
-		for _, t := range tasks {
-			s.knownTasks[t.ID] = true
-			s.lastOutputLen[t.ID] = len(t.Output)
+	// Discoverability hint: bare-word + `yaver <verb>` work in this
+	// prompt. Press / for the full menu including all wrapped verbs.
+	s.writeRaw(rawifyLines("\033[2mTip: type any yaver verb (e.g. `machines`, `guests`, `vault list`, `deploy templates`) — press / to discover more.\033[0m\n\r\n"))
+
+	if !s.offline {
+		if tasks, err := attachListTasks(s.baseURL, s.token); err == nil {
+			for _, t := range tasks {
+				s.knownTasks[t.ID] = true
+				s.lastOutputLen[t.ID] = len(t.Output)
+			}
 		}
 	}
 
@@ -131,8 +193,14 @@ func (s *codeTerminalSession) run() error {
 	stdinCh := make(chan byte, 256)
 	go readStdinBytes(ctx, stdinCh)
 
-	pollCh := make(chan []TaskInfo, 4)
-	go pollTasks(ctx, s.baseURL, s.token, pollCh)
+	// Polling only makes sense when we can actually reach the agent.
+	// In offline mode, the channel stays nil and the select branch is
+	// skipped (a nil channel never fires).
+	var pollCh chan []TaskInfo
+	if !s.offline {
+		pollCh = make(chan []TaskInfo, 4)
+		go pollTasks(ctx, s.baseURL, s.token, pollCh)
+	}
 
 	s.draw()
 
@@ -440,6 +508,23 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 		return false, false, nil
 	}
 
+	// Bare-word yaver subcommand (`guests list`, `vault projects`,
+	// also `yaver guests list`). Runs in-process as a subprocess of
+	// yaver itself with output captured into the TUI scrollback.
+	if out, handled, err := MaybeRunYaverArgv(input); handled {
+		if strings.TrimSpace(out) != "" {
+			s.writeRaw(rawifyLines(out))
+			if !strings.HasSuffix(out, "\n") {
+				s.writeRaw("\r\n")
+			}
+		}
+		if err != nil {
+			s.writeRaw(fmt.Sprintf("\033[31m✗ yaver %s failed: %v\033[0m\r\n", strings.Fields(input)[0], err))
+		}
+		s.draw()
+		return false, false, nil
+	}
+
 	// Local builtins (help, tasks, agent, set agent, clear, etc).
 	if handled, exit := runAttachBuiltin(input, s.info, s.baseURL, s.token, &s.opts); handled {
 		if exit {
@@ -449,7 +534,13 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 		return false, false, nil
 	}
 
-	// Fall through: it's a coding prompt — create a task.
+	// Coding prompt. Connected → create a task on the agent. Offline
+	// → spawn the picked runner directly with its yolo flag.
+	if s.offline {
+		s.runOfflineCodingPrompt(input)
+		s.draw()
+		return false, false, nil
+	}
 	payload := buildTerminalPromptPayload(input)
 	taskID, err := attachCreateTask(s.baseURL, s.token, payload, s.opts)
 	if err != nil {
@@ -462,6 +553,79 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 	s.activeTask = taskID
 	s.draw()
 	return false, false, nil
+}
+
+// runOfflineCodingPrompt spawns the chosen wrapped runner (claude /
+// codex / opencode) directly in cwd with its dangerous/yolo flag and
+// streams its output into the TUI scrollback. Ctrl-C in the parent
+// TUI propagates: the child gets its own process group via the
+// runner config and exits when the user hits ^C again to detach.
+func (s *codeTerminalSession) runOfflineCodingPrompt(prompt string) {
+	if s.opts.DefaultRunner == "" {
+		s.writeRaw("\r\n\033[31m✗ no supported runner installed (claude / codex / opencode)\033[0m\r\n")
+		return
+	}
+	cfg, ok := builtinRunners[normalizeRunnerID(s.opts.DefaultRunner)]
+	if !ok || !IsSupportedRunner(s.opts.DefaultRunner) {
+		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ runner %q is not in the supported set (claude / codex / opencode)\033[0m\r\n", s.opts.DefaultRunner))
+		return
+	}
+	args := substituteRunnerArgs(cfg.Args, prompt)
+	cmd := exec.Command(cfg.Command, args...)
+	cwd, _ := os.Getwd()
+	cmd.Dir = cwd
+	cmd.Stdin = nil
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ pipe stdout: %v\033[0m\r\n", err))
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ pipe stderr: %v\033[0m\r\n", err))
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ start %s: %v\033[0m\r\n", cfg.Command, err))
+		return
+	}
+	s.writeRaw(fmt.Sprintf("\r\n\033[2m▸ spawned %s (offline mode)\033[0m\r\n", cfg.Command))
+
+	streamOut := func(r io.Reader) {
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := r.Read(buf)
+			if n > 0 {
+				s.writeRaw(rawifyLines(string(buf[:n])))
+			}
+			if readErr != nil {
+				return
+			}
+		}
+	}
+	doneOut := make(chan struct{})
+	doneErr := make(chan struct{})
+	go func() { streamOut(stdout); close(doneOut) }()
+	go func() { streamOut(stderr); close(doneErr) }()
+	<-doneOut
+	<-doneErr
+	if waitErr := cmd.Wait(); waitErr != nil {
+		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ %s exited: %v\033[0m\r\n", cfg.Command, waitErr))
+	} else {
+		s.writeRaw(fmt.Sprintf("\r\n\033[2m✓ %s done\033[0m\r\n", cfg.Command))
+	}
+}
+
+// substituteRunnerArgs walks a RunnerConfig.Args slice and replaces
+// the {prompt} placeholder with the user's input. Other placeholders
+// ({model}, {sessionId}) are left as-is — only `claude -p {prompt}`,
+// `codex exec {prompt}`, `opencode run {prompt}` are exercised here.
+func substituteRunnerArgs(args []string, prompt string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = strings.ReplaceAll(a, "{prompt}", prompt)
+	}
+	return out
 }
 
 func (s *codeTerminalSession) applyPoll(tasks []TaskInfo) {
@@ -517,7 +681,11 @@ func (s *codeTerminalSession) draw() {
 		b.WriteString("\033[1A\r\033[J")
 	}
 
-	label := renderTerminalPromptLabel(currentWorkDir(s.info), s.opts.DefaultRunner, s.opts.DefaultModel)
+	status := ""
+	if s.offline {
+		status = "\033[33m⚠ local-only\033[0m"
+	}
+	label := renderTerminalPromptLabelWithStatus(currentWorkDir(s.info), s.opts.DefaultRunner, s.opts.DefaultModel, status)
 	fmt.Fprintf(&b, "\033[2m%s\033[0m\r\n\033[1;35myaver>\033[0m %s", label, string(s.buf))
 
 	extra := 0

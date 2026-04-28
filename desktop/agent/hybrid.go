@@ -75,7 +75,10 @@ type HybridSpec struct {
 	// runner works — the planner does not edit files.
 	Planner string `json:"planner"`
 	// Implementer is the runner used to execute each subtask.
-	// Defaults to "aider-ollama".
+	// Defaults to "opencode" — yaver only first-classes
+	// claude/codex/opencode now, and opencode wraps the rest of the
+	// long tail (BYOK Ollama / OpenRouter / etc.) so users who want a
+	// local model still get it through opencode's config.
 	Implementer string `json:"implementer"`
 	// Model overrides the implementer's LLM backend. For
 	// aider-ollama this becomes the --model flag (e.g.
@@ -156,9 +159,12 @@ func applyHybridDefaults(s *HybridSpec) error {
 		s.Planner = "claude"
 	}
 	if s.Implementer == "" {
-		s.Implementer = "aider-ollama"
+		s.Implementer = "opencode"
 	}
 	if s.Implementer == "aider-ollama" {
+		// Legacy implementer kept reachable when explicitly named, so
+		// pre-existing HybridSpec serializations keep working. Default
+		// flipped to opencode above; this branch only fires on opt-in.
 		if s.Model == "" {
 			s.Model = "ollama_chat/qwen2.5-coder:14b"
 		}

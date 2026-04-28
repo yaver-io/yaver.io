@@ -89,8 +89,10 @@ func TestApplyHybridDefaults_Requires(t *testing.T) {
 	}
 }
 
-// TestApplyHybridDefaults_Fills verifies the defaults land on a 24 GB
-// M-series setup: claude planner, aider-ollama implementer with Qwen.
+// TestApplyHybridDefaults_Fills verifies the defaults: claude planner,
+// opencode implementer (yaver only first-classes claude/codex/opencode
+// now; opencode wraps the long tail via BYOK so users still reach
+// Ollama / OpenRouter / etc. through it).
 func TestApplyHybridDefaults_Fills(t *testing.T) {
 	spec := HybridSpec{WorkDir: t.TempDir(), Prompt: "do a thing"}
 	if err := applyHybridDefaults(&spec); err != nil {
@@ -99,14 +101,28 @@ func TestApplyHybridDefaults_Fills(t *testing.T) {
 	if spec.Planner != "claude" {
 		t.Errorf("planner default: %q", spec.Planner)
 	}
-	if spec.Implementer != "aider-ollama" {
-		t.Errorf("implementer default: %q", spec.Implementer)
-	}
-	if !strings.Contains(spec.Model, "qwen2.5-coder") {
-		t.Errorf("model default: %q", spec.Model)
+	if spec.Implementer != "opencode" {
+		t.Errorf("implementer default: %q (want opencode)", spec.Implementer)
 	}
 	if spec.MaxSubtasks == 0 || spec.Timeout == 0 {
 		t.Errorf("caps not filled: %+v", spec)
+	}
+}
+
+// TestApplyHybridDefaults_AiderOllamaOptIn checks that the legacy
+// aider-ollama implementer is still reachable when explicitly named
+// (so pre-existing HybridSpec serializations keep working) and that
+// it still pulls in the Qwen model + Ollama base URL.
+func TestApplyHybridDefaults_AiderOllamaOptIn(t *testing.T) {
+	spec := HybridSpec{WorkDir: t.TempDir(), Prompt: "do a thing", Implementer: "aider-ollama"}
+	if err := applyHybridDefaults(&spec); err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	if !strings.Contains(spec.Model, "qwen2.5-coder") {
+		t.Errorf("aider-ollama model default: %q", spec.Model)
+	}
+	if spec.BaseURL == "" {
+		t.Errorf("aider-ollama base URL default missing")
 	}
 }
 

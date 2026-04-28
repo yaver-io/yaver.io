@@ -424,6 +424,13 @@ func printTerminalUserInput(payload terminalPromptPayload) {
 }
 
 func renderTerminalPromptLabel(workDir, runner, model string) string {
+	return renderTerminalPromptLabelWithStatus(workDir, runner, model, "")
+}
+
+// renderTerminalPromptLabelWithStatus is the underlying implementation;
+// status is appended as " · <status>" so the user can see at a glance
+// whether the session is offline / attached / etc.
+func renderTerminalPromptLabelWithStatus(workDir, runner, model, status string) string {
 	wd := strings.TrimSpace(workDir)
 	if wd == "" {
 		if cwd, err := os.Getwd(); err == nil {
@@ -454,10 +461,14 @@ func renderTerminalPromptLabel(workDir, runner, model string) string {
 			agent = "opencode default"
 		}
 	}
-	if wd == "" {
-		return agent
+	parts := []string{agent}
+	if wd != "" {
+		parts = append(parts, wd)
 	}
-	return agent + " · " + wd
+	if status != "" {
+		parts = append(parts, status)
+	}
+	return strings.Join(parts, " · ")
 }
 
 func printInteractivePrompt(workDir, runner, model string) {
