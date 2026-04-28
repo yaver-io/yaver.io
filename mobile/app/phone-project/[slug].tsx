@@ -350,9 +350,19 @@ export default function PhoneProjectDetailScreen() {
     >
       <View style={{ paddingHorizontal: 16 }}>
         <AppBackButton onPress={() => router.back()} style={{ marginBottom: 8 }} />
-        <Pressable onPress={() => router.navigate(`/phone-project/workspace/${slugStr}` as any)}>
-          <Text style={{ color: c.accent, marginBottom: 8 }}>Workspace ›</Text>
-        </Pressable>
+        <View style={{ flexDirection: "row", flexWrap: "wrap", marginBottom: 8 }}>
+          <Pressable
+            onPress={() => router.navigate(`/phone-project/workspace/${slugStr}` as any)}
+            style={{ marginRight: 14 }}
+          >
+            <Text style={{ color: c.accent }}>Workspace ›</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.navigate(`/phone-project/code/${slugStr}` as any)}
+          >
+            <Text style={{ color: c.accent }}>Code ›</Text>
+          </Pressable>
+        </View>
         <Text style={[styles.h1, { color: c.textPrimary }]}>{project.name}</Text>
         <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
           {project.slug} · {project.template ?? "custom"}
