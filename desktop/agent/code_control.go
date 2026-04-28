@@ -79,6 +79,8 @@ func runCodeControl(args []string) (bool, error) {
 		return true, nil
 	case "native":
 		return true, runCodeNativeControl(args[1:])
+	case "phone":
+		return true, runCodePhoneControl(args[1:])
 	case "status":
 		return true, runCodeStatus()
 	case "help":
@@ -123,7 +125,7 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 		fields[0] = strings.TrimPrefix(fields[0], "/")
 	}
 	switch fields[0] {
-	case "attach", "detach", "auth", "continue", "fork", "sessions", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help", "monorepo", "native":
+	case "attach", "detach", "auth", "continue", "fork", "sessions", "get", "set", "repo", "clone", "dev", "deploy", "user", "status", "help", "monorepo", "native", "phone":
 		return fields, true
 	default:
 		return nil, false
