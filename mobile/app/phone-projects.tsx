@@ -206,6 +206,11 @@ export default function PhoneProjectsScreen() {
   const [surveyIndex, setSurveyIndex] = useState(0);
   const [surveySkipped, setSurveySkipped] = useState(false);
   const [surveyAnswers, setSurveyAnswers] = useState<SurveyAnswers>({});
+  // Optional logo URL — concatenated into the description prompt so
+  // the LLM can use it as a visual reference. We accept any URL the
+  // user can paste (CDN, gist, GitHub raw, etc.) — gallery upload is
+  // a follow-up that needs an upload pipeline + storage.
+  const [logoUrl, setLogoUrl] = useState("");
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
@@ -362,11 +367,14 @@ export default function PhoneProjectsScreen() {
     // Survey answers (when not skipped) get prepended to the prompt
     // as a structured "[Survey]\nKey: value\n…" header so the LLM
     // wrapper has both the user's prose AND the multiple-choice
-    // intent in one blob.
+    // intent in one blob. Logo URL (when set) joins as a separate
+    // [Brand] line so the LLM can fetch and reference it.
     const surveyParagraph = surveySkipped ? "" : buildSurveyParagraph(surveyAnswers);
-    const effectivePrompt = surveyParagraph
-      ? `${surveyParagraph}\n${mergeImportedConversationPrompt(prompt, importedConversation)}`
-      : mergeImportedConversationPrompt(prompt, importedConversation);
+    const brandParagraph = logoUrl.trim() ? `[Brand]\nLogo URL: ${logoUrl.trim()}\n` : "";
+    const baseDescription = mergeImportedConversationPrompt(prompt, importedConversation);
+    const effectivePrompt = [surveyParagraph, brandParagraph, baseDescription]
+      .filter(Boolean)
+      .join("\n");
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
     if (codingMode === "phone" && effectivePrompt.trim() && !activePhoneKey) {
       Alert.alert(
@@ -467,6 +475,7 @@ export default function PhoneProjectsScreen() {
       setRunner(availableRunners[0]?.runnerId ?? "");
       setGitMode("skip");
       setRepoName("");
+      setLogoUrl("");
       setSurveyAnswers({});
       setSurveyIndex(0);
       setSurveySkipped(false);
@@ -788,39 +797,65 @@ export default function PhoneProjectsScreen() {
                   </>
                 ) : null}
 
-                {codingMode === "runner" && prompt.trim() ? (
+                {codingMode === "runner" ? (
                   <>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Runner</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      {(availableRunners.length
-                        ? availableRunners.map((item) => ({
-                            id: item.runnerId,
-                            label: item.title || item.runnerId,
-                          }))
-                        : [{ id: "codex", label: "Codex" }, { id: "claude", label: "Claude" }, { id: "opencode", label: "OpenCode" }]
-                      ).map((item) => {
-                        const active = runner === item.id;
-                        return (
-                          <Pressable
-                            key={item.id}
-                            onPress={() => connected && setRunner(item.id)}
-                            style={[
-                              styles.modeChip,
-                              {
-                                backgroundColor: active ? c.accent : c.bgCard,
-                                borderColor: active ? c.accent : c.border,
-                                marginRight: 8,
-                                marginTop: 8,
-                              },
-                            ]}
-                          >
-                            <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
-                              {item.label}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
+                    {availableRunners.length === 0 ? (
+                      // No authed runner on the picked machine —
+                      // surface an actionable provisioning hint
+                      // instead of letting the user pick a runner
+                      // that'll fail at task creation. The Devices
+                      // tab is where the existing RunnerAuthModal +
+                      // device-auth flow lives, so we route there
+                      // rather than reimplementing it inside this
+                      // wizard.
+                      <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
+                        <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
+                          {connected ? "No coding runner is signed in yet" : "Connect a Yaver machine first"}
+                        </Text>
+                        <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                          {connected
+                            ? "Open Devices, pick this machine, and sign in Claude / Codex (browser device-auth, no SSH) or paste a GLM API key for OpenCode. Come back here once one runner is ready."
+                            : "Pair a Yaver machine from the Devices tab, then return here. Phone-side coding works without one."}
+                        </Text>
+                        <Pressable
+                          onPress={() => router.push("/(tabs)/devices" as any)}
+                          style={[styles.btnSecondary, { borderColor: c.border, marginTop: 10 }]}
+                        >
+                          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                            Open Devices →
+                          </Text>
+                        </Pressable>
+                      </View>
+                    ) : (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                        {availableRunners.map((item) => ({
+                          id: item.runnerId,
+                          label: item.title || item.runnerId,
+                        })).map((item) => {
+                          const active = runner === item.id;
+                          return (
+                            <Pressable
+                              key={item.id}
+                              onPress={() => connected && setRunner(item.id)}
+                              style={[
+                                styles.modeChip,
+                                {
+                                  backgroundColor: active ? c.accent : c.bgCard,
+                                  borderColor: active ? c.accent : c.border,
+                                  marginRight: 8,
+                                  marginTop: 8,
+                                },
+                              ]}
+                            >
+                              <Text style={{ color: active ? c.bg : c.textPrimary, fontWeight: "600" }}>
+                                {item.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
                   </>
                 ) : null}
               </>
@@ -936,6 +971,18 @@ export default function PhoneProjectsScreen() {
                     </Text>
                   </View>
                 ) : null}
+                <Text style={[styles.label, { color: c.textMuted }]}>Logo URL (optional)</Text>
+                <TextInput
+                  value={logoUrl}
+                  onChangeText={setLogoUrl}
+                  placeholder="https://… raw image URL Yaver can fetch"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  keyboardType="url"
+                  style={[styles.input, { color: c.textPrimary, borderColor: c.border, marginBottom: 12 }]}
+                />
                 <Text style={[styles.label, { color: c.textMuted }]}>Describe the app *</Text>
                 <TextInput
                   value={prompt}
