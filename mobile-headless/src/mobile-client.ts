@@ -747,6 +747,38 @@ export class MobileClient {
       (await this.raw.post("/dev/start", { framework, workDir })).body,
     stop: async () => (await this.raw.post("/dev/stop")).body,
     reload: async () => (await this.raw.post("/dev/reload")).body,
+    /**
+     * Trigger the agent's Hermes bytecode build for the active project and
+     * return the structured result. Mirrors the call the real mobile app
+     * makes from DevPreview / Hot Reload before loading a bundle.
+     *
+     * `opts.timeoutMs` defaults to 12 minutes — slightly more than the
+     * agent's combined Metro (8 min) + hermesc (3 min) caps so the agent
+     * gets to surface its own structured "timedOut" response first. A
+     * client abort fires only when the agent is unreachable or wedged
+     * past its own caps; the rejection's `name` is "AbortError".
+     */
+    buildNative: async (
+      platform: "ios" | "android",
+      opts?: { timeoutMs?: number; signal?: AbortSignal },
+    ) => {
+      const externalSignal = opts?.signal;
+      const ctrl = new AbortController();
+      const onAbort = () => ctrl.abort();
+      if (externalSignal) {
+        if (externalSignal.aborted) ctrl.abort();
+        else externalSignal.addEventListener("abort", onAbort, { once: true });
+      }
+      const timeoutMs = opts?.timeoutMs ?? 12 * 60_000;
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const r = await this.raw.post("/dev/build-native", { platform }, { signal: ctrl.signal });
+        return { status: r.status, body: r.body };
+      } finally {
+        clearTimeout(timer);
+        if (externalSignal) externalSignal.removeEventListener("abort", onAbort);
+      }
+    },
   };
 
   // ── Repos ──────────────────────────────────────────────────────
@@ -897,16 +929,21 @@ export class MobileClient {
   };
 
   // ── Raw escape hatch ──────────────────────────────────────────
+  // The optional `opts.signal` lets callers wire their own timeout to a
+  // request that may legitimately take minutes (e.g. /dev/build-native).
+  // Without this, a hung agent leaves the fetch open forever and there's
+  // no way to surface a real "build timed out" error to the caller.
   readonly raw = {
-    get: async (p: string) => {
-      const res = await fetch(this.agentURL(p), { headers: this.authHeaders() });
+    get: async (p: string, opts?: { signal?: AbortSignal }) => {
+      const res = await fetch(this.agentURL(p), { headers: this.authHeaders(), signal: opts?.signal });
       return { status: res.status, body: await safeJson(res) };
     },
-    post: async (p: string, body?: any) => {
+    post: async (p: string, body?: any, opts?: { signal?: AbortSignal }) => {
       const res = await fetch(this.agentURL(p), {
         method: "POST",
         headers: { ...this.authHeaders(), "Content-Type": "application/json" },
         body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: opts?.signal,
       });
       return { status: res.status, body: await safeJson(res) };
     },

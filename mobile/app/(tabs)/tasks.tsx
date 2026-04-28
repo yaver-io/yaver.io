@@ -1620,9 +1620,16 @@ export default function TasksScreen() {
           console.log(`[tasks] auth recovery before reconnect failed for ${device.name}: ${recovery.error}`);
         }
       }
+      // selectDevice awaits quicClient.connect (which races direct + tunnel
+      // + relay candidates and resolves only when one succeeds or its own
+      // 20s timeout fires). It catches its own errors and flips
+      // connectionStatus to "disconnected" + sets lastError. So once this
+      // await returns, the connection is either established or has already
+      // failed — no extra wall-clock wait is needed. Devices tab uses the
+      // same selectDevice() call directly; Tasks must match so a device that
+      // only reaches us via relay (e.g. yaver test ephemeral) is given the
+      // same chance to come up.
       await selectDevice(device);
-      // Give it a moment to establish connection
-      await new Promise(resolve => setTimeout(resolve, 3000));
       if (quicClient.connectionState !== "connected") {
         setReconnectError(`Could not reach ${device.name}. Make sure yaver is running.`);
       }

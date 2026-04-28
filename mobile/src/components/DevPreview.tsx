@@ -280,6 +280,15 @@ export function DevPreview() {
     }
     setNativeLoading(true);
     setLastLogLine("Building native bundle...");
+    // The Go agent caps Metro bundle at 8 min and hermesc at 3 min, so
+    // /dev/build-native worst-case duration is ~11 min. Give the client a
+    // hair more so the agent's structured "timedOut" response surfaces
+    // first; client abort is a backstop for a dead network or crashed
+    // agent. Without this the fetch hangs forever — setNativeLoading stays
+    // true, the UI is stuck on "Building..." and the user has to kill the
+    // app to recover.
+    const buildAbort = new AbortController();
+    const buildAbortTimer = setTimeout(() => buildAbort.abort(), 12 * 60 * 1000);
     try {
       // Ask the Go agent to build a production Hermes bytecode bundle
       const platform = require("react-native").Platform.OS;
@@ -291,7 +300,9 @@ export function DevPreview() {
         method: "POST",
         headers,
         body: JSON.stringify({ platform }),
+        signal: buildAbort.signal,
       });
+      clearTimeout(buildAbortTimer);
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
@@ -325,9 +336,14 @@ export function DevPreview() {
       const moduleName = buildResult.moduleName || "main";
       await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
     } catch (err: any) {
+      clearTimeout(buildAbortTimer);
       setNativeLoading(false);
       setLastLogLine("");
-      Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
+      const aborted = err?.name === "AbortError" || buildAbort.signal.aborted;
+      const message = aborted
+        ? "Build did not respond in 12 minutes. The agent may be stuck or unreachable — check the project's node_modules and retry."
+        : err?.message || "Could not load bundle in Yaver";
+      Alert.alert(aborted ? "Build Timed Out" : "Load Failed", message);
     }
   }, []);
 

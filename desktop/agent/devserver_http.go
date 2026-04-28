@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -698,32 +699,48 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 	return result, nil
 }
 
-func bundleCommand(packageManager, framework, platform, entryFile, bundlePath, assetsDir string) *exec.Cmd {
+// bundleCommand returns the framework-appropriate Metro/Expo invocation as
+// a context-aware *exec.Cmd. Callers MUST supply a context with a timeout
+// (e.g. context.WithTimeout) — Metro and Expo can hang silently on a broken
+// project (missing node_modules, infinite resolver loop, stuck on stdin
+// prompts), so a hard wall-clock cap is the only way to surface failure to
+// the mobile app instead of leaving the HTTP request blocked indefinitely.
+func bundleCommand(ctx context.Context, packageManager, framework, platform, entryFile, bundlePath, assetsDir string) *exec.Cmd {
 	switch framework {
 	case "expo":
 		switch packageManager {
 		case "yarn":
-			return exec.Command("yarn", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "yarn", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		case "pnpm":
-			return exec.Command("pnpm", "exec", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "pnpm", "exec", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		case "bun":
-			return exec.Command("bunx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "bunx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		default:
-			return exec.Command("npx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "npx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		}
 	default:
 		switch packageManager {
 		case "yarn":
-			return exec.Command("yarn", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "yarn", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		case "pnpm":
-			return exec.Command("pnpm", "exec", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "pnpm", "exec", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		case "bun":
-			return exec.Command("bunx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "bunx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		default:
-			return exec.Command("npx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return exec.CommandContext(ctx, "npx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
 		}
 	}
 }
+
+// Wall-clock caps for the build pipeline. Metro/Expo bundles for a clean
+// project complete in <2 min on a workstation; 8 min covers a large monorepo
+// with cold caches. Hermes compile is much faster — 3 min is generous.
+// These caps exist to surface a hung subprocess as a real failure to the
+// mobile app instead of leaving /dev/build-native blocked indefinitely.
+const (
+	bundleBuildTimeout   = 8 * time.Minute
+	hermesCompileTimeout = 3 * time.Minute
+)
 
 // handleDevServerStatus returns the current dev server status.
 // GET /dev/status
@@ -2110,12 +2127,19 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 
 	// ── Bundle ──
+	// Wall-clock cap so a hung Metro/Expo subprocess (broken project, infinite
+	// resolver loop, missing native dep) doesn't keep /dev/build-native
+	// blocked. On expiry exec.CommandContext kills the bundler and cmd.Run
+	// returns; we detect ctx.Err() == DeadlineExceeded and surface a
+	// dedicated build_failed status to the mobile DevPreview / hot reload UI.
+	bundleCtx, bundleCancel := context.WithTimeout(r.Context(), bundleBuildTimeout)
+	defer bundleCancel()
 	assetsDir := filepath.Join(buildDir, "assets")
 	var cmd *exec.Cmd
 	if isExpo {
 		s.emitBuildProgress(fmt.Sprintf("Bundling with Expo for %s...", req.Platform), "bundle")
 		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling with Expo for %s…", req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "expo"})
-		cmd = bundleCommand(prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
+		cmd = bundleCommand(bundleCtx, prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
 	} else {
 		// Find entry file: package.json "main" → fallback candidates
 		entryFile := "index.js"
@@ -2131,7 +2155,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		}
 		s.emitBuildProgress(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform), "bundle")
 		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling %s for %s…", entryFile, req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "react-native", "entryFile": entryFile})
-		cmd = bundleCommand(prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
+		cmd = bundleCommand(bundleCtx, prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
 	}
 
 	cmd.Dir = workDir
@@ -2155,22 +2179,43 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	if err := cmd.Run(); err != nil {
 		tailLines := tail.lines()
-		s.devServerMgr.EmitLog(fmt.Sprintf("Bundle failed: %v", err))
-		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "JavaScript bundle build failed", "The agent failed while producing the JavaScript bundle used for Hermes compilation.", err.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		// Timeout takes precedence over the raw exec error — when the
+		// bundler hangs, exec.CommandContext kills it and cmd.Run returns
+		// "signal: killed", which is misleading. Surface "timed out" so the
+		// mobile app shows a useful message and the user knows to look at
+		// project state (broken node_modules, infinite resolver loop, etc.)
+		timedOut := bundleCtx.Err() == context.DeadlineExceeded
+		errMsg := fmt.Sprintf("bundle failed: %v", err)
+		summary := "JavaScript bundle build failed"
+		userMsg := "The agent failed while producing the JavaScript bundle used for Hermes compilation."
+		hint := "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause."
+		if timedOut {
+			errMsg = fmt.Sprintf("bundle timed out after %s — the bundler was killed", bundleBuildTimeout)
+			summary = "JavaScript bundle build timed out"
+			userMsg = fmt.Sprintf("The bundler did not finish in %s. The subprocess was killed so the build endpoint can return an answer.", bundleBuildTimeout)
+			hint = "Common causes: missing node_modules (run `npm install` in the project), Metro stuck on a circular import, or `npm install` running inside the bundler waiting for the network. The tail above shows what the bundler was doing when it was killed."
+		}
+		s.devServerMgr.EmitLog(errMsg)
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, summary, userMsg, err.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
 		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 		writeNativeBuildStatus(workDir, nativeBuildStatus{
 			State:        "build_failed",
 			Platform:     req.Platform,
 			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
-			LastError:    fmt.Sprintf("bundle failed: %v", err),
+			LastError:    errMsg,
 		})
-		jsonReply(w, http.StatusInternalServerError, map[string]interface{}{
-			"error":    fmt.Sprintf("bundle failed: %v", err),
+		statusCode := http.StatusInternalServerError
+		if timedOut {
+			statusCode = http.StatusGatewayTimeout
+		}
+		jsonReply(w, statusCode, map[string]interface{}{
+			"error":    errMsg,
 			"phase":    "bundle",
 			"command":  cmd.Args,
 			"workDir":  workDir,
 			"output":   strings.Join(tailLines, "\n"),
-			"helpHint": "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause.",
+			"timedOut": timedOut,
+			"helpHint": hint,
 		})
 		return
 	}
@@ -2214,13 +2259,23 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		tmpPath := bundlePath + ".tmp"
 		os.Rename(bundlePath, tmpPath)
 
-		hermesCmd := exec.Command(hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
+		// Wall-clock cap on hermesc compile. hermesc is fast (<30s for a
+		// large RN bundle) but a corrupt input or an OOM-killed retry can
+		// hang it; without this the /dev/build-native HTTP request would
+		// stay open indefinitely after a successful Metro bundle.
+		hermesCtx, hermesCancel := context.WithTimeout(r.Context(), hermesCompileTimeout)
+		hermesCmd := exec.CommandContext(hermesCtx, hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
 		hermesCmd.Dir = workDir
 		hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
 		hermesCmd.Stdout = hermesLogW
 		hermesCmd.Stderr = hermesLogW
 
-		if err := hermesCmd.Run(); err != nil {
+		hermesErr := hermesCmd.Run()
+		hermesCancel()
+		if err := hermesErr; err != nil {
+			if hermesCtx.Err() == context.DeadlineExceeded {
+				err = fmt.Errorf("hermesc timed out after %s (subprocess killed)", hermesCompileTimeout)
+			}
 			os.Rename(tmpPath, bundlePath)
 			log.Printf("[super-host] hermesc failed: %v — using plain JS", err)
 			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))

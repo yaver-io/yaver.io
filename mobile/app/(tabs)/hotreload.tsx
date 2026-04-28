@@ -217,6 +217,13 @@ export default function HotReloadScreen() {
 
     setNativeLoading(true);
     setLoadingStatus("Building HBC bundle...");
+    // Agent caps Metro bundle at 8 min and hermesc at 3 min, so the worst
+    // case is ~11 min. Give the client 12 min before aborting — anything
+    // longer means the agent is unreachable, not slow. Without an abort
+    // the fetch can hang forever on a crashed agent or dead relay, leaving
+    // the Hot Reload UI stuck on "Building HBC bundle...".
+    const buildAbort = new AbortController();
+    const buildAbortTimer = setTimeout(() => buildAbort.abort(), 12 * 60 * 1000);
     try {
       const headers = {
         ...(quicClient as any).authHeaders,
@@ -229,7 +236,9 @@ export default function HotReloadScreen() {
         method: "POST",
         headers,
         body: JSON.stringify({ platform }),
+        signal: buildAbort.signal,
       });
+      clearTimeout(buildAbortTimer);
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
@@ -272,8 +281,13 @@ export default function HotReloadScreen() {
       // If we get here, bundle was validated (MD5 + BC version match)
       setLoadingStatus(`Loaded! MD5: ${(buildResult.md5 || "").slice(0, 8)}...`);
     } catch (err: any) {
+      clearTimeout(buildAbortTimer);
       setLoadingStatus("");
-      Alert.alert("Load Failed", err?.message || "Could not load bundle in Yaver");
+      const aborted = err?.name === "AbortError" || buildAbort.signal.aborted;
+      const message = aborted
+        ? "Build did not respond in 12 minutes. The agent may be stuck or unreachable — check the project's node_modules and retry."
+        : err?.message || "Could not load bundle in Yaver";
+      Alert.alert(aborted ? "Build Timed Out" : "Load Failed", message);
     } finally {
       setNativeLoading(false);
     }

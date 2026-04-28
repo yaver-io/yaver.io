@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
@@ -346,7 +347,9 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 	s.devServerMgr.EmitLog("[web-hermes-wasm] bundling for web platform via Metro …")
 	s.upsertDevOperation("build_web_hermes_wasm", "running", "bundle", "Bundling for web (expo export:embed --platform web)…", workDir, target.DeviceID, 0.4, map[string]interface{}{"target": "web-hermes-wasm", "caller": req.Caller})
 
-	cmd := bundleCommand(prep.PackageManager, "expo", "web", "", bundlePath, assetsDir)
+	bundleCtx, bundleCancel := context.WithTimeout(r.Context(), bundleBuildTimeout)
+	defer bundleCancel()
+	cmd := bundleCommand(bundleCtx, prep.PackageManager, "expo", "web", "", bundlePath, assetsDir)
 	cmd.Dir = workDir
 	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production")
 	logW := &devLogWriter{prefix: "[web-hermes-wasm]"}
@@ -358,6 +361,9 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 	cmd.Stderr = io.MultiWriter(logW, tail)
 	if err := cmd.Run(); err != nil {
 		tailLines := tail.lines()
+		if bundleCtx.Err() == context.DeadlineExceeded {
+			err = fmt.Errorf("bundler timed out after %s (subprocess killed)", bundleBuildTimeout)
+		}
 		errMsg := fmt.Sprintf("web Hermes WASM bundle failed: %v", err)
 		s.upsertDevOperation("build_web_hermes_wasm", "failed", "error", errMsg, workDir, target.DeviceID, 1, map[string]interface{}{"target": "web-hermes-wasm", "caller": req.Caller}, buildOp.ID)
 		jsonReply(w, http.StatusInternalServerError, map[string]interface{}{

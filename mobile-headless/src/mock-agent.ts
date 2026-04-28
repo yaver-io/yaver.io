@@ -11,10 +11,27 @@ export interface MockAgentHandle {
   close: () => Promise<void>;
   /** Push a frame to any SSE subscriber connected to this stream. */
   pushFrame: (streamName: string, frame: any) => void;
+  /**
+   * Switch /dev/build-native behaviour at runtime.
+   *
+   *   "ok"     — instant 200 with a synthetic bundle descriptor
+   *   "hang"   — never responds; lets tests verify client-side abort
+   *   "fail"   — instant 500 with an error body (mirrors a real bundler crash)
+   *   "slow"   — responds after `slowMs`; lets tests verify the client honours
+   *              its own per-request deadline without waiting forever for the
+   *              agent to die first
+   */
+  setBuildNativeMode: (mode: "ok" | "hang" | "fail" | "slow", slowMs?: number) => void;
 }
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
+  let buildNativeMode: "ok" | "hang" | "fail" | "slow" = "ok";
+  let buildNativeSlowMs = 0;
+  // Track in-flight "hang" responses so we can release them on close —
+  // otherwise server.close() blocks forever waiting for them and the
+  // test's afterAll hangs.
+  const pendingBuildNative = new Set<http.ServerResponse>();
   const streamSubs = new Map<string, Set<http.ServerResponse>>();
   const phoneProjects = new Map<string, any>();
   const repos = new Map<string, any>();
@@ -194,6 +211,49 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
         message: `queued: ${String(body.prompt || "").slice(0, 80)}`,
       });
     }
+    if (path === "/dev/build-native" && req.method === "POST") {
+      // Drain the request body so the connection is half-closed correctly.
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      switch (buildNativeMode) {
+        case "hang":
+          // Hold the response open. The client must abort to make progress.
+          pendingBuildNative.add(res);
+          req.on("close", () => pendingBuildNative.delete(res));
+          return;
+        case "slow":
+          await new Promise((r) => setTimeout(r, buildNativeSlowMs));
+          return json(200, {
+            status: "ok",
+            bundleUrl: "/dev/native-bundle",
+            assetsUrl: "/dev/native-assets",
+            size: 4096,
+            md5: "deadbeef",
+            bcVersion: 96,
+            moduleName: "main",
+            hasAssets: false,
+          });
+        case "fail":
+          return json(500, {
+            error: "bundle failed: mocked failure",
+            phase: "bundle",
+            timedOut: false,
+            helpHint: "mock-agent: buildNativeMode=fail",
+          });
+        case "ok":
+        default:
+          return json(200, {
+            status: "ok",
+            bundleUrl: "/dev/native-bundle",
+            assetsUrl: "/dev/native-assets",
+            size: 4096,
+            md5: "deadbeef",
+            bcVersion: 96,
+            moduleName: "main",
+            hasAssets: false,
+          });
+      }
+    }
     if (path === "/phone/projects/list" && req.method === "GET") {
       return json(200, { projects: Array.from(phoneProjects.values()) });
     }
@@ -272,9 +332,16 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
         for (const res of subs) { try { res.end(); } catch { /* already ended */ } }
         subs.clear();
       }
+      // Same story for /dev/build-native hang-mode responses.
+      for (const res of pendingBuildNative) { try { res.end(); } catch { /* already ended */ } }
+      pendingBuildNative.clear();
       server.closeAllConnections?.();
       server.close(() => r());
     }),
     pushFrame,
+    setBuildNativeMode: (mode, slowMs) => {
+      buildNativeMode = mode;
+      buildNativeSlowMs = slowMs ?? 0;
+    },
   };
 }

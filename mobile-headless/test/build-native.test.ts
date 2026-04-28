@@ -1,0 +1,103 @@
+// Hermetic coverage for the /dev/build-native client contract used by
+// DevPreview / Hot Reload in the real mobile app. Three guarantees the
+// real UI relies on:
+//
+//   1. Happy path: a 200 response surfaces { status: "ok", bundleUrl }
+//      so the loader knows where to fetch the Hermes bundle.
+//   2. Hang path: when the agent never replies (busted Metro, dead
+//      relay, crashed bundler), the client honours its own deadline
+//      and rejects with AbortError. This is the regression we just
+//      fixed in mobile/src/components/DevPreview.tsx — without the
+//      AbortController the UI sat on "Building..." forever.
+//   3. Fast-fail path: when the agent reports a structured failure
+//      (timed-out bundler, missing node_modules, etc.) the client
+//      returns the body so the UI can show the real reason.
+
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { MobileClient } from "../src/mobile-client";
+import { startMockAgent, type MockAgentHandle } from "../src/mock-agent";
+
+let agent: MockAgentHandle;
+let mobile: MobileClient;
+
+beforeAll(async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ymh-build-native-"));
+  process.env.YMH_DATA_DIR = dataDir;
+  agent = await startMockAgent({ token: "mock-token" });
+  mobile = new MobileClient({
+    dataDir,
+    authToken: "mock-token",
+    convexUrl: agent.baseUrl,
+  });
+  mobile.useAgentBaseUrl(agent.baseUrl);
+});
+
+afterAll(async () => {
+  await agent.close();
+});
+
+describe("devServer.buildNative", () => {
+  it("returns the bundle descriptor on the happy path", async () => {
+    agent.setBuildNativeMode("ok");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(200);
+    expect(r.body?.status).toBe("ok");
+    expect(r.body?.bundleUrl).toBe("/dev/native-bundle");
+    expect(r.body?.bcVersion).toBe(96);
+  });
+
+  it("aborts with AbortError when the agent hangs past the deadline", async () => {
+    agent.setBuildNativeMode("hang");
+    const start = Date.now();
+    let caught: any = null;
+    try {
+      // 250ms is way under the 12-min default — proves the per-call
+      // override actually wires the abort signal through to fetch.
+      await mobile.devServer.buildNative("ios", { timeoutMs: 250 });
+    } catch (e: any) {
+      caught = e;
+    }
+    const elapsed = Date.now() - start;
+    expect(caught).not.toBeNull();
+    // node/bun's fetch surfaces aborted requests as either AbortError
+    // or DOMException with name "AbortError" — accept either signal.
+    expect(caught?.name === "AbortError" || /aborted/i.test(String(caught))).toBe(true);
+    // Sanity: the test must give up well before the 12-min default
+    // would expire. 5s of slack is generous on a slow CI runner.
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it("respects an external AbortSignal", async () => {
+    agent.setBuildNativeMode("hang");
+    const ctrl = new AbortController();
+    setTimeout(() => ctrl.abort(), 100);
+    let caught: any = null;
+    try {
+      await mobile.devServer.buildNative("android", { signal: ctrl.signal });
+    } catch (e: any) {
+      caught = e;
+    }
+    expect(caught).not.toBeNull();
+    expect(caught?.name === "AbortError" || /aborted/i.test(String(caught))).toBe(true);
+  });
+
+  it("surfaces structured failure responses without throwing", async () => {
+    agent.setBuildNativeMode("fail");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(500);
+    expect(r.body?.error).toMatch(/bundle failed/);
+    expect(r.body?.helpHint).toBeDefined();
+  });
+
+  it("recovers to ok after a transient failure", async () => {
+    agent.setBuildNativeMode("fail");
+    await mobile.devServer.buildNative("ios");
+    agent.setBuildNativeMode("ok");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(200);
+    expect(r.body?.status).toBe("ok");
+  });
+});
