@@ -3653,6 +3653,83 @@ export class QuicClient {
     return res.json();
   }
 
+  /** Fetch the canonical deploy-token catalogue from the agent.
+   *  Used by the mobile + web sandbox export onboarding screens to
+   *  render the list of secrets the user needs in their vault. */
+  async deployTokensCatalogue(): Promise<{
+    targets: Array<{
+      id: string;
+      label: string;
+      description: string;
+      fields: Array<{
+        name: string;
+        label: string;
+        hint: string;
+        generateUrl: string;
+        kind: 'secret' | 'json' | 'file';
+        canVerify: boolean;
+        pairs?: string[];
+      }>;
+    }>;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/deploy/tokens/catalogue`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`deployTokensCatalogue ${res.status}`);
+    const data = await res.json();
+    return { targets: Array.isArray(data?.targets) ? data.targets : [] };
+  }
+
+  /** Per-project status: which deploy-token fields are filled in
+   *  the agent's vault. Never returns the values themselves —
+   *  only `set: bool` + `updatedAt` per field. */
+  async deployTokensStatus(project: string): Promise<{
+    targets: Array<{
+      id: string;
+      label: string;
+      ready: boolean;
+      total: number;
+      filled: number;
+      fields: Array<{ name: string; set: boolean; updatedAt?: number }>;
+    }>;
+  }> {
+    this.assertConnected();
+    const res = await fetch(
+      `${this.baseUrl}/deploy/tokens/status?project=${encodeURIComponent(project)}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`deployTokensStatus ${res.status}`);
+    const data = await res.json();
+    return { targets: Array.isArray(data?.targets) ? data.targets : [] };
+  }
+
+  /** Save one or many deploy-token values into the per-project
+   *  vault, optionally verifying each via its provider catalogue
+   *  entry. Returns per-field saved/verify status. */
+  async deployTokensSave(args: {
+    project: string;
+    tokens: Record<string, string>;
+    verifyAs?: Record<string, string>;
+  }): Promise<{
+    results: Record<string, { saved: boolean; reason?: string; verify?: string; verifyDetail?: string; verifyReason?: string }>;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/deploy/tokens/save`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project: args.project,
+        tokens: args.tokens,
+        verifyAs: args.verifyAs || {},
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`deployTokensSave ${res.status}: ${text}`);
+    }
+    const data = await res.json();
+    return { results: data?.results || {} };
+  }
+
   /** Create a brand-new GitHub or GitLab repo on the user's behalf
    *  using a previously-stored PAT (set via /git/provider/setup).
    *  When writeSandbox is true the agent also seeds a starter

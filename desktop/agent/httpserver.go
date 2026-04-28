@@ -794,6 +794,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// PAT to call the provider API on their behalf + commit a
 	// yaver.workspace.yaml). Not opened to SDK / guest tokens.
 	mux.HandleFunc("/git/provider/repo/create", s.auth(s.handleGitProviderRepoCreate))
+	// Deploy-token onboarding (Convex / Cloudflare / npm / PyPI /
+	// TestFlight / Play). Vault-backed; values never sync to Convex.
+	// Owner-only — guests can't enumerate or save deploy secrets.
+	mux.HandleFunc("/deploy/tokens/catalogue", s.auth(s.handleDeployTokensCatalogue))
+	mux.HandleFunc("/deploy/tokens/status", s.auth(s.handleDeployTokensStatus))
+	mux.HandleFunc("/deploy/tokens/verify", s.auth(s.handleDeployTokensVerify))
+	mux.HandleFunc("/deploy/tokens/save", s.auth(s.handleDeployTokensSave))
 	mux.HandleFunc("/git/provider/", s.auth(s.handleGitProviderRemove))
 	// Find an existing clone of a remote URL anywhere under the
 	// agent's project-discovery roots. The Feedback SDK's git-setup

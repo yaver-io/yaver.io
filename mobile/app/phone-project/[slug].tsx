@@ -474,6 +474,31 @@ export default function PhoneProjectDetailScreen() {
         </>
       ) : null}
 
+      {/* Deploy-tokens onboarding entry. Opens the catalogue
+       * screen scoped to this project's slug so saved tokens land
+       * in the right vault namespace for `yaver vault env --project`
+       * to pick up at deploy time. */}
+      <View style={{ paddingHorizontal: 16, marginTop: 12 }}>
+        <Pressable
+          onPress={() => router.push(`/deploy-tokens?project=${encodeURIComponent(slug)}` as any)}
+          style={{
+            paddingVertical: 11,
+            paddingHorizontal: 14,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor: c.border,
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+            🔐 Set up deploy tokens (vault)
+          </Text>
+        </Pressable>
+        <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+          Convex, Cloudflare, npm, PyPI, TestFlight, Play Store. Stored in the agent's vault, never synced.
+        </Text>
+      </View>
+
       <Text style={[styles.section, { color: c.textPrimary }]}>Tables</Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16 }}>
         {tables.map((table) => (
