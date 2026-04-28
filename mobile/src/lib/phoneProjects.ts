@@ -655,6 +655,86 @@ export async function generatePhoneProjectDraftFromPrompt(args: {
   return sanitizePhoneProjectDraft(parsed);
 }
 
+// Reuses the same BYOK chat-completions endpoint that
+// generatePhoneProjectDraftFromPrompt hits. Asks the LLM to inspect
+// the user's survey + description and decide whether the project
+// has enough fidelity to skeleton, or whether a few short-answer
+// follow-up questions would meaningfully shape the schema. Returns
+// `{ ready: true }` when the description is rich enough to proceed
+// straight to generation; otherwise returns up to 3 short-answer
+// questions the wizard can render. The user can always click
+// "Force initialize" in the UI to bypass this and proceed anyway.
+export async function generateClarifyingQuestions(args: {
+  provider?: "openai" | "glm";
+  apiKey: string;
+  name: string;
+  description: string;
+}): Promise<{ ready: boolean; questions: Array<{ id: string; title: string; placeholder?: string }> }> {
+  const key = args.apiKey.trim();
+  const description = args.description.trim();
+  const provider = args.provider === "glm" ? "glm" : "openai";
+  if (!key || !description) {
+    return { ready: true, questions: [] };
+  }
+  const endpoint =
+    provider === "glm"
+      ? "https://api.z.ai/api/paas/v4/chat/completions"
+      : "https://api.openai.com/v1/chat/completions";
+  const model = provider === "glm" ? "glm-4.5-air" : "gpt-4.1-mini";
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content:
+            'Return compact JSON only. Decide whether a brief description is concrete enough to scaffold a small mobile-first SQLite sandbox. If it is, return {"ready": true, "questions": []}. Otherwise return up to 3 short, specific follow-up questions the user can answer in one short sentence each. Each question must materially shape the schema, screens, or auth — do not ask cosmetic or rhetorical things. Format: {"ready": false, "questions": [{"id": "q1", "title": "…", "placeholder": "short example answer"}]}.',
+        },
+        {
+          role: "user",
+          content: `Project: ${args.name.trim()}\nDescription:\n${description}`,
+        },
+      ],
+    }),
+  });
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    // Don't block on a refine failure — pretend the description is
+    // good enough so the wizard can proceed.
+    return { ready: true, questions: [] };
+  }
+  try {
+    const json = JSON.parse(text) as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const raw = json.choices?.[0]?.message?.content || "{}";
+    const parsed = JSON.parse(extractJsonObject(raw)) as {
+      ready?: boolean;
+      questions?: Array<{ id?: string; title?: string; placeholder?: string }>;
+    };
+    const questions = Array.isArray(parsed.questions)
+      ? parsed.questions
+          .map((q, i) => ({
+            id: typeof q?.id === "string" && q.id ? q.id : `q${i + 1}`,
+            title: typeof q?.title === "string" ? q.title : "",
+            placeholder: typeof q?.placeholder === "string" ? q.placeholder : undefined,
+          }))
+          .filter((q) => q.title.trim().length > 0)
+          .slice(0, 3)
+      : [];
+    return { ready: parsed.ready === true || questions.length === 0, questions };
+  } catch {
+    return { ready: true, questions: [] };
+  }
+}
+
 export async function getPhoneProjectAccess(sourceSlug: string): Promise<PhoneProjectAccess> {
   try {
     const raw = await AsyncStorage.getItem(bindingKey(sourceSlug));

@@ -36,6 +36,7 @@ import {
   createPhoneProjectAt,
   deletePhoneProject,
   generatePhoneProjectDraftFromPrompt,
+  generateClarifyingQuestions,
   listPhoneProjects,
   listPhoneTemplates,
 } from "../src/lib/phoneProjects";
@@ -211,6 +212,17 @@ export default function PhoneProjectsScreen() {
   // user can paste (CDN, gist, GitHub raw, etc.) — gallery upload is
   // a follow-up that needs an upload pipeline + storage.
   const [logoUrl, setLogoUrl] = useState("");
+  // Optional refinement loop: after the user types a description,
+  // they can tap "Refine with AI" to have the LLM check whether
+  // 1-3 follow-up questions would meaningfully shape the schema.
+  // Answers are appended to the prompt as a [Clarifications] block
+  // before generation. The Refine path is purely opt-in — the user
+  // can always click Create directly to force-initialise without
+  // going through it.
+  const [refineLoading, setRefineLoading] = useState(false);
+  const [refineQuestions, setRefineQuestions] = useState<Array<{ id: string; title: string; placeholder?: string }>>([]);
+  const [refineAnswers, setRefineAnswers] = useState<Record<string, string>>({});
+  const [refineUsed, setRefineUsed] = useState(false);
   const devMachines = useMemo(
     () => pickDevMachines(devices, activeDevice?.id),
     [devices, activeDevice?.id],
@@ -371,8 +383,22 @@ export default function PhoneProjectsScreen() {
     // [Brand] line so the LLM can fetch and reference it.
     const surveyParagraph = surveySkipped ? "" : buildSurveyParagraph(surveyAnswers);
     const brandParagraph = logoUrl.trim() ? `[Brand]\nLogo URL: ${logoUrl.trim()}\n` : "";
+    // Clarifying-question answers (if the user used the Refine pass
+    // and typed answers) get folded in as a [Clarifications] block
+    // so the LLM sees them alongside the survey + prose.
+    const refineLines = Object.entries(refineAnswers)
+      .map(([id, val]) => {
+        const q = refineQuestions.find((x) => x.id === id);
+        const trimmed = (val || "").trim();
+        if (!q || !trimmed) return "";
+        return `${q.title} ${trimmed}`;
+      })
+      .filter(Boolean);
+    const refineParagraph = refineLines.length > 0
+      ? `[Clarifications]\n${refineLines.join("\n")}\n`
+      : "";
     const baseDescription = mergeImportedConversationPrompt(prompt, importedConversation);
-    const effectivePrompt = [surveyParagraph, brandParagraph, baseDescription]
+    const effectivePrompt = [surveyParagraph, brandParagraph, refineParagraph, baseDescription]
       .filter(Boolean)
       .join("\n");
     const activePhoneKey = mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim();
@@ -516,6 +542,9 @@ export default function PhoneProjectsScreen() {
       setGitMode("skip");
       setRepoName("");
       setLogoUrl("");
+      setRefineQuestions([]);
+      setRefineAnswers({});
+      setRefineUsed(false);
       setSurveyAnswers({});
       setSurveyIndex(0);
       setSurveySkipped(false);
@@ -594,6 +623,11 @@ export default function PhoneProjectsScreen() {
             <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
               {connected ? "Start on your phone or a Yaver backend." : "Runs locally on this phone."}
             </Text>
+            {projects.length > 0 ? (
+              <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                Or tap one of your {projects.length === 1 ? "existing project" : `${projects.length} existing projects`} below to open it.
+              </Text>
+            ) : null}
           </>
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
@@ -1087,6 +1121,80 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
                 <Text style={[styles.muted, { color: c.textMuted, marginTop: 6 }]}>
                   Yaver will use this (plus the survey, if you took it) to draft the schema, seed data, and a starter UI.
                 </Text>
+                {/* Optional clarifying-question pass. The user can
+                 * skip it entirely by just clicking Create — that's
+                 * the implicit "force initialize" path. Tapping
+                 * Refine asks the BYOK LLM whether 1-3 short
+                 * follow-up questions would meaningfully shape the
+                 * schema; answers are folded into the prompt as a
+                 * [Clarifications] block. Failures fall through
+                 * silently — never blocks Create. */}
+                {codingMode === "phone" && (mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim()) ? (
+                  <View style={{ marginTop: 12 }}>
+                    {refineQuestions.length === 0 ? (
+                      <Pressable
+                        onPress={async () => {
+                          if (!prompt.trim()) {
+                            Alert.alert("Need a description", "Type a description first, then refine.");
+                            return;
+                          }
+                          setRefineLoading(true);
+                          try {
+                            const res = await generateClarifyingQuestions({
+                              provider: mobileAiProvider,
+                              apiKey: mobileAiProvider === "glm" ? glmKey.trim() : openAiKey.trim(),
+                              name: name.trim(),
+                              description: prompt.trim(),
+                            });
+                            setRefineUsed(true);
+                            if (res.ready || res.questions.length === 0) {
+                              Alert.alert("Looks good", "AI thinks the description is concrete enough — go ahead and Create.");
+                            } else {
+                              setRefineQuestions(res.questions);
+                            }
+                          } catch (err: any) {
+                            Alert.alert("Refine failed", err?.message ?? "AI refinement call failed; you can still Create.");
+                          } finally {
+                            setRefineLoading(false);
+                          }
+                        }}
+                        disabled={refineLoading}
+                        style={[styles.btnSecondary, { borderColor: c.border, opacity: refineLoading ? 0.6 : 1 }]}
+                      >
+                        {refineLoading ? (
+                          <ActivityIndicator color={c.textPrimary} />
+                        ) : (
+                          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                            {refineUsed ? "Refine again" : "Refine with AI (optional)"}
+                          </Text>
+                        )}
+                      </Pressable>
+                    ) : (
+                      <View>
+                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <Text style={[styles.label, { color: c.textMuted }]}>
+                            AI follow-ups ({Object.keys(refineAnswers).filter((k) => refineAnswers[k]?.trim()).length}/{refineQuestions.length})
+                          </Text>
+                          <Pressable onPress={() => { setRefineQuestions([]); setRefineAnswers({}); }}>
+                            <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Force init (skip)</Text>
+                          </Pressable>
+                        </View>
+                        {refineQuestions.map((q) => (
+                          <View key={q.id} style={{ marginTop: 8 }}>
+                            <Text style={[styles.muted, { color: c.textPrimary, marginBottom: 4 }]}>{q.title}</Text>
+                            <TextInput
+                              value={refineAnswers[q.id] || ""}
+                              onChangeText={(t) => setRefineAnswers((prev) => ({ ...prev, [q.id]: t }))}
+                              placeholder={q.placeholder || "Short answer"}
+                              placeholderTextColor={c.textMuted}
+                              style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
+                            />
+                          </View>
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                ) : null}
                 <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 12 }]}>
                   <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>Ready to create</Text>
                   <Text style={[styles.muted, { color: c.textMuted }]}>
