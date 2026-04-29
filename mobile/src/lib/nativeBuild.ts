@@ -9,6 +9,8 @@ export function nativeBuildFailureMessage(buildResult: any): string {
 
 export function nativeBuildFailureTitle(buildResult: any): string {
   if (buildResult?.code === "NATIVE_MODULE_INCOMPATIBLE") return "Compatibility Blocked";
+  if (buildResult?.code === "NATIVE_MODULE_VERSION_MISMATCH") return "Compatibility Blocked";
+  if (buildResult?.code === "REACT_VERSION_MISMATCH") return "Compatibility Blocked";
   if (buildResult?.code === "BC_VERSION_MISMATCH") return "Hermes Version Mismatch";
   return "Load Failed";
 }

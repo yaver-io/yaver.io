@@ -240,23 +240,25 @@ func (c *MobileClient) GetDevStatus(ctx context.Context) (*DevServerStatus, erro
 
 // BuildNativeBundleResult mirrors the JSON response of /dev/build-native.
 type BuildNativeBundleResult struct {
-	Status                    string   `json:"status"`
-	Code                      string   `json:"code,omitempty"`
-	Error                     string   `json:"error,omitempty"`
-	HelpHint                  string   `json:"helpHint,omitempty"`
-	BundleURL                 string   `json:"bundleUrl"`
-	AssetsURL                 string   `json:"assetsUrl,omitempty"`
-	Size                      int64    `json:"size"`
-	MD5                       string   `json:"md5"`
-	BCVersion                 int      `json:"bcVersion"`
-	Platform                  string   `json:"platform"`
-	ModuleName                string   `json:"moduleName"`
-	HasAssets                 bool     `json:"hasAssets"`
-	HostSDKVersion            string   `json:"hostSdkVersion,omitempty"`
-	HostReactNative           string   `json:"hostReactNative,omitempty"`
-	SupportedRNRange          string   `json:"supportedRNRange,omitempty"`
-	IncompatibleNativeModules []string `json:"incompatibleNativeModules,omitempty"`
-	MatchedNativeModules      []string `json:"matchedNativeModules,omitempty"`
+	Status                        string                 `json:"status"`
+	Code                          string                 `json:"code,omitempty"`
+	Error                         string                 `json:"error,omitempty"`
+	HelpHint                      string                 `json:"helpHint,omitempty"`
+	BundleURL                     string                 `json:"bundleUrl"`
+	AssetsURL                     string                 `json:"assetsUrl,omitempty"`
+	Size                          int64                  `json:"size"`
+	MD5                           string                 `json:"md5"`
+	BCVersion                     int                    `json:"bcVersion"`
+	Platform                      string                 `json:"platform"`
+	ModuleName                    string                 `json:"moduleName"`
+	HasAssets                     bool                   `json:"hasAssets"`
+	HostSDKVersion                string                 `json:"hostSdkVersion,omitempty"`
+	HostReactNative               string                 `json:"hostReactNative,omitempty"`
+	SupportedRNRange              string                 `json:"supportedRNRange,omitempty"`
+	IncompatibleNativeModules     []string               `json:"incompatibleNativeModules,omitempty"`
+	MatchedNativeModules          []string               `json:"matchedNativeModules,omitempty"`
+	NativeModuleVersionMismatches []NativeModuleMismatch `json:"nativeModuleVersionMismatches,omitempty"`
+	ReactVersionMismatch          *VersionMismatch       `json:"reactVersionMismatch,omitempty"`
 }
 
 type UnityRunResult struct {

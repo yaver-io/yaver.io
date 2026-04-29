@@ -2605,6 +2605,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	var compatIncompatible []string
 	var compatMatched []string
 	var compatIgnored []string
+	var compatVersionMismatches []NativeModuleMismatch
+	var compatReactVersionMismatch *VersionMismatch
 	var compatHostRN string
 	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
 		s.emitBuildProgress("Checking host compatibility...", "compat")
@@ -2612,14 +2614,38 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		compatIncompatible = report.Incompatible
 		compatMatched = report.Matched
 		compatIgnored = report.Ignored
+		compatVersionMismatches = append([]NativeModuleMismatch(nil), report.VersionMismatches...)
+		compatReactVersionMismatch = report.ReactVersionMismatch
 		compatHostRN = report.HostRN
 		meta.HostSDKVersion = report.HostSDKVersion
+		meta.HostReactVersion = strings.TrimSpace(report.HostRN)
+		if report.ReactVersionMismatch != nil {
+			meta.ProjectReactVersion = report.ReactVersionMismatch.ProjectVersion
+		}
+		meta.ReactVersionMismatch = report.ReactVersionMismatch
 		meta.SupportedRNRange = report.SupportedRNRange
 		meta.IncompatibleNativeModules = append([]string(nil), compatIncompatible...)
+		meta.NativeModuleVersionMismatches = append([]NativeModuleMismatch(nil), compatVersionMismatches...)
 		if len(compatIgnored) > 0 {
 			msg := fmt.Sprintf("Ignoring host-optional SDK package(s): %s", strings.Join(compatIgnored, ", "))
 			log.Printf("[super-host] native-module compat: ignored (%v)", compatIgnored)
 			s.devServerMgr.EmitLog(msg)
+		}
+		if len(compatVersionMismatches) > 0 {
+			names := make([]string, 0, len(compatVersionMismatches))
+			for _, mismatch := range compatVersionMismatches {
+				names = append(names, fmt.Sprintf("%s (%s vs %s)", mismatch.Name, mismatch.ProjectVersion, mismatch.HostVersion))
+			}
+			log.Printf("[super-host] native-module compat: %d version mismatch(es) (%v)",
+				len(compatVersionMismatches), names)
+			s.devServerMgr.EmitLog(fmt.Sprintf(
+				"⚠ Native module version drift at a likely-breaking boundary: %s.",
+				strings.Join(names, ", "),
+			))
+		}
+		if compatReactVersionMismatch != nil {
+			log.Printf("[super-host] react compat: project=%s host=%s (%s)",
+				compatReactVersionMismatch.ProjectVersion, compatReactVersionMismatch.HostVersion, compatReactVersionMismatch.Reason)
 		}
 		if len(compatIncompatible) > 0 {
 			log.Printf("[super-host] native-module compat: %d incompatible (%v)",
@@ -2629,38 +2655,71 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"They will throw at runtime if called.",
 				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
 			))
+		}
+		if len(compatIncompatible) > 0 || len(compatVersionMismatches) > 0 {
 			if !req.AllowUnsafeNativeModules {
 				metaJSON := meta.JSON()
 				s.devServerMgr.SetBundleMetadata(metaJSON)
-				errMsg := fmt.Sprintf(
-					"Blocked native Hermes load: this project declares %d native module(s) Yaver does not register: %s",
-					len(compatIncompatible), strings.Join(compatIncompatible, ", "),
-				)
-				helpHint := "Add those modules to Yaver's super-host, remove them from the project, or guard every call site behind a runtime availability check before retrying."
-				incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Incompatible native modules", "The bundle compiled, but it would crash at runtime because the project declares native modules missing from Yaver's mobile host.", errMsg, helpHint, workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+				errMsg := "Blocked native Hermes load due to host compatibility mismatch."
+				helpHint := "Align the project's native-module versions with Yaver's host, add missing modules to Yaver, or guard unsupported call sites before retrying."
+				title := "Compatibility blocked"
+				userMsg := "The bundle compiled, but Yaver blocked restart because the project's native runtime contract does not match the mobile host."
+				respCode := "NATIVE_MODULE_INCOMPATIBLE"
+				payload := map[string]interface{}{
+					"platform":                      req.Platform,
+					"incompatibleNativeModules":     compatIncompatible,
+					"matchedNativeModules":          compatMatched,
+					"ignoredNativeModules":          compatIgnored,
+					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"reactVersionMismatch":          compatReactVersionMismatch,
+					"blocked":                       true,
+				}
+				if len(compatIncompatible) > 0 {
+					errMsg = fmt.Sprintf(
+						"Blocked native Hermes load: this project declares %d native module(s) Yaver does not register: %s",
+						len(compatIncompatible), strings.Join(compatIncompatible, ", "),
+					)
+					title = "Incompatible native modules"
+					userMsg = "The bundle compiled, but it would crash at runtime because the project declares native modules missing from Yaver's mobile host."
+				} else if len(compatVersionMismatches) > 0 {
+					respCode = "NATIVE_MODULE_VERSION_MISMATCH"
+					parts := make([]string, 0, len(compatVersionMismatches))
+					for _, mismatch := range compatVersionMismatches {
+						parts = append(parts, fmt.Sprintf("%s project %s vs host %s", mismatch.Name, mismatch.ProjectVersion, mismatch.HostVersion))
+					}
+					errMsg = fmt.Sprintf(
+						"Blocked native Hermes load: host-native module version drift at a likely-breaking boundary: %s",
+						strings.Join(parts, ", "),
+					)
+				}
+				incident := s.appendDevIncident("build", ReasonBuildNativeFailed, title, userMsg, errMsg, helpHint, workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, payload, buildOp.ID)
 				s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{
-					"platform":                  req.Platform,
-					"incompatibleNativeModules": compatIncompatible,
-					"matchedNativeModules":      compatMatched,
-					"ignoredNativeModules":      compatIgnored,
-					"blocked":                   true,
+					"platform":                      req.Platform,
+					"incompatibleNativeModules":     compatIncompatible,
+					"matchedNativeModules":          compatMatched,
+					"ignoredNativeModules":          compatIgnored,
+					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"reactVersionMismatch":          compatReactVersionMismatch,
+					"blocked":                       true,
 				}, incident.ID)
 				jsonReply(w, http.StatusConflict, map[string]interface{}{
-					"status":                    "blocked",
-					"code":                      "NATIVE_MODULE_INCOMPATIBLE",
-					"error":                     errMsg,
-					"helpHint":                  helpHint,
-					"platform":                  req.Platform,
-					"moduleName":                moduleName,
-					"incompatibleNativeModules": compatIncompatible,
-					"matchedNativeModules":      compatMatched,
-					"ignoredNativeModules":      compatIgnored,
-					"hostSdkVersion":            report.HostSDKVersion,
-					"hostReactNative":           report.HostRN,
-					"supportedRNRange":          report.SupportedRNRange,
-					"bcVersion":                 meta.HermesBCVersion,
-					"md5":                       meta.MD5,
-					"size":                      meta.Size,
+					"status":                        "blocked",
+					"code":                          respCode,
+					"error":                         errMsg,
+					"helpHint":                      helpHint,
+					"platform":                      req.Platform,
+					"moduleName":                    moduleName,
+					"incompatibleNativeModules":     compatIncompatible,
+					"matchedNativeModules":          compatMatched,
+					"ignoredNativeModules":          compatIgnored,
+					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"reactVersionMismatch":          compatReactVersionMismatch,
+					"hostSdkVersion":                report.HostSDKVersion,
+					"hostReactNative":               report.HostRN,
+					"supportedRNRange":              report.SupportedRNRange,
+					"bcVersion":                     meta.HermesBCVersion,
+					"md5":                           meta.MD5,
+					"size":                          meta.Size,
 				})
 				return
 			}
@@ -2704,22 +2763,24 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	})
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"status":                    "ok",
-		"bundleUrl":                 "/dev/native-bundle",
-		"assetsUrl":                 "/dev/native-assets",
-		"size":                      meta.Size,
-		"md5":                       meta.MD5,
-		"bcVersion":                 meta.HermesBCVersion,
-		"platform":                  req.Platform,
-		"moduleName":                moduleName,
-		"hasAssets":                 hasAssets,
-		"hostSdkVersion":            meta.HostSDKVersion,
-		"hostReactNative":           compatHostRN,
-		"supportedRNRange":          meta.SupportedRNRange,
-		"incompatibleNativeModules": compatIncompatible,
-		"matchedNativeModules":      compatMatched,
-		"ignoredNativeModules":      compatIgnored,
-		"allowUnsafeNativeModules":  req.AllowUnsafeNativeModules,
+		"status":                        "ok",
+		"bundleUrl":                     "/dev/native-bundle",
+		"assetsUrl":                     "/dev/native-assets",
+		"size":                          meta.Size,
+		"md5":                           meta.MD5,
+		"bcVersion":                     meta.HermesBCVersion,
+		"platform":                      req.Platform,
+		"moduleName":                    moduleName,
+		"hasAssets":                     hasAssets,
+		"hostSdkVersion":                meta.HostSDKVersion,
+		"hostReactNative":               compatHostRN,
+		"supportedRNRange":              meta.SupportedRNRange,
+		"incompatibleNativeModules":     compatIncompatible,
+		"matchedNativeModules":          compatMatched,
+		"ignoredNativeModules":          compatIgnored,
+		"nativeModuleVersionMismatches": compatVersionMismatches,
+		"reactVersionMismatch":          compatReactVersionMismatch,
+		"allowUnsafeNativeModules":      req.AllowUnsafeNativeModules,
 	})
 }
 

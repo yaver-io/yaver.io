@@ -165,6 +165,81 @@ func TestBuildCompatReport_IgnoresFeedbackSDKPackage(t *testing.T) {
 	}
 }
 
+func TestBuildCompatReport_FlagsBreakingVersionDrift(t *testing.T) {
+	tmp := t.TempDir()
+	pkg := `{
+  "dependencies": {
+    "react": "19.2.5",
+    "react-native": "0.81.5",
+    "react-native-worklets": "^0.7.4",
+    "react-native-record-screen": "^0.6.2"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	report, err := BuildNativeModuleCompatReport(tmp)
+	if err != nil {
+		t.Fatalf("compat report: %v", err)
+	}
+	foundWorklets := false
+	for _, mismatch := range report.VersionMismatches {
+		if mismatch.Name == "react-native-worklets" {
+			foundWorklets = true
+			if mismatch.ProjectVersion != "0.7.4" {
+				t.Fatalf("unexpected project version: %+v", mismatch)
+			}
+			if mismatch.HostVersion != "0.5.1" {
+				t.Fatalf("unexpected host version: %+v", mismatch)
+			}
+			if mismatch.Reason != "0.x minor version differs" {
+				t.Fatalf("unexpected mismatch reason: %+v", mismatch)
+			}
+		}
+		if mismatch.Name == "react-native-record-screen" {
+			t.Fatalf("record-screen should not be flagged when versions match, got %+v", mismatch)
+		}
+	}
+	if !foundWorklets {
+		t.Fatalf("expected react-native-worklets version mismatch, got %+v", report.VersionMismatches)
+	}
+	if report.ReactVersionMismatch != nil {
+		t.Fatalf("react 19.x minor drift should not hard-block, got %+v", report.ReactVersionMismatch)
+	}
+}
+
+func TestDetectVersionMismatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		project string
+		host    string
+		wantNil bool
+		reason  string
+	}{
+		{name: "matching", project: "^0.6.2", host: "0.6.2", wantNil: true},
+		{name: "major mismatch", project: "^1.2.0", host: "2.0.0", reason: "major version differs"},
+		{name: "0.x minor mismatch", project: "^0.7.4", host: "0.5.1", reason: "0.x minor version differs"},
+		{name: "non-zero minor mismatch allowed", project: "^19.2.5", host: "19.1.0", wantNil: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectVersionMismatch(tc.project, tc.host)
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("expected nil, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected mismatch")
+			}
+			if got.Reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", got.Reason, tc.reason)
+			}
+		})
+	}
+}
+
 func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
 	cases := []struct {
 		name string

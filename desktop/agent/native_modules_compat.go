@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -23,7 +24,10 @@ type sdkManifest struct {
 	React            string            `json:"react"`
 	SupportedRNRange string            `json:"supportedRNRange"`
 	NativeModules    map[string]string `json:"nativeModules"`
-	Hermes           struct {
+	ModuleSupport    map[string]struct {
+		Version string `json:"version"`
+	} `json:"moduleSupport"`
+	Hermes struct {
 		Version         string `json:"version"`
 		BytecodeVersion int    `json:"bytecodeVersion"`
 	} `json:"hermes"`
@@ -155,13 +159,28 @@ func extractProjectNativeModulesFromDeps(deps map[string]string) ([]string, []st
 // CompatReport summarises how a project's native deps line up with the
 // host super-host's published manifest.
 type CompatReport struct {
-	ProjectModules   []string `json:"projectModules"`            // every dep we treated as native
-	Matched          []string `json:"matched"`                   // present in host manifest
-	Incompatible     []string `json:"incompatibleNativeModules"` // missing — likely crash sites
-	Ignored          []string `json:"ignoredNativeModules"`      // intentionally ignored host-optional packages
-	HostSDKVersion   string   `json:"hostSdkVersion"`
-	HostRN           string   `json:"hostReactNative"`
-	SupportedRNRange string   `json:"supportedRNRange"`
+	ProjectModules       []string               `json:"projectModules"`                 // every dep we treated as native
+	Matched              []string               `json:"matched"`                        // present in host manifest
+	Incompatible         []string               `json:"incompatibleNativeModules"`      // missing — likely crash sites
+	Ignored              []string               `json:"ignoredNativeModules"`           // intentionally ignored host-optional packages
+	VersionMismatches    []NativeModuleMismatch `json:"nativeModuleVersionMismatches"`  // present but at a likely-breaking version boundary
+	ReactVersionMismatch *VersionMismatch       `json:"reactVersionMismatch,omitempty"` // project React vs host React
+	HostSDKVersion       string                 `json:"hostSdkVersion"`
+	HostRN               string                 `json:"hostReactNative"`
+	SupportedRNRange     string                 `json:"supportedRNRange"`
+}
+
+type NativeModuleMismatch struct {
+	Name           string `json:"name"`
+	ProjectVersion string `json:"projectVersion"`
+	HostVersion    string `json:"hostVersion"`
+	Reason         string `json:"reason"`
+}
+
+type VersionMismatch struct {
+	ProjectVersion string `json:"projectVersion"`
+	HostVersion    string `json:"hostVersion"`
+	Reason         string `json:"reason"`
 }
 
 // BuildNativeModuleCompatReport runs the diff. workDir is the third-party
@@ -190,20 +209,135 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 	}
 	matched := make([]string, 0, len(projectMods))
 	missing := make([]string, 0)
+	versionMismatches := make([]NativeModuleMismatch, 0)
 	for _, m := range projectMods {
 		if hostNames[m] {
 			matched = append(matched, m)
+			if mismatch := detectNativeModuleVersionMismatch(m, pkg.Dependencies[m], host); mismatch != nil {
+				versionMismatches = append(versionMismatches, *mismatch)
+			}
 		} else {
 			missing = append(missing, m)
 		}
 	}
+	sort.Slice(versionMismatches, func(i, j int) bool {
+		return versionMismatches[i].Name < versionMismatches[j].Name
+	})
+	var reactMismatch *VersionMismatch
+	if mismatch := detectVersionMismatch(pkg.Dependencies["react"], host.React); mismatch != nil {
+		reactMismatch = mismatch
+	}
 	return &CompatReport{
-		ProjectModules:   projectMods,
-		Matched:          matched,
-		Incompatible:     missing,
-		Ignored:          ignored,
-		HostSDKVersion:   host.SdkVersion,
-		HostRN:           host.ReactNative,
-		SupportedRNRange: host.SupportedRNRange,
+		ProjectModules:       projectMods,
+		Matched:              matched,
+		Incompatible:         missing,
+		Ignored:              ignored,
+		VersionMismatches:    versionMismatches,
+		ReactVersionMismatch: reactMismatch,
+		HostSDKVersion:       host.SdkVersion,
+		HostRN:               host.ReactNative,
+		SupportedRNRange:     host.SupportedRNRange,
 	}, nil
+}
+
+func detectNativeModuleVersionMismatch(name, projectVersion string, host *sdkManifest) *NativeModuleMismatch {
+	hostVersion := strings.TrimSpace(host.NativeModules[name])
+	if hostVersion == "" {
+		if ms, ok := host.ModuleSupport[name]; ok {
+			hostVersion = strings.TrimSpace(ms.Version)
+		}
+	}
+	if hostVersion == "" {
+		return nil
+	}
+	mismatch := detectVersionMismatch(projectVersion, hostVersion)
+	if mismatch == nil {
+		return nil
+	}
+	return &NativeModuleMismatch{
+		Name:           name,
+		ProjectVersion: mismatch.ProjectVersion,
+		HostVersion:    mismatch.HostVersion,
+		Reason:         mismatch.Reason,
+	}
+}
+
+func detectVersionMismatch(projectVersion, hostVersion string) *VersionMismatch {
+	project := parseSemverish(projectVersion)
+	host := parseSemverish(hostVersion)
+	if project == nil || host == nil {
+		return nil
+	}
+	if project.major != host.major {
+		return &VersionMismatch{
+			ProjectVersion: project.original,
+			HostVersion:    host.original,
+			Reason:         "major version differs",
+		}
+	}
+	if project.major == 0 && project.minor != host.minor {
+		return &VersionMismatch{
+			ProjectVersion: project.original,
+			HostVersion:    host.original,
+			Reason:         "0.x minor version differs",
+		}
+	}
+	return nil
+}
+
+type semverish struct {
+	original string
+	major    int
+	minor    int
+	patch    int
+}
+
+func parseSemverish(raw string) *semverish {
+	clean := strings.TrimSpace(raw)
+	clean = strings.TrimLeft(clean, "^~<>= v")
+	if clean == "" {
+		return nil
+	}
+	parts := strings.Split(clean, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	parsePart := func(s string) (int, bool) {
+		digits := make([]rune, 0, len(s))
+		for _, r := range s {
+			if r >= '0' && r <= '9' {
+				digits = append(digits, r)
+				continue
+			}
+			break
+		}
+		if len(digits) == 0 {
+			return 0, false
+		}
+		v, err := strconv.Atoi(string(digits))
+		if err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+	major, ok := parsePart(parts[0])
+	if !ok {
+		return nil
+	}
+	minor, ok := parsePart(parts[1])
+	if !ok {
+		return nil
+	}
+	patch := 0
+	if len(parts) > 2 {
+		if p, ok := parsePart(parts[2]); ok {
+			patch = p
+		}
+	}
+	return &semverish{
+		original: clean,
+		major:    major,
+		minor:    minor,
+		patch:    patch,
+	}
 }
