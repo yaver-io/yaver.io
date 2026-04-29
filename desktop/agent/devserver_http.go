@@ -2103,9 +2103,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// Agent's preflight uses these to fail fast when the
 		// project's installed deps drift outside what the caller
 		// supports. Mirrors mobile's HBC-vs-manifest validation.
-		ClientVersion  string `json:"clientVersion,omitempty"`
-		ExpectReact    string `json:"expectReact,omitempty"`
-		ExpectReactDom string `json:"expectReactDom,omitempty"`
+		ClientVersion            string `json:"clientVersion,omitempty"`
+		ExpectReact              string `json:"expectReact,omitempty"`
+		ExpectReactDom           string `json:"expectReactDom,omitempty"`
+		AllowUnsafeNativeModules bool   `json:"allowUnsafeNativeModules,omitempty"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -2568,8 +2569,71 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 	GlobalIncidentStore().ResolveOpenByKey(resolveKey, "Native bundle build recovered.")
 
-	// Store metadata for the /dev/native-bundle endpoint to attach as header
-	s.devServerMgr.SetBundleMetadata(meta.JSON())
+	// ── Native-module compatibility handshake ──
+	// The bundle compiled cleanly, but that only proves Hermes is happy.
+	// What it does not prove is that every TurboModule the project calls
+	// at runtime is actually registered in Yaver's super-host. SFMG
+	// shipping `react-native-record-screen` against a Yaver build that
+	// doesn't know that selector is exactly the path that produced the
+	// 1.18.22-build-246 NSException-into-JSError crash. We compare the
+	// project's package.json deps against the host's embedded
+	// sdk-manifest.json and surface mismatches in the build response;
+	// the phone shows an actionable banner instead of crashing in JS.
+	var compatIncompatible []string
+	var compatMatched []string
+	var compatHostRN string
+	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
+		compatIncompatible = report.Incompatible
+		compatMatched = report.Matched
+		compatHostRN = report.HostRN
+		meta.HostSDKVersion = report.HostSDKVersion
+		meta.SupportedRNRange = report.SupportedRNRange
+		meta.IncompatibleNativeModules = append([]string(nil), compatIncompatible...)
+		if len(compatIncompatible) > 0 {
+			log.Printf("[super-host] native-module compat: %d incompatible (%v)",
+				len(compatIncompatible), compatIncompatible)
+			s.devServerMgr.EmitLog(fmt.Sprintf(
+				"⚠ %d native module(s) declared in this project are NOT in Yaver's super-host: %s. "+
+					"They will throw at runtime if called.",
+				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
+			))
+			if !req.AllowUnsafeNativeModules {
+				metaJSON := meta.JSON()
+				s.devServerMgr.SetBundleMetadata(metaJSON)
+				errMsg := fmt.Sprintf(
+					"Blocked native Hermes load: this project declares %d native module(s) Yaver does not register: %s",
+					len(compatIncompatible), strings.Join(compatIncompatible, ", "),
+				)
+				helpHint := "Add those modules to Yaver's super-host, remove them from the project, or guard every call site behind a runtime availability check before retrying."
+				incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Incompatible native modules", "The bundle compiled, but it would crash at runtime because the project declares native modules missing from Yaver's mobile host.", errMsg, helpHint, workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+				s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{
+					"platform":                  req.Platform,
+					"incompatibleNativeModules": compatIncompatible,
+					"matchedNativeModules":      compatMatched,
+					"blocked":                   true,
+				}, incident.ID)
+				jsonReply(w, http.StatusConflict, map[string]interface{}{
+					"status":                    "blocked",
+					"code":                      "NATIVE_MODULE_INCOMPATIBLE",
+					"error":                     errMsg,
+					"helpHint":                  helpHint,
+					"platform":                  req.Platform,
+					"moduleName":                moduleName,
+					"incompatibleNativeModules": compatIncompatible,
+					"matchedNativeModules":      compatMatched,
+					"hostSdkVersion":            report.HostSDKVersion,
+					"hostReactNative":           report.HostRN,
+					"supportedRNRange":          report.SupportedRNRange,
+					"bcVersion":                 meta.HermesBCVersion,
+					"md5":                       meta.MD5,
+					"size":                      meta.Size,
+				})
+				return
+			}
+		}
+	} else {
+		log.Printf("[super-host] native-module compat probe skipped: %v", err)
+	}
 
 	// ── Check for assets ──
 	assetsDir = filepath.Join(buildDir, "assets")
@@ -2580,6 +2644,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 	log.Printf("[super-host] hasAssets=%v", hasAssets)
 
+	s.devServerMgr.SetBundleMetadata(meta.JSON())
 	s.emitBuildProgress(fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s",
 		meta.Size/1024, meta.HermesBCVersion, moduleName), "ready")
 	s.upsertDevOperation("build_native", "completed", "ready", fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s", meta.Size/1024, meta.HermesBCVersion, moduleName), workDir, target.DeviceID, phaseProgress("done"), map[string]interface{}{
@@ -2604,34 +2669,6 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		HermesVersion: meta.HermesBCVersion,
 	})
 
-	// ── Native-module compatibility handshake ──
-	// The bundle compiled cleanly, but that only proves Hermes is happy.
-	// What it does not prove is that every TurboModule the project calls
-	// at runtime is actually registered in Yaver's super-host. SFMG
-	// shipping `react-native-record-screen` against a Yaver build that
-	// doesn't know that selector is exactly the path that produced the
-	// 1.18.22-build-246 NSException-into-JSError crash. We compare the
-	// project's package.json deps against the host's embedded
-	// sdk-manifest.json and surface mismatches in the build response;
-	// the phone shows an actionable banner instead of crashing in JS.
-	var compatIncompatible []string
-	var compatMatched []string
-	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
-		compatIncompatible = report.Incompatible
-		compatMatched = report.Matched
-		if len(compatIncompatible) > 0 {
-			log.Printf("[super-host] native-module compat: %d incompatible (%v) — phone will warn, bundle still served",
-				len(compatIncompatible), compatIncompatible)
-			s.devServerMgr.EmitLog(fmt.Sprintf(
-				"⚠ %d native module(s) declared in this project are NOT in Yaver's super-host: %s. "+
-					"They will throw at runtime if called.",
-				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
-			))
-		}
-	} else {
-		log.Printf("[super-host] native-module compat probe skipped: %v", err)
-	}
-
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":                    "ok",
 		"bundleUrl":                 "/dev/native-bundle",
@@ -2642,8 +2679,12 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"platform":                  req.Platform,
 		"moduleName":                moduleName,
 		"hasAssets":                 hasAssets,
+		"hostSdkVersion":            meta.HostSDKVersion,
+		"hostReactNative":           compatHostRN,
+		"supportedRNRange":          meta.SupportedRNRange,
 		"incompatibleNativeModules": compatIncompatible,
 		"matchedNativeModules":      compatMatched,
+		"allowUnsafeNativeModules":  req.AllowUnsafeNativeModules,
 	})
 }
 

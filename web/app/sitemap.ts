@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { blogPosts } from "@/lib/blog";
+import { publicBlogPosts } from "@/lib/blog";
 
 const SITE = "https://yaver.io";
 
@@ -44,7 +44,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     changeFrequency: r.changeFrequency,
     priority: r.priority,
   }));
-  for (const post of blogPosts) {
+  for (const post of publicBlogPosts) {
     entries.push({
       url: `${SITE}/blog/${post.slug}`,
       lastModified: new Date(post.date),

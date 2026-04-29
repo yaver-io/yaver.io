@@ -26,18 +26,21 @@ const (
 // BundleMetadata is sent to mobile before/with the bundle bytes.
 // Both Go and Swift must use the same JSON structure.
 type BundleMetadata struct {
-	Version            int    `json:"version"`         // protocol version, always 1
-	Size               int64  `json:"size"`            // exact byte count of HBC file
-	MD5                string `json:"md5"`             // hex-encoded MD5 of entire HBC file
-	HermesBCVersion    int    `json:"hermesBCVersion"` // bytecode version (e.g. 96)
-	ModuleName         string `json:"moduleName"`      // AppRegistry component name
-	Format             string `json:"format"`          // "hbc" or "js"
-	TargetPlatform     string `json:"targetPlatform,omitempty"`
-	BuilderPlatform    string `json:"builderPlatform,omitempty"`
-	BuilderArch        string `json:"builderArch,omitempty"`
-	ReactNativeVersion string `json:"reactNativeVersion,omitempty"`
-	ExpoSDKVersion     string `json:"expoSdkVersion,omitempty"`
-	HermesRef          string `json:"hermesRef,omitempty"`
+	Version                   int      `json:"version"`         // protocol version, always 1
+	Size                      int64    `json:"size"`            // exact byte count of HBC file
+	MD5                       string   `json:"md5"`             // hex-encoded MD5 of entire HBC file
+	HermesBCVersion           int      `json:"hermesBCVersion"` // bytecode version (e.g. 96)
+	ModuleName                string   `json:"moduleName"`      // AppRegistry component name
+	Format                    string   `json:"format"`          // "hbc" or "js"
+	HostSDKVersion            string   `json:"hostSdkVersion,omitempty"`
+	SupportedRNRange          string   `json:"supportedRNRange,omitempty"`
+	TargetPlatform            string   `json:"targetPlatform,omitempty"`
+	BuilderPlatform           string   `json:"builderPlatform,omitempty"`
+	BuilderArch               string   `json:"builderArch,omitempty"`
+	ReactNativeVersion        string   `json:"reactNativeVersion,omitempty"`
+	ExpoSDKVersion            string   `json:"expoSdkVersion,omitempty"`
+	HermesRef                 string   `json:"hermesRef,omitempty"`
+	IncompatibleNativeModules []string `json:"incompatibleNativeModules,omitempty"`
 }
 
 // ValidateHBC checks a built HBC bundle file.

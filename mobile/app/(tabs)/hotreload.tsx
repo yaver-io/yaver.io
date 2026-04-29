@@ -21,6 +21,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -250,13 +251,9 @@ export default function HotReloadScreen() {
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
-        const detail = [
-          buildResult.phase ? `phase: ${buildResult.phase}` : null,
-          buildResult.error || "build failed",
-          buildResult.helpHint || null,
-          buildResult.output ? `\n${String(buildResult.output).trim()}` : null,
-        ].filter(Boolean).join("\n");
-        throw new Error(detail);
+        const error = new Error(nativeBuildFailureMessage(buildResult));
+        (error as any).buildResult = buildResult;
+        throw error;
       }
 
       const sizeKB = Math.round((buildResult.size || 0) / 1024);
@@ -295,7 +292,10 @@ export default function HotReloadScreen() {
       const message = aborted
         ? "Build did not respond in 12 minutes. The agent may be stuck or unreachable — check the project's node_modules and retry."
         : err?.message || "Could not load bundle in Yaver";
-      Alert.alert(aborted ? "Build Timed Out" : "Load Failed", message);
+      const title = aborted
+        ? "Build Timed Out"
+        : err?.buildResult ? nativeBuildFailureTitle(err.buildResult) : "Load Failed";
+      Alert.alert(title, message);
     } finally {
       setNativeLoading(false);
     }

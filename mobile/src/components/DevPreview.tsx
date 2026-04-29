@@ -13,6 +13,7 @@ import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
 import { loadApp, onBundleEvent } from "../lib/bundleLoader";
+import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { VibePreviewModal } from "./VibePreviewModal";
 
 // Web frameworks where the vibe-preview modal makes sense — chromedp on
@@ -306,7 +307,9 @@ export function DevPreview() {
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
-        throw new Error(buildResult.error || "Build failed");
+        const error = new Error(nativeBuildFailureMessage(buildResult));
+        (error as any).buildResult = buildResult;
+        throw error;
       }
 
       // Download assets first (if any) so images/fonts are available when JS runs
@@ -343,7 +346,10 @@ export function DevPreview() {
       const message = aborted
         ? "Build did not respond in 12 minutes. The agent may be stuck or unreachable — check the project's node_modules and retry."
         : err?.message || "Could not load bundle in Yaver";
-      Alert.alert(aborted ? "Build Timed Out" : "Load Failed", message);
+      const title = aborted
+        ? "Build Timed Out"
+        : err?.buildResult ? nativeBuildFailureTitle(err.buildResult) : "Load Failed";
+      Alert.alert(title, message);
     }
   }, []);
 

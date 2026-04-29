@@ -21,7 +21,7 @@ export interface MockAgentHandle {
    *              its own per-request deadline without waiting forever for the
    *              agent to die first
    */
-  setBuildNativeMode: (mode: "ok" | "hang" | "fail" | "slow", slowMs?: number) => void;
+  setBuildNativeMode: (mode: "ok" | "hang" | "fail" | "slow" | "blocked", slowMs?: number) => void;
   /**
    * Switch /dev/stop behaviour at runtime so tests can exercise the
    * Stop-UX state machine in mobile/web without spinning a real agent.
@@ -46,7 +46,7 @@ export interface MockAgentHandle {
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
-  let buildNativeMode: "ok" | "hang" | "fail" | "slow" = "ok";
+  let buildNativeMode: "ok" | "hang" | "fail" | "slow" | "blocked" = "ok";
   let buildNativeSlowMs = 0;
   let stopMode: "verified" | "not-verified" | "fail" | "legacy" = "verified";
   let stopBuildsCancelled = 0;
@@ -308,6 +308,23 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             phase: "bundle",
             timedOut: false,
             helpHint: "mock-agent: buildNativeMode=fail",
+          });
+        case "blocked":
+          return json(409, {
+            status: "blocked",
+            code: "NATIVE_MODULE_INCOMPATIBLE",
+            error: "Blocked native Hermes load: mock project declares modules Yaver does not register: react-native-fictional",
+            helpHint: "mock-agent: buildNativeMode=blocked",
+            incompatibleNativeModules: ["react-native-fictional"],
+            matchedNativeModules: ["@react-native-async-storage/async-storage"],
+            hostSdkVersion: "1.0.0",
+            hostReactNative: "0.81.5",
+            supportedRNRange: "0.81.x",
+            bcVersion: 96,
+            md5: "deadbeef",
+            size: 4096,
+            moduleName: "main",
+            platform: "ios",
           });
         case "ok":
         default:

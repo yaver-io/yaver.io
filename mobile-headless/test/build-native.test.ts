@@ -92,6 +92,15 @@ describe("devServer.buildNative", () => {
     expect(r.body?.helpHint).toBeDefined();
   });
 
+  it("surfaces compatibility blocks with the same contract as the mobile app", async () => {
+    agent.setBuildNativeMode("blocked");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("NATIVE_MODULE_INCOMPATIBLE");
+    expect(r.body?.incompatibleNativeModules).toEqual(["react-native-fictional"]);
+  });
+
   it("recovers to ok after a transient failure", async () => {
     agent.setBuildNativeMode("fail");
     await mobile.devServer.buildNative("ios");

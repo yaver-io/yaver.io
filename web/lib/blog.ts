@@ -3,6 +3,7 @@ export type BlogPost = {
   title: string;
   date: string;
   description: string;
+  published?: boolean;
 };
 
 export const POSTS_PER_PAGE = 10;
@@ -12,6 +13,7 @@ export const blogPosts: BlogPost[] = [
     slug: "hermes-vs-webview-yaver-architecture",
     title: "Hermes Bytecode vs WebView: How Yaver Tests Native Apps Without an App Store Cycle",
     date: "2026-04-29",
+    published: true,
     description:
       "How Yaver runs your in-progress React Native app on a real iPhone in 10 seconds — using Hermes bytecode for native frameworks and WebView for web frameworks. The architecture, what each path can and can't do, and where the limits come from (Apple, mostly).",
   },
@@ -26,6 +28,7 @@ export const blogPosts: BlogPost[] = [
     slug: "ai-iot-fix-architecture",
     title: "AI-to-IoT Fix Loop: ...",
     date: "2026-04-25",
+    published: false,
     description:
       "The architecture behind Yaver's IoT troubleshooting direction: a phone as the operator surface, a cloud brain that plans and signs work, and a small c-agent runtime on the device that executes bounded diagnostics and fixes.",
   },
@@ -51,6 +54,8 @@ export const blogPosts: BlogPost[] = [
       "A prebuilt ARM64 image for Raspberry Pi 5 that turns a Pi into a headless Yaver developer node — flash it, boot it, pair it from your phone. Includes the full dev stack, Ollama, and auto-updates.",
   },
 ];
+
+export const publicBlogPosts = blogPosts.filter((post) => post.published !== false);
 
 export function paginate(posts: BlogPost[], page: number) {
   const totalPages = Math.max(1, Math.ceil(posts.length / POSTS_PER_PAGE));

@@ -23,6 +23,7 @@ import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type 
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
+import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -1186,39 +1187,9 @@ export default function AppsScreen() {
       const buildResult = await buildRes.json();
 
       if (buildResult.status !== "ok") {
-        throw new Error(buildResult.error || "Build failed");
-      }
-
-      // Native-module compat handshake: agent diffed the project's
-      // package.json against Yaver's embedded sdk-manifest.json.
-      // Any deps that look native but aren't in the host's manifest will
-      // throw NSException at runtime and crash Hermes during JSError
-      // construction (the SFMG TestFlight 246 crash class). Warn loudly
-      // before doing the bridge swap; let the user opt in if they know
-      // the missing modules are guarded behind feature flags.
-      const incompat: string[] = Array.isArray(buildResult.incompatibleNativeModules)
-        ? buildResult.incompatibleNativeModules
-        : [];
-      if (loadAfterBuild && incompat.length > 0) {
-        const list = incompat.join("\n  • ");
-        const proceed = await new Promise<boolean>((resolve) => {
-          Alert.alert(
-            "Incompatible native modules",
-            `This project declares ${incompat.length} native module(s) Yaver doesn't register:\n\n  • ${list}\n\nLoading anyway will likely crash when these modules are called. Continue?`,
-            [
-              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-              { text: "Load anyway", style: "destructive", onPress: () => resolve(true) },
-            ],
-            { cancelable: true, onDismiss: () => resolve(false) },
-          );
-        });
-        if (!proceed) {
-          setBuildProgress(0);
-          setLoadingStatus("");
-          setNativeLoading(false);
-          sseController.abort();
-          return;
-        }
+        const error = new Error(nativeBuildFailureMessage(buildResult));
+        (error as any).buildResult = buildResult;
+        throw error;
       }
 
       if (loadAfterBuild) {
@@ -1253,7 +1224,11 @@ export default function AppsScreen() {
       } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("timeout")) {
         hint = `\n\nYaver ${describeConnectionStatus(connectionStatus)}.`;
       }
-      Alert.alert(loadAfterBuild ? "Open in Yaver Failed" : "Hermes Build Failed", `${raw}${hint}`);
+      const buildResult = err?.buildResult;
+      const title = buildResult
+        ? nativeBuildFailureTitle(buildResult)
+        : (loadAfterBuild ? "Open in Yaver Failed" : "Hermes Build Failed");
+      Alert.alert(title, `${raw}${hint}`);
       return;
     }
     sseController.abort();

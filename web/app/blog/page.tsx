@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { blogPosts, paginate, POSTS_PER_PAGE } from "@/lib/blog";
+import { publicBlogPosts, paginate, POSTS_PER_PAGE } from "@/lib/blog";
 
 export const metadata: Metadata = {
   title: "Blog — Yaver",
@@ -31,7 +31,7 @@ export default async function BlogIndexPage({
 }) {
   const params = await searchParams;
   const requested = Number.parseInt(params?.page ?? "1", 10) || 1;
-  const { posts, page, totalPages } = paginate(blogPosts, requested);
+  const { posts, page, totalPages } = paginate(publicBlogPosts, requested);
 
   return (
     <div className="px-6 py-20">
@@ -96,7 +96,7 @@ export default async function BlogIndexPage({
         )}
 
         <p className="sr-only">
-          {blogPosts.length} posts total, {POSTS_PER_PAGE} per page.
+          {publicBlogPosts.length} posts total, {POSTS_PER_PAGE} per page.
         </p>
       </div>
     </div>

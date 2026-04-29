@@ -132,7 +132,14 @@ public class AppDelegate: ExpoAppDelegate {
       }
     }
 
-    // 1. Show spinner (stops JS rendering)
+    // 1. Capture the existing bridge BEFORE swapping the root view.
+    // The previous code replaced the root view with the placeholder first,
+    // then tried to cast that placeholder back to RCTRootView, which meant
+    // the old bridge was never invalidated at all.
+    let existingRootView = window?.rootViewController?.view as? RCTRootView
+    let existingBridge = existingRootView?.bridge
+
+    // 2. Show spinner (stops JS rendering)
     let placeholder = UIView(frame: window?.bounds ?? .zero)
     placeholder.backgroundColor = .systemBackground
     let spinner = UIActivityIndicatorView(style: .large)
@@ -141,35 +148,34 @@ public class AppDelegate: ExpoAppDelegate {
     placeholder.addSubview(spinner)
     window?.rootViewController?.view = placeholder
 
-    // 2. Capture weak reference to old bridge before invalidating
+    // 3. Capture weak reference to old bridge before invalidating
     var oldBridgeWeak: RCTBridge? = nil
-    if let rootView = window?.rootViewController?.view as? RCTRootView {
-      oldBridgeWeak = rootView.bridge
+    if let bridge = existingBridge {
+      oldBridgeWeak = bridge
       NSLog("[AppDelegate] invalidating old bridge...")
-      rootView.bridge.invalidate()
+      bridge.invalidate()
     } else {
       NSLog("[AppDelegate] no existing RCTRootView — creating fresh bridge")
     }
 
-    weak var weakOldBridge: RCTBridge? = oldBridgeWeak
-    oldBridgeWeak = nil // release strong ref
-
-    // 3. Wait for actual deallocation using polling (replaces fixed sleep)
-    waitForBridgeDeallocation(weakRef: weakOldBridge, timeout: 3.0) { [weak self] in
+    // 4. Wait for actual deallocation using polling (replaces fixed sleep)
+    waitForBridgeDeallocation(bridge: oldBridgeWeak, timeout: 3.0) { [weak self] in
       guard let self = self, let window = self.window else { return }
       self.initGuestBridge(bundleURL: bundleURL, moduleName: resolvedModule, window: window)
     }
+    oldBridgeWeak = nil // release the last strong ref after scheduling the weak poll
   }
 
   /// Polls until the weak reference goes nil (bridge deallocated),
   /// then calls completion on the main thread. Falls back to timeout.
   private func waitForBridgeDeallocation(
-    weakRef: AnyObject?,
+    bridge: RCTBridge?,
     timeout: TimeInterval,
     completion: @escaping () -> Void
   ) {
+    weak var weakBridge = bridge
     // If no old bridge, proceed immediately
-    guard weakRef != nil else {
+    guard weakBridge != nil else {
       NSLog("[AppDelegate] no old bridge to wait for — proceeding immediately")
       DispatchQueue.main.async { completion() }
       return
@@ -179,7 +185,7 @@ public class AppDelegate: ExpoAppDelegate {
     let checkInterval: TimeInterval = 0.05
 
     func check() {
-      if weakRef == nil {
+      if weakBridge == nil {
         NSLog("[AppDelegate] old bridge deallocated — creating new bridge")
         DispatchQueue.main.async { completion() }
         return
@@ -599,13 +605,10 @@ public class AppDelegate: ExpoAppDelegate {
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
     UserDefaults.standard.removeObject(forKey: "yaverCurrentModuleName")
 
-    // Invalidate loaded bridge
-    if let rootView = window?.rootViewController?.view as? RCTRootView {
-      rootView.bridge.invalidate()
-    }
+    let existingBridge = (window?.rootViewController?.view as? RCTRootView)?.bridge
+    existingBridge?.invalidate()
 
-    // Recreate with original Yaver bundle
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+    waitForBridgeDeallocation(bridge: existingBridge, timeout: 3.0) { [weak self] in
       guard let self = self, let window = self.window else { return }
 
       let delegate = ReactNativeDelegate()

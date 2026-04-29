@@ -18,11 +18,12 @@ import (
 var sdkManifestJSON []byte
 
 type sdkManifest struct {
-	SdkVersion    string            `json:"sdkVersion"`
-	ReactNative   string            `json:"reactNative"`
-	React         string            `json:"react"`
-	NativeModules map[string]string `json:"nativeModules"`
-	Hermes        struct {
+	SdkVersion       string            `json:"sdkVersion"`
+	ReactNative      string            `json:"reactNative"`
+	React            string            `json:"react"`
+	SupportedRNRange string            `json:"supportedRNRange"`
+	NativeModules    map[string]string `json:"nativeModules"`
+	Hermes           struct {
 		Version         string `json:"version"`
 		BytecodeVersion int    `json:"bytecodeVersion"`
 	} `json:"hermes"`
@@ -140,11 +141,12 @@ func isLikelyNativeModule(name string) bool {
 // CompatReport summarises how a project's native deps line up with the
 // host super-host's published manifest.
 type CompatReport struct {
-	ProjectModules []string `json:"projectModules"`         // every dep we treated as native
-	Matched        []string `json:"matched"`                // present in host manifest
-	Incompatible   []string `json:"incompatibleNativeModules"` // missing — likely crash sites
-	HostSDKVersion string   `json:"hostSdkVersion"`
-	HostRN         string   `json:"hostReactNative"`
+	ProjectModules   []string `json:"projectModules"`            // every dep we treated as native
+	Matched          []string `json:"matched"`                   // present in host manifest
+	Incompatible     []string `json:"incompatibleNativeModules"` // missing — likely crash sites
+	HostSDKVersion   string   `json:"hostSdkVersion"`
+	HostRN           string   `json:"hostReactNative"`
+	SupportedRNRange string   `json:"supportedRNRange"`
 }
 
 // BuildNativeModuleCompatReport runs the diff. workDir is the third-party
@@ -170,10 +172,11 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		}
 	}
 	return &CompatReport{
-		ProjectModules: projectMods,
-		Matched:        matched,
-		Incompatible:   missing,
-		HostSDKVersion: host.SdkVersion,
-		HostRN:         host.ReactNative,
+		ProjectModules:   projectMods,
+		Matched:          matched,
+		Incompatible:     missing,
+		HostSDKVersion:   host.SdkVersion,
+		HostRN:           host.ReactNative,
+		SupportedRNRange: host.SupportedRNRange,
 	}, nil
 }
