@@ -349,9 +349,9 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 
 	bundleCtx, bundleCancel := context.WithTimeout(r.Context(), bundleBuildTimeout)
 	defer bundleCancel()
-	cmd := bundleCommand(bundleCtx, prep.PackageManager, "expo", "web", "", bundlePath, assetsDir)
+	cmd := bundleCommand(bundleCtx, prep.PackageManager, "expo", "web", "", bundlePath, assetsDir, shouldResetMetroCache(workDir))
 	cmd.Dir = workDir
-	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production")
+	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production", "NODE_OPTIONS=--max-old-space-size=5120")
 	logW := &devLogWriter{prefix: "[web-hermes-wasm]"}
 	if s.devServerMgr != nil {
 		logW.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }

@@ -5,16 +5,14 @@ import { CONVEX_URL } from "@/lib/constants";
 
 // DomainsView — "bring your own domain" flow. Lets a signed-in user:
 //   1. Name a custom domain (myapp.com / api.myapp.com).
-//   2. Pick a target (a provisioned cloud machine, a managed relay, or a
-//      raw IP they manage themselves).
+//   2. Point it at a server they control (raw IP).
 //   3. See the exact DNS records they need to set at their registrar
 //      (TXT for ownership verification, A or CNAME for routing).
 //   4. Click "Verify" to poll DoH and flip the row to "verified" once both
 //      records resolve.
 //
 // The backend (backend/convex/userDomains.ts) holds the truth; this view
-// is a thin client. Cloudflare-zone-owned domains auto-provision during
-// cloudMachines.provision — this screen is for everything else.
+// is a thin client.
 
 type UserDomain = {
   _id: string;
@@ -42,13 +40,8 @@ type DnsInstructions = {
   }[];
 };
 
-type Machine = { _id: string; machineType: string; hostname?: string; serverIp?: string; status: string };
-type Relay = { _id: string; domain?: string; serverIp?: string; status: string };
-
 export default function DomainsView({ token, userId }: { token: string; userId: string }) {
   const [domains, setDomains] = useState<UserDomain[]>([]);
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [relays, setRelays] = useState<Relay[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<UserDomain | null>(null);
@@ -58,8 +51,7 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
 
   // Form state for "Add a domain"
   const [newDomain, setNewDomain] = useState("");
-  const [targetType, setTargetType] = useState<UserDomain["targetType"]>("cloud_machine");
-  const [targetId, setTargetId] = useState("");
+  const targetType: UserDomain["targetType"] = "custom_server";
   const [targetIp, setTargetIp] = useState("");
   const [dnsProvider, setDnsProvider] = useState<"cloudflare" | "manual">("manual");
   const [submitting, setSubmitting] = useState(false);
@@ -67,23 +59,12 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
   async function load() {
     setLoading(true);
     try {
-      const [dResp, mResp, rResp] = await Promise.all([
-        fetch(`${CONVEX_URL}/api/query/userDomains:listForUser?args=${encodeURIComponent(JSON.stringify({ userId }))}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${CONVEX_URL}/api/query/cloudMachines:listForUser?args=${encodeURIComponent(JSON.stringify({ userId }))}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-        fetch(`${CONVEX_URL}/api/query/managedRelays:getByUser?args=${encodeURIComponent(JSON.stringify({ userId }))}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-      ]);
+      const dResp = await fetch(
+        `${CONVEX_URL}/api/query/userDomains:listForUser?args=${encodeURIComponent(JSON.stringify({ userId }))}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
       const d = dResp.ok ? await dResp.json() : { value: [] };
-      const m = mResp.ok ? await mResp.json() : { value: [] };
-      const r = rResp.ok ? await rResp.json() : { value: null };
       setDomains(d.value || d || []);
-      setMachines(m.value || m || []);
-      setRelays(r.value ? [r.value] : []);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -104,9 +85,8 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
         domain: newDomain.trim().toLowerCase(),
         targetType,
         dnsProvider,
+        targetIp: targetIp.trim(),
       };
-      if (targetType !== "custom_server" && targetId) args.targetId = targetId;
-      if (targetType === "custom_server") args.targetIp = targetIp.trim();
       const resp = await fetch(`${CONVEX_URL}/api/mutation/userDomains:add`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -115,7 +95,6 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "Add failed");
       setNewDomain("");
-      setTargetId("");
       setTargetIp("");
       await load();
     } catch (e) {
@@ -183,8 +162,8 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
         <h2 className="text-sm font-semibold text-surface-100">Custom Domains</h2>
         <p className="mt-1 text-xs text-surface-400">
           Point a domain you own (from Namecheap, Porkbun, Cloudflare Registrar, GoDaddy, …)
-          at a Yaver Cloud machine or managed relay. We'll generate the exact records you
-          need to paste at your registrar.
+          at a server you control. We'll generate the exact records you need to paste at
+          your registrar.
         </p>
       </div>
 
@@ -198,49 +177,10 @@ export default function DomainsView({ token, userId }: { token: string; userId: 
               className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200" />
           </label>
           <label className="text-xs text-surface-300 space-y-1">
-            <span>Target</span>
-            <select value={targetType} onChange={e => setTargetType(e.target.value as UserDomain["targetType"])}
-              className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200">
-              <option value="cloud_machine">Cloud Machine</option>
-              <option value="managed_relay">Managed Relay</option>
-              <option value="custom_server">Custom Server (IP)</option>
-            </select>
+            <span>Server IPv4</span>
+            <input value={targetIp} onChange={e => setTargetIp(e.target.value)} placeholder="203.0.113.42"
+              className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200" />
           </label>
-          {targetType === "cloud_machine" && (
-            <label className="text-xs text-surface-300 space-y-1">
-              <span>Machine</span>
-              <select value={targetId} onChange={e => setTargetId(e.target.value)}
-                className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200">
-                <option value="">-- select --</option>
-                {machines.map(m => (
-                  <option key={m._id} value={m._id}>
-                    {m.machineType} · {m.hostname || m.serverIp || "(not provisioned)"} · {m.status}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {targetType === "managed_relay" && (
-            <label className="text-xs text-surface-300 space-y-1">
-              <span>Relay</span>
-              <select value={targetId} onChange={e => setTargetId(e.target.value)}
-                className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200">
-                <option value="">-- select --</option>
-                {relays.map(r => (
-                  <option key={r._id} value={r._id}>
-                    {r.domain || r.serverIp} · {r.status}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {targetType === "custom_server" && (
-            <label className="text-xs text-surface-300 space-y-1">
-              <span>Server IPv4</span>
-              <input value={targetIp} onChange={e => setTargetIp(e.target.value)} placeholder="203.0.113.42"
-                className="w-full rounded border border-surface-800 bg-surface-950 px-2 py-1 text-xs text-surface-200" />
-            </label>
-          )}
           <label className="text-xs text-surface-300 space-y-1">
             <span>DNS at</span>
             <select value={dnsProvider} onChange={e => setDnsProvider(e.target.value as "cloudflare" | "manual")}

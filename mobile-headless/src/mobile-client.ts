@@ -16,6 +16,11 @@ export interface MobileClientOptions {
   authToken?: string;
   platform?: "ios" | "android";
   deviceName?: string;
+  /** Mirror iOS App Transport Security on `recoveryTargetsForDevice`.
+   * When true (or env YMH_ATS=1), candidate URLs that would be blocked
+   * by ATS on iPhone (plain HTTP to non-RFC1918 hosts) are filtered out.
+   * Useful when reproducing iPhone-only failures in a Node test. */
+  atsAware?: boolean;
   /** Override the agent base URL. When absent, MobileClient still
    *  works for Convex-only calls (listDevices, etc.) but agent
    *  endpoints need `connect()` first. */
@@ -998,9 +1003,50 @@ export class MobileClient {
   ): Promise<Array<{ baseUrl: string; headers: Record<string, string> }>> {
     const out: Array<{ baseUrl: string; headers: Record<string, string> }> = [];
     const seen = new Set<string>();
+    // ATS-aware filter — mirrors iOS App Transport Security so headless
+    // tests reproduce iPhone behavior. ATS blocks plain HTTP requests
+    // to non-local addresses (-1022) when NSAllowsArbitraryLoads is
+    // false. The Yaver mobile Info.plist sets NSAllowsLocalNetworking=true
+    // (so RFC1918 / loopback HTTP is allowed) but otherwise enforces ATS.
+    // Set YMH_ATS=1 (or pass atsAware:true via constructor) to enable the
+    // same filter in mobile-headless and reproduce the iOS connection
+    // shortlist exactly.
+    const atsAware = this.opts.atsAware === true ||
+      process.env.YMH_ATS === "1" ||
+      process.env.YMH_ATS === "true";
+    const isAtsAllowed = (rawUrl: string): boolean => {
+      if (!atsAware) return true;
+      try {
+        const u = new URL(rawUrl);
+        if (u.protocol === "https:") return true;
+        // HTTP allowed only for RFC1918 / loopback / link-local. Anything
+        // else (public IP, public hostname, .local mDNS) — iOS rejects
+        // with -1022 unless NSAllowsArbitraryLoads is true.
+        const host = u.hostname;
+        if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+        // RFC1918 IPv4
+        const m4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+        if (m4) {
+          const [a, b] = [Number(m4[1]), Number(m4[2])];
+          if (a === 10) return true;
+          if (a === 172 && b >= 16 && b <= 31) return true;
+          if (a === 192 && b === 168) return true;
+          if (a === 169 && b === 254) return true; // link-local
+          // Non-RFC1918 IPv4 over HTTP → ATS blocks
+          return false;
+        }
+        // Hostname that ends in .local — mDNS, allowed by NSAllowsLocalNetworking
+        if (host.endsWith(".local")) return true;
+        // Any other public hostname over HTTP → ATS blocks
+        return false;
+      } catch {
+        return true;
+      }
+    };
     const push = (baseUrl: string | undefined, headers: Record<string, string>) => {
       const normalized = (baseUrl ?? "").replace(/\/+$/, "");
       if (!normalized || seen.has(normalized)) return;
+      if (!isAtsAllowed(normalized)) return; // skip ATS-blocked candidates
       seen.add(normalized);
       out.push({ baseUrl: normalized, headers });
     };

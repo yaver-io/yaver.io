@@ -761,31 +761,73 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 // project (missing node_modules, infinite resolver loop, stuck on stdin
 // prompts), so a hard wall-clock cap is the only way to surface failure to
 // the mobile app instead of leaving the HTTP request blocked indefinitely.
-func bundleCommand(ctx context.Context, packageManager, framework, platform, entryFile, bundlePath, assetsDir string) *exec.Cmd {
-	switch framework {
-	case "expo":
-		switch packageManager {
+//
+// resetCache controls whether `--reset-cache` is appended. Pass true on the
+// first build of a session or after a project change; pass false on incremental
+// rebuilds to save 30-60s and avoid blowing past Metro's heap on small boxes
+// (the cache rebuild is the heaviest memory step in a Metro bundle).
+func bundleCommand(ctx context.Context, packageManager, framework, platform, entryFile, bundlePath, assetsDir string, resetCache bool) *exec.Cmd {
+	expoArgs := []string{"expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true"}
+	rnArgs := []string{"react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true"}
+	if resetCache {
+		expoArgs = append(expoArgs, "--reset-cache")
+		rnArgs = append(rnArgs, "--reset-cache")
+	}
+
+	pmRun := func(pm string) (string, []string) {
+		switch pm {
 		case "yarn":
-			return exec.CommandContext(ctx, "yarn", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return "yarn", nil
 		case "pnpm":
-			return exec.CommandContext(ctx, "pnpm", "exec", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return "pnpm", []string{"exec"}
 		case "bun":
-			return exec.CommandContext(ctx, "bunx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return "bunx", nil
 		default:
-			return exec.CommandContext(ctx, "npx", "expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
-		}
-	default:
-		switch packageManager {
-		case "yarn":
-			return exec.CommandContext(ctx, "yarn", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
-		case "pnpm":
-			return exec.CommandContext(ctx, "pnpm", "exec", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
-		case "bun":
-			return exec.CommandContext(ctx, "bunx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
-		default:
-			return exec.CommandContext(ctx, "npx", "react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true", "--reset-cache")
+			return "npx", nil
 		}
 	}
+
+	switch framework {
+	case "expo":
+		bin, prefix := pmRun(packageManager)
+		return exec.CommandContext(ctx, bin, append(prefix, expoArgs...)...)
+	default:
+		bin, prefix := pmRun(packageManager)
+		return exec.CommandContext(ctx, bin, append(prefix, rnArgs...)...)
+	}
+}
+
+// cacheLabel renders the warm/cold tag we paste into progress messages
+// so users can see why a build is going to be slow this iteration.
+func cacheLabel(resetCache bool) string {
+	if resetCache {
+		return " (cold)"
+	}
+	return " (warm cache)"
+}
+
+// shouldResetMetroCache returns true when no warm Metro cache exists for
+// the project, or when the cache is older than 24h (Metro bugs accumulate
+// in stale caches). On a clean checkout or the first build after a yarn
+// install, the cache is empty and Metro will rebuild it implicitly even
+// without the flag — passing --reset-cache then is wasted memory.
+func shouldResetMetroCache(workDir string) bool {
+	candidates := []string{
+		filepath.Join(workDir, "node_modules", ".cache", "metro"),
+		filepath.Join(workDir, "node_modules", ".cache", "babel-loader"),
+	}
+	freshest := time.Time{}
+	for _, p := range candidates {
+		if info, err := os.Stat(p); err == nil {
+			if info.ModTime().After(freshest) {
+				freshest = info.ModTime()
+			}
+		}
+	}
+	if freshest.IsZero() {
+		return true // no cache → no need to force-reset, but doesn't hurt
+	}
+	return time.Since(freshest) > 24*time.Hour
 }
 
 // Wall-clock caps for the build pipeline. Metro/Expo bundles for a clean
@@ -2289,11 +2331,18 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	releaseActiveBuild := registerActiveBuild(workDir, req.Platform, bundleCancel)
 	defer releaseActiveBuild()
 	assetsDir := filepath.Join(buildDir, "assets")
+	// Decide whether to nuke Metro's cache. --reset-cache forces a full
+	// haste-map rebuild which is the heaviest memory step in the whole
+	// bundle (peaks 4-6 GB on a SFMG-sized RN project). On a small box
+	// it OOM-kills node. Skip it on incremental rebuilds — Metro
+	// invalidates entries when source files change anyway.
+	resetCache := shouldResetMetroCache(workDir)
 	var cmd *exec.Cmd
 	if isExpo {
-		s.emitBuildProgress(fmt.Sprintf("Bundling with Expo for %s...", req.Platform), "bundle")
-		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling with Expo for %s…", req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "expo"})
-		cmd = bundleCommand(bundleCtx, prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir)
+		msg := fmt.Sprintf("Bundling with Expo for %s%s...", req.Platform, cacheLabel(resetCache))
+		s.emitBuildProgress(msg, "bundle")
+		s.upsertDevOperation("build_native", "running", "bundle", msg, workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "expo", "resetCache": resetCache})
+		cmd = bundleCommand(bundleCtx, prep.PackageManager, "expo", req.Platform, "", bundlePath, assetsDir, resetCache)
 	} else {
 		// Find entry file: package.json "main" → fallback candidates
 		entryFile := "index.js"
@@ -2307,15 +2356,21 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				entryFile = candidate
 			}
 		}
-		s.emitBuildProgress(fmt.Sprintf("Bundling %s for %s...", entryFile, req.Platform), "bundle")
-		s.upsertDevOperation("build_native", "running", "bundle", fmt.Sprintf("Bundling %s for %s…", entryFile, req.Platform), workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "react-native", "entryFile": entryFile})
-		cmd = bundleCommand(bundleCtx, prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir)
+		msg := fmt.Sprintf("Bundling %s for %s%s...", entryFile, req.Platform, cacheLabel(resetCache))
+		s.emitBuildProgress(msg, "bundle")
+		s.upsertDevOperation("build_native", "running", "bundle", msg, workDir, target.DeviceID, phaseProgress("bundle"), map[string]interface{}{"platform": req.Platform, "framework": "react-native", "entryFile": entryFile, "resetCache": resetCache})
+		cmd = bundleCommand(bundleCtx, prep.PackageManager, "react-native", req.Platform, entryFile, bundlePath, assetsDir, resetCache)
 	}
 
 	cmd.Dir = workDir
 	// augmentEnv prepends the agent-managed Node bin so a fresh
 	// Linux box (no system Node) still bundles after /install/node.
-	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production")
+	// NODE_OPTIONS caps node's heap so a runaway Metro doesn't OOM-kill
+	// itself (and the agent) on small boxes. 5120 MB is generous for a
+	// large RN bundle and well below the 7-8 GB physical RAM where the
+	// Linux OOM-killer starts reaping. Without this cap, node will try
+	// to grow its heap to the full machine size and SIGKILL itself.
+	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production", "NODE_OPTIONS=--max-old-space-size=5120")
 
 	log.Printf("[super-host] bundling with command: %v", cmd.Args)
 	logW := &devLogWriter{prefix: "[super-host]"}

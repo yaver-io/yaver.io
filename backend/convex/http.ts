@@ -114,7 +114,7 @@ async function createLemonSqueezyCheckout(args: {
     lsEnv("YAVER_CLOUD_RECEIPT_LINK_URL") ||
     lsEnv("CHECKOUT_REDIRECT_URL") ||
     process.env.NEXT_PUBLIC_BASE_URL ||
-    "https://yaver.io/pricing";
+    "https://yaver.io/";
   const receiptButtonText =
     lsEnv("YAVER_CLOUD_RECEIPT_BUTTON_TEXT") || "Open Yaver";
 
@@ -2904,14 +2904,13 @@ Your ONLY purpose is to help users with Yaver-related questions:
 - How to integrate: Telegram bot, Discord, Slack, CI/CD webhooks, MCP tools
 - How to use SDKs (Go, Python, JS/TS, Flutter/Dart)
 - How to self-host a relay server
-- Pricing: free relay included, optional dedicated relay ($10/mo)
 
 Rules:
 - Keep answers short (2-4 sentences). Link to docs when relevant.
 - If the question is NOT about Yaver, politely say: "I can only help with Yaver-related questions. Check out yaver.io/docs for guides, or yaver.io/faq for common questions."
 - Never make up features that don't exist.
-- Key links: yaver.io/docs, yaver.io/manuals, yaver.io/download, yaver.io/pricing, yaver.io/manuals/integrations
-- Yaver is free and open-source. The managed relay is the only paid option.
+- Key links: yaver.io/docs, yaver.io/manuals, yaver.io/download, yaver.io/manuals/integrations
+- Yaver is fully free and open-source — no paid tiers, no subscriptions. We may add optional managed offerings later, but at launch nothing is for sale.
 - Privacy-first: code never leaves the developer's machines. Relay is pass-through, encrypted.`;
 
     try {

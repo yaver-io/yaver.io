@@ -1253,6 +1253,8 @@ func probeLocalAgentHealthInfo(port int) *localAgentHealthInfo {
 		return nil
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
@@ -1280,6 +1282,8 @@ func probeAuthedLocalAgentInfo(port int, authToken string) *localAgentInfo {
 		return nil
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil
 	}
@@ -2952,6 +2956,8 @@ func runShutdown() {
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode == 200 {
 		if running {
 			fmt.Printf("Shutdown signal sent to agent (PID %d) — stopping gracefully.\n", pid)
@@ -3891,6 +3897,8 @@ func checkAutoUpdate(cfg *Config) {
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode != 200 {
 		log.Printf("[auto-update] GitHub API returned %d", resp.StatusCode)
 		return
@@ -4229,6 +4237,8 @@ func runSetRunner(args []string) {
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode != http.StatusOK {
 		fmt.Fprintf(os.Stderr, "Server returned %d\n", resp.StatusCode)
 		os.Exit(1)
@@ -4267,6 +4277,8 @@ func fetchRunnersFromBackend(client *http.Client, convexSiteURL string) ([]backe
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("runners endpoint returned %d", resp.StatusCode)
 	}
@@ -4296,6 +4308,8 @@ func getCurrentRunner(client *http.Client, convexSiteURL, token string) string {
 		return ""
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 
 	if resp.StatusCode != http.StatusOK {
 		return ""
@@ -4473,6 +4487,8 @@ func runStatus() {
 		return
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 
 	if resp.StatusCode != http.StatusOK {
 		fmt.Printf("Auth:     \033[31m●\033[0m session expired (agent still running)\n")
@@ -4885,6 +4901,8 @@ func fetchLocalSharedUsers(client *http.Client, token string) (*statusSharedUser
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -4994,6 +5012,8 @@ func runTmuxList() {
 		resp, err := client.Do(req)
 		if err == nil {
 			defer resp.Body.Close()
+
+	// STREAMING DEBUG
 			if resp.StatusCode == 200 {
 				var body struct {
 					Sessions []TmuxSession `json:"sessions"`
@@ -5067,6 +5087,8 @@ func runTmuxAdopt(sessionName string) {
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 
@@ -5104,6 +5126,8 @@ func runTmuxDetach(taskID string) {
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
@@ -6287,6 +6311,8 @@ func resolveRunner(convexSiteURL, token string) RunnerConfig {
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("Runner: settings endpoint returned %d — using default", resp.StatusCode)
 		return defaultRunner
@@ -6388,6 +6414,8 @@ func fetchRunner(client *http.Client, convexSiteURL, runnerID string) (RunnerCon
 	}
 	defer resp.Body.Close()
 
+	// STREAMING DEBUG
+
 	if resp.StatusCode != http.StatusOK {
 		return RunnerConfig{}, fmt.Errorf("runners endpoint returned %d", resp.StatusCode)
 	}
@@ -6478,6 +6506,8 @@ func listDevices(baseURL, token string) ([]DeviceInfo, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
@@ -6642,16 +6672,80 @@ func runDoctorMesh(check func(string), pass func(string), warning func(string), 
 	}
 }
 
-// getLocalIP returns the preferred outbound local IP address.
+// getLocalIP returns the preferred outbound LOCAL (RFC1918 / private)
+// IPv4 address. Returns "" if the host has no private interface — e.g.
+// a cloud VM where the only outbound route is via a public IP.
+//
+// We deliberately do NOT publish public IPs as `localIP` to Convex.
+// Reason: iOS' App Transport Security blocks plain-HTTP requests to
+// non-local addresses, so when the mobile app reads localIP from the
+// device registry and tries `http://<public-ip>:18080`, ATS rejects
+// the connection with NSURLError -1022. The mobile then bounces
+// between failed direct attempts and the relay path, which looks like
+// a network outage to the user. The relay is the intended path for
+// off-LAN connections; the direct path is for same-Wi-Fi only.
 func getLocalIP() string {
-	// Use default outbound IP (LAN address when on local network)
+	// Probe the default outbound route. On a normal LAN host this
+	// returns the host's RFC1918 address; on a cloud VM with only a
+	// public NIC it returns the public address.
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
-		return "0.0.0.0"
+		return ""
 	}
 	defer conn.Close()
 	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String()
+	ip := localAddr.IP
+	if ip == nil {
+		return ""
+	}
+	// Only advertise IPs the mobile can talk to over plain HTTP.
+	// IsPrivate covers RFC1918 (10/8, 172.16/12, 192.168/16) plus
+	// RFC4193 (IPv6 ULA). Loopback and link-local are also excluded.
+	if !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+		// Public IP — fall through to scanning interfaces in case
+		// there's a private NIC alongside (e.g. tailscale interface
+		// that wasn't picked as the default route).
+		if alt := firstPrivateIPv4(); alt != "" {
+			return alt
+		}
+		return ""
+	}
+	return ip.String()
+}
+
+// firstPrivateIPv4 enumerates every UP non-loopback interface and
+// returns the first RFC1918 IPv4 address it finds. Used as a fallback
+// when getLocalIP's outbound-route probe lands on a public IP.
+func firstPrivateIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			if ip.IsPrivate() {
+				return ip.String()
+			}
+		}
+	}
+	return ""
 }
 
 // getLocalIPs enumerates every reachable IPv4 address this host has —
@@ -6696,6 +6790,17 @@ func getLocalIPs() []string {
 			}
 			ip4 := ip.To4()
 			if ip4 == nil {
+				continue
+			}
+			// Skip public IPs. Mobile reads localIps[] and tries each
+			// over plain HTTP for direct-LAN connect; iOS App Transport
+			// Security blocks HTTP to public addresses with -1022, and
+			// even if it didn't, no mobile on the user's home Wi-Fi can
+			// reach the cloud VM's public IP via direct route. The
+			// relay path (https://public.yaver.io/d/<id>) is the only
+			// off-LAN path that works. Keep RFC1918 (and other private
+			// ranges) — those are real LAN addresses for home agents.
+			if !ip4.IsPrivate() {
 				continue
 			}
 			s := ip4.String()
@@ -7269,6 +7374,8 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 			status.Error = err.Error()
 		} else {
 			defer resp.Body.Close()
+
+	// STREAMING DEBUG
 			if resp.StatusCode == 200 {
 				status.OK = true
 				var body struct {
@@ -7526,8 +7633,17 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 		exposeMgr.SetConn(conn, deviceID)
 	}
 
-	// Handle incoming proxied requests
-	localClient := &http.Client{Timeout: 60 * time.Second}
+	// Handle incoming proxied requests.
+	//
+	// Timeout = 15 min so slow /dev/* handlers (Metro bundling, hermesc
+	// compile, asset copy — combined 60-120s for a SFMG-sized RN app) can
+	// finish before the agent's own per-handler caps (bundleBuildTimeout
+	// 8m, hermesCompileTimeout 3m) fire. The previous 60s default cut the
+	// connection right after Metro's "Done writing bundle output", before
+	// hermesc could even start. The mobile then saw an HTML 504 page and
+	// surfaced "JSON Parse error: Unexpected character: h" — symptom that
+	// always means a relay/proxy timeout, never a real bundle problem.
+	localClient := &http.Client{Timeout: 15 * time.Minute}
 
 	for {
 		stream, err := conn.AcceptStream(ctx)
@@ -7632,6 +7748,8 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 			return
 		}
 		defer resp.Body.Close()
+
+	// STREAMING DEBUG
 		buf := make([]byte, 4096)
 		for {
 			n, err := resp.Body.Read(buf)
@@ -7654,30 +7772,17 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 	}
 	defer resp.Body.Close()
 
-	// 64 MiB cap matches the relay-side limits. Anything larger is
-	// silently truncated and the iframe gets a corrupt script — for
-	// real big bundles we need a streaming protocol, but bumping the
-	// cap from 10 MB → 64 MB unblocks Expo / RN web bundles which
-	// routinely sit in the 5–15 MB range. Keep this in sync with
-	// the limits in relay/server.go and the inbound limit above.
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
-
-	headers := make(map[string]string)
-	for k, v := range resp.Header {
-		if len(v) > 0 {
-			headers[k] = v[0]
-		}
+	// Streaming wire format. The legacy JSON envelope buffered the
+	// entire response body inline, then writing 11 MB to a single QUIC
+	// stream truncated under quic-go's default 6 MB stream window —
+	// the relay then logged "unexpected end of JSON input" and the
+	// iPhone got HTTP 502. The streaming format pushes 64 KB chunks
+	// with their own length prefixes, never holding more than that in
+	// flight at a time. See relay_stream_wire.go for the full spec.
+	if err := writeStreamingResponse(stream, resp); err != nil {
+		log.Printf("[RELAY] stream response failed: %v", err)
+		return
 	}
-
-	tunnelResp := relayTunnelResponse{
-		ID:         req.ID,
-		StatusCode: resp.StatusCode,
-		Headers:    headers,
-		Body:       respBody,
-	}
-
-	respJSON, _ := json.Marshal(tunnelResp)
-	stream.Write(respJSON)
 }
 
 // ---------------------------------------------------------------------------
@@ -8073,6 +8178,8 @@ func mcpRemoteCmd(subcmd string, args []string) {
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+	// STREAMING DEBUG
 		var result map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&result)
 		if resp.StatusCode == 201 {
@@ -8093,6 +8200,8 @@ func mcpRemoteCmd(subcmd string, args []string) {
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+	// STREAMING DEBUG
 		var data struct {
 			Plugins []struct {
 				Name    string `json:"name"`
@@ -8146,6 +8255,8 @@ func mcpRemoteCmd(subcmd string, args []string) {
 			os.Exit(1)
 		}
 		defer resp.Body.Close()
+
+	// STREAMING DEBUG
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
 		fmt.Println("MCP server is UP")
@@ -8342,6 +8453,8 @@ func checkLatestVersion() {
 		return
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 	if resp.StatusCode != 200 {
 		return
 	}
@@ -8381,6 +8494,8 @@ func fetchLatestCLIVersion() string {
 		return ""
 	}
 	defer resp.Body.Close()
+
+	// STREAMING DEBUG
 	var result struct {
 		CliVersion string `json:"cliVersion"`
 	}

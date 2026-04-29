@@ -1,9 +1,9 @@
 "use client";
 
 // PhoneProjectsView — UI over desktop/agent/phone_backend.go. A phone project
-// is a SQLite-backed Yaver project. Top-level Deploy section matches
-// roadmap §Wedge Demo — [Your Dev Machine] + [Yaver Cloud]. Legacy 6-target
-// switch-engine promote is tucked under an "Advanced" toggle.
+// is a SQLite-backed Yaver project. Deploy section currently surfaces the
+// "Your Dev Machine" path; the cloud deploy path is hidden at launch
+// (`canUseYaverCloud` is permanently false until paid features ship).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -15,9 +15,7 @@ import {
 } from "@/lib/agent-client";
 import { useDevices, type Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
-import { isCloudPreviewUser } from "@/lib/cloud-preview";
 import { buildImportedConversationBrief, mergeImportedConversationPrompt } from "@/lib/conversation-import";
-import { getManagedSubscription } from "@/lib/subscription";
 import { getSelfHostedRuntimeBaseUrl, getSelfHostedRuntimeLabel, getYaverCloudBaseUrl } from "@/lib/yaver-cloud";
 
 const ADVANCED_PROMOTE_TARGETS: Array<{ id: string; label: string; sub: string }> = [
@@ -94,11 +92,11 @@ export default function PhoneProjectsView() {
   const [promoting, setPromoting] = useState<string | null>(null);
 
   // Deploy state (roadmap §Wedge Demo)
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const { devices } = useDevices(token);
-  const canUseCloudPreview = isCloudPreviewUser(user?.email);
-  const [hasManagedCloud, setHasManagedCloud] = useState(false);
-  const canUseYaverCloud = canUseCloudPreview || hasManagedCloud;
+  // Yaver Cloud deploy path is hidden at launch — no paid features yet.
+  const canUseCloudPreview = false;
+  const canUseYaverCloud = false;
   const [currentDeviceId] = useState<string | undefined>(undefined);
   const devMachines = useMemo(
     () => pickDevMachines(devices, currentDeviceId),
@@ -120,24 +118,6 @@ export default function PhoneProjectsView() {
       setSelectedMobileDeviceId(mobileDevices[0].id);
     }
   }, [mobileDevices, selectedMobileDeviceId]);
-  useEffect(() => {
-    let cancelled = false;
-    if (!token) {
-      setHasManagedCloud(false);
-      return;
-    }
-    void (async () => {
-      const summary = await getManagedSubscription(token);
-      if (cancelled || !summary) return;
-      const hasMachine = Array.isArray(summary.machines)
-        && summary.machines.some((machine) => machine.status !== "stopped");
-      const hasSubscription = !!summary.subscription;
-      setHasManagedCloud(hasMachine || hasSubscription);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
   const selectedDevMachine = useMemo(
     () => devMachines.find((d) => d.id === selectedDevMachineId) ?? null,
     [devMachines, selectedDevMachineId],

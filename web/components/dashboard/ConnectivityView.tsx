@@ -9,7 +9,6 @@ type SettingsState = {
   relayUrl: string;
   relayPassword: string;
   tunnelUrl: string;
-  managedRelay?: boolean;
 };
 
 function normalizeUrl(value: string) {
@@ -24,7 +23,7 @@ function recommendationLabel(args: {
 }) {
   if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) return "Cloudflare Tunnel";
   if (args.tailscale?.running) return "Tailscale";
-  if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl || args.settings.managedRelay) return "Yaver Relay";
+  if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl) return "Yaver Relay";
   return "LAN";
 }
 
@@ -37,7 +36,7 @@ function transportOrder(args: {
   const out: string[] = ["LAN"];
   if (args.tailscale?.running) out.push("Tailscale");
   if ((args.device?.publicEndpoints?.length || 0) > 0 || args.settings.tunnelUrl) out.push("Cloudflare Tunnel");
-  if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl || args.settings.managedRelay) out.push("Yaver Relay");
+  if ((args.infra?.relays?.length || 0) > 0 || args.settings.relayUrl) out.push("Yaver Relay");
   return out;
 }
 
@@ -84,7 +83,6 @@ export default function ConnectivityView({
             relayUrl: next.relayUrl || "",
             relayPassword: next.relayPassword || "",
             tunnelUrl: next.tunnelUrl || "",
-            managedRelay: next.managed?.relay,
           });
         }
       } catch {
@@ -295,9 +293,6 @@ export default function ConnectivityView({
                   <div className="font-medium text-surface-100">Yaver Relay</div>
                   <div className="text-xs text-surface-500">Best when you want a stable cross-network fallback without exposing your machine directly.</div>
                 </div>
-                {settings.managedRelay ? (
-                  <span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-200">managed relay enabled</span>
-                ) : null}
               </div>
               <div className="grid gap-3 md:grid-cols-2">
                 <label className="text-xs text-surface-400">

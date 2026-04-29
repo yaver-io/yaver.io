@@ -158,6 +158,35 @@ func (t *TunnelClient) register(ctx context.Context, conn quic.Connection) error
 	return nil
 }
 
+// isLongDevRequest returns true for /dev/* paths whose handler can
+// legitimately take more than 60s on the agent (Metro bundling, hermesc
+// compile, web-export). The default httpClient.Timeout is 60s — too
+// short for these — and a 504 there surfaces as "JSON Parse error:
+// Unexpected character: h" on the mobile client because the relay
+// returns an HTML 504 page. Keep this list aligned with every slow
+// /dev/* handler in desktop/agent/devserver_http.go and build_web.go.
+func isLongDevRequest(path string) bool {
+	if !strings.HasPrefix(path, "/dev/") {
+		return false
+	}
+	long := []string{
+		"/dev/build-native",
+		"/dev/web-bundle",
+		"/dev/build-web",
+		"/dev/build-",
+		"/dev/start",
+		"/dev/web-preview/start",
+		"/dev/native-bundle", // bundle download — multi-MB body
+		"/dev/native-assets", // assets zip — multi-MB body
+	}
+	for _, p := range long {
+		if strings.Contains(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleRequest reads a TunnelRequest from the relay, proxies it to
 // the local agent HTTP server, and writes the TunnelResponse back.
 func (t *TunnelClient) handleRequest(stream quic.Stream) {
@@ -244,8 +273,18 @@ func (t *TunnelClient) handleRequest(stream quic.Stream) {
 		return
 	}
 
-	// Execute request against local agent
-	resp, err := t.httpClient.Do(httpReq)
+	// Pick a longer client timeout for slow /dev/* endpoints. The
+	// default 60s client.Timeout kills /dev/build-native around the
+	// time Metro finishes bundling SFMG (~54s + asset copy), so the
+	// relay returns a 504 HTML page that the mobile app's JSON.parse
+	// chokes on with "Unexpected character: h". The agent's own
+	// timeouts (bundleBuildTimeout 8m, hermesCompileTimeout 3m) are the
+	// real safety net — the relay just forwards.
+	client := t.httpClient
+	if isLongDevRequest(req.Path) {
+		client = &http.Client{Timeout: 15 * time.Minute}
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		log.Printf("[TUNNEL] local request failed: %v", err)
 		t.sendErrorResponse(stream, req.ID, 502, fmt.Sprintf("agent error: %v", err))

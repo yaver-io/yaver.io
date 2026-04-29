@@ -24,7 +24,7 @@ func TestBundleCommandHonoursContext(t *testing.T) {
 	// and dial directly into exec.CommandContext to keep the test hermetic.
 	// The wiring it proves — context propagates and kills the subprocess —
 	// is identical to what bundleCommand does internally.
-	cmd := bundleCommand(ctx, "npm", "react-native", "ios", "index.js", "/tmp/bundle.js", "/tmp/assets")
+	cmd := bundleCommand(ctx, "npm", "react-native", "ios", "index.js", "/tmp/bundle.js", "/tmp/assets", true)
 	if cmd == nil {
 		t.Fatal("bundleCommand returned nil")
 	}

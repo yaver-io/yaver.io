@@ -48,7 +48,15 @@ export default function TabLayout() {
     [router],
   );
 
-  // Poll dev server status for green dot badge + auto-route
+  // Poll dev server status — drives the green-dot badge on the Hot
+  // Reload + Projects tabs. We INTENTIONALLY do not auto-navigate to
+  // any tab when the dev server starts. The previous behaviour ripped
+  // the user out of Hot Reload (where they had just tapped "Open in
+  // Yaver" and were watching progress) the moment Metro flipped to
+  // running, dumping them on Projects with a stale state and a "no
+  // device selected" appearance — even though the loading was healthy
+  // in the tab they came from. Loading state belongs to the tab the
+  // user is on; navigation is the user's call.
   useEffect(() => {
     if (!isConnected) {
       setDevServerRunning(false);
@@ -62,11 +70,7 @@ export default function TabLayout() {
         const running = status?.running === true;
         if (mounted) {
           setDevServerRunning(running);
-          // Auto-navigate to Projects tab when dev server first starts
-          if (running && !wasRunning.current) {
-            wasRunning.current = true;
-            router.navigate("/(tabs)/apps");
-          }
+          if (running) wasRunning.current = true;
           if (!running) wasRunning.current = false;
         }
       } catch {
@@ -76,7 +80,7 @@ export default function TabLayout() {
     poll();
     const interval = setInterval(poll, 3000);
     return () => { mounted = false; clearInterval(interval); };
-  }, [isConnected, router]);
+  }, [isConnected]);
 
   useEffect(() => {
     if (!isConnected) return;

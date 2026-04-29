@@ -216,6 +216,11 @@ export default function AppsScreen() {
   // helpers below (sendTaskOrWarn / offerAgentFix) can surface status from
   // any callback without forward-reference TDZ errors.
   const [nativeLoading, setNativeLoading] = useState(false);
+  // Live tail of the latest bundler stdout line. Updated from /dev/events
+  // SSE on every event.logLine push. Rendered below the progress bar so
+  // the user can see Metro is actively chewing through modules and not
+  // just hung. Cleared when the build finishes.
+  const [bundlerLine, setBundlerLine] = useState("");
   const [loadingStatus, setLoadingStatus] = useState("");
   const [buildProgress, setBuildProgress] = useState(0);
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
@@ -1135,13 +1140,31 @@ export default function AppsScreen() {
             if (!line.startsWith("data: ")) continue;
             try {
               const event = JSON.parse(line.slice(6));
-              if (event.type === "log" && event.message) {
-                const msg = event.message;
-                setLoadingStatus(msg);
-                if (msg.includes("Installing dependencies")) setBuildProgress(0.1);
-                else if (msg.includes("Bundling")) setBuildProgress(0.3);
-                else if (msg.includes("Compiling Hermes")) setBuildProgress(0.7);
-                else if (msg.includes("Bundle ready")) setBuildProgress(0.95);
+              // Two SSE shapes carry useful text:
+              //  - event.message  → high-level phase from emitBuildProgress
+              //                     ("Bundling with Expo for ios...")
+              //  - event.logLine  → individual stdout line from Metro/hermesc
+              //                     ("iOS node_modules/expo-router/entry.js …62.8% (953/1217)")
+              // The phase line drives loadingStatus + the progress bar
+              // bucket; the logLine drives the live tail under the bar.
+              if (event.type === "log") {
+                if (event.logLine) {
+                  // Trim noisy prefixes the agent's devLogWriter prepends
+                  // ([super-host], [super-host:hermesc]) so the mobile tail
+                  // stays readable in 1 line.
+                  const clean = String(event.logLine)
+                    .replace(/^\[super-host(?::hermesc)?\]\s*/, "")
+                    .trimEnd();
+                  if (clean) setBundlerLine(clean);
+                }
+                if (event.message) {
+                  const msg = event.message;
+                  setLoadingStatus(msg);
+                  if (msg.includes("Installing dependencies")) setBuildProgress(0.1);
+                  else if (msg.includes("Bundling")) setBuildProgress(0.3);
+                  else if (msg.includes("Compiling Hermes")) setBuildProgress(0.7);
+                  else if (msg.includes("Bundle ready")) setBuildProgress(0.95);
+                }
               }
             } catch {}
           }
@@ -1373,7 +1396,14 @@ export default function AppsScreen() {
               );
             })()}
 
-            {/* Build progress bar — shows during HBC compilation */}
+            {/* Build progress — two-line layout while HBC bundle is compiling.
+                Line 1 (loadingStatus): the high-level phase, e.g. "Building
+                Hermes bundle...". Line 2 (bundlerLine): the latest stdout
+                line from Metro/expo-export, updated live as Metro emits
+                progress (e.g. "iOS node_modules/expo-router/entry.js
+                62.8% (953/1217)"). The second line is what the user actually
+                wants to see when a build seems "stuck" — it confirms whether
+                the agent is doing useful work or genuinely hung. */}
             {nativeLoading && (
               <View style={s.progressContainer}>
                 <View style={s.progressTrack}>
@@ -1381,6 +1411,15 @@ export default function AppsScreen() {
                 </View>
                 {loadingStatus ? (
                   <Text style={s.progressText} numberOfLines={1}>{loadingStatus}</Text>
+                ) : null}
+                {bundlerLine ? (
+                  <Text
+                    style={[s.progressText, { fontSize: 10, opacity: 0.65, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                  >
+                    {bundlerLine}
+                  </Text>
                 ) : null}
               </View>
             )}

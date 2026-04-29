@@ -103,22 +103,24 @@ type DevServerStatus struct {
 //
 // Type taxonomy (the "Yaver Protocol v1 lite" living on the existing SSE
 // channel — full envelope is a follow-up):
-//   "phase"     — a discrete state transition for a topic
-//   "progress"  — a percentage update for the current phase
-//   "snapshot"  — the agent's current full state, emitted every 5s
-//                 even when otherwise quiet (so the consumer can render
-//                 from the latest snapshot and never feel "stuck")
-//   "log"       — a single stdout/stderr line
-//   "heartbeat" — agent is alive (kept for backwards-compat with
-//                 v1.99.<=66 consumers that don't grok snapshots)
-//   "ready"|"reload"|"error"|"stopped"|"file_changed"|"web-preview-starting"|
-//   "starting"  — legacy event types (still emitted)
+//
+//	"phase"     — a discrete state transition for a topic
+//	"progress"  — a percentage update for the current phase
+//	"snapshot"  — the agent's current full state, emitted every 5s
+//	              even when otherwise quiet (so the consumer can render
+//	              from the latest snapshot and never feel "stuck")
+//	"log"       — a single stdout/stderr line
+//	"heartbeat" — agent is alive (kept for backwards-compat with
+//	              v1.99.<=66 consumers that don't grok snapshots)
+//	"ready"|"reload"|"error"|"stopped"|"file_changed"|"web-preview-starting"|
+//	"starting"  — legacy event types (still emitted)
 //
 // Topic taxonomy:
-//   "dev/start"      — main dev-server lifecycle (Metro/Expo/Vite/etc)
-//   "webview/build"  — Expo Web sibling
-//   "hermes/compile" — hermesc on the agent (per /dev/build-native)
-//   "bundle/push"    — yaver-cli pushing to phone
+//
+//	"dev/start"      — main dev-server lifecycle (Metro/Expo/Vite/etc)
+//	"webview/build"  — Expo Web sibling
+//	"hermes/compile" — hermesc on the agent (per /dev/build-native)
+//	"bundle/push"    — yaver-cli pushing to phone
 type DevServerEvent struct {
 	Type      string `json:"type"`
 	Framework string `json:"framework"`
@@ -172,22 +174,22 @@ type DevServerEvent struct {
 // from this and never feels "stuck" because a fresh one arrives every
 // 5s regardless of whether anything happened.
 type DevServerSnapshot struct {
-	GeneratedAt string             `json:"generatedAt"`
-	Running     bool               `json:"running"`
-	Framework   string             `json:"framework,omitempty"`
-	Surface     string             `json:"surface,omitempty"`
-	Port        int                `json:"port,omitempty"`
-	WebPort     int                `json:"webPort,omitempty"`
-	WorkDir     string             `json:"workDir,omitempty"`
-	UptimeSec   int                `json:"uptimeSec,omitempty"`
-	Pid         int                `json:"pid,omitempty"`
-	PidAlive    bool               `json:"pidAlive,omitempty"`
-	IdleSec     int                `json:"idleSec,omitempty"`
-	Phases      map[string]string  `json:"phases,omitempty"`   // topic → current phase
-	Progress    *ProgressSnapshot  `json:"progress,omitempty"` // most recent active progress
-	WebProgress *ProgressSnapshot  `json:"webProgress,omitempty"`
-	RecentLogs  []string           `json:"recentLogs,omitempty"`     // last 8 stdout/stderr lines
-	BeatNumber  int                `json:"beatNumber,omitempty"`
+	GeneratedAt string            `json:"generatedAt"`
+	Running     bool              `json:"running"`
+	Framework   string            `json:"framework,omitempty"`
+	Surface     string            `json:"surface,omitempty"`
+	Port        int               `json:"port,omitempty"`
+	WebPort     int               `json:"webPort,omitempty"`
+	WorkDir     string            `json:"workDir,omitempty"`
+	UptimeSec   int               `json:"uptimeSec,omitempty"`
+	Pid         int               `json:"pid,omitempty"`
+	PidAlive    bool              `json:"pidAlive,omitempty"`
+	IdleSec     int               `json:"idleSec,omitempty"`
+	Phases      map[string]string `json:"phases,omitempty"`   // topic → current phase
+	Progress    *ProgressSnapshot `json:"progress,omitempty"` // most recent active progress
+	WebProgress *ProgressSnapshot `json:"webProgress,omitempty"`
+	RecentLogs  []string          `json:"recentLogs,omitempty"` // last 8 stdout/stderr lines
+	BeatNumber  int               `json:"beatNumber,omitempty"`
 }
 
 // ─── DevServer Registry ────────────────────────────────────────────────

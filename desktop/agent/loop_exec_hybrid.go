@@ -14,9 +14,9 @@ import (
 
 // spawnHybrid runs one hybrid pass for the current kick: a frontier
 // planner decomposes the kick prompt into small file-scoped subtasks
-// and the local implementer (default aider+ollama) executes them.
-// The HybridReport is folded into the AIResponse contract so the rest
-// of the loop machinery doesn't care which engine ran.
+// and the implementer (default opencode) executes them. The
+// HybridReport is folded into the AIResponse contract so the rest of
+// the loop machinery doesn't care which engine ran.
 func spawnHybrid(ctx context.Context, l *LoopState, workDir string, report *HeuristicReport, reportPath string, nudge string) (*AIResponse, error) {
 	prompt, err := buildLoopPrompt(l, workDir, report, nudge)
 	if err != nil {
@@ -26,8 +26,8 @@ func spawnHybrid(ctx context.Context, l *LoopState, workDir string, report *Heur
 	// Per-tier agent×model layering. The user can compose any
 	// combination via --planner / --implementer (env-injected by
 	// autodev_cmd) so e.g. "Opus plans, Codex implements" is one
-	// flag set away. Empty env → applyHybridDefaults picks the
-	// classic "claude + aider-ollama" cheap pair.
+	// flag set away. Empty env → applyHybridDefaults picks
+	// "claude planner + opencode implementer".
 	plannerSpec := strings.TrimSpace(os.Getenv("YAVER_HYBRID_PLANNER"))
 	implementerSpec := strings.TrimSpace(os.Getenv("YAVER_HYBRID_IMPLEMENTER"))
 	plannerAgent, _ := splitAgentSpec(plannerSpec)
@@ -39,7 +39,6 @@ func spawnHybrid(ctx context.Context, l *LoopState, workDir string, report *Heur
 		Planner:     plannerAgent,
 		Implementer: implAgent,
 		Model:       firstNonEmpty(implModel, l.Spec.Think.Model),
-		BaseURL:     l.Spec.Think.BaseURL,
 		// One kick = one small chunk of work; the loop's repetition
 		// does the long-horizon planning, not a single planner call.
 		MaxSubtasks: 5,
@@ -47,7 +46,7 @@ func spawnHybrid(ctx context.Context, l *LoopState, workDir string, report *Heur
 
 	fmt.Fprintf(os.Stderr, "[loop %s] hybrid kick — planner=%s implementer=%s (max %d subtasks)\n",
 		l.Spec.Name, defaultStr(spec.Planner, "claude"),
-		defaultStr(spec.Implementer, "aider-ollama"), spec.MaxSubtasks)
+		defaultStr(spec.Implementer, "opencode"), spec.MaxSubtasks)
 
 	rep, err := RunHybrid(ctx, spec)
 	if err != nil {
@@ -144,8 +143,8 @@ func defaultStr(v, fallback string) string {
 // splitAgentSpec parses "agent[:model]" into (agent, model). Model
 // aliases (sonnet/opus/haiku) are expanded to current generation
 // claude model ids; other strings pass through verbatim so users
-// can pass full ids ("claude-opus-4-6") or ollama models
-// ("ollama_chat/qwen2.5-coder:14b").
+// can pass full ids ("claude-opus-4-6") or any opencode-compatible
+// model id ("anthropic/claude-sonnet-4-6", "openrouter/...").
 func splitAgentSpec(spec string) (agent, model string) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {

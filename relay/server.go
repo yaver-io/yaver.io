@@ -888,20 +888,50 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read response. 64 MiB cap matches the request-side limit and
-	// handles full Expo static bundles end-to-end. For an oversized
-	// body, ReadAll silently stops at the limit and the JSON unmarshal
-	// below fails → 502 — better than the previous behaviour where
-	// 10 MB of base64 sometimes fit but a 9 MB raw JS asset (which
-	// becomes ~12 MB envelope) silently corrupted and the iframe got
-	// a half-truncated script. TODO: stream large bodies instead of
-	// buffering the whole envelope on both ends.
-	respData, err := io.ReadAll(io.LimitReader(stream, 64<<20))
+	// Peek the first byte to detect wire format:
+	//   0xFE → new streaming wire (relay_stream_wire.go) — body streams
+	//          chunk-by-chunk so iOS/browsers see bytes immediately and
+	//          don't trigger Data stall on big (8 MB+) responses.
+	//   '{'  → legacy JSON envelope (TunnelResponse). Old agents only
+	//          know this shape; backwards compat keeps them working.
+	var first [1]byte
+	if _, err := io.ReadFull(stream, first[:]); err != nil {
+		log.Printf("[RELAY] read first byte from %s failed: %v", tunnel.deviceID[:8], err)
+		http.Error(w, "tunnel read error", http.StatusBadGateway)
+		return
+	}
+
+	bytesIn := int64(len(reqData))
+	if r.ContentLength > 0 {
+		bytesIn += r.ContentLength
+	}
+
+	if first[0] == streamWireMagic {
+		// New streaming wire format. Don't buffer; let the reader
+		// flush chunks straight to the client.
+		if err := readStreamingResponse(w, stream); err != nil {
+			// Headers were already written by the time most errors
+			// fire — log and bail, the client sees a truncated body.
+			log.Printf("[RELAY] streaming response from %s failed: %v", tunnel.deviceID[:8], err)
+		}
+		// Bandwidth bookkeeping for streaming responses isn't byte-
+		// exact (we'd need to wrap the io.Copy with a counter); for
+		// now record the request side accurately and treat streaming
+		// outbound as best-effort. The bandwidth dashboard already
+		// flags very off-base numbers.
+		s.bandwidth.RecordBytes(deviceID, bytesIn, 0, false)
+		return
+	}
+
+	// Legacy JSON envelope path — re-prepend the byte we peeked,
+	// then read the rest.
+	rest, err := io.ReadAll(io.LimitReader(stream, 64<<20))
 	if err != nil {
 		log.Printf("[RELAY] read from %s failed: %v", tunnel.deviceID[:8], err)
 		http.Error(w, "tunnel read error", http.StatusBadGateway)
 		return
 	}
+	respData := append(first[:1:1], rest...)
 
 	var tunnelResp TunnelResponse
 	if err := json.Unmarshal(respData, &tunnelResp); err != nil {
@@ -918,10 +948,6 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	w.Write(tunnelResp.Body)
 
 	// Record bandwidth usage
-	bytesIn := int64(len(reqData))
-	if r.ContentLength > 0 {
-		bytesIn += r.ContentLength
-	}
 	bytesOut := int64(len(tunnelResp.Body))
 	s.bandwidth.RecordBytes(deviceID, bytesIn, bytesOut, false)
 }
