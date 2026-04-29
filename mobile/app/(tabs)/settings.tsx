@@ -36,6 +36,8 @@ import { quicClient, type AgentStatus, type CapabilitySnapshot, type Environment
 
 WebBrowser.maybeCompleteAuthSession();
 
+const SUPPORTED_RUNNERS = new Set(["claude-code", "codex", "opencode"]);
+
 const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
 const BUILD_NUMBER =
   Constants.expoConfig?.ios?.buildNumber ??
@@ -2626,7 +2628,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>AI Runner</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            {runners.map((runner) => {
+            {runners.filter((r) => SUPPORTED_RUNNERS.has(r.runnerId)).map((runner) => {
               const selected = selectedRunner === runner.runnerId;
               return (
                 <Pressable
