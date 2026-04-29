@@ -21,8 +21,15 @@ Treat `.md` files the way you'd treat a commit message from six months ago: usef
 - Runtime architecture (auth / bootstrap / relay / recovery) → [`AI_ARCH.md`](AI_ARCH.md)
 - Slave-machine / remote-build flows → [`REMOTE_WORKER.md`](REMOTE_WORKER.md)
 - Per-project cached context → `init.md` at the project root (best-effort; may be out of date)
+- For local iOS/TestFlight deploys on this Mac, also read the "iOS TestFlight deploy gotchas" and "iOS — TestFlight" sections in [`CLAUDE.md`](CLAUDE.md) before assuming the vault path is working.
 
 After reading the docs, **grep the code for the symbols the docs name** before relying on them.
+
+## Local Deploy Memory
+
+- On this Mac, local TestFlight deploys can work even when `yaver vault env --project mobile` is unauthenticated, because the deploy guide in [`CLAUDE.md`](CLAUDE.md) already documents the fallback `APP_STORE_KEY_*` / `APPLE_TEAM_ID` exports used by the working local path.
+- If `scripts/deploy-testflight.sh` appears stuck with almost no output, check for another active `xcodebuild archive` from `talos`, `sfmg`, or an earlier Yaver run before assuming credentials are broken.
+- If you must clean local archive artifacts, inspect the exact path first (`ls -la /tmp/YaverBuild /tmp/Yaver.xcarchive /tmp/YaverExport`) and only then remove those specific directories.
 
 ## Hard safety rules (summarised from CLAUDE.md)
 

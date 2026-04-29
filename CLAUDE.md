@@ -1958,6 +1958,9 @@ Then tap **Reload JS** on the error screen — the app will fetch the bundle and
 
 - **`uploadSymbols` must be `false` in ExportOptions.plist** (already set in `scripts/deploy-testflight.sh`). Xcode 15+ treats missing dSYMs as fatal export errors, and `rnwhisper` ships without dSYMs. Apple symbolicates server-side from bitcode anyway, so skipping local dSYM upload is safe and lets the export succeed.
 - **After TestFlight daily-limit error, wait ~24h**. There is no API to reset or query the remaining quota; the script will just keep failing with `Upload limit reached` until the window rolls over.
+- **On this Mac, a local deploy may still work when `yaver vault env --project mobile` is unauthenticated.** The operational fallback is the explicit `APP_STORE_KEY_*` + `APPLE_TEAM_ID` export path documented below in the "iOS — TestFlight" section; the local `.p8` is typically resolved from `~/.appstoreconnect/private_keys/` or the sibling Talos checkout.
+- **A "hung" `scripts/deploy-testflight.sh` is often just another archive already holding Xcode busy.** Before blaming Apple auth, check `ps -axo pid,command | rg 'xcodebuild .*archive'` for stale `talos`, `sfmg`, or prior `yaver` archives.
+- **If an earlier archive polluted `/tmp`, clear only the exact Yaver paths after inspecting them first.** The safe cleanup set is `/tmp/YaverBuild`, `/tmp/Yaver.xcarchive`, and `/tmp/YaverExport`; always `ls -la` them before deleting.
 - **Archive is at `/tmp/Yaver.xcarchive`** after a successful archive phase. If the upload portion fails (e.g. Apple transient error, exit 70), re-run just the export step instead of rebuilding:
   ```bash
   xcodebuild -exportArchive \

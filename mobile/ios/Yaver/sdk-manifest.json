@@ -14,8 +14,6 @@
   "supportedRNRange": "0.81.x",
   "nativeModules": {
     "@amplitude/analytics-react-native": "1.5.52",
-    "@expo/vector-icons": "15.1.1",
-    "@gorhom/bottom-sheet": "5.2.9",
     "@intercom/intercom-react-native": "10.0.0",
     "@notifee/react-native": "9.1.8",
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -29,13 +27,10 @@
     "@react-native-picker/picker": "2.11.1",
     "@react-native-segmented-control/segmented-control": "2.5.7",
     "@sentry/react-native": "8.8.0",
-    "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.2.12",
-    "@shopify/restyle": "2.4.5",
     "@stripe/stripe-react-native": "0.64.0",
     "expo-apple-authentication": "8.0.8",
     "expo-asset": "12.0.12",
-    "expo-auth-session": "7.0.10",
     "expo-av": "16.0.8",
     "expo-background-fetch": "14.0.9",
     "expo-battery": "10.0.8",
@@ -61,11 +56,10 @@
     "expo-local-authentication": "17.0.8",
     "expo-localization": "17.0.8",
     "expo-location": "19.0.8",
-    "expo-mail-composer": "15.0.8",
+    "expo-mail-composer": "55.0.13",
     "expo-media-library": "18.2.1",
     "expo-notifications": "0.32.16",
     "expo-print": "15.0.8",
-    "expo-router": "6.0.23",
     "expo-screen-capture": "8.0.9",
     "expo-screen-orientation": "9.0.8",
     "expo-secure-store": "15.0.8",
@@ -75,7 +69,6 @@
     "expo-speech": "14.0.8",
     "expo-splash-screen": "31.0.13",
     "expo-sqlite": "16.0.10",
-    "expo-status-bar": "3.0.9",
     "expo-system-ui": "6.0.9",
     "expo-task-manager": "14.0.9",
     "expo-updates": "29.0.16",
@@ -83,68 +76,39 @@
     "expo-video-thumbnails": "10.0.8",
     "expo-web-browser": "15.0.10",
     "lottie-react-native": "7.3.6",
-    "posthog-react-native": "4.42.1",
     "react-native-audio-api": "0.11.7",
     "react-native-background-actions": "4.1.0",
     "react-native-ble-plx": "3.5.1",
-    "react-native-calendars": "1.1314.0",
     "react-native-device-info": "15.0.2",
-    "react-native-draggable-flatlist": "4.0.3",
     "react-native-gesture-handler": "2.28.0",
     "react-native-get-random-values": "1.11.0",
     "react-native-iap": "14.7.20",
     "react-native-keyboard-controller": "1.21.5",
     "react-native-maps": "1.20.1",
-    "react-native-markdown-display": "7.0.2",
     "react-native-mmkv": "4.3.0",
-    "react-native-modal": "14.0.0-rc.1",
     "react-native-nitro-image": "0.13.1",
     "react-native-nitro-modules": "0.35.3",
     "react-native-pager-view": "6.9.1",
     "react-native-pdf": "7.0.4",
-    "react-native-pell-rich-editor": "1.10.0",
     "react-native-permissions": "5.5.1",
-    "react-native-progress": "5.0.1",
     "react-native-purchases": "10.0.1",
-    "react-native-qrcode-svg": "6.3.21",
     "react-native-reanimated": "4.1.7",
-    "react-native-reanimated-carousel": "4.0.3",
     "react-native-record-screen": "0.6.2",
     "react-native-safe-area-context": "5.6.2",
     "react-native-screens": "4.16.0",
     "react-native-share": "12.2.6",
-    "react-native-signature-canvas": "5.0.2",
-    "react-native-skeleton-placeholder": "5.2.4",
     "react-native-svg": "15.12.1",
-    "react-native-swipe-list-view": "3.2.9",
-    "react-native-toast-message": "2.3.3",
     "react-native-udp": "4.1.7",
     "react-native-video": "6.19.1",
     "react-native-view-shot": "4.0.3",
     "react-native-vision-camera": "5.0.1",
-    "react-native-web": "0.21.2",
     "react-native-webview": "13.15.0",
-    "react-native-worklets": "0.5.1",
-    "victory-native": "41.20.2",
+    "react-native-worklets": "0.7.4",
     "whisper.rn": "0.5.5"
   },
   "moduleSupport": {
     "@amplitude/analytics-react-native": {
       "version": "1.5.52",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@expo/vector-icons": {
-      "version": "15.1.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@gorhom/bottom-sheet": {
-      "version": "5.2.9",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -241,22 +205,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "@shopify/flash-list": {
-      "version": "2.0.2",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "@shopify/react-native-skia": {
       "version": "2.2.12",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "@shopify/restyle": {
-      "version": "2.4.5",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -278,13 +228,6 @@
     },
     "expo-asset": {
       "version": "12.0.12",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "expo-auth-session": {
-      "version": "7.0.10",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -466,7 +409,7 @@
       "pluginEnabled": true
     },
     "expo-mail-composer": {
-      "version": "15.0.8",
+      "version": "55.0.13",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -492,13 +435,6 @@
       "cliPush": true,
       "agentOpenInYaver": true,
       "pluginEnabled": false
-    },
-    "expo-router": {
-      "version": "6.0.23",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": true
     },
     "expo-screen-capture": {
       "version": "8.0.9",
@@ -563,13 +499,6 @@
       "agentOpenInYaver": true,
       "pluginEnabled": true
     },
-    "expo-status-bar": {
-      "version": "3.0.9",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "expo-system-ui": {
       "version": "6.0.9",
       "hostApp": true,
@@ -619,13 +548,6 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "posthog-react-native": {
-      "version": "4.42.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-audio-api": {
       "version": "0.11.7",
       "hostApp": true,
@@ -647,22 +569,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-calendars": {
-      "version": "1.1314.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-device-info": {
       "version": "15.0.2",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-draggable-flatlist": {
-      "version": "4.0.3",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -703,22 +611,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-markdown-display": {
-      "version": "7.0.2",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-mmkv": {
       "version": "4.3.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-modal": {
-      "version": "14.0.0-rc.1",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -752,22 +646,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-pell-rich-editor": {
-      "version": "1.10.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-permissions": {
       "version": "5.5.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-progress": {
-      "version": "5.0.1",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -780,13 +660,6 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-qrcode-svg": {
-      "version": "6.3.21",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-reanimated": {
       "version": "4.1.7",
       "hostApp": true,
@@ -794,8 +667,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-reanimated-carousel": {
-      "version": "4.0.3",
+    "react-native-record-screen": {
+      "version": "0.6.2",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -822,36 +695,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-signature-canvas": {
-      "version": "5.0.2",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-skeleton-placeholder": {
-      "version": "5.2.4",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-svg": {
       "version": "15.12.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-swipe-list-view": {
-      "version": "3.2.9",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-toast-message": {
-      "version": "2.3.3",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
@@ -885,13 +730,6 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-web": {
-      "version": "0.21.2",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-webview": {
       "version": "13.15.0",
       "hostApp": true,
@@ -900,14 +738,7 @@
       "pluginEnabled": false
     },
     "react-native-worklets": {
-      "version": "0.5.1",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "victory-native": {
-      "version": "41.20.2",
+      "version": "0.7.4",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,

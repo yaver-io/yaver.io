@@ -176,6 +176,7 @@ jobs:
           cd mobile
           npm ci
           cd ..
+          node --test scripts/generate-sdk-manifest.test.mjs
           node scripts/generate-sdk-manifest.mjs --check
           cd mobile
           npx tsc --noEmit

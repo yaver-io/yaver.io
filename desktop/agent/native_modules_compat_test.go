@@ -60,18 +60,16 @@ func TestExtractProjectNativeModules(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "expo-camera", "ios"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@react-native-async-storage", "async-storage", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-record-screen", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@gorhom", "bottom-sheet"))
 	mods, err := ExtractProjectNativeModules(tmp)
 	if err != nil {
 		t.Fatalf("extract: %v", err)
 	}
 	got := append([]string{}, mods...)
 	sort.Strings(got)
-	// Heuristic intentionally narrow: must contain "react-native" or
-	// start with "expo-" / "@expo/". `@gorhom/bottom-sheet` is native but
-	// won't pass the heuristic — that's an accepted false-negative since
-	// it's already in Yaver's sdk-manifest, so the manifest match path
-	// catches it during compat reporting. `expo` (umbrella) is in
-	// jsOnlyExact so it doesn't get flagged as missing-from-manifest.
 	want := []string{
 		"@react-native-async-storage/async-storage",
 		"expo-camera",
@@ -80,6 +78,32 @@ func TestExtractProjectNativeModules(t *testing.T) {
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("native module extraction mismatch.\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func TestExtractProjectNativeModules_UsesPackageMarkersToAvoidFalsePositives(t *testing.T) {
+	tmp := t.TempDir()
+	pkg := `{
+  "dependencies": {
+    "react-native-modal": "14.0.0",
+    "react-native-reanimated-carousel": "4.0.3",
+    "posthog-react-native": "4.42.1",
+    "react-native-worklets": "0.7.4"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-modal"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-reanimated-carousel"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "posthog-react-native"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-worklets", "android"))
+	mods, err := ExtractProjectNativeModules(tmp)
+	if err != nil {
+		t.Fatalf("extract: %v", err)
+	}
+	if !reflect.DeepEqual(mods, []string{"react-native-worklets"}) {
+		t.Fatalf("expected only package-marker-backed native modules, got %v", mods)
 	}
 }
 
@@ -100,6 +124,8 @@ func TestBuildCompatReport_DetectsMissingModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@react-native-async-storage", "async-storage", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-yaver-fictional-test-module", "android"))
 	report, err := BuildNativeModuleCompatReport(tmp)
 	if err != nil {
 		t.Fatalf("compat report: %v", err)
@@ -139,6 +165,7 @@ func TestBuildCompatReport_IgnoresFeedbackSDKPackage(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@react-native-async-storage", "async-storage", "android"))
 	report, err := BuildNativeModuleCompatReport(tmp)
 	if err != nil {
 		t.Fatalf("compat report: %v", err)
@@ -178,33 +205,60 @@ func TestBuildCompatReport_FlagsBreakingVersionDrift(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
 		t.Fatalf("write package.json: %v", err)
 	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-worklets", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-record-screen", "android"))
+	report, err := BuildNativeModuleCompatReport(tmp)
+	if err != nil {
+		t.Fatalf("compat report: %v", err)
+	}
+	for _, mismatch := range report.VersionMismatches {
+		if mismatch.Name == "react-native-worklets" {
+			t.Fatalf("worklets should not be flagged when project matches current host line, got %+v", mismatch)
+		}
+		if mismatch.Name == "react-native-record-screen" {
+			t.Fatalf("record-screen should not be flagged when versions match, got %+v", mismatch)
+		}
+	}
+	if report.ReactVersionMismatch != nil {
+		t.Fatalf("react 19.x minor drift should not hard-block, got %+v", report.ReactVersionMismatch)
+	}
+}
+
+func TestBuildCompatReport_FlagsCurrentBreakingVersionDrift(t *testing.T) {
+	tmp := t.TempDir()
+	pkg := `{
+  "dependencies": {
+    "react": "19.2.5",
+    "react-native": "0.81.5",
+    "react-native-worklets": "^0.9.0"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-worklets", "android"))
 	report, err := BuildNativeModuleCompatReport(tmp)
 	if err != nil {
 		t.Fatalf("compat report: %v", err)
 	}
 	foundWorklets := false
 	for _, mismatch := range report.VersionMismatches {
-		if mismatch.Name == "react-native-worklets" {
-			foundWorklets = true
-			if mismatch.ProjectVersion != "0.7.4" {
-				t.Fatalf("unexpected project version: %+v", mismatch)
-			}
-			if mismatch.HostVersion != "0.5.1" {
-				t.Fatalf("unexpected host version: %+v", mismatch)
-			}
-			if mismatch.Reason != "0.x minor version differs" {
-				t.Fatalf("unexpected mismatch reason: %+v", mismatch)
-			}
+		if mismatch.Name != "react-native-worklets" {
+			continue
 		}
-		if mismatch.Name == "react-native-record-screen" {
-			t.Fatalf("record-screen should not be flagged when versions match, got %+v", mismatch)
+		foundWorklets = true
+		if mismatch.ProjectVersion != "0.9.0" {
+			t.Fatalf("unexpected project version: %+v", mismatch)
+		}
+		if mismatch.HostVersion != "0.7.4" {
+			t.Fatalf("unexpected host version: %+v", mismatch)
+		}
+		if mismatch.Reason != "0.x minor version differs" {
+			t.Fatalf("unexpected mismatch reason: %+v", mismatch)
 		}
 	}
 	if !foundWorklets {
 		t.Fatalf("expected react-native-worklets version mismatch, got %+v", report.VersionMismatches)
-	}
-	if report.ReactVersionMismatch != nil {
-		t.Fatalf("react 19.x minor drift should not hard-block, got %+v", report.ReactVersionMismatch)
 	}
 }
 
@@ -240,7 +294,19 @@ func TestDetectVersionMismatch(t *testing.T) {
 	}
 }
 
+func mkdirAll(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+}
+
 func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
+	tmp := t.TempDir()
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "react-native-async-storage", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@react-native-async-storage", "async-storage", "android"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "expo-camera", "ios"))
+	mkdirAll(t, filepath.Join(tmp, "node_modules", "@expo", "vector-icons"))
 	cases := []struct {
 		name string
 		want bool
@@ -251,13 +317,13 @@ func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
 		{"react-native-async-storage", true},
 		{"@react-native-async-storage/async-storage", true},
 		{"expo-camera", true},
-		{"@expo/vector-icons", true},
+		{"@expo/vector-icons", false},
 		{"convex", false},
 		{"zustand", false},
 		{"yaver-feedback-react-native", false},
 	}
 	for _, c := range cases {
-		got := isLikelyNativeModule(c.name)
+		got := isLikelyNativeModule(tmp, c.name)
 		if got != c.want {
 			t.Errorf("isLikelyNativeModule(%q) = %v, want %v", c.name, got, c.want)
 		}

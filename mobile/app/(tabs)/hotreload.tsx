@@ -21,6 +21,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -406,21 +407,9 @@ export default function HotReloadScreen() {
 
   const [loadingStatus, setLoadingStatus] = useState("");
   const activeProjectPath = devStatus?.workDir ? String(devStatus.workDir).trim() : "";
-  const visibleOperations = reloadOperations.filter((op) => {
-    if (op.status === "completed") return false;
-    if (!activeProjectPath) return true;
-    const opProjectPath = typeof op.projectPath === "string" ? op.projectPath.trim() : "";
-    return !opProjectPath || opProjectPath === activeProjectPath;
-  });
+  const visibleOperations = visibleReloadOperations(reloadOperations, activeProjectPath);
   const currentOperation = visibleOperations[0] || null;
-  const visibleIncidents = reloadIncidents.filter((incident) => {
-    if (incident.resolved) return false;
-    if (currentOperation?.incidentIds?.includes(incident.id)) return true;
-    if (currentOperation?.id && incident.operationId === currentOperation.id) return true;
-    if (!activeProjectPath) return false;
-    const incidentProjectPath = typeof incident.projectPath === "string" ? incident.projectPath.trim() : "";
-    return incidentProjectPath === activeProjectPath;
-  });
+  const visibleIncidents = visibleReloadIncidents(reloadIncidents, currentOperation, activeProjectPath);
   const currentIncident = visibleIncidents[0] || null;
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {

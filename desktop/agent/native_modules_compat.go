@@ -100,7 +100,7 @@ func ExtractProjectNativeModules(workDir string) ([]string, error) {
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, fmt.Errorf("parse package.json: %w", err)
 	}
-	out, _, err := extractProjectNativeModulesFromDeps(pkg.Dependencies)
+	out, _, err := extractProjectNativeModulesFromDeps(pkg.Dependencies, workDir)
 	return out, err
 }
 
@@ -108,24 +108,45 @@ func ExtractProjectNativeModules(workDir string) ([]string, error) {
 // pure-JS in practice. Add cautiously — a wrong entry hides a real
 // incompatibility.
 var jsOnlyExact = map[string]bool{
-	"react-native":                    true, // the engine itself
-	"react-native-web":                true,
-	"react-native-svg-transformer":    true,
-	"react-native-url-polyfill":       true,
-	"react-native-uuid":               true,
-	"yaver-feedback-react-native":     true, // app-side SDK/plugin; not required for Open in Yaver host loads
-	"@react-native/babel-preset":      true,
-	"@react-native/eslint-config":     true,
-	"@react-native/typescript-config": true,
-	"@react-native/metro-config":      true,
-	"expo":                            true, // umbrella shim — actual modules are expo-foo / @expo/foo
-	"expo-modules-core":               true, // wired by the host runtime, not a guest dep
-	"expo-modules-autolinking":        true, // build-time only
-	"@expo/metro-runtime":             true, // Metro dev-server shim, not a runtime TurboModule
+	"@expo/metro-runtime":               true, // Metro dev-server shim, not a runtime TurboModule
+	"@expo/vector-icons":                true,
+	"@gorhom/bottom-sheet":              true, // JS wrapper over host-native deps
+	"@react-native/babel-preset":        true,
+	"@react-native/eslint-config":       true,
+	"@react-native/metro-config":        true,
+	"@react-native/typescript-config":   true,
+	"@shopify/flash-list":               true, // JS list layer over host-native deps
+	"expo":                              true, // umbrella shim — actual modules are expo-foo / @expo/foo
+	"expo-build-properties":             true, // build-time only
+	"expo-modules-autolinking":          true, // build-time only
+	"expo-modules-core":                 true, // wired by the host runtime, not a guest dep
+	"expo-router":                       true, // JS routing layer, not a host native runtime module
+	"posthog-react-native":              true, // JS wrapper SDK
+	"react-native":                      true, // the engine itself
+	"react-native-modal":                true,
+	"react-native-progress":             true,
+	"react-native-qrcode-svg":           true,
+	"react-native-reanimated-carousel":  true,
+	"react-native-skeleton-placeholder": true,
+	"react-native-svg-transformer":      true,
+	"react-native-swipe-list-view":      true,
+	"react-native-toast-message":        true,
+	"react-native-url-polyfill":         true,
+	"react-native-uuid":                 true,
+	"react-native-web":                  true,
+	"victory-native":                    true, // JS charting layer over react-native-svg
+	"yaver-feedback-react-native":       true, // app-side SDK/plugin; not required for Open in Yaver host loads
 }
 
-func isLikelyNativeModule(name string) bool {
+func isLikelyNativeModule(workDir, name string) bool {
 	if jsOnlyExact[name] {
+		return false
+	}
+	packageDir := filepath.Join(workDir, "node_modules", filepath.FromSlash(name))
+	if hasNativePackageMarkers(packageDir) {
+		return true
+	}
+	if hasPackageDir(packageDir) {
 		return false
 	}
 	if strings.Contains(name, "react-native") {
@@ -137,7 +158,7 @@ func isLikelyNativeModule(name string) bool {
 	return false
 }
 
-func extractProjectNativeModulesFromDeps(deps map[string]string) ([]string, []string, error) {
+func extractProjectNativeModulesFromDeps(deps map[string]string, workDir string) ([]string, []string, error) {
 	out := make([]string, 0, len(deps))
 	ignored := make([]string, 0)
 	for name := range deps {
@@ -147,13 +168,35 @@ func extractProjectNativeModulesFromDeps(deps map[string]string) ([]string, []st
 			}
 			continue
 		}
-		if isLikelyNativeModule(name) {
+		if isLikelyNativeModule(workDir, name) {
 			out = append(out, name)
 		}
 	}
 	sort.Strings(out)
 	sort.Strings(ignored)
 	return out, ignored, nil
+}
+
+func hasPackageDir(dir string) bool {
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
+}
+
+func hasNativePackageMarkers(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasSuffix(name, ".podspec") {
+			return true
+		}
+		if entry.IsDir() && (name == "ios" || name == "android") {
+			return true
+		}
+	}
+	return false
 }
 
 // CompatReport summarises how a project's native deps line up with the
@@ -203,7 +246,7 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, fmt.Errorf("parse package.json: %w", err)
 	}
-	projectMods, ignored, err := extractProjectNativeModulesFromDeps(pkg.Dependencies)
+	projectMods, ignored, err := extractProjectNativeModulesFromDeps(pkg.Dependencies, workDir)
 	if err != nil {
 		return nil, err
 	}

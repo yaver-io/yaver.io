@@ -15,8 +15,12 @@ import { MobileClient } from "../src/mobile-client";
 const AGENT_URL = process.env.YMH_SMOKE_AGENT_URL || "";
 const AGENT_TOKEN = process.env.YMH_SMOKE_AGENT_TOKEN || "";
 const GLM_API_KEY = process.env.YMH_GLM_API_KEY || "";
+const BUILD_NATIVE_PROJECT_PATH = process.env.YMH_BUILD_NATIVE_PROJECT_PATH || "";
+const SKIP_BUNDLEID_FIXTURE_SMOKE = process.env.YMH_SKIP_BUNDLEID_FIXTURE_SMOKE === "1";
 
 const maybe = AGENT_URL ? describe : describe.skip;
+const maybeBuildNative = BUILD_NATIVE_PROJECT_PATH ? it : it.skip;
+const maybeBundleIdFixture = SKIP_BUNDLEID_FIXTURE_SMOKE ? it.skip : it;
 
 async function waitForExec(
   mobile: MobileClient,
@@ -83,6 +87,25 @@ function assertResolvedPastActiveDevServerFailure(
   expect(text).not.toContain("no active dev server");
   expect(text).not.toContain("start one first OR pass projectName / projectPath / bundleId");
   expect(response.status).not.toBe(400);
+}
+
+function assertBuildNativeContract(
+  response: { status: number; body: any },
+  platform: "ios" | "android",
+) {
+  const text = JSON.stringify(response.body ?? {});
+  expect(text).not.toContain("no active dev server");
+  expect(text).not.toContain("start one first OR pass projectName / projectPath / bundleId");
+  expect(response.status).not.toBe(400);
+  if (response.status === 200) {
+    expect(response.body?.status).toBe("ok");
+    expect(typeof response.body?.bundleUrl).toBe("string");
+    expect(typeof response.body?.bcVersion).toBe("number");
+    expect(response.body?.platform).toBe(platform);
+    return;
+  }
+  expect([409, 500, 504]).toContain(response.status);
+  expect(typeof response.body?.error).toBe("string");
 }
 
 maybe("smoke against live yaver agent", () => {
@@ -169,7 +192,7 @@ maybe("smoke against live yaver agent", () => {
     expect(ans?.session?.id).toBe(start.session.id);
   });
 
-  it("bundleId-only reload resolves ios and android projects without an active dev server", async () => {
+  maybeBundleIdFixture("bundleId-only reload resolves ios and android projects without an active dev server", async () => {
     const home = process.env.HOME;
     if (!home) throw new Error("HOME is required for project discovery smoke");
 
@@ -209,6 +232,20 @@ maybe("smoke against live yaver agent", () => {
     });
     assertResolvedPastActiveDevServerFailure(androidReload, androidBundleId);
   }, 30000);
+
+  maybeBuildNative("build-native returns a structured contract for ios and android against a real project", async () => {
+    const iosBuild = await mobile.raw.post("/dev/build-native", {
+      platform: "ios",
+      projectPath: BUILD_NATIVE_PROJECT_PATH,
+    });
+    assertBuildNativeContract(iosBuild, "ios");
+
+    const androidBuild = await mobileAndroid.raw.post("/dev/build-native", {
+      platform: "android",
+      projectPath: BUILD_NATIVE_PROJECT_PATH,
+    });
+    assertBuildNativeContract(androidBuild, "android");
+  }, 15 * 60_000);
 
   const maybeGLM = GLM_API_KEY ? it : it.skip;
 

@@ -7,13 +7,28 @@
     "fabric": true,
     "bridgeless": false
   },
-  "manualNativeModules": [
+  "manualNativeModules": [],
+  "jsOnlyExact": [
+    "@expo/metro-runtime",
     "@expo/vector-icons",
     "@gorhom/bottom-sheet",
     "@shopify/flash-list",
-    "lottie-react-native",
-    "victory-native",
-    "whisper.rn"
+    "expo",
+    "expo-build-properties",
+    "expo-router",
+    "posthog-react-native",
+    "react",
+    "react-dom",
+    "react-native",
+    "react-native-modal",
+    "react-native-progress",
+    "react-native-qrcode-svg",
+    "react-native-reanimated-carousel",
+    "react-native-skeleton-placeholder",
+    "react-native-swipe-list-view",
+    "react-native-toast-message",
+    "react-native-web",
+    "victory-native"
   ],
   "moduleSupportDefaults": {
     "hostApp": true,

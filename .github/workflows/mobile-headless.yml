@@ -5,14 +5,26 @@ on:
     branches: [main]
     paths:
       - "mobile-headless/**"
+      - "mobile/package.json"
+      - "mobile/package-lock.json"
+      - "mobile/sdk-manifest.json"
+      - "mobile/ios/Yaver/sdk-manifest.json"
       - "mobile/src/lib/**"
       - "desktop/agent/**"
+      - "scripts/generate-sdk-manifest.mjs"
+      - "scripts/sdk-manifest.config.json"
       - ".github/workflows/mobile-headless.yml"
   pull_request:
     paths:
       - "mobile-headless/**"
+      - "mobile/package.json"
+      - "mobile/package-lock.json"
+      - "mobile/sdk-manifest.json"
+      - "mobile/ios/Yaver/sdk-manifest.json"
       - "mobile/src/lib/**"
       - "desktop/agent/**"
+      - "scripts/generate-sdk-manifest.mjs"
+      - "scripts/sdk-manifest.config.json"
       - ".github/workflows/mobile-headless.yml"
   workflow_dispatch:
 
@@ -31,6 +43,9 @@ jobs:
       - name: Install deps
         working-directory: mobile-headless
         run: bun install
+      - name: SDK manifest unit tests
+        working-directory: mobile-headless
+        run: npm run test:sdk-manifest
       - name: Typecheck
         working-directory: mobile-headless
         run: bun run typecheck

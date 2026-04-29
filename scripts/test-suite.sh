@@ -596,10 +596,10 @@ run_build_tests() {
 
     # Mobile typecheck
     info "Typechecking mobile (React Native)..."
-    if (cd "$ROOT_DIR/mobile" && npm ci --silent > /dev/null 2>&1 && cd "$ROOT_DIR" && node scripts/generate-sdk-manifest.mjs --check > "$TEST_DIR/sdk-manifest-check.log" 2>&1 && cd "$ROOT_DIR/mobile" && npx tsc --noEmit > "$TEST_DIR/build-mobile.log" 2>&1); then
+    if (cd "$ROOT_DIR/mobile" && npm ci --silent > /dev/null 2>&1 && cd "$ROOT_DIR" && node --test scripts/generate-sdk-manifest.test.mjs > "$TEST_DIR/sdk-manifest-unit.log" 2>&1 && node scripts/generate-sdk-manifest.mjs --check > "$TEST_DIR/sdk-manifest-check.log" 2>&1 && cd "$ROOT_DIR/mobile" && npx tsc --noEmit > "$TEST_DIR/build-mobile.log" 2>&1); then
         pass "Mobile typecheck OK"
     else
-        fail "Mobile typecheck failed (see $TEST_DIR/build-mobile.log and $TEST_DIR/sdk-manifest-check.log)"
+        fail "Mobile typecheck failed (see $TEST_DIR/build-mobile.log, $TEST_DIR/sdk-manifest-unit.log, and $TEST_DIR/sdk-manifest-check.log)"
     fi
 
     # iOS (macOS only)

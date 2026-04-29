@@ -142,6 +142,49 @@ describe("devServer.buildNative", () => {
     expect(r.body?.platform).toBe("android");
   });
 
+  it("surfaces native module version mismatches in ios mode", async () => {
+    agent.setBuildNativeMode("blocked-version");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("NATIVE_MODULE_VERSION_MISMATCH");
+    expect(r.body?.nativeModuleVersionMismatches).toEqual([
+      expect.objectContaining({
+        name: "react-native-worklets",
+        projectVersion: "0.7.4",
+        hostVersion: "0.5.1",
+        reason: "0.x minor version differs",
+      }),
+    ]);
+    expect(r.body?.platform).toBe("ios");
+  });
+
+  it("surfaces react version mismatches in android mode", async () => {
+    agent.setBuildNativeMode("blocked-react");
+    const r = await mobileAndroid.devServer.buildNative("android");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("REACT_VERSION_MISMATCH");
+    expect(r.body?.reactVersionMismatch).toEqual(
+      expect.objectContaining({
+        projectVersion: "20.0.0",
+        hostVersion: "19.1.0",
+        reason: "major version differs",
+      }),
+    );
+    expect(r.body?.platform).toBe("android");
+  });
+
+  it("surfaces Hermes bytecode mismatch metadata without throwing", async () => {
+    agent.setBuildNativeMode("bc-mismatch");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("BC_VERSION_MISMATCH");
+    expect(r.body?.bcVersion).toBe(95);
+    expect(r.body?.platform).toBe("ios");
+  });
+
   it("recovers to ok after a transient failure", async () => {
     agent.setBuildNativeMode("fail");
     await mobile.devServer.buildNative("ios");

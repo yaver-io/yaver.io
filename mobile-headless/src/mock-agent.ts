@@ -21,7 +21,10 @@ export interface MockAgentHandle {
    *              its own per-request deadline without waiting forever for the
    *              agent to die first
    */
-  setBuildNativeMode: (mode: "ok" | "hang" | "fail" | "slow" | "blocked", slowMs?: number) => void;
+  setBuildNativeMode: (
+    mode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "bc-mismatch",
+    slowMs?: number,
+  ) => void;
   /**
    * Switch /dev/stop behaviour at runtime so tests can exercise the
    * Stop-UX state machine in mobile/web without spinning a real agent.
@@ -47,7 +50,7 @@ export interface MockAgentHandle {
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
-  let buildNativeMode: "ok" | "hang" | "fail" | "slow" | "blocked" = "ok";
+  let buildNativeMode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "bc-mismatch" = "ok";
   let buildNativeSlowMs = 0;
   let stopMode: "verified" | "not-verified" | "fail" | "legacy" = "verified";
   let stopBuildsCancelled = 0;
@@ -325,6 +328,68 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             hostReactNative: "0.81.5",
             supportedRNRange: "0.81.x",
             bcVersion: 96,
+            md5: "deadbeef",
+            size: 4096,
+            moduleName: "main",
+            platform: lastBuildNativeRequest?.platform ?? "ios",
+          });
+        case "blocked-version":
+          return json(409, {
+            status: "blocked",
+            code: "NATIVE_MODULE_VERSION_MISMATCH",
+            error: "Blocked native Hermes load: host-native module versions drift at a likely-breaking boundary.",
+            helpHint: "mock-agent: buildNativeMode=blocked-version",
+            matchedNativeModules: ["react-native-worklets"],
+            nativeModuleVersionMismatches: [
+              {
+                name: "react-native-worklets",
+                projectVersion: "0.7.4",
+                hostVersion: "0.5.1",
+                reason: "0.x minor version differs",
+              },
+            ],
+            hostSdkVersion: "1.0.0",
+            hostReactNative: "0.81.5",
+            supportedRNRange: "0.81.x",
+            bcVersion: 96,
+            md5: "deadbeef",
+            size: 4096,
+            moduleName: "main",
+            platform: lastBuildNativeRequest?.platform ?? "ios",
+          });
+        case "blocked-react":
+          return json(409, {
+            status: "blocked",
+            code: "REACT_VERSION_MISMATCH",
+            error: "Blocked native Hermes load: project React does not match host React at a supported boundary.",
+            helpHint: "mock-agent: buildNativeMode=blocked-react",
+            matchedNativeModules: ["@react-native-async-storage/async-storage"],
+            reactVersionMismatch: {
+              projectVersion: "20.0.0",
+              hostVersion: "19.1.0",
+              reason: "major version differs",
+            },
+            projectReactVersion: "20.0.0",
+            hostReactVersion: "19.1.0",
+            hostSdkVersion: "1.0.0",
+            hostReactNative: "0.81.5",
+            supportedRNRange: "0.81.x",
+            bcVersion: 96,
+            md5: "deadbeef",
+            size: 4096,
+            moduleName: "main",
+            platform: lastBuildNativeRequest?.platform ?? "ios",
+          });
+        case "bc-mismatch":
+          return json(409, {
+            status: "blocked",
+            code: "BC_VERSION_MISMATCH",
+            error: "Hermes BC95 does not match Yaver BC96.",
+            helpHint: "mock-agent: buildNativeMode=bc-mismatch",
+            hostSdkVersion: "1.0.0",
+            hostReactNative: "0.81.5",
+            supportedRNRange: "0.81.x",
+            bcVersion: 95,
             md5: "deadbeef",
             size: 4096,
             moduleName: "main",
