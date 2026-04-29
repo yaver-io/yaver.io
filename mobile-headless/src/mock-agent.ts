@@ -22,7 +22,7 @@ export interface MockAgentHandle {
    *              agent to die first
    */
   setBuildNativeMode: (
-    mode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "bc-mismatch",
+    mode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "blocked-framework" | "bc-mismatch",
     slowMs?: number,
   ) => void;
   /**
@@ -50,7 +50,7 @@ export interface MockAgentHandle {
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
   const token = opts?.token ?? "mock-token";
-  let buildNativeMode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "bc-mismatch" = "ok";
+  let buildNativeMode: "ok" | "hang" | "fail" | "slow" | "blocked" | "blocked-version" | "blocked-react" | "blocked-framework" | "bc-mismatch" = "ok";
   let buildNativeSlowMs = 0;
   let stopMode: "verified" | "not-verified" | "fail" | "legacy" = "verified";
   let stopBuildsCancelled = 0;
@@ -372,6 +372,33 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             projectReactVersion: "20.0.0",
             hostReactVersion: "19.1.0",
             hostSdkVersion: "1.0.0",
+            hostReactNative: "0.81.5",
+            supportedRNRange: "0.81.x",
+            bcVersion: 96,
+            md5: "deadbeef",
+            size: 4096,
+            moduleName: "main",
+            platform: lastBuildNativeRequest?.platform ?? "ios",
+          });
+        case "blocked-framework":
+          return json(409, {
+            status: "blocked",
+            code: "FRAMEWORK_VERSION_MISMATCH",
+            error: "Blocked native Hermes load: framework/runtime drift between guest and Yaver host.",
+            helpHint: "mock-agent: buildNativeMode=blocked-framework",
+            matchedNativeModules: ["@react-native-async-storage/async-storage"],
+            reactNativeVersionMismatch: {
+              projectVersion: "0.81.6",
+              hostVersion: "0.81.5",
+              reason: "exact runtime version differs",
+            },
+            expoVersionMismatch: {
+              projectVersion: "54.0.33",
+              hostVersion: "54.0.0",
+              reason: "exact runtime version differs",
+            },
+            hostSdkVersion: "1.0.0",
+            hostExpoVersion: "54.0.0",
             hostReactNative: "0.81.5",
             supportedRNRange: "0.81.x",
             bcVersion: 96,

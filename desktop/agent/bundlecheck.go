@@ -33,14 +33,19 @@ type BundleMetadata struct {
 	ModuleName                    string                 `json:"moduleName"`      // AppRegistry component name
 	Format                        string                 `json:"format"`          // "hbc" or "js"
 	HostSDKVersion                string                 `json:"hostSdkVersion,omitempty"`
+	HostExpoVersion               string                 `json:"hostExpoVersion,omitempty"`
 	SupportedRNRange              string                 `json:"supportedRNRange,omitempty"`
 	TargetPlatform                string                 `json:"targetPlatform,omitempty"`
 	BuilderPlatform               string                 `json:"builderPlatform,omitempty"`
 	BuilderArch                   string                 `json:"builderArch,omitempty"`
 	ReactNativeVersion            string                 `json:"reactNativeVersion,omitempty"`
+	HostReactNativeVersion        string                 `json:"hostReactNativeVersion,omitempty"`
+	ReactNativeVersionMismatch    *VersionMismatch       `json:"reactNativeVersionMismatch,omitempty"`
 	ProjectReactVersion           string                 `json:"projectReactVersion,omitempty"`
 	HostReactVersion              string                 `json:"hostReactVersion,omitempty"`
+	ProjectExpoVersion            string                 `json:"projectExpoVersion,omitempty"`
 	ExpoSDKVersion                string                 `json:"expoSdkVersion,omitempty"`
+	ExpoVersionMismatch           *VersionMismatch       `json:"expoVersionMismatch,omitempty"`
 	HermesRef                     string                 `json:"hermesRef,omitempty"`
 	IncompatibleNativeModules     []string               `json:"incompatibleNativeModules,omitempty"`
 	NativeModuleVersionMismatches []NativeModuleMismatch `json:"nativeModuleVersionMismatches,omitempty"`

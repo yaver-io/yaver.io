@@ -20,6 +20,7 @@ var sdkManifestJSON []byte
 
 type sdkManifest struct {
 	SdkVersion       string            `json:"sdkVersion"`
+	Expo             string            `json:"expo"`
 	ReactNative      string            `json:"reactNative"`
 	React            string            `json:"react"`
 	SupportedRNRange string            `json:"supportedRNRange"`
@@ -208,7 +209,11 @@ type CompatReport struct {
 	Ignored              []string               `json:"ignoredNativeModules"`           // intentionally ignored host-optional packages
 	VersionMismatches    []NativeModuleMismatch `json:"nativeModuleVersionMismatches"`  // present but at a likely-breaking version boundary
 	ReactVersionMismatch *VersionMismatch       `json:"reactVersionMismatch,omitempty"` // project React vs host React
+	ExpoVersionMismatch  *VersionMismatch       `json:"expoVersionMismatch,omitempty"`  // project Expo vs host Expo
+	RNVersionMismatch    *VersionMismatch       `json:"reactNativeVersionMismatch,omitempty"`
 	HostSDKVersion       string                 `json:"hostSdkVersion"`
+	HostExpo             string                 `json:"hostExpoVersion"`
+	HostReact            string                 `json:"hostReactVersion"`
 	HostRN               string                 `json:"hostReactNative"`
 	SupportedRNRange     string                 `json:"supportedRNRange"`
 }
@@ -256,7 +261,8 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 	for _, m := range projectMods {
 		if hostNames[m] {
 			matched = append(matched, m)
-			if mismatch := detectNativeModuleVersionMismatch(m, pkg.Dependencies[m], host); mismatch != nil {
+			projectVersion := readProjectDependencyVersion(workDir, pkg.Dependencies, m)
+			if mismatch := detectNativeModuleVersionMismatch(m, projectVersion, host); mismatch != nil {
 				versionMismatches = append(versionMismatches, *mismatch)
 			}
 		} else {
@@ -267,8 +273,16 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		return versionMismatches[i].Name < versionMismatches[j].Name
 	})
 	var reactMismatch *VersionMismatch
-	if mismatch := detectVersionMismatch(pkg.Dependencies["react"], host.React); mismatch != nil {
+	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "react"), host.React); mismatch != nil {
 		reactMismatch = mismatch
+	}
+	var expoMismatch *VersionMismatch
+	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "expo"), host.Expo); mismatch != nil {
+		expoMismatch = mismatch
+	}
+	var rnMismatch *VersionMismatch
+	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "react-native"), host.ReactNative); mismatch != nil {
+		rnMismatch = mismatch
 	}
 	return &CompatReport{
 		ProjectModules:       projectMods,
@@ -277,10 +291,21 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		Ignored:              ignored,
 		VersionMismatches:    versionMismatches,
 		ReactVersionMismatch: reactMismatch,
+		ExpoVersionMismatch:  expoMismatch,
+		RNVersionMismatch:    rnMismatch,
 		HostSDKVersion:       host.SdkVersion,
+		HostExpo:             host.Expo,
+		HostReact:            host.React,
 		HostRN:               host.ReactNative,
 		SupportedRNRange:     host.SupportedRNRange,
 	}, nil
+}
+
+func readProjectDependencyVersion(workDir string, deps map[string]string, name string) string {
+	if version, err := readInstalledPackageVersion(workDir, name); err == nil && strings.TrimSpace(version) != "" {
+		return strings.TrimSpace(version)
+	}
+	return strings.TrimSpace(deps[name])
 }
 
 func detectNativeModuleVersionMismatch(name, projectVersion string, host *sdkManifest) *NativeModuleMismatch {
@@ -323,6 +348,31 @@ func detectVersionMismatch(projectVersion, hostVersion string) *VersionMismatch 
 			ProjectVersion: project.original,
 			HostVersion:    host.original,
 			Reason:         "0.x minor version differs",
+		}
+	}
+	return nil
+}
+
+func detectFrameworkVersionMismatch(projectVersion, hostVersion string) *VersionMismatch {
+	project := parseSemverish(projectVersion)
+	host := parseSemverish(hostVersion)
+	if project == nil || host == nil {
+		projectVersion = strings.TrimSpace(projectVersion)
+		hostVersion = strings.TrimSpace(hostVersion)
+		if projectVersion == "" || hostVersion == "" || projectVersion == hostVersion {
+			return nil
+		}
+		return &VersionMismatch{
+			ProjectVersion: projectVersion,
+			HostVersion:    hostVersion,
+			Reason:         "exact runtime version differs",
+		}
+	}
+	if project.major != host.major || project.minor != host.minor || project.patch != host.patch {
+		return &VersionMismatch{
+			ProjectVersion: project.original,
+			HostVersion:    host.original,
+			Reason:         "exact runtime version differs",
 		}
 	}
 	return nil

@@ -30,3 +30,12 @@ export function visibleReloadIncidents(
     return false;
   });
 }
+
+export function shouldShowCurrentReloadIncident(
+  currentIncident: IncidentEvent | null,
+  currentOperation: OperationState | null,
+): boolean {
+  if (!currentIncident) return false;
+  if (!currentOperation) return true;
+  return currentOperation.status !== "running";
+}

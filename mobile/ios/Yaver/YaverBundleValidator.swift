@@ -9,11 +9,16 @@ struct BundleMetadata: Codable {
   let moduleName: String
   let format: String
   let hostSdkVersion: String?
+  let hostExpoVersion: String?
   let supportedRNRange: String?
   let reactNativeVersion: String?
+  let hostReactNativeVersion: String?
+  let reactNativeVersionMismatch: VersionMismatch?
   let projectReactVersion: String?
   let hostReactVersion: String?
+  let projectExpoVersion: String?
   let expoSDKVersion: String?
+  let expoVersionMismatch: VersionMismatch?
   let incompatibleNativeModules: [String]?
   let nativeModuleVersionMismatches: [NativeModuleVersionMismatch]?
   let reactVersionMismatch: VersionMismatch?
@@ -105,6 +110,18 @@ enum YaverBundleValidator {
       return BundleValidationError(
         code: "REACT_VERSION_MISMATCH",
         localizedDescription: "Blocked because project React \(reactMismatch.projectVersion) does not match Yaver host React \(reactMismatch.hostVersion) at a supported boundary."
+      )
+    }
+    if let reactNativeMismatch = metadata.reactNativeVersionMismatch {
+      return BundleValidationError(
+        code: "FRAMEWORK_VERSION_MISMATCH",
+        localizedDescription: "Blocked because project React Native \(reactNativeMismatch.projectVersion) does not match Yaver host React Native \(reactNativeMismatch.hostVersion)."
+      )
+    }
+    if let expoMismatch = metadata.expoVersionMismatch {
+      return BundleValidationError(
+        code: "FRAMEWORK_VERSION_MISMATCH",
+        localizedDescription: "Blocked because project Expo \(expoMismatch.projectVersion) does not match Yaver host Expo \(expoMismatch.hostVersion)."
       )
     }
     return nil

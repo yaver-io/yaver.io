@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { visibleReloadIncidents, visibleReloadOperations } from "../../mobile/src/lib/hotReloadState";
+import {
+  shouldShowCurrentReloadIncident,
+  visibleReloadIncidents,
+  visibleReloadOperations,
+} from "../../mobile/src/lib/hotReloadState";
 import type { IncidentEvent, OperationState } from "../../mobile/src/lib/quic";
 
 function op(partial: Partial<OperationState>): OperationState {
@@ -70,5 +74,17 @@ describe("hot reload state filtering", () => {
     expect(
       visibleReloadIncidents(incidents, currentOperation, "/active").map((item) => item.id),
     ).toEqual(["linked"]);
+  });
+
+  it("keeps the blocker card hidden while the linked operation is still running", () => {
+    const currentOperation = op({ id: "op-running", status: "running" });
+    const currentIncident = incident({ id: "linked", operationId: "op-running" });
+    expect(shouldShowCurrentReloadIncident(currentIncident, currentOperation)).toBe(false);
+  });
+
+  it("shows the blocker card after the linked operation settles", () => {
+    const currentOperation = op({ id: "op-failed", status: "failed" });
+    const currentIncident = incident({ id: "linked", operationId: "op-failed" });
+    expect(shouldShowCurrentReloadIncident(currentIncident, currentOperation)).toBe(true);
   });
 });

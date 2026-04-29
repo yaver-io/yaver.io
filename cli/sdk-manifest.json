@@ -1,5 +1,6 @@
 {
   "sdkVersion": "1.0.0",
+  "expo": "54.0.33",
   "reactNative": "0.81.5",
   "react": "19.1.0",
   "hermes": {

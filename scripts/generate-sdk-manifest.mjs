@@ -54,6 +54,7 @@ export function buildSDKManifest(inputs = loadRepoInputs(repoRoot)) {
 
   return {
     sdkVersion: inputs.config.sdkVersion,
+    expo: getInstalledVersion('expo', inputs),
     reactNative: getInstalledVersion('react-native', inputs),
     react: getInstalledVersion('react', inputs),
     hermes: {

@@ -196,7 +196,7 @@ func TestBuildCompatReport_FlagsBreakingVersionDrift(t *testing.T) {
 	tmp := t.TempDir()
 	pkg := `{
   "dependencies": {
-    "react": "19.2.5",
+    "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-worklets": "^0.7.4",
     "react-native-record-screen": "^0.6.2"
@@ -220,7 +220,13 @@ func TestBuildCompatReport_FlagsBreakingVersionDrift(t *testing.T) {
 		}
 	}
 	if report.ReactVersionMismatch != nil {
-		t.Fatalf("react 19.x minor drift should not hard-block, got %+v", report.ReactVersionMismatch)
+		t.Fatalf("react exact match should not hard-block, got %+v", report.ReactVersionMismatch)
+	}
+	if report.ExpoVersionMismatch != nil {
+		t.Fatalf("expo exact match should not hard-block, got %+v", report.ExpoVersionMismatch)
+	}
+	if report.RNVersionMismatch != nil {
+		t.Fatalf("react-native exact match should not hard-block, got %+v", report.RNVersionMismatch)
 	}
 }
 
@@ -291,6 +297,65 @@ func TestDetectVersionMismatch(t *testing.T) {
 				t.Fatalf("reason = %q, want %q", got.Reason, tc.reason)
 			}
 		})
+	}
+}
+
+func TestDetectFrameworkVersionMismatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		project string
+		host    string
+		wantNil bool
+		reason  string
+	}{
+		{name: "matching", project: "^19.1.0", host: "19.1.0", wantNil: true},
+		{name: "react minor mismatch", project: "^19.2.5", host: "19.1.0", reason: "exact runtime version differs"},
+		{name: "expo patch mismatch", project: "~54.0.33", host: "54.0.0", reason: "exact runtime version differs"},
+		{name: "rn patch mismatch", project: "0.81.6", host: "0.81.5", reason: "exact runtime version differs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectFrameworkVersionMismatch(tc.project, tc.host)
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("expected nil, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected mismatch")
+			}
+			if got.Reason != tc.reason {
+				t.Fatalf("reason = %q, want %q", got.Reason, tc.reason)
+			}
+		})
+	}
+}
+
+func TestBuildCompatReport_FlagsFrameworkRuntimeDrift(t *testing.T) {
+	tmp := t.TempDir()
+	pkg := `{
+  "dependencies": {
+    "expo": "54.0.0",
+    "react": "19.2.5",
+    "react-native": "0.81.6"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	report, err := BuildNativeModuleCompatReport(tmp)
+	if err != nil {
+		t.Fatalf("compat report: %v", err)
+	}
+	if report.ExpoVersionMismatch == nil {
+		t.Fatalf("expected expo version mismatch")
+	}
+	if report.ReactVersionMismatch == nil {
+		t.Fatalf("expected react version mismatch")
+	}
+	if report.RNVersionMismatch == nil {
+		t.Fatalf("expected react-native version mismatch")
 	}
 }
 

@@ -34,6 +34,7 @@ export function nativeBuildFailureTitle(buildResult: any): string {
   if (buildResult?.code === "NATIVE_MODULE_INCOMPATIBLE") return "Compatibility Blocked";
   if (buildResult?.code === "NATIVE_MODULE_VERSION_MISMATCH") return "Compatibility Blocked";
   if (buildResult?.code === "REACT_VERSION_MISMATCH") return "Compatibility Blocked";
+  if (buildResult?.code === "FRAMEWORK_VERSION_MISMATCH") return "Compatibility Blocked";
   if (buildResult?.code === "BC_VERSION_MISMATCH") return "Hermes Version Mismatch";
   return "Load Failed";
 }
@@ -47,6 +48,9 @@ function compatibilitySummary(buildResult: any): string | null {
   }
   if (buildResult?.code === "REACT_VERSION_MISMATCH") {
     return "Yaver blocked restart because the project's React runtime does not match the mobile host.";
+  }
+  if (buildResult?.code === "FRAMEWORK_VERSION_MISMATCH") {
+    return "Yaver blocked restart because the project's Expo or React Native runtime does not match the mobile host.";
   }
   if (buildResult?.code === "BC_VERSION_MISMATCH") {
     return buildResult?.error || "Hermes bytecode version mismatch.";
@@ -65,6 +69,16 @@ function compatibilityDetails(buildResult: any): string | null {
   }
   if (buildResult?.reactVersionMismatch) {
     return `React: project ${buildResult.reactVersionMismatch.projectVersion} vs host ${buildResult.reactVersionMismatch.hostVersion}`;
+  }
+  if (buildResult?.reactNativeVersionMismatch || buildResult?.expoVersionMismatch) {
+    return [
+      buildResult?.reactNativeVersionMismatch
+        ? `React Native: project ${buildResult.reactNativeVersionMismatch.projectVersion} vs host ${buildResult.reactNativeVersionMismatch.hostVersion}`
+        : null,
+      buildResult?.expoVersionMismatch
+        ? `Expo: project ${buildResult.expoVersionMismatch.projectVersion} vs host ${buildResult.expoVersionMismatch.hostVersion}`
+        : null,
+    ].filter(Boolean).join("\n");
   }
   return null;
 }

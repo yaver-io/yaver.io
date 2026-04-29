@@ -253,11 +253,14 @@ type BuildNativeBundleResult struct {
 	ModuleName                    string                 `json:"moduleName"`
 	HasAssets                     bool                   `json:"hasAssets"`
 	HostSDKVersion                string                 `json:"hostSdkVersion,omitempty"`
+	HostExpoVersion               string                 `json:"hostExpoVersion,omitempty"`
 	HostReactNative               string                 `json:"hostReactNative,omitempty"`
 	SupportedRNRange              string                 `json:"supportedRNRange,omitempty"`
 	IncompatibleNativeModules     []string               `json:"incompatibleNativeModules,omitempty"`
 	MatchedNativeModules          []string               `json:"matchedNativeModules,omitempty"`
 	NativeModuleVersionMismatches []NativeModuleMismatch `json:"nativeModuleVersionMismatches,omitempty"`
+	ExpoVersionMismatch           *VersionMismatch       `json:"expoVersionMismatch,omitempty"`
+	ReactNativeVersionMismatch    *VersionMismatch       `json:"reactNativeVersionMismatch,omitempty"`
 	ReactVersionMismatch          *VersionMismatch       `json:"reactVersionMismatch,omitempty"`
 }
 

@@ -2764,6 +2764,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	var compatIgnored []string
 	var compatVersionMismatches []NativeModuleMismatch
 	var compatReactVersionMismatch *VersionMismatch
+	var compatExpoVersionMismatch *VersionMismatch
+	var compatRNVersionMismatch *VersionMismatch
 	var compatHostRN string
 	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
 		s.emitBuildProgress("Checking host compatibility...", "compat")
@@ -2773,12 +2775,24 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		compatIgnored = report.Ignored
 		compatVersionMismatches = append([]NativeModuleMismatch(nil), report.VersionMismatches...)
 		compatReactVersionMismatch = report.ReactVersionMismatch
+		compatExpoVersionMismatch = report.ExpoVersionMismatch
+		compatRNVersionMismatch = report.RNVersionMismatch
 		compatHostRN = report.HostRN
 		meta.HostSDKVersion = report.HostSDKVersion
-		meta.HostReactVersion = strings.TrimSpace(report.HostRN)
+		meta.HostExpoVersion = strings.TrimSpace(report.HostExpo)
+		meta.HostReactNativeVersion = strings.TrimSpace(report.HostRN)
+		meta.HostReactVersion = strings.TrimSpace(report.HostReact)
 		if report.ReactVersionMismatch != nil {
 			meta.ProjectReactVersion = report.ReactVersionMismatch.ProjectVersion
 		}
+		if report.ExpoVersionMismatch != nil {
+			meta.ProjectExpoVersion = report.ExpoVersionMismatch.ProjectVersion
+		}
+		if report.RNVersionMismatch != nil {
+			meta.ReactNativeVersion = report.RNVersionMismatch.ProjectVersion
+		}
+		meta.ExpoVersionMismatch = report.ExpoVersionMismatch
+		meta.ReactNativeVersionMismatch = report.RNVersionMismatch
 		meta.ReactVersionMismatch = report.ReactVersionMismatch
 		meta.SupportedRNRange = report.SupportedRNRange
 		meta.IncompatibleNativeModules = append([]string(nil), compatIncompatible...)
@@ -2804,6 +2818,14 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			log.Printf("[super-host] react compat: project=%s host=%s (%s)",
 				compatReactVersionMismatch.ProjectVersion, compatReactVersionMismatch.HostVersion, compatReactVersionMismatch.Reason)
 		}
+		if compatExpoVersionMismatch != nil {
+			log.Printf("[super-host] expo compat: project=%s host=%s (%s)",
+				compatExpoVersionMismatch.ProjectVersion, compatExpoVersionMismatch.HostVersion, compatExpoVersionMismatch.Reason)
+		}
+		if compatRNVersionMismatch != nil {
+			log.Printf("[super-host] react-native compat: project=%s host=%s (%s)",
+				compatRNVersionMismatch.ProjectVersion, compatRNVersionMismatch.HostVersion, compatRNVersionMismatch.Reason)
+		}
 		if len(compatIncompatible) > 0 {
 			log.Printf("[super-host] native-module compat: %d incompatible (%v)",
 				len(compatIncompatible), compatIncompatible)
@@ -2813,7 +2835,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
 			))
 		}
-		if len(compatIncompatible) > 0 || len(compatVersionMismatches) > 0 {
+		if len(compatIncompatible) > 0 || len(compatVersionMismatches) > 0 || compatReactVersionMismatch != nil || compatExpoVersionMismatch != nil || compatRNVersionMismatch != nil {
 			if !req.AllowUnsafeNativeModules {
 				metaJSON := meta.JSON()
 				s.devServerMgr.SetBundleMetadata(metaJSON)
@@ -2828,6 +2850,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"matchedNativeModules":          compatMatched,
 					"ignoredNativeModules":          compatIgnored,
 					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"expoVersionMismatch":           compatExpoVersionMismatch,
+					"reactNativeVersionMismatch":    compatRNVersionMismatch,
 					"reactVersionMismatch":          compatReactVersionMismatch,
 					"blocked":                       true,
 				}
@@ -2848,6 +2872,25 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 						"Blocked native Hermes load: host-native module version drift at a likely-breaking boundary: %s",
 						strings.Join(parts, ", "),
 					)
+				} else {
+					respCode = "FRAMEWORK_VERSION_MISMATCH"
+					parts := make([]string, 0, 3)
+					if compatExpoVersionMismatch != nil {
+						parts = append(parts, fmt.Sprintf("expo project %s vs host %s", compatExpoVersionMismatch.ProjectVersion, compatExpoVersionMismatch.HostVersion))
+					}
+					if compatRNVersionMismatch != nil {
+						parts = append(parts, fmt.Sprintf("react-native project %s vs host %s", compatRNVersionMismatch.ProjectVersion, compatRNVersionMismatch.HostVersion))
+					}
+					if compatReactVersionMismatch != nil {
+						parts = append(parts, fmt.Sprintf("react project %s vs host %s", compatReactVersionMismatch.ProjectVersion, compatReactVersionMismatch.HostVersion))
+					}
+					errMsg = fmt.Sprintf(
+						"Blocked native Hermes load: framework/runtime drift between guest and Yaver host: %s",
+						strings.Join(parts, ", "),
+					)
+					title = "Framework runtime mismatch"
+					userMsg = "The bundle compiled, but Yaver blocked restart because the guest app's Expo/React runtime does not match the mobile host."
+					helpHint = "Align the project's Expo, React Native, and React versions with this Yaver host before retrying."
 				}
 				incident := s.appendDevIncident("build", ReasonBuildNativeFailed, title, userMsg, errMsg, helpHint, workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, payload, buildOp.ID)
 				s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{
@@ -2856,6 +2899,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"matchedNativeModules":          compatMatched,
 					"ignoredNativeModules":          compatIgnored,
 					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"expoVersionMismatch":           compatExpoVersionMismatch,
+					"reactNativeVersionMismatch":    compatRNVersionMismatch,
 					"reactVersionMismatch":          compatReactVersionMismatch,
 					"blocked":                       true,
 				}, incident.ID)
@@ -2870,8 +2915,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"matchedNativeModules":          compatMatched,
 					"ignoredNativeModules":          compatIgnored,
 					"nativeModuleVersionMismatches": compatVersionMismatches,
+					"expoVersionMismatch":           compatExpoVersionMismatch,
+					"reactNativeVersionMismatch":    compatRNVersionMismatch,
 					"reactVersionMismatch":          compatReactVersionMismatch,
 					"hostSdkVersion":                report.HostSDKVersion,
+					"hostExpoVersion":               report.HostExpo,
 					"hostReactNative":               report.HostRN,
 					"supportedRNRange":              report.SupportedRNRange,
 					"bcVersion":                     meta.HermesBCVersion,
@@ -2949,12 +2997,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"cacheValid":                    cacheDecision.Valid,
 		"cacheMessage":                  cacheDecision.Message,
 		"hostSdkVersion":                meta.HostSDKVersion,
+		"hostExpoVersion":               meta.HostExpoVersion,
 		"hostReactNative":               compatHostRN,
 		"supportedRNRange":              meta.SupportedRNRange,
 		"incompatibleNativeModules":     compatIncompatible,
 		"matchedNativeModules":          compatMatched,
 		"ignoredNativeModules":          compatIgnored,
 		"nativeModuleVersionMismatches": compatVersionMismatches,
+		"expoVersionMismatch":           compatExpoVersionMismatch,
+		"reactNativeVersionMismatch":    compatRNVersionMismatch,
 		"reactVersionMismatch":          compatReactVersionMismatch,
 		"allowUnsafeNativeModules":      req.AllowUnsafeNativeModules,
 	})

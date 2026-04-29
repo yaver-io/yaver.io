@@ -187,6 +187,30 @@ describe("devServer.buildNative", () => {
     expect(r.body?.platform).toBe("android");
   });
 
+  it("surfaces framework runtime mismatches with Expo and React Native details", async () => {
+    agent.setBuildNativeMode("blocked-framework");
+    const r = await mobile.devServer.buildNative("ios");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("FRAMEWORK_VERSION_MISMATCH");
+    expect(r.body?.reactNativeVersionMismatch).toEqual(
+      expect.objectContaining({
+        projectVersion: "0.81.6",
+        hostVersion: "0.81.5",
+        reason: "exact runtime version differs",
+      }),
+    );
+    expect(r.body?.expoVersionMismatch).toEqual(
+      expect.objectContaining({
+        projectVersion: "54.0.33",
+        hostVersion: "54.0.0",
+        reason: "exact runtime version differs",
+      }),
+    );
+    expect(r.body?.hostExpoVersion).toBe("54.0.0");
+    expect(r.body?.platform).toBe("ios");
+  });
+
   it("surfaces Hermes bytecode mismatch metadata without throwing", async () => {
     agent.setBuildNativeMode("bc-mismatch");
     const r = await mobile.devServer.buildNative("ios");

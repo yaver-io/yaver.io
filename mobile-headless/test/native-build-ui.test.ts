@@ -21,6 +21,7 @@ describe("nativeBuild UI mapping", () => {
     expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_INCOMPATIBLE" })).toBe("Compatibility Blocked");
     expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
     expect(nativeBuildFailureTitle({ code: "REACT_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
+    expect(nativeBuildFailureTitle({ code: "FRAMEWORK_VERSION_MISMATCH" })).toBe("Compatibility Blocked");
   });
 
   it("maps Hermes bytecode mismatch distinctly", () => {
@@ -60,6 +61,29 @@ describe("nativeBuild UI mapping", () => {
       "phase: compat\n" +
       "Yaver blocked restart because the project uses native modules the mobile host does not include.\n" +
       "Missing in Yaver: react-native-yaver-fictional-test-module"
+    );
+  });
+
+  it("renders framework runtime mismatches concisely", () => {
+    expect(nativeBuildFailureMessage({
+      phase: "compat",
+      code: "FRAMEWORK_VERSION_MISMATCH",
+      reactNativeVersionMismatch: {
+        projectVersion: "0.81.6",
+        hostVersion: "0.81.5",
+      },
+      expoVersionMismatch: {
+        projectVersion: "54.0.33",
+        hostVersion: "54.0.0",
+      },
+      helpHint: "align Expo/React Native exactly",
+      output: "Done writing bundle output",
+    })).toBe(
+      "phase: compat\n" +
+      "Yaver blocked restart because the project's Expo or React Native runtime does not match the mobile host.\n" +
+      "React Native: project 0.81.6 vs host 0.81.5\n" +
+      "Expo: project 54.0.33 vs host 54.0.0\n" +
+      "align Expo/React Native exactly"
     );
   });
 });

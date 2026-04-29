@@ -23,7 +23,7 @@ import {
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { formatGuestCrashReport, shouldShowGuestCrashReport, type GuestCrashReport } from "../../src/lib/guestCrash";
-import { visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
+import { shouldShowCurrentReloadIncident, visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -430,11 +430,12 @@ export default function HotReloadScreen() {
   const currentOperation = visibleOperations[0] || null;
   const visibleIncidents = visibleReloadIncidents(reloadIncidents, currentOperation, activeProjectPath);
   const currentIncident = visibleIncidents[0] || null;
+  const showCurrentIncident = shouldShowCurrentReloadIncident(currentIncident, currentOperation);
   const lastGuestCrash = currentYaverGuestCrashReport();
   const showGuestCrashCard =
     shouldShowGuestCrashReport(lastGuestCrash) &&
     (!currentOperation || currentOperation.status !== "running") &&
-    !currentIncident;
+    !showCurrentIncident;
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -577,7 +578,7 @@ export default function HotReloadScreen() {
                 ) : null}
               </View>
             ) : null}
-            {currentIncident ? (
+            {showCurrentIncident && currentIncident ? (
               <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>
                 <Text style={{ color: "#fca5a5", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
                   current blocker
