@@ -2,6 +2,8 @@
 
 Visual feedback SDK for Yaver. Lets testers and developers shake their phone and then keep a small quick-access icon on screen for hot reload, vibing, and screenshot & fix flows straight to a Yaver agent running on a dev machine.
 
+Haptics ownership rule: when your app is paired with Yaver, app-level haptics should belong to Yaver Feedback alone. If the host app also fires its own `expo-haptics` calls, you risk duplicated tactile feedback and a larger native-module crash surface during guest/runtime flows.
+
 ## Installation
 
 ```bash
@@ -618,6 +620,7 @@ YaverFeedback.init({
   // Optional
   agentUrl: 'http://192.168.1.10:18080',  // Agent URL (auto-discovered if omitted)
   trigger: 'shake',                        // 'shake' | 'floating-button' | 'manual'
+  disableShakeGesture: false,              // Non-default: disable shake + promote quick icon to 'always'
   enabled: true,                           // Default: __DEV__ (auto-disabled in production)
   maxRecordingDuration: 120,               // Max recording duration in seconds (default: 120)
   feedbackMode: 'batch',                   // 'live' | 'narrated' | 'batch' (default: 'batch')
@@ -661,6 +664,26 @@ SDK yields shake handling to Yaver's native overlay — see the
 ```typescript
 YaverFeedback.init({ authToken, trigger: 'shake' });
 ```
+
+### No-shake build option
+
+If another surface owns motion / haptics and you want the SDK without shake detection, enable the non-default `disableShakeGesture` option:
+
+```typescript
+YaverFeedback.init({
+  authToken,
+  trigger: 'shake',
+  disableShakeGesture: true,
+});
+```
+
+Effects:
+
+- `ShakeDetector` is not started.
+- If `quickIcon` was unset / `'auto'`, the SDK promotes it to `'always'`.
+- The user opens feedback through the draggable quick icon or your own manual trigger.
+
+This is useful when Yaver Feedback should remain the only haptic/shake owner and the host app should not bind its own motion-triggered entry point.
 
 ### Floating Button
 

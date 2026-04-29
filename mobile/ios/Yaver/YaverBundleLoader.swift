@@ -21,9 +21,17 @@ class YaverBundleLoader: RCTEventEmitter {
                         resolver resolve: @escaping RCTPromiseResolveBlock,
                         rejecter reject: @escaping RCTPromiseRejectBlock) {
     NSLog("[YaverBundleLoader] loadBundle called: url=%@ moduleName=%@", urlString, moduleName)
+    YaverGuestCrashReporter.markGuestPhase("bundle_download_requested", moduleName: moduleName, sourceURL: urlString)
 
     guard let bundleURL = URL(string: urlString) else {
       NSLog("[YaverBundleLoader] INVALID_URL: %@", urlString)
+      YaverGuestCrashReporter.recordGuestFailure(
+        phase: "bundle_invalid_url",
+        message: "Invalid guest bundle URL: \(urlString)",
+        moduleName: moduleName,
+        sourceURL: urlString
+      )
+      sendEvent(withName: "onBundleError", body: ["code": "INVALID_URL", "message": "Invalid bundle URL: \(urlString)"])
       reject("INVALID_URL", "Invalid bundle URL: \(urlString)", nil)
       return
     }
@@ -38,19 +46,41 @@ class YaverBundleLoader: RCTEventEmitter {
     URLSession.shared.dataTask(with: request) { data, response, error in
       if let error = error {
         NSLog("[YaverBundleLoader] DOWNLOAD_FAILED: %@", error.localizedDescription)
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "bundle_download_failed",
+          message: "Downloading the guest bundle failed: \(error.localizedDescription)",
+          moduleName: moduleName,
+          sourceURL: urlString
+        )
+        self.sendEvent(withName: "onBundleError", body: ["code": "DOWNLOAD_FAILED", "message": error.localizedDescription])
         reject("DOWNLOAD_FAILED", error.localizedDescription, error); return
       }
       guard let data = data, data.count > 0 else {
         NSLog("[YaverBundleLoader] EMPTY_BUNDLE from %@", urlString)
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "bundle_download_empty",
+          message: "Downloading the guest bundle returned no bytes.",
+          moduleName: moduleName,
+          sourceURL: urlString
+        )
+        self.sendEvent(withName: "onBundleError", body: ["code": "EMPTY_BUNDLE", "message": "Empty bundle"])
         reject("EMPTY_BUNDLE", "Empty bundle", nil); return
       }
       guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         NSLog("[YaverBundleLoader] HTTP_ERROR: status=%d", code)
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "bundle_download_http_error",
+          message: "Downloading the guest bundle returned HTTP \(code).",
+          moduleName: moduleName,
+          sourceURL: urlString
+        )
+        self.sendEvent(withName: "onBundleError", body: ["code": "HTTP_ERROR", "message": "Status \(code)"])
         reject("HTTP_ERROR", "Status \(code)", nil); return
       }
 
       NSLog("[YaverBundleLoader] downloaded %d bytes", data.count)
+      YaverGuestCrashReporter.markGuestPhase("bundle_downloaded", moduleName: moduleName, sourceURL: urlString)
 
       // Parse bundle metadata from response header (if agent sent it)
       let metaHeader = http.value(forHTTPHeaderField: "X-Yaver-Bundle-Metadata")
@@ -65,12 +95,26 @@ class YaverBundleLoader: RCTEventEmitter {
           // Pre-validate metadata (catches BC mismatch before we even look at bytes)
           if let metaErr = YaverBundleValidator.validateMetadata(m) {
             NSLog("[YaverBundleLoader] metadata rejected: %@", metaErr.localizedDescription)
+            YaverGuestCrashReporter.recordGuestFailure(
+              phase: "bundle_metadata_rejected",
+              message: metaErr.localizedDescription,
+              moduleName: moduleName,
+              sourceURL: urlString
+            )
+            self.sendEvent(withName: "onBundleError", body: ["code": metaErr.code, "message": metaErr.localizedDescription])
             reject(metaErr.code, metaErr.localizedDescription, nil); return
           }
 
           // Full bundle validation (size + MD5 + magic + BC)
           if let bundleErr = YaverBundleValidator.validateBundle(data: data, metadata: m) {
             NSLog("[YaverBundleLoader] bundle validation FAILED: %@", bundleErr.localizedDescription)
+            YaverGuestCrashReporter.recordGuestFailure(
+              phase: "bundle_validation_failed",
+              message: bundleErr.localizedDescription,
+              moduleName: moduleName,
+              sourceURL: urlString
+            )
+            self.sendEvent(withName: "onBundleError", body: ["code": bundleErr.code, "message": bundleErr.localizedDescription])
             reject(bundleErr.code, bundleErr.localizedDescription, nil); return
           }
           NSLog("[YaverBundleLoader] bundle validated: size match, MD5 match, BC%d", m.hermesBCVersion)
@@ -85,6 +129,13 @@ class YaverBundleLoader: RCTEventEmitter {
           if magic == 0x1F1903C1 {
             NSLog("[YaverBundleLoader] Hermes BC=%d expectedBC=%d", bcVersion, expectedBC)
             if expectedBC > 0 && bcVersion != expectedBC {
+              YaverGuestCrashReporter.recordGuestFailure(
+                phase: "bundle_bc_mismatch",
+                message: "Hermes BC\(bcVersion) != expected BC\(expectedBC)",
+                moduleName: moduleName,
+                sourceURL: urlString
+              )
+              self.sendEvent(withName: "onBundleError", body: ["code": "BC_VERSION_MISMATCH", "message": "Hermes BC\(bcVersion) != expected BC\(expectedBC)"])
               reject("BC_VERSION_MISMATCH",
                      "Hermes BC\(bcVersion) != expected BC\(expectedBC)", nil); return
             }
@@ -101,6 +152,12 @@ class YaverBundleLoader: RCTEventEmitter {
         let savePath = dir.appendingPathComponent("main.jsbundle")
         try data.write(to: savePath, options: .atomic)
         NSLog("[YaverBundleLoader] saved bundle to %@, size=%d", savePath.path, data.count)
+        YaverGuestCrashReporter.markGuestPhase(
+          "bundle_saved",
+          moduleName: moduleName,
+          sourceURL: urlString,
+          bundlePath: savePath.path
+        )
 
         let localMeta = try JSONSerialization.data(withJSONObject: [
           "moduleName": moduleName, "sourceUrl": urlString, "size": data.count,
@@ -125,6 +182,7 @@ class YaverBundleLoader: RCTEventEmitter {
         }
 
         resolve(["loaded": true, "url": urlString, "size": data.count])
+        self.sendEvent(withName: "onBundleLoaded", body: ["url": urlString, "moduleName": moduleName, "size": data.count])
 
         NSLog("[YaverBundleLoader] posting reload notification: moduleName=%@", moduleName)
         DispatchQueue.main.async {
@@ -133,6 +191,13 @@ class YaverBundleLoader: RCTEventEmitter {
         }
       } catch {
         NSLog("[YaverBundleLoader] SAVE_FAILED: %@", error.localizedDescription)
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "bundle_save_failed",
+          message: "Saving the guest bundle failed: \(error.localizedDescription)",
+          moduleName: moduleName,
+          sourceURL: urlString
+        )
+        self.sendEvent(withName: "onBundleError", body: ["code": "SAVE_FAILED", "message": error.localizedDescription])
         reject("SAVE_FAILED", error.localizedDescription, error)
       }
     }.resume()
@@ -145,7 +210,9 @@ class YaverBundleLoader: RCTEventEmitter {
     try? FileManager.default.removeItem(at: dir.appendingPathComponent("main.jsbundle"))
     try? FileManager.default.removeItem(at: dir.appendingPathComponent("metadata.json"))
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
+    YaverGuestCrashReporter.clearGuestSession()
     resolve(["unloaded": true])
+    sendEvent(withName: "onBundleUnloaded", body: ["unloaded": true])
     DispatchQueue.main.async {
       NotificationCenter.default.post(name: YaverBundleLoader.restoreNotification, object: nil)
     }

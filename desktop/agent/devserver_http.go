@@ -2591,6 +2591,25 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if err := injectGuestSafePrelude(bundlePath); err != nil {
+		errMsg := fmt.Sprintf("guest-safe prelude injection failed: %v", err)
+		s.devServerMgr.EmitLog(errMsg)
+		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Guest safety prelude failed", "Yaver could not prepare its guest-safety runtime shim before Hermes compilation.", errMsg, "Inspect the generated bundle path and retry the build after fixing host file permissions or disk state.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
+		writeNativeBuildStatus(workDir, nativeBuildStatus{
+			State:        "build_failed",
+			Platform:     req.Platform,
+			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+			LastError:    errMsg,
+		})
+		jsonReply(w, http.StatusInternalServerError, map[string]string{
+			"error": errMsg,
+			"code":  "GUEST_SAFE_PRELUDE_FAILED",
+		})
+		return
+	}
+	s.devServerMgr.EmitLog("Injected Yaver guest-safe runtime shims for ExpoHaptics and RNCNetInfo.")
+
 	// ── Hermes compile ──
 	s.emitBuildProgress("Compiling Hermes bytecode...", "hermes")
 	s.upsertDevOperation("build_native", "running", "hermes", "Compiling Hermes bytecode…", workDir, target.DeviceID, phaseProgress("hermes"), map[string]interface{}{"platform": req.Platform})

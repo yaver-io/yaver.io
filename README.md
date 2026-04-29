@@ -106,7 +106,7 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 
 **You might use:**
 - Just the **mobile app + agent** — control AI agents from your phone, hot reload any framework
-- Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent
+- Add the **Feedback SDK** — embed a debug console in your app, shake to report bugs to your AI agent. If you pair a guest app with Yaver, let the Feedback SDK own haptics; do not keep a second app-level `expo-haptics` layer active on top.
 - All three together — the full loop: code on machine, push to device, test, report bugs, AI fixes, repeat
 
 ## Yaver Protocol v1 — never feel disconnected

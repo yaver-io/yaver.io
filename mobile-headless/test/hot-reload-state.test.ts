@@ -60,4 +60,15 @@ describe("hot reload state filtering", () => {
       visibleReloadIncidents(incidents, currentOperation, "/active").map((item) => item.id),
     ).toEqual(["incident-1", "incident-2"]);
   });
+
+  it("hides stale same-project incidents while a newer operation is still running", () => {
+    const currentOperation = op({ id: "op-running", projectPath: "/active" });
+    const incidents = [
+      incident({ id: "stale-path-match", projectPath: "/active" }),
+      incident({ id: "linked", operationId: "op-running" }),
+    ];
+    expect(
+      visibleReloadIncidents(incidents, currentOperation, "/active").map((item) => item.id),
+    ).toEqual(["linked"]);
+  });
 });

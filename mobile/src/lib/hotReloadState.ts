@@ -23,12 +23,10 @@ export function visibleReloadIncidents(
   activeProjectPath?: string | null,
 ): IncidentEvent[] {
   if (!currentOperation) return [];
-  const normalizedActivePath = normalizePath(activeProjectPath);
   return incidents.filter((incident) => {
     if (incident.resolved) return false;
     if (currentOperation?.incidentIds?.includes(incident.id)) return true;
     if (currentOperation?.id && incident.operationId === currentOperation.id) return true;
-    if (!normalizedActivePath) return false;
-    return normalizePath(incident.projectPath) === normalizedActivePath;
+    return false;
   });
 }

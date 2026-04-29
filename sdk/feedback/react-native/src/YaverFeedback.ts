@@ -137,6 +137,9 @@ export class YaverFeedback {
       autoLogin: true,
       ...cfg,
     };
+    if (config.disableShakeGesture && (!config.quickIcon || config.quickIcon === 'auto')) {
+      config.quickIcon = 'always';
+    }
     firstShakeFired = false;
 
     // Route the in-SDK login screen to prod yaver.io by default; callers may
@@ -193,7 +196,7 @@ export class YaverFeedback {
       shakeDetector.stop();
       shakeDetector = null;
     }
-    if (enabled && config.trigger === 'shake') {
+    if (enabled && config.trigger === 'shake' && !config.disableShakeGesture) {
       shakeDetector = new ShakeDetector();
       shakeDetector.start(() => {
         YaverFeedback.notifyShake();
@@ -583,7 +586,7 @@ export class YaverFeedback {
         BlackBox.start(); // restart with previous config
       }
       // Restart shake detector if trigger is 'shake'
-      if (config?.trigger === 'shake' && !shakeDetector) {
+      if (config?.trigger === 'shake' && !config?.disableShakeGesture && !shakeDetector) {
         shakeDetector = new ShakeDetector();
         shakeDetector.start(() => {
           YaverFeedback.notifyShake();

@@ -27,11 +27,13 @@ describe('React Native SDK types', () => {
         authToken: 'tok',
         agentUrl: 'http://192.168.1.10:18080',
         trigger: 'shake',
+        disableShakeGesture: true,
         enabled: true,
         maxRecordingDuration: 60,
         strictNativeAuth: true,
       };
       expect(config.trigger).toBe('shake');
+      expect(config.disableShakeGesture).toBe(true);
       expect(config.strictNativeAuth).toBe(true);
     });
 

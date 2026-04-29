@@ -1,4 +1,5 @@
 import Foundation
+import React
 
 @objc(YaverInfo)
 final class YaverInfo: NSObject {
@@ -23,6 +24,21 @@ final class YaverInfo: NSObject {
       "suppressPushNotifications": true,
       "suppressLocalizationProbe": true,
       "availableModules": availableModules,
+      "lastGuestCrashReport": YaverGuestCrashReporter.loadLastCrashReport() ?? NSNull(),
     ]
+  }
+
+  @objc func getLastGuestCrashReport(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    resolve(YaverGuestCrashReporter.loadLastCrashReport() ?? NSNull())
+  }
+
+  @objc func clearLastGuestCrashReport(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    resolve(YaverGuestCrashReporter.clearLastCrashReport())
   }
 }

@@ -14,6 +14,8 @@ public class AppDelegate: ExpoAppDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    YaverGuestCrashReporter.recoverCrashIfNeeded()
+
     // Clean up any stale guest bundle from previous sessions so Yaver's own UI loads
     let docsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
     let staleBundlePath = (docsPath as NSString).appendingPathComponent("bundles/main.jsbundle")
@@ -46,6 +48,11 @@ public class AppDelegate: ExpoAppDelegate {
       object: nil, queue: .main
     ) { _ in
       NSLog("[AppDelegate] JS loaded successfully")
+      if UserDefaults.standard.string(forKey: "yaverCurrentModuleName") != nil
+        || UserDefaults.standard.string(forKey: "yaverLoadedModuleName") != nil
+      {
+        YaverGuestCrashReporter.markGuestPhase("javascript_loaded")
+      }
     }
     NotificationCenter.default.addObserver(
       self, selector: #selector(handleJSLoadFailure(_:)),
@@ -71,12 +78,18 @@ public class AppDelegate: ExpoAppDelegate {
   @objc func handleBundleReload(_ notification: Notification) {
     let moduleName = (notification.userInfo?["moduleName"] as? String) ?? "main"
     NSLog("[AppDelegate] handleBundleReload: moduleName=%@", moduleName)
+    YaverGuestCrashReporter.markGuestPhase("reload_requested", moduleName: moduleName)
     safeReloadBridge(moduleName: moduleName)
   }
 
   @objc func handleJSLoadFailure(_ notification: Notification) {
     let error = (notification.userInfo?["error"] as? Error)?.localizedDescription ?? "unknown"
     NSLog("[AppDelegate] JS LOAD FAILED: %@", error)
+    YaverGuestCrashReporter.recordGuestFailure(
+      phase: "javascript_failed_to_load",
+      message: "JavaScript failed to load: \(error)",
+      moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName")
+    )
 
     // Only show error screen if we're loading a guest app (not Yaver's own bundle)
     let isGuestBundle = UserDefaults.standard.string(forKey: "yaverCurrentModuleName") != nil
@@ -98,6 +111,7 @@ public class AppDelegate: ExpoAppDelegate {
       return
     }
     isReloading = true
+    YaverGuestCrashReporter.markGuestPhase("bridge_reload_preparing", moduleName: moduleName)
 
     let docsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
     let downloadedBundle = (docsPath as NSString).appendingPathComponent("bundles/main.jsbundle")
@@ -114,6 +128,11 @@ public class AppDelegate: ExpoAppDelegate {
     let bundleURL = URL(fileURLWithPath: downloadedBundle)
 
     NSLog("[AppDelegate] safeReloadBridge: bundleURL=%@ moduleName=%@", bundleURL.path, resolvedModule)
+    YaverGuestCrashReporter.markGuestPhase(
+      "bridge_reload_ready",
+      moduleName: resolvedModule,
+      bundlePath: bundleURL.path
+    )
 
     // Log bundle info for debugging
     // HBC format: magic at offset 4, BC version at offset 8
@@ -153,6 +172,11 @@ public class AppDelegate: ExpoAppDelegate {
     if let bridge = existingBridge {
       oldBridgeWeak = bridge
       NSLog("[AppDelegate] invalidating old bridge...")
+      YaverGuestCrashReporter.markGuestPhase(
+        "bridge_invalidating_old",
+        moduleName: resolvedModule,
+        bundlePath: bundleURL.path
+      )
       bridge.invalidate()
     } else {
       NSLog("[AppDelegate] no existing RCTRootView — creating fresh bridge")
@@ -209,6 +233,11 @@ public class AppDelegate: ExpoAppDelegate {
   /// TurboModules like PlatformConstants are available to the guest app.
   private func initGuestBridge(bundleURL: URL, moduleName: String, window: UIWindow) {
     NSLog("[AppDelegate] creating New Arch factory bridge: url=%@ module=%@", bundleURL.path, moduleName)
+    YaverGuestCrashReporter.markGuestPhase(
+      "bridge_starting_guest",
+      moduleName: moduleName,
+      bundlePath: bundleURL.path
+    )
 
     let delegate = ReactNativeDelegate()
     delegate.overrideBundleURL = bundleURL
@@ -228,6 +257,11 @@ public class AppDelegate: ExpoAppDelegate {
 
     isReloading = false
     NSLog("[AppDelegate] guest app loaded (New Arch): module=%@", moduleName)
+    YaverGuestCrashReporter.markGuestPhase(
+      "bridge_started_guest",
+      moduleName: moduleName,
+      bundlePath: bundleURL.path
+    )
 
     // Guest app is running. Shake phone to reveal "Back to Yaver" overlay.
     isGuestAppRunning = true
@@ -398,6 +432,11 @@ public class AppDelegate: ExpoAppDelegate {
     URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
       if let err = err {
         NSLog("[AppDelegate] reload build failed: %@", err.localizedDescription)
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "native_rebuild_failed",
+          message: "Native rebuild request failed: \(err.localizedDescription)",
+          moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName")
+        )
         DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
         return
       }
@@ -406,6 +445,11 @@ public class AppDelegate: ExpoAppDelegate {
             let bundleURLPath = obj["bundleUrl"] as? String,
             let fullBundleURL = URL(string: "\(baseURL)\(bundleURLPath)") else {
         NSLog("[AppDelegate] reload: invalid build response")
+        YaverGuestCrashReporter.recordGuestFailure(
+          phase: "native_rebuild_invalid_response",
+          message: "Native rebuild returned an invalid response.",
+          moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName")
+        )
         DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
         return
       }
@@ -417,10 +461,22 @@ public class AppDelegate: ExpoAppDelegate {
       URLSession.shared.dataTask(with: dlReq) { [weak self] bundleData, _, dlErr in
         if let dlErr = dlErr {
           NSLog("[AppDelegate] reload download failed: %@", dlErr.localizedDescription)
+          YaverGuestCrashReporter.recordGuestFailure(
+            phase: "native_rebuild_download_failed",
+            message: "Downloading the rebuilt guest bundle failed: \(dlErr.localizedDescription)",
+            moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName"),
+            sourceURL: fullBundleURL.absoluteString
+          )
           DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
           return
         }
         guard let bundleData = bundleData, bundleData.count > 0 else {
+          YaverGuestCrashReporter.recordGuestFailure(
+            phase: "native_rebuild_empty_bundle",
+            message: "Downloading the rebuilt guest bundle returned no bytes.",
+            moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName"),
+            sourceURL: fullBundleURL.absoluteString
+          )
           DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
           return
         }
@@ -431,8 +487,20 @@ public class AppDelegate: ExpoAppDelegate {
           let bundlePath = docs.appendingPathComponent("bundles/main.jsbundle")
           try bundleData.write(to: bundlePath, options: .atomic)
           NSLog("[AppDelegate] reload: wrote %d bytes to %@", bundleData.count, bundlePath.path)
+          YaverGuestCrashReporter.markGuestPhase(
+            "native_rebuild_downloaded",
+            moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName"),
+            sourceURL: fullBundleURL.absoluteString,
+            bundlePath: bundlePath.path
+          )
         } catch {
           NSLog("[AppDelegate] reload write failed: %@", error.localizedDescription)
+          YaverGuestCrashReporter.recordGuestFailure(
+            phase: "native_rebuild_write_failed",
+            message: "Writing the rebuilt guest bundle failed: \(error.localizedDescription)",
+            moduleName: UserDefaults.standard.string(forKey: "yaverCurrentModuleName"),
+            sourceURL: fullBundleURL.absoluteString
+          )
           DispatchQueue.main.async { self?.hideReloadSpinner(); self?.fallbackBridgeReload() }
           return
         }
@@ -599,6 +667,7 @@ public class AppDelegate: ExpoAppDelegate {
 
   @objc func handleBundleRestore(_ notification: Notification) {
     NSLog("[AppDelegate] Restoring original Yaver bundle...")
+    YaverGuestCrashReporter.clearGuestSession()
     isGuestAppRunning = false
     overlayDismissTimer?.invalidate()
     overlayDismissTimer = nil

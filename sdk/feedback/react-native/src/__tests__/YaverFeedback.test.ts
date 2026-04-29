@@ -83,6 +83,17 @@ describe('YaverFeedback', () => {
       expect(cfg!.strictNativeAuth).toBe(true);
     });
 
+    it('promotes quick icon to always when shake is disabled', () => {
+      YaverFeedback.init({
+        authToken: 'tok',
+        disableShakeGesture: true,
+      });
+
+      const cfg = YaverFeedback.getConfig();
+      expect(cfg!.disableShakeGesture).toBe(true);
+      expect(cfg!.quickIcon).toBe('always');
+    });
+
     it('with enabled=false sets enabled to false', () => {
       YaverFeedback.init({
         authToken: 'tok',

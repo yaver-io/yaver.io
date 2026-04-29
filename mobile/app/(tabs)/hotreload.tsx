@@ -22,6 +22,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { formatGuestCrashReport, shouldShowGuestCrashReport, type GuestCrashReport } from "../../src/lib/guestCrash";
 import { visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
@@ -64,6 +65,13 @@ function currentYaverConsumerContract() {
     consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
     consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
   };
+}
+
+function currentYaverGuestCrashReport(): GuestCrashReport | null {
+  const info = (NativeModules as any)?.YaverInfo ?? {};
+  const report = info?.lastGuestCrashReport;
+  if (!report || typeof report !== "object") return null;
+  return report as GuestCrashReport;
 }
 
 // ── Hot Reload Tab ────────────────────────────────────────────────
@@ -422,6 +430,11 @@ export default function HotReloadScreen() {
   const currentOperation = visibleOperations[0] || null;
   const visibleIncidents = visibleReloadIncidents(reloadIncidents, currentOperation, activeProjectPath);
   const currentIncident = visibleIncidents[0] || null;
+  const lastGuestCrash = currentYaverGuestCrashReport();
+  const showGuestCrashCard =
+    shouldShowGuestCrashReport(lastGuestCrash) &&
+    (!currentOperation || currentOperation.status !== "running") &&
+    !currentIncident;
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -580,6 +593,18 @@ export default function HotReloadScreen() {
                     Next: {currentIncident.suggestedAction}
                   </Text>
                 ) : null}
+              </View>
+            ) : null}
+            {showGuestCrashCard ? (
+              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#1a1208", borderWidth: 1, borderColor: "#f59e0b66" }}>
+                <Text style={{ color: "#fbbf24", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+                  last guest crash
+                </Text>
+                {formatGuestCrashReport(lastGuestCrash).map((line, index) => (
+                  <Text key={`${index}-${line}`} style={{ color: "#fde68a", fontSize: 11, marginTop: index === 0 ? 0 : 4 }}>
+                    {line}
+                  </Text>
+                ))}
               </View>
             ) : null}
             {/* Failure banner: shows the server-captured reason (stderr tail, missing tool, etc.) */}

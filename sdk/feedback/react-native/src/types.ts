@@ -124,6 +124,17 @@ export interface FeedbackConfig {
   /** How feedback collection is triggered */
   trigger?: 'shake' | 'floating-button' | 'manual';
   /**
+   * Non-default escape hatch for host apps that want the SDK without
+   * shake gesture handling. When enabled:
+   * - the SDK does not start ShakeDetector
+   * - if `quickIcon` was left as `'auto'`/unset, it is promoted to `'always'`
+   * - the app should rely on the draggable quick icon or explicit
+   *   `YaverFeedback.startReport()` calls instead
+   *
+   * Intended for builds where another surface owns motion / haptics.
+   */
+  disableShakeGesture?: boolean;
+  /**
    * Small tap-to-open icon that floats above the app so the user
    * doesn't have to shake every time they want to open feedback.
    * Single tap → open the feedback modal; long-press → menu with
