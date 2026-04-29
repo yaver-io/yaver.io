@@ -27,3 +27,21 @@ index f1abde9..c55af56 100644
  
    # Use install_modules_dependencies helper to install the dependencies if React Native version >=0.71.0.
    # See https://github.com/facebook/react-native/blob/febf6b7f33fdb4904669f99d795eba4c0f95d7bf/scripts/cocoapods/new_architecture.rb#L79.
+diff --git a/node_modules/react-native-record-screen/android/src/main/java/com/recordscreen/RecordScreenModule.kt b/node_modules/react-native-record-screen/android/src/main/java/com/recordscreen/RecordScreenModule.kt
+index 8475fd1..d217323 100644
+--- a/node_modules/react-native-record-screen/android/src/main/java/com/recordscreen/RecordScreenModule.kt
++++ b/node_modules/react-native-record-screen/android/src/main/java/com/recordscreen/RecordScreenModule.kt
+@@ -101,7 +101,12 @@ class RecordScreenModule(reactContext: ReactApplicationContext) : ReactContextB
+   private fun startRecordingScreen() {
+     val mediaProjectionManager = reactApplicationContext.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager;
+     val permissionIntent = mediaProjectionManager.createScreenCaptureIntent();
+-    currentActivity!!.startActivityForResult(permissionIntent, SCREEN_RECORD_REQUEST_CODE);
++    val activity = getCurrentActivity();
++    if (activity == null) {
++      startPromise?.reject("NO_ACTIVITY", "No foreground activity to request screen recording permission");
++      return;
++    }
++    activity.startActivityForResult(permissionIntent, SCREEN_RECORD_REQUEST_CODE);
+   }
+ 
+ 

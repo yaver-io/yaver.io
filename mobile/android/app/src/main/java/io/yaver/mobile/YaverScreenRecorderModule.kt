@@ -73,7 +73,7 @@ class YaverScreenRecorderModule(private val ctx: ReactApplicationContext) :
       promise.reject("ALREADY_RECORDING", "Already recording")
       return
     }
-    val activity = currentActivity ?: run {
+    val activity = getCurrentActivity() ?: run {
       promise.reject("NO_ACTIVITY", "Cannot start screen recording without a foreground activity")
       return
     }
@@ -113,7 +113,7 @@ class YaverScreenRecorderModule(private val ctx: ReactApplicationContext) :
 
   // ─── ActivityEventListener — receives MediaProjection grant ─────────────────
 
-  override fun onActivityResult(activity: Activity?, requestCode: Int, resultCode: Int, data: Intent?) {
+  override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
     if (requestCode != REQUEST_CODE_CAPTURE) return
     val promise = pendingPromise ?: return
     pendingPromise = null
@@ -146,7 +146,7 @@ class YaverScreenRecorderModule(private val ctx: ReactApplicationContext) :
     }
   }
 
-  override fun onNewIntent(intent: Intent?) { /* no-op */ }
+  override fun onNewIntent(intent: Intent) { /* no-op */ }
 
   // ─── Internal helpers ──────────────────────────────────────────────────────
 
