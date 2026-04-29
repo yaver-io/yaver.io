@@ -2738,6 +2738,20 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	log.Printf("[super-host] hasAssets=%v", hasAssets)
 
 	s.devServerMgr.SetBundleMetadata(meta.JSON())
+	buildID := fmt.Sprintf("%s-%d", meta.MD5, time.Now().UTC().UnixNano())
+	bundleURL := "/dev/native-bundle?build=" + url.QueryEscape(buildID)
+	assetsURL := "/dev/native-assets?build=" + url.QueryEscape(buildID)
+	s.devServerMgr.SetNativeBundleInfo(NativeBundleInfo{
+		BuildID:      buildID,
+		WorkDir:      workDir,
+		BuildDir:     buildDir,
+		BundlePath:   bundlePath,
+		AssetsDir:    assetsDir,
+		Platform:     req.Platform,
+		ModuleName:   moduleName,
+		BuiltAt:      time.Now().UTC().Format(time.RFC3339),
+		MetadataJSON: meta.JSON(),
+	})
 	s.emitBuildProgress(fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s",
 		meta.Size/1024, meta.HermesBCVersion, moduleName), "ready")
 	s.upsertDevOperation("build_native", "completed", "ready", fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s", meta.Size/1024, meta.HermesBCVersion, moduleName), workDir, target.DeviceID, phaseProgress("done"), map[string]interface{}{
@@ -2764,8 +2778,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":                        "ok",
-		"bundleUrl":                     "/dev/native-bundle",
-		"assetsUrl":                     "/dev/native-assets",
+		"bundleUrl":                     bundleURL,
+		"assetsUrl":                     assetsURL,
+		"buildId":                       buildID,
 		"size":                          meta.Size,
 		"md5":                           meta.MD5,
 		"bcVersion":                     meta.HermesBCVersion,
@@ -2799,13 +2814,18 @@ func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	status := s.devServerMgr.Status()
-	if status == nil || status.WorkDir == "" {
-		http.Error(w, "no active project", http.StatusBadRequest)
+	info := s.devServerMgr.GetNativeBundleInfo(strings.TrimSpace(r.URL.Query().Get("build")))
+	bundlePath := info.BundlePath
+	if bundlePath == "" {
+		status := s.devServerMgr.Status()
+		if status != nil && status.WorkDir != "" {
+			bundlePath = filepath.Join(status.WorkDir, ".yaver-build", "main.jsbundle")
+		}
+	}
+	if bundlePath == "" {
+		http.Error(w, "no native bundle — call POST /dev/build-native first", http.StatusNotFound)
 		return
 	}
-
-	bundlePath := filepath.Join(status.WorkDir, ".yaver-build", "main.jsbundle")
 	if _, err := os.Stat(bundlePath); err != nil {
 		http.Error(w, "no native bundle — call POST /dev/build-native first", http.StatusNotFound)
 		return
@@ -2815,7 +2835,9 @@ func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Disposition", "attachment; filename=main.jsbundle")
 
 	// Attach bundle metadata header for integrity validation on phone
-	if s.devServerMgr != nil {
+	if metaJSON := info.MetadataJSON; metaJSON != "" {
+		w.Header().Set("X-Yaver-Bundle-Metadata", metaJSON)
+	} else if s.devServerMgr != nil {
 		if metaJSON := s.devServerMgr.GetBundleMetadata(); metaJSON != "" {
 			w.Header().Set("X-Yaver-Bundle-Metadata", metaJSON)
 		}
@@ -2871,13 +2893,18 @@ func (s *HTTPServer) handleServeNativeAssets(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	status := s.devServerMgr.Status()
-	if status == nil || status.WorkDir == "" {
-		http.Error(w, "no active project", http.StatusBadRequest)
+	info := s.devServerMgr.GetNativeBundleInfo(strings.TrimSpace(r.URL.Query().Get("build")))
+	assetsDir := info.AssetsDir
+	if assetsDir == "" {
+		status := s.devServerMgr.Status()
+		if status != nil && status.WorkDir != "" {
+			assetsDir = filepath.Join(status.WorkDir, ".yaver-build", "assets")
+		}
+	}
+	if assetsDir == "" {
+		http.Error(w, "no assets — call POST /dev/build-native first", http.StatusNotFound)
 		return
 	}
-
-	assetsDir := filepath.Join(status.WorkDir, ".yaver-build", "assets")
 	if _, err := os.Stat(assetsDir); err != nil {
 		http.Error(w, "no assets — call POST /dev/build-native first", http.StatusNotFound)
 		return

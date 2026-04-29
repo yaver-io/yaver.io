@@ -262,6 +262,10 @@ type DevServerManager struct {
 	// bundleMetaJSON stores the last validated bundle's metadata JSON.
 	// Set by handleBuildNativeBundle, read by handleServeNativeBundle.
 	bundleMetaJSON string
+	// nativeBundleState tracks the most recent build-native artifacts so
+	// /dev/native-bundle and /dev/native-assets keep working even when no
+	// Metro dev server is active. Persisted to ~/.yaver/native-bundles.json.
+	nativeBundleState NativeBundleState
 
 	// Heartbeat state. heartbeatLoop ticks every 5s and emits a
 	// "heartbeat" DevServerEvent with the live process state so the
@@ -301,6 +305,26 @@ type WebBundleInfo struct {
 	Caller    string `json:"caller"`    // X-Yaver-Caller of the build trigger
 }
 
+// NativeBundleInfo describes one compiled Hermes/native build artifact set.
+// The build-specific URL returned by /dev/build-native carries BuildID so
+// later fetches do not depend on whichever project is currently "active".
+type NativeBundleInfo struct {
+	BuildID      string `json:"buildId"`
+	WorkDir      string `json:"workDir"`
+	BuildDir     string `json:"buildDir"`
+	BundlePath   string `json:"bundlePath"`
+	AssetsDir    string `json:"assetsDir,omitempty"`
+	Platform     string `json:"platform"`
+	ModuleName   string `json:"moduleName"`
+	BuiltAt      string `json:"builtAt"`
+	MetadataJSON string `json:"metadataJson,omitempty"`
+}
+
+type NativeBundleState struct {
+	LatestBuildID string             `json:"latestBuildId"`
+	Bundles       []NativeBundleInfo `json:"bundles"`
+}
+
 // webBundleInfoFile is where SetWebBundleInfo persists its struct so a
 // later agent process (after auto-update / reboot / systemd restart)
 // can keep serving the on-disk bundle without losing 5 MB of asset
@@ -311,6 +335,14 @@ func webBundleInfoFile() string {
 		return ""
 	}
 	return filepath.Join(home, ".yaver", "web-bundle-info.json")
+}
+
+func nativeBundleStateFile() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".yaver", "native-bundles.json")
 }
 
 // SetWebBundleInfo registers a freshly-built web bundle with the
@@ -890,6 +922,134 @@ func (m *DevServerManager) GetBundleMetadata() string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.bundleMetaJSON
+}
+
+func trimNativeBundlesLocked(state NativeBundleState) NativeBundleState {
+	const maxNativeBundles = 4
+	if len(state.Bundles) <= maxNativeBundles {
+		return state
+	}
+	keep := state.Bundles[len(state.Bundles)-maxNativeBundles:]
+	state.Bundles = append([]NativeBundleInfo(nil), keep...)
+	return state
+}
+
+func persistNativeBundleState(state NativeBundleState) {
+	path := nativeBundleStateFile()
+	if path == "" {
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	if data, err := json.Marshal(state); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+func isUsableNativeBundle(info NativeBundleInfo) bool {
+	if info.BuildID == "" || info.BundlePath == "" {
+		return false
+	}
+	if st, err := os.Stat(info.BundlePath); err != nil || st.IsDir() {
+		return false
+	}
+	if info.AssetsDir != "" {
+		if st, err := os.Stat(info.AssetsDir); err != nil || !st.IsDir() {
+			info.AssetsDir = ""
+		}
+	}
+	return true
+}
+
+func loadPersistedNativeBundleState() NativeBundleState {
+	path := nativeBundleStateFile()
+	if path == "" {
+		return NativeBundleState{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return NativeBundleState{}
+	}
+	var persisted NativeBundleState
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		return NativeBundleState{}
+	}
+	filtered := make([]NativeBundleInfo, 0, len(persisted.Bundles))
+	for _, info := range persisted.Bundles {
+		if isUsableNativeBundle(info) {
+			filtered = append(filtered, info)
+		}
+	}
+	persisted.Bundles = filtered
+	foundLatest := false
+	for _, info := range persisted.Bundles {
+		if info.BuildID == persisted.LatestBuildID {
+			foundLatest = true
+			break
+		}
+	}
+	if !foundLatest && len(persisted.Bundles) > 0 {
+		persisted.LatestBuildID = persisted.Bundles[len(persisted.Bundles)-1].BuildID
+	}
+	if len(persisted.Bundles) == 0 {
+		persisted.LatestBuildID = ""
+	}
+	return trimNativeBundlesLocked(persisted)
+}
+
+// SetNativeBundleInfo stores a completed native bundle build so the returned
+// bundle/assets URLs remain valid even when no project is actively serving
+// Metro. The state is persisted to ~/.yaver/native-bundles.json.
+func (m *DevServerManager) SetNativeBundleInfo(info NativeBundleInfo) {
+	if info.BuildID == "" || info.BundlePath == "" {
+		return
+	}
+	m.mu.Lock()
+	state := m.nativeBundleState
+	replaced := false
+	for i := range state.Bundles {
+		if state.Bundles[i].BuildID == info.BuildID {
+			state.Bundles[i] = info
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		state.Bundles = append(state.Bundles, info)
+	}
+	state.LatestBuildID = info.BuildID
+	state = trimNativeBundlesLocked(state)
+	m.nativeBundleState = state
+	m.mu.Unlock()
+	persistNativeBundleState(state)
+}
+
+// GetNativeBundleInfo resolves a build-specific native bundle when buildID is
+// provided, otherwise it returns the latest successfully built bundle.
+func (m *DevServerManager) GetNativeBundleInfo(buildID string) NativeBundleInfo {
+	m.mu.RLock()
+	state := m.nativeBundleState
+	m.mu.RUnlock()
+	if len(state.Bundles) == 0 {
+		state = loadPersistedNativeBundleState()
+		if len(state.Bundles) > 0 {
+			m.mu.Lock()
+			if len(m.nativeBundleState.Bundles) == 0 {
+				m.nativeBundleState = state
+			}
+			state = m.nativeBundleState
+			m.mu.Unlock()
+		}
+	}
+	resolveID := buildID
+	if resolveID == "" {
+		resolveID = state.LatestBuildID
+	}
+	for _, info := range state.Bundles {
+		if info.BuildID == resolveID && isUsableNativeBundle(info) {
+			return info
+		}
+	}
+	return NativeBundleInfo{}
 }
 
 // EmitLog emits a "log" event with the given line to all SSE subscribers.
