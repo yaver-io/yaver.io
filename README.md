@@ -1332,6 +1332,21 @@ If you are on Linux or WSL, Yaver should use the Hermes bundle path for iPhone w
 
 ### Hermes reload — when it crashes and how to fix it
 
+> **TL;DR — this can fail with apps that use native modules Yaver
+> doesn't know about.** The bundle download is rock-solid; the
+> structural limit is what's compiled into Yaver's iOS / Android
+> super-host. Apple forbids loading new native code at runtime, so the
+> set of native modules a guest bundle can call equals the set already
+> baked into the signed Yaver binary on disk (currently 113 modules in
+> [`mobile/sdk-manifest.json`](./mobile/sdk-manifest.json)). Anything
+> outside that set will surface in the **"Incompatible native modules"**
+> dialog before the bridge swap; if you tap "Load anyway" and the JS
+> actually calls the missing module, Hermes will crash. Background +
+> mitigation roadmap: [`HERMES_RELOAD_STATUS.md`](./HERMES_RELOAD_STATUS.md),
+> [`docs/native-module-architecture.md`](./docs/native-module-architecture.md),
+> [`docs/android-dynamic-native-modules.md`](./docs/android-dynamic-native-modules.md),
+> and the blog post [Hermes vs WebView](https://yaver.io/blog/hermes-vs-webview-yaver-architecture).
+
 The bundle download path is reliable end-to-end (streaming relay protocol verified for 8.5 MB+ Hermes bytecode). But the **bundle is just JS bytecode** — it executes inside Yaver's iOS super-host and can only call native modules the host registers. If your app declares a native module that Yaver doesn't know about, the build still succeeds and the bundle still loads, but the JS will eventually call a TurboModule selector that resolves to nil, throw an `NSException`, and crash Hermes during the JSError-construction path.
 
 #### The handshake check (cli/v1.99.94+)
@@ -1366,7 +1381,20 @@ If your project depends on a native module that's missing from Yaver's super-hos
 
 The `sdk-manifest.json` is the **source of truth for "what Yaver guarantees a guest bundle can call"**. Adding a module here is a public commitment that the iOS and Android super-hosts both register it. Don't add a module to the manifest before the corresponding native code is wired — it'll just push the crash from the build-time warning to a runtime SIGSEGV. The `TestSDKManifestInSync` test catches drift between the agent and the mobile master, but it can't catch "manifest claims X is registered but no `RCT_EXPORT_MODULE` exists." That's a manual review item.
 
-For follow-up reading, see [`HERMES_RELOAD_STATUS.md`](./HERMES_RELOAD_STATUS.md) for the current state of the agent ↔ relay ↔ phone handshake, what's verified, what's still stubbed, and the ranked path forward.
+For follow-up reading:
+- [`HERMES_RELOAD_STATUS.md`](./HERMES_RELOAD_STATUS.md) — current state of the agent ↔ relay ↔ phone handshake, what's verified, what's still stubbed.
+- [`docs/native-module-architecture.md`](./docs/native-module-architecture.md) — full developer reference: the five mirrored manifest copies, the heuristic, the PR contract, common failure modes.
+- [`docs/android-dynamic-native-modules.md`](./docs/android-dynamic-native-modules.md) — design sketch for an Android-only fast path that side-steps the wall by leveraging `dlopen`. Not shipped yet.
+- Blog post: [Hermes Bytecode vs WebView](https://yaver.io/blog/hermes-vs-webview-yaver-architecture) — what Hermes is, how iOS and Android allow runtime injection, where WebView fits, and where the long-tail-of-modules problem comes from.
+
+#### Roadmap for closing the gap
+
+The handshake catches mismatches today. Three more layers planned:
+
+1. **Auto-stub at build time.** When the agent finds an incompatible module, inject a JS-side proxy that returns a controlled rejection (`Module X is not available inside Yaver`) instead of throwing NSException. Apps that gate optional features behind `if (Module.isAvailable)` keep working — the specific feature is just disabled. Stops crashes for ~80% of cases.
+2. **Popular-module preload.** Bake the top 30-50 most-commonly-needed RN native modules into Yaver's super-host as one-time integration work. Binary grows ~30-50%, but the wall recedes for most users.
+3. **Per-project Yaver build.** For high-value cases, build a custom Yaver-X binary in CI with that project's native modules linked in, ship via that user's Apple Developer account or ad-hoc enterprise distribution. Same model EAS Build uses for production apps.
+4. **Android dynamic loading.** Android allows `dlopen` of arbitrary `.so` files at runtime. The agent could cross-compile a missing module on the host, stream the `.so` to the phone via the relay, and `System.load` it before the bridge swap. Only works on Android (Apple forbids it on iOS) — but it's a real escape hatch for Android-first teams. See [`docs/android-dynamic-native-modules.md`](./docs/android-dynamic-native-modules.md).
 
 ### Mobile-First Backend Continuum
 

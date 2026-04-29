@@ -9,6 +9,13 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "hermes-vs-webview-yaver-architecture",
+    title: "Hermes Bytecode vs WebView: How Yaver Tests Native Apps Without an App Store Cycle",
+    date: "2026-04-29",
+    description:
+      "How Yaver runs your in-progress React Native app on a real iPhone in 10 seconds — using Hermes bytecode for native frameworks and WebView for web frameworks. The architecture, what each path can and can't do, and where the limits come from (Apple, mostly).",
+  },
+  {
     slug: "opencode-providers-and-ollama",
     title: "OpenCode in Yaver: Bring Your Own Key, or Run Free on Ollama",
     date: "2026-04-28",
