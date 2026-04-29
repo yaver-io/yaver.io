@@ -3207,6 +3207,7 @@ func isPureJSPackage(name string) bool {
 		"@react-navigation/bottom-tabs", "@react-navigation/drawer", "@react-navigation/native-stack",
 		"@react-navigation/material-top-tabs", "react-native-web", "react-dom",
 		"@expo/metro-runtime", "expo-router", "expo-splash-screen", "expo-status-bar",
+		"yaver-feedback-react-native",
 		"three", "@react-three/fiber", "@react-three/drei":
 		return true
 	default:

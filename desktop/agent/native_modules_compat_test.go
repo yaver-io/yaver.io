@@ -126,6 +126,35 @@ func TestBuildCompatReport_DetectsMissingModule(t *testing.T) {
 	}
 }
 
+func TestBuildCompatReport_IgnoresFeedbackSDKPackage(t *testing.T) {
+	tmp := t.TempDir()
+	pkg := `{
+  "dependencies": {
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "yaver-feedback-react-native": "0.8.7",
+    "@react-native-async-storage/async-storage": "2.2.0"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	report, err := BuildNativeModuleCompatReport(tmp)
+	if err != nil {
+		t.Fatalf("compat report: %v", err)
+	}
+	for _, m := range report.ProjectModules {
+		if m == "yaver-feedback-react-native" {
+			t.Fatalf("feedback sdk should be ignored for Open in Yaver compatibility, got project modules %v", report.ProjectModules)
+		}
+	}
+	for _, m := range report.Incompatible {
+		if m == "yaver-feedback-react-native" {
+			t.Fatalf("feedback sdk should not block compatibility, got incompatible %v", report.Incompatible)
+		}
+	}
+}
+
 func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
 	cases := []struct {
 		name string
@@ -140,7 +169,7 @@ func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
 		{"@expo/vector-icons", true},
 		{"convex", false},
 		{"zustand", false},
-		{"yaver-feedback-react-native", true},
+		{"yaver-feedback-react-native", false},
 	}
 	for _, c := range cases {
 		got := isLikelyNativeModule(c.name)

@@ -115,6 +115,7 @@ var jsOnlyExact = map[string]bool{
 	"react-native-svg-transformer":    true,
 	"react-native-url-polyfill":       true,
 	"react-native-uuid":               true,
+	"yaver-feedback-react-native":     true, // app-side SDK/plugin; not required for Open in Yaver host loads
 	"@react-native/babel-preset":      true,
 	"@react-native/eslint-config":     true,
 	"@react-native/typescript-config": true,
