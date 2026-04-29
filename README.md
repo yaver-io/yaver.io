@@ -1330,6 +1330,44 @@ What does not need macOS:
 
 If you are on Linux or WSL, Yaver should use the Hermes bundle path for iPhone work rather than `xcodebuild`.
 
+### Hermes reload — when it crashes and how to fix it
+
+The bundle download path is reliable end-to-end (streaming relay protocol verified for 8.5 MB+ Hermes bytecode). But the **bundle is just JS bytecode** — it executes inside Yaver's iOS super-host and can only call native modules the host registers. If your app declares a native module that Yaver doesn't know about, the build still succeeds and the bundle still loads, but the JS will eventually call a TurboModule selector that resolves to nil, throw an `NSException`, and crash Hermes during the JSError-construction path.
+
+#### The handshake check (cli/v1.99.94+)
+
+Before every "Open in Yaver", the agent now diffs the project's `package.json` dependencies against Yaver's embedded [`mobile/sdk-manifest.json`](./mobile/sdk-manifest.json). The mobile app receives the missing-module list in the build response and shows you an **"Incompatible native modules"** dialog before doing the bridge swap. You can cancel, or **Load anyway** if you know the missing modules are guarded behind feature flags or platform checks.
+
+The check is non-blocking on the agent side — the bundle still gets served — because there are legitimate cases (the Yaver Feedback SDK is one) where a "missing" module self-suppresses inside Yaver. The mobile dialog is the safety gate.
+
+#### Common crash classes
+
+| Symptom | Probable cause | Where to look |
+|---|---|---|
+| `EXC_BAD_ACCESS` in `hermes::vm::HiddenClass::isDictionary()` after `convertNSExceptionToJSError` | A TurboModule selector threw `NSException`, Hermes crashed converting it to a JS error. Almost always: the module isn't in Yaver's super-host. | Compare your `package.json` deps vs `mobile/sdk-manifest.json::nativeModules`. |
+| `Native module 'X' is null` thrown immediately after bundle load | `TurboModuleRegistry.getEnforcing('X')` ran during a static initializer and X isn't registered. | Same diff. Either add the module to Yaver, or guard the call with `if (NativeModules.X)`. |
+| `BC_VERSION_MISMATCH` rejection | Project compiled against a different Hermes than Yaver ships. | Make sure `hermesc` from your RN install isn't being substituted; Yaver-cli embeds the canonical hermesc for BC 96. |
+| Bundle downloads then silently does nothing | App is bundleless — the user's bundle is plain JS, not Hermes bytecode (HBC magic at offset 4 should be `0x1F1903C1`). | Inspect with `xxd /tmp/<bundle>.jsbundle \| head -1`. If magic is missing the build pipeline never ran `hermesc`. |
+| Fine on macOS host, crashes from Linux/WSL host | The compatibility check is the same on both — but a stale macOS DerivedData cache can mask a real native dep mismatch by reusing pre-built native code. Linux can't do that. | Always trust the Linux/WSL run when the two diverge. |
+
+#### Adding a native module — invitation to PR
+
+If your project depends on a native module that's missing from Yaver's super-host, the right fix is to add it. The contract:
+
+1. Add the npm package to [`mobile/package.json`](./mobile/package.json).
+2. Add a matching entry to [`mobile/sdk-manifest.json`](./mobile/sdk-manifest.json) under `nativeModules` (key = npm package name, value = installed version).
+3. Mirror the manifest into [`mobile/android/app/src/main/assets/sdk-manifest.json`](./mobile/android/app/src/main/assets/sdk-manifest.json), [`mobile/ios/Yaver/sdk-manifest.json`](./mobile/ios/Yaver/sdk-manifest.json), [`cli/sdk-manifest.json`](./cli/sdk-manifest.json), and [`desktop/agent/sdk-manifest.json`](./desktop/agent/sdk-manifest.json). The `TestSDKManifestInSync` Go test fails the build if the agent copy drifts from the mobile master.
+4. For the iOS path: `cd mobile/ios && pod install`, then make sure the module's headers and bridging code are reachable from `mobile/ios/Yaver.xcworkspace`. Most autolinked modules need no manual wiring beyond `pod install`.
+5. For Android: `cd mobile/android && ./gradlew clean`, then re-bundle. Autolinking handles the registration.
+6. Open a PR. Include:
+   - The `sdk-manifest.json` diff
+   - One smoke-test scenario (e.g. "loaded SFMG which uses `react-native-record-screen` — `RecordScreen.startRecording()` no longer throws").
+   - The Hermes BC version you tested against (currently 96).
+
+The `sdk-manifest.json` is the **source of truth for "what Yaver guarantees a guest bundle can call"**. Adding a module here is a public commitment that the iOS and Android super-hosts both register it. Don't add a module to the manifest before the corresponding native code is wired — it'll just push the crash from the build-time warning to a runtime SIGSEGV. The `TestSDKManifestInSync` test catches drift between the agent and the mobile master, but it can't catch "manifest claims X is registered but no `RCT_EXPORT_MODULE` exists." That's a manual review item.
+
+For follow-up reading, see [`HERMES_RELOAD_STATUS.md`](./HERMES_RELOAD_STATUS.md) for the current state of the agent ↔ relay ↔ phone handshake, what's verified, what's still stubbed, and the ranked path forward.
+
 ### Mobile-First Backend Continuum
 
 Yaver is not just a phone-to-screen bridge. For the phone-project flow, the

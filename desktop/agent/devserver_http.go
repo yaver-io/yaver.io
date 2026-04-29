@@ -2604,16 +2604,46 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		HermesVersion: meta.HermesBCVersion,
 	})
 
+	// ── Native-module compatibility handshake ──
+	// The bundle compiled cleanly, but that only proves Hermes is happy.
+	// What it does not prove is that every TurboModule the project calls
+	// at runtime is actually registered in Yaver's super-host. SFMG
+	// shipping `react-native-record-screen` against a Yaver build that
+	// doesn't know that selector is exactly the path that produced the
+	// 1.18.22-build-246 NSException-into-JSError crash. We compare the
+	// project's package.json deps against the host's embedded
+	// sdk-manifest.json and surface mismatches in the build response;
+	// the phone shows an actionable banner instead of crashing in JS.
+	var compatIncompatible []string
+	var compatMatched []string
+	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
+		compatIncompatible = report.Incompatible
+		compatMatched = report.Matched
+		if len(compatIncompatible) > 0 {
+			log.Printf("[super-host] native-module compat: %d incompatible (%v) — phone will warn, bundle still served",
+				len(compatIncompatible), compatIncompatible)
+			s.devServerMgr.EmitLog(fmt.Sprintf(
+				"⚠ %d native module(s) declared in this project are NOT in Yaver's super-host: %s. "+
+					"They will throw at runtime if called.",
+				len(compatIncompatible), strings.Join(compatIncompatible, ", "),
+			))
+		}
+	} else {
+		log.Printf("[super-host] native-module compat probe skipped: %v", err)
+	}
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"status":     "ok",
-		"bundleUrl":  "/dev/native-bundle",
-		"assetsUrl":  "/dev/native-assets",
-		"size":       meta.Size,
-		"md5":        meta.MD5,
-		"bcVersion":  meta.HermesBCVersion,
-		"platform":   req.Platform,
-		"moduleName": moduleName,
-		"hasAssets":  hasAssets,
+		"status":                    "ok",
+		"bundleUrl":                 "/dev/native-bundle",
+		"assetsUrl":                 "/dev/native-assets",
+		"size":                      meta.Size,
+		"md5":                       meta.MD5,
+		"bcVersion":                 meta.HermesBCVersion,
+		"platform":                  req.Platform,
+		"moduleName":                moduleName,
+		"hasAssets":                 hasAssets,
+		"incompatibleNativeModules": compatIncompatible,
+		"matchedNativeModules":      compatMatched,
 	})
 }
 

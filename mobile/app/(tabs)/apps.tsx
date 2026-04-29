@@ -1189,6 +1189,38 @@ export default function AppsScreen() {
         throw new Error(buildResult.error || "Build failed");
       }
 
+      // Native-module compat handshake: agent diffed the project's
+      // package.json against Yaver's embedded sdk-manifest.json.
+      // Any deps that look native but aren't in the host's manifest will
+      // throw NSException at runtime and crash Hermes during JSError
+      // construction (the SFMG TestFlight 246 crash class). Warn loudly
+      // before doing the bridge swap; let the user opt in if they know
+      // the missing modules are guarded behind feature flags.
+      const incompat: string[] = Array.isArray(buildResult.incompatibleNativeModules)
+        ? buildResult.incompatibleNativeModules
+        : [];
+      if (loadAfterBuild && incompat.length > 0) {
+        const list = incompat.join("\n  • ");
+        const proceed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            "Incompatible native modules",
+            `This project declares ${incompat.length} native module(s) Yaver doesn't register:\n\n  • ${list}\n\nLoading anyway will likely crash when these modules are called. Continue?`,
+            [
+              { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+              { text: "Load anyway", style: "destructive", onPress: () => resolve(true) },
+            ],
+            { cancelable: true, onDismiss: () => resolve(false) },
+          );
+        });
+        if (!proceed) {
+          setBuildProgress(0);
+          setLoadingStatus("");
+          setNativeLoading(false);
+          sseController.abort();
+          return;
+        }
+      }
+
       if (loadAfterBuild) {
         const sizeKB = Math.round((buildResult.size || 0) / 1024);
         setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
