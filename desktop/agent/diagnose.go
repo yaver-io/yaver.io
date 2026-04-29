@@ -38,6 +38,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -213,16 +214,23 @@ func checkBinaryPaths(fix bool) func(context.Context, DiagEmit) {
 				Severity: DiagFailure,
 				Message:  "No yaver binary found in any known install path.",
 			})
-		case len(versions) > 1:
+		case len(seen) > 1 && len(versions) > 1:
 			emit(DiagEvent{
 				Type:     "finding",
 				Check:    "binary-paths",
 				Severity: DiagWarning,
-				Message:  fmt.Sprintf("Multiple yaver versions on disk: %v", mapKeys(versions)),
+				Message:  fmt.Sprintf("Multiple yaver binaries on disk with different versions: %v", mapKeys(versions)),
 			})
 			if fix {
 				diagNormaliseBinaries(seen, emit)
 			}
+		case len(seen) > 1:
+			emit(DiagEvent{
+				Type:     "finding",
+				Check:    "binary-paths",
+				Severity: DiagWarning,
+				Message:  fmt.Sprintf("Multiple yaver binaries on disk: %s", strings.Join(sortedKeys(seen), ", ")),
+			})
 		default:
 			emit(DiagEvent{
 				Type:     "finding",
@@ -516,6 +524,15 @@ func mapKeys(m map[string]bool) []string {
 	for k := range m {
 		out = append(out, k)
 	}
+	return out
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 

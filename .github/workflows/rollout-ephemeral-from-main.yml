@@ -57,6 +57,15 @@ jobs:
           go build -o /tmp/yaver.new .
           chmod 0755 /tmp/yaver.new
 
+          TARGET_BIN="$(systemctl cat yaver-agent.service 2>/dev/null | sed -n 's/^ExecStart=//p' | head -1 | awk '{print $1}')"
+          if [ -z "$TARGET_BIN" ]; then
+            TARGET_BIN="$(systemctl cat yaver.service 2>/dev/null | sed -n 's/^ExecStart=//p' | head -1 | awk '{print $1}')"
+          fi
+          if [ -z "$TARGET_BIN" ]; then
+            TARGET_BIN=/usr/local/bin/yaver
+          fi
+          echo "target binary: $TARGET_BIN"
+
           # Kill any running yaver cleanly. Prefer systemd if a
           # matching unit exists; otherwise pkill. The agent's own
           # autostart path (installed via `yaver serve` earlier)
@@ -72,8 +81,17 @@ jobs:
 
           # Atomic replace — don't leave a half-written binary if
           # someone Ctrl-C's this step.
-          install -m 0755 /tmp/yaver.new /usr/local/bin/yaver
+          install -m 0755 /tmp/yaver.new "$TARGET_BIN"
           rm -f /tmp/yaver.new
+
+          for OTHER in /usr/local/bin/yaver /usr/bin/yaver; do
+            if [ "$OTHER" = "$TARGET_BIN" ] || [ ! -e "$OTHER" ]; then
+              continue
+            fi
+            echo "removing duplicate binary path:"
+            ls -la "$OTHER"
+            rm -f "$OTHER"
+          done
 
           # Bring the agent back. Prefer systemd; otherwise rely
           # on the auto-start hook invoked by the yaver CLI itself.
@@ -84,10 +102,10 @@ jobs:
           else
             # Last-ditch — start detached with the same PATH the
             # systemd unit would have used.
-            nohup /usr/local/bin/yaver serve >/var/log/yaver.log 2>&1 &
+            nohup "$TARGET_BIN" serve >/var/log/yaver.log 2>&1 &
           fi
 
-          echo "installed version: $(/usr/local/bin/yaver --version 2>/dev/null | head -1)"
+          echo "installed version: $("$TARGET_BIN" --version 2>/dev/null | head -1)"
           REMOTE
 
       - name: Verify bus + watchdog are healthy

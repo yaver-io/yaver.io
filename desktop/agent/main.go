@@ -200,6 +200,7 @@ func relayHTTPURLsMatch(a, b string) bool {
 
 func main() {
 	augmentAgentPATH()
+	logYaverBinaryDriftWarnings()
 
 	if len(os.Args) < 2 {
 		printUsage()
@@ -5013,7 +5014,7 @@ func runTmuxList() {
 		if err == nil {
 			defer resp.Body.Close()
 
-	// STREAMING DEBUG
+			// STREAMING DEBUG
 			if resp.StatusCode == 200 {
 				var body struct {
 					Sessions []TmuxSession `json:"sessions"`
@@ -7375,7 +7376,7 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 		} else {
 			defer resp.Body.Close()
 
-	// STREAMING DEBUG
+			// STREAMING DEBUG
 			if resp.StatusCode == 200 {
 				status.OK = true
 				var body struct {
@@ -7749,7 +7750,7 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 		}
 		defer resp.Body.Close()
 
-	// STREAMING DEBUG
+		// STREAMING DEBUG
 		buf := make([]byte, 4096)
 		for {
 			n, err := resp.Body.Read(buf)
@@ -8179,7 +8180,7 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		}
 		defer resp.Body.Close()
 
-	// STREAMING DEBUG
+		// STREAMING DEBUG
 		var result map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&result)
 		if resp.StatusCode == 201 {
@@ -8201,7 +8202,7 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		}
 		defer resp.Body.Close()
 
-	// STREAMING DEBUG
+		// STREAMING DEBUG
 		var data struct {
 			Plugins []struct {
 				Name    string `json:"name"`
@@ -8256,7 +8257,7 @@ func mcpRemoteCmd(subcmd string, args []string) {
 		}
 		defer resp.Body.Close()
 
-	// STREAMING DEBUG
+		// STREAMING DEBUG
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
 		fmt.Println("MCP server is UP")

@@ -79,16 +79,11 @@ func runAuthFactoryReset(args []string) {
 		}
 	}
 
-	if nextBinary == "" {
-		augmentAgentPATH()
-		if path, lookErr := osexec.LookPath("yaver"); lookErr == nil {
-			nextBinary = path
-		}
-	}
-	if nextBinary == "" {
-		if exe, exeErr := os.Executable(); exeErr == nil {
-			nextBinary = exe
-		}
+	// Always prefer restarting the same binary path that launched this
+	// process. Falling back to PATH here caused /usr/bin vs
+	// /usr/local/bin drift on systemd hosts.
+	if current := preferredYaverBinaryPath(); current != "" {
+		nextBinary = current
 	}
 	if nextBinary == "" {
 		fmt.Fprintln(os.Stderr, "Error: could not locate yaver binary for restart")
@@ -141,9 +136,9 @@ func refreshNpmYaverCLI() (string, error) {
 		return "", err
 	}
 	augmentAgentPATH()
-	yaverPath, err := osexec.LookPath("yaver")
-	if err != nil {
-		return "", fmt.Errorf("npm refresh succeeded but `yaver` is not on PATH")
+	yaverPath := preferredYaverBinaryPath()
+	if yaverPath == "" {
+		return "", fmt.Errorf("npm refresh succeeded but no yaver binary could be resolved")
 	}
 	return yaverPath, nil
 }
