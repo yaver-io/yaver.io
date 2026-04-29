@@ -36,7 +36,7 @@ jobs:
         run: bun run typecheck
       - name: Hermetic tests
         working-directory: mobile-headless
-        run: bun test test/hermetic.test.ts
+        run: bun run test:hermetic
 
   smoke-local:
     runs-on: ubuntu-latest

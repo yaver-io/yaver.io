@@ -34,10 +34,67 @@ async function waitForExec(
   }
 }
 
+async function waitForMobileProject(
+  mobile: MobileClient,
+  projectName: string,
+  timeoutMs = 20000,
+) {
+  const start = Date.now();
+  for (;;) {
+    const res = await mobile.raw.get("/projects/mobile");
+    const projects = Array.isArray(res.body?.projects) ? res.body.projects : [];
+    const found = projects.find((p: any) => p?.name === projectName);
+    if (found) return found;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`mobile project ${projectName} not discovered within ${timeoutMs}ms`);
+    }
+    await Bun.sleep(500);
+  }
+}
+
+function writeScannableBrokenExpoProject(
+  root: string,
+  projectName: string,
+  bundleField: "bundleIdentifier" | "package",
+  bundleId: string,
+) {
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(
+    path.join(root, "package.json"),
+    '{\n  "name": "' + projectName + '",\n  "dependencies": { "expo": "~52.0.0" }\n',
+    "utf8",
+  );
+  const platformConfig =
+    bundleField === "bundleIdentifier"
+      ? `"ios": { "bundleIdentifier": "${bundleId}" }`
+      : `"android": { "package": "${bundleId}" }`;
+  fs.writeFileSync(
+    path.join(root, "app.json"),
+    `{\n  "expo": {\n    "name": "${projectName}",\n    ${platformConfig}\n  }\n}\n`,
+    "utf8",
+  );
+}
+
+function assertResolvedPastActiveDevServerFailure(
+  response: { status: number; body: any },
+  _bundleId: string,
+) {
+  const text = JSON.stringify(response.body ?? {});
+  expect(text).not.toContain("no active dev server");
+  expect(text).not.toContain("start one first OR pass projectName / projectPath / bundleId");
+  expect(response.status).not.toBe(400);
+}
+
 maybe("smoke against live yaver agent", () => {
   const mobile = new MobileClient({
     agentBaseUrl: AGENT_URL,
     authToken: AGENT_TOKEN,
+    platform: "ios",
+  });
+  const mobileAndroid = new MobileClient({
+    agentBaseUrl: AGENT_URL,
+    authToken: AGENT_TOKEN,
+    platform: "android",
   });
 
   it("GET /info responds", async () => {
@@ -111,6 +168,47 @@ maybe("smoke against live yaver agent", () => {
     const ans = await mobile.wizard.answer(start.session.id, "app_name", "ymh-smoke");
     expect(ans?.session?.id).toBe(start.session.id);
   });
+
+  it("bundleId-only reload resolves ios and android projects without an active dev server", async () => {
+    const home = process.env.HOME;
+    if (!home) throw new Error("HOME is required for project discovery smoke");
+
+    const workspaceRoot = path.join(home, "Workspace");
+    const iosName = "ymh-ios-bundleid";
+    const androidName = "ymh-android-bundleid";
+    const iosBundleId = "com.yaver.ymh.ios";
+    const androidBundleId = "com.yaver.ymh.android";
+
+    writeScannableBrokenExpoProject(
+      path.join(workspaceRoot, iosName),
+      iosName,
+      "bundleIdentifier",
+      iosBundleId,
+    );
+    writeScannableBrokenExpoProject(
+      path.join(workspaceRoot, androidName),
+      androidName,
+      "package",
+      androidBundleId,
+    );
+
+    const rescan = await mobile.raw.post("/projects/mobile");
+    expect(rescan.status).toBe(200);
+    await waitForMobileProject(mobile, iosName);
+    await waitForMobileProject(mobile, androidName);
+
+    const iosReload = await mobile.raw.post("/dev/reload-app", {
+      mode: "bundle",
+      bundleId: iosBundleId,
+    });
+    assertResolvedPastActiveDevServerFailure(iosReload, iosBundleId);
+
+    const androidReload = await mobileAndroid.raw.post("/dev/reload-app", {
+      mode: "bundle",
+      bundleId: androidBundleId,
+    });
+    assertResolvedPastActiveDevServerFailure(androidReload, androidBundleId);
+  }, 30000);
 
   const maybeGLM = GLM_API_KEY ? it : it.skip;
 

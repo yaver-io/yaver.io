@@ -1771,6 +1771,27 @@ export default function SettingsScreen() {
               </View>
             </Pressable>
           ) : null}
+
+          <View
+            style={{
+              marginTop: 8,
+              backgroundColor: c.bgCard,
+              borderColor: c.border,
+              borderWidth: 1,
+              borderRadius: 10,
+              padding: 12,
+            }}
+          >
+            <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>
+              Mobile app version
+            </Text>
+            <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "700", marginTop: 4 }}>
+              v{APP_VERSION}
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+              Build {BUILD_NUMBER}
+            </Text>
+          </View>
         </View>
 
         {/* Developer Profile section removed — survey no longer required */}
@@ -3909,18 +3930,6 @@ export default function SettingsScreen() {
         {/* About */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>About</Text>
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            <View style={styles.aboutRow}>
-              <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Version</Text>
-              <Text style={[styles.aboutValue, { color: c.textMuted }]}>{APP_VERSION}</Text>
-            </View>
-            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
-            <View style={styles.aboutRow}>
-              <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Build</Text>
-              <Text style={[styles.aboutValue, { color: c.textMuted }]}>{BUILD_NUMBER}</Text>
-            </View>
-          </View>
-
           <View style={[styles.linksCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             {[
               { label: "Website", onPress: () => Linking.openURL("https://yaver.io").catch(() => {}) },

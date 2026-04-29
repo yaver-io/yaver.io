@@ -22,6 +22,7 @@ import { startMockAgent, type MockAgentHandle } from "../src/mock-agent";
 
 let agent: MockAgentHandle;
 let mobile: MobileClient;
+let mobileAndroid: MobileClient;
 
 beforeAll(async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "ymh-build-native-"));
@@ -30,9 +31,17 @@ beforeAll(async () => {
   mobile = new MobileClient({
     dataDir,
     authToken: "mock-token",
+    platform: "ios",
+    convexUrl: agent.baseUrl,
+  });
+  mobileAndroid = new MobileClient({
+    dataDir,
+    authToken: "mock-token",
+    platform: "android",
     convexUrl: agent.baseUrl,
   });
   mobile.useAgentBaseUrl(agent.baseUrl);
+  mobileAndroid.useAgentBaseUrl(agent.baseUrl);
 });
 
 afterAll(async () => {
@@ -47,6 +56,23 @@ describe("devServer.buildNative", () => {
     expect(r.body?.status).toBe("ok");
     expect(r.body?.bundleUrl).toBe("/dev/native-bundle");
     expect(r.body?.bcVersion).toBe(96);
+    expect(r.body?.platform).toBe("ios");
+    expect(agent.getLastBuildNativeRequest()).toEqual(
+      expect.objectContaining({ platform: "ios" }),
+    );
+  });
+
+  it("builds and parses Hermes metadata for android mode too", async () => {
+    agent.setBuildNativeMode("ok");
+    const r = await mobileAndroid.devServer.buildNative("android");
+    expect(r.status).toBe(200);
+    expect(r.body?.status).toBe("ok");
+    expect(r.body?.bundleUrl).toBe("/dev/native-bundle");
+    expect(r.body?.bcVersion).toBe(96);
+    expect(r.body?.platform).toBe("android");
+    expect(agent.getLastBuildNativeRequest()).toEqual(
+      expect.objectContaining({ platform: "android" }),
+    );
   });
 
   it("aborts with AbortError when the agent hangs past the deadline", async () => {
@@ -99,6 +125,21 @@ describe("devServer.buildNative", () => {
     expect(r.body?.status).toBe("blocked");
     expect(r.body?.code).toBe("NATIVE_MODULE_INCOMPATIBLE");
     expect(r.body?.incompatibleNativeModules).toEqual(["react-native-fictional"]);
+    expect(r.body?.bcVersion).toBe(96);
+    expect(r.body?.supportedRNRange).toBe("0.81.x");
+    expect(r.body?.platform).toBe("ios");
+  });
+
+  it("surfaces compatibility blocks in android mode with the same Hermes metadata", async () => {
+    agent.setBuildNativeMode("blocked");
+    const r = await mobileAndroid.devServer.buildNative("android");
+    expect(r.status).toBe(409);
+    expect(r.body?.status).toBe("blocked");
+    expect(r.body?.code).toBe("NATIVE_MODULE_INCOMPATIBLE");
+    expect(r.body?.incompatibleNativeModules).toEqual(["react-native-fictional"]);
+    expect(r.body?.bcVersion).toBe(96);
+    expect(r.body?.supportedRNRange).toBe("0.81.x");
+    expect(r.body?.platform).toBe("android");
   });
 
   it("recovers to ok after a transient failure", async () => {

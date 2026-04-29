@@ -207,6 +207,7 @@ export class MobileClient {
       authToken: opts.authToken ?? process.env.YMH_AUTH_TOKEN ?? "",
       platform: opts.platform ?? "ios",
       deviceName: opts.deviceName ?? "mobile-headless",
+      atsAware: opts.atsAware ?? process.env.YMH_ATS === "1",
     };
     this.agentBaseUrl = opts.agentBaseUrl ?? process.env.YMH_AGENT_URL;
   }

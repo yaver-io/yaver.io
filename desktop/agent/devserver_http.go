@@ -2082,6 +2082,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// broadcast reload_bundle on a never-built bundle.
 		ProjectName string `json:"projectName"`
 		ProjectPath string `json:"projectPath"`
+		BundleID    string `json:"bundleId"`
 		// Target controls compile output:
 		//   "" / "mobile-hermes"   — Metro bundle + hermesc → HBC
 		//                            served via /dev/native-bundle
@@ -2156,8 +2157,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	// Resolve workDir in priority order:
 	//   1. explicit projectPath in body
-	//   2. projectName looked up in mobile-projects scan
-	//   3. devServerMgr's currently-active project (legacy path)
+	//   2. projectName looked up in mobile-projects scan / workspace manifest
+	//   3. bundleId looked up in the cached mobile-project scan
+	//   4. devServerMgr's currently-active project (legacy path)
 	var workDir string
 	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
 	if guestUID != "" {
@@ -2188,10 +2190,23 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	if workDir == "" && strings.TrimSpace(req.BundleID) != "" {
+		if mp := findMobileProjectByBundleID(req.BundleID); mp != nil && strings.TrimSpace(mp.Path) != "" {
+			workDir = strings.TrimSpace(mp.Path)
+			if strings.TrimSpace(req.ProjectName) == "" {
+				req.ProjectName = strings.TrimSpace(mp.Name)
+			}
+		} else if req.ProjectPath != "" || req.ProjectName != "" {
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("bundle id %q did not match any scanned mobile project on this machine", req.BundleID),
+			})
+			return
+		}
+	}
 	if workDir == "" {
 		status := s.devServerMgr.Status()
 		if status == nil || status.WorkDir == "" {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first OR pass projectName / projectPath in the body"})
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first OR pass projectName / projectPath / bundleId in the body"})
 			return
 		}
 		workDir = status.WorkDir

@@ -42,6 +42,7 @@ export interface MockAgentHandle {
     mode: "verified" | "not-verified" | "fail" | "legacy",
     opts?: { buildsCancelled?: number; message?: string },
   ) => void;
+  getLastBuildNativeRequest: () => any;
 }
 
 export async function startMockAgent(opts?: { token?: string }): Promise<MockAgentHandle> {
@@ -51,6 +52,7 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
   let stopMode: "verified" | "not-verified" | "fail" | "legacy" = "verified";
   let stopBuildsCancelled = 0;
   let stopMessage = "";
+  let lastBuildNativeRequest: any = null;
   // Track in-flight "hang" responses so we can release them on close —
   // otherwise server.close() blocks forever waiting for them and the
   // test's afterAll hangs.
@@ -284,6 +286,7 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
       // Drain the request body so the connection is half-closed correctly.
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      lastBuildNativeRequest = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
       switch (buildNativeMode) {
         case "hang":
           // Hold the response open. The client must abort to make progress.
@@ -299,6 +302,7 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             size: 4096,
             md5: "deadbeef",
             bcVersion: 96,
+            platform: lastBuildNativeRequest?.platform ?? "ios",
             moduleName: "main",
             hasAssets: false,
           });
@@ -324,7 +328,7 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             md5: "deadbeef",
             size: 4096,
             moduleName: "main",
-            platform: "ios",
+            platform: lastBuildNativeRequest?.platform ?? "ios",
           });
         case "ok":
         default:
@@ -335,6 +339,7 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
             size: 4096,
             md5: "deadbeef",
             bcVersion: 96,
+            platform: lastBuildNativeRequest?.platform ?? "ios",
             moduleName: "main",
             hasAssets: false,
           });
@@ -434,5 +439,6 @@ export async function startMockAgent(opts?: { token?: string }): Promise<MockAge
       stopBuildsCancelled = opts?.buildsCancelled ?? 0;
       stopMessage = opts?.message ?? "";
     },
+    getLastBuildNativeRequest: () => lastBuildNativeRequest,
   };
 }

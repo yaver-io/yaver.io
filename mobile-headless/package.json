@@ -24,7 +24,7 @@
     "cli": "bun run src/bin/cli.ts",
     "mcp": "bun run src/bin/mcp.ts",
     "test": "bun test",
-    "test:hermetic": "bun test test/hermetic.test.ts",
+    "test:hermetic": "bun test test/hermetic.test.ts test/build-native.test.ts",
     "test:smoke": "bun test test/smoke-local.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "bun build src/bin/cli.ts --outdir dist --target node --minify && bun build src/bin/mcp.ts --outdir dist --target node --minify && bun build src/mobile-client.ts --outdir dist --target node && node scripts/fix-shebang.mjs",
