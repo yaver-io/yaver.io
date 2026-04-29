@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -263,13 +264,7 @@ export default function InfraScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
-      <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Infra</Text>
-        <View style={{ width: 50 }} />
-      </View>
+      <AppScreenHeader title="Infra" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
       {loading && !summary ? (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>

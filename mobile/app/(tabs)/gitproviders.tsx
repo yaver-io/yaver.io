@@ -1,7 +1,8 @@
 import React from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { GitProviderSection } from "./more";
 
@@ -11,13 +12,7 @@ export default function GitProvidersScreen() {
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
-      <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Git Providers</Text>
-        <View style={{ width: 50 }} />
-      </View>
+      <AppScreenHeader title="Git Providers" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
       <ScrollView contentContainerStyle={{ paddingBottom: 32 }}>
         <GitProviderSection c={c} />
       </ScrollView>

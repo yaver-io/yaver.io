@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -434,18 +435,7 @@ export default function GuestsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
-      <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable
-          onPress={() => router.navigate("/(tabs)/more" as any)}
-          style={{ paddingVertical: 8 }}
-        >
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>
-          Guest Access
-        </Text>
-        <View style={{ width: 50 }} />
-      </View>
+      <AppScreenHeader title="Guest Access" onBack={() => router.navigate("/(tabs)/more" as any)} style={{ paddingTop: insets.top + 12 }} />
 
       <View style={{ flexDirection: "row", padding: 12, gap: 8 }}>
         <ModeBtn c={c} label="My guests" active={mode === "my-guests"} onPress={() => setMode("my-guests")} />

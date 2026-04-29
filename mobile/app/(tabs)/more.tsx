@@ -13,6 +13,7 @@ import {
 import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type HealthMonitorTarget, type MachineInfo } from "../../src/lib/quic";
@@ -3166,13 +3167,7 @@ export default function MoreScreen() {
       {/* Tutorials list modal */}
       <Modal visible={showTutorials && !tutorialUrl} animationType="slide">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-            <Pressable onPress={() => setShowTutorials(false)} style={{ paddingVertical: 8 }}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-            </Pressable>
-            <Text style={[s.modalTitle, { color: c.textPrimary }]}>Tutorials</Text>
-            <View style={{ width: 50 }} />
-          </View>
+          <AppScreenHeader title="Tutorials" onBack={() => setShowTutorials(false)} style={{ paddingTop: insets.top + 12 }} />
           <ScrollView contentContainerStyle={s.list}>
             {TUTORIALS.map((t) => (
               <Pressable
@@ -3195,15 +3190,11 @@ export default function MoreScreen() {
       {/* Tutorial content WebView */}
       <Modal visible={!!tutorialUrl} animationType="slide">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <View style={[s.modalHeader, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-            <Pressable onPress={() => setTutorialUrl(null)} style={{ paddingVertical: 8 }}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-            </Pressable>
-            <Text style={[s.modalTitle, { color: c.textPrimary }]}>
-              {TUTORIALS.find(t => t.url === tutorialUrl)?.label ?? "Tutorial"}
-            </Text>
-            <View style={{ width: 40 }} />
-          </View>
+          <AppScreenHeader
+            title={TUTORIALS.find(t => t.url === tutorialUrl)?.label ?? "Tutorial"}
+            onBack={() => setTutorialUrl(null)}
+            style={{ paddingTop: insets.top + 12 }}
+          />
           {tutorialUrl && (
             <WebView
               source={{ uri: tutorialUrl }}

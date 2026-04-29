@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
@@ -345,29 +346,25 @@ export default function TodosScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: c.bg }]}>
-      {/* Header */}
-      <View style={[s.header, { paddingTop: insets.top + 12, borderBottomColor: c.border }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={[s.headerTitle, { color: c.textPrimary }]}>Todos</Text>
-        <View style={s.headerRight}>
-          {isConnected && pending.length > 0 && (
+      <AppScreenHeader
+        title="Todos"
+        onBack={() => router.navigate("/(tabs)/more" as any)}
+        style={{ paddingTop: insets.top + 12 }}
+        right={
+          isConnected && pending.length > 0 ? (
             <Pressable
               style={[s.autopilotBtn, { backgroundColor: c.bgCardElevated }, autopilot && { backgroundColor: "#6366f122" }, sending && { opacity: 0.5 }]}
               onPress={handleAutopilot}
               disabled={sending}
             >
-              <Text style={s.autopilotIcon}>
-                {"\u26A1"}
-              </Text>
+              <Text style={s.autopilotIcon}>{"\u26A1"}</Text>
               <Text style={[s.autopilotText, { color: c.textMuted }, autopilot && { color: "#6366f1", fontWeight: "600" }]}>
                 {autopilot ? "Driving" : "Auto-Drive"}
               </Text>
             </Pressable>
-          )}
-        </View>
-      </View>
+          ) : null
+        }
+      />
 
       {/* Inline input */}
       {showInput && (

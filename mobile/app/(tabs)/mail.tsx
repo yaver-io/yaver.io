@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -219,15 +220,16 @@ export default function MailScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: c.bg }]}>
-      <View style={[s.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Mail</Text>
-        <Pressable onPress={() => setShowCompose(true)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Compose</Text>
-        </Pressable>
-      </View>
+      <AppScreenHeader
+        title="Mail"
+        onBack={() => router.navigate("/(tabs)/more" as any)}
+        style={{ paddingTop: insets.top + 12 }}
+        right={
+          <Pressable onPress={() => setShowCompose(true)} style={{ paddingVertical: 8 }}>
+            <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Compose</Text>
+          </Pressable>
+        }
+      />
 
       <View style={[s.filterRow, { borderBottomColor: c.border }]}>
         {(["personal", "transactional", "all"] as Filter[]).map((f) => (
@@ -275,15 +277,15 @@ export default function MailScreen() {
       {/* Draft modal */}
       <Modal visible={!!selected} animationType="slide">
         <View style={[s.container, { backgroundColor: c.bg, paddingTop: insets.top + 12 }]}>
-          <View style={[s.header, { borderBottomColor: c.border }]}>
-            <Pressable onPress={() => setSelected(null)} style={{ paddingVertical: 8 }}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-            </Pressable>
-            <Text style={{ fontSize: 17, fontWeight: "700", color: c.textPrimary }}>Reply</Text>
-            <Pressable onPress={sendDraft} style={{ paddingVertical: 8 }}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Send</Text>
-            </Pressable>
-          </View>
+          <AppScreenHeader
+            title="Reply"
+            onBack={() => setSelected(null)}
+            right={
+              <Pressable onPress={sendDraft} style={{ paddingVertical: 8 }}>
+                <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Send</Text>
+              </Pressable>
+            }
+          />
           {selected ? (
             <ScrollView contentContainerStyle={{ padding: 16 }}>
               <Text style={[s.subject, { color: c.textPrimary, fontSize: 17 }]}>{selected.subject}</Text>

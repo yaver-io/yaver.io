@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
 
@@ -82,16 +83,12 @@ export default function TerminalScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: "#0b0d10" }]}>
-      <View style={[styles.header, { borderBottomColor: c.border, paddingTop: insets.top + 12 }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: connected ? "#10b981" : "#ef4444" }} />
-          <Text style={{ fontSize: 14, fontWeight: "600", color: "#d1d5db" }}>Terminal</Text>
-        </View>
-        <View style={{ width: 50 }} />
-      </View>
+      <AppScreenHeader
+        title="Terminal"
+        onBack={() => router.navigate("/(tabs)/more" as any)}
+        style={{ backgroundColor: "#0b0d10", paddingTop: insets.top + 12 }}
+        right={<View style={{ width: 50 }} />}
+      />
 
       {error && <Text style={{ color: "#ef4444", fontSize: 11, padding: 8 }}>{error}</Text>}
 

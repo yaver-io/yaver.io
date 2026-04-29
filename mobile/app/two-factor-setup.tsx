@@ -12,6 +12,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as Clipboard from "expo-clipboard";
+import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
 import {
@@ -117,8 +118,8 @@ export default function TwoFactorSetupScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
+      <AppScreenHeader title="Two-Factor Authentication" onBack={() => router.back()} />
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={[styles.title, { color: c.textPrimary }]}>Two-Factor Authentication</Text>
         <Text style={[styles.subtitle, { color: c.textSecondary }]}>
           Optional. When enabled, new sign-ins require a 6-digit code from an
           authenticator app (Microsoft Authenticator, Google Authenticator,
@@ -246,10 +247,6 @@ export default function TwoFactorSetupScreen() {
         ) : null}
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <Pressable style={styles.back} onPress={() => router.back()}>
-          <Text style={[styles.backText, { color: c.textMuted }]}>Back</Text>
-        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -294,6 +291,4 @@ const styles = StyleSheet.create({
   codes: { gap: 4 },
   codeLine: { fontFamily: "Menlo", fontSize: 14 },
   errorText: { color: "#ef4444", fontSize: 13 },
-  back: { alignItems: "center", marginTop: 8 },
-  backText: { fontSize: 13 },
 });

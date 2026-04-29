@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
@@ -251,14 +252,7 @@ export default function QualityGatesScreen() {
 
   return (
     <View style={[st.container, { backgroundColor: c.bg, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[st.header, { borderBottomColor: c.border }]}>
-        <Pressable onPress={() => router.navigate("/(tabs)/more" as any)} style={{ paddingVertical: 8 }}>
-          <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-        </Pressable>
-        <Text style={[st.headerTitle, { color: c.textPrimary }]}>Quality Gates</Text>
-        <View style={{ width: 40 }} />
-      </View>
+      <AppScreenHeader title="Quality Gates" onBack={() => router.navigate("/(tabs)/more" as any)} />
 
       {!connected ? (
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 20 }}>

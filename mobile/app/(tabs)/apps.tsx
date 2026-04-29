@@ -17,6 +17,7 @@ import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { Platform } from "react-native";
+import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
@@ -1766,16 +1767,16 @@ export default function AppsScreen() {
       {/* Vibing modal — AI pair programming widget */}
       <Modal visible={!!vibingState} animationType="slide">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <View style={[s.vibingHeader, { borderBottomColor: c.border, paddingTop: insets.top + 8 }]}>
-            <Pressable onPress={() => { setVibingState(null); setCustomTask(""); setVibingTaskStatus(""); setVibingTaskId(null); }} style={{ paddingVertical: 8 }}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>{"\u2039"} Back</Text>
-            </Pressable>
-            <View style={{ alignItems: "center" }}>
-              <Text style={[s.vibingTitle, { color: c.textPrimary }]}>{"\u{1F3B5}"} Vibing</Text>
-              <Text style={{ color: c.textMuted, fontSize: 11 }}>{vibingState?.project}</Text>
+          <AppScreenHeader
+            title="Vibing"
+            onBack={() => { setVibingState(null); setCustomTask(""); setVibingTaskStatus(""); setVibingTaskId(null); }}
+            style={{ paddingTop: insets.top + 8 }}
+          />
+          {vibingState?.project ? (
+            <View style={{ alignItems: "center", paddingTop: 8 }}>
+              <Text style={{ color: c.textMuted, fontSize: 11 }}>{vibingState.project}</Text>
             </View>
-            <View style={{ width: 50 }} />
-          </View>
+          ) : null}
 
           <ScrollView contentContainerStyle={s.vibingContent}>
 
@@ -2021,23 +2022,21 @@ export default function AppsScreen() {
       {/* Full-screen WebView */}
       <Modal visible={showWebView} animationType="slide" presentationStyle="fullScreen">
         <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <View style={[s.webViewHeader, { borderBottomColor: c.border, paddingTop: insets.top + 8 }]}>
-            <Pressable onPress={() => setShowWebView(false)}>
-              <Text style={{ color: c.accent, fontSize: 15, fontWeight: "600" }}>Back</Text>
-            </Pressable>
-            <View style={s.webViewHeaderCenter}>
-              <View style={[s.statusDot, { backgroundColor: "#22c55e" }]} />
-              <Text style={[s.webViewTitle, { color: c.textPrimary }]}>{runningProject}</Text>
-            </View>
-            <View style={s.webViewHeaderActions}>
-              <Pressable onPress={handleReload}>
-                <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Reload</Text>
-              </Pressable>
-              <Pressable onPress={handleStop}>
-                <Text style={{ color: c.error, fontSize: 14, fontWeight: "600", marginLeft: 16 }}>Stop</Text>
-              </Pressable>
-            </View>
-          </View>
+          <AppScreenHeader
+            title={runningProject || "Preview"}
+            onBack={() => setShowWebView(false)}
+            style={{ paddingTop: insets.top + 8 }}
+            right={
+              <View style={s.webViewHeaderActions}>
+                <Pressable onPress={handleReload}>
+                  <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Reload</Text>
+                </Pressable>
+                <Pressable onPress={handleStop}>
+                  <Text style={{ color: c.error, fontSize: 14, fontWeight: "600", marginLeft: 16 }}>Stop</Text>
+                </Pressable>
+              </View>
+            }
+          />
           {webViewLoading && (
             <View style={[s.loadingBar, { backgroundColor: c.accent }]} />
           )}

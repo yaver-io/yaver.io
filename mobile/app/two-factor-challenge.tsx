@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
+import { AppScreenHeader } from "../src/components/AppScreenHeader";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors } from "../src/context/ThemeContext";
 import { verifyTotpChallenge } from "../src/lib/auth";
@@ -59,12 +60,12 @@ export default function TwoFactorChallengeScreen() {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: c.bg }]}>
+      <AppScreenHeader title="Two-Factor Authentication" onBack={() => router.replace("/login")} />
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <View style={styles.container}>
-          <Text style={[styles.title, { color: c.textPrimary }]}>Two-Factor Authentication</Text>
           <Text style={[styles.subtitle, { color: c.textSecondary }]}>
             Enter the 6-digit code from your authenticator app, or a recovery code if you lost access.
           </Text>
@@ -103,9 +104,6 @@ export default function TwoFactorChallengeScreen() {
             )}
           </Pressable>
 
-          <Pressable onPress={() => router.replace("/login")} style={styles.back}>
-            <Text style={[styles.backText, { color: c.textMuted }]}>Back to sign in</Text>
-          </Pressable>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -134,6 +132,4 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   submitText: { color: "#fff", fontSize: 16, fontWeight: "600" },
-  back: { marginTop: 16, alignItems: "center" },
-  backText: { fontSize: 13 },
 });
