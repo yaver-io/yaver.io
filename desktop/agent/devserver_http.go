@@ -1679,7 +1679,8 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 				projectPath = strings.TrimSpace(st.WorkDir)
 			}
 		}
-		reloadOp := s.upsertDevOperation("reload_app", "running", "build", "Rebuilding Hermes bundle before reload…", projectPath, target.DeviceID, 0.1, map[string]interface{}{"mode": "bundle"})
+		s.emitBuildProgress("Preparing Yaver reload: stop guest, rebuild Hermes, restart…", "prepare")
+		reloadOp := s.upsertDevOperation("reload_app", "running", "prepare", "Preparing Yaver reload: stop guest, rebuild Hermes bundle, then restart in Yaver.", projectPath, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{"mode": "bundle"})
 		// Native bundle: rebuild and tell SDK devices to fetch new bundle.
 		// Capture handleBuildNativeBundle's response so we can detect a
 		// failed build (no active dev server, dependency install failed,
@@ -1728,7 +1729,8 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Build succeeded. Tell SDKs to fetch the fresh bundle.
-		s.emitBuildProgress("Pushing fresh bundle to device…", "push")
+		s.emitBuildProgress("Sending fresh bundle + restart command to phone…", "push")
+		s.upsertDevOperation("reload_app", "running", "restart", "Bundle ready. Sending restart command so the phone can swap the guest bridge in Yaver.", projectPath, target.DeviceID, phaseProgress("restart"), map[string]interface{}{"mode": "bundle"})
 		cmd := BlackBoxCommand{
 			Command: "reload_bundle",
 			Data: map[string]interface{}{
@@ -1744,7 +1746,7 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 			s.blackboxMgr.BroadcastCommand(cmd)
 			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
 		}
-		s.upsertDevOperation("reload_app", "completed", "push", "Fresh bundle pushed to the app.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"})
+		s.upsertDevOperation("reload_app", "completed", "push", "Fresh bundle sent. The phone is restarting the guest inside Yaver.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"})
 		// Note: response already written by handleBuildNativeBundle
 
 	default:
@@ -2035,6 +2037,8 @@ func (s *HTTPServer) emitBuildProgressWithPercent(message, phase string, percent
 // DevPreview.tsx uses for native builds.
 func phaseProgress(phase string) float64 {
 	switch phase {
+	case "prepare":
+		return 0.03
 	case "build":
 		return 0.05
 	case "install":
@@ -2043,12 +2047,16 @@ func phaseProgress(phase string) float64 {
 		return 0.45
 	case "hermes":
 		return 0.70
+	case "compat":
+		return 0.82
 	case "assets":
 		return 0.85
 	case "ready":
 		return 0.95
 	case "push":
 		return 0.98
+	case "restart":
+		return 0.99
 	case "done":
 		return 1.0
 	case "error":
@@ -2596,14 +2604,23 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// the phone shows an actionable banner instead of crashing in JS.
 	var compatIncompatible []string
 	var compatMatched []string
+	var compatIgnored []string
 	var compatHostRN string
 	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
+		s.emitBuildProgress("Checking host compatibility...", "compat")
+		s.upsertDevOperation("build_native", "running", "compat", "Checking whether Yaver can safely restart this bundle…", workDir, target.DeviceID, phaseProgress("compat"), map[string]interface{}{"platform": req.Platform})
 		compatIncompatible = report.Incompatible
 		compatMatched = report.Matched
+		compatIgnored = report.Ignored
 		compatHostRN = report.HostRN
 		meta.HostSDKVersion = report.HostSDKVersion
 		meta.SupportedRNRange = report.SupportedRNRange
 		meta.IncompatibleNativeModules = append([]string(nil), compatIncompatible...)
+		if len(compatIgnored) > 0 {
+			msg := fmt.Sprintf("Ignoring host-optional SDK package(s): %s", strings.Join(compatIgnored, ", "))
+			log.Printf("[super-host] native-module compat: ignored (%v)", compatIgnored)
+			s.devServerMgr.EmitLog(msg)
+		}
 		if len(compatIncompatible) > 0 {
 			log.Printf("[super-host] native-module compat: %d incompatible (%v)",
 				len(compatIncompatible), compatIncompatible)
@@ -2625,6 +2642,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"platform":                  req.Platform,
 					"incompatibleNativeModules": compatIncompatible,
 					"matchedNativeModules":      compatMatched,
+					"ignoredNativeModules":      compatIgnored,
 					"blocked":                   true,
 				}, incident.ID)
 				jsonReply(w, http.StatusConflict, map[string]interface{}{
@@ -2636,6 +2654,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"moduleName":                moduleName,
 					"incompatibleNativeModules": compatIncompatible,
 					"matchedNativeModules":      compatMatched,
+					"ignoredNativeModules":      compatIgnored,
 					"hostSdkVersion":            report.HostSDKVersion,
 					"hostReactNative":           report.HostRN,
 					"supportedRNRange":          report.SupportedRNRange,
@@ -2699,6 +2718,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"supportedRNRange":          meta.SupportedRNRange,
 		"incompatibleNativeModules": compatIncompatible,
 		"matchedNativeModules":      compatMatched,
+		"ignoredNativeModules":      compatIgnored,
 		"allowUnsafeNativeModules":  req.AllowUnsafeNativeModules,
 	})
 }

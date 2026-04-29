@@ -96,14 +96,8 @@ func ExtractProjectNativeModules(workDir string) ([]string, error) {
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return nil, fmt.Errorf("parse package.json: %w", err)
 	}
-	out := make([]string, 0, len(pkg.Dependencies))
-	for name := range pkg.Dependencies {
-		if isLikelyNativeModule(name) {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out, nil
+	out, _, err := extractProjectNativeModulesFromDeps(pkg.Dependencies)
+	return out, err
 }
 
 // jsOnlyExact is a deny-list of names that match the heuristic but are
@@ -139,12 +133,32 @@ func isLikelyNativeModule(name string) bool {
 	return false
 }
 
+func extractProjectNativeModulesFromDeps(deps map[string]string) ([]string, []string, error) {
+	out := make([]string, 0, len(deps))
+	ignored := make([]string, 0)
+	for name := range deps {
+		if jsOnlyExact[name] {
+			if name == "yaver-feedback-react-native" {
+				ignored = append(ignored, name)
+			}
+			continue
+		}
+		if isLikelyNativeModule(name) {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	sort.Strings(ignored)
+	return out, ignored, nil
+}
+
 // CompatReport summarises how a project's native deps line up with the
 // host super-host's published manifest.
 type CompatReport struct {
 	ProjectModules   []string `json:"projectModules"`            // every dep we treated as native
 	Matched          []string `json:"matched"`                   // present in host manifest
 	Incompatible     []string `json:"incompatibleNativeModules"` // missing — likely crash sites
+	Ignored          []string `json:"ignoredNativeModules"`      // intentionally ignored host-optional packages
 	HostSDKVersion   string   `json:"hostSdkVersion"`
 	HostRN           string   `json:"hostReactNative"`
 	SupportedRNRange string   `json:"supportedRNRange"`
@@ -159,7 +173,18 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		return nil, err
 	}
 	hostNames, _ := HostSupportedNativeModules()
-	projectMods, err := ExtractProjectNativeModules(workDir)
+	pkgPath := filepath.Join(workDir, "package.json")
+	data, err := os.ReadFile(pkgPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", pkgPath, err)
+	}
+	var pkg struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return nil, fmt.Errorf("parse package.json: %w", err)
+	}
+	projectMods, ignored, err := extractProjectNativeModulesFromDeps(pkg.Dependencies)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +201,7 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		ProjectModules:   projectMods,
 		Matched:          matched,
 		Incompatible:     missing,
+		Ignored:          ignored,
 		HostSDKVersion:   host.SdkVersion,
 		HostRN:           host.ReactNative,
 		SupportedRNRange: host.SupportedRNRange,

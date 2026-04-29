@@ -51,8 +51,7 @@ function isHermesMobileFramework(framework?: string): boolean {
 }
 
 function agentFlowGuidance(framework?: string): string | null {
-  if (!isHermesMobileFramework(framework)) return null;
-  return "Hermes reload to Yaver on iPhone/Android should work from Linux, WSL, macOS, or a remote host. No project injection is required for this path. Use yaver-cli only for direct push/watch workflows. Add the Feedback SDK only for in-app bug reports or remote reload inside your own app.";
+  return null;
 }
 
 // ── Hot Reload Tab ────────────────────────────────────────────────
@@ -406,8 +405,23 @@ export default function HotReloadScreen() {
   }, [devStatus, handleOpen]);
 
   const [loadingStatus, setLoadingStatus] = useState("");
-  const currentOperation = reloadOperations[0] || null;
-  const currentIncident = reloadIncidents[0] || null;
+  const activeProjectPath = devStatus?.workDir ? String(devStatus.workDir).trim() : "";
+  const visibleOperations = reloadOperations.filter((op) => {
+    if (op.status === "completed") return false;
+    if (!activeProjectPath) return true;
+    const opProjectPath = typeof op.projectPath === "string" ? op.projectPath.trim() : "";
+    return !opProjectPath || opProjectPath === activeProjectPath;
+  });
+  const currentOperation = visibleOperations[0] || null;
+  const visibleIncidents = reloadIncidents.filter((incident) => {
+    if (incident.resolved) return false;
+    if (currentOperation?.incidentIds?.includes(incident.id)) return true;
+    if (currentOperation?.id && incident.operationId === currentOperation.id) return true;
+    if (!activeProjectPath) return false;
+    const incidentProjectPath = typeof incident.projectPath === "string" ? incident.projectPath.trim() : "";
+    return incidentProjectPath === activeProjectPath;
+  });
+  const currentIncident = visibleIncidents[0] || null;
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -501,9 +515,9 @@ export default function HotReloadScreen() {
                       : `${devStatus.framework} · starting...`}
                 </Text>
                 <Text style={[s.cardMeta, { color: "#86efac" }]}>
-                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver"}
+                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bytecode"}
                 </Text>
-                {devStatus.iosInstallReason ? (
+                {devStatus.iosInstallReason && devStatus.iosInstallMethod === "native" ? (
                   <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
                     {devStatus.iosInstallReason}
                   </Text>

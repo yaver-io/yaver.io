@@ -148,6 +148,16 @@ func TestBuildCompatReport_IgnoresFeedbackSDKPackage(t *testing.T) {
 			t.Fatalf("feedback sdk should be ignored for Open in Yaver compatibility, got project modules %v", report.ProjectModules)
 		}
 	}
+	foundIgnored := false
+	for _, m := range report.Ignored {
+		if m == "yaver-feedback-react-native" {
+			foundIgnored = true
+			break
+		}
+	}
+	if !foundIgnored {
+		t.Fatalf("expected feedback sdk in ignored list, got %v", report.Ignored)
+	}
 	for _, m := range report.Incompatible {
 		if m == "yaver-feedback-react-native" {
 			t.Fatalf("feedback sdk should not block compatibility, got incompatible %v", report.Incompatible)
