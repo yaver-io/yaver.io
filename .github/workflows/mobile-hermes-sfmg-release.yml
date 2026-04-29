@@ -113,8 +113,8 @@ jobs:
           # the bundle the box produces has a different bcVersion,
           # the mobile app would crash on load — fail the release
           # smoke instead.
-          BCV=$(jq -r '.hermesBytecodeVersion' mobile/sdk-manifest.json)
-          RNV=$(jq -r '.reactNativeVersion'    mobile/sdk-manifest.json)
+          BCV=$(jq -r '.hermes.bytecodeVersion' mobile/sdk-manifest.json)
+          RNV=$(jq -r '.reactNative'            mobile/sdk-manifest.json)
           echo "Expected hermesBytecodeVersion: $BCV"
           echo "Expected reactNativeVersion:    $RNV"
           echo "expectedBcVersion=$BCV" >> "$GITHUB_OUTPUT"
@@ -124,6 +124,7 @@ jobs:
         env:
           EXPECTED_BC_VERSION: ${{ steps.manifest.outputs.expectedBcVersion }}
           EXPECTED_RN_VERSION: ${{ steps.manifest.outputs.expectedRnVersion }}
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
         run: |
           export PATH="$HOME/.bun/bin:$PATH"
           cd mobile-headless
@@ -136,11 +137,18 @@ jobs:
           echo "=== confirm SFMG is on the box ==="
           APPS=$($NODE raw-get "$(rp '/workspace/apps?kind=hybrid')" --token="$YAVER_TOKEN")
           if ! echo "$APPS" | jq -e '.body.apps[]? | select(.name=="sfmg" and .exists==true)' >/dev/null; then
-            echo "::error::SFMG isn't checked out on yaver-test-ephemeral. Re-bootstrap the box (ci/remote/bootstrap.sh) before running this smoke."
-            echo "$APPS" | jq '.body.apps | map({name, exists, absPath})' || true
-            exit 1
+            SFMG_PATH="/home/yaver/Workspace/sfmg"
+            if ! ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+                -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                "root@$HETZNER_TEST_SERVER_IP" "test -d '$SFMG_PATH'"; then
+              echo "::error::SFMG isn't checked out on yaver-test-ephemeral. Re-bootstrap the box (ci/remote/bootstrap.sh) before running this smoke."
+              echo "$APPS" | jq '.body.apps | map({name, exists, absPath})' || true
+              exit 1
+            fi
+            echo "  /workspace/apps did not surface sfmg; falling back to $SFMG_PATH"
+          else
+            SFMG_PATH=$(echo "$APPS" | jq -r '.body.apps[] | select(.name=="sfmg") | .absPath')
           fi
-          SFMG_PATH=$(echo "$APPS" | jq -r '.body.apps[] | select(.name=="sfmg") | .absPath')
           echo "  SFMG checkout: $SFMG_PATH"
 
           echo "=== /dev/compatibility for SFMG (release-readiness shape) ==="
