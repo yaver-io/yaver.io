@@ -726,7 +726,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryRunnerByDevice, primaryModelByDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, DeviceProbeState>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -2446,7 +2446,15 @@ export default function TasksScreen() {
                           { borderColor: selectedRunner === r.id ? "#f59e0b" : c.border },
                           selectedRunner === r.id && { backgroundColor: "#f59e0b20" },
                         ]}
-                        onPress={() => setSelectedRunner(r.id)}
+                        onPress={() => {
+                          setSelectedRunner(r.id);
+                          // Persist per-device so the seeding effect on
+                          // re-render reads the user's choice instead of
+                          // reverting to the previously-pinned default.
+                          if (activeDevice?.id) {
+                            void setPrimaryRunnerForDevice(activeDevice.id, r.id).catch(() => {});
+                          }
+                        }}
                       >
                         <Text style={[s.modelChipText, { color: selectedRunner === r.id ? "#f59e0b" : c.textMuted }]}>
                           {r.name}
@@ -2492,7 +2500,15 @@ export default function TasksScreen() {
                         { borderColor: selectedModel === m.id ? c.accent : c.border },
                         selectedModel === m.id && { backgroundColor: c.accent + "20" },
                       ]}
-                      onPress={() => setSelectedModel(m.id)}
+                      onPress={() => {
+                        setSelectedModel(m.id);
+                        // Persist alongside the runner so the seeding effect
+                        // on re-render reads the user's pick instead of
+                        // overwriting it from primaryModelByDevice.
+                        if (activeDevice?.id && selectedRunner) {
+                          void setPrimaryRunnerForDevice(activeDevice.id, selectedRunner, m.id).catch(() => {});
+                        }
+                      }}
                     >
                       <Text style={[s.modelChipText, { color: selectedModel === m.id ? c.accent : c.textMuted }]}>
                         {m.name}
