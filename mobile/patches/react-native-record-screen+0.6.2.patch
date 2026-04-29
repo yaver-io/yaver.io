@@ -15,3 +15,15 @@ index 67ac51f..157f07c 100644
 -#endif
  
  @end
+diff --git a/node_modules/react-native-record-screen/react-native-record-screen.podspec b/node_modules/react-native-record-screen/react-native-record-screen.podspec
+index f1abde9..c55af56 100644
+--- a/node_modules/react-native-record-screen/react-native-record-screen.podspec
++++ b/node_modules/react-native-record-screen/react-native-record-screen.podspec
+@@ -15,6 +15,7 @@ Pod::Spec.new do |s|
+   s.source       = { :git => "https://github.com/yutasuzuki/react-native-record-screen.git", :tag => "#{s.version}" }
+ 
+   s.source_files = "ios/**/*.{h,m,mm}"
++  s.frameworks   = "ReplayKit", "AVFoundation"
+ 
+   # Use install_modules_dependencies helper to install the dependencies if React Native version >=0.71.0.
+   # See https://github.com/facebook/react-native/blob/febf6b7f33fdb4904669f99d795eba4c0f95d7bf/scripts/cocoapods/new_architecture.rb#L79.
