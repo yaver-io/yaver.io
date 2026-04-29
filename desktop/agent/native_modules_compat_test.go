@@ -83,16 +83,18 @@ func TestExtractProjectNativeModules(t *testing.T) {
 	}
 }
 
-func TestBuildCompatReport_DetectsRecordScreen(t *testing.T) {
-	// The exact crash class from SFMG TestFlight 246: SFMG declares
-	// react-native-record-screen, Yaver does not register it.
+func TestBuildCompatReport_DetectsMissingModule(t *testing.T) {
+	// Use a fictional module that will never end up in Yaver's
+	// manifest — keeps the test stable as the manifest grows. Pairs
+	// with @react-native-async-storage/async-storage which is in the
+	// manifest, so we exercise both buckets of the report.
 	tmp := t.TempDir()
 	pkg := `{
   "dependencies": {
     "react": "19.1.0",
     "react-native": "0.81.5",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "react-native-record-screen": "0.6.1"
+    "react-native-yaver-fictional-test-module": "0.0.1"
   }
 }`
 	if err := os.WriteFile(filepath.Join(tmp, "package.json"), []byte(pkg), 0644); err != nil {
@@ -102,20 +104,16 @@ func TestBuildCompatReport_DetectsRecordScreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compat report: %v", err)
 	}
-	if len(report.Incompatible) == 0 {
-		t.Fatalf("expected react-native-record-screen to be flagged incompatible, got none")
-	}
-	found := false
+	foundIncompat := false
 	for _, m := range report.Incompatible {
-		if m == "react-native-record-screen" {
-			found = true
+		if m == "react-native-yaver-fictional-test-module" {
+			foundIncompat = true
 			break
 		}
 	}
-	if !found {
-		t.Fatalf("expected react-native-record-screen in Incompatible list, got %v", report.Incompatible)
+	if !foundIncompat {
+		t.Fatalf("expected fictional module in Incompatible list, got %v", report.Incompatible)
 	}
-	// And async-storage should be in Matched.
 	matched := false
 	for _, m := range report.Matched {
 		if m == "@react-native-async-storage/async-storage" {
