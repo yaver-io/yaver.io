@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  NativeModules,
   Platform,
   Pressable,
   StyleSheet,
@@ -22,7 +23,7 @@ import {
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
-import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
+import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -53,6 +54,16 @@ function isHermesMobileFramework(framework?: string): boolean {
 
 function agentFlowGuidance(framework?: string): string | null {
   return null;
+}
+
+function currentYaverConsumerContract() {
+  const info = (NativeModules as any)?.YaverInfo ?? {};
+  return {
+    consumerVersion: typeof info.version === "string" ? info.version : undefined,
+    consumerBuild: typeof info.build === "string" ? info.build : undefined,
+    consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
+    consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+  };
 }
 
 // ── Hot Reload Tab ────────────────────────────────────────────────
@@ -244,7 +255,7 @@ export default function HotReloadScreen() {
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ platform }),
+        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
         signal: buildAbort.signal,
       });
       clearTimeout(buildAbortTimer);

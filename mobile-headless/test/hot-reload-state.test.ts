@@ -40,13 +40,13 @@ describe("hot reload state filtering", () => {
     expect(visibleReloadOperations(operations, "/a").map((item) => item.id)).toEqual(["active", "global"]);
   });
 
-  it("shows no stale incidents from other projects when there is no matching active op", () => {
+  it("shows no blocker before the current run has an active operation", () => {
     const incidents = [
       incident({ id: "stale", projectPath: "/other" }),
       incident({ id: "resolved", projectPath: "/active", resolved: true }),
       incident({ id: "active", projectPath: "/active" }),
     ];
-    expect(visibleReloadIncidents(incidents, null, "/active").map((item) => item.id)).toEqual(["active"]);
+    expect(visibleReloadIncidents(incidents, null, "/active").map((item) => item.id)).toEqual([]);
   });
 
   it("keeps incidents linked to the current operation even if project path is missing", () => {

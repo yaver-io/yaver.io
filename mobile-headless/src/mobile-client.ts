@@ -10,6 +10,8 @@
 //
 // The contract — not the code — is what we're testing.
 
+import { buildNativeBuildRequest } from "../../mobile/src/lib/nativeBuild";
+
 export interface MobileClientOptions {
   dataDir?: string;
   convexUrl?: string;
@@ -778,7 +780,16 @@ export class MobileClient {
       const timeoutMs = opts?.timeoutMs ?? 12 * 60_000;
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
-        const r = await this.raw.post("/dev/build-native", { platform }, { signal: ctrl.signal });
+        const r = await this.raw.post(
+          "/dev/build-native",
+          buildNativeBuildRequest(platform, {
+            consumerVersion: "mobile-headless",
+            consumerBuild: "headless",
+            consumerSdkVersion: "headless",
+            consumerHermesBCVersion: 96,
+          }),
+          { signal: ctrl.signal },
+        );
         return { status: r.status, body: r.body };
       } finally {
         clearTimeout(timer);

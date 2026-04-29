@@ -58,7 +58,13 @@ describe("devServer.buildNative", () => {
     expect(r.body?.bcVersion).toBe(96);
     expect(r.body?.platform).toBe("ios");
     expect(agent.getLastBuildNativeRequest()).toEqual(
-      expect.objectContaining({ platform: "ios" }),
+      expect.objectContaining({
+        platform: "ios",
+        consumerVersion: "mobile-headless",
+        consumerBuild: "headless",
+        consumerSdkVersion: "headless",
+        consumerHermesBCVersion: 96,
+      }),
     );
   });
 
@@ -71,7 +77,13 @@ describe("devServer.buildNative", () => {
     expect(r.body?.bcVersion).toBe(96);
     expect(r.body?.platform).toBe("android");
     expect(agent.getLastBuildNativeRequest()).toEqual(
-      expect.objectContaining({ platform: "android" }),
+      expect.objectContaining({
+        platform: "android",
+        consumerVersion: "mobile-headless",
+        consumerBuild: "headless",
+        consumerSdkVersion: "headless",
+        consumerHermesBCVersion: 96,
+      }),
     );
   });
 

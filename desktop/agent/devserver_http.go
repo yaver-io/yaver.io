@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -91,6 +92,22 @@ type nativeBuildStatus struct {
 	BundlePath    string `json:"bundlePath,omitempty"`
 	ModuleName    string `json:"moduleName,omitempty"`
 	HermesVersion int    `json:"hermesVersion,omitempty"`
+	ConsumerKey   string `json:"consumerKey,omitempty"`
+	ConsumerLabel string `json:"consumerLabel,omitempty"`
+}
+
+type nativeBuildConsumerContract struct {
+	Platform        string
+	AppVersion      string
+	AppBuild        string
+	SDKVersion      string
+	HermesBCVersion int
+}
+
+type nativeBuildCacheDecision struct {
+	Valid   bool
+	Message string
+	Label   string
 }
 
 type projectPreparationStatus struct {
@@ -342,6 +359,12 @@ func readNativeBuildStatus(workDir string) nativeBuildStatus {
 	if stored.HermesVersion > 0 {
 		status.HermesVersion = stored.HermesVersion
 	}
+	if stored.ConsumerKey != "" {
+		status.ConsumerKey = stored.ConsumerKey
+	}
+	if stored.ConsumerLabel != "" {
+		status.ConsumerLabel = stored.ConsumerLabel
+	}
 
 	if _, err := os.Stat(bundlePath); err != nil {
 		if status.State == "ready" {
@@ -365,6 +388,95 @@ func writeNativeBuildStatus(workDir string, status nativeBuildStatus) {
 		return
 	}
 	_ = os.WriteFile(nativeBuildStatusPath(workDir), data, 0o644)
+}
+
+func trimBuildValue(value string) string {
+	return strings.TrimSpace(value)
+}
+
+func nativeBuildConsumerKey(contract nativeBuildConsumerContract) string {
+	parts := []string{
+		"platform=" + trimBuildValue(contract.Platform),
+		"version=" + trimBuildValue(contract.AppVersion),
+		"build=" + trimBuildValue(contract.AppBuild),
+		"sdk=" + trimBuildValue(contract.SDKVersion),
+		"bc=" + strconv.Itoa(contract.HermesBCVersion),
+	}
+	return strings.Join(parts, "|")
+}
+
+func nativeBuildConsumerLabel(contract nativeBuildConsumerContract) string {
+	label := trimBuildValue(contract.AppVersion)
+	if label == "" {
+		label = "unknown"
+	}
+	if build := trimBuildValue(contract.AppBuild); build != "" {
+		label += " (" + build + ")"
+	}
+	if sdk := trimBuildValue(contract.SDKVersion); sdk != "" {
+		label += ", SDK " + sdk
+	}
+	if contract.HermesBCVersion > 0 {
+		label += fmt.Sprintf(", BC%d", contract.HermesBCVersion)
+	}
+	if platform := trimBuildValue(contract.Platform); platform != "" {
+		label += " on " + platform
+	}
+	return label
+}
+
+func nativeBuildCacheDecisionForConsumer(status nativeBuildStatus, contract nativeBuildConsumerContract) nativeBuildCacheDecision {
+	currentKey := nativeBuildConsumerKey(contract)
+	currentLabel := nativeBuildConsumerLabel(contract)
+	if strings.TrimSpace(currentKey) == "" || currentKey == "platform=|version=|build=|sdk=|bc=0" {
+		return nativeBuildCacheDecision{
+			Valid:   false,
+			Label:   currentLabel,
+			Message: "No mobile consumer contract was provided. Clearing stale build output before bundling.",
+		}
+	}
+	if strings.TrimSpace(status.ConsumerKey) == "" {
+		return nativeBuildCacheDecision{
+			Valid:   false,
+			Label:   currentLabel,
+			Message: "No previous consumer contract was recorded. Clearing stale build output before bundling.",
+		}
+	}
+	if status.ConsumerKey != currentKey {
+		prev := strings.TrimSpace(status.ConsumerLabel)
+		if prev == "" {
+			prev = "another Yaver build"
+		}
+		return nativeBuildCacheDecision{
+			Valid:   false,
+			Label:   currentLabel,
+			Message: fmt.Sprintf("Clearing bundle cache to match this Yaver build. Previous output was built for %s.", prev),
+		}
+	}
+	return nativeBuildCacheDecision{
+		Valid:   true,
+		Label:   currentLabel,
+		Message: fmt.Sprintf("Bundle cache matches this Yaver build (%s). Reusing compatible cache before rebuilding output.", currentLabel),
+	}
+}
+
+func prepareNativeBuildOutput(buildDir, workDir string, contract nativeBuildConsumerContract) (nativeBuildCacheDecision, error) {
+	status := readNativeBuildStatus(workDir)
+	decision := nativeBuildCacheDecisionForConsumer(status, contract)
+	if !decision.Valid {
+		if err := os.RemoveAll(buildDir); err != nil {
+			return decision, fmt.Errorf("clear build dir: %w", err)
+		}
+	}
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return decision, err
+	}
+	// Even when the consumer matches, rebuild from clean output paths so
+	// removed assets from a previous build cannot leak into the next zip.
+	_ = os.Remove(filepath.Join(buildDir, "main.jsbundle"))
+	_ = os.Remove(filepath.Join(buildDir, "status.json"))
+	_ = os.RemoveAll(filepath.Join(buildDir, "assets"))
+	return decision, nil
 }
 
 func buildStateGuidance(state nativeBuildStatus) string {
@@ -2116,6 +2228,10 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ExpectReact              string `json:"expectReact,omitempty"`
 		ExpectReactDom           string `json:"expectReactDom,omitempty"`
 		AllowUnsafeNativeModules bool   `json:"allowUnsafeNativeModules,omitempty"`
+		ConsumerVersion          string `json:"consumerVersion,omitempty"`
+		ConsumerBuild            string `json:"consumerBuild,omitempty"`
+		ConsumerSDKVersion       string `json:"consumerSdkVersion,omitempty"`
+		ConsumerHermesBCVersion  int    `json:"consumerHermesBCVersion,omitempty"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -2258,14 +2374,36 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	})
 
 	log.Printf("[super-host] build-native called: platform=%s workDir=%s", req.Platform, workDir)
-	s.emitBuildProgress("Building native bundle...", "build")
-	s.upsertDevOperation("build_native", "running", "build", "Building native bundle…", workDir, target.DeviceID, phaseProgress("build"), map[string]interface{}{"platform": req.Platform})
+	consumer := nativeBuildConsumerContract{
+		Platform:        req.Platform,
+		AppVersion:      req.ConsumerVersion,
+		AppBuild:        req.ConsumerBuild,
+		SDKVersion:      req.ConsumerSDKVersion,
+		HermesBCVersion: req.ConsumerHermesBCVersion,
+	}
+	s.emitBuildProgress("Checking cache validity for this Yaver build...", "prepare")
+	s.upsertDevOperation("build_native", "running", "prepare", "Checking cache validity for this Yaver build…", workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{"platform": req.Platform})
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
-		State:    "building",
-		Platform: req.Platform,
+		State:         "building",
+		Platform:      req.Platform,
+		ConsumerKey:   nativeBuildConsumerKey(consumer),
+		ConsumerLabel: nativeBuildConsumerLabel(consumer),
 	})
-
-	os.MkdirAll(buildDir, 0o755)
+	cacheDecision, prepErr := prepareNativeBuildOutput(buildDir, workDir, consumer)
+	if prepErr != nil {
+		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("prepare build output: %v", prepErr)})
+		return
+	}
+	log.Printf("[build-native] cache-valid=%v consumer=%q message=%s", cacheDecision.Valid, nativeBuildConsumerKey(consumer), cacheDecision.Message)
+	s.emitBuildProgress(cacheDecision.Message, "prepare")
+	s.upsertDevOperation("build_native", "running", "prepare", cacheDecision.Message, workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{
+		"platform":      req.Platform,
+		"cacheValid":    cacheDecision.Valid,
+		"consumerKey":   nativeBuildConsumerKey(consumer),
+		"consumerLabel": cacheDecision.Label,
+	})
+	s.emitBuildProgress("Building native bundle...", "build")
+	s.upsertDevOperation("build_native", "running", "build", "Building native bundle…", workDir, target.DeviceID, phaseProgress("build"), map[string]interface{}{"platform": req.Platform, "cacheValid": cacheDecision.Valid})
 
 	manifest, manifestErr := readProjectPackageManifest(workDir)
 	if manifestErr != nil {
@@ -2774,6 +2912,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		BundlePath:    bundlePath,
 		ModuleName:    moduleName,
 		HermesVersion: meta.HermesBCVersion,
+		ConsumerKey:   nativeBuildConsumerKey(consumer),
+		ConsumerLabel: nativeBuildConsumerLabel(consumer),
 	})
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
@@ -2787,6 +2927,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"platform":                      req.Platform,
 		"moduleName":                    moduleName,
 		"hasAssets":                     hasAssets,
+		"cacheValid":                    cacheDecision.Valid,
+		"cacheMessage":                  cacheDecision.Message,
 		"hostSdkVersion":                meta.HostSDKVersion,
 		"hostReactNative":               compatHostRN,
 		"supportedRNRange":              meta.SupportedRNRange,

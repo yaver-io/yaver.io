@@ -1,3 +1,25 @@
+export type NativeBuildConsumerContract = {
+  consumerVersion?: string;
+  consumerBuild?: string;
+  consumerSdkVersion?: string;
+  consumerHermesBCVersion?: number;
+};
+
+export function buildNativeBuildRequest(
+  platform: "ios" | "android",
+  contract?: NativeBuildConsumerContract,
+) {
+  return {
+    platform,
+    ...(contract?.consumerVersion ? { consumerVersion: contract.consumerVersion } : {}),
+    ...(contract?.consumerBuild ? { consumerBuild: contract.consumerBuild } : {}),
+    ...(contract?.consumerSdkVersion ? { consumerSdkVersion: contract.consumerSdkVersion } : {}),
+    ...(typeof contract?.consumerHermesBCVersion === "number" && contract.consumerHermesBCVersion > 0
+      ? { consumerHermesBCVersion: contract.consumerHermesBCVersion }
+      : {}),
+  };
+}
+
 export function nativeBuildFailureMessage(buildResult: any): string {
   const lines = [
     buildResult?.phase ? `phase: ${buildResult.phase}` : null,

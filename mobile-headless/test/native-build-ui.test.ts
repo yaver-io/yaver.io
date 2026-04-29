@@ -1,7 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../mobile/src/lib/nativeBuild";
+import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../mobile/src/lib/nativeBuild";
 
 describe("nativeBuild UI mapping", () => {
+  it("builds the shared build-native request contract", () => {
+    expect(buildNativeBuildRequest("ios", {
+      consumerVersion: "1.18.22",
+      consumerBuild: "260",
+      consumerSdkVersion: "1.0.0",
+      consumerHermesBCVersion: 96,
+    })).toEqual({
+      platform: "ios",
+      consumerVersion: "1.18.22",
+      consumerBuild: "260",
+      consumerSdkVersion: "1.0.0",
+      consumerHermesBCVersion: 96,
+    });
+  });
+
   it("maps compatibility-family codes to Compatibility Blocked", () => {
     expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_INCOMPATIBLE" })).toBe("Compatibility Blocked");
     expect(nativeBuildFailureTitle({ code: "NATIVE_MODULE_VERSION_MISMATCH" })).toBe("Compatibility Blocked");

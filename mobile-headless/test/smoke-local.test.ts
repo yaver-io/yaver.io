@@ -237,12 +237,20 @@ maybe("smoke against live yaver agent", () => {
     const iosBuild = await mobile.raw.post("/dev/build-native", {
       platform: "ios",
       projectPath: BUILD_NATIVE_PROJECT_PATH,
+      consumerVersion: "mobile-headless",
+      consumerBuild: "headless",
+      consumerSdkVersion: "headless",
+      consumerHermesBCVersion: 96,
     });
     assertBuildNativeContract(iosBuild, "ios");
 
     const androidBuild = await mobileAndroid.raw.post("/dev/build-native", {
       platform: "android",
       projectPath: BUILD_NATIVE_PROJECT_PATH,
+      consumerVersion: "mobile-headless",
+      consumerBuild: "headless",
+      consumerSdkVersion: "headless",
+      consumerHermesBCVersion: 96,
     });
     assertBuildNativeContract(androidBuild, "android");
   }, 15 * 60_000);

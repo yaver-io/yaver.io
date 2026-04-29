@@ -22,6 +22,7 @@ export function visibleReloadIncidents(
   currentOperation: OperationState | null,
   activeProjectPath?: string | null,
 ): IncidentEvent[] {
+  if (!currentOperation) return [];
   const normalizedActivePath = normalizePath(activeProjectPath);
   return incidents.filter((incident) => {
     if (incident.resolved) return false;

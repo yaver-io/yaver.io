@@ -4,6 +4,7 @@ import {
   Alert,
   Linking,
   Modal,
+  NativeModules,
   Pressable,
   StyleSheet,
   Text,
@@ -13,7 +14,7 @@ import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
 import { loadApp, onBundleEvent } from "../lib/bundleLoader";
-import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
+import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { VibePreviewModal } from "./VibePreviewModal";
 
 // Web frameworks where the vibe-preview modal makes sense — chromedp on
@@ -59,6 +60,16 @@ function vibePreviewTargetUrlFromStatus(status: DevServerStatus | null): string 
 function isHermesNativeFramework(status: DevServerStatus | null): boolean {
   const framework = String(status?.framework || "").toLowerCase();
   return framework.includes("expo") || framework.includes("react-native");
+}
+
+function currentYaverConsumerContract() {
+  const info = (NativeModules as any)?.YaverInfo ?? {};
+  return {
+    consumerVersion: typeof info.version === "string" ? info.version : undefined,
+    consumerBuild: typeof info.build === "string" ? info.build : undefined,
+    consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
+    consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+  };
 }
 
 export function DevPreview() {
@@ -300,7 +311,7 @@ export function DevPreview() {
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ platform }),
+        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
         signal: buildAbort.signal,
       });
       clearTimeout(buildAbortTimer);

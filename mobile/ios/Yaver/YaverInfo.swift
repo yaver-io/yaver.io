@@ -14,6 +14,8 @@ final class YaverInfo: NSObject {
       "isYaver": true,
       "version": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
       "build": (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "",
+      "sdkVersion": SDKManifest.shared.sdkVersion ?? "",
+      "hermesBCVersion": Int(SDKManifest.shared.hermesBytecodeVersion),
       // Guest bundles run inside Yaver's own super-host, not their original app
       // container. Startup code that assumes project-specific entitlements or
       // push-token wiring should opt out when these flags are true.

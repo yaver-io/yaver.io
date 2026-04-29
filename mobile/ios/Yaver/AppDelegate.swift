@@ -386,7 +386,13 @@ public class AppDelegate: ExpoAppDelegate {
     req.httpMethod = "POST"
     req.setValue(auth, forHTTPHeaderField: "Authorization")
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = try? JSONSerialization.data(withJSONObject: ["platform": "ios"])
+    req.httpBody = try? JSONSerialization.data(withJSONObject: [
+      "platform": "ios",
+      "consumerVersion": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
+      "consumerBuild": (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "",
+      "consumerSdkVersion": SDKManifest.shared.sdkVersion ?? "",
+      "consumerHermesBCVersion": Int(SDKManifest.shared.hermesBytecodeVersion),
+    ])
     req.timeoutInterval = 120
 
     URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
