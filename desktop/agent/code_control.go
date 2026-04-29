@@ -134,6 +134,7 @@ func parseInteractiveCodeArgs(line string) ([]string, bool) {
 
 func slashMenuOptions(attached bool) []string {
 	options := []string{
+		"/discover",
 		"/auth yaver",
 		"/auth claude",
 		"/auth codex",

@@ -58,6 +58,8 @@ func parseTerminalCommand(line string) (terminalCommand, bool) {
 		return terminalCommand{Kind: "about"}, true
 	case "machine", "/machine", "\\machine", "where", "/where", "host", "/host":
 		return terminalCommand{Kind: "machine"}, true
+	case "discover", "/discover", "\\discover":
+		return terminalCommand{Kind: "discover"}, true
 	case "/phone", "phone", "/phone status", "phone status":
 		// Default verb for the phone surface is `status` — same shape
 		// as `/agent` printing the current runner. Future phone verbs
@@ -151,6 +153,7 @@ func printAttachHelp(info *attachInfo) {
 	fmt.Println("  version               show the agent's version")
 	fmt.Println("  about                 show what `yaver code` is + key shortcuts")
 	fmt.Println("  machine               show which host is running this session")
+	fmt.Println("  discover              show the cached machine discovery snapshot")
 	fmt.Println("  /                     open the slash-command picker (↑/↓ + Enter, Esc cancels)")
 	fmt.Println("  exit / quit / detach  leave the terminal without stopping the agent")
 	fmt.Println("  /help /exit /quit     common slash-command aliases")

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -86,6 +87,7 @@ func runCodeTerminal(runner, model string) {
 		baseURL: baseURL,
 		token:   authToken,
 		info:    info,
+		cfg:     cfg,
 		offline: offline,
 		offlineReason: offlineMsg,
 		inventory:     inventory,
@@ -98,6 +100,7 @@ func runCodeTerminal(runner, model string) {
 		lastOutputLen: map[string]int{},
 		firstDraw:     true,
 	}
+	sess.prefetchAttachDevices()
 	if err := sess.run(); err != nil {
 		fmt.Fprintf(os.Stderr, "code: %v\n", err)
 		os.Exit(1)
@@ -109,6 +112,7 @@ type codeTerminalSession struct {
 	token   string
 	info    *attachInfo
 	opts    attachSessionOptions
+	cfg     *Config
 
 	// offline is true when we couldn't reach a local agent at startup.
 	// Submit branches on this: connected → POST /tasks; offline →
@@ -118,6 +122,11 @@ type codeTerminalSession struct {
 	offline       bool
 	offlineReason string
 	inventory     InventoryReport
+	attachDevices []DeviceInfo
+	discoverMu    sync.RWMutex
+	discovery     []terminalDiscoveredMachine
+	discoveryAt   time.Time
+	discoveryBusy bool
 
 	// editor state — owned by main goroutine
 	buf    []rune
@@ -148,6 +157,211 @@ type codeTerminalSession struct {
 	// fan-out — today only the main goroutine writes, so this is
 	// just a defensive seatbelt.
 	writeMu sync.Mutex
+}
+
+type terminalDiscoveredMachine struct {
+	DeviceID      string
+	Name          string
+	Platform      string
+	HostEmail     string
+	State         string
+	CurrentWorkDir string
+	Capabilities  *MachineCapabilities
+	Note          string
+}
+
+func (s *codeTerminalSession) prefetchAttachDevices() {
+	if s == nil {
+		return
+	}
+	machines := []terminalDiscoveredMachine{localTerminalDiscoveryMachine()}
+	s.setDiscoverySnapshot(machines, false)
+	if s.cfg == nil {
+		return
+	}
+	if strings.TrimSpace(s.cfg.AuthToken) == "" || strings.TrimSpace(s.cfg.ConvexSiteURL) == "" {
+		s.updateDiscoveryMachine("local", func(m *terminalDiscoveredMachine) {
+			m.Note = "Sign in with `yaver auth` to discover your other machines."
+		})
+		return
+	}
+	devices, err := listDevices(s.cfg.ConvexSiteURL, s.cfg.AuthToken)
+	if err != nil {
+		s.updateDiscoveryMachine("local", func(m *terminalDiscoveredMachine) {
+			m.Note = "Could not load remote machines: " + err.Error()
+		})
+		return
+	}
+	s.attachDevices = filterOnlineDevices(devices)
+	machines = append(machines, terminalDiscoveryMachinesFromDevices(devices)...)
+	s.setDiscoverySnapshot(machines, len(devices) > 0)
+	if len(devices) > 0 {
+		go s.enrichDiscoveryMachines(devices)
+	}
+}
+
+func localTerminalDiscoveryMachine() terminalDiscoveredMachine {
+	cwd, _ := os.Getwd()
+	name := strings.TrimSpace(localHostname())
+	if name == "" {
+		name = "this-mac"
+	}
+	return terminalDiscoveredMachine{
+		DeviceID:       "local",
+		Name:           name,
+		Platform:       runtimePlatformLabel(),
+		State:          "local",
+		CurrentWorkDir: cwd,
+		Capabilities:   detectMachineCapabilities(cwd),
+	}
+}
+
+func terminalDiscoveryMachinesFromDevices(devices []DeviceInfo) []terminalDiscoveredMachine {
+	out := make([]terminalDiscoveredMachine, 0, len(devices))
+	for _, d := range devices {
+		state := "offline"
+		note := "Machine is offline. Start `yaver serve` on that host and wait for its heartbeat."
+		if d.IsOnline {
+			state = "online"
+			note = "Capability probe still loading..."
+		}
+		out = append(out, terminalDiscoveredMachine{
+			DeviceID:  strings.TrimSpace(d.DeviceID),
+			Name:      firstNonEmpty(strings.TrimSpace(d.Name), strings.TrimSpace(d.DeviceID)),
+			Platform:  strings.TrimSpace(d.Platform),
+			HostEmail: strings.TrimSpace(d.HostEmail),
+			State:     state,
+			Note:      note,
+		})
+	}
+	return out
+}
+
+func (s *codeTerminalSession) enrichDiscoveryMachines(devices []DeviceInfo) {
+	for _, d := range devices {
+		if !d.IsOnline || strings.TrimSpace(d.DeviceID) == "" {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+		info, err := fetchRemoteMachineCapabilities(ctx, MachineInfo{
+			DeviceID: strings.TrimSpace(d.DeviceID),
+			Name:     strings.TrimSpace(d.Name),
+			Platform: strings.TrimSpace(d.Platform),
+			IsOnline: true,
+		})
+		cancel()
+		if err != nil {
+			s.updateDiscoveryMachine(strings.TrimSpace(d.DeviceID), func(m *terminalDiscoveredMachine) {
+				m.State = "stale"
+				m.Note = "Listed as online, but the agent did not answer capability checks. On that host run `yaver serve`, check relay/network, then retry `/discover`."
+			})
+			continue
+		}
+		s.updateDiscoveryMachine(strings.TrimSpace(d.DeviceID), func(m *terminalDiscoveredMachine) {
+			m.State = "online"
+			m.CurrentWorkDir = strings.TrimSpace(info.CurrentWorkDir)
+			m.Capabilities = info.Capabilities
+			m.Platform = firstNonEmpty(strings.TrimSpace(info.Platform), m.Platform)
+			if note := discoveryRunnerGuidance(info.Capabilities, ""); note != "" {
+				m.Note = note
+			} else {
+				m.Note = "Ready for remote coding."
+			}
+		})
+	}
+	s.discoverMu.Lock()
+	s.discoveryBusy = false
+	s.discoveryAt = time.Now()
+	s.discoverMu.Unlock()
+}
+
+func (s *codeTerminalSession) setDiscoverySnapshot(machines []terminalDiscoveredMachine, busy bool) {
+	s.discoverMu.Lock()
+	defer s.discoverMu.Unlock()
+	s.discovery = append([]terminalDiscoveredMachine(nil), machines...)
+	s.discoveryBusy = busy
+	s.discoveryAt = time.Now()
+}
+
+func (s *codeTerminalSession) updateDiscoveryMachine(deviceID string, fn func(*terminalDiscoveredMachine)) {
+	s.discoverMu.Lock()
+	defer s.discoverMu.Unlock()
+	for i := range s.discovery {
+		if s.discovery[i].DeviceID != deviceID {
+			continue
+		}
+		fn(&s.discovery[i])
+		s.discoveryAt = time.Now()
+		return
+	}
+}
+
+func (s *codeTerminalSession) discoverySnapshot() ([]terminalDiscoveredMachine, bool, time.Time) {
+	s.discoverMu.RLock()
+	defer s.discoverMu.RUnlock()
+	out := append([]terminalDiscoveredMachine(nil), s.discovery...)
+	return out, s.discoveryBusy, s.discoveryAt
+}
+
+func runtimePlatformLabel() string {
+	return runtime.GOOS + "/" + runtime.GOARCH
+}
+
+func discoveryRunnerGuidance(caps *MachineCapabilities, preferredRunner string) string {
+	if caps == nil || len(caps.Runners) == 0 {
+		return ""
+	}
+	preferredRunner = normalizeRunnerID(preferredRunner)
+	if preferredRunner != "" {
+		for _, r := range caps.Runners {
+			if normalizeRunnerID(r.ID) != preferredRunner {
+				continue
+			}
+			if r.Ready {
+				return ""
+			}
+			return runnerSetupHint(r)
+		}
+	}
+	for _, id := range supportedRunnerIDs {
+		for _, r := range caps.Runners {
+			if normalizeRunnerID(r.ID) != id {
+				continue
+			}
+			if r.Ready {
+				return ""
+			}
+		}
+	}
+	for _, r := range caps.Runners {
+		if strings.TrimSpace(r.ID) == "" {
+			continue
+		}
+		return runnerSetupHint(r)
+	}
+	return ""
+}
+
+func runnerSetupHint(r MachineRunnerCapability) string {
+	id := normalizeRunnerID(r.ID)
+	name := firstNonEmpty(strings.TrimSpace(r.Name), id)
+	if !r.Installed {
+		return fmt.Sprintf("%s is not installed on that machine. Install it there before attaching for coding.", name)
+	}
+	if !r.AuthConfigured || strings.TrimSpace(r.Error) != "" {
+		switch id {
+		case "codex":
+			return "Codex on that machine is not authenticated. Run `yaver runner-auth setup codex --target <deviceId> --openai-api-key $OPENAI_API_KEY`."
+		case "claude":
+			return "Claude Code on that machine is not authenticated. Run `yaver runner-auth setup claude --target <deviceId> --anthropic-api-key $ANTHROPIC_API_KEY`."
+		case "opencode":
+			return "OpenCode on that machine is not ready. Run `yaver runner-auth setup opencode --target <deviceId>` and verify its provider config."
+		}
+	}
+	if strings.TrimSpace(r.Warning) != "" {
+		return strings.TrimSpace(r.Warning)
+	}
+	return ""
 }
 
 func (s *codeTerminalSession) run() error {
@@ -452,9 +666,15 @@ func (s *codeTerminalSession) recomputePalette() {
 	}
 	attached := s.opts.Source == terminalRemoteTaskSource
 	all := slashMenuOptions(attached)
+	all = append(all, s.attachPaletteOptions(text)...)
 	q := strings.ToLower(strings.TrimSpace(text))
 	filtered := make([]string, 0, len(all))
+	seen := map[string]struct{}{}
 	for _, opt := range all {
+		if _, ok := seen[opt]; ok {
+			continue
+		}
+		seen[opt] = struct{}{}
 		if q == "/" || strings.Contains(strings.ToLower(opt), q) {
 			filtered = append(filtered, opt)
 		}
@@ -464,6 +684,45 @@ func (s *codeTerminalSession) recomputePalette() {
 		s.paletteSelected = 0
 	}
 	s.paletteActive = len(filtered) > 0
+}
+
+func (s *codeTerminalSession) attachPaletteOptions(text string) []string {
+	if s == nil || s.opts.Source == terminalRemoteTaskSource || len(s.attachDevices) == 0 {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "/attach") {
+		return nil
+	}
+	if strings.HasPrefix(lower, "/attach ") && !strings.HasPrefix(lower, "/attach pc") {
+		return []string{"/attach pc "}
+	}
+	if !strings.HasPrefix(lower, "/attach pc") {
+		return nil
+	}
+	target := strings.TrimSpace(strings.TrimPrefix(trimmed, "/attach pc"))
+	targetLower := strings.ToLower(target)
+	options := make([]string, 0, len(s.attachDevices)*2+1)
+	options = append(options, "/attach pc select")
+	for _, d := range s.attachDevices {
+		name := strings.TrimSpace(d.Name)
+		id := strings.TrimSpace(d.DeviceID)
+		matches := targetLower == ""
+		if !matches {
+			matches = strings.Contains(strings.ToLower(name), targetLower) || strings.HasPrefix(strings.ToLower(id), targetLower)
+		}
+		if !matches {
+			continue
+		}
+		if name != "" {
+			options = append(options, "/attach pc "+name)
+		}
+		if id != "" {
+			options = append(options, "/attach pc "+id)
+		}
+	}
+	return options
 }
 
 // submit handles Enter: if the palette is active, treat the selected
@@ -490,6 +749,12 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 	// Newline so the submitted line is preserved above the next prompt.
 	s.clearPromptArea()
 	s.writeRaw(fmt.Sprintf("\033[1;35myaver>\033[0m %s\r\n", ansiEscape(input)))
+
+	if handled := s.handleTerminalDiscoveryCommand(input); handled {
+		s.draw()
+		return false, false, nil
+	}
+	s.maybePrintAttachGuidance(input)
 
 	// First try the shared interactive control-plane handler (slash
 	// commands like /attach, /set, /sessions, etc).
@@ -614,6 +879,141 @@ func (s *codeTerminalSession) runOfflineCodingPrompt(prompt string) {
 	} else {
 		s.writeRaw(fmt.Sprintf("\r\n\033[2m✓ %s done\033[0m\r\n", cfg.Command))
 	}
+}
+
+func (s *codeTerminalSession) handleTerminalDiscoveryCommand(input string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(input))
+	if normalized != "discover" && normalized != "/discover" {
+		return false
+	}
+	report := s.renderDiscoveryReport()
+	s.writeRaw(rawifyLines(report))
+	if !strings.HasSuffix(report, "\n") {
+		s.writeRaw("\r\n")
+	}
+	return true
+}
+
+func (s *codeTerminalSession) renderDiscoveryReport() string {
+	machines, busy, updatedAt := s.discoverySnapshot()
+	var b strings.Builder
+	b.WriteString("Machine discovery\n")
+	if !updatedAt.IsZero() {
+		b.WriteString("  cached: " + updatedAt.Format(time.RFC3339) + "\n")
+	}
+	if busy {
+		b.WriteString("  status: background refresh still running\n")
+	}
+	if len(machines) == 0 {
+		b.WriteString("  no machines discovered yet\n")
+		return b.String()
+	}
+	for _, m := range machines {
+		b.WriteString("\n")
+		b.WriteString("  " + firstNonEmpty(m.Name, m.DeviceID) + " [" + m.State + "]\n")
+		if m.DeviceID != "" {
+			b.WriteString("    device: " + m.DeviceID + "\n")
+		}
+		if m.Platform != "" {
+			b.WriteString("    platform: " + m.Platform + "\n")
+		}
+		if m.HostEmail != "" {
+			b.WriteString("    host: " + m.HostEmail + "\n")
+		}
+		if m.CurrentWorkDir != "" {
+			b.WriteString("    cwd: " + m.CurrentWorkDir + "\n")
+		}
+		if m.Capabilities != nil && len(m.Capabilities.Runners) > 0 {
+			b.WriteString("    runners: " + renderDiscoveryRunnerStatuses(m.Capabilities.Runners) + "\n")
+		}
+		if strings.TrimSpace(m.Note) != "" {
+			b.WriteString("    guide: " + strings.TrimSpace(m.Note) + "\n")
+		}
+	}
+	return b.String()
+}
+
+func renderDiscoveryRunnerStatuses(runners []MachineRunnerCapability) string {
+	parts := make([]string, 0, len(runners))
+	for _, id := range supportedRunnerIDs {
+		for _, r := range runners {
+			if normalizeRunnerID(r.ID) != id {
+				continue
+			}
+			state := "not-ready"
+			switch {
+			case r.Ready:
+				state = "ready"
+			case !r.Installed:
+				state = "not-installed"
+			case r.AuthConfigured:
+				state = "installed"
+			case strings.TrimSpace(r.Error) != "":
+				state = "auth-needed"
+			default:
+				state = "auth-needed"
+			}
+			parts = append(parts, firstNonEmpty(strings.TrimSpace(r.ID), id)+":"+state)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (s *codeTerminalSession) maybePrintAttachGuidance(input string) {
+	target := parseAttachTarget(input)
+	if target == "" || strings.EqualFold(target, "select") {
+		return
+	}
+	machine := s.findDiscoveredMachine(target)
+	if machine == nil {
+		return
+	}
+	switch machine.State {
+	case "offline":
+		s.writeRaw("\033[33mGuide:\033[0m this machine is offline. Start `yaver serve` on that host, wait for it to heartbeat, then try attaching again.\r\n")
+		return
+	case "stale":
+		s.writeRaw("\033[33mGuide:\033[0m this machine looks stale/unreachable. Run `yaver serve` on that host, verify relay/network, then re-run `/discover` before attaching.\r\n")
+		return
+	}
+	if note := discoveryRunnerGuidance(machine.Capabilities, s.opts.DefaultRunner); note != "" {
+		s.writeRaw("\033[33mGuide:\033[0m " + rawifyLines(note) + "\r\n")
+	}
+}
+
+func parseAttachTarget(input string) string {
+	fields := strings.Fields(strings.TrimSpace(input))
+	if len(fields) < 3 {
+		return ""
+	}
+	if fields[0] != "/attach" && fields[0] != "attach" {
+		return ""
+	}
+	if fields[1] != "pc" {
+		return ""
+	}
+	return strings.Join(fields[2:], " ")
+}
+
+func (s *codeTerminalSession) findDiscoveredMachine(target string) *terminalDiscoveredMachine {
+	target = strings.TrimSpace(strings.ToLower(target))
+	if target == "" {
+		return nil
+	}
+	machines, _, _ := s.discoverySnapshot()
+	var partial *terminalDiscoveredMachine
+	for i := range machines {
+		m := &machines[i]
+		if strings.EqualFold(m.DeviceID, target) || strings.EqualFold(m.Name, target) {
+			return m
+		}
+		if strings.HasPrefix(strings.ToLower(m.DeviceID), target) || strings.Contains(strings.ToLower(m.Name), target) {
+			if partial == nil {
+				partial = m
+			}
+		}
+	}
+	return partial
 }
 
 // substituteRunnerArgs walks a RunnerConfig.Args slice and replaces
