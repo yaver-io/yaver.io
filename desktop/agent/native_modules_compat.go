@@ -351,6 +351,43 @@ func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies
 		sel := SelectRuntimeFamily(guestRuntime, runtimeFamilies)
 		familySelection = &sel
 	}
+	effectiveHostSDKVersion := strings.TrimSpace(host.SdkVersion)
+	effectiveHostExpo := strings.TrimSpace(host.Expo)
+	effectiveHostReact := strings.TrimSpace(host.React)
+	effectiveHostRN := strings.TrimSpace(host.ReactNative)
+	effectiveSupportedRNRange := strings.TrimSpace(host.SupportedRNRange)
+	if familySelection != nil {
+		if v := strings.TrimSpace(familySelection.Selected.SDKVersion); v != "" {
+			effectiveHostSDKVersion = v
+		}
+		if v := strings.TrimSpace(familySelection.Selected.ExpoVersion); v != "" {
+			effectiveHostExpo = v
+		}
+		if v := strings.TrimSpace(familySelection.Selected.React); v != "" {
+			effectiveHostReact = v
+		}
+		if v := strings.TrimSpace(familySelection.Selected.ReactNative); v != "" {
+			effectiveHostRN = v
+		}
+		if v := strings.TrimSpace(familySelection.Selected.SupportedRNRange); v != "" {
+			effectiveSupportedRNRange = v
+		}
+	}
+	if mismatch := detectFrameworkVersionMismatch(projectReact, effectiveHostReact); mismatch != nil {
+		reactMismatch = mismatch
+	} else {
+		reactMismatch = nil
+	}
+	if mismatch := detectFrameworkVersionMismatch(projectExpo, effectiveHostExpo); mismatch != nil {
+		expoMismatch = mismatch
+	} else {
+		expoMismatch = nil
+	}
+	if mismatch := detectFrameworkVersionMismatch(projectRN, effectiveHostRN); mismatch != nil {
+		rnMismatch = mismatch
+	} else {
+		rnMismatch = nil
+	}
 	return &CompatReport{
 		ProjectModules:       projectMods,
 		Matched:              matched,
@@ -360,11 +397,11 @@ func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies
 		ReactVersionMismatch: reactMismatch,
 		ExpoVersionMismatch:  expoMismatch,
 		RNVersionMismatch:    rnMismatch,
-		HostSDKVersion:       host.SdkVersion,
-		HostExpo:             host.Expo,
-		HostReact:            host.React,
-		HostRN:               host.ReactNative,
-		SupportedRNRange:     host.SupportedRNRange,
+		HostSDKVersion:       effectiveHostSDKVersion,
+		HostExpo:             effectiveHostExpo,
+		HostReact:            effectiveHostReact,
+		HostRN:               effectiveHostRN,
+		SupportedRNRange:     effectiveSupportedRNRange,
 		GuestRuntime:         guestRuntime,
 		RuntimeFamily:        familySelection,
 	}, nil

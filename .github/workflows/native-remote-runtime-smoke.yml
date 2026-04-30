@@ -1,0 +1,117 @@
+# Native remote-runtime smoke against the persistent yaver-test-ephemeral
+# agent. This keeps Hermes/webview untouched and focuses only on the
+# Swift/Kotlin WebRTC lane:
+# - Swift on Linux must report "macOS host required" cleanly.
+# - Kotlin on Linux must have Android emulator tooling and be able to
+#   create a relay-mode remote-runtime session and fetch at least one frame.
+
+name: Native Remote Runtime Smoke on Ephemeral
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: native-remote-runtime-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          HCLOUD_SSH_PRIVATE_KEY_PATH: ${{ runner.temp }}/hcloud_ssh
+        run: |
+          install -m 600 /dev/stdin "$HCLOUD_SSH_PRIVATE_KEY_PATH" <<'EOF'
+          ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+          EOF
+          echo "HCLOUD_SSH_PRIVATE_KEY_PATH=$HCLOUD_SSH_PRIVATE_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Rsync fixture apps and smoke script to the box
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh_base="ssh -i $HCLOUD_SSH_PRIVATE_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          $ssh_base "root@$HETZNER_TEST_SERVER_IP" "mkdir -p /opt/yaver/tests/fixtures /opt/yaver/scripts"
+          rsync -az \
+            -e "$ssh_base" \
+            tests/fixtures/native-ios-swift/ \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/tests/fixtures/native-ios-swift/"
+          rsync -az \
+            -e "$ssh_base" \
+            tests/fixtures/native-android-kotlin/ \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/tests/fixtures/native-android-kotlin/"
+          rsync -az \
+            -e "$ssh_base" \
+            scripts/remote-runtime-smoke.sh \
+            "root@$HETZNER_TEST_SERVER_IP:/opt/yaver/scripts/remote-runtime-smoke.sh"
+
+      - name: Run native remote-runtime smoke against live agent
+        env:
+          HETZNER_TEST_SERVER_IP: ${{ secrets.HETZNER_TEST_SERVER_IP }}
+        run: |
+          ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
+              "root@$HETZNER_TEST_SERVER_IP" bash -s <<'REMOTE'
+          set -euo pipefail
+
+          CONFIG=""
+          for c in /home/yaver/.yaver/config.json /root/.yaver/config.json; do
+            [ -f "$c" ] && CONFIG="$c" && break
+          done
+          [ -n "$CONFIG" ] || { echo "no agent config" >&2; exit 2; }
+          TOKEN=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['auth_token'])" "$CONFIG")
+          [ -n "$TOKEN" ] || { echo "agent auth_token empty" >&2; exit 2; }
+
+          AGENT="http://127.0.0.1:18080"
+          chmod +x /opt/yaver/scripts/remote-runtime-smoke.sh
+
+          echo "== yaver version =="
+          yaver --version
+
+          echo "== preparing managed remote-runtime tooling for the yaver user =="
+          if id yaver >/dev/null 2>&1; then
+            runuser -u yaver -- /usr/bin/env PATH="/usr/local/bin:/usr/bin:/bin" yaver install remote-runtime
+          else
+            yaver install remote-runtime
+          fi
+
+          echo "== swift / linux-host verdict =="
+          /opt/yaver/scripts/remote-runtime-smoke.sh \
+            --agent "$AGENT" \
+            --token "$TOKEN" \
+            --workdir /opt/yaver/tests/fixtures/native-ios-swift \
+            --framework swift \
+            --target ios-simulator \
+            --expect disabled
+
+          echo "== kotlin / android-emulator verdict + frame =="
+          if id yaver >/dev/null 2>&1; then
+            su - yaver -c "/opt/yaver/scripts/remote-runtime-smoke.sh \
+              --agent '$AGENT' \
+              --token '$TOKEN' \
+              --workdir /opt/yaver/tests/fixtures/native-android-kotlin \
+              --framework kotlin \
+              --target android-emulator \
+              --expect enabled \
+              --transport relay-jpeg-poll \
+              --check-frame"
+          else
+            /opt/yaver/scripts/remote-runtime-smoke.sh \
+              --agent "$AGENT" \
+              --token "$TOKEN" \
+              --workdir /opt/yaver/tests/fixtures/native-android-kotlin \
+              --framework kotlin \
+              --target android-emulator \
+              --expect enabled \
+              --transport relay-jpeg-poll \
+              --check-frame
+          fi
+
+          echo "== native remote-runtime smoke complete =="
+          REMOTE

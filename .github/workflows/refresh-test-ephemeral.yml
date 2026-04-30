@@ -61,6 +61,15 @@ jobs:
           after=$(yaver --version 2>/dev/null || echo unknown)
           echo "After:  $after"
 
+          # Keep the shared box ready for native remote-runtime smoke
+          # too, not only Hermes/webview. Install the managed Android
+          # SDK / emulator lane into the actual agent user's home so
+          # Kotlin WebRTC sessions can boot an emulator later. Swift on
+          # this Linux host still correctly reports "macOS required".
+          if id yaver >/dev/null 2>&1; then
+            runuser -u yaver -- /usr/bin/env PATH="/usr/local/bin:/usr/bin:/bin" yaver install remote-runtime || true
+          fi
+
           # Normalise /usr/bin/yaver to point at the dpkg-installed
           # binary. On this box the .deb lives at /usr/local/bin/yaver
           # but history left a stale 1.99.25 at /usr/bin/yaver that

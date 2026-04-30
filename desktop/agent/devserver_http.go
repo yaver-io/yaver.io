@@ -2507,14 +2507,23 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			s.devServerMgr.EmitLog("Guest runtime: " + guestSummary)
 			if sel.ExactMatch {
 				log.Printf("[super-host] runtime-family match: %s", sel.Reason)
+				s.devServerMgr.EmitLog("Host runtime matched: " + selectedLabel)
 				s.emitBuildProgress("Host runtime matched: "+selectedLabel, "prepare")
 				if currentFamilyID != "" && currentFamilyID != sel.Selected.ID {
 					s.devServerMgr.EmitLog("Switching host runtime from " + currentFamilyID + " to " + sel.Selected.ID)
 				}
 			} else {
 				log.Printf("[super-host] runtime-family closest: %s | supported=%s", sel.Reason, sel.SupportedHint)
+				s.devServerMgr.EmitLog("Host runtime selected: " + selectedLabel)
+				if strings.TrimSpace(sel.Reason) != "" {
+					s.devServerMgr.EmitLog("Why: " + sel.Reason)
+				}
+				if strings.TrimSpace(sel.SupportedHint) != "" {
+					s.devServerMgr.EmitLog("Host supports: " + sel.SupportedHint)
+				}
 				s.emitBuildProgress("Host runtime selected: "+selectedLabel, "prepare")
 			}
+			s.devServerMgr.EmitLog("Compiling against host runtime contract: " + selectedLabel)
 			s.emitBuildProgress("Compiling for host runtime: "+selectedLabel, "build")
 			s.upsertDevOperation("build_native", "running", "prepare", metaMsg, workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{
 				"platform":                       req.Platform,

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -46,6 +47,46 @@ func TestRemoteRuntimeCapabilitiesForSwiftIncludesFeedbackProtocol(t *testing.T)
 	}
 	if caps.Targets[0].RuntimeHostClass == "" {
 		t.Fatal("expected runtime host class on target")
+	}
+}
+
+func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("linux-only expectation")
+	}
+	caps := remoteRuntimeCapabilitiesForProject("/tmp/swift-app", "swift")
+	if len(caps.Targets) != 1 {
+		t.Fatalf("swift targets = %d, want 1", len(caps.Targets))
+	}
+	target := caps.Targets[0]
+	if target.ID != "ios-simulator" {
+		t.Fatalf("swift target id = %q, want ios-simulator", target.ID)
+	}
+	if target.RuntimeHostClass != "macos-ios" {
+		t.Fatalf("swift runtime host class = %q, want macos-ios", target.RuntimeHostClass)
+	}
+	if target.Enabled {
+		t.Fatal("swift target should be disabled on non-macOS hosts")
+	}
+	if !strings.Contains(target.Reason, "macOS host") {
+		t.Fatalf("swift disabled reason = %q, want macOS host guidance", target.Reason)
+	}
+}
+
+func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
+	caps := remoteRuntimeCapabilitiesForProject("/tmp/kotlin-app", "kotlin")
+	if len(caps.Targets) != 1 {
+		t.Fatalf("kotlin targets = %d, want 1", len(caps.Targets))
+	}
+	target := caps.Targets[0]
+	if target.ID != "android-emulator" {
+		t.Fatalf("kotlin target id = %q, want android-emulator", target.ID)
+	}
+	if !strings.Contains(target.RuntimeHostClass, "android") {
+		t.Fatalf("kotlin runtime host class = %q, want android suffix", target.RuntimeHostClass)
+	}
+	if target.RequiredCLI != "adb + emulator" {
+		t.Fatalf("kotlin required cli = %q", target.RequiredCLI)
 	}
 }
 

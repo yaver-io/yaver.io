@@ -37,6 +37,14 @@ interface ProjectItem {
   executionMode?: string;
   primarySurface?: string;
   tags?: string[];
+  monorepoRoot?: string;
+  monorepoApp?: string;
+}
+
+interface RemoteAgentInfo {
+  hostname: string;
+  version: string;
+  workDir: string;
 }
 
 const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite", "react-native", "react"];
@@ -86,6 +94,46 @@ function currentYaverGuestCrashReport(): GuestCrashReport | null {
   return report as GuestCrashReport;
 }
 
+function titleCaseWord(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function monorepoSurfaceLabel(monorepoApp?: string): string | null {
+  const trimmed = typeof monorepoApp === "string" ? monorepoApp.trim() : "";
+  if (!trimmed) return null;
+  const leaf = trimmed.split("/").pop()?.trim() || "";
+  if (!leaf) return null;
+  return leaf.toLowerCase();
+}
+
+function displayProjectTitle(project: ProjectItem): string {
+  const surface = monorepoSurfaceLabel(project.monorepoApp);
+  if (!surface) return project.name;
+  const repoLeaf = project.monorepoRoot?.trim().split("/").pop()?.trim() || "";
+  const baseName = project.name.trim().toLowerCase() === surface && repoLeaf
+    ? titleCaseWord(repoLeaf)
+    : project.name;
+  return `${baseName} (${surface})`;
+}
+
+function describeRuntimeFamilySelection(metadata?: Record<string, unknown> | null): string | null {
+  const selection = metadata?.runtimeFamilySelection;
+  if (!selection || typeof selection !== "object") return null;
+  const selected = (selection as any).selected;
+  if (!selected || typeof selected !== "object") return null;
+  const label = typeof selected.label === "string" && selected.label.trim()
+    ? selected.label.trim()
+    : typeof selected.id === "string" && selected.id.trim()
+      ? selected.id.trim()
+      : "";
+  if (!label) return null;
+  const exact = (selection as any).exactMatch === true;
+  const reason = typeof (selection as any).reason === "string" ? (selection as any).reason.trim() : "";
+  if (exact) return `host runtime · ${label}`;
+  return reason ? `host runtime · ${label} · ${reason}` : `host runtime · ${label}`;
+}
+
 // ── Hot Reload Tab ────────────────────────────────────────────────
 
 export default function HotReloadScreen() {
@@ -96,6 +144,7 @@ export default function HotReloadScreen() {
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
+  const [agentInfo, setAgentInfo] = useState<RemoteAgentInfo | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsScanning, setProjectsScanning] = useState(false);
   const [scanStopping, setScanStopping] = useState(false);
@@ -163,15 +212,18 @@ export default function HotReloadScreen() {
 
     const poll = async () => {
       try {
-        const [status, session] = await Promise.all([
+        const [status, session, info] = await Promise.all([
           quicClient.getDevServerStatus(),
           quicClient.getMobileWorkerPreviewSession(),
+          quicClient.getInfo(),
         ]);
         if (mounted) setDevStatus(status?.running || status?.framework ? status : null);
         if (mounted) setWorkerSession(session);
+        if (mounted) setAgentInfo(info);
       } catch {
         if (mounted) setDevStatus(null);
         if (mounted) setWorkerSession(null);
+        if (mounted) setAgentInfo(null);
       }
       try {
         const [operations, incidents] = await Promise.all([
@@ -208,6 +260,8 @@ export default function HotReloadScreen() {
             framework: p.framework,
             executionMode: p.executionMode,
             primarySurface: p.primarySurface,
+            monorepoRoot: p.monorepoRoot,
+            monorepoApp: p.monorepoApp,
             tags: [p.framework, p.primarySurface].filter(Boolean),
           })));
         }
@@ -466,6 +520,7 @@ export default function HotReloadScreen() {
   const currentOperation = visibleOperations[0] || null;
   const visibleIncidents = visibleReloadIncidents(reloadIncidents, currentOperation, activeProjectPath);
   const currentIncident = visibleIncidents[0] || null;
+  const runtimeFamilyLine = describeRuntimeFamilySelection(currentOperation?.metadata);
   const showCurrentIncident = shouldShowCurrentReloadIncident(currentIncident, currentOperation);
   const lastGuestCrash = currentYaverGuestCrashReport();
   const showGuestCrashCard =
@@ -500,6 +555,20 @@ export default function HotReloadScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
+        {agentInfo && (
+          <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
+            <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
+            <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
+              {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version || "unknown"}
+            </Text>
+            {agentInfo.workDir ? (
+              <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
+                {agentInfo.workDir}
+              </Text>
+            ) : null}
+          </View>
+        )}
+
         {mobileWorkers.length > 0 && (
           <>
             <Text style={[s.sectionTitle, { color: c.textMuted }]}>Preview Target</Text>
@@ -587,6 +656,11 @@ export default function HotReloadScreen() {
                     worker · {workerSession.workerOnline ? "online" : "offline"}
                   </Text>
                 )}
+                {agentInfo?.version ? (
+                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
+                    remote box · {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version}
+                  </Text>
+                ) : null}
                 {!devStatus.targetDeviceName && !selectedTarget && (
                   <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
                     target · this device
@@ -610,6 +684,11 @@ export default function HotReloadScreen() {
                 {currentOperation.message ? (
                   <Text style={{ color: "#bfdbfe", fontSize: 11, marginTop: 4 }}>
                     {currentOperation.message}
+                  </Text>
+                ) : null}
+                {runtimeFamilyLine ? (
+                  <Text style={{ color: "#93c5fd", fontSize: 11, marginTop: 4 }}>
+                    {runtimeFamilyLine}
                   </Text>
                 ) : null}
               </View>
@@ -658,7 +737,7 @@ export default function HotReloadScreen() {
             {/* Live agent activity: Metro/Expo/Flutter stdout streamed over /dev/events SSE.
                 Shows the last ~6 lines so the user sees progress during "starting…" and
                 the actual log tail on failure. */}
-            {!devStatus.running && devLog.length > 0 ? (
+            {devLog.length > 0 ? (
               <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#0b0b0b", borderWidth: 1, borderColor: "#333" }}>
                 <Text style={{ color: "#9ca3af", fontSize: 10, fontWeight: "600", marginBottom: 4 }}>
                   agent activity
@@ -787,9 +866,9 @@ export default function HotReloadScreen() {
                 disabled={isStarting}
               >
                 <View style={s.cardHeader}>
-                  <Text style={s.frameworkIcon}>{fwIcon}</Text>
+                    <Text style={s.frameworkIcon}>{fwIcon}</Text>
                   <View style={s.cardTitleContainer}>
-                    <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
+                    <Text style={[s.projectName, { color: c.textPrimary }]}>{displayProjectTitle(item)}</Text>
                     <View style={s.tagRow}>
                       {item.tags?.map((tag) => (
                         <View key={tag} style={s.tag}>

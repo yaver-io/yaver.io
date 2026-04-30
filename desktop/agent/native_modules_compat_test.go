@@ -446,6 +446,57 @@ func TestSelectRuntimeFamily_PrefersPreferredPackageOnTie(t *testing.T) {
 	}
 }
 
+func TestBuildNativeModuleCompatReportWithFamilies_UsesSelectedFamilyAsHostContract(t *testing.T) {
+	dir := t.TempDir()
+	pkg := `{
+  "name": "sfmg",
+  "dependencies": {
+    "expo": "54.0.33",
+    "react-native": "0.81.5",
+    "react": "19.2.5"
+  }
+}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	report, err := BuildNativeModuleCompatReportWithFamilies(dir, []RuntimeFamily{
+		{
+			ID:              "family-a",
+			Label:           "Family A",
+			ExpoVersion:     "54.0.33",
+			ReactNative:     "0.81.5",
+			React:           "19.1.0",
+			HermesBCVersion: 96,
+			CompiledIn:      true,
+		},
+		{
+			ID:                    "family-b",
+			Label:                 "Family B",
+			ExpoVersion:           "54.0.33",
+			ReactNative:           "0.81.5",
+			React:                 "19.2.5",
+			HermesBCVersion:       96,
+			CompiledIn:            true,
+			PreferredPackageNames: []string{"sfmg"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildNativeModuleCompatReportWithFamilies: %v", err)
+	}
+	if report.RuntimeFamily == nil {
+		t.Fatal("expected runtime family selection")
+	}
+	if report.RuntimeFamily.Selected.ID != "family-b" {
+		t.Fatalf("selected family = %q, want family-b", report.RuntimeFamily.Selected.ID)
+	}
+	if report.ReactVersionMismatch != nil {
+		t.Fatalf("react mismatch = %#v, want nil because selected family-b matches project", report.ReactVersionMismatch)
+	}
+	if report.HostReact != "19.2.5" {
+		t.Fatalf("host react = %q, want 19.2.5 from selected family", report.HostReact)
+	}
+}
+
 func TestHostRuntimeFamilies_UsesEmbeddedManifestFamilies(t *testing.T) {
 	families, err := HostRuntimeFamilies()
 	if err != nil {
