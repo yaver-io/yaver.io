@@ -72,8 +72,23 @@ jobs:
               which yaver
               yaver --version
             "
+            NPM_YAVER=$(sudo -u yaver -i bash -c "
+              export PATH=/home/yaver/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
+              command -v yaver
+            " | tail -1)
+            if [ -n \"${NPM_YAVER:-}\" ] && [ -x \"$NPM_YAVER\" ]; then
+              echo "Symlinking /usr/bin/yaver -> $NPM_YAVER"
+              rm -f /usr/bin/yaver
+              ln -s "$NPM_YAVER" /usr/bin/yaver
+            fi
           else
             npm install -g "yaver-cli@$TARGET_VERSION" 2>&1 | tail -20
+            NPM_YAVER=$(command -v yaver || true)
+            if [ -n "${NPM_YAVER:-}" ] && [ -x "$NPM_YAVER" ]; then
+              echo "Symlinking /usr/bin/yaver -> $NPM_YAVER"
+              rm -f /usr/bin/yaver
+              ln -s "$NPM_YAVER" /usr/bin/yaver
+            fi
           fi
 
           echo
