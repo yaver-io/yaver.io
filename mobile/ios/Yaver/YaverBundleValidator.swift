@@ -41,6 +41,7 @@ struct VersionMismatch: Codable {
 }
 
 struct RuntimeFingerprint: Codable {
+  let packageName: String?
   let expoVersion: String?
   let reactNativeVersion: String?
   let reactVersion: String?
@@ -57,6 +58,11 @@ struct RuntimeFamily: Codable {
   let hermesVersion: String?
   let hermesBCVersion: Int?
   let supportedRNRange: String?
+  let compiledIn: Bool?
+  let status: String?
+  let manifestResource: String?
+  let packageRoot: String?
+  let preferredPackageNames: [String]?
 }
 
 struct RuntimeFamilySelection: Codable {
@@ -279,7 +285,7 @@ final class SDKManifest {
     }
     self.hermesBytecodeVersion = bc
     if let families = SDKManifest.parseRuntimeFamilies(from: parsed), !families.isEmpty {
-      self.runtimeFamilies = families
+      self.runtimeFamilies = families.filter { $0.compiledIn ?? false }
     } else {
       self.runtimeFamilies = [SDKManifest.synthesizedDefaultFamily(from: parsed, bc: Int(bc))]
     }

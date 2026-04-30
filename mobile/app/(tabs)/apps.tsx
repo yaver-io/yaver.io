@@ -24,7 +24,7 @@ import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type 
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
-import { nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
+import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -64,6 +64,19 @@ function agentFlowGuidance(_framework?: string, _feedbackSDKInstalled?: boolean)
   // Yaver's native overlay (shake → reload / back) already handles the
   // in-app feedback loop, so no extra banner text is needed.
   return null;
+}
+
+function currentYaverConsumerContract() {
+  const info = (NativeModules as any)?.YaverInfo ?? {};
+  return {
+    consumerVersion: typeof info.version === "string" ? info.version : undefined,
+    consumerBuild: typeof info.build === "string" ? info.build : undefined,
+    consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
+    consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+    consumerCurrentRuntimeFamilyId: typeof info.currentRuntimeFamilyId === "string" ? info.currentRuntimeFamilyId : undefined,
+    consumerDefaultRuntimeFamilyId: typeof info.defaultRuntimeFamilyId === "string" ? info.defaultRuntimeFamilyId : undefined,
+    consumerRuntimeFamilies: Array.isArray(info.runtimeFamilies) ? info.runtimeFamilies : undefined,
+  };
 }
 
 function secondClassGuidance(framework?: string, isDirectConnection?: boolean): string | null {
@@ -1180,10 +1193,11 @@ export default function AppsScreen() {
 
       setLoadingStatus("Building Hermes bundle...");
       setBuildProgress(0.15);
+      const platform = Platform.OS === "android" ? "android" : "ios";
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ platform: Platform.OS }),
+        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
       });
       const buildResult = await buildRes.json();
 
@@ -1192,19 +1206,25 @@ export default function AppsScreen() {
         (error as any).buildResult = buildResult;
         throw error;
       }
+      const familySelection = buildResult.runtimeFamilySelection;
+      const familyLabel = familySelection?.selected?.label || familySelection?.selected?.id || "";
 
       if (loadAfterBuild) {
         const sizeKB = Math.round((buildResult.size || 0) / 1024);
-        setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
+        setLoadingStatus(
+          familySelection?.exactMatch && familyLabel
+            ? `Downloading ${sizeKB}KB bundle · matched ${familyLabel}...`
+            : `Downloading ${sizeKB}KB bundle${familyLabel ? ` · closest ${familyLabel}` : ""}...`,
+        );
         setBuildProgress(0.95);
         const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
         const moduleName = buildResult.moduleName || "main";
         await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
         setBuildProgress(1);
-        setLoadingStatus("Loaded!");
+        setLoadingStatus(`Loaded${familyLabel ? ` · ${familyLabel}` : ""}!`);
       } else {
         setBuildProgress(1);
-        setLoadingStatus("Hermes bundle ready");
+        setLoadingStatus(`Hermes bundle ready${familyLabel ? ` · ${familyLabel}` : ""}`);
       }
     } catch (err: any) {
       // Reset loading state BEFORE the alert so a fast dismissal can't leave
@@ -1215,17 +1235,19 @@ export default function AppsScreen() {
       setLoadingStatus("");
       const raw = err?.message || "Could not build Hermes bundle in Yaver";
       const lower = raw.toLowerCase();
+      const buildResult = err?.buildResult;
       let hint = "";
       if (lower.includes("did not become ready") || lower.includes("dev server")) {
         hint = "\n\nMetro didn't start on the dev machine. Check Node.js is installed and the project has a valid package.json.";
+      } else if (buildResult?.code === "RUNTIME_FAMILY_MISMATCH" || buildResult?.code === "FRAMEWORK_VERSION_MISMATCH") {
+        hint = "\n\nYaver picked the nearest supported runtime family, but the guest app still does not match it exactly. Align the guest app to one of Yaver's supported families or switch to a native build fallback.";
       } else if (lower.includes("hbc") || lower.includes("bytecode") || lower.includes("hermes")) {
-        hint = "\n\nHermes bytecode version mismatch between Yaver and the project. Update Yaver from the App / Play Store and try again.";
+        hint = "\n\nHermes bytecode version mismatch between the guest app and the selected Yaver host family. Align the guest runtime to a supported family and retry.";
       } else if (lower.includes("yaverbundleloader") || lower.includes("native module")) {
         hint = "\n\nYaver's native bundle loader is missing — reinstall Yaver from the App / Play Store.";
       } else if (lower.includes("network") || lower.includes("fetch") || lower.includes("timeout")) {
         hint = `\n\nYaver ${describeConnectionStatus(connectionStatus)}.`;
       }
-      const buildResult = err?.buildResult;
       const title = buildResult
         ? nativeBuildFailureTitle(buildResult)
         : (loadAfterBuild ? "Open in Yaver Failed" : "Hermes Build Failed");

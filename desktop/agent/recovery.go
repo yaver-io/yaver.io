@@ -89,7 +89,7 @@ func BuildRecoveryPrompt(ctx RecoveryContext) (title, prompt string) {
 			"",
 			"Figure out the root cause and fix it so `/dev/build-native` succeeds. Typical culprits:",
 			"- Metro not starting (node missing, wrong node version, stale `.expo/`).",
-			"- Hermes bytecode version mismatch between the project and Yaver's Hermes runtime (update the project's react-native / expo SDK to match).",
+			"- Runtime-family mismatch or Hermes bytecode drift between the guest app and the nearest Yaver host family (align the project's Expo / React Native / React versions to a supported host family).",
 			"- Missing native dependencies after a prebuild reset.",
 			"",
 			"Do not run `expo run:ios`, `xcodebuild`, `gradlew`, or `expo run:android` — Yaver loads the app via Hermes push, so Metro + a fresh bundle is what matters.",

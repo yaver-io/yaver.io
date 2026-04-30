@@ -22,6 +22,11 @@ final class YaverInfo: NSObject {
         "hermesVersion": family.hermesVersion ?? "",
         "hermesBCVersion": family.hermesBCVersion ?? 0,
         "supportedRNRange": family.supportedRNRange ?? "",
+        "compiledIn": family.compiledIn ?? false,
+        "status": family.status ?? "",
+        "manifestResource": family.manifestResource ?? "",
+        "packageRoot": family.packageRoot ?? "",
+        "preferredPackageNames": family.preferredPackageNames ?? [],
       ]
     }
     return [

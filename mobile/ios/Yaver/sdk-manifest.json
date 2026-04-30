@@ -13,6 +13,39 @@
     "bridgeless": false
   },
   "supportedRNRange": "0.81.x",
+  "runtimeFamilies": [
+    {
+      "id": "family-a",
+      "label": "Family A · Expo 54.0.33 / RN 0.81.5 / React 19.1.0 / BC96",
+      "sdkVersion": "1.0.0",
+      "expoVersion": "54.0.33",
+      "reactNativeVersion": "0.81.5",
+      "reactVersion": "19.1.0",
+      "hermesVersion": "0.81.5",
+      "hermesBCVersion": 96,
+      "supportedRNRange": "0.81.x",
+      "compiledIn": true,
+      "status": "active",
+      "manifestResource": "sdk-manifest.json",
+      "packageRoot": "mobile"
+    },
+    {
+      "id": "family-b",
+      "label": "Family B · SFMG pilot / Hetzner ephemeral proof slot",
+      "sdkVersion": "1.0.0",
+      "expoVersion": "54.0.33",
+      "reactNativeVersion": "0.81.5",
+      "reactVersion": "19.1.0",
+      "hermesVersion": "0.81.5",
+      "hermesBCVersion": 96,
+      "supportedRNRange": "0.81.x",
+      "compiledIn": true,
+      "status": "pilot",
+      "manifestResource": "runtime-families/family-b/sdk-manifest.json",
+      "packageRoot": "mobile-family-b",
+      "preferredPackageNames": ["sfmg"]
+    }
+  ],
   "nativeModules": {
     "@amplitude/analytics-react-native": "1.5.52",
     "@intercom/intercom-react-native": "10.0.0",

@@ -19,13 +19,14 @@ import (
 var sdkManifestJSON []byte
 
 type sdkManifest struct {
-	SdkVersion       string            `json:"sdkVersion"`
-	Expo             string            `json:"expo"`
-	ReactNative      string            `json:"reactNative"`
-	React            string            `json:"react"`
-	SupportedRNRange string            `json:"supportedRNRange"`
-	NativeModules    map[string]string `json:"nativeModules"`
-	ModuleSupport    map[string]struct {
+	SdkVersion         string            `json:"sdkVersion"`
+	Expo               string            `json:"expo"`
+	ReactNative        string            `json:"reactNative"`
+	React              string            `json:"react"`
+	SupportedRNRange   string            `json:"supportedRNRange"`
+	RawRuntimeFamilies []RuntimeFamily   `json:"runtimeFamilies"`
+	NativeModules      map[string]string `json:"nativeModules"`
+	ModuleSupport      map[string]struct {
 		Version string `json:"version"`
 	} `json:"moduleSupport"`
 	Hermes struct {
@@ -35,6 +36,7 @@ type sdkManifest struct {
 }
 
 type RuntimeFingerprint struct {
+	PackageName        string `json:"packageName,omitempty"`
 	ExpoVersion        string `json:"expoVersion,omitempty"`
 	ReactNativeVersion string `json:"reactNativeVersion,omitempty"`
 	ReactVersion       string `json:"reactVersion,omitempty"`
@@ -42,15 +44,20 @@ type RuntimeFingerprint struct {
 }
 
 type RuntimeFamily struct {
-	ID               string `json:"id"`
-	Label            string `json:"label"`
-	SDKVersion       string `json:"sdkVersion,omitempty"`
-	ExpoVersion      string `json:"expoVersion,omitempty"`
-	ReactNative      string `json:"reactNativeVersion,omitempty"`
-	React            string `json:"reactVersion,omitempty"`
-	HermesVersion    string `json:"hermesVersion,omitempty"`
-	HermesBCVersion  int    `json:"hermesBCVersion,omitempty"`
-	SupportedRNRange string `json:"supportedRNRange,omitempty"`
+	ID                    string   `json:"id"`
+	Label                 string   `json:"label"`
+	SDKVersion            string   `json:"sdkVersion,omitempty"`
+	ExpoVersion           string   `json:"expoVersion,omitempty"`
+	ReactNative           string   `json:"reactNativeVersion,omitempty"`
+	React                 string   `json:"reactVersion,omitempty"`
+	HermesVersion         string   `json:"hermesVersion,omitempty"`
+	HermesBCVersion       int      `json:"hermesBCVersion,omitempty"`
+	SupportedRNRange      string   `json:"supportedRNRange,omitempty"`
+	CompiledIn            bool     `json:"compiledIn,omitempty"`
+	Status                string   `json:"status,omitempty"`
+	ManifestResource      string   `json:"manifestResource,omitempty"`
+	PackageRoot           string   `json:"packageRoot,omitempty"`
+	PreferredPackageNames []string `json:"preferredPackageNames,omitempty"`
 }
 
 type RuntimeFamilySelection struct {
@@ -126,6 +133,7 @@ func ExtractProjectNativeModules(workDir string) ([]string, error) {
 		return nil, fmt.Errorf("read %s: %w", pkgPath, err)
 	}
 	var pkg struct {
+		Name         string            `json:"name"`
 		Dependencies map[string]string `json:"dependencies"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -282,6 +290,7 @@ func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies
 		return nil, fmt.Errorf("read %s: %w", pkgPath, err)
 	}
 	var pkg struct {
+		Name         string            `json:"name"`
 		Dependencies map[string]string `json:"dependencies"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -324,6 +333,7 @@ func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies
 		rnMismatch = mismatch
 	}
 	guestRuntime := RuntimeFingerprint{
+		PackageName:        strings.TrimSpace(pkg.Name),
 		ExpoVersion:        strings.TrimSpace(projectExpo),
 		ReactNativeVersion: strings.TrimSpace(projectRN),
 		ReactVersion:       strings.TrimSpace(projectReact),
@@ -365,6 +375,18 @@ func HostRuntimeFamilies() ([]RuntimeFamily, error) {
 	if err != nil {
 		return nil, err
 	}
+	if rawFamilies, ok := host.rawRuntimeFamilies(); ok {
+		families := make([]RuntimeFamily, 0, len(rawFamilies))
+		for _, family := range rawFamilies {
+			if !family.CompiledIn {
+				continue
+			}
+			families = append(families, family)
+		}
+		if len(families) > 0 {
+			return families, nil
+		}
+	}
 	family := RuntimeFamily{
 		ID:               runtimeFamilyID(host.Expo, host.ReactNative, host.React, host.Hermes.BytecodeVersion),
 		Label:            runtimeFamilyLabel(host.Expo, host.ReactNative, host.React, host.Hermes.BytecodeVersion),
@@ -375,6 +397,10 @@ func HostRuntimeFamilies() ([]RuntimeFamily, error) {
 		HermesVersion:    strings.TrimSpace(host.Hermes.Version),
 		HermesBCVersion:  host.Hermes.BytecodeVersion,
 		SupportedRNRange: strings.TrimSpace(host.SupportedRNRange),
+		CompiledIn:       true,
+		Status:           "active",
+		ManifestResource: "sdk-manifest.json",
+		PackageRoot:      "mobile",
 	}
 	return []RuntimeFamily{family}, nil
 }
@@ -394,7 +420,7 @@ func SelectRuntimeFamily(guest RuntimeFingerprint, supported []RuntimeFamily) Ru
 	bestDistance := runtimeFamilyDistance(guest, best)
 	for _, family := range supported[1:] {
 		distance := runtimeFamilyDistance(guest, family)
-		if distance < bestDistance {
+		if distance < bestDistance || (distance == bestDistance && runtimeFamilyPreferredForGuest(guest, family) && !runtimeFamilyPreferredForGuest(guest, best)) {
 			best = family
 			bestDistance = distance
 		}
@@ -411,6 +437,9 @@ func SelectRuntimeFamily(guest RuntimeFingerprint, supported []RuntimeFamily) Ru
 			fallbackRuntimeValue(guest.ReactVersion, "?"),
 			best.ID,
 		)
+		if runtimeFamilyPreferredForGuest(guest, best) {
+			selection.Reason += fmt.Sprintf(" (preferred for package %s)", fallbackRuntimeValue(guest.PackageName, "?"))
+		}
 		return selection
 	}
 	selection.MatchKind = "closest"
@@ -478,6 +507,19 @@ func runtimeFamilyDistance(guest RuntimeFingerprint, family RuntimeFamily) int {
 		weightedVersionDistance(guest.ReactVersion, family.React, 250, 70, 15)
 }
 
+func runtimeFamilyPreferredForGuest(guest RuntimeFingerprint, family RuntimeFamily) bool {
+	name := strings.TrimSpace(strings.ToLower(guest.PackageName))
+	if name == "" || len(family.PreferredPackageNames) == 0 {
+		return false
+	}
+	for _, candidate := range family.PreferredPackageNames {
+		if strings.TrimSpace(strings.ToLower(candidate)) == name {
+			return true
+		}
+	}
+	return false
+}
+
 func weightedVersionDistance(guest, host string, majorWeight, minorWeight, patchWeight int) int {
 	ga := parseSemverish(guest)
 	ha := parseSemverish(host)
@@ -512,6 +554,13 @@ func fallbackRuntimeValue(raw, fallback string) string {
 		return fallback
 	}
 	return raw
+}
+
+func (m *sdkManifest) rawRuntimeFamilies() ([]RuntimeFamily, bool) {
+	if m == nil || len(m.RawRuntimeFamilies) == 0 {
+		return nil, false
+	}
+	return append([]RuntimeFamily(nil), m.RawRuntimeFamilies...), true
 }
 
 func intAbs(v int) int {

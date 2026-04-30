@@ -3,6 +3,8 @@ export type NativeBuildConsumerContract = {
   consumerBuild?: string;
   consumerSdkVersion?: string;
   consumerHermesBCVersion?: number;
+  consumerCurrentRuntimeFamilyId?: string;
+  consumerDefaultRuntimeFamilyId?: string;
   consumerRuntimeFamilies?: Array<Record<string, unknown>>;
 };
 
@@ -18,6 +20,8 @@ export function buildNativeBuildRequest(
     ...(typeof contract?.consumerHermesBCVersion === "number" && contract.consumerHermesBCVersion > 0
       ? { consumerHermesBCVersion: contract.consumerHermesBCVersion }
       : {}),
+    ...(contract?.consumerCurrentRuntimeFamilyId ? { consumerCurrentRuntimeFamilyId: contract.consumerCurrentRuntimeFamilyId } : {}),
+    ...(contract?.consumerDefaultRuntimeFamilyId ? { consumerDefaultRuntimeFamilyId: contract.consumerDefaultRuntimeFamilyId } : {}),
     ...(Array.isArray(contract?.consumerRuntimeFamilies) && contract.consumerRuntimeFamilies.length > 0
       ? { consumerRuntimeFamilies: contract.consumerRuntimeFamilies }
       : {}),
@@ -56,10 +60,10 @@ function compatibilitySummary(buildResult: any): string | null {
     return "Yaver blocked restart because the project's React runtime does not match the mobile host.";
   }
   if (buildResult?.code === "FRAMEWORK_VERSION_MISMATCH") {
-    return "Yaver blocked restart because the guest app's runtime family does not match the mobile host.";
+    return "Yaver blocked restart because the guest app does not match the selected mobile host runtime family.";
   }
   if (buildResult?.code === "RUNTIME_FAMILY_MISMATCH") {
-    return "Yaver blocked restart because the guest app's runtime family does not match the mobile host.";
+    return "Yaver blocked restart because the guest app does not match the selected mobile host runtime family.";
   }
   if (buildResult?.code === "BC_VERSION_MISMATCH") {
     return buildResult?.error || "Hermes bytecode version mismatch.";
@@ -114,6 +118,7 @@ function runtimeFamilySummary(buildResult: any): string | null {
   }
   return [
     `Closest host family: ${selectedLabel}${guestLabel ? ` ← ${guestLabel}` : ""}`,
+    selection.reason ? `Why: ${selection.reason}` : null,
     supported ? `Host supports: ${supported}` : null,
   ].filter(Boolean).join("\n");
 }

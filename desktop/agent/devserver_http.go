@@ -2232,6 +2232,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ConsumerBuild            string          `json:"consumerBuild,omitempty"`
 		ConsumerSDKVersion       string          `json:"consumerSdkVersion,omitempty"`
 		ConsumerHermesBCVersion  int             `json:"consumerHermesBCVersion,omitempty"`
+		ConsumerCurrentFamilyID  string          `json:"consumerCurrentRuntimeFamilyId,omitempty"`
+		ConsumerDefaultFamilyID  string          `json:"consumerDefaultRuntimeFamilyId,omitempty"`
 		ConsumerRuntimeFamilies  []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
 	}
 	if r.Body != nil {
@@ -2476,6 +2478,16 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		compatReport = report
 		if report.RuntimeFamily != nil {
 			sel := report.RuntimeFamily
+			guestSummary := fmt.Sprintf(
+				"Expo %s / RN %s / React %s",
+				fallbackRuntimeValue(sel.Guest.ExpoVersion, "?"),
+				fallbackRuntimeValue(sel.Guest.ReactNativeVersion, "?"),
+				fallbackRuntimeValue(sel.Guest.ReactVersion, "?"),
+			)
+			selectedLabel := strings.TrimSpace(sel.Selected.Label)
+			if selectedLabel == "" {
+				selectedLabel = sel.Selected.ID
+			}
 			metaMsg := fmt.Sprintf(
 				"Runtime family %s: guest Expo %s / RN %s / React %s -> host %s",
 				sel.MatchKind,
@@ -2484,17 +2496,31 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				fallbackRuntimeValue(sel.Guest.ReactVersion, "?"),
 				sel.Selected.ID,
 			)
+			currentFamilyID := strings.TrimSpace(req.ConsumerCurrentFamilyID)
+			defaultFamilyID := strings.TrimSpace(req.ConsumerDefaultFamilyID)
+			switch {
+			case currentFamilyID != "" && currentFamilyID != sel.Selected.ID:
+				metaMsg += fmt.Sprintf(" (switching host family from %s)", currentFamilyID)
+			case currentFamilyID == "" && defaultFamilyID != "" && defaultFamilyID != sel.Selected.ID:
+				metaMsg += fmt.Sprintf(" (default host family is %s)", defaultFamilyID)
+			}
+			s.devServerMgr.EmitLog("Guest runtime: " + guestSummary)
 			if sel.ExactMatch {
 				log.Printf("[super-host] runtime-family match: %s", sel.Reason)
-				s.devServerMgr.EmitLog("Runtime family matched host exactly: " + sel.Selected.Label)
+				s.emitBuildProgress("Host runtime matched: "+selectedLabel, "prepare")
+				if currentFamilyID != "" && currentFamilyID != sel.Selected.ID {
+					s.devServerMgr.EmitLog("Switching host runtime from " + currentFamilyID + " to " + sel.Selected.ID)
+				}
 			} else {
 				log.Printf("[super-host] runtime-family closest: %s | supported=%s", sel.Reason, sel.SupportedHint)
-				s.devServerMgr.EmitLog("Runtime family drift: selected closest host family " + sel.Selected.Label)
-				s.devServerMgr.EmitLog("Host supports: " + sel.SupportedHint)
+				s.emitBuildProgress("Host runtime selected: "+selectedLabel, "prepare")
 			}
+			s.emitBuildProgress("Compiling for host runtime: "+selectedLabel, "build")
 			s.upsertDevOperation("build_native", "running", "prepare", metaMsg, workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{
-				"platform":               req.Platform,
-				"runtimeFamilySelection": sel,
+				"platform":                       req.Platform,
+				"runtimeFamilySelection":         sel,
+				"consumerCurrentRuntimeFamilyId": currentFamilyID,
+				"consumerDefaultRuntimeFamilyId": defaultFamilyID,
 			})
 		}
 	} else {
@@ -2932,8 +2958,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 						strings.Join(parts, ", "),
 					)
 					title = "Runtime family mismatch"
-					userMsg = "The bundle compiled, but Yaver blocked restart because the guest app's runtime family does not match the mobile host."
-					helpHint = "Use a host runtime family Yaver supports, or align the project's Expo, React Native, and React versions before retrying."
+					userMsg = "The bundle compiled, but Yaver blocked restart because the guest app does not match the selected mobile host runtime family."
+					helpHint = "Use one of Yaver's supported host runtime families, or align the project's Expo, React Native, and React versions to the nearest family before retrying."
 					if report.RuntimeFamily != nil {
 						errMsg = fmt.Sprintf("%s. Closest host family: %s. Host supports: %s",
 							errMsg, report.RuntimeFamily.Selected.Label, report.RuntimeFamily.SupportedHint)
@@ -3012,6 +3038,13 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		BuiltAt:      time.Now().UTC().Format(time.RFC3339),
 		MetadataJSON: meta.JSON(),
 	})
+	if meta.RuntimeFamilySelection != nil {
+		selectedLabel := strings.TrimSpace(meta.RuntimeFamilySelection.Selected.Label)
+		if selectedLabel == "" {
+			selectedLabel = meta.RuntimeFamilySelection.Selected.ID
+		}
+		s.emitBuildProgress("Bundle ready for host runtime: "+selectedLabel, "ready")
+	}
 	s.emitBuildProgress(fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s",
 		meta.Size/1024, meta.HermesBCVersion, moduleName), "ready")
 	s.upsertDevOperation("build_native", "completed", "ready", fmt.Sprintf("Bundle ready: %d KB, BC%d, module: %s", meta.Size/1024, meta.HermesBCVersion, moduleName), workDir, target.DeviceID, phaseProgress("done"), map[string]interface{}{

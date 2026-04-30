@@ -412,6 +412,69 @@ func TestSelectRuntimeFamily_ClosestMatch(t *testing.T) {
 	}
 }
 
+func TestSelectRuntimeFamily_PrefersPreferredPackageOnTie(t *testing.T) {
+	families := []RuntimeFamily{
+		{
+			ID:              "family-a",
+			Label:           "Family A",
+			ExpoVersion:     "54.0.33",
+			ReactNative:     "0.81.5",
+			React:           "19.1.0",
+			HermesBCVersion: 96,
+			CompiledIn:      true,
+		},
+		{
+			ID:                    "family-b",
+			Label:                 "Family B",
+			ExpoVersion:           "54.0.33",
+			ReactNative:           "0.81.5",
+			React:                 "19.1.0",
+			HermesBCVersion:       96,
+			CompiledIn:            true,
+			PreferredPackageNames: []string{"sfmg"},
+		},
+	}
+	guest := RuntimeFingerprint{
+		PackageName:        "sfmg",
+		ExpoVersion:        "54.0.33",
+		ReactNativeVersion: "0.81.5",
+		ReactVersion:       "19.1.0",
+	}
+	selection := SelectRuntimeFamily(guest, families)
+	if selection.Selected.ID != "family-b" {
+		t.Fatalf("selected family = %q, want family-b", selection.Selected.ID)
+	}
+}
+
+func TestHostRuntimeFamilies_UsesEmbeddedManifestFamilies(t *testing.T) {
+	families, err := HostRuntimeFamilies()
+	if err != nil {
+		t.Fatalf("HostRuntimeFamilies: %v", err)
+	}
+	if len(families) < 2 {
+		t.Fatalf("got %d runtime families, want at least 2", len(families))
+	}
+	var familyB *RuntimeFamily
+	for i := range families {
+		if families[i].ID == "family-b" {
+			familyB = &families[i]
+			break
+		}
+	}
+	if familyB == nil {
+		t.Fatalf("family-b missing from embedded runtime families: %#v", families)
+	}
+	if !familyB.CompiledIn {
+		t.Fatalf("family-b compiledIn = false, want true")
+	}
+	if familyB.Status != "pilot" {
+		t.Fatalf("family-b status = %q, want pilot", familyB.Status)
+	}
+	if len(familyB.PreferredPackageNames) != 1 || familyB.PreferredPackageNames[0] != "sfmg" {
+		t.Fatalf("family-b preferredPackageNames = %#v, want [sfmg]", familyB.PreferredPackageNames)
+	}
+}
+
 func mkdirAll(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {

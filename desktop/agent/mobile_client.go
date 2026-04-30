@@ -268,6 +268,16 @@ type BuildNativeBundleResult struct {
 	ReactVersionMismatch          *VersionMismatch        `json:"reactVersionMismatch,omitempty"`
 }
 
+type NativeBuildConsumerContract struct {
+	ConsumerVersion              string          `json:"consumerVersion,omitempty"`
+	ConsumerBuild                string          `json:"consumerBuild,omitempty"`
+	ConsumerSDKVersion           string          `json:"consumerSdkVersion,omitempty"`
+	ConsumerHermesBCVersion      int             `json:"consumerHermesBCVersion,omitempty"`
+	ConsumerCurrentRuntimeFamily string          `json:"consumerCurrentRuntimeFamilyId,omitempty"`
+	ConsumerDefaultRuntimeFamily string          `json:"consumerDefaultRuntimeFamilyId,omitempty"`
+	ConsumerRuntimeFamilies      []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
+}
+
 type UnityRunResult struct {
 	OK             bool     `json:"ok"`
 	Status         string   `json:"status,omitempty"`
@@ -291,10 +301,37 @@ type UnityRunResult struct {
 // metro+hermesc, validates the HBC header, writes the bundle, and
 // returns metadata the phone uses to fetch + load it.
 func (c *MobileClient) BuildNativeBundle(ctx context.Context, platform string) (*BuildNativeBundleResult, error) {
+	return c.BuildNativeBundleWithContract(ctx, platform, nil)
+}
+
+func (c *MobileClient) BuildNativeBundleWithContract(ctx context.Context, platform string, contract *NativeBuildConsumerContract) (*BuildNativeBundleResult, error) {
 	if platform == "" {
 		platform = "ios"
 	}
-	body := map[string]string{"platform": platform}
+	body := map[string]any{"platform": platform}
+	if contract != nil {
+		if contract.ConsumerVersion != "" {
+			body["consumerVersion"] = contract.ConsumerVersion
+		}
+		if contract.ConsumerBuild != "" {
+			body["consumerBuild"] = contract.ConsumerBuild
+		}
+		if contract.ConsumerSDKVersion != "" {
+			body["consumerSdkVersion"] = contract.ConsumerSDKVersion
+		}
+		if contract.ConsumerHermesBCVersion > 0 {
+			body["consumerHermesBCVersion"] = contract.ConsumerHermesBCVersion
+		}
+		if contract.ConsumerCurrentRuntimeFamily != "" {
+			body["consumerCurrentRuntimeFamilyId"] = contract.ConsumerCurrentRuntimeFamily
+		}
+		if contract.ConsumerDefaultRuntimeFamily != "" {
+			body["consumerDefaultRuntimeFamilyId"] = contract.ConsumerDefaultRuntimeFamily
+		}
+		if len(contract.ConsumerRuntimeFamilies) > 0 {
+			body["consumerRuntimeFamilies"] = contract.ConsumerRuntimeFamilies
+		}
+	}
 	var out BuildNativeBundleResult
 	if err := c.doJSON(ctx, "POST", "/dev/build-native", body, &out); err != nil {
 		return nil, err

@@ -69,6 +69,8 @@ function currentYaverConsumerContract() {
     consumerBuild: typeof info.build === "string" ? info.build : undefined,
     consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
     consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+    consumerCurrentRuntimeFamilyId: typeof info.currentRuntimeFamilyId === "string" ? info.currentRuntimeFamilyId : undefined,
+    consumerDefaultRuntimeFamilyId: typeof info.defaultRuntimeFamilyId === "string" ? info.defaultRuntimeFamilyId : undefined,
     consumerRuntimeFamilies: Array.isArray(info.runtimeFamilies) ? info.runtimeFamilies : undefined,
   };
 }
