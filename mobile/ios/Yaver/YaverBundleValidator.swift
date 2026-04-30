@@ -330,7 +330,12 @@ final class SDKManifest {
       reactVersion: react,
       hermesVersion: hermesVersion,
       hermesBCVersion: bc,
-      supportedRNRange: supportedRNRange
+      supportedRNRange: supportedRNRange,
+      compiledIn: true,
+      status: "active",
+      manifestResource: "sdk-manifest.json",
+      packageRoot: "mobile",
+      preferredPackageNames: nil
     )
   }
 
