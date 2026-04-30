@@ -319,7 +319,12 @@ public class AppDelegate: ExpoAppDelegate {
         reactVersion: nil,
         hermesVersion: nil,
         hermesBCVersion: Int(SDKManifest.shared.hermesBytecodeVersion),
-        supportedRNRange: SDKManifest.shared.supportedRNRange
+        supportedRNRange: SDKManifest.shared.supportedRNRange,
+        compiledIn: true,
+        status: "active",
+        manifestResource: "sdk-manifest.json",
+        packageRoot: "mobile",
+        preferredPackageNames: nil
       )
   }
 
@@ -495,6 +500,9 @@ public class AppDelegate: ExpoAppDelegate {
       "consumerBuild": (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "",
       "consumerSdkVersion": SDKManifest.shared.sdkVersion ?? "",
       "consumerHermesBCVersion": Int(SDKManifest.shared.hermesBytecodeVersion),
+      "consumerCurrentRuntimeFamilyId": UserDefaults.standard.string(forKey: "yaverSelectedRuntimeFamilyID")
+        ?? SDKManifest.shared.defaultRuntimeFamilyID,
+      "consumerDefaultRuntimeFamilyId": SDKManifest.shared.defaultRuntimeFamilyID,
       "consumerRuntimeFamilies": runtimeFamiliesPayload,
     ])
     req.timeoutInterval = 120

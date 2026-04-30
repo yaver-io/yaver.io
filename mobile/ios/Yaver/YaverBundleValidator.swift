@@ -293,12 +293,12 @@ final class SDKManifest {
   }
 
   func supportsRuntimeFamily(id: String?) -> Bool {
-    guard let id = trimmed(id) else { return false }
+    guard let id = SDKManifest.trimmed(id) else { return false }
     return runtimeFamilies.contains(where: { $0.id == id })
   }
 
   func runtimeFamily(id: String?) -> RuntimeFamily? {
-    guard let id = trimmed(id) else { return nil }
+    guard let id = SDKManifest.trimmed(id) else { return nil }
     return runtimeFamilies.first(where: { $0.id == id })
   }
 

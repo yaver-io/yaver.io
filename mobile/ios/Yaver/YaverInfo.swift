@@ -12,7 +12,7 @@ final class YaverInfo: NSObject {
       availableModules = Array(modules.keys).sorted()
     }
     let runtimeFamilies: [[String: Any]] = SDKManifest.shared.runtimeFamilies.map { family in
-      [
+      var payload: [String: Any] = [
         "id": family.id,
         "label": family.label,
         "sdkVersion": family.sdkVersion ?? "",
@@ -22,12 +22,13 @@ final class YaverInfo: NSObject {
         "hermesVersion": family.hermesVersion ?? "",
         "hermesBCVersion": family.hermesBCVersion ?? 0,
         "supportedRNRange": family.supportedRNRange ?? "",
-        "compiledIn": family.compiledIn ?? false,
-        "status": family.status ?? "",
-        "manifestResource": family.manifestResource ?? "",
-        "packageRoot": family.packageRoot ?? "",
-        "preferredPackageNames": family.preferredPackageNames ?? [],
       ]
+      payload["compiledIn"] = family.compiledIn ?? false
+      payload["status"] = family.status ?? ""
+      payload["manifestResource"] = family.manifestResource ?? ""
+      payload["packageRoot"] = family.packageRoot ?? ""
+      payload["preferredPackageNames"] = family.preferredPackageNames ?? []
+      return payload
     }
     return [
       "isYaver": true,
