@@ -25,6 +25,8 @@ public class AppDelegate: ExpoAppDelegate {
     }
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
     UserDefaults.standard.removeObject(forKey: "yaverCurrentModuleName")
+    UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyID")
+    UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyLabel")
 
     let delegate = ReactNativeDelegate()
     let factory = ExpoReactNativeFactory(delegate: delegate)
@@ -126,8 +128,11 @@ public class AppDelegate: ExpoAppDelegate {
       ?? UserDefaults.standard.string(forKey: "yaverCurrentModuleName")
       ?? "main"
     let bundleURL = URL(fileURLWithPath: downloadedBundle)
+    let selectedFamily = resolveSelectedRuntimeFamily()
 
     NSLog("[AppDelegate] safeReloadBridge: bundleURL=%@ moduleName=%@", bundleURL.path, resolvedModule)
+    NSLog("[AppDelegate] safeReloadBridge: runtimeFamily=%@ label=%@",
+          selectedFamily.id, selectedFamily.label)
     YaverGuestCrashReporter.markGuestPhase(
       "bridge_reload_ready",
       moduleName: resolvedModule,
@@ -185,7 +190,7 @@ public class AppDelegate: ExpoAppDelegate {
     // 4. Wait for actual deallocation using polling (replaces fixed sleep)
     waitForBridgeDeallocation(bridge: oldBridgeWeak, timeout: 3.0) { [weak self] in
       guard let self = self, let window = self.window else { return }
-      self.initGuestBridge(bundleURL: bundleURL, moduleName: resolvedModule, window: window)
+      self.initGuestBridge(bundleURL: bundleURL, moduleName: resolvedModule, runtimeFamily: selectedFamily, window: window)
     }
     oldBridgeWeak = nil // release the last strong ref after scheduling the weak poll
   }
@@ -231,13 +236,28 @@ public class AppDelegate: ExpoAppDelegate {
 
   /// Creates the guest bridge using ExpoReactNativeFactory (New Architecture) so
   /// TurboModules like PlatformConstants are available to the guest app.
-  private func initGuestBridge(bundleURL: URL, moduleName: String, window: UIWindow) {
-    NSLog("[AppDelegate] creating New Arch factory bridge: url=%@ module=%@", bundleURL.path, moduleName)
+  private func initGuestBridge(bundleURL: URL, moduleName: String, runtimeFamily: RuntimeFamily, window: UIWindow) {
+    NSLog("[AppDelegate] creating guest bridge: family=%@ label=%@ url=%@ module=%@",
+          runtimeFamily.id, runtimeFamily.label, bundleURL.path, moduleName)
     YaverGuestCrashReporter.markGuestPhase(
       "bridge_starting_guest",
       moduleName: moduleName,
       bundlePath: bundleURL.path
     )
+
+    guard SDKManifest.shared.supportsRuntimeFamily(id: runtimeFamily.id) else {
+      let message = "Runtime family \(runtimeFamily.id) is not compiled into this Yaver build."
+      NSLog("[AppDelegate] %@", message)
+      YaverGuestCrashReporter.recordGuestFailure(
+        phase: "runtime_family_unsupported",
+        message: message,
+        moduleName: moduleName,
+        bundlePath: bundleURL.path
+      )
+      showGuestErrorScreen(message: message, window: window)
+      isReloading = false
+      return
+    }
 
     let delegate = ReactNativeDelegate()
     delegate.overrideBundleURL = bundleURL
@@ -249,6 +269,8 @@ public class AppDelegate: ExpoAppDelegate {
     self.bindReactNativeFactory(factory)
 
     UserDefaults.standard.set(moduleName, forKey: "yaverCurrentModuleName")
+    UserDefaults.standard.set(runtimeFamily.id, forKey: "yaverSelectedRuntimeFamilyID")
+    UserDefaults.standard.set(runtimeFamily.label, forKey: "yaverSelectedRuntimeFamilyLabel")
 
     factory.startReactNative(
       withModuleName: moduleName,
@@ -275,6 +297,40 @@ public class AppDelegate: ExpoAppDelegate {
   /// motionShake event instead of letting RN / the guest JS also react.
   func isGuestModeActive() -> Bool {
     return isGuestAppRunning
+  }
+
+  private func resolveSelectedRuntimeFamily() -> RuntimeFamily {
+    if let metadata = currentGuestBundleMetadata(),
+       let familyID = metadata["runtimeFamilyId"] as? String,
+       let family = SDKManifest.shared.runtimeFamily(id: familyID) {
+      return family
+    }
+    if let familyID = UserDefaults.standard.string(forKey: "yaverSelectedRuntimeFamilyID"),
+       let family = SDKManifest.shared.runtimeFamily(id: familyID) {
+      return family
+    }
+    return SDKManifest.shared.runtimeFamilies.first
+      ?? RuntimeFamily(
+        id: SDKManifest.shared.defaultRuntimeFamilyID,
+        label: UserDefaults.standard.string(forKey: "yaverSelectedRuntimeFamilyLabel") ?? "Default runtime family",
+        sdkVersion: SDKManifest.shared.sdkVersion,
+        expoVersion: nil,
+        reactNativeVersion: SDKManifest.shared.reactNativeVersion,
+        reactVersion: nil,
+        hermesVersion: nil,
+        hermesBCVersion: Int(SDKManifest.shared.hermesBytecodeVersion),
+        supportedRNRange: SDKManifest.shared.supportedRNRange
+      )
+  }
+
+  private func currentGuestBundleMetadata() -> [String: Any]? {
+    let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+    let metadataURL = docs.appendingPathComponent("bundles/metadata.json")
+    guard let data = try? Data(contentsOf: metadataURL),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    return obj
   }
 
   // MARK: - Shake to reveal Back to Yaver
@@ -420,12 +476,26 @@ public class AppDelegate: ExpoAppDelegate {
     req.httpMethod = "POST"
     req.setValue(auth, forHTTPHeaderField: "Authorization")
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let runtimeFamiliesPayload: [[String: Any]] = SDKManifest.shared.runtimeFamilies.map { family in
+      [
+        "id": family.id,
+        "label": family.label,
+        "sdkVersion": family.sdkVersion ?? "",
+        "expoVersion": family.expoVersion ?? "",
+        "reactNativeVersion": family.reactNativeVersion ?? "",
+        "reactVersion": family.reactVersion ?? "",
+        "hermesVersion": family.hermesVersion ?? "",
+        "hermesBCVersion": family.hermesBCVersion ?? 0,
+        "supportedRNRange": family.supportedRNRange ?? "",
+      ]
+    }
     req.httpBody = try? JSONSerialization.data(withJSONObject: [
       "platform": "ios",
       "consumerVersion": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
       "consumerBuild": (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "",
       "consumerSdkVersion": SDKManifest.shared.sdkVersion ?? "",
       "consumerHermesBCVersion": Int(SDKManifest.shared.hermesBytecodeVersion),
+      "consumerRuntimeFamilies": runtimeFamiliesPayload,
     ])
     req.timeoutInterval = 120
 

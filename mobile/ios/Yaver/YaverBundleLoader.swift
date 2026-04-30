@@ -91,6 +91,12 @@ class YaverBundleLoader: RCTEventEmitter {
         if let m = bundleMeta {
           NSLog("[YaverBundleLoader] metadata: size=%lld md5=%@ BC%d module=%@ format=%@",
                 m.size, m.md5, m.hermesBCVersion, m.moduleName, m.format)
+          if let family = m.runtimeFamilySelection?.selected {
+            NSLog("[YaverBundleLoader] runtime family: id=%@ label=%@ exact=%@ supported=%@",
+                  family.id, family.label,
+                  (m.runtimeFamilySelection?.exactMatch ?? false) ? "YES" : "NO",
+                  m.runtimeFamilySelection?.supportedHint ?? "")
+          }
 
           // Pre-validate metadata (catches BC mismatch before we even look at bytes)
           if let metaErr = YaverBundleValidator.validateMetadata(m) {
@@ -161,11 +167,20 @@ class YaverBundleLoader: RCTEventEmitter {
 
         let localMeta = try JSONSerialization.data(withJSONObject: [
           "moduleName": moduleName, "sourceUrl": urlString, "size": data.count,
-          "md5": bundleMeta?.md5 ?? "", "bcVersion": bundleMeta?.hermesBCVersion ?? 0
+          "md5": bundleMeta?.md5 ?? "", "bcVersion": bundleMeta?.hermesBCVersion ?? 0,
+          "runtimeFamilyId": bundleMeta?.runtimeFamilySelection?.selected.id ?? SDKManifest.shared.defaultRuntimeFamilyID,
+          "runtimeFamilyLabel": bundleMeta?.runtimeFamilySelection?.selected.label ?? "",
+          "runtimeFamilyExactMatch": bundleMeta?.runtimeFamilySelection?.exactMatch ?? true
         ] as [String: Any])
         try localMeta.write(to: dir.appendingPathComponent("metadata.json"), options: .atomic)
 
         UserDefaults.standard.set(moduleName, forKey: "yaverLoadedModuleName")
+        UserDefaults.standard.set(
+          bundleMeta?.runtimeFamilySelection?.selected.id ?? SDKManifest.shared.defaultRuntimeFamilyID,
+          forKey: "yaverSelectedRuntimeFamilyID")
+        UserDefaults.standard.set(
+          bundleMeta?.runtimeFamilySelection?.selected.label ?? "",
+          forKey: "yaverSelectedRuntimeFamilyLabel")
 
         // Store agent base URL + auth token so AppDelegate can call /dev/stop
         // when user taps "Back to Yaver" from the shake overlay.
@@ -181,8 +196,19 @@ class YaverBundleLoader: RCTEventEmitter {
           UserDefaults.standard.set(auth, forKey: "yaverAgentAuth")
         }
 
-        resolve(["loaded": true, "url": urlString, "size": data.count])
-        self.sendEvent(withName: "onBundleLoaded", body: ["url": urlString, "moduleName": moduleName, "size": data.count])
+        resolve([
+          "loaded": true,
+          "url": urlString,
+          "size": data.count,
+          "runtimeFamilyId": bundleMeta?.runtimeFamilySelection?.selected.id ?? SDKManifest.shared.defaultRuntimeFamilyID,
+        ])
+        self.sendEvent(withName: "onBundleLoaded", body: [
+          "url": urlString,
+          "moduleName": moduleName,
+          "size": data.count,
+          "runtimeFamilyId": bundleMeta?.runtimeFamilySelection?.selected.id ?? SDKManifest.shared.defaultRuntimeFamilyID,
+          "runtimeFamilyLabel": bundleMeta?.runtimeFamilySelection?.selected.label ?? "",
+        ])
 
         NSLog("[YaverBundleLoader] posting reload notification: moduleName=%@", moduleName)
         DispatchQueue.main.async {
@@ -210,6 +236,8 @@ class YaverBundleLoader: RCTEventEmitter {
     try? FileManager.default.removeItem(at: dir.appendingPathComponent("main.jsbundle"))
     try? FileManager.default.removeItem(at: dir.appendingPathComponent("metadata.json"))
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
+    UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyID")
+    UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyLabel")
     YaverGuestCrashReporter.clearGuestSession()
     resolve(["unloaded": true])
     sendEvent(withName: "onBundleUnloaded", body: ["unloaded": true])

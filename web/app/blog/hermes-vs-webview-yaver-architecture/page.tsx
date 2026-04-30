@@ -127,6 +127,46 @@ export default function HermesVsWebviewBlogPage() {
         </section>
 
         <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">Source code vs bundle vs HBC</h2>
+          <p>
+            Three different artifacts matter here, and conflating them is where most Hermes explainers
+            get fuzzy. <strong className="text-surface-100">Source code</strong> is your project&apos;s{" "}
+            <code className={codeChip}>.js</code>, <code className={codeChip}>.ts</code>,{" "}
+            <code className={codeChip}>.tsx</code>, plus everything Metro pulls from{" "}
+            <code className={codeChip}>node_modules</code>. <strong className="text-surface-100">A JS
+            bundle</strong> is Metro&apos;s single-file output: one large JavaScript program with the module
+            graph flattened, transformed, and ready for React Native to load. <strong className="text-surface-100">HBC</strong> is what you get after running that JS bundle through{" "}
+            <code className={codeChip}>hermesc -emit-binary</code>: a Hermes-specific bytecode file that
+            the Hermes VM can execute directly.
+          </p>
+          <p className="mt-3">
+            So the pipeline is not &ldquo;TypeScript to native code.&rdquo; It is{" "}
+            <code className={codeChip}>TS/JS source → Metro JS bundle → Hermes bytecode</code>. The
+            native side was already compiled earlier, when the Yaver app itself was built and shipped.
+            At iteration time we are only swapping the guest program that runs <em>inside</em> that
+            native host.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">Why HBC is not assembly code</h2>
+          <p>
+            Hermes bytecode can look &ldquo;low level,&rdquo; but it is still VM bytecode, not CPU assembly. Assembly
+            is an almost one-to-one textual representation of machine instructions for a real processor:
+            ARM64, x86-64, and so on. HBC is an instruction stream for the Hermes virtual machine. The
+            CPU never executes HBC directly. Hermes reads it, decodes Hermes opcodes, manages stack
+            frames, objects, strings, closures, and garbage collection, and only then uses native code
+            from the already-signed Hermes engine binary to do the actual work.
+          </p>
+          <p className="mt-3">
+            That distinction is the whole App Store story. Shipping new ARM64 code to an iPhone at
+            runtime would trip code-signing rules immediately. Shipping new Hermes bytecode is allowed
+            because the executable part is still the Hermes interpreter already inside Yaver&apos;s signed
+            binary. The downloaded file is data for that interpreter, not a new Mach-O image.
+          </p>
+        </section>
+
+        <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">How iOS and Android allow runtime code injection</h2>
           <p>
             Apple&apos;s App Store Review Guidelines (
@@ -139,8 +179,7 @@ export default function HermesVsWebviewBlogPage() {
           <p className="mt-3">
             That carve-out is what makes Hermes-based hot reload legal. The bytecode is interpreted by
             a JS VM that&apos;s already inside Yaver&apos;s signed binary; we&apos;re not loading new native code, we&apos;re
-            loading new <em>data for the JS interpreter to run</em>. Same principle behind Expo
-            Updates, Microsoft CodePush, and Expo Go.
+            loading new <em>data for the JS interpreter to run</em>.
           </p>
           <p className="mt-3">
             Android has the same carve-out and is more permissive on top of it: it allows{" "}
@@ -150,14 +189,102 @@ export default function HermesVsWebviewBlogPage() {
             limitations.
           </p>
           <p className="mt-3">
-            Practically: Yaver&apos;s iOS and Android binaries each contain a JS bridge built with{" "}
+            Practically: Yaver&apos;s iOS binary contains a React Native host built with{" "}
             <code className={codeChip}>ExpoReactNativeFactory</code> +{" "}
             <code className={codeChip}>RCTAppDependencyProvider</code>. When you tap &ldquo;Open in
-            Yaver,&rdquo; the agent on your dev machine builds an HBC bundle, the relay forwards it to
-            the phone, and Yaver swaps its current bridge with a fresh one running your guest bytecode.
-            Bridge swap takes ~2 seconds (it has to wait for Hermes&apos; concurrent garbage collector to
-            settle on the old bridge before tearing it down). The whole cycle from <em>build</em> to{" "}
-            <em>visible on phone</em> is about 10 seconds for a typical 8 MB bundle.
+            Yaver,&rdquo; the phone asks the agent for a native bundle build at{" "}
+            <code className={codeChip}>POST /dev/build-native</code>, the agent runs Metro and{" "}
+            <code className={codeChip}>hermesc</code>, then returns build-specific URLs like{" "}
+            <code className={codeChip}>/dev/native-bundle?build=...</code>. The phone downloads that
+            HBC file, validates it, saves it to{" "}
+            <code className={codeChip}>Documents/bundles/main.jsbundle</code>, and Yaver swaps its
+            current bridge with a fresh one running your guest bytecode. Bridge swap typically takes
+            around 2 seconds because Yaver waits for Hermes&apos; concurrent GC to release the old bridge
+            before bringing up the new one.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The full pipeline, end to end</h2>
+          <p>
+            The production &ldquo;Open in Yaver&rdquo; path is a host-build plus phone-fetch loop:
+          </p>
+          <ol className="mt-3 space-y-2 list-decimal pl-5">
+            <li>The phone calls the agent&apos;s <code className={codeChip}>POST /dev/build-native</code> endpoint with the target platform plus its own Yaver app version, SDK version, and Hermes bytecode version.</li>
+            <li>The agent resolves the project path, checks whether the previous build cache belongs to the same consumer contract, and clears stale output if the host app build changed.</li>
+            <li>The agent runs Metro or Expo export to produce a plain JS bundle at <code className={codeChip}>.yaver-build/main.jsbundle</code> plus an assets directory.</li>
+            <li>Yaver injects a small guest-safety prelude into that JS bundle before compilation so a few host-optional modules fail more cleanly.</li>
+            <li>The agent runs <code className={codeChip}>hermesc -emit-binary</code> over that bundle, replacing the JS file with HBC.</li>
+            <li>The agent validates the output locally: Hermes magic at offset 4, bytecode version at offset 8, size sanity, and MD5 of the full file.</li>
+            <li>The agent computes compatibility metadata from the project&apos;s dependencies and Yaver&apos;s embedded <code className={codeChip}>sdk-manifest.json</code>, then persists the finished artifact under a build ID so the phone can fetch it even if no dev server is actively serving.</li>
+            <li>The phone downloads <code className={codeChip}>/dev/native-bundle?build=...</code>, reads the <code className={codeChip}>X-Yaver-Bundle-Metadata</code> header, re-validates size, MD5, magic, bytecode version, SDK version, RN support range, and native-module compatibility, then only after that triggers a bridge reload.</li>
+          </ol>
+          <p className="mt-3">
+            That last point matters: the build and the load are separate phases. The agent does not
+            stream raw source code into the device runtime. It hands the phone a sealed build artifact
+            plus a metadata contract, and the phone refuses to load it if either the bytes or the host
+            assumptions drift.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">The versioning handshake in detail</h2>
+          <p>
+            Yaver&apos;s handshake is really several checks stacked together.
+          </p>
+          <ul className="mt-3 space-y-2 list-disc pl-5">
+            <li><strong className="text-surface-100">Consumer contract:</strong> the phone includes its Yaver app version, build number, SDK version, platform, and Hermes BC version in the build request. The agent uses that to decide whether an old <code className={codeChip}>.yaver-build</code> directory can be reused or must be cleared.</li>
+            <li><strong className="text-surface-100">Compiler contract:</strong> after <code className={codeChip}>hermesc</code> runs, the agent reads the output header and rejects the file if the produced BC version is not what the host expects.</li>
+            <li><strong className="text-surface-100">Integrity contract:</strong> the agent sends metadata containing size, MD5, module name, format, BC version, builder OS/arch, and framework versions. The phone re-checks the downloaded bytes against that metadata before saving anything.</li>
+            <li><strong className="text-surface-100">Runtime contract:</strong> the agent compares the guest project&apos;s React, React Native, Expo, and native-module dependency graph against the host app&apos;s <code className={codeChip}>sdk-manifest.json</code>. If the guest expects modules or versions the host does not provide, Yaver blocks the reload instead of letting the app crash after startup.</li>
+          </ul>
+          <p className="mt-3">
+            This is why the handshake has to happen both on the agent and on the phone. The agent knows
+            the project graph; the phone knows the exact binary it is running. Neither side can prove
+            compatibility alone.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">Yaver&apos;s runtime-family model</h2>
+          <p>
+            The practical limit is that one mobile host binary cannot safely pretend to be every Expo /
+            React Native runtime ever released. So Yaver treats the host as a small set of{" "}
+            <strong className="text-surface-100">runtime families</strong>: pinned combinations of Expo,
+            React Native, React, Hermes bytecode version, and the native-module manifest compiled into
+            the container.
+          </p>
+          <p className="mt-3">
+            When the phone asks the agent for a build, the host advertises the runtime families it can
+            execute. The agent fingerprints the guest app&apos;s installed Expo / RN / React versions,
+            chooses the closest host family, and logs that decision before it bundles anything. If the
+            match is exact, the normal Hermes path continues. If the guest drifts outside those
+            families, Yaver surfaces the closest host family plus the supported family list instead of
+            failing with a vague &ldquo;version mismatch.&rdquo;
+          </p>
+          <p className="mt-3">
+            This gives Yaver a clean product shape: <strong className="text-surface-100">fast direct
+            load</strong> for a few high-value runtime families, and a{" "}
+            <strong className="text-surface-100">native build fallback</strong> for everything else.
+            The fallback carries the guest app&apos;s own native runtime, so it handles projects that sit
+            outside Yaver&apos;s bundled families without pretending a single container can safely host every
+            native contract.
+          </p>
+        </section>
+
+        <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">What hermesc does, and what it does not do</h2>
+          <p>
+            <code className={codeChip}>hermesc</code> is just the compiler. It does not stay resident,
+            it does not manage hot reload sessions, and it does not execute JavaScript in real time.
+            Yaver launches it as a subprocess during the build step, points it at Metro&apos;s JS output,
+            and waits for an HBC file. After that, <code className={codeChip}>hermesc</code> is done.
+          </p>
+          <p className="mt-3">
+            The runtime work is handled by the Hermes engine embedded inside the Yaver app. That engine
+            reads the bytecode, creates the JS runtime, exposes TurboModules and Fabric through React
+            Native&apos;s New Architecture, and runs garbage collection while the guest app is live. So if
+            you want the short version: <strong className="text-surface-100">hermesc is build-time; Hermes is runtime.</strong>
           </p>
         </section>
 
@@ -235,6 +362,27 @@ export default function HermesVsWebviewBlogPage() {
         </section>
 
         <section>
+          <h2 className="mb-3 text-xl font-semibold text-surface-100">How the Yaver container app uses Hermes</h2>
+          <p>
+            The Yaver phone app is a super-host: one signed native app with React Native, Hermes, Expo
+            infrastructure, and a large set of prelinked native modules already compiled in. Your guest
+            app does not bring its own copy of Hermes, Fabric, or TurboModules. It runs inside Yaver&apos;s
+            copies.
+          </p>
+          <p className="mt-3">
+            On iOS the loader path is explicit. <code className={codeChip}>YaverBundleLoader</code>{" "}
+            downloads the bundle, validates the metadata header, writes the HBC file to disk, stores
+            the selected module name, and posts a reload notification.{" "}
+            <code className={codeChip}>AppDelegate.safeReloadBridge()</code> then invalidates the old
+            bridge, polls up to 3 seconds for deallocation so Hermes GC does not touch freed memory,
+            and finally creates a fresh guest bridge with{" "}
+            <code className={codeChip}>ExpoReactNativeFactory</code> and{" "}
+            <code className={codeChip}>RCTAppDependencyProvider</code>. That last part is why guest
+            bundles get real New Architecture behavior instead of a half-working legacy bridge.
+          </p>
+        </section>
+
+        <section>
           <h2 className="mb-3 text-xl font-semibold text-surface-100">Hermes&apos; real limit: the native side has to be pre-bundled</h2>
           <p>
             HBC is JavaScript. It can call any native module that&apos;s already registered in Yaver&apos;s
@@ -253,7 +401,7 @@ export default function HermesVsWebviewBlogPage() {
             packaged into the iOS / Android super-host, and shipped through TestFlight / Play Console.
           </p>
           <p className="mt-3">
-            Yaver currently registers ~113 native modules. We picked them by surveying our own
+            Yaver currently registers 92 native modules. We picked them by surveying our own
             projects and the most common React Native dependencies. That covers most apps most of the
             time, but the long tail is real. Every new third-party app a user wants to test risks
             hitting a module that isn&apos;t there.
@@ -273,10 +421,11 @@ export default function HermesVsWebviewBlogPage() {
             bridge swap, listing exactly what&apos;s missing.
           </p>
           <p className="mt-3">
-            You get a choice: cancel and add the modules to Yaver, drop them from your app, or{" "}
-            <strong className="text-surface-100">Load anyway</strong> if you know the missing module
-            is guarded behind a feature flag and you don&apos;t intend to call it in this run.
-            Either way, no more silent SIGSEGV — you see the dependency mismatch up front.
+            The build metadata also carries host SDK version, host Expo / React / React Native
+            versions, supported RN range, and likely-breaking native-module version drift. The phone
+            validates those again before reload, so the build can be blocked even if the bytes are
+            structurally valid. This is not just &ldquo;is the file corrupt?&rdquo; It is &ldquo;does this guest app
+            belong inside this exact Yaver binary?&rdquo;
           </p>
         </section>
 
@@ -371,12 +520,12 @@ export default function HermesVsWebviewBlogPage() {
             </li>
             <li>
               Hermes&apos; structural limit: any native module the guest app calls has to be pre-bundled
-              into Yaver&apos;s super-host. We&apos;ve registered 113 of them; the long tail is real.
+              into Yaver&apos;s super-host. We&apos;ve registered 92 of them; the long tail is real.
             </li>
             <li>
-              Today: a compat handshake catches mismatches before the bridge swap and shows you what&apos;s
-              missing. Coming: auto-stubs, popular-module preload, per-project Yaver builds, Android
-              dynamic loading.
+              The real pipeline is source code → Metro JS bundle → Hermes bytecode → metadata-validated
+              bridge reload inside Yaver&apos;s native container. `hermesc` only compiles; Hermes runtime
+              inside the app does the execution.
             </li>
             <li>
               The native module list is open-source. PRs with new modules + manifest entries +

@@ -22,6 +22,9 @@ struct BundleMetadata: Codable {
   let incompatibleNativeModules: [String]?
   let nativeModuleVersionMismatches: [NativeModuleVersionMismatch]?
   let reactVersionMismatch: VersionMismatch?
+  let guestRuntime: RuntimeFingerprint?
+  let runtimeFamilySelection: RuntimeFamilySelection?
+  let hostRuntimeFamilies: [RuntimeFamily]?
 }
 
 struct NativeModuleVersionMismatch: Codable {
@@ -35,6 +38,36 @@ struct VersionMismatch: Codable {
   let projectVersion: String
   let hostVersion: String
   let reason: String
+}
+
+struct RuntimeFingerprint: Codable {
+  let expoVersion: String?
+  let reactNativeVersion: String?
+  let reactVersion: String?
+  let hermesBCVersion: Int?
+}
+
+struct RuntimeFamily: Codable {
+  let id: String
+  let label: String
+  let sdkVersion: String?
+  let expoVersion: String?
+  let reactNativeVersion: String?
+  let reactVersion: String?
+  let hermesVersion: String?
+  let hermesBCVersion: Int?
+  let supportedRNRange: String?
+}
+
+struct RuntimeFamilySelection: Codable {
+  let guest: RuntimeFingerprint
+  let selected: RuntimeFamily
+  let exactMatch: Bool
+  let matchKind: String
+  let reason: String?
+  let distance: Int?
+  let supported: [RuntimeFamily]?
+  let supportedHint: String?
 }
 
 struct BundleValidationError {
@@ -105,6 +138,20 @@ enum YaverBundleValidator {
         code: "NATIVE_MODULE_VERSION_MISMATCH",
         localizedDescription: "Blocked because host-native module versions drift at a likely-breaking boundary: \(summary)."
       )
+    }
+    if let familySelection = metadata.runtimeFamilySelection {
+      guard SDKManifest.shared.supportsRuntimeFamily(id: familySelection.selected.id) else {
+        return BundleValidationError(
+          code: "RUNTIME_FAMILY_UNSUPPORTED",
+          localizedDescription: "Host runtime family \(familySelection.selected.id) is not compiled into this Yaver build."
+        )
+      }
+      if !familySelection.exactMatch {
+        return BundleValidationError(
+          code: "RUNTIME_FAMILY_MISMATCH",
+          localizedDescription: "Blocked because guest runtime is closest to host family \(familySelection.selected.label), but does not match it exactly. Supported families: \(familySelection.supportedHint ?? SDKManifest.shared.runtimeFamiliesSummary)"
+        )
+      }
     }
     if let reactMismatch = metadata.reactVersionMismatch {
       return BundleValidationError(
@@ -210,6 +257,8 @@ final class SDKManifest {
   let sdkVersion: String?
   let reactNativeVersion: String?
   let supportedRNRange: String?
+  let runtimeFamilies: [RuntimeFamily]
+  let defaultRuntimeFamilyID: String
 
   private init() {
     var parsed: [String: Any] = [:]
@@ -229,5 +278,69 @@ final class SDKManifest {
       bc = UInt32(version)
     }
     self.hermesBytecodeVersion = bc
+    if let families = SDKManifest.parseRuntimeFamilies(from: parsed), !families.isEmpty {
+      self.runtimeFamilies = families
+    } else {
+      self.runtimeFamilies = [SDKManifest.synthesizedDefaultFamily(from: parsed, bc: Int(bc))]
+    }
+    self.defaultRuntimeFamilyID = self.runtimeFamilies.first?.id ?? "default"
+  }
+
+  func supportsRuntimeFamily(id: String?) -> Bool {
+    guard let id = trimmed(id) else { return false }
+    return runtimeFamilies.contains(where: { $0.id == id })
+  }
+
+  func runtimeFamily(id: String?) -> RuntimeFamily? {
+    guard let id = trimmed(id) else { return nil }
+    return runtimeFamilies.first(where: { $0.id == id })
+  }
+
+  var runtimeFamiliesSummary: String {
+    runtimeFamilies.map { "\($0.id) (\($0.label))" }.joined(separator: "; ")
+  }
+
+  private static func parseRuntimeFamilies(from parsed: [String: Any]) -> [RuntimeFamily]? {
+    guard let rawFamilies = parsed["runtimeFamilies"] else { return nil }
+    guard let data = try? JSONSerialization.data(withJSONObject: rawFamilies) else { return nil }
+    return try? JSONDecoder().decode([RuntimeFamily].self, from: data)
+  }
+
+  private static func synthesizedDefaultFamily(from parsed: [String: Any], bc: Int) -> RuntimeFamily {
+    let sdkVersion = parsed["sdkVersion"] as? String
+    let expo = parsed["expo"] as? String
+    let reactNative = parsed["reactNative"] as? String
+    let react = parsed["react"] as? String
+    let supportedRNRange = parsed["supportedRNRange"] as? String
+    let hermesVersion = (parsed["hermes"] as? [String: Any])?["version"] as? String
+    let id = "expo-\(runtimeToken(expo))-rn-\(runtimeToken(reactNative))-react-\(runtimeToken(react))-bc-\(bc)"
+    let label = "Expo \(expo ?? "?") / RN \(reactNative ?? "?") / React \(react ?? "?") / BC\(bc)"
+    return RuntimeFamily(
+      id: id,
+      label: label,
+      sdkVersion: sdkVersion,
+      expoVersion: expo,
+      reactNativeVersion: reactNative,
+      reactVersion: react,
+      hermesVersion: hermesVersion,
+      hermesBCVersion: bc,
+      supportedRNRange: supportedRNRange
+    )
+  }
+
+  private static func runtimeToken(_ raw: String?) -> String {
+    let value = trimmed(raw) ?? "unknown"
+    return value
+      .replacingOccurrences(of: ".", with: "-")
+      .replacingOccurrences(of: "^", with: "")
+      .replacingOccurrences(of: "~", with: "")
+      .replacingOccurrences(of: " ", with: "")
+      .lowercased()
+  }
+
+  private static func trimmed(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
   }
 }

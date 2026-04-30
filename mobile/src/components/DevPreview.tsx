@@ -69,6 +69,7 @@ function currentYaverConsumerContract() {
     consumerBuild: typeof info.build === "string" ? info.build : undefined,
     consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
     consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+    consumerRuntimeFamilies: Array.isArray(info.runtimeFamilies) ? info.runtimeFamilies : undefined,
   };
 }
 
@@ -321,6 +322,15 @@ export function DevPreview() {
         const error = new Error(nativeBuildFailureMessage(buildResult));
         (error as any).buildResult = buildResult;
         throw error;
+      }
+      const familySelection = buildResult.runtimeFamilySelection;
+      const familyLabel = familySelection?.selected?.label || familySelection?.selected?.id || "";
+      if (familyLabel) {
+        setLastLogLine(
+          familySelection?.exactMatch
+            ? `Runtime family matched: ${familyLabel}`
+            : `Runtime family closest host: ${familyLabel}`,
+        );
       }
 
       // Download assets first (if any) so images/fonts are available when JS runs

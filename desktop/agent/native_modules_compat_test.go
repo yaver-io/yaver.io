@@ -359,6 +359,59 @@ func TestBuildCompatReport_FlagsFrameworkRuntimeDrift(t *testing.T) {
 	}
 }
 
+func TestSelectRuntimeFamily_ExactMatch(t *testing.T) {
+	families, err := HostRuntimeFamilies()
+	if err != nil {
+		t.Fatalf("host runtime families: %v", err)
+	}
+	if len(families) == 0 {
+		t.Fatalf("expected at least one runtime family")
+	}
+	guest := RuntimeFingerprint{
+		ExpoVersion:        families[0].ExpoVersion,
+		ReactNativeVersion: families[0].ReactNative,
+		ReactVersion:       families[0].React,
+	}
+	selection := SelectRuntimeFamily(guest, families)
+	if !selection.ExactMatch {
+		t.Fatalf("expected exact match, got %+v", selection)
+	}
+	if selection.MatchKind != "exact" {
+		t.Fatalf("unexpected match kind: %+v", selection)
+	}
+	if selection.Selected.ID != families[0].ID {
+		t.Fatalf("selected family = %q, want %q", selection.Selected.ID, families[0].ID)
+	}
+}
+
+func TestSelectRuntimeFamily_ClosestMatch(t *testing.T) {
+	families, err := HostRuntimeFamilies()
+	if err != nil {
+		t.Fatalf("host runtime families: %v", err)
+	}
+	if len(families) == 0 {
+		t.Fatalf("expected at least one runtime family")
+	}
+	guest := RuntimeFingerprint{
+		ExpoVersion:        "54.0.0",
+		ReactNativeVersion: "0.81.6",
+		ReactVersion:       "19.2.5",
+	}
+	selection := SelectRuntimeFamily(guest, families)
+	if selection.ExactMatch {
+		t.Fatalf("expected closest match, got exact %+v", selection)
+	}
+	if selection.MatchKind != "closest" {
+		t.Fatalf("unexpected match kind: %+v", selection)
+	}
+	if selection.Selected.ID != families[0].ID {
+		t.Fatalf("selected family = %q, want %q", selection.Selected.ID, families[0].ID)
+	}
+	if selection.Distance <= 0 {
+		t.Fatalf("expected positive distance, got %+v", selection)
+	}
+}
+
 func mkdirAll(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0755); err != nil {

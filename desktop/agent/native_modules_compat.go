@@ -34,6 +34,36 @@ type sdkManifest struct {
 	} `json:"hermes"`
 }
 
+type RuntimeFingerprint struct {
+	ExpoVersion        string `json:"expoVersion,omitempty"`
+	ReactNativeVersion string `json:"reactNativeVersion,omitempty"`
+	ReactVersion       string `json:"reactVersion,omitempty"`
+	HermesBCVersion    int    `json:"hermesBCVersion,omitempty"`
+}
+
+type RuntimeFamily struct {
+	ID               string `json:"id"`
+	Label            string `json:"label"`
+	SDKVersion       string `json:"sdkVersion,omitempty"`
+	ExpoVersion      string `json:"expoVersion,omitempty"`
+	ReactNative      string `json:"reactNativeVersion,omitempty"`
+	React            string `json:"reactVersion,omitempty"`
+	HermesVersion    string `json:"hermesVersion,omitempty"`
+	HermesBCVersion  int    `json:"hermesBCVersion,omitempty"`
+	SupportedRNRange string `json:"supportedRNRange,omitempty"`
+}
+
+type RuntimeFamilySelection struct {
+	Guest         RuntimeFingerprint `json:"guest"`
+	Selected      RuntimeFamily      `json:"selected"`
+	ExactMatch    bool               `json:"exactMatch"`
+	MatchKind     string             `json:"matchKind"`
+	Reason        string             `json:"reason,omitempty"`
+	Distance      int                `json:"distance"`
+	Supported     []RuntimeFamily    `json:"supported"`
+	SupportedHint string             `json:"supportedHint,omitempty"`
+}
+
 var (
 	cachedManifest      *sdkManifest
 	cachedManifestNames map[string]bool
@@ -203,19 +233,21 @@ func hasNativePackageMarkers(dir string) bool {
 // CompatReport summarises how a project's native deps line up with the
 // host super-host's published manifest.
 type CompatReport struct {
-	ProjectModules       []string               `json:"projectModules"`                 // every dep we treated as native
-	Matched              []string               `json:"matched"`                        // present in host manifest
-	Incompatible         []string               `json:"incompatibleNativeModules"`      // missing — likely crash sites
-	Ignored              []string               `json:"ignoredNativeModules"`           // intentionally ignored host-optional packages
-	VersionMismatches    []NativeModuleMismatch `json:"nativeModuleVersionMismatches"`  // present but at a likely-breaking version boundary
-	ReactVersionMismatch *VersionMismatch       `json:"reactVersionMismatch,omitempty"` // project React vs host React
-	ExpoVersionMismatch  *VersionMismatch       `json:"expoVersionMismatch,omitempty"`  // project Expo vs host Expo
-	RNVersionMismatch    *VersionMismatch       `json:"reactNativeVersionMismatch,omitempty"`
-	HostSDKVersion       string                 `json:"hostSdkVersion"`
-	HostExpo             string                 `json:"hostExpoVersion"`
-	HostReact            string                 `json:"hostReactVersion"`
-	HostRN               string                 `json:"hostReactNative"`
-	SupportedRNRange     string                 `json:"supportedRNRange"`
+	ProjectModules       []string                `json:"projectModules"`                 // every dep we treated as native
+	Matched              []string                `json:"matched"`                        // present in host manifest
+	Incompatible         []string                `json:"incompatibleNativeModules"`      // missing — likely crash sites
+	Ignored              []string                `json:"ignoredNativeModules"`           // intentionally ignored host-optional packages
+	VersionMismatches    []NativeModuleMismatch  `json:"nativeModuleVersionMismatches"`  // present but at a likely-breaking version boundary
+	ReactVersionMismatch *VersionMismatch        `json:"reactVersionMismatch,omitempty"` // project React vs host React
+	ExpoVersionMismatch  *VersionMismatch        `json:"expoVersionMismatch,omitempty"`  // project Expo vs host Expo
+	RNVersionMismatch    *VersionMismatch        `json:"reactNativeVersionMismatch,omitempty"`
+	HostSDKVersion       string                  `json:"hostSdkVersion"`
+	HostExpo             string                  `json:"hostExpoVersion"`
+	HostReact            string                  `json:"hostReactVersion"`
+	HostRN               string                  `json:"hostReactNative"`
+	SupportedRNRange     string                  `json:"supportedRNRange"`
+	GuestRuntime         RuntimeFingerprint      `json:"guestRuntime"`
+	RuntimeFamily        *RuntimeFamilySelection `json:"runtimeFamilySelection,omitempty"`
 }
 
 type NativeModuleMismatch struct {
@@ -235,6 +267,10 @@ type VersionMismatch struct {
 // project root (where its package.json lives). Returns a fully-populated
 // report — caller decides whether to warn or hard-fail on Incompatible.
 func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
+	return BuildNativeModuleCompatReportWithFamilies(workDir, nil)
+}
+
+func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies []RuntimeFamily) (*CompatReport, error) {
 	host, err := loadHostSDKManifest()
 	if err != nil {
 		return nil, err
@@ -273,16 +309,37 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		return versionMismatches[i].Name < versionMismatches[j].Name
 	})
 	var reactMismatch *VersionMismatch
-	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "react"), host.React); mismatch != nil {
+	projectReact := readProjectDependencyVersion(workDir, pkg.Dependencies, "react")
+	projectExpo := readProjectDependencyVersion(workDir, pkg.Dependencies, "expo")
+	projectRN := readProjectDependencyVersion(workDir, pkg.Dependencies, "react-native")
+	if mismatch := detectFrameworkVersionMismatch(projectReact, host.React); mismatch != nil {
 		reactMismatch = mismatch
 	}
 	var expoMismatch *VersionMismatch
-	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "expo"), host.Expo); mismatch != nil {
+	if mismatch := detectFrameworkVersionMismatch(projectExpo, host.Expo); mismatch != nil {
 		expoMismatch = mismatch
 	}
 	var rnMismatch *VersionMismatch
-	if mismatch := detectFrameworkVersionMismatch(readProjectDependencyVersion(workDir, pkg.Dependencies, "react-native"), host.ReactNative); mismatch != nil {
+	if mismatch := detectFrameworkVersionMismatch(projectRN, host.ReactNative); mismatch != nil {
 		rnMismatch = mismatch
+	}
+	guestRuntime := RuntimeFingerprint{
+		ExpoVersion:        strings.TrimSpace(projectExpo),
+		ReactNativeVersion: strings.TrimSpace(projectRN),
+		ReactVersion:       strings.TrimSpace(projectReact),
+	}
+	runtimeFamilies := append([]RuntimeFamily(nil), supportedFamilies...)
+	if len(runtimeFamilies) == 0 {
+		var familyErr error
+		runtimeFamilies, familyErr = HostRuntimeFamilies()
+		if familyErr != nil {
+			runtimeFamilies = nil
+		}
+	}
+	var familySelection *RuntimeFamilySelection
+	if len(runtimeFamilies) > 0 {
+		sel := SelectRuntimeFamily(guestRuntime, runtimeFamilies)
+		familySelection = &sel
 	}
 	return &CompatReport{
 		ProjectModules:       projectMods,
@@ -298,7 +355,170 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 		HostReact:            host.React,
 		HostRN:               host.ReactNative,
 		SupportedRNRange:     host.SupportedRNRange,
+		GuestRuntime:         guestRuntime,
+		RuntimeFamily:        familySelection,
 	}, nil
+}
+
+func HostRuntimeFamilies() ([]RuntimeFamily, error) {
+	host, err := loadHostSDKManifest()
+	if err != nil {
+		return nil, err
+	}
+	family := RuntimeFamily{
+		ID:               runtimeFamilyID(host.Expo, host.ReactNative, host.React, host.Hermes.BytecodeVersion),
+		Label:            runtimeFamilyLabel(host.Expo, host.ReactNative, host.React, host.Hermes.BytecodeVersion),
+		SDKVersion:       strings.TrimSpace(host.SdkVersion),
+		ExpoVersion:      strings.TrimSpace(host.Expo),
+		ReactNative:      strings.TrimSpace(host.ReactNative),
+		React:            strings.TrimSpace(host.React),
+		HermesVersion:    strings.TrimSpace(host.Hermes.Version),
+		HermesBCVersion:  host.Hermes.BytecodeVersion,
+		SupportedRNRange: strings.TrimSpace(host.SupportedRNRange),
+	}
+	return []RuntimeFamily{family}, nil
+}
+
+func SelectRuntimeFamily(guest RuntimeFingerprint, supported []RuntimeFamily) RuntimeFamilySelection {
+	selection := RuntimeFamilySelection{
+		Guest:         guest,
+		Supported:     append([]RuntimeFamily(nil), supported...),
+		MatchKind:     "unknown",
+		SupportedHint: runtimeFamilySupportedHint(supported),
+	}
+	if len(supported) == 0 {
+		selection.Reason = "host did not advertise any runtime families"
+		return selection
+	}
+	best := supported[0]
+	bestDistance := runtimeFamilyDistance(guest, best)
+	for _, family := range supported[1:] {
+		distance := runtimeFamilyDistance(guest, family)
+		if distance < bestDistance {
+			best = family
+			bestDistance = distance
+		}
+	}
+	selection.Selected = best
+	selection.Distance = bestDistance
+	selection.ExactMatch = runtimeFamilyExactMatch(guest, best)
+	if selection.ExactMatch {
+		selection.MatchKind = "exact"
+		selection.Reason = fmt.Sprintf(
+			"guest Expo %s / RN %s / React %s matches host family %s",
+			fallbackRuntimeValue(guest.ExpoVersion, "?"),
+			fallbackRuntimeValue(guest.ReactNativeVersion, "?"),
+			fallbackRuntimeValue(guest.ReactVersion, "?"),
+			best.ID,
+		)
+		return selection
+	}
+	selection.MatchKind = "closest"
+	selection.Reason = fmt.Sprintf(
+		"guest Expo %s / RN %s / React %s is closest to host family %s",
+		fallbackRuntimeValue(guest.ExpoVersion, "?"),
+		fallbackRuntimeValue(guest.ReactNativeVersion, "?"),
+		fallbackRuntimeValue(guest.ReactVersion, "?"),
+		best.ID,
+	)
+	return selection
+}
+
+func runtimeFamilyID(expo, rn, react string, bc int) string {
+	return fmt.Sprintf(
+		"expo-%s-rn-%s-react-%s-bc-%d",
+		runtimeFamilyVersionToken(expo),
+		runtimeFamilyVersionToken(rn),
+		runtimeFamilyVersionToken(react),
+		bc,
+	)
+}
+
+func runtimeFamilyLabel(expo, rn, react string, bc int) string {
+	return fmt.Sprintf(
+		"Expo %s / RN %s / React %s / BC%d",
+		fallbackRuntimeValue(strings.TrimSpace(expo), "?"),
+		fallbackRuntimeValue(strings.TrimSpace(rn), "?"),
+		fallbackRuntimeValue(strings.TrimSpace(react), "?"),
+		bc,
+	)
+}
+
+func runtimeFamilyVersionToken(raw string) string {
+	s := parseSemverish(raw)
+	if s == nil {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return "unknown"
+		}
+		raw = strings.NewReplacer(".", "-", "^", "", "~", "", " ", "", "/", "-").Replace(raw)
+		return strings.ToLower(raw)
+	}
+	return fmt.Sprintf("%d-%d-%d", s.major, s.minor, s.patch)
+}
+
+func runtimeFamilyExactMatch(guest RuntimeFingerprint, family RuntimeFamily) bool {
+	return runtimeVersionEquals(guest.ExpoVersion, family.ExpoVersion) &&
+		runtimeVersionEquals(guest.ReactNativeVersion, family.ReactNative) &&
+		runtimeVersionEquals(guest.ReactVersion, family.React)
+}
+
+func runtimeVersionEquals(a, b string) bool {
+	sa := parseSemverish(a)
+	sb := parseSemverish(b)
+	if sa == nil || sb == nil {
+		return strings.TrimSpace(a) == strings.TrimSpace(b)
+	}
+	return sa.major == sb.major && sa.minor == sb.minor && sa.patch == sb.patch
+}
+
+func runtimeFamilyDistance(guest RuntimeFingerprint, family RuntimeFamily) int {
+	return weightedVersionDistance(guest.ReactNativeVersion, family.ReactNative, 700, 150, 30) +
+		weightedVersionDistance(guest.ExpoVersion, family.ExpoVersion, 400, 90, 20) +
+		weightedVersionDistance(guest.ReactVersion, family.React, 250, 70, 15)
+}
+
+func weightedVersionDistance(guest, host string, majorWeight, minorWeight, patchWeight int) int {
+	ga := parseSemverish(guest)
+	ha := parseSemverish(host)
+	if ga == nil || ha == nil {
+		if strings.TrimSpace(guest) == strings.TrimSpace(host) {
+			return 0
+		}
+		if strings.TrimSpace(guest) == "" || strings.TrimSpace(host) == "" {
+			return majorWeight * 2
+		}
+		return majorWeight
+	}
+	return intAbs(ga.major-ha.major)*majorWeight +
+		intAbs(ga.minor-ha.minor)*minorWeight +
+		intAbs(ga.patch-ha.patch)*patchWeight
+}
+
+func runtimeFamilySupportedHint(families []RuntimeFamily) string {
+	if len(families) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(families))
+	for _, family := range families {
+		parts = append(parts, fmt.Sprintf("%s (%s)", family.ID, family.Label))
+	}
+	return strings.Join(parts, "; ")
+}
+
+func fallbackRuntimeValue(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+	return raw
+}
+
+func intAbs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 func readProjectDependencyVersion(workDir string, deps map[string]string, name string) string {

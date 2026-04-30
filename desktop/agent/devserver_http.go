@@ -2224,14 +2224,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// Agent's preflight uses these to fail fast when the
 		// project's installed deps drift outside what the caller
 		// supports. Mirrors mobile's HBC-vs-manifest validation.
-		ClientVersion            string `json:"clientVersion,omitempty"`
-		ExpectReact              string `json:"expectReact,omitempty"`
-		ExpectReactDom           string `json:"expectReactDom,omitempty"`
-		AllowUnsafeNativeModules bool   `json:"allowUnsafeNativeModules,omitempty"`
-		ConsumerVersion          string `json:"consumerVersion,omitempty"`
-		ConsumerBuild            string `json:"consumerBuild,omitempty"`
-		ConsumerSDKVersion       string `json:"consumerSdkVersion,omitempty"`
-		ConsumerHermesBCVersion  int    `json:"consumerHermesBCVersion,omitempty"`
+		ClientVersion            string          `json:"clientVersion,omitempty"`
+		ExpectReact              string          `json:"expectReact,omitempty"`
+		ExpectReactDom           string          `json:"expectReactDom,omitempty"`
+		AllowUnsafeNativeModules bool            `json:"allowUnsafeNativeModules,omitempty"`
+		ConsumerVersion          string          `json:"consumerVersion,omitempty"`
+		ConsumerBuild            string          `json:"consumerBuild,omitempty"`
+		ConsumerSDKVersion       string          `json:"consumerSdkVersion,omitempty"`
+		ConsumerHermesBCVersion  int             `json:"consumerHermesBCVersion,omitempty"`
+		ConsumerRuntimeFamilies  []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -2463,6 +2464,41 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		prep = detectProjectPreparation(workDir, manifest)
+	}
+
+	// ── Runtime family selection preflight ──
+	// The host advertises the runtime families it can safely execute.
+	// The agent fingerprints the guest app and selects the closest host
+	// family before bundle/compile so logs and UI can explain the target
+	// contract upfront, even when the final load is blocked later.
+	var compatReport *CompatReport
+	if report, err := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); err == nil {
+		compatReport = report
+		if report.RuntimeFamily != nil {
+			sel := report.RuntimeFamily
+			metaMsg := fmt.Sprintf(
+				"Runtime family %s: guest Expo %s / RN %s / React %s -> host %s",
+				sel.MatchKind,
+				fallbackRuntimeValue(sel.Guest.ExpoVersion, "?"),
+				fallbackRuntimeValue(sel.Guest.ReactNativeVersion, "?"),
+				fallbackRuntimeValue(sel.Guest.ReactVersion, "?"),
+				sel.Selected.ID,
+			)
+			if sel.ExactMatch {
+				log.Printf("[super-host] runtime-family match: %s", sel.Reason)
+				s.devServerMgr.EmitLog("Runtime family matched host exactly: " + sel.Selected.Label)
+			} else {
+				log.Printf("[super-host] runtime-family closest: %s | supported=%s", sel.Reason, sel.SupportedHint)
+				s.devServerMgr.EmitLog("Runtime family drift: selected closest host family " + sel.Selected.Label)
+				s.devServerMgr.EmitLog("Host supports: " + sel.SupportedHint)
+			}
+			s.upsertDevOperation("build_native", "running", "prepare", metaMsg, workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{
+				"platform":               req.Platform,
+				"runtimeFamilySelection": sel,
+			})
+		}
+	} else {
+		log.Printf("[super-host] runtime-family probe skipped: %v", err)
 	}
 
 	// ── Detect project type ──
@@ -2767,7 +2803,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	var compatExpoVersionMismatch *VersionMismatch
 	var compatRNVersionMismatch *VersionMismatch
 	var compatHostRN string
-	if report, err := BuildNativeModuleCompatReport(workDir); err == nil {
+	if report := compatReport; report != nil {
 		s.emitBuildProgress("Checking host compatibility...", "compat")
 		s.upsertDevOperation("build_native", "running", "compat", "Checking whether Yaver can safely restart this bundle…", workDir, target.DeviceID, phaseProgress("compat"), map[string]interface{}{"platform": req.Platform})
 		compatIncompatible = report.Incompatible
@@ -2782,6 +2818,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		meta.HostExpoVersion = strings.TrimSpace(report.HostExpo)
 		meta.HostReactNativeVersion = strings.TrimSpace(report.HostRN)
 		meta.HostReactVersion = strings.TrimSpace(report.HostReact)
+		meta.GuestRuntime = &report.GuestRuntime
+		meta.RuntimeFamilySelection = report.RuntimeFamily
+		if report.RuntimeFamily != nil {
+			meta.HostRuntimeFamilies = append([]RuntimeFamily(nil), report.RuntimeFamily.Supported...)
+		}
 		if report.ReactVersionMismatch != nil {
 			meta.ProjectReactVersion = report.ReactVersionMismatch.ProjectVersion
 		}
@@ -2854,6 +2895,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"reactNativeVersionMismatch":    compatRNVersionMismatch,
 					"reactVersionMismatch":          compatReactVersionMismatch,
 					"blocked":                       true,
+					"guestRuntime":                  report.GuestRuntime,
+					"runtimeFamilySelection":        report.RuntimeFamily,
 				}
 				if len(compatIncompatible) > 0 {
 					errMsg = fmt.Sprintf(
@@ -2873,7 +2916,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 						strings.Join(parts, ", "),
 					)
 				} else {
-					respCode = "FRAMEWORK_VERSION_MISMATCH"
+					respCode = "RUNTIME_FAMILY_MISMATCH"
 					parts := make([]string, 0, 3)
 					if compatExpoVersionMismatch != nil {
 						parts = append(parts, fmt.Sprintf("expo project %s vs host %s", compatExpoVersionMismatch.ProjectVersion, compatExpoVersionMismatch.HostVersion))
@@ -2888,9 +2931,15 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 						"Blocked native Hermes load: framework/runtime drift between guest and Yaver host: %s",
 						strings.Join(parts, ", "),
 					)
-					title = "Framework runtime mismatch"
-					userMsg = "The bundle compiled, but Yaver blocked restart because the guest app's Expo/React runtime does not match the mobile host."
-					helpHint = "Align the project's Expo, React Native, and React versions with this Yaver host before retrying."
+					title = "Runtime family mismatch"
+					userMsg = "The bundle compiled, but Yaver blocked restart because the guest app's runtime family does not match the mobile host."
+					helpHint = "Use a host runtime family Yaver supports, or align the project's Expo, React Native, and React versions before retrying."
+					if report.RuntimeFamily != nil {
+						errMsg = fmt.Sprintf("%s. Closest host family: %s. Host supports: %s",
+							errMsg, report.RuntimeFamily.Selected.Label, report.RuntimeFamily.SupportedHint)
+						helpHint = fmt.Sprintf("Closest host family: %s. Host supports: %s",
+							report.RuntimeFamily.Selected.Label, report.RuntimeFamily.SupportedHint)
+					}
 				}
 				incident := s.appendDevIncident("build", ReasonBuildNativeFailed, title, userMsg, errMsg, helpHint, workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, payload, buildOp.ID)
 				s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{
@@ -2903,6 +2952,8 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"reactNativeVersionMismatch":    compatRNVersionMismatch,
 					"reactVersionMismatch":          compatReactVersionMismatch,
 					"blocked":                       true,
+					"guestRuntime":                  report.GuestRuntime,
+					"runtimeFamilySelection":        report.RuntimeFamily,
 				}, incident.ID)
 				jsonReply(w, http.StatusConflict, map[string]interface{}{
 					"status":                        "blocked",
@@ -2921,7 +2972,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"hostSdkVersion":                report.HostSDKVersion,
 					"hostExpoVersion":               report.HostExpo,
 					"hostReactNative":               report.HostRN,
+					"hostReactVersion":              report.HostReact,
 					"supportedRNRange":              report.SupportedRNRange,
+					"guestRuntime":                  report.GuestRuntime,
+					"runtimeFamilySelection":        report.RuntimeFamily,
+					"hostRuntimeFamilies":           meta.HostRuntimeFamilies,
 					"bcVersion":                     meta.HermesBCVersion,
 					"md5":                           meta.MD5,
 					"size":                          meta.Size,
@@ -2930,7 +2985,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	} else {
-		log.Printf("[super-host] native-module compat probe skipped: %v", err)
+		log.Printf("[super-host] native-module compat probe skipped: no report")
 	}
 
 	// ── Check for assets ──
@@ -2999,7 +3054,11 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"hostSdkVersion":                meta.HostSDKVersion,
 		"hostExpoVersion":               meta.HostExpoVersion,
 		"hostReactNative":               compatHostRN,
+		"hostReactVersion":              meta.HostReactVersion,
 		"supportedRNRange":              meta.SupportedRNRange,
+		"guestRuntime":                  meta.GuestRuntime,
+		"runtimeFamilySelection":        meta.RuntimeFamilySelection,
+		"hostRuntimeFamilies":           meta.HostRuntimeFamilies,
 		"incompatibleNativeModules":     compatIncompatible,
 		"matchedNativeModules":          compatMatched,
 		"ignoredNativeModules":          compatIgnored,

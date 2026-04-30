@@ -64,6 +64,7 @@ function currentYaverConsumerContract() {
     consumerBuild: typeof info.build === "string" ? info.build : undefined,
     consumerSdkVersion: typeof info.sdkVersion === "string" ? info.sdkVersion : undefined,
     consumerHermesBCVersion: typeof info.hermesBCVersion === "number" ? info.hermesBCVersion : undefined,
+    consumerRuntimeFamilies: Array.isArray(info.runtimeFamilies) ? info.runtimeFamilies : undefined,
   };
 }
 
@@ -259,7 +260,7 @@ export default function HotReloadScreen() {
       };
 
       // Step 1: Build production Hermes bytecode bundle (embedded hermesc BC96)
-      const platform = Platform.OS;
+      const platform = Platform.OS === "android" ? "android" : "ios";
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
@@ -276,7 +277,13 @@ export default function HotReloadScreen() {
       }
 
       const sizeKB = Math.round((buildResult.size || 0) / 1024);
-      setLoadingStatus(`Built ${sizeKB}KB BC${buildResult.bcVersion || "?"}`);
+      const familySelection = buildResult.runtimeFamilySelection;
+      const familyLabel = familySelection?.selected?.label || familySelection?.selected?.id || "";
+      setLoadingStatus(
+        familySelection?.exactMatch && familyLabel
+          ? `Built ${sizeKB}KB BC${buildResult.bcVersion || "?"} · matched ${familyLabel}`
+          : `Built ${sizeKB}KB BC${buildResult.bcVersion || "?"}${familyLabel ? ` · closest ${familyLabel}` : ""}`,
+      );
 
       // Step 2: Download assets if available
       if (buildResult.hasAssets && buildResult.assetsUrl) {
@@ -303,7 +310,10 @@ export default function HotReloadScreen() {
       await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
 
       // If we get here, bundle was validated (MD5 + BC version match)
-      setLoadingStatus(`Loaded! MD5: ${(buildResult.md5 || "").slice(0, 8)}...`);
+      const loadedFamilyLabel = familySelection?.selected?.label || familySelection?.selected?.id || "";
+      setLoadingStatus(
+        `Loaded${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""}! MD5: ${(buildResult.md5 || "").slice(0, 8)}...`,
+      );
     } catch (err: any) {
       clearTimeout(buildAbortTimer);
       setLoadingStatus("");

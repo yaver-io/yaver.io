@@ -11,12 +11,29 @@ final class YaverInfo: NSObject {
     if let modules = SDKManifest.shared.raw["nativeModules"] as? [String: String] {
       availableModules = Array(modules.keys).sorted()
     }
+    let runtimeFamilies: [[String: Any]] = SDKManifest.shared.runtimeFamilies.map { family in
+      [
+        "id": family.id,
+        "label": family.label,
+        "sdkVersion": family.sdkVersion ?? "",
+        "expoVersion": family.expoVersion ?? "",
+        "reactNativeVersion": family.reactNativeVersion ?? "",
+        "reactVersion": family.reactVersion ?? "",
+        "hermesVersion": family.hermesVersion ?? "",
+        "hermesBCVersion": family.hermesBCVersion ?? 0,
+        "supportedRNRange": family.supportedRNRange ?? "",
+      ]
+    }
     return [
       "isYaver": true,
       "version": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
       "build": (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String) ?? "",
       "sdkVersion": SDKManifest.shared.sdkVersion ?? "",
       "hermesBCVersion": Int(SDKManifest.shared.hermesBytecodeVersion),
+      "runtimeFamilies": runtimeFamilies,
+      "currentRuntimeFamilyId": UserDefaults.standard.string(forKey: "yaverSelectedRuntimeFamilyID")
+        ?? SDKManifest.shared.defaultRuntimeFamilyID,
+      "defaultRuntimeFamilyId": SDKManifest.shared.defaultRuntimeFamilyID,
       // Guest bundles run inside Yaver's own super-host, not their original app
       // container. Startup code that assumes project-specific entitlements or
       // push-token wiring should opt out when these flags are true.
