@@ -235,3 +235,18 @@ func TestDetectMonorepoLineageYaverIoDogfoodLayout(t *testing.T) {
 		t.Errorf("web + mobile should have distinct app names; both = %q", nameW)
 	}
 }
+
+func TestHasProjectGitContext_WalksDeepFixtureAncestors(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "yaver.io")
+	fixture := filepath.Join(repo, "tests", "fixtures", "native-ios-swift")
+	if err := os.MkdirAll(fixture, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !hasProjectGitContext(fixture) {
+		t.Fatalf("expected fixture path to inherit git context from repo root")
+	}
+}

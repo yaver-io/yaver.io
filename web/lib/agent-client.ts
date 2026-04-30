@@ -318,6 +318,50 @@ export interface MobileWorkerPreviewSession {
   targetCommandScope?: string;
 }
 
+export interface RemoteRuntimeTarget {
+  id: string;
+  label: string;
+  platform: string;
+  runtimeHostClass?: string;
+  enabled: boolean;
+  reason?: string;
+  hostOs?: string;
+  requiredCli?: string;
+}
+
+export interface RemoteRuntimeCapabilities {
+  workDir: string;
+  framework: string;
+  executionMode: "rn-hermes" | "web-webview" | "native-webrtc" | "unsupported";
+  primarySurface: "hermes" | "webview" | "webrtc" | "none";
+  remoteRuntimeEligible: boolean;
+  feedbackSdkCompatible: boolean;
+  feedbackSdkNote?: string;
+  feedbackControlProtocol?: string;
+  supportedTransports?: string[];
+  currentHostClass?: string;
+  targets: RemoteRuntimeTarget[];
+}
+
+export interface RemoteRuntimeSession {
+  id: string;
+  workDir: string;
+  framework: string;
+  executionMode: "rn-hermes" | "web-webview" | "native-webrtc" | "unsupported";
+  targetId: string;
+  targetLabel: string;
+  platform?: string;
+  deviceId?: string;
+  runtimeHostClass?: string;
+  transportMode?: string;
+  frameTransport?: string;
+  status: string;
+  lastCommand?: string;
+  createdAt: string;
+  updatedAt: string;
+  note?: string;
+}
+
 // Vault entries — mirrors VaultEntry / VaultEntrySummary in vault.go.
 export type VaultCategory = "api-key" | "signing-key" | "ssh-key" | "git-credential" | "custom";
 
@@ -3182,7 +3226,7 @@ export class AgentClient {
 
   // ── Projects ───────────────────────────────────────────────────────
 
-  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; tags?: string[] }[]> {
+  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; tags?: string[] }[]> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects`, { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));
@@ -3204,6 +3248,8 @@ export class AgentClient {
     name: string;
     path: string;
     framework: string;
+    executionMode?: string;
+    primarySurface?: string;
     sdkVersion?: string;
     hasDevBuild?: boolean;
     branch?: string;
@@ -3223,6 +3269,8 @@ export class AgentClient {
       name: String(p.name ?? ""),
       path: String(p.path ?? ""),
       framework: String(p.framework ?? ""),
+      executionMode: typeof p.executionMode === "string" ? p.executionMode : undefined,
+      primarySurface: typeof p.primarySurface === "string" ? p.primarySurface : undefined,
       sdkVersion: typeof p.sdkVersion === "string" ? p.sdkVersion : undefined,
       hasDevBuild: typeof p.hasDevBuild === "boolean" ? p.hasDevBuild : undefined,
       branch: typeof p.branch === "string" ? p.branch : undefined,
@@ -3240,6 +3288,95 @@ export class AgentClient {
     const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, { headers: this.authHeaders });
     if (!res.ok) throw new Error("Failed to get project actions");
     return res.json();
+  }
+
+  async getRemoteRuntimeCapabilities(workDir: string, framework: string): Promise<RemoteRuntimeCapabilities> {
+    this.assertConnected();
+    const url = new URL(`${this.baseUrl}/remote-runtime/capabilities`);
+    url.searchParams.set("workDir", workDir);
+    url.searchParams.set("framework", framework);
+    const res = await fetch(url.toString(), { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to load remote runtime capabilities: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async startRemoteRuntimeSession(workDir: string, framework: string, targetId: string, transportMode?: string): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ workDir, framework, targetId, transportMode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to start remote runtime session: HTTP ${res.status}`);
+    return data as RemoteRuntimeSession;
+  }
+
+  async sendRemoteRuntimeCommand(sessionId: string, command: "launch-feedback", source: string = "web"): Promise<{ ok: boolean; note?: string; protocol?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/command`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ command, source }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to send remote runtime command: HTTP ${res.status}`);
+    return data;
+  }
+
+  async getRemoteRuntimeSession(sessionId: string): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to load remote runtime session: HTTP ${res.status}`);
+    return data as RemoteRuntimeSession;
+  }
+
+  async closeRemoteRuntimeSession(sessionId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to close remote runtime session: HTTP ${res.status}`);
+  }
+
+  async createRemoteRuntimeWebRTCAnswer(sessionId: string, offer: { sdp?: string; type?: string }): Promise<{ session: RemoteRuntimeSession; answer: { sdp?: string; type?: string }; transport?: string; note?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/webrtc/offer`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: offer.sdp || "", type: offer.type || "offer" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to negotiate remote runtime WebRTC: HTTP ${res.status}`);
+    return data as { session: RemoteRuntimeSession; answer: { sdp?: string; type?: string }; transport?: string; note?: string };
+  }
+
+  async fetchRemoteRuntimeFrame(sessionId: string): Promise<Blob> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/frame?ts=${Date.now()}`, {
+      headers: this.authHeaders,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error || `Failed to fetch remote runtime frame: HTTP ${res.status}`);
+    }
+    return await res.blob();
+  }
+
+  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "text" | "back" | "home"; x?: number; y?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/control`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to send remote runtime control: HTTP ${res.status}`);
+    return (data?.session || data) as RemoteRuntimeSession;
   }
 
   async getPublishConfig(dir?: string): Promise<{ config: unknown; exists: boolean; path: string }> {

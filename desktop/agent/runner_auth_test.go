@@ -158,3 +158,80 @@ func TestDetectRunnerRuntimeStatusOpenCodeZAIVaultKey(t *testing.T) {
 		t.Fatalf("expected vault:ZAI_API_KEY auth source, got %q", status.AuthSource)
 	}
 }
+
+func TestDetectRunnerRuntimeStatusOpenCodeCustomProviderConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GLM_API_KEY", "")
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	xdgConfig := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	cfgPath := filepath.Join(xdgConfig, "opencode", "opencode.jsonc")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	raw := `{
+  "provider": {
+    "my-gateway": {
+      "options": {
+        "baseURL": "https://llm.example.com/v1",
+        "apiKey": "sk-test"
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write opencode config: %v", err)
+	}
+
+	status := DetectRunnerRuntimeStatus(GetRunnerConfig("opencode"), t.TempDir())
+	if !status.Ready {
+		t.Fatalf("expected custom provider config to be allowed, got error: %s", status.Error)
+	}
+	if !status.AuthConfigured {
+		t.Fatalf("expected custom provider config to be detected")
+	}
+	if status.AuthSource != cfgPath {
+		t.Fatalf("expected auth source %q, got %q", cfgPath, status.AuthSource)
+	}
+}
+
+func TestDetectRunnerRuntimeStatusOpenCodeRemoteOllamaConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GLM_API_KEY", "")
+	t.Setenv("ZAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	xdgConfig := filepath.Join(t.TempDir(), "config")
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+	cfgPath := filepath.Join(xdgConfig, "opencode", "opencode.jsonc")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	raw := `{
+  "provider": {
+    "ollama": {
+      "options": {
+        "baseURL": "http://100.64.0.12:11434/v1"
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(cfgPath, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write opencode config: %v", err)
+	}
+
+	status := DetectRunnerRuntimeStatus(GetRunnerConfig("opencode"), t.TempDir())
+	if !status.Ready {
+		t.Fatalf("expected remote ollama config to be allowed, got error: %s", status.Error)
+	}
+	if !status.AuthConfigured {
+		t.Fatalf("expected remote ollama config to be detected")
+	}
+	if status.AuthSource != "local provider config" {
+		t.Fatalf("expected local provider config source, got %q", status.AuthSource)
+	}
+}

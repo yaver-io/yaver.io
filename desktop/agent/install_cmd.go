@@ -227,10 +227,17 @@ var integrations = []installPlan{
 	{
 		name:        "android-sdk",
 		description: "Android SDK platform-tools (adb) + emulator — required for `target: android-emu`",
-		macOS:       []string{"brew install --cask android-platform-tools", "brew install --cask android-commandlinetools"},
-		linux: []linuxStep{
-			{"apt-get", "sudo apt-get install -y android-tools-adb"},
-		},
+		runFunc:     runAndroidSDKInstall,
+	},
+	{
+		name:        "xcodegen",
+		description: "XcodeGen — generates the Swift Todo fixture project and keeps native iOS sample apps reproducible",
+		macOS:       []string{"brew install xcodegen"},
+	},
+	{
+		name:        "cliclick",
+		description: "cliclick — macOS UI automation helper for native remote-runtime control fallbacks outside Hermes",
+		macOS:       []string{"brew install cliclick"},
 	},
 	{
 		name:        "appium",
@@ -273,6 +280,11 @@ var integrations = []installPlan{
 			}
 			return nil
 		},
+	},
+	{
+		name:        "remote-runtime",
+		description: "Native remote-runtime stack for Swift/Kotlin projects: Android emulator tools everywhere, plus macOS host helpers for iOS Simulator and native sample projects. Meta-target.",
+		runFunc:     runRemoteRuntimeInstall,
 	},
 	{
 		name:        "opencode",
@@ -478,6 +490,11 @@ func checkInstalled(name string) string {
 			}
 		}
 		return "—"
+	case "android-sdk":
+		if findAndroidToolPath("adb") != "" && findAndroidToolPath("emulator") != "" && findAndroidToolPath("sdkmanager") != "" {
+			return "✓"
+		}
+		return "—"
 	case "vercel", "convex", "supabase":
 		if home, err := os.UserHomeDir(); err == nil {
 			if _, err := os.Stat(filepath.Join(home, ".local", "bin", name)); err == nil {
@@ -507,7 +524,9 @@ func checkInstalled(name string) string {
 		"chrome":            {"google-chrome", "google-chrome-stable", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"},
 		"chromium":          {"chromium", "chromium-browser", "/Applications/Chromium.app/Contents/MacOS/Chromium"},
 		"firefox":           {"firefox", "/Applications/Firefox.app/Contents/MacOS/firefox"},
-		"android-sdk":       {"adb"},
+		"android-sdk":       {"adb", "emulator"},
+		"xcodegen":          {"xcodegen"},
+		"cliclick":          {"cliclick"},
 		"appium":            {"appium"},
 		"maestro":           {"maestro"},
 		"opencode":          {"opencode"},
@@ -537,10 +556,11 @@ func checkInstalled(name string) string {
 
 func compositeInstallSatisfied(name string) bool {
 	required := map[string][]string{
-		"tdd":          {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
-		"backend-dev":  {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
-		"pi-dev-node":  {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "opencode", "tdd", "backend-dev"},
-		"vibe-preview": {"chromium", "ffmpeg", "maestro", "appium", "android-sdk"},
+		"tdd":            {"pre-commit", "pytest", "ruff", "vitest", "eslint", "prettier"},
+		"backend-dev":    {"sqlite3", "vercel", "convex", "postgresql-client", "postgresql", "redis-tools", "redis-server", "supabase", "mqtt-broker", "mqtt-clients"},
+		"pi-dev-node":    {"git", "gh", "uv", "docker", "mobile", "tmux", "ffmpeg", "opencode", "tdd", "backend-dev"},
+		"vibe-preview":   {"chromium", "ffmpeg", "maestro", "appium", "android-sdk"},
+		"remote-runtime": {"android-sdk"},
 	}
 	targets, ok := required[name]
 	if !ok {
@@ -548,8 +568,14 @@ func compositeInstallSatisfied(name string) bool {
 	}
 	for _, target := range targets {
 		if checkInstalled(target) != "✓" {
+			if name == "remote-runtime" && runtime.GOOS == "darwin" && (target == "xcodegen" || target == "cliclick") {
+				continue
+			}
 			return false
 		}
+	}
+	if name == "remote-runtime" && runtime.GOOS == "darwin" {
+		return checkInstalled("xcodegen") == "✓" && checkInstalled("cliclick") == "✓" && checkInstalled("android-sdk") == "✓"
 	}
 	return true
 }
@@ -781,6 +807,43 @@ func runVibePreviewInstall(ctx context.Context, progress func(string)) error {
 		progress("  - macOS users: install Xcode for sim-ios clip recording (xcrun simctl).")
 		progress("  - YAVER_VIBE_SUMMARIZER=claude turns on the LLM diff summarizer (needs `claude` CLI).")
 		progress("  - Set Think.AutoSummary.Enabled=true on a loop to start receiving summaries.")
+	}
+	return nil
+}
+
+func runAndroidSDKInstall(ctx context.Context, progress func(string)) error {
+	return installAndroidSDKRuntime(ctx, progress)
+}
+
+func runRemoteRuntimeInstall(ctx context.Context, progress func(string)) error {
+	planNames := []string{"android-sdk"}
+	if runtime.GOOS == "darwin" {
+		planNames = append(planNames, "xcodegen", "cliclick")
+	}
+	for _, name := range planNames {
+		plan, ok := metaInstallPlan(name)
+		if !ok {
+			return fmt.Errorf("missing install plan: %s", name)
+		}
+		if progress != nil {
+			progress("==> " + plan.name + " — " + plan.description)
+		}
+		if checkInstalled(plan.name) == "✓" {
+			if progress != nil {
+				progress("already installed, skipping")
+			}
+			continue
+		}
+		if err := runInstallPlan(ctx, plan, progress); err != nil {
+			return fmt.Errorf("%s: %w", plan.name, err)
+		}
+	}
+	if progress != nil {
+		if runtime.GOOS == "darwin" {
+			progress("Remote runtime host helpers ready. Xcode itself is still required for iOS Simulator sessions.")
+		} else {
+			progress("Remote runtime Android host tools ready. iOS Simulator sessions still require a separate macOS runtime node.")
+		}
 	}
 	return nil
 }
@@ -1066,13 +1129,8 @@ func metaInstallPlan(name string) (installPlan, bool) {
 	case "android-sdk":
 		return installPlan{
 			name:        "android-sdk",
-			description: "Android SDK platform-tools (adb) — needed for `target: android-emu` and vibe-preview sim-android clip recording",
-			macOS:       []string{"brew install --cask android-platform-tools"},
-			linux: []linuxStep{
-				{"apt-get", "sudo apt-get install -y android-tools-adb"},
-				{"dnf", "sudo dnf install -y android-tools"},
-				{"pacman", "sudo pacman -S --noconfirm android-tools"},
-			},
+			description: "Managed Android SDK host tools — command-line tools, adb, emulator, and a default AVD for remote runtime / sim-android workflows",
+			runFunc:     runAndroidSDKInstall,
 		}, true
 	case "opencode":
 		return installPlan{

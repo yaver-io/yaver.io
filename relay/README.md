@@ -37,6 +37,21 @@ Application-layer P2P relay for Yaver. Enables mobile-to-desktop connectivity wi
 - **Multi-relay redundancy**: Multiple relay servers supported — if one goes down, traffic routes through others.
 - **Platform-managed**: Relay config lives in Convex `platformConfig`, not per-device or per-user config.
 
+### Remote Runtime compatibility
+
+Yaver's native `Remote Runtime` lane is relay-compatible.
+
+- `direct-webrtc` sessions still prefer direct host reachability when available.
+- `relay-jpeg-poll` sessions deliberately use the relay's normal authenticated HTTP proxy path.
+- The relay does not need TURN support for `relay-jpeg-poll`; it only needs to forward the standard remote-runtime endpoints such as:
+  - `GET /d/{deviceId}/remote-runtime/capabilities`
+  - `POST /d/{deviceId}/remote-runtime/sessions`
+  - `POST /d/{deviceId}/remote-runtime/sessions/:id/control`
+  - `POST /d/{deviceId}/remote-runtime/sessions/:id/command`
+  - `GET /d/{deviceId}/remote-runtime/sessions/:id/frame`
+
+That means the current relay is already suitable for the fallback transport used by Swift/Kotlin remote-runtime sessions. Full TURN-style media relay would still be a separate future feature for first-class cross-network WebRTC media.
+
 ## Multi-Relay Architecture
 
 Relay servers are stored as a JSON array in Convex `platformConfig` under the key `relay_servers`:

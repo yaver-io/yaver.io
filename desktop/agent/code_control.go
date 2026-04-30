@@ -147,6 +147,8 @@ func slashMenuOptions(attached bool) []string {
 		"/set agent codex",
 		"/set agent opencode",
 		"/set byok openrouter",
+		"/get mode",
+		"/set mode plan",
 		"/get model",
 		"/set model gpt-5.4",
 		"/get provider",
@@ -326,7 +328,11 @@ func handleInteractiveCodeCommand(line, attachedDeviceID, attachedDeviceName str
 		if strings.TrimSpace(profile.AttachedDeviceID) == "" {
 			return interactiveCodeResult{Handled: true}, nil
 		}
-		if err := runRemoteCodeAttach("", profile.AttachedDeviceID, "", runner, model); err != nil {
+		mode := ""
+		if normalizeRunnerID(firstNonEmpty(runner, profile.Runner)) == "opencode" {
+			mode = strings.TrimSpace(profile.Mode)
+		}
+		if err := runRemoteCodeAttach("", profile.AttachedDeviceID, "", runner, model, mode); err != nil {
 			return interactiveCodeResult{Handled: true}, err
 		}
 		return interactiveCodeResult{Handled: true, ShouldExit: true}, nil
@@ -359,7 +365,7 @@ Auth:
 
 Sessions:
   yaver code sessions
-  yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>
+  yaver code continue <task-id> [--agent <runner>] [--model <model>] [--mode <agent>] <message>
   yaver code fork <task-id> --agent <runner> [--model <model>] <message>
 
 Orchestration:
@@ -372,7 +378,9 @@ Agent + models:
   yaver code set byok <provider> [--api-key <key>] [--model <model>] [--base-url <url>] [--small-model <model>] [--plan-model <model>] [--build-model <model>]
   yaver code get byok
   yaver code set provider <provider>
+  yaver code set mode <agent>
   yaver code get provider
+  yaver code get mode
   yaver code set model <model>
   yaver code get model
   yaver code set base-url <url>
@@ -693,11 +701,12 @@ func runCodeSessionsControl(args []string) error {
 
 func runCodeContinueControl(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>")
+		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] [--mode <agent>] <message>")
 	}
 	taskID := strings.TrimSpace(args[0])
 	runner := ""
 	model := ""
+	mode := ""
 	var messageParts []string
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -713,20 +722,29 @@ func runCodeContinueControl(args []string) error {
 			}
 			model = strings.TrimSpace(args[i+1])
 			i++
+		case "--mode":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --mode")
+			}
+			mode = strings.TrimSpace(args[i+1])
+			i++
 		default:
 			messageParts = append(messageParts, args[i])
 		}
 	}
 	message := strings.TrimSpace(strings.Join(messageParts, " "))
 	if taskID == "" || message == "" {
-		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] <message>")
+		return fmt.Errorf("usage: yaver code continue <task-id> [--agent <runner>] [--model <model>] [--mode <agent>] <message>")
 	}
 	_, profile, err := loadCodeConfig()
 	if err != nil {
 		return err
 	}
 	payload := buildTerminalPromptPayload(message)
-	task, err := codeContinueTask(codeAttachedDevice(profile), taskID, payload, runner, model)
+	if mode == "" && normalizeRunnerID(firstNonEmpty(runner, profile.Runner)) == "opencode" {
+		mode = strings.TrimSpace(profile.Mode)
+	}
+	task, err := codeContinueTask(codeAttachedDevice(profile), taskID, payload, runner, model, mode)
 	if err != nil {
 		return err
 	}
@@ -801,7 +819,7 @@ func codeListTasks(deviceID string) ([]TaskInfo, error) {
 	return resp.Tasks, nil
 }
 
-func codeContinueTask(deviceID, taskID string, payload terminalPromptPayload, runner, model string) (*TaskInfo, error) {
+func codeContinueTask(deviceID, taskID string, payload terminalPromptPayload, runner, model, mode string) (*TaskInfo, error) {
 	var resp struct {
 		OK     bool     `json:"ok"`
 		TaskID string   `json:"taskId"`
@@ -813,6 +831,7 @@ func codeContinueTask(deviceID, taskID string, payload terminalPromptPayload, ru
 		"images": payload.Images,
 		"runner": strings.TrimSpace(runner),
 		"model":  strings.TrimSpace(model),
+		"mode":   strings.TrimSpace(mode),
 	}
 	path := "/tasks/" + strings.TrimSpace(taskID) + "/continue"
 	if deviceID == "" {
@@ -843,7 +862,7 @@ func codeForkTask(deviceID, parentTaskID, runner, model, childPrompt string) (*T
 		Prompt:       fullPrompt,
 		UserEcho:     childPrompt,
 		OriginalText: childPrompt,
-	}, runner, model)
+	}, runner, model, "")
 }
 
 func codeFetchTask(deviceID, taskID string) (*TaskInfo, error) {
@@ -869,7 +888,7 @@ func codeFetchTask(deviceID, taskID string) (*TaskInfo, error) {
 	return &resp.Task, nil
 }
 
-func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, model string) (*TaskInfo, error) {
+func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, model, mode string) (*TaskInfo, error) {
 	var resp struct {
 		OK       bool       `json:"ok"`
 		TaskID   string     `json:"taskId"`
@@ -884,6 +903,7 @@ func codeCreateTask(deviceID string, payload terminalPromptPayload, runner, mode
 		"source":      terminalLocalTaskSource,
 		"runner":      strings.TrimSpace(runner),
 		"model":       strings.TrimSpace(model),
+		"mode":        strings.TrimSpace(mode),
 	}
 	if deviceID == "" {
 		raw, err := localAgentRequest("POST", "/tasks", body)
@@ -1042,7 +1062,7 @@ func runCodeDetachControl(args []string) error {
 
 func runCodeGetControl(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: yaver code get <pc|agent|byok|provider|model|base-url|plan-model|build-model|repo|work-mode|orchestration>")
+		return fmt.Errorf("usage: yaver code get <pc|agent|byok|provider|mode|model|base-url|plan-model|build-model|repo|work-mode|orchestration>")
 	}
 	switch args[0] {
 	case "pc":
@@ -1053,6 +1073,8 @@ func runCodeGetControl(args []string) error {
 		return runCodeGetBYOK()
 	case "provider":
 		return runCodeGetProvider()
+	case "mode":
+		return runCodeGetMode()
 	case "model":
 		return runCodeGetModel()
 	case "base-url":
@@ -1074,7 +1096,7 @@ func runCodeGetControl(args []string) error {
 
 func runCodeSetControl(args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: yaver code set <agent|byok|provider|model|base-url|plan-model|build-model|repo|work-mode|orchestration> ...")
+		return fmt.Errorf("usage: yaver code set <agent|byok|provider|mode|model|base-url|plan-model|build-model|repo|work-mode|orchestration> ...")
 	}
 	switch args[0] {
 	case "agent":
@@ -1083,6 +1105,8 @@ func runCodeSetControl(args []string) error {
 		return runCodeSetBYOK(args[1:])
 	case "provider":
 		return runCodeSetProvider(args[1:])
+	case "mode":
+		return runCodeSetMode(args[1:])
 	case "model":
 		return runCodeSetModel(args[1:])
 	case "base-url":
@@ -1212,7 +1236,26 @@ func runCodeSetProvider(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("provider is required")
 	}
-	return codeApplyBYOKProvider(strings.TrimSpace(args[0]), "", "", "", "", "", "")
+	provider := normalizeOpenCodeProvider(strings.TrimSpace(args[0]))
+	if provider == "" {
+		return fmt.Errorf("provider is required")
+	}
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		if err := codeSwitchRunner(codeAttachedDevice(profile), "opencode"); err != nil {
+			return err
+		}
+		profile.Runner = "opencode"
+	}
+	profile.Provider = provider
+	if err := saveCodeConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Provider set to %s\n", provider)
+	return nil
 }
 
 func runCodeGetProvider() error {
@@ -1221,6 +1264,38 @@ func runCodeGetProvider() error {
 		return err
 	}
 	fmt.Printf("Provider: %s\n", firstNonEmpty(codeSummaryProvider(summary, profile), profile.Provider, "(default)"))
+	return nil
+}
+
+func runCodeSetMode(args []string) error {
+	mode := strings.TrimSpace(strings.Join(args, " "))
+	if mode == "" {
+		return fmt.Errorf("mode is required")
+	}
+	cfg, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		return fmt.Errorf("mode is only valid when agent=opencode")
+	}
+	profile.Mode = mode
+	if err := saveCodeConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Printf("Mode set to %s\n", mode)
+	return nil
+}
+
+func runCodeGetMode() error {
+	_, profile, err := loadCodeConfig()
+	if err != nil {
+		return err
+	}
+	if normalizeRunnerID(profile.Runner) != "opencode" {
+		return fmt.Errorf("mode is only valid when agent=opencode")
+	}
+	fmt.Printf("Mode: %s\n", firstNonEmpty(strings.TrimSpace(profile.Mode), "(default)"))
 	return nil
 }
 
@@ -1723,6 +1798,9 @@ func runCodeStatus() error {
 		if err := runCodeGetProvider(); err != nil {
 			return err
 		}
+		if err := runCodeGetMode(); err != nil {
+			return err
+		}
 		if err := runCodeGetBaseURL(); err != nil {
 			return err
 		}
@@ -1740,9 +1818,29 @@ func codeSwitchRunner(deviceID, runner string) error {
 	body := map[string]interface{}{"runnerId": runner}
 	if deviceID == "" {
 		_, err := localAgentRequest("POST", "/agent/runner/switch", body)
+		if err != nil && shouldIgnoreLocalCodeRunnerSwitchError(err) {
+			return nil
+		}
 		return err
 	}
 	return remoteAgentJSONForDevice(context.Background(), deviceID, "POST", "/agent/runner/switch", body, nil)
+}
+
+func shouldIgnoreLocalCodeRunnerSwitchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(msg, "token belongs to a different user"):
+		return true
+	case strings.Contains(msg, "not authenticated"):
+		return true
+	case strings.Contains(msg, "agent not reachable"):
+		return true
+	default:
+		return false
+	}
 }
 
 func codeTargetInfo() (map[string]interface{}, string, error) {

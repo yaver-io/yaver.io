@@ -16,6 +16,7 @@ type CodeConfigSummary struct {
 type codeConfigPatchRequest struct {
 	Runner             *string `json:"runner,omitempty"`
 	Model              *string `json:"model,omitempty"`
+	Mode               *string `json:"mode,omitempty"`
 	Provider           *string `json:"provider,omitempty"`
 	BaseURL            *string `json:"baseUrl,omitempty"`
 	WorkMode           *string `json:"workMode,omitempty"`
@@ -120,6 +121,9 @@ func applyCodeConfigPatch(patch codeConfigPatchRequest) (*CodeConfigSummary, err
 				return nil, err
 			}
 		}
+	}
+	if patch.Mode != nil {
+		profile.Mode = strings.TrimSpace(*patch.Mode)
 	}
 	if patch.Provider != nil {
 		profile.Provider = normalizeOpenCodeProvider(*patch.Provider)

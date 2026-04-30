@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from "react-native";
+import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
@@ -33,6 +34,8 @@ interface ProjectItem {
   path: string;
   branch?: string;
   framework?: string;
+  executionMode?: string;
+  primarySurface?: string;
   tags?: string[];
 }
 
@@ -45,12 +48,18 @@ const FRAMEWORK_ICONS: Record<string, string> = {
   flutter: "\uD83D\uDC26",
   nextjs: "\u25B2",
   vite: "\u26A1",
+  swift: "\uF8FF",
+  kotlin: "\u25C8",
 };
 
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
 function isHermesMobileFramework(framework?: string): boolean {
   return framework === "expo" || framework === "react-native";
+}
+
+function isNativeRemoteRuntimeProject(project: ProjectItem): boolean {
+  return project.executionMode === "native-webrtc" || project.framework === "swift" || project.framework === "kotlin";
 }
 
 function agentFlowGuidance(framework?: string): string | null {
@@ -81,6 +90,7 @@ function currentYaverGuestCrashReport(): GuestCrashReport | null {
 
 export default function HotReloadScreen() {
   const c = useColors();
+  const router = useRouter();
   const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
@@ -196,7 +206,9 @@ export default function HotReloadScreen() {
             path: p.path,
             branch: p.branch,
             framework: p.framework,
-            tags: [p.framework],
+            executionMode: p.executionMode,
+            primarySurface: p.primarySurface,
+            tags: [p.framework, p.primarySurface].filter(Boolean),
           })));
         }
       } catch {}
@@ -413,6 +425,18 @@ export default function HotReloadScreen() {
 
   // Tap project → start dev server directly using path + framework from scanner
   const handleStartProject = useCallback(async (project: ProjectItem) => {
+    if (isNativeRemoteRuntimeProject(project)) {
+      router.navigate({
+        pathname: "/remote-runtime",
+        params: {
+          project: project.name,
+          path: project.path,
+          framework: project.framework || "",
+        },
+      } as any);
+      return;
+    }
+
     const isRunning = devStatus?.workDir === project.path;
     if (isRunning) {
       handleOpen();
@@ -434,7 +458,7 @@ export default function HotReloadScreen() {
     } finally {
       setStartingProject(null);
     }
-  }, [devStatus, handleOpen]);
+  }, [devStatus, handleOpen, router, selectedTarget?.deviceClass, selectedTarget?.id, selectedTarget?.name]);
 
   const [loadingStatus, setLoadingStatus] = useState("");
   const activeProjectPath = devStatus?.workDir ? String(devStatus.workDir).trim() : "";
@@ -767,13 +791,20 @@ export default function HotReloadScreen() {
                   <View style={s.cardTitleContainer}>
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
                     <View style={s.tagRow}>
-                      <View style={s.tag}>
-                        <Text style={s.tagText}>{item.framework}</Text>
-                      </View>
+                      {item.tags?.map((tag) => (
+                        <View key={tag} style={s.tag}>
+                          <Text style={s.tagText}>{tag}</Text>
+                        </View>
+                      ))}
                     </View>
                     <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
                       {item.path}
                     </Text>
+                    {isNativeRemoteRuntimeProject(item) ? (
+                      <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
+                        Opens Remote Runtime. Hermes stays first for React Native projects.
+                      </Text>
+                    ) : null}
                   </View>
                   {isStarting ? (
                     <ActivityIndicator size="small" color={c.accent} />
@@ -790,7 +821,7 @@ export default function HotReloadScreen() {
                 {projectsScanning
                   ? "Discovering mobile projects on your machine…"
                   : projects.length > 0
-                  ? "No hot-reloadable projects found.\nLooking for Expo, Flutter, Next.js, or Vite projects."
+                  ? "No mobile projects found.\nLooking for Hermes apps and native Swift/Kotlin projects."
                   : "No projects discovered yet.\nThe agent scans your home directory automatically."}
               </Text>
               <Pressable

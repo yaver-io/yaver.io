@@ -147,9 +147,10 @@ type HTTPServer struct {
 	qualityMgr *QualityManager
 
 	// Health monitor (production URL pinging)
-	healthMon     *HealthMonitor
-	agentGraphMgr *AgentGraphManager
-	publishMgr    *PublishManager
+	healthMon        *HealthMonitor
+	agentGraphMgr    *AgentGraphManager
+	publishMgr       *PublishManager
+	remoteRuntimeMgr *RemoteRuntimeManager
 
 	// Named log streams for fan-out of long-running CLI ops
 	// (autodev, autotest, etc.) to mobile + web subscribers.
@@ -686,6 +687,9 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/projects/mobile", s.auth(s.handleMobileProjects))
 	mux.HandleFunc("/projects/web", s.auth(s.handleProjectsByCapability))
 	mux.HandleFunc("/projects/all", s.auth(s.handleProjectsByCapability))
+	mux.HandleFunc("/remote-runtime/capabilities", s.auth(s.handleRemoteRuntimeCapabilities))
+	mux.HandleFunc("/remote-runtime/sessions", s.auth(s.handleRemoteRuntimeSessions))
+	mux.HandleFunc("/remote-runtime/sessions/", s.auth(s.handleRemoteRuntimeSessionRoute))
 	// Monorepo detection — desktop/agent/monorepo_detect.go
 	mux.HandleFunc("/projects/monorepo", s.auth(s.handleMonorepoDetect))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
@@ -2253,14 +2257,16 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		projects = listDiscoveredProjects()
 	}
 	type projectResp struct {
-		Name          string   `json:"name"`
-		Path          string   `json:"path"`
-		Branch        string   `json:"branch,omitempty"`
-		Framework     string   `json:"framework,omitempty"`
-		GitRemote     string   `json:"gitRemote,omitempty"`
-		Tags          []string `json:"tags,omitempty"`
-		IsMonorepo    bool     `json:"isMonorepo,omitempty"`
-		Subframeworks []string `json:"subframeworks,omitempty"`
+		Name           string   `json:"name"`
+		Path           string   `json:"path"`
+		Branch         string   `json:"branch,omitempty"`
+		Framework      string   `json:"framework,omitempty"`
+		ExecutionMode  string   `json:"executionMode,omitempty"`
+		PrimarySurface string   `json:"primarySurface,omitempty"`
+		GitRemote      string   `json:"gitRemote,omitempty"`
+		Tags           []string `json:"tags,omitempty"`
+		IsMonorepo     bool     `json:"isMonorepo,omitempty"`
+		Subframeworks  []string `json:"subframeworks,omitempty"`
 	}
 	// Filter out non-deployable projects: dotfiles, editor configs, vim plugins, etc.
 	// Only show things a solo dev would actually deploy: apps, websites, backends, APIs.
@@ -2326,7 +2332,8 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 				fileExists(filepath.Join(dir, "go.mod")) || fileExists(filepath.Join(dir, "Cargo.toml")) ||
 				fileExists(filepath.Join(dir, "Dockerfile")) || fileExists(filepath.Join(dir, "docker-compose.yml")) ||
 				fileExists(filepath.Join(dir, "docker-compose.yaml")) || fileExists(filepath.Join(dir, "pyproject.toml")) ||
-				fileExists(filepath.Join(dir, "requirements.txt")) || fileExists(filepath.Join(dir, "Makefile")) {
+				fileExists(filepath.Join(dir, "requirements.txt")) || fileExists(filepath.Join(dir, "Makefile")) ||
+				fileExists(filepath.Join(dir, "Package.swift")) || hasExtInDir(dir, ".xcodeproj") || isKotlinAndroidProject(dir) {
 				hasDeployable = true
 				break
 			}
@@ -2390,14 +2397,16 @@ func (s *HTTPServer) handleProjects(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result = append(result, projectResp{
-			Name:          name,
-			Path:          p.Path,
-			Branch:        p.Branch,
-			Framework:     framework,
-			GitRemote:     info.GitRemote,
-			Tags:          tags,
-			IsMonorepo:    isMonorepo,
-			Subframeworks: subframeworks,
+			Name:           name,
+			Path:           p.Path,
+			Branch:         p.Branch,
+			Framework:      framework,
+			ExecutionMode:  string(executionModeForFramework(framework)),
+			PrimarySurface: primarySurfaceForFramework(framework),
+			GitRemote:      info.GitRemote,
+			Tags:           tags,
+			IsMonorepo:     isMonorepo,
+			Subframeworks:  subframeworks,
 		})
 	}
 
@@ -3373,6 +3382,7 @@ func (s *HTTPServer) continueTask(w http.ResponseWriter, r *http.Request, id str
 		Images []ImageAttachment `json:"images,omitempty"`
 		Runner string            `json:"runner,omitempty"`
 		Model  string            `json:"model,omitempty"`
+		Mode   string            `json:"mode,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -3386,6 +3396,7 @@ func (s *HTTPServer) continueTask(w http.ResponseWriter, r *http.Request, id str
 	task, err := s.taskMgr.ResumeTaskWithOptions(id, body.Input, body.Images, TaskResumeOptions{
 		RunnerID: body.Runner,
 		Model:    body.Model,
+		Mode:     body.Mode,
 	})
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("resume failed: %v", err))

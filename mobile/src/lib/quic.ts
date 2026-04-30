@@ -616,6 +616,50 @@ export interface CapabilitySnapshot {
   targets: Record<string, CapabilityTargetReadiness>;
 }
 
+export interface RemoteRuntimeTarget {
+  id: string;
+  label: string;
+  platform: string;
+  runtimeHostClass?: string;
+  enabled: boolean;
+  reason?: string;
+  hostOs?: string;
+  requiredCli?: string;
+}
+
+export interface RemoteRuntimeCapabilities {
+  workDir: string;
+  framework: string;
+  executionMode: "rn-hermes" | "web-webview" | "native-webrtc" | "unsupported";
+  primarySurface: "hermes" | "webview" | "webrtc" | "none";
+  remoteRuntimeEligible: boolean;
+  feedbackSdkCompatible: boolean;
+  feedbackSdkNote?: string;
+  feedbackControlProtocol?: string;
+  supportedTransports?: string[];
+  currentHostClass?: string;
+  targets: RemoteRuntimeTarget[];
+}
+
+export interface RemoteRuntimeSession {
+  id: string;
+  workDir: string;
+  framework: string;
+  executionMode: "rn-hermes" | "web-webview" | "native-webrtc" | "unsupported";
+  targetId: string;
+  targetLabel: string;
+  platform?: string;
+  deviceId?: string;
+  runtimeHostClass?: string;
+  transportMode?: string;
+  frameTransport?: string;
+  status: string;
+  lastCommand?: string;
+  createdAt: string;
+  updatedAt: string;
+  note?: string;
+}
+
 export interface TmuxSession {
   name: string;
   windows: number;
@@ -2000,7 +2044,7 @@ export class QuicClient {
 
   /** List discovered projects on the machine, with discovery-state metadata. */
   async listProjectsDetailed(): Promise<{
-    projects: { name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[];
+    projects: { name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; gitRemote?: string; tags?: string[] }[];
     discovery?: {
       status?: "idle" | "discovering" | "partial" | "ready";
       discovering?: boolean;
@@ -2023,7 +2067,7 @@ export class QuicClient {
   }
 
   /** List discovered projects on the machine. */
-  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[] }[]> {
+  async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; gitRemote?: string; tags?: string[] }[]> {
     const data = await this.listProjectsDetailed();
     return data.projects;
   }
@@ -2070,6 +2114,95 @@ export class QuicClient {
     });
     if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
     return res.json();
+  }
+
+  async getRemoteRuntimeCapabilities(workDir: string, framework: string): Promise<RemoteRuntimeCapabilities> {
+    this.assertConnected();
+    const url = `${this.baseUrl}/remote-runtime/capabilities?workDir=${encodeURIComponent(workDir)}&framework=${encodeURIComponent(framework)}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Failed to get remote runtime capabilities: ${res.status}`);
+    return res.json();
+  }
+
+  async startRemoteRuntimeSession(workDir: string, framework: string, targetId: string, transportMode?: string): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ workDir, framework, targetId, transportMode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to start remote runtime session: ${res.status}`);
+    return data as RemoteRuntimeSession;
+  }
+
+  async sendRemoteRuntimeCommand(sessionId: string, command: "launch-feedback", source: string = "mobile"): Promise<{ ok: boolean; note?: string; protocol?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/command`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ command, source }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to send remote runtime command: ${res.status}`);
+    return data;
+  }
+
+  async getRemoteRuntimeSession(sessionId: string): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}`, {
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to load remote runtime session: ${res.status}`);
+    return data as RemoteRuntimeSession;
+  }
+
+  async closeRemoteRuntimeSession(sessionId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+      headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to close remote runtime session: ${res.status}`);
+  }
+
+  async createRemoteRuntimeWebRTCAnswer(sessionId: string, offer: { sdp?: string; type?: string }): Promise<{ session: RemoteRuntimeSession; answer: { sdp?: string; type?: string }; transport?: string; note?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/webrtc/offer`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: offer.sdp || "", type: offer.type || "offer" }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to negotiate remote runtime WebRTC: ${res.status}`);
+    return data as { session: RemoteRuntimeSession; answer: { sdp?: string; type?: string }; transport?: string; note?: string };
+  }
+
+  async fetchRemoteRuntimeFrame(sessionId: string): Promise<Blob> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/frame?ts=${Date.now()}`, {
+      headers: this.authHeaders,
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data?.error || `Failed to fetch remote runtime frame: ${res.status}`);
+    }
+    return await res.blob();
+  }
+
+  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "text" | "back" | "home"; x?: number; y?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/control`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `Failed to send remote runtime control: ${res.status}`);
+    return (data?.session || data) as RemoteRuntimeSession;
   }
 
   // ── Vibing (AI pair programming widget) ─────────────────────────

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,5 +126,83 @@ func TestBuildTerminalPromptPayloadDetectsAttachments(t *testing.T) {
 	}
 	if !strings.Contains(payload.UserEcho, "screen shot.png") {
 		t.Fatalf("echo missing image filename: %q", payload.UserEcho)
+	}
+}
+
+func TestCodeSwitchRunnerIgnoresLocalDifferentUserError(t *testing.T) {
+	restorePort := currentLocalAgentPort.Load()
+	t.Cleanup(func() { currentLocalAgentPort.Store(restorePort) })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var hit bool
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		if r.URL.Path != "/agent/runner/switch" {
+			t.Fatalf("path = %q, want /agent/runner/switch", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "token belongs to a different user"})
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	currentLocalAgentPort.Store(int64(ln.Addr().(*net.TCPAddr).Port))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".yaver"), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfg := &Config{AuthToken: "owner-token"}
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if err := codeSwitchRunner("", "codex"); err != nil {
+		t.Fatalf("codeSwitchRunner returned error: %v", err)
+	}
+	if !hit {
+		t.Fatal("expected local agent switch request to be attempted")
+	}
+}
+
+func TestCodeSwitchRunnerIgnoresLocalAgentUnavailableMessage(t *testing.T) {
+	restorePort := currentLocalAgentPort.Load()
+	t.Cleanup(func() { currentLocalAgentPort.Store(restorePort) })
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": "agent not reachable"})
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+
+	currentLocalAgentPort.Store(int64(ln.Addr().(*net.TCPAddr).Port))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".yaver"), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	cfg := &Config{AuthToken: "owner-token"}
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	if err := codeSwitchRunner("", "codex"); err != nil {
+		t.Fatalf("codeSwitchRunner returned error: %v", err)
 	}
 }

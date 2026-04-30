@@ -121,12 +121,12 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		})
 	}
 
-	// Swift (native iOS) — shown but hot reload not supported
+	// Swift (native iOS) — primary path is remote runtime over WebRTC.
 	if hasFile(dir, "Package.swift") || (hasFile(dir, "*.xcodeproj") || hasDir(dir, ".xcodeproj")) {
 		actions = append(actions, ProjectAction{
-			Label: "Hot Reload", Target: rel, Type: "dev-server",
-			Framework: "swift", Icon: "\U0001F34E",
-			Supported: false, Reason: "Native Swift hot reload coming soon",
+			Label: "Remote Runtime", Target: rel, Type: "remote-runtime",
+			Framework: "swift", Icon: "\U0001F4FA",
+			Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build iOS", Target: rel, Type: "build",
@@ -134,12 +134,12 @@ func detectActionsInDir(dir, rel string) []ProjectAction {
 		})
 	}
 
-	// Kotlin (native Android) — shown but hot reload not supported
+	// Kotlin (native Android) — primary path is remote runtime over WebRTC.
 	if hasFile(dir, "build.gradle.kts") && !pkgHas(dir, "react-native") && !hasFile(dir, "pubspec.yaml") {
 		actions = append(actions, ProjectAction{
-			Label: "Hot Reload", Target: rel, Type: "dev-server",
-			Framework: "kotlin", Icon: "\U0001F916",
-			Supported: false, Reason: "Native Kotlin hot reload coming soon",
+			Label: "Remote Runtime", Target: rel, Type: "remote-runtime",
+			Framework: "kotlin", Icon: "\U0001F4FA",
+			Supported: true,
 		})
 		actions = append(actions, ProjectAction{
 			Label: "Build Android", Target: rel, Type: "build",

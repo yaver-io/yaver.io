@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -273,7 +274,9 @@ func codexAuthPath() string {
 func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
 	authPath, authText := readFirstExistingFile(openCodeAuthPaths())
-	_, cfgText := readFirstExistingFile(openCodeConfigPaths(workDir))
+	cfgPath, cfgText := readFirstExistingFile(openCodeConfigPaths(workDir))
+	cfg := loadOpenCodeConfigMapText(cfgText)
+	providers := openCodeRuntimeProviders(cfg)
 
 	authLower := strings.ToLower(authText)
 	cfgLower := strings.ToLower(cfgText)
@@ -283,20 +286,54 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 
 	hasOpenAIOAuth := strings.Contains(authLower, "openai")
 	hasAnthropicOAuth := strings.Contains(authLower, "anthropic")
-	hasOpenAIAPI := openAIValue != "" || strings.Contains(cfgLower, "openai_api_key")
-	hasGLMAPI := glmValue != "" ||
-		strings.Contains(cfgLower, "glm_api_key") ||
-		strings.Contains(cfgLower, "zai_api_key") ||
-		strings.Contains(cfgLower, "\"glm\"") ||
-		strings.Contains(cfgLower, "\"z-ai\"") ||
-		strings.Contains(cfgLower, "\"zai\"")
-	hasAnthropicAPI := anthropicValue != "" || strings.Contains(cfgLower, "anthropic_api_key")
-	hasLocalProvider := strings.Contains(cfgLower, "ollama") ||
-		strings.Contains(cfgLower, "lmstudio") ||
-		strings.Contains(cfgLower, "llama.cpp") ||
-		strings.Contains(cfgLower, "localhost:11434") ||
-		strings.Contains(cfgLower, "127.0.0.1:11434") ||
-		strings.Contains(cfgLower, "127.0.0.1:1234")
+	hasOpenAIAPI := openAIValue != ""
+	hasGLMAPI := glmValue != ""
+	hasAnthropicAPI := anthropicValue != ""
+	hasLocalProvider := false
+	hasConfiguredProvider := false
+	for _, p := range providers {
+		id := normalizeOpenCodeProvider(p.ID)
+		baseLower := strings.ToLower(strings.TrimSpace(p.BaseURL))
+		if p.HasAPIKey || strings.TrimSpace(p.BaseURL) != "" {
+			hasConfiguredProvider = true
+		}
+		if id == "openai" && (p.HasAPIKey || openAIValue != "") {
+			hasOpenAIAPI = true
+		}
+		if (id == "glm" || id == "zai" || id == "z-ai") && (p.HasAPIKey || glmValue != "") {
+			hasGLMAPI = true
+		}
+		if id == "anthropic" && (p.HasAPIKey || anthropicValue != "") {
+			hasAnthropicAPI = true
+		}
+		if id == "ollama" || id == "lmstudio" || id == "llama.cpp" {
+			hasLocalProvider = hasLocalProvider || p.HasAPIKey || strings.TrimSpace(p.BaseURL) != ""
+		}
+		if strings.Contains(baseLower, ":11434") || strings.Contains(baseLower, ":1234") {
+			hasLocalProvider = true
+		}
+	}
+	if !hasOpenAIAPI {
+		hasOpenAIAPI = strings.Contains(cfgLower, "openai_api_key")
+	}
+	if !hasGLMAPI {
+		hasGLMAPI = strings.Contains(cfgLower, "glm_api_key") ||
+			strings.Contains(cfgLower, "zai_api_key") ||
+			strings.Contains(cfgLower, "\"glm\"") ||
+			strings.Contains(cfgLower, "\"z-ai\"") ||
+			strings.Contains(cfgLower, "\"zai\"")
+	}
+	if !hasAnthropicAPI {
+		hasAnthropicAPI = strings.Contains(cfgLower, "anthropic_api_key")
+	}
+	if !hasLocalProvider {
+		hasLocalProvider = strings.Contains(cfgLower, "ollama") ||
+			strings.Contains(cfgLower, "lmstudio") ||
+			strings.Contains(cfgLower, "llama.cpp") ||
+			strings.Contains(cfgLower, "localhost:11434") ||
+			strings.Contains(cfgLower, "127.0.0.1:11434") ||
+			strings.Contains(cfgLower, "127.0.0.1:1234")
+	}
 
 	// Anthropic explicitly forbids third-party apps from routing Claude.ai
 	// subscription OAuth credentials on behalf of users. If OpenCode is the
@@ -330,6 +367,13 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 	case hasLocalProvider:
 		status.AuthConfigured = true
 		status.AuthSource = "local provider config"
+	case hasConfiguredProvider:
+		status.AuthConfigured = true
+		if cfgPath != "" {
+			status.AuthSource = cfgPath
+		} else {
+			status.AuthSource = "provider config"
+		}
 	case strings.TrimSpace(authText) != "":
 		status.AuthConfigured = true
 		status.AuthSource = authPath
@@ -339,6 +383,50 @@ func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {
 		status.Warning = "OpenCode auth was not detected. If tasks fail, run `opencode auth list` or `/connect`."
 	}
 	return status
+}
+
+type openCodeRuntimeProvider struct {
+	ID        string
+	BaseURL   string
+	HasAPIKey bool
+}
+
+func loadOpenCodeConfigMapText(raw string) map[string]any {
+	clean := stripJSONC([]byte(raw))
+	if strings.TrimSpace(string(clean)) == "" {
+		return map[string]any{}
+	}
+	cfg := map[string]any{}
+	if err := json.Unmarshal(clean, &cfg); err != nil {
+		return map[string]any{}
+	}
+	return cfg
+}
+
+func openCodeRuntimeProviders(cfg map[string]any) []openCodeRuntimeProvider {
+	node, _ := cfg["provider"].(map[string]any)
+	if len(node) == 0 {
+		return nil
+	}
+	out := make([]openCodeRuntimeProvider, 0, len(node))
+	for id, raw := range node {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		options, _ := entry["options"].(map[string]any)
+		baseURL, _ := stringFromMap(options, "baseURL")
+		if strings.TrimSpace(baseURL) == "" {
+			baseURL, _ = stringFromMap(options, "baseUrl")
+		}
+		apiKey, _ := stringFromMap(options, "apiKey")
+		out = append(out, openCodeRuntimeProvider{
+			ID:        strings.TrimSpace(id),
+			BaseURL:   strings.TrimSpace(baseURL),
+			HasAPIKey: strings.TrimSpace(apiKey) != "",
+		})
+	}
+	return out
 }
 
 func openCodeAuthPaths() []string {

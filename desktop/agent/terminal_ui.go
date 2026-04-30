@@ -262,13 +262,26 @@ func attachRunnerLine(info *attachInfo) string {
 		name = strings.TrimSpace(info.Runner.ID)
 	}
 	model := strings.TrimSpace(info.Runner.Model)
+	mode := strings.TrimSpace(info.Runner.Mode)
+	if mode != "" {
+		mode = "mode=" + mode
+	}
 	switch {
+	case name != "" && model != "" && mode != "":
+		return name + " · " + model + " · " + mode
 	case name != "" && model != "":
 		return name + " · " + model
+	case name != "" && mode != "":
+		return name + " · " + mode
 	case name != "":
 		return name
 	case model != "":
+		if mode != "" {
+			return model + " · " + mode
+		}
 		return model
+	case mode != "":
+		return mode
 	default:
 		return ""
 	}
@@ -432,14 +445,14 @@ func printTerminalUserInput(payload terminalPromptPayload) {
 	fmt.Printf("\n\033[1;36m⟩ %s\033[0m\n\n", echo)
 }
 
-func renderTerminalPromptLabel(workDir, runner, model string) string {
-	return renderTerminalPromptLabelWithStatus(workDir, runner, model, "")
+func renderTerminalPromptLabel(workDir, runner, model, mode string) string {
+	return renderTerminalPromptLabelWithStatus(workDir, runner, model, mode, "")
 }
 
 // renderTerminalPromptLabelWithStatus is the underlying implementation;
 // status is appended as " · <status>" so the user can see at a glance
 // whether the session is offline / attached / etc.
-func renderTerminalPromptLabelWithStatus(workDir, runner, model, status string) string {
+func renderTerminalPromptLabelWithStatus(workDir, runner, model, mode, status string) string {
 	wd := strings.TrimSpace(workDir)
 	if wd == "" {
 		if cwd, err := os.Getwd(); err == nil {
@@ -470,6 +483,9 @@ func renderTerminalPromptLabelWithStatus(workDir, runner, model, status string) 
 			agent = "opencode default"
 		}
 	}
+	if normalizeRunnerID(runner) == "opencode" && strings.TrimSpace(mode) != "" {
+		agent += " [" + strings.TrimSpace(mode) + "]"
+	}
 	parts := []string{agent}
 	if wd != "" {
 		parts = append(parts, wd)
@@ -480,6 +496,6 @@ func renderTerminalPromptLabelWithStatus(workDir, runner, model, status string) 
 	return strings.Join(parts, " · ")
 }
 
-func printInteractivePrompt(workDir, runner, model string) {
-	fmt.Printf("\033[2m%s\033[0m\n\033[1;35myaver>\033[0m ", renderTerminalPromptLabel(workDir, runner, model))
+func printInteractivePrompt(workDir, runner, model, mode string) {
+	fmt.Printf("\033[2m%s\033[0m\n\033[1;35myaver>\033[0m ", renderTerminalPromptLabel(workDir, runner, model, mode))
 }

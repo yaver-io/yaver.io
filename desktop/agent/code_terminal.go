@@ -22,7 +22,7 @@ import (
 // their line-buffered scanner contract. If stdin or stdout isn't a
 // TTY we transparently fall back to runAttach so scripted callers
 // still work.
-func runCodeTerminal(runner, model string) {
+func runCodeTerminal(runner, model, mode string) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
 		attachArgs := make([]string, 0, 4)
 		if r := strings.TrimSpace(runner); r != "" {
@@ -30,6 +30,9 @@ func runCodeTerminal(runner, model string) {
 		}
 		if m := strings.TrimSpace(model); m != "" {
 			attachArgs = append(attachArgs, "--model", m)
+		}
+		if m := strings.TrimSpace(mode); m != "" {
+			attachArgs = append(attachArgs, "--mode", m)
 		}
 		runAttach(attachArgs)
 		return
@@ -72,8 +75,12 @@ func runCodeTerminal(runner, model string) {
 	// installed of the supported set if the recorded runner isn't
 	// available on PATH any more.
 	lastRunner := ""
+	lastMode := strings.TrimSpace(mode)
 	if _, profile, err := loadCodeConfig(); err == nil && profile != nil {
 		lastRunner = strings.TrimSpace(profile.Runner)
+		if lastMode == "" {
+			lastMode = strings.TrimSpace(profile.Mode)
+		}
 	}
 	wd, _ := os.Getwd()
 	inventory := ProbeLocalInventory(ProbeContext{WorkDir: wd, LastUsedRunner: lastRunner})
@@ -84,17 +91,18 @@ func runCodeTerminal(runner, model string) {
 	}
 
 	sess := &codeTerminalSession{
-		baseURL: baseURL,
-		token:   authToken,
-		info:    info,
-		cfg:     cfg,
-		offline: offline,
+		baseURL:       baseURL,
+		token:         authToken,
+		info:          info,
+		cfg:           cfg,
+		offline:       offline,
 		offlineReason: offlineMsg,
 		inventory:     inventory,
 		opts: attachSessionOptions{
 			Source:        terminalLocalTaskSource,
 			DefaultRunner: chosenRunner,
 			DefaultModel:  strings.TrimSpace(model),
+			DefaultMode:   lastMode,
 		},
 		knownTasks:    map[string]bool{},
 		lastOutputLen: map[string]int{},
@@ -141,6 +149,7 @@ type codeTerminalSession struct {
 	knownTasks    map[string]bool
 	lastOutputLen map[string]int
 	activeTask    string
+	sessionTask   string
 
 	// firstDraw is true until draw() has rendered the prompt block at
 	// least once. Used so the first frame doesn't try to climb up to a
@@ -160,14 +169,14 @@ type codeTerminalSession struct {
 }
 
 type terminalDiscoveredMachine struct {
-	DeviceID      string
-	Name          string
-	Platform      string
-	HostEmail     string
-	State         string
+	DeviceID       string
+	Name           string
+	Platform       string
+	HostEmail      string
+	State          string
 	CurrentWorkDir string
-	Capabilities  *MachineCapabilities
-	Note          string
+	Capabilities   *MachineCapabilities
+	Note           string
 }
 
 func (s *codeTerminalSession) prefetchAttachDevices() {
@@ -768,6 +777,7 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 		if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
 			s.opts.DefaultRunner = strings.TrimSpace(profile.Runner)
 			s.opts.DefaultModel = strings.TrimSpace(profile.Model)
+			s.opts.DefaultMode = strings.TrimSpace(profile.Mode)
 		}
 		s.draw()
 		return false, false, nil
@@ -807,7 +817,18 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 		return false, false, nil
 	}
 	payload := buildTerminalPromptPayload(input)
-	taskID, err := attachCreateTask(s.baseURL, s.token, payload, s.opts)
+	taskID := ""
+	var err error
+	if s.sessionTask != "" && s.activeTask == "" {
+		task, contErr := codeContinueTask("", s.sessionTask, payload, s.opts.DefaultRunner, s.opts.DefaultModel, s.opts.DefaultMode)
+		if contErr != nil {
+			err = contErr
+		} else {
+			taskID = task.ID
+		}
+	} else {
+		taskID, err = attachCreateTask(s.baseURL, s.token, payload, s.opts)
+	}
 	if err != nil {
 		s.writeRaw(fmt.Sprintf("\033[31mError: %v\033[0m\r\n", err))
 		s.draw()
@@ -816,6 +837,7 @@ func (s *codeTerminalSession) submit() (bool, bool, error) {
 	s.knownTasks[taskID] = true
 	s.lastOutputLen[taskID] = 0
 	s.activeTask = taskID
+	s.sessionTask = taskID
 	s.draw()
 	return false, false, nil
 }
@@ -835,7 +857,9 @@ func (s *codeTerminalSession) runOfflineCodingPrompt(prompt string) {
 		s.writeRaw(fmt.Sprintf("\r\n\033[31m✗ runner %q is not in the supported set (claude / codex / opencode)\033[0m\r\n", s.opts.DefaultRunner))
 		return
 	}
-	args := substituteRunnerArgs(cfg.Args, prompt)
+	cfg.Model = strings.TrimSpace(s.opts.DefaultModel)
+	cfg.Mode = strings.TrimSpace(s.opts.DefaultMode)
+	args := buildRunnerArgs(cfg, prompt)
 	cmd := exec.Command(cfg.Command, args...)
 	cwd, _ := os.Getwd()
 	cmd.Dir = cwd
@@ -1036,6 +1060,7 @@ func (s *codeTerminalSession) applyPoll(tasks []TaskInfo) {
 			s.lastOutputLen[t.ID] = 0
 			out.WriteString(fmt.Sprintf("\r\n\033[1;33m[mobile] %s\033[0m\r\n\r\n", ansiEscape(t.Title)))
 			s.activeTask = t.ID
+			s.sessionTask = t.ID
 		}
 		prev := s.lastOutputLen[t.ID]
 		if len(t.Output) > prev {
@@ -1085,7 +1110,7 @@ func (s *codeTerminalSession) draw() {
 	if s.offline {
 		status = "\033[33m⚠ local-only\033[0m"
 	}
-	label := renderTerminalPromptLabelWithStatus(currentWorkDir(s.info), s.opts.DefaultRunner, s.opts.DefaultModel, status)
+	label := renderTerminalPromptLabelWithStatus(currentWorkDir(s.info), s.opts.DefaultRunner, s.opts.DefaultModel, s.opts.DefaultMode, status)
 	fmt.Fprintf(&b, "\033[2m%s\033[0m\r\n\033[1;35myaver>\033[0m %s", label, string(s.buf))
 
 	extra := 0

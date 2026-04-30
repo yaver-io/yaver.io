@@ -261,6 +261,15 @@ async function main() {
     log(`Skipping mobile bootstrap: ${error.message}`);
   }
 
+  if (!envEnabled("YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME")) {
+    try {
+      await runAgentCommand(["install", "remote-runtime"], { quiet: true });
+      log("Provisioned native remote-runtime host tools (Android everywhere; macOS host helpers where supported).");
+    } catch (error) {
+      log(`Skipping remote-runtime bootstrap: ${error.message}`);
+    }
+  }
+
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE_TOOLS")) {
     installMissingMobileTools();
   }

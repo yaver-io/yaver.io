@@ -12,7 +12,7 @@ import (
 func runCmd(dir string, name string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath(name), args...)
 	cmd.Dir = dir
 	var out bytes.Buffer
 	cmd.Stdout = &out

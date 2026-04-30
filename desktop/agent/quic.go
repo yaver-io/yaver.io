@@ -32,6 +32,7 @@ type IncomingMessage struct {
 	UserPrompt  string            `json:"userPrompt,omitempty"`
 	Runner      string            `json:"runner,omitempty"`
 	Model       string            `json:"model,omitempty"`
+	Mode        string            `json:"mode,omitempty"`
 	TaskID      string            `json:"taskId,omitempty"`
 	Input       string            `json:"input,omitempty"`
 	Source      string            `json:"source,omitempty"` // "mobile" or "cli"
@@ -190,6 +191,7 @@ func (s *QUICServer) handleTaskCreate(stream quic.Stream, msg IncomingMessage) {
 	}
 	task, err := s.taskManager.CreateTaskWithOptions(msg.Title, msg.Description, msg.Model, source, msg.Runner, "", msg.Images, TaskCreateOptions{
 		InitialUserPrompt: msg.UserPrompt,
+		Mode:              msg.Mode,
 	})
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})
@@ -231,6 +233,7 @@ func (s *QUICServer) handleTaskContinue(stream quic.Stream, msg IncomingMessage)
 	task, err := s.taskManager.ResumeTaskWithOptions(msg.TaskID, msg.Input, msg.Images, TaskResumeOptions{
 		RunnerID: msg.Runner,
 		Model:    msg.Model,
+		Mode:     msg.Mode,
 	})
 	if err != nil {
 		s.sendMessage(stream, OutgoingMessage{Type: "error", Message: err.Error()})

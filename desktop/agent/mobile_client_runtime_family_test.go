@@ -30,8 +30,8 @@ func TestMobileClientBuildNativeBundleWithContractSendsRuntimeFamilies(t *testin
 			"platform":"ios",
 			"moduleName":"main",
 			"runtimeFamilySelection":{
-				"guest":{"packageName":"sfmg","expoVersion":"54.0.33","reactNativeVersion":"0.81.5","reactVersion":"19.1.0"},
-				"selected":{"id":"family-b","label":"Family B","expoVersion":"54.0.33","reactNativeVersion":"0.81.5","reactVersion":"19.1.0","hermesBCVersion":96},
+				"guest":{"packageName":"sfmg","expoVersion":"54.0.33","reactNativeVersion":"0.81.5","reactVersion":"19.2.5"},
+				"selected":{"id":"family-b","label":"Family B","expoVersion":"54.0.33","reactNativeVersion":"0.81.5","reactVersion":"19.2.5","hermesBCVersion":96},
 				"exactMatch":true,
 				"matchKind":"exact"
 			}

@@ -2,9 +2,11 @@ import SwiftUI
 
 @main
 struct YaverFixtureApp: App {
+    @StateObject private var store = TodoStore()
+
     var body: some Scene {
         WindowGroup {
-            LoginView()
+            TodoListView(store: store)
         }
     }
 }

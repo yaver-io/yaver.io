@@ -428,7 +428,7 @@ func TestSelectRuntimeFamily_PrefersPreferredPackageOnTie(t *testing.T) {
 			Label:                 "Family B",
 			ExpoVersion:           "54.0.33",
 			ReactNative:           "0.81.5",
-			React:                 "19.1.0",
+			React:                 "19.2.5",
 			HermesBCVersion:       96,
 			CompiledIn:            true,
 			PreferredPackageNames: []string{"sfmg"},
@@ -438,7 +438,7 @@ func TestSelectRuntimeFamily_PrefersPreferredPackageOnTie(t *testing.T) {
 		PackageName:        "sfmg",
 		ExpoVersion:        "54.0.33",
 		ReactNativeVersion: "0.81.5",
-		ReactVersion:       "19.1.0",
+		ReactVersion:       "19.2.5",
 	}
 	selection := SelectRuntimeFamily(guest, families)
 	if selection.Selected.ID != "family-b" {

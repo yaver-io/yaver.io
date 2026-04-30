@@ -341,16 +341,11 @@ public class AppDelegate: ExpoAppDelegate {
   // MARK: - Shake to reveal Back to Yaver
 
   /// Called by ShakeDetectingWindow when device is shaken while guest app is running.
+  /// In guest mode, shake is reserved for Yaver Feedback parity, so we jump
+  /// back into the host shell and open feedback instead of showing a second menu.
   func handleShakeGesture() {
-    guard isGuestAppRunning, let window = self.window else { return }
-
-    // If overlay is already visible, dismiss it
-    if backOverlay != nil {
-      dismissOverlay()
-      return
-    }
-
-    showShakeOverlay(in: window)
+    guard isGuestAppRunning else { return }
+    handleFeedbackTap()
   }
 
   private func showShakeOverlay(in window: UIWindow) {
@@ -392,11 +387,13 @@ public class AppDelegate: ExpoAppDelegate {
 
     let reloadBtn = makeButton(title: "Reload App", icon: "arrow.clockwise", color: greenColor,
                                action: #selector(handleReloadTap))
+    let feedbackBtn = makeButton(title: "Feedback", icon: "bubble.left.and.bubble.right", color: accentColor,
+                                 action: #selector(handleFeedbackTap))
     let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
                              action: #selector(handleBackTap))
 
-    let stack = UIStackView(arrangedSubviews: [reloadBtn, backBtn])
-    stack.axis = .horizontal
+    let stack = UIStackView(arrangedSubviews: [reloadBtn, feedbackBtn, backBtn])
+    stack.axis = .vertical
     stack.spacing = 10
     stack.distribution = .fillEqually
     stack.translatesAutoresizingMaskIntoConstraints = false
@@ -455,6 +452,14 @@ public class AppDelegate: ExpoAppDelegate {
     NSLog("[AppDelegate] Reload App tapped — fetching fresh Hermes bundle")
     dismissOverlay()
     rebuildAndReloadGuestBundle()
+  }
+
+  @objc private func handleFeedbackTap() {
+    NSLog("[AppDelegate] Feedback tapped from shake overlay")
+    dismissOverlay()
+    UserDefaults.standard.set(true, forKey: "yaverPendingFeedbackLaunch")
+    isGuestAppRunning = false
+    NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)
   }
 
   /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),

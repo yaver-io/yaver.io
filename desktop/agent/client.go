@@ -20,6 +20,7 @@ import (
 type TerminalClientOptions struct {
 	DefaultRunner      string
 	DefaultModel       string
+	DefaultMode        string
 	Source             string
 	AttachedDeviceID   string
 	AttachedDeviceName string
@@ -50,13 +51,13 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 	if err != nil {
 		return fmt.Errorf("authentication failed: %w", err)
 	}
-	printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
+	printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}})
 
 	// Interactive loop
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		printInteractivePrompt("", opts.DefaultRunner, opts.DefaultModel)
+		printInteractivePrompt("", opts.DefaultRunner, opts.DefaultModel, opts.DefaultMode)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -82,6 +83,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 			if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
 				opts.DefaultRunner = strings.TrimSpace(profile.Runner)
 				opts.DefaultModel = strings.TrimSpace(profile.Model)
+				opts.DefaultMode = strings.TrimSpace(profile.Mode)
 			}
 			continue
 		}
@@ -92,7 +94,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 			case "detach":
 				return nil
 			case "help":
-				printAttachHelp(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
+				printAttachHelp(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}})
 				continue
 			case "tasks":
 				if err := clientListTasks(ctx, conn); err != nil {
@@ -101,7 +103,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				continue
 			case "agent":
 				if strings.TrimSpace(opts.DefaultRunner) != "" || strings.TrimSpace(opts.DefaultModel) != "" {
-					fmt.Printf("Current coding agent: %s\n", attachRunnerLine(&attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}}))
+					fmt.Printf("Current coding agent: %s\n", attachRunnerLine(&attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}}))
 					fmt.Println()
 				} else {
 					fmt.Println("Current coding agent: remote default")
@@ -111,12 +113,12 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 			case "set-agent":
 				opts.DefaultRunner = strings.TrimSpace(cmd.Runner)
 				opts.DefaultModel = strings.TrimSpace(cmd.Model)
-				info := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Name: opts.DefaultRunner, Model: opts.DefaultModel}}
+				info := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Name: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}}
 				fmt.Printf("Default coding agent set to: %s\n\n", attachRunnerLine(info))
 				continue
 			case "clear":
 				fmt.Print("\033[2J\033[H")
-				printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}})
+				printAttachWelcome(&attachInfo{Hostname: deviceName, Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}})
 				continue
 			case "version":
 				// QUIC client doesn't fetch /info up-front, so it only
@@ -130,7 +132,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 			case "machine":
 				printTerminalMachine(&attachInfo{
 					Hostname: deviceName,
-					Runner:   attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel},
+					Runner:   attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode},
 				})
 				continue
 			case "stop-task":
@@ -139,7 +141,7 @@ func RunClient(ctx context.Context, host string, port int, token string, opts Te
 				}
 				continue
 			case "continue-task":
-				if err := clientContinueTask(ctx, conn, cmd.TaskID, cmd.Input); err != nil {
+				if err := clientContinueTask(ctx, conn, cmd.TaskID, cmd.Input, opts); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
 				continue
@@ -196,6 +198,7 @@ func clientCreateTask(ctx context.Context, conn quic.Connection, prompt terminal
 		Source:      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
 		Runner:      opts.DefaultRunner,
 		Model:       opts.DefaultModel,
+		Mode:        opts.DefaultMode,
 	}
 
 	data, _ := json.Marshal(msg)
@@ -264,7 +267,7 @@ func clientStopTask(ctx context.Context, conn quic.Connection, taskID string) er
 }
 
 // clientContinueTask continues a task with follow-up input.
-func clientContinueTask(ctx context.Context, conn quic.Connection, taskID, input string) error {
+func clientContinueTask(ctx context.Context, conn quic.Connection, taskID, input string, opts TerminalClientOptions) error {
 	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return fmt.Errorf("open stream: %w", err)
@@ -274,6 +277,9 @@ func clientContinueTask(ctx context.Context, conn quic.Connection, taskID, input
 		Type:   "task_continue",
 		TaskID: taskID,
 		Input:  input,
+		Runner: opts.DefaultRunner,
+		Model:  opts.DefaultModel,
+		Mode:   opts.DefaultMode,
 	}
 
 	data, _ := json.Marshal(msg)
@@ -315,7 +321,7 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	authHeader := "Bearer " + token
-	infoSnapshot := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel}}
+	infoSnapshot := &attachInfo{Runner: attachRunnerInfo{ID: opts.DefaultRunner, Model: opts.DefaultModel, Mode: opts.DefaultMode}}
 
 	// Health check to verify connectivity
 	req, err := http.NewRequestWithContext(ctx, "GET", baseURL+"/health", nil)
@@ -346,6 +352,9 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 		if strings.TrimSpace(opts.DefaultModel) != "" && strings.TrimSpace(info.Runner.Model) == "" {
 			info.Runner.Model = opts.DefaultModel
 		}
+		if strings.TrimSpace(opts.DefaultMode) != "" && strings.TrimSpace(info.Runner.Mode) == "" {
+			info.Runner.Mode = opts.DefaultMode
+		}
 		infoSnapshot = &info
 		printAttachWelcome(infoSnapshot)
 	} else {
@@ -357,13 +366,14 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 
 	// Interactive loop
 	reader := bufio.NewReader(os.Stdin)
+	sessionTask := ""
 
 	for {
 		workDir := ""
 		if infoSnapshot != nil {
 			workDir = strings.TrimSpace(infoSnapshot.WorkDir)
 		}
-		printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel)
+		printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel, opts.DefaultMode)
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -393,6 +403,14 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 			if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
 				opts.DefaultRunner = strings.TrimSpace(profile.Runner)
 				opts.DefaultModel = strings.TrimSpace(profile.Model)
+				opts.DefaultMode = strings.TrimSpace(profile.Mode)
+				if infoSnapshot == nil {
+					infoSnapshot = &attachInfo{}
+				}
+				infoSnapshot.Runner.ID = opts.DefaultRunner
+				infoSnapshot.Runner.Name = opts.DefaultRunner
+				infoSnapshot.Runner.Model = opts.DefaultModel
+				infoSnapshot.Runner.Mode = opts.DefaultMode
 			}
 			continue
 		}
@@ -427,6 +445,7 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 				infoSnapshot.Runner.ID = opts.DefaultRunner
 				infoSnapshot.Runner.Name = opts.DefaultRunner
 				infoSnapshot.Runner.Model = opts.DefaultModel
+				infoSnapshot.Runner.Mode = opts.DefaultMode
 				fmt.Printf("Default coding agent set to: %s\n\n", attachRunnerLine(infoSnapshot))
 				continue
 			case "clear":
@@ -453,7 +472,10 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 				}
 				continue
 			case "continue-task":
-				if err := httpContinueTask(ctx, client, baseURL, authHeader, cmd.TaskID, cmd.Input); err != nil {
+				if _, err := httpContinueTask(ctx, client, baseURL, authHeader, cmd.TaskID, terminalPromptPayload{
+					Prompt:       cmd.Input,
+					OriginalText: cmd.Input,
+				}, opts); err != nil {
 					fmt.Printf("error: %v\n", err)
 				}
 				continue
@@ -475,13 +497,25 @@ func RunClientHTTP(ctx context.Context, baseURL string, token string, opts Termi
 
 		payload := buildTerminalPromptPayload(line)
 		printTerminalUserInput(payload)
-		if err := httpCreateTask(ctx, client, baseURL, authHeader, payload, opts); err != nil {
-			fmt.Printf("error: %v\n", err)
+		if sessionTask != "" {
+			taskID, err := httpContinueTask(ctx, client, baseURL, authHeader, sessionTask, payload, opts)
+			if err != nil {
+				fmt.Printf("error: %v\n", err)
+				continue
+			}
+			sessionTask = taskID
+			continue
 		}
+		taskID, err := httpCreateTask(ctx, client, baseURL, authHeader, payload, opts)
+		if err != nil {
+			fmt.Printf("error: %v\n", err)
+			continue
+		}
+		sessionTask = taskID
 	}
 }
 
-func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader string, prompt terminalPromptPayload, opts TerminalClientOptions) error {
+func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeader string, prompt terminalPromptPayload, opts TerminalClientOptions) (string, error) {
 	body, _ := json.Marshal(map[string]interface{}{
 		"title":       prompt.Prompt,
 		"description": prompt.Prompt,
@@ -490,6 +524,7 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 		"source":      firstNonEmpty(opts.Source, terminalRemoteTaskSource),
 		"runner":      opts.DefaultRunner,
 		"model":       opts.DefaultModel,
+		"mode":        opts.DefaultMode,
 	})
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/tasks", bytes.NewReader(body))
 	req.Header.Set("Authorization", authHeader)
@@ -499,7 +534,7 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("create task: %w", err)
+		return "", fmt.Errorf("create task: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -510,7 +545,7 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	if !result.OK {
-		return fmt.Errorf("create task: %s", result.Error)
+		return "", fmt.Errorf("create task: %s", result.Error)
 	}
 
 	fmt.Printf("[task %s] created\n", result.TaskID)
@@ -522,7 +557,7 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 
 	sseResp, err := sseClient.Do(sseReq)
 	if err != nil {
-		return fmt.Errorf("stream output: %w", err)
+		return result.TaskID, fmt.Errorf("stream output: %w", err)
 	}
 	defer sseResp.Body.Close()
 
@@ -547,10 +582,10 @@ func httpCreateTask(ctx context.Context, client *http.Client, baseURL, authHeade
 			fmt.Print(event.Text)
 		case "done":
 			fmt.Println()
-			return nil
+			return result.TaskID, nil
 		}
 	}
-	return scanner.Err()
+	return result.TaskID, scanner.Err()
 }
 
 func httpListTasks(ctx context.Context, client *http.Client, baseURL, authHeader string) error {
@@ -613,15 +648,21 @@ func httpExitTask(ctx context.Context, client *http.Client, baseURL, authHeader,
 	return nil
 }
 
-func httpContinueTask(ctx context.Context, client *http.Client, baseURL, authHeader, taskID, input string) error {
-	body, _ := json.Marshal(map[string]string{"input": input})
+func httpContinueTask(ctx context.Context, client *http.Client, baseURL, authHeader, taskID string, prompt terminalPromptPayload, opts TerminalClientOptions) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"input":  prompt.Prompt,
+		"images": prompt.Images,
+		"runner": opts.DefaultRunner,
+		"model":  opts.DefaultModel,
+		"mode":   opts.DefaultMode,
+	})
 	req, _ := http.NewRequestWithContext(ctx, "POST", baseURL+"/tasks/"+taskID+"/continue", bytes.NewReader(body))
 	req.Header.Set("Authorization", authHeader)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return taskID, err
 	}
 	defer resp.Body.Close()
 
@@ -631,7 +672,7 @@ func httpContinueTask(ctx context.Context, client *http.Client, baseURL, authHea
 	}
 	json.NewDecoder(resp.Body).Decode(&result)
 	if !result.OK {
-		return fmt.Errorf("continue: %s", result.Error)
+		return taskID, fmt.Errorf("continue: %s", result.Error)
 	}
 
 	fmt.Printf("[task %s] resumed\n", taskID)
@@ -643,7 +684,7 @@ func httpContinueTask(ctx context.Context, client *http.Client, baseURL, authHea
 
 	sseResp, err := sseClient.Do(sseReq)
 	if err != nil {
-		return fmt.Errorf("stream output: %w", err)
+		return taskID, fmt.Errorf("stream output: %w", err)
 	}
 	defer sseResp.Body.Close()
 
@@ -667,10 +708,10 @@ func httpContinueTask(ctx context.Context, client *http.Client, baseURL, authHea
 			fmt.Print(event.Text)
 		case "done":
 			fmt.Println()
-			return nil
+			return taskID, nil
 		}
 	}
-	return scanner.Err()
+	return taskID, scanner.Err()
 }
 
 // clientRPC sends a single message and reads one response (non-streaming).

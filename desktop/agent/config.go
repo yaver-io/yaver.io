@@ -37,10 +37,10 @@ type Config struct {
 	// 2026-04-28 (project_lean_stack_2026_04_28.md). This field is
 	// preserved only so a concurrent thread / older config.json
 	// that still serializes it doesn't break parsing.
-	Speech                        *SpeechConfig            `json:"speech,omitempty"`
-	Notifications                 *NotificationConfig      `json:"notifications,omitempty"`
-	WebhookSecret                 string                   `json:"webhook_secret,omitempty"`
-	AnalyticsWebhookURL           string                   `json:"analytics_webhook_url,omitempty"`
+	Speech              *SpeechConfig       `json:"speech,omitempty"`
+	Notifications       *NotificationConfig `json:"notifications,omitempty"`
+	WebhookSecret       string              `json:"webhook_secret,omitempty"`
+	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
 	// DeployWebhookURL is POST'd a JSON body summarising each finished
 	// /deploy/ship run. Empty = disabled. Intended use: point at a
 	// Slack / Discord / Zapier inbound URL so overnight guest-deploy
@@ -117,6 +117,7 @@ type CodeCLIConfig struct {
 	AttachedDeviceName string `json:"attached_device_name,omitempty"`
 	Runner             string `json:"runner,omitempty"`
 	Model              string `json:"model,omitempty"`
+	Mode               string `json:"mode,omitempty"`
 	Provider           string `json:"provider,omitempty"`
 	BaseURL            string `json:"base_url,omitempty"`
 	RepoPath           string `json:"repo_path,omitempty"`

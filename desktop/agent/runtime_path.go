@@ -25,6 +25,7 @@ func runtimeBinDirs() []string {
 	root := runtimeRoot()
 	candidates := []string{
 		filepath.Join(root, "node", "bin"),
+		filepath.Join(root, "android-sdk", "bin"),
 	}
 	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
 		candidates = append(candidates,

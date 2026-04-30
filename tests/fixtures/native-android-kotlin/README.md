@@ -1,10 +1,11 @@
-# native-android-kotlin — Yaver fixture
+# native-android-kotlin — Yaver Todo fixture
 
-Minimal pure-Kotlin Android app with `LoginActivity` (hardcoded `admin` / `admin`)
-→ `DashboardActivity`. No Compose, no Hilt — just `Activity` + plain views so the
-fixture compiles fast and isn't sensitive to AGP/Compose version churn. Used by
-`desktop/agent/native_build_fixtures_test.go` to verify `yaver androidNative` and
-`/builds` (`platform: androidNative`) can build and push real Android apps.
+Minimal pure-Kotlin Android Todo app. No Compose, no Hilt — just a single
+`Activity` with programmatic views so the fixture compiles fast and stays stable
+across AGP changes. It is meant to test Yaver remote-runtime text entry, tap
+controls, relay fallback, and feedback commands. It is also used by
+`desktop/agent/native_build_fixtures_test.go` to verify `yaver androidNative`
+and `/builds` (`platform: androidNative`) can build and push real Android apps.
 
 ## First-time setup
 
@@ -36,5 +37,5 @@ yaver androidNative . --target=playstore       # build release AAB
 ## Unit tests
 
 ```sh
-gradle test                                    # runs Auth.authenticate JUnit tests
+gradle test                                    # runs TodoStore JUnit tests
 ```

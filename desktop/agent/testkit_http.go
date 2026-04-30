@@ -303,12 +303,10 @@ func (s *HTTPServer) handleTestkitIntegrations(w http.ResponseWriter, r *http.Re
 			return p != ""
 		}},
 		{"adb", "Android SDK platform-tools (real devices + emulator)", "yaver install android-sdk", func() bool {
-			p, _ := detectBinaryWithVersion("adb", "--version")
-			return p != ""
+			return findAndroidToolPath("adb") != ""
 		}},
 		{"emulator", "Android emulator", "yaver install android-sdk", func() bool {
-			p, _ := exec.LookPath("emulator")
-			return p != ""
+			return findAndroidToolPath("emulator") != ""
 		}},
 		{"xcode", "Xcode / simctl for iOS Simulator (macOS only)", "Install Xcode from the App Store", func() bool {
 			if runtime.GOOS != "darwin" {

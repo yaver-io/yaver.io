@@ -53,6 +53,7 @@ func runCode(args []string) {
 	runner := fs.String("runner", "", "runner ID override")
 	agent := fs.String("agent", "", "terminal coding agent override (alias for --runner)")
 	model := fs.String("model", "", "model override")
+	mode := fs.String("mode", "", "runner mode override (opencode agent: build|plan|<custom>)")
 	template := fs.String("template", "full", "mesh template: full|ship")
 	maxParallel := fs.Int("max-parallel", 2, "mesh max concurrency")
 	name := fs.String("name", "", "session name (mesh mode)")
@@ -67,6 +68,9 @@ func runCode(args []string) {
 		if strings.TrimSpace(*model) == "" {
 			*model = strings.TrimSpace(profile.Model)
 		}
+		if strings.TrimSpace(*mode) == "" {
+			*mode = strings.TrimSpace(profile.Mode)
+		}
 		if strings.TrimSpace(*workDir) == "" && !profile.RepoRemote {
 			*workDir = strings.TrimSpace(profile.RepoPath)
 		}
@@ -80,7 +84,7 @@ func runCode(args []string) {
 
 	prompt := strings.TrimSpace(strings.Join(fs.Args(), " "))
 	if strings.TrimSpace(*attachTarget) != "" {
-		if err := runRemoteCodeAttach(prompt, *attachTarget, *username, *runner, *model); err != nil {
+		if err := runRemoteCodeAttach(prompt, *attachTarget, *username, *runner, *model, *mode); err != nil {
 			fmt.Fprintf(os.Stderr, "code: %v\n", err)
 			os.Exit(1)
 		}
@@ -101,7 +105,7 @@ func runCode(args []string) {
 			}
 			defer restore()
 		}
-		runCodeTerminal(strings.TrimSpace(*runner), strings.TrimSpace(*model))
+		runCodeTerminal(strings.TrimSpace(*runner), strings.TrimSpace(*model), strings.TrimSpace(*mode))
 		return
 	}
 
@@ -159,7 +163,7 @@ func runCode(args []string) {
 		return
 	}
 
-	taskID, err := createCodeTask(enrichedPrompt, *runner, *model)
+	taskID, err := createCodeTask(enrichedPrompt, *runner, *model, *mode)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "code: %v\n", err)
 		os.Exit(1)
@@ -187,6 +191,7 @@ Terminal mode:
 One-shot mode:
   yaver code "fix the failing tests"
   yaver code --agent codex --model gpt-5.4 "implement dark mode"
+  yaver code --agent opencode --mode plan --model openai/gpt-5.4 "investigate the prod issue"
 
   These run against your local repo/files on this machine.
 
@@ -202,6 +207,7 @@ Flags:
   --agent <runner>       Alias for --runner in terminal coding mode
   --runner <runner>      Runner override: claude, codex, or opencode
   --model <model>        Model override for the chosen runner
+  --mode <mode>          Runner mode override (OpenCode agent: build, plan, or a custom agent)
   --work-dir <path>      Local work dir override
   --mesh                 Run agent-graph mesh mode instead of a single terminal task
   --plain                Force plain output in mesh mode
@@ -282,7 +288,7 @@ func splitCSVAllowlist(raw string) []string {
 	return out
 }
 
-func createCodeTask(prompt, runner, model string) (string, error) {
+func createCodeTask(prompt, runner, model, mode string) (string, error) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
 		return "", fmt.Errorf("not authenticated — run 'yaver auth'")
@@ -292,6 +298,7 @@ func createCodeTask(prompt, runner, model string) (string, error) {
 		"description": "",
 		"runner":      runner,
 		"model":       model,
+		"mode":        mode,
 		"source":      terminalLocalTaskSource,
 	})
 	req, _ := http.NewRequest("POST", "http://127.0.0.1:18080/tasks", bytes.NewReader(body))
@@ -321,7 +328,7 @@ func createCodeTask(prompt, runner, model string) (string, error) {
 	return result.TaskID, nil
 }
 
-func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) error {
+func runRemoteCodeAttach(prompt, attachTarget, username, runner, model, mode string) error {
 	cfg, err := LoadConfig()
 	if err != nil || cfg.AuthToken == "" {
 		return fmt.Errorf("not authenticated — run 'yaver auth'")
@@ -334,6 +341,7 @@ func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) e
 	opts := TerminalClientOptions{
 		DefaultRunner:      runner,
 		DefaultModel:       model,
+		DefaultMode:        mode,
 		Source:             terminalRemoteTaskSource,
 		AttachedDeviceID:   device.DeviceID,
 		AttachedDeviceName: device.Name,
@@ -344,7 +352,8 @@ func runRemoteCodeAttach(prompt, attachTarget, username, runner, model string) e
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	authHeader := "Bearer " + cfg.AuthToken
-	return httpCreateTask(context.Background(), client, baseURL, authHeader, buildTerminalPromptPayload(prompt), opts)
+	_, err = httpCreateTask(context.Background(), client, baseURL, authHeader, buildTerminalPromptPayload(prompt), opts)
+	return err
 }
 
 func resolveCodeAttachDevice(cfg *Config, attachTarget, username string) (*DeviceInfo, error) {

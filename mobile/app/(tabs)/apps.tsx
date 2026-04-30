@@ -33,6 +33,8 @@ interface ProjectItem {
   path: string;
   branch?: string;
   framework?: string;
+  executionMode?: string;
+  primarySurface?: string;
   tags?: string[];
 }
 
@@ -503,6 +505,15 @@ export default function AppsScreen() {
                 ? "Kotlin flush targets Android only."
                 : undefined,
       }] : [];
+      const nativeRemoteRuntimeActions = (secondClassFramework === "swift" || secondClassFramework === "kotlin") ? [{
+        label: "Remote Runtime",
+        target: ".",
+        type: "remote-runtime",
+        icon: "\u{1F4FA}",
+        framework: secondClassFramework,
+        platform: Platform.OS,
+        supported: true,
+      }] : [];
       const hermesActions = isHermesMobileFramework(hermesFramework) ? [
         {
           label: "Open in Yaver",
@@ -526,7 +537,7 @@ export default function AppsScreen() {
         },
       ] : [];
       result.actions = result.actions.filter((a: any) => !(isSecondClassMobileFramework(a.framework) && a.type === "dev-server"));
-      result.actions = [projectAction, previewManifestAction, ...hermesActions, ...secondClassActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
+      result.actions = [projectAction, previewManifestAction, ...hermesActions, ...nativeRemoteRuntimeActions, ...secondClassActions, vibingAction, agentAction, autoDevAction, autoTestAction, gitSyncAction, ...result.actions];
       setActionSheet({ ...result, compatibility });
     } catch (e) {
       // Don't silently send a vague task — the user just tapped a project and
@@ -638,6 +649,11 @@ export default function AppsScreen() {
 
     if (action.type === "flush-mobile") {
       await handleFlushMobile(path, action.framework);
+      return;
+    }
+
+    if (action.type === "remote-runtime") {
+      router.navigate({ pathname: "/remote-runtime", params: { project, path, framework: action.framework || "" } } as any);
       return;
     }
 

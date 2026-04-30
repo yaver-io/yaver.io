@@ -8,6 +8,8 @@ import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
+import { startFeedbackShakeBridge } from "../src/lib/feedbackTrigger";
+import { useAuth } from "../src/context/AuthContext";
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -43,11 +45,15 @@ class ErrorBoundary extends React.Component<
 
 function InnerLayout() {
   const { isDark, colors } = useTheme();
+  const { user } = useAuth();
   // Wire the native screen-recorder bridge once on first render. Idempotent
   // — vibePreview.ts.setNativeScreenRecorder just stores the latest fn.
   useEffect(() => {
     registerNativeScreenRecorder();
   }, []);
+  useEffect(() => {
+    return startFeedbackShakeBridge(user?.id);
+  }, [user?.id]);
   return (
     <>
       <StatusBar style={isDark ? "light" : "dark"} />

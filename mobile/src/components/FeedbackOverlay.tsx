@@ -16,6 +16,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 import { useDevice } from "../context/DeviceContext";
 import { quicClient } from "../lib/quic";
+import { subscribeFeedbackLaunch } from "../lib/feedbackTrigger";
 
 const BUTTON_SIZE = 46;
 const PANEL_WIDTH = 300;
@@ -94,12 +95,21 @@ export function FeedbackOverlay() {
     return () => clearInterval(interval);
   }, [user?.id, enabled]);
 
-  const agentUrl = connectionStatus === "connected" ? quicClient.baseUrl : null;
-  const isConnected = connectionStatus === "connected" && !!agentUrl;
-
   const addOutput = useCallback((line: string) => {
     setOutput((prev) => [...prev.slice(-8), line]); // keep last 9 lines
   }, []);
+
+  useEffect(() => {
+    return subscribeFeedbackLaunch(() => {
+      if (!enabled) return;
+      setChatOpen(true);
+      setFullSize(false);
+      addOutput("> feedback opened");
+    });
+  }, [enabled, addOutput]);
+
+  const agentUrl = connectionStatus === "connected" ? quicClient.baseUrl : null;
+  const isConnected = connectionStatus === "connected" && !!agentUrl;
 
   const handleTap = useCallback(() => {
     if (isDragging.current) return;

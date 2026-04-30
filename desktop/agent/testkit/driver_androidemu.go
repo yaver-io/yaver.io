@@ -3,6 +3,7 @@ package testkit
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -22,10 +23,10 @@ type AndroidEmuDriver struct {
 
 // Available returns nil if both `adb` and `emulator` are on PATH.
 func (d *AndroidEmuDriver) Available() error {
-	if _, err := exec.LookPath("adb"); err != nil {
+	if _, err := os.Stat(resolveTestkitCommandPath("adb")); err != nil {
 		return fmt.Errorf("adb not found — install Android SDK platform-tools")
 	}
-	if _, err := exec.LookPath("emulator"); err != nil {
+	if _, err := os.Stat(resolveTestkitCommandPath("emulator")); err != nil {
 		return fmt.Errorf("emulator not found — install Android SDK emulator package")
 	}
 	return nil
@@ -54,7 +55,7 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 	}
 
 	// Spawn the emulator in the background and wait for adb to see it.
-	cmd := exec.CommandContext(ctx, "emulator", "-avd", d.AVD, "-no-snapshot-save", "-no-window")
+	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath("emulator"), "-avd", d.AVD, "-no-snapshot-save", "-no-window")
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("emulator start: %w", err)
 	}
@@ -114,7 +115,7 @@ func (d *AndroidEmuDriver) Launch(ctx context.Context, deviceID string) error {
 
 // Screenshot captures a PNG to outPath via `adb exec-out screencap`.
 func (d *AndroidEmuDriver) Screenshot(ctx context.Context, deviceID, outPath string) error {
-	cmd := exec.CommandContext(ctx, "adb", "-s", deviceID, "exec-out", "screencap", "-p")
+	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath("adb"), "-s", deviceID, "exec-out", "screencap", "-p")
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("adb screencap: %w", err)

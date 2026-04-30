@@ -62,6 +62,30 @@ func detectMonorepoLineage(dir string) (root, app string) {
 	return "", ""
 }
 
+func hasProjectGitContext(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return true
+	}
+	if root, _ := detectMonorepoLineage(dir); root != "" {
+		return true
+	}
+	cur := dir
+	for i := 0; i < 6; i++ {
+		parent := filepath.Dir(cur)
+		if parent == cur || parent == "/" {
+			break
+		}
+		if _, err := os.Stat(filepath.Join(parent, ".git")); err == nil {
+			return true
+		}
+		cur = parent
+	}
+	return false
+}
+
 // MobileProject represents a discovered mobile project on the dev machine.
 type MobileProject struct {
 	Name        string `json:"name"`
@@ -75,14 +99,16 @@ type MobileProject struct {
 	// Capabilities (Yaver Protocol v1 — surface the dashboard's mode
 	// toggle correctly per project). One project can be both web and
 	// mobile capable (RN+RN-Web) — that's why these are independent flags.
-	WebCapable    bool `json:"webCapable"`              // can be served as web (has react-native-web, expo with --web, next, vite, etc.)
-	MobileCapable bool `json:"mobileCapable"`           // can run on phone (has react-native, expo, flutter)
+	WebCapable    bool `json:"webCapable"`    // can be served as web (has react-native-web, expo with --web, next, vite, etc.)
+	MobileCapable bool `json:"mobileCapable"` // can run on phone (has react-native, expo, flutter, native iOS/Android)
 	// Monorepo lineage. Set when the project lives inside a yaver.workspace.yaml-
 	// declared monorepo or under a `apps/*`, `packages/*`, `mobile/` subdir.
 	// Lets the dashboard show "carrotbet → apps/web" + "carrotbet → mobile"
 	// as separate selectable rows instead of one root-level entry.
-	MonorepoRoot string `json:"monorepoRoot,omitempty"`  // absolute path to monorepo root, or "" if standalone
-	MonorepoApp  string `json:"monorepoApp,omitempty"`   // app name within the monorepo (e.g. "web", "mobile")
+	MonorepoRoot   string `json:"monorepoRoot,omitempty"`   // absolute path to monorepo root, or "" if standalone
+	MonorepoApp    string `json:"monorepoApp,omitempty"`    // app name within the monorepo (e.g. "web", "mobile")
+	ExecutionMode  string `json:"executionMode,omitempty"`  // rn-hermes | web-webview | native-webrtc
+	PrimarySurface string `json:"primarySurface,omitempty"` // hermes | webview | webrtc
 }
 
 // Known Expo SDK versions and their compatibility
@@ -239,6 +265,14 @@ func scanMobileProjects() []MobileProject {
 					framework = "unity"
 					mobileCapable = true
 				}
+			case "Package.swift":
+				framework = "swift"
+				mobileCapable = true
+			case "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle":
+				if isKotlinAndroidProject(dir) {
+					framework = "kotlin"
+					mobileCapable = true
+				}
 			default:
 				return nil
 			}
@@ -254,22 +288,12 @@ func scanMobileProjects() []MobileProject {
 			if parentName == "example" || parentName == "test" || parentName == "e2e" {
 				return nil
 			}
-			// Skip if it's a library/SDK (not a real app) — check for .git to confirm it's a standalone project
-			// or if the parent has a .git (it's a subdir of a larger project, which is fine — like monorepo/mobile/)
-			if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-				// No .git — check if parent or grandparent has one (monorepo case)
-				parent := filepath.Dir(dir)
-				grandparent := filepath.Dir(parent)
-				hasParentGit := false
-				if _, err := os.Stat(filepath.Join(parent, ".git")); err == nil {
-					hasParentGit = true
-				}
-				if _, err := os.Stat(filepath.Join(grandparent, ".git")); err == nil {
-					hasParentGit = true
-				}
-				if !hasParentGit {
-					return nil // orphan package.json/pubspec.yaml without any git context — skip
-				}
+			// Skip if it's a library/SDK (not a real app) by requiring some
+			// nearby git context. Walk more than two ancestors so fixture apps
+			// under tests/fixtures/ inside a larger repo still show up in Hot
+			// Reload and remote-runtime testing.
+			if !hasProjectGitContext(dir) {
+				return nil
 			}
 
 			// Parse real app name from framework config files
@@ -285,13 +309,15 @@ func scanMobileProjects() []MobileProject {
 				framework == "unity"
 
 			proj := MobileProject{
-				Name:          appName,
-				Path:          dir,
-				Framework:     framework,
-				SDKVersion:    sdkVersion,
-				HasDevBuild:   hasDevBuild,
-				WebCapable:    webCapable,
-				MobileCapable: mobileCapable,
+				Name:           appName,
+				Path:           dir,
+				Framework:      framework,
+				SDKVersion:     sdkVersion,
+				HasDevBuild:    hasDevBuild,
+				WebCapable:     webCapable,
+				MobileCapable:  mobileCapable,
+				ExecutionMode:  string(executionModeForFramework(framework)),
+				PrimarySurface: primarySurfaceForFramework(framework),
 			}
 			// Monorepo lineage detection. If `dir` is N levels under a
 			// directory that has its own .git AND is also one of the

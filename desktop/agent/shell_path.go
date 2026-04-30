@@ -21,7 +21,7 @@ func ensureUserShellPathSetup(progress func(string)) error {
 		return fmt.Errorf("resolve home dir: %w", err)
 	}
 
-	exportLine := `export PATH="$HOME/.yaver/runtimes/node/bin:$HOME/.local/node-current/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"`
+	exportLine := `export ANDROID_HOME="$HOME/.yaver/runtimes/android-sdk"; export ANDROID_SDK_ROOT="$ANDROID_HOME"; export PATH="$HOME/.yaver/runtimes/node/bin:$HOME/.yaver/runtimes/android-sdk/bin:$HOME/.local/node-current/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"`
 	targets := []string{
 		filepath.Join(home, ".profile"),
 		filepath.Join(home, ".bashrc"),

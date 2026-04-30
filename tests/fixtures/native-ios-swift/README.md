@@ -1,15 +1,17 @@
-# native-ios-swift — Yaver fixture
+# native-ios-swift — Yaver Todo fixture
 
-Minimal SwiftUI iOS app with `LoginView` (hardcoded `admin` / `admin`) →
-`DashboardView`. Used by `desktop/agent/native_build_fixtures_test.go` to verify
-`yaver iosNative` and `/builds` (`platform: iosNative`) can build / sign /
-device-install / TestFlight-upload real iOS apps.
+Minimal SwiftUI iOS Todo app used to exercise Yaver's native remote-runtime
+viewer. It has an input field, add button, toggle buttons, and delete buttons
+so tap/text control is easy to validate from the remote stream. It is also used
+by `desktop/agent/native_build_fixtures_test.go` to verify `yaver iosNative`
+and `/builds` (`platform: iosNative`) can build / sign / device-install /
+TestFlight-upload real iOS apps.
 
 ## Project shape
 
-- `YaverFixture/` — SwiftUI sources (`Auth.swift`, `YaverFixtureApp.swift`,
-  `LoginView.swift`, `DashboardView.swift`)
-- `YaverFixtureTests/` — XCTest tests for `Auth.authenticate`
+- `YaverFixture/` — SwiftUI Todo sources (`TodoItem.swift`, `TodoStore.swift`,
+  `TodoListView.swift`, `YaverFixtureApp.swift`)
+- `YaverFixtureTests/` — XCTest tests for store add/toggle/remove behavior
 - `project.yml` — xcodegen manifest; regenerates `YaverFixture.xcodeproj/`
 
 ## First-time setup

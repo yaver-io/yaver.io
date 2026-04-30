@@ -618,6 +618,7 @@ type TaskCreateOptions struct {
 type TaskResumeOptions struct {
 	RunnerID string
 	Model    string
+	Mode     string
 }
 
 type Task struct {
@@ -2503,6 +2504,14 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 	}
 	if model := strings.TrimSpace(opts.Model); model != "" {
 		task.Model = model
+	}
+	if mode := strings.TrimSpace(opts.Mode); mode != "" {
+		runner := task.runner
+		if runner.Command == "" {
+			runner = tm.runner
+		}
+		runner.Mode = mode
+		task.runner = runner
 	}
 
 	// Clear output for the new run — turns track conversation history

@@ -64,4 +64,15 @@ final class YaverInfo: NSObject {
   ) {
     resolve(YaverGuestCrashReporter.clearLastCrashReport())
   }
+
+  @objc func consumePendingFeedbackLaunch(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    let pending = UserDefaults.standard.bool(forKey: "yaverPendingFeedbackLaunch")
+    if pending {
+      UserDefaults.standard.removeObject(forKey: "yaverPendingFeedbackLaunch")
+    }
+    resolve(pending)
+  }
 }

@@ -26,10 +26,10 @@ import (
 
 // IOSSimDriver is the lifecycle wrapper.
 type IOSSimDriver struct {
-	UDID         string // optional — defaults to first booted device
-	DeviceType   string // e.g. "iPhone 15" — used when no UDID is set
-	BundleID     string // app bundle id, e.g. "io.yaver.mobile"
-	AppPath      string // path to .app bundle
+	UDID       string // optional — defaults to first booted device
+	DeviceType string // e.g. "iPhone 15" — used when no UDID is set
+	BundleID   string // app bundle id, e.g. "io.yaver.mobile"
+	AppPath    string // path to .app bundle
 }
 
 // Available returns nil if simctl appears usable on the current host.
@@ -143,7 +143,7 @@ func pickSimulator(ctx context.Context, deviceType string) (string, error) {
 
 // runCtx is a tiny wrapper that returns combined output + error.
 func runCtx(ctx context.Context, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath(name), args...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

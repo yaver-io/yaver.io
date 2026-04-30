@@ -4,12 +4,15 @@ import { useState, useEffect, useMemo } from "react";
 import { agentClient } from "@/lib/agent-client";
 import EnvironmentSwitcher from "./EnvironmentSwitcher";
 import ProjectDetailView from "./ProjectDetailView";
+import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
 
 interface Project {
   name: string;
   path: string;
   branch?: string;
   framework?: string;
+  executionMode?: string;
+  primarySurface?: string;
   tags?: string[];
 }
 
@@ -92,6 +95,10 @@ export default function ProjectsView({
   } | null>(null);
   const [filter, setFilter] = useState<Category>("all");
   const [search, setSearch] = useState("");
+  const [remoteCaps, setRemoteCaps] = useState<import("@/lib/agent-client").RemoteRuntimeCapabilities | null>(null);
+  const [remoteProject, setRemoteProject] = useState<Project | null>(null);
+  const [remoteSession, setRemoteSession] = useState<import("@/lib/agent-client").RemoteRuntimeSession | null>(null);
+  const [remoteSessionNote, setRemoteSessionNote] = useState<string | null>(null);
 
   useEffect(() => {
     loadProjects();
@@ -176,6 +183,60 @@ export default function ProjectsView({
   async function stopDev() {
     await agentClient.stopDevServer();
     setDevStatus(null);
+  }
+
+  async function openRemoteRuntime(project: Project) {
+    try {
+      const caps = await agentClient.getRemoteRuntimeCapabilities(project.path, project.framework || "");
+      setRemoteProject(project);
+      setRemoteCaps(caps);
+      setRemoteSession(null);
+      setRemoteSessionNote(null);
+    } catch (error) {
+      setRemoteProject(project);
+      setRemoteCaps(null);
+      setRemoteSession(null);
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not load remote runtime capabilities.");
+    }
+  }
+
+  async function createRemoteRuntimeSession(targetId: string) {
+    if (!remoteProject) return;
+    try {
+      const transportMode = agentClient.activeRelayUrl ? "relay-jpeg-poll" : "direct-webrtc";
+      const session = await agentClient.startRemoteRuntimeSession(remoteProject.path, remoteProject.framework || "", targetId, transportMode);
+      setRemoteSession(session);
+      setRemoteSessionNote(session.note || `Remote runtime session ${session.id} created.`);
+    } catch (error) {
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not create remote runtime session.");
+    }
+  }
+
+  async function triggerRemoteRuntimeFeedback() {
+    if (!remoteSession) return;
+    try {
+      const result = await agentClient.sendRemoteRuntimeCommand(remoteSession.id, "launch-feedback", "web");
+      setRemoteSession((prev) => prev ? {
+        ...prev,
+        status: "feedback-pending",
+        lastCommand: "launch-feedback",
+        note: result.note || prev.note,
+      } : prev);
+      setRemoteSessionNote(result.note || "Feedback launch requested.");
+    } catch (error) {
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not launch feedback.");
+    }
+  }
+
+  async function closeRemoteRuntimeSession() {
+    if (!remoteSession) return;
+    try {
+      await agentClient.closeRemoteRuntimeSession(remoteSession.id);
+      setRemoteSession(null);
+      setRemoteSessionNote("Remote runtime session closed.");
+    } catch (error) {
+      setRemoteSessionNote(error instanceof Error ? error.message : "Could not close remote runtime session.");
+    }
   }
 
   // Compute category counts and filtered list
@@ -345,10 +406,21 @@ export default function ProjectsView({
                     {p.framework || "unknown"}
                     {p.tags && p.tags.length > 0 && <span className="ml-1 text-surface-600">&middot; {p.tags.join(", ")}</span>}
                   </div>
+                  {p.primarySurface ? (
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-surface-600">
+                      Primary: {p.primarySurface}{p.executionMode ? ` · ${p.executionMode}` : ""}
+                    </div>
+                  ) : null}
                 </div>
                 <button onClick={() => setEnvProject(p.path)} className="px-2 py-1 text-[10px] rounded-md bg-surface-800 text-surface-400 hover:text-indigo-400" title="Switch environment">Env</button>
                 <button onClick={() => gitSync(p)} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Sync</button>
-                <button onClick={() => startProject(p)} className="px-3 py-1 text-xs rounded-md bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20">Start</button>
+                {p.executionMode === "native-webrtc" ? (
+                  <button onClick={() => void openRemoteRuntime(p)} className="px-3 py-1 text-xs rounded-md bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">Remote Runtime</button>
+                ) : (
+                  <button onClick={() => startProject(p)} className="px-3 py-1 text-xs rounded-md bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20">
+                    {p.executionMode === "rn-hermes" ? "Start Hermes" : "Start"}
+                  </button>
+                )}
               </div>
             );
           })}
@@ -363,6 +435,90 @@ export default function ProjectsView({
               <button onClick={() => setEnvProject(null)} className="text-xs text-surface-500">close</button>
             </div>
             <EnvironmentSwitcher directory={envProject} />
+          </div>
+        </div>
+      )}
+
+      {remoteProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setRemoteProject(null); setRemoteCaps(null); setRemoteSession(null); setRemoteSessionNote(null); }}>
+          <div className="w-full max-w-xl rounded-xl border border-surface-700 bg-surface-950 p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-surface-100">Native Remote Runtime</div>
+                <div className="text-xs text-surface-500">{remoteProject.name} · {remoteProject.framework || "unknown"}</div>
+              </div>
+              <button onClick={() => { setRemoteProject(null); setRemoteCaps(null); setRemoteSession(null); setRemoteSessionNote(null); }} className="text-xs text-surface-500 hover:text-surface-300">close</button>
+            </div>
+            {remoteCaps ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-surface-800 bg-surface-900/60 p-3 text-xs text-surface-300">
+                  Primary surface: <span className="font-medium text-surface-100">{remoteCaps.primarySurface}</span>
+                  <span className="text-surface-500"> · execution mode {remoteCaps.executionMode}</span>
+                  {remoteCaps.supportedTransports?.length ? (
+                    <span className="text-surface-500"> · transports {remoteCaps.supportedTransports.join(", ")}</span>
+                  ) : null}
+                  {remoteCaps.currentHostClass ? (
+                    <span className="text-surface-500"> · host {remoteCaps.currentHostClass}</span>
+                  ) : null}
+                </div>
+                {remoteCaps.feedbackSdkCompatible ? (
+                  <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 text-xs text-emerald-100">
+                    Feedback SDK: {remoteCaps.feedbackSdkNote || "compatible"}
+                    {remoteCaps.feedbackControlProtocol ? ` · protocol ${remoteCaps.feedbackControlProtocol}` : ""}
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  {remoteCaps.targets.map((target) => (
+                    <div key={target.id} className="rounded-lg border border-surface-800 bg-surface-900/50 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm text-surface-100">{target.label}</div>
+                          <div className="text-xs text-surface-500">
+                            {target.requiredCli || "runtime tools"} · host {target.hostOs || "unknown"} · runtime class {target.runtimeHostClass || "generic"}
+                          </div>
+                        </div>
+                        <button
+                          disabled={!target.enabled}
+                          onClick={() => void createRemoteRuntimeSession(target.id)}
+                          className={`px-3 py-1 text-xs rounded-md ${target.enabled ? "bg-amber-500/10 text-amber-300 hover:bg-amber-500/20" : "bg-surface-800 text-surface-500 cursor-not-allowed"}`}
+                        >
+                          {target.enabled ? "Create Session" : "Unavailable"}
+                        </button>
+                      </div>
+                      {target.reason ? <div className="mt-2 text-xs text-rose-300">{target.reason}</div> : null}
+                    </div>
+                  ))}
+                </div>
+                {remoteSession ? (
+                  <div className="rounded-lg border border-sky-500/20 bg-sky-500/5 p-3 text-xs text-sky-100 space-y-2">
+                    <div>
+                      Session <span className="font-mono">{remoteSession.id}</span> · {remoteSession.status}
+                      {remoteSession.lastCommand ? ` · ${remoteSession.lastCommand}` : ""}
+                      {remoteSession.transportMode ? ` · ${remoteSession.transportMode}` : ""}
+                    </div>
+                    {remoteSession.note ? <div className="text-sky-200/80">{remoteSession.note}</div> : null}
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => void triggerRemoteRuntimeFeedback()} className="px-3 py-1 text-xs rounded-md bg-sky-500/15 text-sky-200 hover:bg-sky-500/25">
+                        Trigger Feedback
+                      </button>
+                      <button onClick={() => void closeRemoteRuntimeSession()} className="px-3 py-1 text-xs rounded-md bg-rose-500/15 text-rose-200 hover:bg-rose-500/25">
+                        Close Session
+                      </button>
+                    </div>
+                    <RemoteRuntimeViewer session={remoteSession} onSessionChange={setRemoteSession} />
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3 text-sm text-rose-200">
+                {remoteSessionNote || "Could not load remote runtime capabilities."}
+              </div>
+            )}
+            {remoteSessionNote && remoteCaps ? (
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100">
+                {remoteSessionNote}
+              </div>
+            ) : null}
           </div>
         </div>
       )}

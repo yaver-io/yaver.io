@@ -23,6 +23,7 @@ func runAttach(args []string) {
 	runner := fs.String("runner", "", "runner ID override for new terminal tasks")
 	agent := fs.String("agent", "", "alias for --runner")
 	model := fs.String("model", "", "model override for new terminal tasks")
+	mode := fs.String("mode", "", "runner mode override for new terminal tasks")
 	_ = fs.Parse(args)
 	if strings.TrimSpace(*agent) != "" && strings.TrimSpace(*runner) == "" {
 		*runner = normalizeRunnerID(*agent)
@@ -31,6 +32,7 @@ func runAttach(args []string) {
 		Source:        terminalLocalTaskSource,
 		DefaultRunner: strings.TrimSpace(*runner),
 		DefaultModel:  strings.TrimSpace(*model),
+		DefaultMode:   strings.TrimSpace(*mode),
 	}
 
 	cfg, err := LoadConfig()
@@ -91,6 +93,7 @@ func runAttach(args []string) {
 
 	// Track which task we're actively streaming
 	activeTask := ""
+	sessionTask := ""
 
 	printPrompt := func() {
 		if activeTask == "" {
@@ -98,7 +101,7 @@ func runAttach(args []string) {
 			if info != nil {
 				workDir = strings.TrimSpace(info.WorkDir)
 			}
-			printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel)
+			printInteractivePrompt(workDir, opts.DefaultRunner, opts.DefaultModel, opts.DefaultMode)
 		}
 	}
 
@@ -124,6 +127,13 @@ func runAttach(args []string) {
 				if cfg, profile, loadErr := loadCodeConfig(); loadErr == nil && cfg != nil && profile != nil {
 					opts.DefaultRunner = strings.TrimSpace(profile.Runner)
 					opts.DefaultModel = strings.TrimSpace(profile.Model)
+					opts.DefaultMode = strings.TrimSpace(profile.Mode)
+					if info != nil {
+						info.Runner.ID = opts.DefaultRunner
+						info.Runner.Name = opts.DefaultRunner
+						info.Runner.Model = opts.DefaultModel
+						info.Runner.Mode = opts.DefaultMode
+					}
 				}
 				printPrompt()
 				continue
@@ -139,15 +149,27 @@ func runAttach(args []string) {
 			payload := buildTerminalPromptPayload(input)
 			// Create a new task from keyboard input
 			printTerminalUserInput(payload)
-			taskID, err := attachCreateTask(baseURL, cfg.AuthToken, payload, opts)
-			if err != nil {
-				fmt.Printf("\033[31mError: %v\033[0m\n", err)
-				printPrompt()
-				continue
+			taskID := ""
+			if sessionTask != "" && activeTask == "" {
+				task, contErr := codeContinueTask("", sessionTask, payload, opts.DefaultRunner, opts.DefaultModel, opts.DefaultMode)
+				if contErr != nil {
+					fmt.Printf("\033[31mError: %v\033[0m\n", contErr)
+					printPrompt()
+					continue
+				}
+				taskID = task.ID
+			} else {
+				taskID, err = attachCreateTask(baseURL, cfg.AuthToken, payload, opts)
+				if err != nil {
+					fmt.Printf("\033[31mError: %v\033[0m\n", err)
+					printPrompt()
+					continue
+				}
 			}
 			knownTasks[taskID] = true
 			lastOutputLen[taskID] = 0
 			activeTask = taskID
+			sessionTask = taskID
 
 		case <-ticker.C:
 			// Poll for task updates
@@ -163,6 +185,7 @@ func runAttach(args []string) {
 					lastOutputLen[t.ID] = 0
 					fmt.Printf("\n\033[1;33m📱 [mobile] %s\033[0m\n\n", t.Title)
 					activeTask = t.ID
+					sessionTask = t.ID
 				}
 
 				// Stream new output
@@ -201,6 +224,7 @@ type attachRunnerInfo struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Model string `json:"model,omitempty"`
+	Mode  string `json:"mode,omitempty"`
 }
 
 type attachInfo struct {
@@ -214,6 +238,7 @@ type attachSessionOptions struct {
 	Source        string
 	DefaultRunner string
 	DefaultModel  string
+	DefaultMode   string
 }
 
 func attachGetInfo(baseURL, token string) (*attachInfo, error) {
@@ -267,6 +292,9 @@ func attachCreateTask(baseURL, token string, prompt terminalPromptPayload, opts 
 	}
 	if strings.TrimSpace(opts.DefaultModel) != "" {
 		bodyPayload["model"] = opts.DefaultModel
+	}
+	if strings.TrimSpace(opts.DefaultMode) != "" {
+		bodyPayload["mode"] = opts.DefaultMode
 	}
 	if len(prompt.Images) > 0 {
 		bodyPayload["images"] = prompt.Images
