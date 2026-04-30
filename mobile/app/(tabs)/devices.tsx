@@ -211,7 +211,7 @@ function DeviceCard({
   // button instead of the old green/red flicker.
   isStale: boolean;
   isPrimary: boolean;
-  onSelect: () => void;
+  onSelect: () => Promise<void> | void;
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
   token: string | null;
@@ -426,6 +426,30 @@ function DeviceCard({
         : (hasBusStaleSignal || isStale)
           ? "#eab308"
           : c.textMuted;
+  const primaryActionLabel = authRecoverable
+    ? "Recover & Connect"
+    : (isStale || isOffline)
+      ? "Connect"
+      : "Details";
+  const primaryActionTone = authRecoverable
+    ? "#f59e0b"
+    : isStale
+      ? "#eab308"
+      : c.accent;
+  const handleSmartConnect = async () => {
+    if (recovering) return;
+    if (!authRecoverable) {
+      await onSelect();
+      return;
+    }
+    setRecovering(true);
+    try {
+      await onRecoverAuth();
+      await onSelect();
+    } finally {
+      setRecovering(false);
+    }
+  };
 
   return (
     <Pressable
@@ -434,7 +458,7 @@ function DeviceCard({
         { backgroundColor: c.bgCard, borderColor: isActive ? c.accent : c.border },
         pressed && styles.cardPressed,
       ]}
-      onPress={onSelect}
+      onPress={() => { void handleSmartConnect(); }}
       onLongPress={onLongPress}
     >
       <View style={styles.cardRow}>
@@ -540,24 +564,6 @@ function DeviceCard({
           </View>
         ) : null}
         <View style={styles.cardActions}>
-          {(needsAuth || authExpired || remoteAuthExpired) && (
-            <Pressable
-              style={[styles.pingBtn, { backgroundColor: "#f59e0b18", borderWidth: 1, borderColor: "#f59e0b44" }]}
-              onPress={async () => {
-                setRecovering(true);
-                try {
-                  await onRecoverAuth();
-                } finally {
-                  setRecovering(false);
-                }
-              }}
-              disabled={recovering}
-            >
-              <Text style={[styles.pingBtnText, { color: "#f59e0b", fontWeight: "700" }]}>
-                {recovering ? "Recovering..." : "Recover Auth"}
-              </Text>
-            </Pressable>
-          )}
           <Pressable
             style={[styles.pingBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
             onPress={() => handlePing()}
@@ -574,28 +580,29 @@ function DeviceCard({
                 pingState.ok === false ? "unreachable" : "ping"}
             </Text>
           </Pressable>
-          {(isStale || isOffline) && (
-            <Pressable
-              style={[
-                styles.pingBtn,
-                {
-                  backgroundColor: isStale ? "#eab30822" : c.accent + "22",
-                  borderWidth: 1,
-                  borderColor: isStale ? "#eab30866" : c.accent + "55",
-                },
-              ]}
-              onPress={onSelect}
-            >
-              <Text
-                style={[
-                  styles.pingBtnText,
-                  { color: isStale ? "#eab308" : c.accent, fontWeight: "700" },
-                ]}
-              >
-                Connect
-              </Text>
-            </Pressable>
-          )}
+          <Pressable
+            style={[
+              styles.pingBtn,
+              {
+                backgroundColor: authRecoverable ? "#f59e0b18" : (isStale || isOffline) ? primaryActionTone + "22" : c.accent + "18",
+                borderWidth: 1,
+                borderColor: authRecoverable ? "#f59e0b44" : (isStale || isOffline) ? primaryActionTone + "55" : c.accent + "40",
+                opacity: recovering ? 0.7 : 1,
+              },
+            ]}
+            onPress={() => {
+              if (authRecoverable || isStale || isOffline) {
+                void handleSmartConnect();
+              } else {
+                setDetailsOpen(true);
+              }
+            }}
+            disabled={recovering}
+          >
+            <Text style={[styles.pingBtnText, { color: primaryActionTone, fontWeight: "700" }]}>
+              {recovering ? "Recovering..." : primaryActionLabel}
+            </Text>
+          </Pressable>
           <Pressable
             style={[styles.pingBtn, { backgroundColor: c.accent + "18" }]}
             onPress={() => setDetailsOpen(true)}

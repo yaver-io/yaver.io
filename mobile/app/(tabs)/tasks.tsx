@@ -1657,29 +1657,6 @@ export default function TasksScreen() {
     }
   };
 
-  const handleRecoverAuthFromPhone = async (device: typeof devices[0]) => {
-    setRecoveringDeviceId(device.id);
-    setReconnectError(null);
-    try {
-      const recovery = await recoverDeviceAuth(device);
-      if (recovery?.ok && recovery.mode === "device-code") {
-        Alert.alert("Continue In Browser", "Finish sign-in in your phone browser. Yaver already opened the authorization page.");
-        return;
-      }
-      if (recovery?.ok) {
-        Alert.alert("Recovered", `${device.name} is signing back into Yaver now.`);
-        return;
-      }
-      Alert.alert("Recovery Failed", recovery?.error || "Could not recover this machine from the phone.");
-    } catch (e: any) {
-      const msg = e?.message || "Could not recover this machine from the phone.";
-      setReconnectError(msg);
-      Alert.alert("Recovery Failed", msg);
-    } finally {
-      setRecoveringDeviceId((current) => (current === device.id ? null : current));
-    }
-  };
-
   const effectiveState: ConnectionState =
     connectionStatus === "connected" ? quicState :
     // Show yellow "Reconnecting" for error state (active retries)
@@ -1834,19 +1811,8 @@ export default function TasksScreen() {
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
               <Text style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6 }}>
-                Agent session expired
+                Agent session expired. Reconnect will recover it from this phone.
               </Text>
-              {activeDevice && (
-                <Pressable
-                  style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: "#f59e0b22" }}
-                  onPress={() => { void handleRecoverAuthFromPhone(activeDevice); }}
-                  disabled={recoveringDeviceId === activeDevice.id}
-                >
-                  <Text style={{ color: "#fbbf24", fontSize: 11, fontWeight: "700" }}>
-                    {recoveringDeviceId === activeDevice.id ? "Recovering..." : "Recover Auth"}
-                  </Text>
-                </Pressable>
-              )}
             </View>
           )}
           {isEffectivelyConnected && !agentAuthExpired && (
@@ -2125,7 +2091,7 @@ export default function TasksScreen() {
                   const needsAuth = d.needsAuth === true || probe?.needsAuth === true;
                   const statusText =
                     needsAuth && hasReachableProbe
-                      ? "Needs Auth"
+                      ? "Recover"
                       : d.online && !unreachable
                         ? "Online"
                         : hasReachableProbe
@@ -2169,7 +2135,7 @@ export default function TasksScreen() {
                           </Text>
                           {needsAuth && hasReachableProbe ? (
                             <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
-                              Machine is up, but Yaver auth expired. Tap to recover from this phone.
+                              Machine is up, but Yaver auth expired. Tap to recover and connect.
                             </Text>
                           ) : hasReachableProbe ? (
                             <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
@@ -2196,25 +2162,6 @@ export default function TasksScreen() {
                           ) : null}
                         </View>
                       </View>
-                      {needsAuth && hasReachableProbe && (
-                        <View style={{ marginTop: 10, flexDirection: "row", justifyContent: "flex-end" }}>
-                          <Pressable
-                            style={{
-                              paddingHorizontal: 10,
-                              paddingVertical: 6,
-                              borderRadius: 8,
-                              backgroundColor: "#f59e0b18",
-                              opacity: isRecovering ? 0.7 : 1,
-                            }}
-                            onPress={() => { void handleRecoverAuthFromPhone(d); }}
-                            disabled={isRecovering}
-                          >
-                            <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
-                              {isRecovering ? "Recovering..." : "Recover Auth"}
-                            </Text>
-                          </Pressable>
-                        </View>
-                      )}
                     </Pressable>
                   );
                 })}

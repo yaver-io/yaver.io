@@ -9,12 +9,12 @@ import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/t
 
 function transportToneClasses(tone: TransportInfo["tone"]): string {
   switch (tone) {
-    case "emerald": return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
-    case "blue":    return "border-blue-500/40 bg-blue-500/10 text-blue-200";
-    case "violet":  return "border-violet-500/40 bg-violet-500/10 text-violet-200";
-    case "amber":   return "border-amber-500/40 bg-amber-500/10 text-amber-200";
-    case "rose":    return "border-rose-500/40 bg-rose-500/10 text-rose-200";
-    default:        return "border-surface-700 bg-surface-800/40 text-surface-300";
+    case "emerald": return "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200";
+    case "blue":    return "border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-200";
+    case "violet":  return "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/10 dark:text-violet-200";
+    case "amber":   return "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200";
+    case "rose":    return "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200";
+    default:        return "border-slate-300 bg-white text-slate-600 dark:border-surface-700 dark:bg-surface-800/40 dark:text-surface-300";
   }
 }
 
@@ -1461,15 +1461,15 @@ export default function DevicesView({
             const shareSummary = deviceShareSummary(device);
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
             return (
-            <div key={device.id} className="card flex items-start gap-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-surface-800 text-surface-400">
+            <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-800 dark:bg-surface-900/40">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-surface-800 dark:text-surface-400">
                 <DeviceIcon platform={device.platform} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-semibold text-surface-50">
+                      <h3 className="font-semibold text-slate-900 dark:text-surface-50">
                         {device.name}
                       </h3>
                       {device.isGuest ? (
@@ -1510,7 +1510,7 @@ export default function DevicesView({
                                 : "bg-surface-600"
                         }`}
                       />
-                      <span className="text-xs text-surface-500">
+                      <span className="text-xs text-slate-500 dark:text-surface-500">
                         {device.workspaceLive
                           ? "Workspace Live"
                           : device.probeState === "ok"
@@ -1527,7 +1527,7 @@ export default function DevicesView({
                       </span>
                     </div>
                     <div className="mt-1"><TransportBadge device={device} /></div>
-                    <p className="text-sm text-surface-500">
+                    <p className="text-sm text-slate-600 dark:text-surface-500">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
                       {device.agentVersion ? (
                         <>
@@ -1537,14 +1537,14 @@ export default function DevicesView({
                             const cmp = compareSemver(cur, latestAgentVersion);
                             if (cmp >= 0) {
                               return (
-                                <span title={`Latest agent (v${latestAgentVersion})`} className="ml-1 text-emerald-400">✓</span>
+                                <span title={`Latest agent (v${latestAgentVersion})`} className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>
                               );
                             }
                             return (
                               <button
                                 onClick={() => setUpdateModalDevice(device)}
                                 title={`Update v${cur} → v${latestAgentVersion} on ${device.name}`}
-                                className="ml-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-300 hover:bg-amber-500/20"
+                                className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
                               >
                                 update → v{latestAgentVersion}
                               </button>
@@ -1570,7 +1570,7 @@ export default function DevicesView({
                         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                           primaryDeviceId === device.id
                             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
-                            : "border-surface-700 bg-surface-900/40 text-surface-300 hover:border-amber-300 hover:text-amber-700 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-amber-300 hover:text-amber-700 dark:border-surface-700 dark:bg-surface-900/40 dark:text-surface-300 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
                         }`}
                         title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
                       >
@@ -1583,7 +1583,7 @@ export default function DevicesView({
                     {!device.isGuest ? (
                       <button
                         onClick={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 hover:border-amber-500/60 hover:bg-amber-500/20"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
                         title="Recover a wedged agent — works even when the relay tunnel is broken"
                       >
                         🩹 Rescue
@@ -1591,7 +1591,7 @@ export default function DevicesView({
                     ) : null}
                     <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-surface-800 bg-surface-900/40 px-2.5 py-1 text-[11px] font-medium text-surface-300 hover:border-surface-700 hover:bg-surface-800/60 hover:text-surface-100"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-800 dark:bg-surface-900/40 dark:text-surface-300 dark:hover:border-surface-700 dark:hover:bg-surface-800/60 dark:hover:text-surface-100"
                       aria-expanded={expandedId === device.id}
                       title="Show runtime, hardware, network and sharing details"
                     >
@@ -1632,13 +1632,13 @@ export default function DevicesView({
                   />
                 ) : null}
                 {device.edgeProfile ? (
-                  <p className="text-xs text-surface-500">
+                  <p className="text-xs text-slate-500 dark:text-surface-500">
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
                   </p>
                 ) : null}
                 {shareSummary?.viewerIsGuest && shareSummary?.hostLabel ? (
                   <div className="mt-3">
-                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
                       Shared from
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -1673,7 +1673,7 @@ export default function DevicesView({
                 ) : null}
                 {shareSummary && shareSummary.guestChips.length > 0 ? (
                   <div className="mt-3">
-                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
                       Shared with
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -1728,7 +1728,7 @@ export default function DevicesView({
                   const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">
-                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
                         Coding agents
                       </div>
                       {/* Primary agent — promoted to its own card. This
@@ -1751,7 +1751,7 @@ export default function DevicesView({
                             onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
                           />
                         ) : (
-                          <span className="text-[12px] text-surface-500">(none set)</span>
+                          <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
                         )}
                         {!explicitPrimary && seededPrimary ? (
                           <span
@@ -1837,12 +1837,12 @@ export default function DevicesView({
                           to expose the full chip rail with Test +
                           Sign-in buttons preserved for each one. */}
                       {availableOthers.length > 0 ? (
-                        <details className="rounded-lg border border-surface-800 bg-surface-900/30">
-                          <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-surface-400 hover:text-surface-200">
+                        <details className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-surface-800 dark:bg-surface-900/30">
+                          <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-slate-600 hover:text-slate-900 dark:text-surface-400 dark:hover:text-surface-200">
                             <span>Other available agents</span>
-                            <span className="text-[10px] text-surface-500">({availableOthers.length})</span>
+                            <span className="text-[10px] text-slate-500 dark:text-surface-500">({availableOthers.length})</span>
                           </summary>
-                          <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-800/60 px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 px-3 py-2 dark:border-surface-800/60">
                             {availableOthers.map((state) => (
                               <RunnerChipWithTest
                                 key={`${device.id}:runner:${state.id}`}
@@ -1872,7 +1872,7 @@ export default function DevicesView({
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-surface-700 bg-surface-900/60 px-3 py-1.5 text-xs font-semibold text-surface-100 shadow-sm hover:border-surface-600 hover:bg-surface-800"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-surface-900/60 dark:text-surface-100 dark:hover:border-surface-600 dark:hover:bg-surface-800"
                       title="Disconnect from this machine and close the active workspace"
                     >
                       <span aria-hidden>×</span>

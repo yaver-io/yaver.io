@@ -236,6 +236,43 @@ func TestDetectMonorepoLineageYaverIoDogfoodLayout(t *testing.T) {
 	}
 }
 
+func TestDisplayProjectName_RepoFirstStandalone(t *testing.T) {
+	got := displayProjectName("/tmp/sfmg", "", "SFMG", "react-native", true, false)
+	if got != "sfmg / mobile" {
+		t.Fatalf("got %q, want %q", got, "sfmg / mobile")
+	}
+}
+
+func TestDisplayProjectName_RepoFirstNestedApp(t *testing.T) {
+	got := displayProjectName("/tmp/yaver", "", "todo", "kotlin", true, false)
+	if got != "yaver (todo) / mobile" {
+		t.Fatalf("got %q, want %q", got, "yaver (todo) / mobile")
+	}
+}
+
+func TestDisplayProjectName_RepoFirstRootMobileSubdir(t *testing.T) {
+	got := displayProjectName("/tmp/yaver.io", "mobile", "Yaver", "react-native", true, false)
+	if got != "yaver / mobile" {
+		t.Fatalf("got %q, want %q", got, "yaver / mobile")
+	}
+}
+
+func TestRepoRootForProject_FindsAncestorGitRoot(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "yaver")
+	app := filepath.Join(repo, "tests", "fixtures", "native-android-kotlin")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := repoRootForProject(app)
+	if got != repo {
+		t.Fatalf("got %q, want %q", got, repo)
+	}
+}
+
 func TestHasProjectGitContext_WalksDeepFixtureAncestors(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "yaver.io")

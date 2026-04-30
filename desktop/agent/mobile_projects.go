@@ -111,6 +111,81 @@ type MobileProject struct {
 	PrimarySurface string `json:"primarySurface,omitempty"` // hermes | webview | webrtc
 }
 
+func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
+	fw := strings.TrimSpace(strings.ToLower(framework))
+	switch fw {
+	case "next", "vite":
+		return "web"
+	}
+	if mobileCapable && !webCapable {
+		return "mobile"
+	}
+	if webCapable && !mobileCapable {
+		return "web"
+	}
+	if mobileCapable && webCapable {
+		return "mobile-web"
+	}
+	if fw != "" {
+		return fw
+	}
+	return "project"
+}
+
+func repoDisplayName(repoRoot string) string {
+	repoName := strings.TrimSpace(filepath.Base(strings.TrimSpace(repoRoot)))
+	repoName = strings.TrimSuffix(repoName, ".git")
+	if dot := strings.Index(repoName, "."); dot > 0 {
+		repoName = repoName[:dot]
+	}
+	return strings.TrimSpace(repoName)
+}
+
+func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobileCapable, webCapable bool) string {
+	repoName := repoDisplayName(repoRoot)
+	appName = strings.TrimSpace(appName)
+	kind := projectKindLabel(framework, mobileCapable, webCapable)
+	leaf := strings.TrimSpace(monorepoApp)
+	if leaf != "" {
+		leaf = strings.TrimSpace(strings.Split(leaf, "/")[len(strings.Split(leaf, "/"))-1])
+	}
+	subproject := ""
+	switch {
+	case leaf != "" && !strings.EqualFold(leaf, kind):
+		subproject = leaf
+	case appName != "" && !strings.EqualFold(appName, repoName) && !strings.EqualFold(appName, kind):
+		subproject = appName
+	}
+	if repoName == "" {
+		repoName = appName
+	}
+	if repoName == "" {
+		repoName = "project"
+	}
+	if subproject != "" {
+		return fmt.Sprintf("%s (%s) / %s", repoName, subproject, kind)
+	}
+	return fmt.Sprintf("%s / %s", repoName, kind)
+}
+
+func repoRootForProject(dir string) string {
+	if root, _ := detectMonorepoLineage(dir); strings.TrimSpace(root) != "" {
+		return root
+	}
+	cur := strings.TrimSpace(dir)
+	for i := 0; i < 6 && cur != "" && cur != "/" && cur != "."; i++ {
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
+			return cur
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	return ""
+}
+
 // Known Expo SDK versions and their compatibility
 var knownExpoSDKs = map[string]string{
 	"52": "React Native 0.76",
@@ -301,6 +376,8 @@ func scanMobileProjects() []MobileProject {
 			if appName == "" {
 				appName = filepath.Base(dir)
 			}
+			repoRoot := repoRootForProject(dir)
+			monorepoApp := ""
 
 			// Detect SDK version and dev build status
 			sdkVersion := detectExpoSDK(dir, framework)
@@ -309,7 +386,7 @@ func scanMobileProjects() []MobileProject {
 				framework == "unity"
 
 			proj := MobileProject{
-				Name:           appName,
+				Name:           displayProjectName(repoRoot, monorepoApp, appName, framework, mobileCapable, webCapable),
 				Path:           dir,
 				Framework:      framework,
 				SDKVersion:     sdkVersion,
@@ -327,8 +404,12 @@ func scanMobileProjects() []MobileProject {
 			// "carrotbet → apps/web" as separate rows under the same
 			// repo. Standalone repos leave both fields empty.
 			if root, app := detectMonorepoLineage(dir); root != "" {
+				monorepoApp = app
 				proj.MonorepoRoot = root
 				proj.MonorepoApp = app
+				proj.Name = displayProjectName(root, app, appName, framework, mobileCapable, webCapable)
+			} else if repoRoot != "" {
+				proj.Name = displayProjectName(repoRoot, "", appName, framework, mobileCapable, webCapable)
 			}
 
 			// Get git info (fast — just reads local files)

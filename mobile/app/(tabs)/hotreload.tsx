@@ -94,27 +94,8 @@ function currentYaverGuestCrashReport(): GuestCrashReport | null {
   return report as GuestCrashReport;
 }
 
-function titleCaseWord(value: string): string {
-  if (!value) return value;
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function monorepoSurfaceLabel(monorepoApp?: string): string | null {
-  const trimmed = typeof monorepoApp === "string" ? monorepoApp.trim() : "";
-  if (!trimmed) return null;
-  const leaf = trimmed.split("/").pop()?.trim() || "";
-  if (!leaf) return null;
-  return leaf.toLowerCase();
-}
-
 function displayProjectTitle(project: ProjectItem): string {
-  const surface = monorepoSurfaceLabel(project.monorepoApp);
-  if (!surface) return project.name;
-  const repoLeaf = project.monorepoRoot?.trim().split("/").pop()?.trim() || "";
-  const baseName = project.name.trim().toLowerCase() === surface && repoLeaf
-    ? titleCaseWord(repoLeaf)
-    : project.name;
-  return `${baseName} (${surface})`;
+  return project.name;
 }
 
 function describeRuntimeFamilySelection(metadata?: Record<string, unknown> | null): string | null {
