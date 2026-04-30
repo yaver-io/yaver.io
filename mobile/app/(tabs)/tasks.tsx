@@ -751,6 +751,8 @@ export default function TasksScreen() {
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [reconnectingDeviceId, setReconnectingDeviceId] = useState<string | null>(null);
+  const [recoveringDeviceId, setRecoveringDeviceId] = useState<string | null>(null);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [quicState, setQuicState] = useState<ConnectionState>(quicClient.connectionState);
   const [connMode, setConnMode] = useState<ConnectionMode>(quicClient.connectionMode);
@@ -1612,12 +1614,25 @@ export default function TasksScreen() {
 
   const handleReconnect = async (device: typeof devices[0]) => {
     setIsReconnecting(true);
+    setReconnectingDeviceId(device.id);
     setReconnectError(null);
     try {
-      if (!device.isGuest && unreachableSet.has(device.id) && device.online) {
+      const probe = deviceProbeMap[device.id];
+      const shouldRecoverAuth =
+        !device.isGuest &&
+        (
+          device.needsAuth === true ||
+          probe?.needsAuth === true ||
+          (unreachableSet.has(device.id) && device.online)
+        );
+
+      if (shouldRecoverAuth) {
+        setRecoveringDeviceId(device.id);
         const recovery = await recoverDeviceAuth(device);
         if (recovery && !recovery.ok && recovery.error) {
           console.log(`[tasks] auth recovery before reconnect failed for ${device.name}: ${recovery.error}`);
+          setReconnectError(recovery.error);
+          return;
         }
       }
       // selectDevice awaits quicClient.connect (which races direct + tunnel
@@ -1636,7 +1651,32 @@ export default function TasksScreen() {
     } catch (e: any) {
       setReconnectError(e?.message || `Could not reach ${device.name}`);
     } finally {
+      setRecoveringDeviceId((current) => (current === device.id ? null : current));
+      setReconnectingDeviceId((current) => (current === device.id ? null : current));
       setIsReconnecting(false);
+    }
+  };
+
+  const handleRecoverAuthFromPhone = async (device: typeof devices[0]) => {
+    setRecoveringDeviceId(device.id);
+    setReconnectError(null);
+    try {
+      const recovery = await recoverDeviceAuth(device);
+      if (recovery?.ok && recovery.mode === "device-code") {
+        Alert.alert("Continue In Browser", "Finish sign-in in your phone browser. Yaver already opened the authorization page.");
+        return;
+      }
+      if (recovery?.ok) {
+        Alert.alert("Recovered", `${device.name} is signing back into Yaver now.`);
+        return;
+      }
+      Alert.alert("Recovery Failed", recovery?.error || "Could not recover this machine from the phone.");
+    } catch (e: any) {
+      const msg = e?.message || "Could not recover this machine from the phone.";
+      setReconnectError(msg);
+      Alert.alert("Recovery Failed", msg);
+    } finally {
+      setRecoveringDeviceId((current) => (current === device.id ? null : current));
     }
   };
 
@@ -1794,8 +1834,19 @@ export default function TasksScreen() {
             <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
               <Text style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6 }}>
-                Agent session expired — open Devices and tap Recover Auth
+                Agent session expired
               </Text>
+              {activeDevice && (
+                <Pressable
+                  style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, backgroundColor: "#f59e0b22" }}
+                  onPress={() => { void handleRecoverAuthFromPhone(activeDevice); }}
+                  disabled={recoveringDeviceId === activeDevice.id}
+                >
+                  <Text style={{ color: "#fbbf24", fontSize: 11, fontWeight: "700" }}>
+                    {recoveringDeviceId === activeDevice.id ? "Recovering..." : "Recover Auth"}
+                  </Text>
+                </Pressable>
+              )}
             </View>
           )}
           {isEffectivelyConnected && !agentAuthExpired && (
@@ -2092,7 +2143,8 @@ export default function TasksScreen() {
                           : unreachable && d.online
                             ? "#eab308"
                             : "#a1a1aa";
-                  const isRetrying = isReconnecting && activeDevice?.id === d.id;
+                  const isRetrying = reconnectingDeviceId === d.id;
+                  const isRecovering = recoveringDeviceId === d.id;
                   return (
                     <Pressable
                       key={d.id}
@@ -2105,8 +2157,8 @@ export default function TasksScreen() {
                         // for status + meta + action affordance.
                         paddingVertical: 14,
                       }]}
-                      onPress={() => !isRetrying && handleReconnect(d)}
-                      disabled={isRetrying}
+                      onPress={() => !(isRetrying || isRecovering) && handleReconnect(d)}
+                      disabled={isRetrying || isRecovering}
                     >
                       <View style={s.devicePickerRow}>
                         <View style={{ flex: 1 }}>
@@ -2139,11 +2191,30 @@ export default function TasksScreen() {
                             <View style={[s.reconnectStatusDot, { backgroundColor: statusColor }]} />
                             <Text style={[s.reconnectStatusText, { color: statusColor }]}>{statusText}</Text>
                           </View>
-                          {isRetrying ? (
-                            <ActivityIndicator size="small" color={c.accent} style={{ marginTop: 8 }} />
+                          {(isRetrying || isRecovering) ? (
+                            <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
                           ) : null}
                         </View>
                       </View>
+                      {needsAuth && hasReachableProbe && (
+                        <View style={{ marginTop: 10, flexDirection: "row", justifyContent: "flex-end" }}>
+                          <Pressable
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 6,
+                              borderRadius: 8,
+                              backgroundColor: "#f59e0b18",
+                              opacity: isRecovering ? 0.7 : 1,
+                            }}
+                            onPress={() => { void handleRecoverAuthFromPhone(d); }}
+                            disabled={isRecovering}
+                          >
+                            <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
+                              {isRecovering ? "Recovering..." : "Recover Auth"}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      )}
                     </Pressable>
                   );
                 })}

@@ -13,11 +13,10 @@ import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Alert } from "react-native";
 import { TextInput } from "react-native";
-import { Device, RunnerInfo, useDevice } from "../../src/context/DeviceContext";
+import { Device, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
-import { quicClient, type RunnerAuthStatusRow } from "../../src/lib/quic";
-import RunnerAuthModal from "../../src/components/RunnerAuthModal";
+import { quicClient } from "../../src/lib/quic";
 import DeviceDetailsModal from "../../src/components/DeviceDetailsModal";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
 import { submitPair, fetchPairInfo } from "../../src/lib/pairDevice";
@@ -58,13 +57,7 @@ function TransportBadge({ device }: { device: Device }) {
   );
 }
 
-type GitProviderSummary = {
-  github: boolean;
-  gitlab: boolean;
-};
-
 type DeviceProjectSummary = {
-  names: string[];
   total: number;
 };
 
@@ -75,10 +68,8 @@ type DeviceRuntimeSummary = {
 };
 
 type MachineSummary = {
-  gitProviders: GitProviderSummary | null;
   projectSummary: DeviceProjectSummary | null;
   runtime: DeviceRuntimeSummary | null;
-  runnerAuthRows: RunnerAuthStatusRow[];
   fetchedAt: number;
 };
 
@@ -105,26 +96,6 @@ function formatDevicePlatform(device: Pick<Device, "name" | "os" | "host">, exac
   return os;
 }
 
-function formatRunnerChipLabel(runner: string): string {
-  const cleaned = String(runner || "").trim();
-  if (!cleaned) return cleaned;
-  if (cleaned === "claude-code") return "claude";
-  return cleaned;
-}
-
-function accessSummary(device: Pick<Device, "isGuest" | "sharedWithGuests" | "sharesAllProjects" | "sharedProjects" | "sharesAllRunners" | "sharedRunners">) {
-  const hasSharedState = device.isGuest || device.sharedWithGuests;
-  if (!hasSharedState) return null;
-  const sharedProjects = Array.isArray(device.sharedProjects) ? device.sharedProjects.filter(Boolean) : [];
-  const sharedRunners = Array.isArray(device.sharedRunners) ? device.sharedRunners.filter(Boolean) : [];
-  return {
-    projectLabel: device.sharesAllProjects ? "ALL RESOURCES" : "PROJECT ONLY",
-    projectChips: device.sharesAllProjects ? [] : sharedProjects,
-    runnerLabel: device.sharesAllRunners ? "ALL AGENTS" : "SOME AGENTS",
-    runnerChips: device.sharesAllRunners ? [] : sharedRunners.map(formatRunnerChipLabel),
-  };
-}
-
 function hasRecentLiveSignal(device: Pick<Device, "lastTunnelEvent">, maxAgeMs = 90_000): boolean {
   return Boolean(
     device.lastTunnelEvent &&
@@ -145,20 +116,6 @@ function ConnectionBadge({ status }: { status: string }) {
     <View style={[styles.connBadge, { backgroundColor: color + "22" }]}>
       <View style={[styles.connDot, { backgroundColor: color }]} />
       <Text style={[styles.connText, { color }]}>{status}</Text>
-    </View>
-  );
-}
-
-function ScopeChip({
-  label,
-  color,
-}: {
-  label: string;
-  color: string;
-}) {
-  return (
-    <View style={[styles.scopeChip, { backgroundColor: color + "18", borderColor: color + "55" }]}>
-      <Text style={[styles.scopeChipText, { color }]}>{label}</Text>
     </View>
   );
 }
@@ -189,30 +146,6 @@ function buildDeviceRequestContext(
   };
 }
 
-function buildDeviceUrl(device: Device, token: string | null): string | null {
-  return buildDeviceRequestContext(device, token)?.baseUrl ?? null;
-}
-
-function inferGitProvidersFromProjects(
-  projects: Array<{ gitRemote?: string | null }>,
-): GitProviderSummary {
-  let github = false;
-  let gitlab = false;
-  for (const project of projects) {
-    const remote = String(project?.gitRemote || "").toLowerCase();
-    if (remote.includes("github.com")) github = true;
-    if (remote.includes("gitlab.com")) gitlab = true;
-  }
-  return { github, gitlab };
-}
-
-async function fetchMachineSummary(baseUrl: string, token: string): Promise<MachineSummary> {
-  return fetchMachineSummaryWithHeaders(baseUrl, {
-    Authorization: `Bearer ${token}`,
-    "X-Client-Platform": Platform.OS,
-  });
-}
-
 async function fetchMachineSummaryWithHeaders(
   baseUrl: string,
   headers: Record<string, string>,
@@ -223,45 +156,21 @@ async function fetchMachineSummaryWithHeaders(
   if (!opts?.force && cached && Date.now() - cached.fetchedAt < MACHINE_SUMMARY_TTL_MS) {
     return cached;
   }
-  const [projectsRes, providersRes] = await Promise.allSettled([
+  const [projectsRes] = await Promise.allSettled([
     fetch(`${baseUrl}/projects`, { headers, signal: AbortSignal.timeout(5000) }),
-    fetch(`${baseUrl}/git/provider/status`, { headers, signal: AbortSignal.timeout(5000) }),
   ]);
-  const [infoRes, runnerAuthRes] = await Promise.allSettled([
+  const [infoRes] = await Promise.allSettled([
     fetch(`${baseUrl}/info`, { headers, signal: AbortSignal.timeout(5000) }),
-    fetch(`${baseUrl}/runner-auth/status`, { headers, signal: AbortSignal.timeout(5000) }),
   ]);
 
   let projectSummary: DeviceProjectSummary | null = null;
-  let inferredProviders: GitProviderSummary | null = null;
   let runtime: DeviceRuntimeSummary | null = null;
-  let runnerAuthRows: RunnerAuthStatusRow[] = [];
 
   if (projectsRes.status === "fulfilled" && projectsRes.value.ok) {
     const projectsJson = await projectsRes.value.json();
     const projects = Array.isArray(projectsJson?.projects) ? projectsJson.projects : [];
-    const names = projects
-      .map((project: any) => String(project?.name || "").trim())
-      .filter(Boolean);
-    inferredProviders = inferGitProvidersFromProjects(projects);
     projectSummary = {
-      names: names.slice(0, 4),
-      total: names.length,
-    };
-  }
-
-  let gitProviders = inferredProviders;
-  if (providersRes.status === "fulfilled" && providersRes.value.ok) {
-    const providersJson = await providersRes.value.json();
-    const providers = Array.isArray(providersJson?.providers) ? providersJson.providers : [];
-    const configured = new Set(
-      providers
-        .map((provider: any) => String(provider?.provider || "").trim().toLowerCase())
-        .filter(Boolean),
-    );
-    gitProviders = {
-      github: configured.has("github"),
-      gitlab: configured.has("gitlab"),
+      total: projects.length,
     };
   }
 
@@ -274,45 +183,13 @@ async function fetchMachineSummaryWithHeaders(
     };
   }
 
-  if (runnerAuthRes.status === "fulfilled" && runnerAuthRes.value.ok) {
-    const authJson = await runnerAuthRes.value.json().catch(() => ({}));
-    runnerAuthRows = Array.isArray(authJson?.runners) ? authJson.runners : [];
-  }
-
   const summary: MachineSummary = {
-    gitProviders,
     projectSummary,
     runtime,
-    runnerAuthRows,
     fetchedAt: Date.now(),
   };
   machineSummaryCache.set(cacheKey, summary);
   return summary;
-}
-
-function runnerStatusRow(rows: RunnerAuthStatusRow[], id: "claude" | "codex"): RunnerAuthStatusRow | null {
-  return rows.find((row) => row.id === id || (id === "claude" && row.id === "claude-code")) ?? null;
-}
-
-function runnerAuthState(row: RunnerAuthStatusRow | null): "not-installed" | "ready" | "expired" | "unknown" {
-  if (!row) return "unknown";
-  if (!row.installed) return "not-installed";
-  if (row.ready) return "ready";
-  return "expired";
-}
-
-function runnerStateLabel(row: RunnerAuthStatusRow | null, fallbackName: string): string {
-  const name = row?.name || fallbackName;
-  switch (runnerAuthState(row)) {
-    case "ready":
-      return `${name} ready`;
-    case "expired":
-      return `${name} expired`;
-    case "not-installed":
-      return `${name} not installed`;
-    default:
-      return `${name} unknown`;
-  }
 }
 
 function DeviceCard({
@@ -341,19 +218,11 @@ function DeviceCard({
 }) {
   const c = useColors();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
-  const [killing, setKilling] = useState<string | null>(null);
   const [recovering, setRecovering] = useState(false);
-  const [refreshingState, setRefreshingState] = useState(false);
   const [runtimeLabel, setRuntimeLabel] = useState<string | null>(null);
-  const [gitProviders, setGitProviders] = useState<GitProviderSummary | null>(null);
   const [projectSummary, setProjectSummary] = useState<DeviceProjectSummary | null>(null);
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [remoteAuthExpired, setRemoteAuthExpired] = useState(false);
-  const [runnerAuthRows, setRunnerAuthRows] = useState<RunnerAuthStatusRow[]>([]);
-  // Re-auth a remote runner CLI (claude / codex) on this device by
-  // running the same /runner-auth/browser flow the web UI uses.
-  // `runnerAuthOpenFor` is the runner id when the modal is open.
-  const [runnerAuthOpenFor, setRunnerAuthOpenFor] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
@@ -364,7 +233,6 @@ function DeviceCard({
   // online|offline missed the "Convex thinks live, we can't reach"
   // case which flickered between two wrong answers.
   const authRecoverable = needsAuth || authExpired || remoteAuthExpired;
-  const hasLiveSignal = hasRecentLiveSignal(device);
   const hasBusLiveSignal = device.peerState === "online";
   const hasBusStaleSignal = device.peerState === "stale";
   const isOnline = (device.online || hasBusLiveSignal) && !(isStale && !hasBusLiveSignal) && !authRecoverable;
@@ -382,11 +250,9 @@ function DeviceCard({
   useEffect(() => {
     const ctx = buildDeviceRequestContext(device, token);
     if (!ctx || !token) {
-      setGitProviders(null);
       setProjectSummary(null);
       setAgentVersion(null);
       setRemoteAuthExpired(false);
-      setRunnerAuthRows([]);
       return;
     }
 
@@ -397,32 +263,26 @@ function DeviceCard({
         const cacheKey = `${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`;
         const cached = machineSummaryCache.get(cacheKey);
         if (cached && !cancelled) {
-          setGitProviders(cached.gitProviders);
           setProjectSummary(cached.projectSummary);
           setAgentVersion(cached.runtime?.version ?? null);
           setRemoteAuthExpired(cached.runtime?.authExpired === true);
-          setRunnerAuthRows(cached.runnerAuthRows || []);
         }
 
         if (!device.online && cached) return;
 
         const summary = await fetchMachineSummaryWithHeaders(ctx.baseUrl, ctx.headers, { force });
         if (!cancelled) {
-          setGitProviders(summary.gitProviders);
           setProjectSummary(summary.projectSummary);
           setAgentVersion(summary.runtime?.version ?? null);
           setRemoteAuthExpired(summary.runtime?.authExpired === true);
-          setRunnerAuthRows(summary.runnerAuthRows || []);
         }
       } catch {
         const cacheKey = `${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`;
         const cached = machineSummaryCache.get(cacheKey);
         if (!cancelled) {
-          setGitProviders(cached?.gitProviders ?? null);
           setProjectSummary(cached?.projectSummary ?? null);
           setAgentVersion(cached?.runtime?.version ?? null);
           setRemoteAuthExpired(cached?.runtime?.authExpired === true);
-          setRunnerAuthRows(cached?.runnerAuthRows ?? []);
         }
       }
     };
@@ -506,23 +366,6 @@ function DeviceCard({
     const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
   }, [device.host, device.port, device.publicKey, token]);
-  const claudeRow = runnerStatusRow(runnerAuthRows, "claude");
-  const codexRow = runnerStatusRow(runnerAuthRows, "codex");
-  const claudeState = runnerAuthState(claudeRow);
-  const codexState = runnerAuthState(codexRow);
-  // Yaver's three first-class runners — the only runners we surface
-  // anywhere. Same allowlist used by phone-projects.tsx + tasks.tsx.
-  const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
-  const runners = (device.runners || []).filter((r) => RUNNER_WL.has((r.runnerId || "").toLowerCase()));
-  const activeRunners = runners.filter((r) => r.status === "running");
-  const shareSummary = accessSummary(device);
-  const workerLabel =
-    device.deviceClass === "edge-mobile"
-      ? "MOBILE WORKER"
-      : device.deviceClass === "server"
-        ? "SERVER"
-        : undefined;
-
   const timeSince = (ts: number) => {
     if (!ts) return "never";
     const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -561,68 +404,28 @@ function DeviceCard({
     setPingState({ pinging: false, ok: false });
   };
 
-  const handleRefreshState = async () => {
-    const ctx = buildDeviceRequestContext(device, token);
-    if (!ctx) return;
-    setRefreshingState(true);
-    try {
-      machineSummaryCache.delete(`${ctx.baseUrl}|${JSON.stringify(ctx.headers)}`);
-      const summary = await fetchMachineSummaryWithHeaders(ctx.baseUrl, ctx.headers, { force: true });
-      setGitProviders(summary.gitProviders);
-      setProjectSummary(summary.projectSummary);
-      setAgentVersion(summary.runtime?.version ?? null);
-      setRemoteAuthExpired(summary.runtime?.authExpired === true);
-      setRunnerAuthRows(summary.runnerAuthRows || []);
-      if (summary.runtime?.mode !== "bootstrap") {
-        setNeedsAuth(false);
-      }
-    } finally {
-      setRefreshingState(false);
-    }
-  };
-
-  const killTask = async (taskId: string) => {
-    const baseUrl = buildDeviceUrl(device, token);
-    if (!baseUrl || !token) return;
-    setKilling(taskId);
-    try {
-      await fetch(`${baseUrl}/tasks/${taskId}/stop`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-    } catch {}
-    setKilling(null);
-  };
-
-  const killAll = async () => {
-    for (const r of activeRunners) {
-      await killTask(r.taskId);
-    }
-  };
-
-  const shutdownAgent = () => {
-    Alert.alert("Shutdown Agent", `Stop the Yaver agent on ${device.name}?`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Shutdown", style: "destructive", onPress: async () => {
-          const baseUrl = buildDeviceUrl(device, token);
-          if (!baseUrl || !token) return;
-          try {
-            await fetch(`${baseUrl}/agent/shutdown`, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}` },
-            });
-          } catch {}
-        },
-      },
-    ]);
-  };
-
-  // Group runners by runnerId for summary
-  const runnerCounts = activeRunners.reduce<Record<string, number>>((acc, r) => {
-    acc[r.runnerId] = (acc[r.runnerId] || 0) + 1;
-    return acc;
-  }, {});
+  const platformLabel = formatDevicePlatform(device, runtimeLabel);
+  const projectCount = projectSummary?.total ?? 0;
+  const statusLabel = needsAuth
+    ? "yaver needs auth"
+    : (authExpired || remoteAuthExpired)
+      ? "yaver expired"
+      : isOnline
+        ? "authenticated"
+        : directReachable
+          ? "reachable"
+          : (hasBusStaleSignal || isStale)
+            ? "stale"
+            : "offline";
+  const statusTone = authRecoverable
+    ? "#f59e0b"
+    : isOnline
+      ? c.success
+      : directReachable
+        ? "#38bdf8"
+        : (hasBusStaleSignal || isStale)
+          ? "#eab308"
+          : c.textMuted;
 
   return (
     <Pressable
@@ -652,56 +455,6 @@ function DeviceCard({
                 backgroundColor: "#6366f122", borderWidth: 1, borderColor: "#6366f166",
               }}>
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
-              </View>
-            ) : null}
-            {hasBusLiveSignal ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#06b6d422", borderWidth: 1, borderColor: "#06b6d466",
-              }}>
-                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>BUS LIVE</Text>
-              </View>
-            ) : null}
-            {hasLiveSignal ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#22d3ee22", borderWidth: 1, borderColor: "#22d3ee66",
-              }}>
-                <Text style={{ color: "#22d3ee", fontSize: 10, fontWeight: "700" }}>LIVE SIGNAL</Text>
-              </View>
-            ) : null}
-            {device.isGuest && device.priorityMode === "spare-capacity" ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#a78bfa22", borderWidth: 1, borderColor: "#a78bfa66",
-              }}>
-                <Text style={{ color: "#a78bfa", fontSize: 10, fontWeight: "700" }}>SPARE</Text>
-              </View>
-            ) : null}
-            {!device.isGuest && device.sessionBinding ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: device.sessionBinding === "dedicated" ? "#22c55e22" : "#f59e0b22",
-                borderWidth: 1,
-                borderColor: device.sessionBinding === "dedicated" ? "#22c55e66" : "#f59e0b66",
-              }}>
-                <Text
-                  style={{
-                    color: device.sessionBinding === "dedicated" ? "#22c55e" : "#f59e0b",
-                    fontSize: 10,
-                    fontWeight: "700",
-                  }}
-                >
-                  {device.sessionBinding === "dedicated" ? "DEDICATED SESSION" : "LEGACY SESSION"}
-                </Text>
-              </View>
-            ) : null}
-            {workerLabel ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#0ea5e922", borderWidth: 1, borderColor: "#0ea5e966",
-              }}>
-                <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700" }}>{workerLabel}</Text>
               </View>
             ) : null}
             {recovering ? (
@@ -741,136 +494,28 @@ function DeviceCard({
               </View>
             ) : null}
           </View>
-          <View style={{ marginTop: 4 }}>
+          <View style={{ marginTop: 6 }}>
             <TransportBadge device={device} />
           </View>
           <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
-            {formatDevicePlatform(device, runtimeLabel)} &middot; {device.host}:{device.port}
+            {platformLabel} &middot; {device.host}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
-          {hasBusLiveSignal ? (
-            <Text style={[styles.deviceMeta, { color: "#22d3ee", marginTop: 4 }]}>
-              Agent bus reports this machine live {timeSince(device.peerLastSeen || device.lastSeen || 0)}
-            </Text>
-          ) : hasBusStaleSignal ? (
-            <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
-              Agent bus saw this machine recently, but the current transport looks stale.
-            </Text>
-          ) : null}
-          {hasLiveSignal ? (
-            <Text style={[styles.deviceMeta, { color: "#22d3ee", marginTop: 4 }]}>
-              Relay live signal {timeSince(device.lastTunnelEvent?.at || 0)}
-            </Text>
-          ) : null}
-          {authExpired || remoteAuthExpired ? (
-            <Text style={[styles.deviceMeta, { color: "#fbbf24", marginTop: 4 }]}>
-              This machine is reachable, but its Yaver session expired. Recover it from the phone.
-            </Text>
-          ) : null}
-          {agentVersion ? (
-            <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
-              Yaver v{agentVersion}
-            </Text>
-          ) : null}
-          {device.edgeProfile ? (
-            <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
-              {device.edgeProfile.supportsLocalInference ? "local inference" : "no local inference"}
-              {` · max ${device.edgeProfile.maxModelClass}`}
-              {device.edgeProfile.thermalState ? ` · ${device.edgeProfile.thermalState}` : ""}
-              {typeof device.edgeProfile.batteryPct === "number" ? ` · ${device.edgeProfile.batteryPct}% battery` : ""}
-              {device.edgeProfile.isCharging ? " · charging" : ""}
-            </Text>
-          ) : null}
-          {shareSummary ? (
-            <View style={styles.scopeSection}>
-              <View style={styles.scopeRow}>
-                <ScopeChip
-                  label={shareSummary.projectLabel}
-                  color={shareSummary.projectLabel === "ALL RESOURCES" ? "#38bdf8" : "#f59e0b"}
-                />
-                {shareSummary.projectChips.map((project) => (
-                  <ScopeChip key={`project:${project}`} label={project} color="#f59e0b" />
-                ))}
-              </View>
-              <View style={styles.scopeRow}>
-                <ScopeChip
-                  label={shareSummary.runnerLabel}
-                  color={shareSummary.runnerLabel === "ALL AGENTS" ? "#22c55e" : "#a78bfa"}
-                />
-                {shareSummary.runnerChips.map((runner) => (
-                  <ScopeChip key={`runner:${runner}`} label={runner} color="#a78bfa" />
-                ))}
-              </View>
-            </View>
-          ) : null}
-          {gitProviders ? (
-            <View style={styles.machineSummarySection}>
-              <View style={styles.scopeRow}>
-                <ScopeChip
-                  label={gitProviders.github ? "GITHUB LINKED" : "GITHUB OFF"}
-                  color={gitProviders.github ? "#22c55e" : c.textMuted}
-                />
-                <ScopeChip
-                  label={gitProviders.gitlab ? "GITLAB LINKED" : "GITLAB OFF"}
-                  color={gitProviders.gitlab ? "#f97316" : c.textMuted}
-                />
-              </View>
-            </View>
-          ) : null}
-          {projectSummary && projectSummary.total > 0 ? (
-            <View style={styles.machineSummarySection}>
-              <View style={styles.scopeRow}>
-                <ScopeChip label={`PROJECTS ${projectSummary.total}`} color="#38bdf8" />
-                {projectSummary.names.map((project) => (
-                  <ScopeChip key={`machine-project:${device.id}:${project}`} label={project} color="#38bdf8" />
-                ))}
-                {projectSummary.total > projectSummary.names.length ? (
-                  <ScopeChip
-                    label={`+${projectSummary.total - projectSummary.names.length}`}
-                    color="#38bdf8"
-                  />
-                ) : null}
-              </View>
-            </View>
-          ) : null}
-          <View style={styles.machineSummarySection}>
-            <View style={styles.scopeRow}>
-              {claudeState !== "unknown" ? (
-                <ScopeChip
-                  label={runnerStateLabel(claudeRow, "Claude Code").toUpperCase()}
-                  color={claudeState === "ready" ? "#a78bfa" : claudeState === "expired" ? "#f59e0b" : c.textMuted}
-                />
-              ) : null}
-              {codexState !== "unknown" ? (
-                <ScopeChip
-                  label={runnerStateLabel(codexRow, "Codex").toUpperCase()}
-                  color={codexState === "ready" ? "#22d3ee" : codexState === "expired" ? "#f59e0b" : c.textMuted}
-                />
-              ) : null}
-            </View>
-          </View>
+          <Text style={[styles.deviceMeta, { color: statusTone, marginTop: 4 }]}>
+            {statusLabel}
+            {device.lastSeen > 0 ? ` · ${timeSince(device.lastSeen)}` : ""}
+          </Text>
+          <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+            {agentVersion ? `Yaver v${agentVersion}` : "Yaver version unknown"}
+            {projectSummary ? ` · ${projectCount} project${projectCount === 1 ? "" : "s"}` : ""}
+          </Text>
         </View>
         <View style={styles.cardRight}>
-          {/* Explicit three-state status — never flickers between
-              green/red because isStale is sticky until the next
-              successful connect. */}
           <View
             style={[
               styles.onlineDot,
               {
-                backgroundColor: authRecoverable
-                  ? "#f59e0b"
-                  : hasBusLiveSignal
-                  ? "#06b6d4"
-                  : hasLiveSignal
-                  ? "#22d3ee"
-                  : isOnline
-                  ? c.success
-                  : directReachable
-                  ? "#38bdf8"
-                  : hasBusStaleSignal || isStale
-                  ? "#eab308" // yellow — Convex says live, we can't reach
-                  : c.textMuted, // gray — Convex says offline / wiped
+                backgroundColor: statusTone,
               },
             ]}
           />
@@ -878,144 +523,15 @@ function DeviceCard({
             style={[
               styles.lastSeen,
               {
-                color: authRecoverable ? "#f59e0b" : hasBusLiveSignal ? "#06b6d4" : hasLiveSignal ? "#22d3ee" : isOnline ? c.success : directReachable ? "#38bdf8" : (hasBusStaleSignal || isStale) ? "#eab308" : c.textMuted,
+                color: statusTone,
                 fontWeight: "600",
               },
             ]}
           >
-            {needsAuth ? "yaver needs auth" : (authExpired || remoteAuthExpired) ? "yaver expired" : hasBusLiveSignal ? "bus live" : hasLiveSignal ? "relay live" : isOnline ? "online" : directReachable ? "reachable" : (hasBusStaleSignal || isStale) ? "stale" : "offline"}
+            {statusLabel}
           </Text>
-          {device.lastSeen > 0 && (
-            <Text style={[styles.lastSeen, { color: c.textMuted, marginTop: 2 }]}>
-              {timeSince(device.lastSeen)}
-            </Text>
-          )}
         </View>
       </View>
-
-      {/* Runner + status badges */}
-      <View style={styles.runnerBadges}>
-        {Object.entries(runnerCounts).map(([rid, count]) => (
-          <View key={rid} style={[styles.runnerBadge, { backgroundColor: c.accent + "18" }]}>
-            <Text style={[styles.runnerBadgeText, { color: c.accent }]}>
-              {rid} x{count}
-            </Text>
-          </View>
-        ))}
-      </View>
-
-      {/* Runner list + actions — always visible */}
-      {(isOnline || authRecoverable || directReachable) && (
-        <View style={[styles.menuSection, { borderTopColor: c.border }]}>
-          {activeRunners.length > 0 && (
-            <>
-              {activeRunners.map((r) => (
-                <View key={r.taskId} style={styles.runnerRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.runnerTitle, { color: c.textPrimary }]} numberOfLines={1}>
-                      {r.title}
-                    </Text>
-                    <Text style={[styles.runnerMeta, { color: c.textMuted }]}>
-                      {r.runnerId}{r.model ? ` / ${r.model}` : ""} &middot; PID {r.pid}
-                    </Text>
-                  </View>
-                  <Pressable
-                    style={[styles.killBtn, { backgroundColor: c.error + "18" }]}
-                    onPress={() => killTask(r.taskId)}
-                    disabled={killing === r.taskId}
-                  >
-                    <Text style={[styles.killBtnText, { color: c.error }]}>
-                      {killing === r.taskId ? "..." : "Kill"}
-                    </Text>
-                  </Pressable>
-                </View>
-              ))}
-              {activeRunners.length > 1 && (
-                <Pressable
-                  style={[styles.killAllBtn, { backgroundColor: c.error + "12" }]}
-                  onPress={killAll}
-                >
-                  <Text style={[styles.killBtnText, { color: c.error }]}>Kill All</Text>
-                </Pressable>
-              )}
-            </>
-          )}
-          {activeRunners.length === 0 && (
-            <Text style={[styles.runnerMeta, { color: c.textMuted, paddingVertical: 4 }]}>No active runners</Text>
-          )}
-          <View style={[styles.menuActions, { borderTopColor: c.border }]}>
-            {(needsAuth || authExpired || remoteAuthExpired) && (
-              <Pressable
-                style={[styles.menuActionBtn, { backgroundColor: "#f59e0b18" }]}
-                onPress={async () => {
-                  setRecovering(true);
-                  try {
-                    await onRecoverAuth();
-                    await handleRefreshState();
-                  } finally {
-                    setRecovering(false);
-                  }
-                }}
-                disabled={recovering}
-              >
-                <Text style={[styles.menuActionText, { color: "#f59e0b" }]}>
-                  {recovering ? "Recovering..." : "Recover Yaver"}
-                </Text>
-              </Pressable>
-            )}
-            {/* Re-auth a remote coding-agent CLI (Claude Code / Codex)
-                running on this device. Both run their own OAuth flow
-                through /runner-auth/browser/start; the modal walks the
-                user through the URL → callback code → submit step.
-                Only show on devices we're connected to or can route
-                through (skip offline guests). */}
-            {!device.isGuest && (isOnline || directReachable) ? (
-              <>
-                {claudeState === "expired" ? (
-                <Pressable
-                  style={[styles.menuActionBtn, { backgroundColor: "#8b5cf618" }]}
-                  onPress={() => setRunnerAuthOpenFor("claude")}
-                >
-                  <Text style={[styles.menuActionText, { color: "#a78bfa" }]}>
-                    Sign in: Claude Code
-                  </Text>
-                </Pressable>
-                ) : null}
-                {codexState === "expired" ? (
-                <Pressable
-                  style={[styles.menuActionBtn, { backgroundColor: "#06b6d418" }]}
-                  onPress={() => setRunnerAuthOpenFor("codex")}
-                >
-                  <Text style={[styles.menuActionText, { color: "#22d3ee" }]}>
-                    Sign in: Codex
-                  </Text>
-                </Pressable>
-                ) : null}
-              </>
-            ) : null}
-            <Pressable
-              style={[styles.menuActionBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
-              onPress={handleRefreshState}
-              disabled={refreshingState}
-            >
-              <Text style={[styles.menuActionText, { color: c.textPrimary }]}>
-                {refreshingState ? "Refreshing..." : "Refresh State"}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.menuActionBtn, { backgroundColor: c.accent + "18" }]}
-              onPress={() => setDetailsOpen(true)}
-            >
-              <Text style={[styles.menuActionText, { color: c.accent }]}>Details</Text>
-            </Pressable>
-            {!device.isGuest ? (
-              <Pressable style={[styles.menuActionBtn, { backgroundColor: c.error + "12" }]} onPress={shutdownAgent}>
-                <Text style={[styles.menuActionText, { color: c.error }]}>Shutdown Agent</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-      )}
 
       <View style={styles.cardBottom}>
         {isActive ? (
@@ -1024,6 +540,24 @@ function DeviceCard({
           </View>
         ) : null}
         <View style={styles.cardActions}>
+          {(needsAuth || authExpired || remoteAuthExpired) && (
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: "#f59e0b18", borderWidth: 1, borderColor: "#f59e0b44" }]}
+              onPress={async () => {
+                setRecovering(true);
+                try {
+                  await onRecoverAuth();
+                } finally {
+                  setRecovering(false);
+                }
+              }}
+              disabled={recovering}
+            >
+              <Text style={[styles.pingBtnText, { color: "#f59e0b", fontWeight: "700" }]}>
+                {recovering ? "Recovering..." : "Recover Auth"}
+              </Text>
+            </Pressable>
+          )}
           <Pressable
             style={[styles.pingBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
             onPress={() => handlePing()}
@@ -1062,6 +596,12 @@ function DeviceCard({
               </Text>
             </Pressable>
           )}
+          <Pressable
+            style={[styles.pingBtn, { backgroundColor: c.accent + "18" }]}
+            onPress={() => setDetailsOpen(true)}
+          >
+            <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
+          </Pressable>
           {isOffline && (
             <>
               <Pressable
@@ -1096,19 +636,6 @@ function DeviceCard({
           )}
         </View>
       </View>
-      <RunnerAuthModal
-        visible={runnerAuthOpenFor !== null}
-        runner={runnerAuthOpenFor || ""}
-        deviceName={device.name || device.hostName || "this machine"}
-        target={isActive ? undefined : device.id}
-        baseUrl={buildDeviceRequestContext(device, token)?.baseUrl || ""}
-        headers={buildDeviceRequestContext(device, token)?.headers || {}}
-        onClose={() => setRunnerAuthOpenFor(null)}
-        onCompleted={() => {
-          void handleRefreshState();
-          setRunnerAuthOpenFor(null);
-        }}
-      />
       <DeviceDetailsModal
         device={device}
         agentVersion={agentVersion}
