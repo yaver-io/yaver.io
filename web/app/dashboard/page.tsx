@@ -1003,8 +1003,19 @@ export default function DashboardPage() {
 
   // ── Actions ─────────────────────────────────────────────────────
 
+  const isDifferentUserAuthError = (message: string, diagnostics: Array<{ error?: string }> = []) => {
+    const haystack = [message, ...diagnostics.map((diag) => diag?.error || "")]
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes("token belongs to a different user");
+  };
+
   const connectToDevice = async (device: Device) => {
     if (!token) return;
+    const switchingDevice = connectedDevice?.id && connectedDevice.id !== device.id;
+    if (switchingDevice || connState === "error") {
+      try { agentClient.disconnect(); } catch {}
+    }
     setConnectedDevice(device);
     setConnectError(null);
     setConnectDiagnostics([]);
@@ -1086,6 +1097,16 @@ export default function DashboardPage() {
     } catch (err: any) {
       const firstDiagnostics = agentClient.lastConnectDiagnostics;
       const canTryAutoReauth = Boolean(token && device.id && agentClient.configuredRelayServers.length > 0);
+      const rawError = err?.message || "Could not connect to device";
+      const authOwnedByAnotherUser = isDifferentUserAuthError(rawError, firstDiagnostics);
+
+      if (authOwnedByAnotherUser) {
+        setConnectError(
+          "This device is still paired to a different Yaver user. Open Rescue and run the auth reset, then reconnect once the box comes back."
+        );
+        setConnectDiagnostics(firstDiagnostics);
+        return;
+      }
 
       if (canTryAutoReauth) {
         setConnectError("Connection failed. Trying automatic re-auth recovery…");
@@ -1107,7 +1128,7 @@ export default function DashboardPage() {
         } catch {}
       }
 
-      setConnectError(err?.message || "Could not connect to device");
+      setConnectError(rawError);
       setConnectDiagnostics(agentClient.lastConnectDiagnostics);
     }
   };
@@ -1600,17 +1621,17 @@ export default function DashboardPage() {
           <div className="shrink-0 space-y-3 border-t border-surface-800 pt-4">
             <button
               onClick={() => setActiveTab("guests")}
-              className="w-full rounded-md border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-medium text-indigo-200 hover:bg-indigo-500/15"
+              className="w-full rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200 dark:hover:bg-indigo-500/15"
               title="Invite someone to share this machine"
             >
               Invite a guest
             </button>
 
             <div>
-              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Join as a guest</p>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">Join as a guest</p>
               <div className="flex gap-1.5">
                 <input value={guestCode} onChange={e => setGuestCode(e.target.value.toUpperCase())} maxLength={6}
-                  placeholder="CODE" className="min-w-0 flex-[1_1_0%] rounded-md border border-surface-800 bg-surface-900 px-2 py-1.5 text-xs text-center font-mono tracking-widest text-surface-200 placeholder-surface-600 outline-none focus:border-indigo-500" />
+                  placeholder="CODE" className="min-w-0 flex-[1_1_0%] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-center font-mono tracking-widest text-slate-700 placeholder-slate-400 outline-none focus:border-indigo-500 dark:border-surface-800 dark:bg-surface-900 dark:text-surface-200 dark:placeholder-surface-600" />
                 <button onClick={async () => {
                   if (guestCode.trim().length < 4) return;
                   try {
@@ -1620,7 +1641,7 @@ export default function DashboardPage() {
                     else alert(data.error || "Invalid code");
                   } catch (e: any) { alert(e.message); }
                 }} disabled={guestCode.trim().length < 4}
-                  className="shrink-0 rounded-md bg-indigo-500 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-400 disabled:opacity-30">Join</button>
+                  className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-indigo-700 disabled:opacity-30 dark:bg-indigo-500 dark:hover:bg-indigo-400">Join</button>
               </div>
             </div>
           </div>

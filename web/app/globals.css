@@ -67,14 +67,19 @@ body.dashboard-mode main { flex: 1; }
 
   .dashboard-sidebar {
     @apply backdrop-blur-xl;
+    background: rgba(251, 252, 255, 0.96);
+    border-color: rgba(214, 221, 234, 0.95);
   }
 
   .dashboard-main {
     @apply relative;
+    background: linear-gradient(180deg, rgba(244, 247, 252, 0.98) 0%, rgba(239, 243, 250, 0.98) 100%);
   }
 
   .dashboard-topbar {
     @apply backdrop-blur-xl;
+    background: rgba(248, 250, 255, 0.9);
+    border-color: rgba(214, 221, 234, 0.92);
   }
 
   .dark .dashboard-mobilebar {

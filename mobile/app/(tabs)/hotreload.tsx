@@ -70,6 +70,12 @@ function isNativeRemoteRuntimeProject(project: ProjectItem): boolean {
   return project.executionMode === "native-webrtc" || project.framework === "swift" || project.framework === "kotlin";
 }
 
+function isMobileHotReloadProject(project: ProjectItem): boolean {
+  const fw = String(project.framework || "").trim().toLowerCase();
+  if (project.executionMode === "native-webrtc" || project.executionMode === "rn-hermes") return true;
+  return fw === "expo" || fw === "react-native" || fw === "flutter" || fw === "swift" || fw === "kotlin";
+}
+
 function agentFlowGuidance(framework?: string): string | null {
   return null;
 }
@@ -517,7 +523,7 @@ export default function HotReloadScreen() {
   })();
 
   // All projects from /projects/mobile are already mobile-only
-  const devProjects = projects;
+  const devProjects = projects.filter(isMobileHotReloadProject);
 
   if (!isConnected) {
     return (

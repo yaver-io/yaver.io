@@ -2670,36 +2670,6 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Agent Mode — graph-style project runs */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/(tabs)/agent" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F9E0}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Agent Mode</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Project graph runs</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
-        {/* Auto Dev — scheduled loop UI */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/(tabs)/autodev" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u{1F916}"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Auto Dev</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Scheduled dev loops</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
         {/* Builds — artifact history + downloads */}
         {connected && (
           <Pressable

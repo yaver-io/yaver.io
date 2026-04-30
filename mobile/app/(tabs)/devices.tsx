@@ -481,6 +481,14 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
+            {isActive ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: c.accent + "22", borderWidth: 1, borderColor: c.accent + "55",
+              }}>
+                <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>ACTIVE</Text>
+              </View>
+            ) : null}
             {recovering ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -543,43 +551,11 @@ function DeviceCard({
               },
             ]}
           />
-          <Text
-            style={[
-              styles.lastSeen,
-              {
-                color: statusTone,
-                fontWeight: "600",
-              },
-            ]}
-          >
-            {statusLabel}
-          </Text>
         </View>
       </View>
 
       <View style={styles.cardBottom}>
-        {isActive ? (
-          <View style={[styles.activeLabel, { backgroundColor: c.accent + "22" }]}>
-            <Text style={[styles.activeLabelText, { color: c.accent }]}>Active</Text>
-          </View>
-        ) : null}
         <View style={styles.cardActions}>
-          <Pressable
-            style={[styles.pingBtn, { backgroundColor: c.bgCardElevated || c.bg }]}
-            onPress={() => handlePing()}
-            disabled={pingState.pinging}
-          >
-            <Text style={[styles.pingBtnText, {
-              color: pingState.pinging ? c.textMuted
-                : pingState.ok === true ? c.success
-                : pingState.ok === false ? c.error
-                : c.textSecondary,
-            }]}>
-              {pingState.pinging ? "..." :
-                pingState.ok === true ? `${pingState.rttMs}ms` :
-                pingState.ok === false ? "unreachable" : "ping"}
-            </Text>
-          </Pressable>
           <Pressable
             style={[
               styles.pingBtn,
@@ -609,38 +585,6 @@ function DeviceCard({
           >
             <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
           </Pressable>
-          {isOffline && (
-            <>
-              <Pressable
-                style={[styles.pingBtn, { backgroundColor: "#f59e0b18" }]}
-                onPress={() => Alert.alert(
-                  "Wake Machine",
-                  "Send a Wake-on-LAN magic packet to power on this machine.\n\n" +
-                  "Requirements:\n" +
-                  "• WoL enabled in BIOS\n" +
-                  "• Wired ethernet (most WiFi cards don't support WoL)\n" +
-                  "• Same network or Tailscale\n\n" +
-                  "For always-on setup: yaver.io/manuals/auto-boot",
-                  [{ text: "OK" }]
-                )}
-              >
-                <Text style={[styles.pingBtnText, { color: "#f59e0b" }]}>Wake</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.pingBtn, { backgroundColor: "#6366f118" }]}
-                onPress={() => Alert.alert(
-                  "Always-on Setup",
-                  "1. Enable auto-boot in BIOS\n" +
-                  "2. Run: yaver serve --install-systemd\n" +
-                  "3. Run: sudo loginctl enable-linger $USER\n\n" +
-                  "Full guide: yaver.io/manuals/auto-boot",
-                  [{ text: "OK" }]
-                )}
-              >
-                <Text style={[styles.pingBtnText, { color: c.accent }]}>Setup</Text>
-              </Pressable>
-            </>
-          )}
         </View>
       </View>
       <DeviceDetailsModal

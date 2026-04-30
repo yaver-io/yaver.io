@@ -474,12 +474,22 @@ function baseUrl(): string | null {
   return quicClient.isConnected && quicClient.baseUrl ? quicClient.baseUrl : null;
 }
 
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function get<T>(path: string): Promise<T | null> {
   const h = headers();
   const url = baseUrl();
   if (!h || !url) return null;
   try {
-    const res = await fetch(`${url}${path}`, { headers: h });
+    const res = await fetchWithTimeout(`${url}${path}`, { headers: h });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -492,7 +502,7 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
   const url = baseUrl();
   if (!h || !url) return null;
   try {
-    const res = await fetch(`${url}${path}`, {
+    const res = await fetchWithTimeout(`${url}${path}`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -511,7 +521,7 @@ async function getFromBase<T>(base: string, path: string): Promise<T | null> {
   const h = headers();
   if (!h) return null;
   try {
-    const res = await fetch(`${base}${path}`, { headers: h });
+    const res = await fetchWithTimeout(`${base}${path}`, { headers: h });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(text || `HTTP ${res.status}`);
@@ -526,7 +536,7 @@ async function postToBase<T>(base: string, path: string, body: unknown): Promise
   const h = headers();
   if (!h) return null;
   try {
-    const res = await fetch(`${base}${path}`, {
+    const res = await fetchWithTimeout(`${base}${path}`, {
       method: "POST",
       headers: { ...h, "Content-Type": "application/json" },
       body: JSON.stringify(body),

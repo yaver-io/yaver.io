@@ -116,6 +116,8 @@ func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
 	switch fw {
 	case "next", "vite":
 		return "web"
+	case "expo", "react-native", "flutter", "swift", "kotlin":
+		return "mobile"
 	}
 	if mobileCapable && !webCapable {
 		return "mobile"
@@ -124,7 +126,7 @@ func projectKindLabel(framework string, mobileCapable, webCapable bool) string {
 		return "web"
 	}
 	if mobileCapable && webCapable {
-		return "mobile-web"
+		return "mobile"
 	}
 	if fw != "" {
 		return fw
@@ -150,10 +152,18 @@ func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobile
 		leaf = strings.TrimSpace(strings.Split(leaf, "/")[len(strings.Split(leaf, "/"))-1])
 	}
 	subproject := ""
+	genericAppName := func(v string) bool {
+		switch strings.TrimSpace(strings.ToLower(v)) {
+		case "", "workspace", "project", "app", "mobile app", "web app":
+			return true
+		default:
+			return false
+		}
+	}
 	switch {
 	case leaf != "" && !strings.EqualFold(leaf, kind):
 		subproject = leaf
-	case appName != "" && !strings.EqualFold(appName, repoName) && !strings.EqualFold(appName, kind):
+	case appName != "" && !genericAppName(appName) && !strings.EqualFold(appName, repoName) && !strings.EqualFold(appName, kind):
 		subproject = appName
 	}
 	if repoName == "" {

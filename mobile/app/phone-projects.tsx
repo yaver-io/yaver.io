@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -185,6 +185,7 @@ export default function PhoneProjectsScreen() {
   const [mobileAiProvider, setMobileAiProvider] = useState<MobileAiProvider>("openai");
   const [openAiKey, setOpenAiKey] = useState("");
   const [glmKey, setGlmKey] = useState("");
+  const mobileAiProviderTouchedRef = useRef(false);
 
   const [startMode, setStartMode] = useState<StartMode>("this-phone");
   // Step 1 — Git config (optional). gitMode === "skip" means the
@@ -241,6 +242,10 @@ export default function PhoneProjectsScreen() {
     () => (importedConversation.trim() ? buildImportedConversationBrief(importedConversation) : null),
     [importedConversation],
   );
+  const activeRunnerDevice = useMemo(() => {
+    if (activeDevice && !activeDevice.needsAuth) return activeDevice;
+    return null;
+  }, [activeDevice]);
   const availableRunners = useMemo(() => {
     // Yaver's three first-class runners — the only ones we surface
     // anywhere in the product. opencode wraps the long tail of
@@ -249,11 +254,12 @@ export default function PhoneProjectsScreen() {
     // model still reach it through opencode rather than yaver
     // shipping a wrapper for every CLI.
     const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
-    const runners = activeDevice?.runners ?? [];
+    const runners = activeRunnerDevice?.runners ?? [];
     return runners
       .filter((item) => RUNNER_WL.has((item.runnerId || "").toLowerCase()))
       .filter((item) => item.status === "running" || item.status === "queued" || item.status === "completed");
-  }, [activeDevice?.runners]);
+  }, [activeRunnerDevice?.runners]);
+  const runnerChoiceEnabled = !!activeRunnerDevice;
   useEffect(() => {
     if (!runner && availableRunners.length) {
       setRunner(availableRunners[0].runnerId);
@@ -279,7 +285,9 @@ export default function PhoneProjectsScreen() {
           : (cloud as any).mobileCodingProvider === "glm"
             ? "glm"
             : "openai";
-      setMobileAiProvider(savedProvider);
+      if (!mobileAiProviderTouchedRef.current) {
+        setMobileAiProvider(savedProvider);
+      }
     };
     void loadMobileAi();
     return () => {
@@ -305,15 +313,20 @@ export default function PhoneProjectsScreen() {
     };
   }, [token]);
   useEffect(() => {
-    if (!connected && codingMode === "runner") {
+    if (!runnerChoiceEnabled && codingMode === "runner") {
       setCodingMode("phone");
     }
-  }, [codingMode, connected]);
+  }, [codingMode, runnerChoiceEnabled]);
   useEffect(() => {
     if (!connected && startMode !== "this-phone") {
       setStartMode("this-phone");
     }
   }, [connected, startMode]);
+  useEffect(() => {
+    if (codingMode === "runner" && runnerChoiceEnabled) {
+      setStartMode("current-agent");
+    }
+  }, [codingMode, runnerChoiceEnabled]);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -614,6 +627,7 @@ export default function PhoneProjectsScreen() {
               onPress={() => {
                 setStep(0);
                 setStartMode("this-phone");
+                setCodingMode(activeRunnerDevice ? "runner" : "phone");
                 setShowForm(true);
               }}
               style={[styles.btn, { backgroundColor: c.accent, marginTop: 12 }]}
@@ -642,9 +656,9 @@ export default function PhoneProjectsScreen() {
             </Text>
             <Text style={[styles.stepSubtitle, { color: c.textMuted }]}>
               {[
-                "A short project name. We slugify it for git, paths, and the SQLite file.",
+                "You can change this later.",
                 "GitHub or GitLab, public or private. You can skip — Yaver works without git.",
-                "Phone-side LLM (BYOK) or a remote Yaver runner you've signed in.",
+                "Use this phone, or send the project to a connected Yaver machine.",
                 "Five quick multiple-choice questions. Skip if you'd rather just type.",
                 "Required. Tell Yaver what you're building, in your own words.",
               ][step]}
@@ -665,7 +679,6 @@ export default function PhoneProjectsScreen() {
 
             {step === 0 ? (
               <>
-                <Text style={[styles.label, { color: c.textMuted }]}>Project name</Text>
                 <TextInput
                   value={name}
                   onChangeText={setName}
@@ -674,7 +687,7 @@ export default function PhoneProjectsScreen() {
                   style={[styles.input, { color: c.textPrimary, borderColor: c.border }]}
                 />
                 <Text style={[styles.muted, { color: c.textMuted, marginTop: 8 }]}>
-                  Start with a simple name. You can describe the app on the next step.
+                  You can rename it later.
                 </Text>
               </>
             ) : null}
@@ -797,25 +810,30 @@ export default function PhoneProjectsScreen() {
                     {
                       id: "phone" as CodingMode,
                       label: "This phone",
-                      sub: "Uses your OpenAI key",
+                      sub: "Use your OpenAI or GLM key on this device",
                     },
                     {
                       id: "runner" as CodingMode,
                       label: "Remote runner",
-                      sub: connected ? "Use a connected Yaver runner" : "Connect a runner first",
-                      disabled: !connected,
+                      sub: activeRunnerDevice
+                        ? `${activeRunnerDevice.name} connected`
+                        : "Connect a Yaver machine to use a remote runner",
                     },
                   ] as const
                 ).map((opt) => (
                   <Pressable
                     key={opt.id}
-                    onPress={() => !(opt as any).disabled && setCodingMode(opt.id)}
+                    onPress={() => {
+                      setCodingMode(opt.id);
+                      if (opt.id === "runner" && runnerChoiceEnabled) {
+                        setStartMode("current-agent");
+                      }
+                    }}
                     style={[
                       styles.choiceCard,
                       {
                         backgroundColor: codingMode === opt.id ? c.accent + "22" : "transparent",
                         borderColor: codingMode === opt.id ? c.accent : c.border,
-                        opacity: (opt as any).disabled ? 0.5 : 1,
                       },
                     ]}
                   >
@@ -836,7 +854,11 @@ export default function PhoneProjectsScreen() {
                         return (
                           <Pressable
                             key={provider.id}
-                            onPress={() => setMobileAiProvider(provider.id)}
+                            onPress={() => {
+                              mobileAiProviderTouchedRef.current = true;
+                              setMobileAiProvider(provider.id);
+                            }}
+                            hitSlop={8}
                             style={[
                               styles.modeChip,
                               {
@@ -873,6 +895,38 @@ export default function PhoneProjectsScreen() {
 
                 {codingMode === "runner" ? (
                   <>
+                    <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Backend</Text>
+                    <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
+                      <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
+                        {activeRunnerDevice ? "Connected machine ready" : "No machine connected"}
+                      </Text>
+                      <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
+                        {activeRunnerDevice
+                          ? `${activeRunnerDevice.name} is connected. This project will be created there.`
+                          : "Open Devices to connect a Yaver machine, then come back and select Remote runner."}
+                      </Text>
+                      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                        <Pressable
+                          onPress={() => router.push("/(tabs)/devices" as any)}
+                          style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+                        >
+                          <Text style={[styles.btnText, { color: c.textPrimary }]}>
+                            {activeRunnerDevice ? "Open Devices" : "Connect machine"}
+                          </Text>
+                        </Pressable>
+                        {activeRunnerDevice ? (
+                          <Pressable
+                            onPress={() => {
+                              setCodingMode("phone");
+                              setStartMode("this-phone");
+                            }}
+                            style={[styles.btnSecondary, { borderColor: c.border, flex: 1 }]}
+                          >
+                            <Text style={[styles.btnText, { color: c.textPrimary }]}>Use this phone instead</Text>
+                          </Pressable>
+                        ) : null}
+                      </View>
+                    </View>
                     <Text style={[styles.label, { color: c.textMuted, marginTop: 12 }]}>Runner</Text>
                     {availableRunners.length === 0 ? (
                       // No authed runner on the picked machine —
@@ -885,11 +939,11 @@ export default function PhoneProjectsScreen() {
                       // wizard.
                       <View style={[styles.reviewCard, { backgroundColor: c.bg, borderColor: c.border, marginTop: 4 }]}>
                         <Text style={[styles.reviewTitle, { color: c.textPrimary }]}>
-                          {connected ? "No coding runner is signed in yet" : "Connect a Yaver machine first"}
+                          {activeRunnerDevice ? "No coding runner is signed in yet" : "Connect a Yaver machine first"}
                         </Text>
                         <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                          {connected
-                            ? "Open Devices, pick this machine, and sign in Claude / Codex (browser device-auth, no SSH) or paste a GLM API key for OpenCode. Come back here once one runner is ready."
+                          {activeRunnerDevice
+                            ? "Open Devices, pick this machine, and sign in Claude / Codex or configure OpenCode. Come back here once one runner is ready."
                             : "Pair a Yaver machine from the Devices tab, then return here. Phone-side coding works without one."}
                         </Text>
                         <Pressable
@@ -911,7 +965,7 @@ export default function PhoneProjectsScreen() {
                           return (
                             <Pressable
                               key={item.id}
-                              onPress={() => connected && setRunner(item.id)}
+                              onPress={() => setRunner(item.id)}
                               style={[
                                 styles.modeChip,
                                 {
@@ -1291,12 +1345,18 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
       codingMode,
       openAiKey,
       activeDevice,
+      activeRunnerDevice,
       applyImportedConversation,
       analyzingImport,
       selectedDevMachine,
       devMachines.length,
       importedConversation,
       importedBrief,
+      mobileAiProvider,
+      openAiKey,
+      glmKey,
+      availableRunners,
+      runnerChoiceEnabled,
     ],
   );
 

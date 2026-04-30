@@ -257,6 +257,20 @@ func TestDisplayProjectName_RepoFirstRootMobileSubdir(t *testing.T) {
 	}
 }
 
+func TestDisplayProjectName_DualCapabilityReactNativeStillReadsMobile(t *testing.T) {
+	got := displayProjectName("/tmp/sfmg", "", "Workspace", "react-native", true, true)
+	if got != "sfmg / mobile" {
+		t.Fatalf("got %q, want %q", got, "sfmg / mobile")
+	}
+}
+
+func TestDisplayProjectName_WebProjectReadsWeb(t *testing.T) {
+	got := displayProjectName("/tmp/carrotbet", "", "Workspace", "vite", false, true)
+	if got != "carrotbet / web" {
+		t.Fatalf("got %q, want %q", got, "carrotbet / web")
+	}
+}
+
 func TestRepoRootForProject_FindsAncestorGitRoot(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "yaver")
