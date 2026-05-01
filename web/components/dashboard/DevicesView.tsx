@@ -1676,6 +1676,59 @@ export default function DevicesView({
                         }));
                       }
                     }}
+                    onReauth={async () => {
+                      // Reset Auth = headless re-auth via /auth/recover
+                      // (mode=direct), not the destructive
+                      // "move config aside + exit" rescue path. Sends
+                      // the user's already-signed-in web bearer to
+                      // the agent through the relay; agent verifies
+                      // ownership against Convex and rotates its
+                      // token in place. Falls back to mode=pair on
+                      // older agents. See agent-client.ts::reauthAgent.
+                      if (!token) {
+                        setRescueStatus((prev) => ({
+                          ...prev,
+                          [device.id]: { msg: "not signed in — refresh and try again", tone: "err" },
+                        }));
+                        return;
+                      }
+                      setRescueStatus((prev) => ({
+                        ...prev,
+                        [device.id]: { msg: "Re-authenticating remote agent…", tone: "info" },
+                      }));
+                      try {
+                        const r = await agentClient.reauthAgent({
+                          deviceId: device.id,
+                          hostSessionToken: token,
+                        });
+                        if (r.ok) {
+                          setRescueStatus((prev) => ({
+                            ...prev,
+                            [device.id]: {
+                              msg: `Re-auth ok via ${r.via} (${r.mode}). Refreshing…`,
+                              tone: "ok",
+                            },
+                          }));
+                          setTimeout(() => onRefresh().catch(() => {}), 1200);
+                        } else {
+                          const summary = r.diagnostics
+                            .map((d) => `${d.path}/${d.step}: ${d.ok ? "ok" : d.error || "fail"}`)
+                            .join(" · ");
+                          setRescueStatus((prev) => ({
+                            ...prev,
+                            [device.id]: {
+                              msg: `Re-auth failed${r.error ? `: ${r.error}` : ""}. ${summary}`,
+                              tone: "err",
+                            },
+                          }));
+                        }
+                      } catch (e: any) {
+                        setRescueStatus((prev) => ({
+                          ...prev,
+                          [device.id]: { msg: e?.message || "re-auth crashed", tone: "err" },
+                        }));
+                      }
+                    }}
                     onClose={() => setRescueOpenDeviceId(null)}
                   />
                 ) : null}
@@ -3177,14 +3230,21 @@ function RescueInlinePanel({
   device,
   statusMsg,
   onQueue,
+  onReauth,
   onClose,
 }: {
   device: Device;
   statusMsg?: { msg: string; tone: "info" | "ok" | "err" };
   onQueue: (command: "restart" | "reinstall-latest" | "tunnel-reset" | "auth-reset") => void;
+  // Reset Auth uses the live /auth/recover path (direct mode → agent
+  // rotates its bearer in place using ours). Distinct from the
+  // Convex-backed onQueue path because the destructive auth-reset
+  // command is rarely what the user actually wants — the headless
+  // re-auth fixes 99 % of "not signed in on the box" cases without
+  // requiring a physical re-pair.
+  onReauth: () => void;
   onClose: () => void;
 }) {
-  const [confirmReset, setConfirmReset] = useState(false);
   const tone = statusMsg?.tone || "info";
   const toneCls =
     tone === "ok"
@@ -3234,22 +3294,11 @@ function RescueInlinePanel({
           ⟳ Reset tunnel
         </button>
         <button
-          onClick={() => {
-            if (!confirmReset) {
-              setConfirmReset(true);
-              return;
-            }
-            setConfirmReset(false);
-            onQueue("auth-reset");
-          }}
-          className={`rounded border px-2.5 py-1 text-[11px] ${
-            confirmReset
-              ? "border-red-500 bg-red-100 text-red-900 hover:bg-red-200 dark:border-red-500/60 dark:bg-red-500/20 dark:text-red-100 dark:hover:bg-red-500/30"
-              : "border-red-400 bg-red-50 text-red-800 hover:bg-red-100 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200 dark:hover:bg-red-500/20"
-          }`}
-          title="Move ~/.yaver/config.json aside — device becomes unauthenticated; requires re-pair on next boot"
+          onClick={onReauth}
+          className="rounded border border-amber-400 bg-amber-50 px-2.5 py-1 text-[11px] text-amber-800 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
+          title="Send your web session bearer to the remote agent (POST /auth/recover mode=direct). Agent verifies ownership against Convex and rotates its token in place — no SSH, no re-pair."
         >
-          {confirmReset ? "Confirm Reset Auth?" : "⚠ Reset Auth"}
+          ⟳ Reset Auth (headless re-auth)
         </button>
       </div>
       {statusMsg ? (
