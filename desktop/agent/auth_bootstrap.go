@@ -428,21 +428,27 @@ func saveBootstrapToken(session *pairingSession) error {
 // reexecAsServe replaces the current bootstrap process with a
 // fresh `yaver serve`. This takes the normal auth path now that
 // the config file has a token.
+//
+// Critical: on Linux/macOS this uses syscall.Exec to REPLACE the
+// running process image instead of forking. systemd's Type=simple
+// tracks the ExecStart pid; if we forked a child and exited, systemd
+// would see the unit's main pid die and Deactivate the unit even
+// though the child is alive — which is exactly the bug the previous
+// fork+wait+exit implementation caused (every fresh install hit this
+// the moment a phone claimed the box). Replacing the process image
+// keeps the pid stable so systemd doesn't notice a transition and
+// the unit stays Active across the bootstrap → authenticated handoff.
+// See bootstrap_reexec_{unix,windows}.go for the platform impl.
 func reexecAsServe() {
 	execPath, err := os.Executable()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: cannot find yaver binary: %v\n", err)
 		os.Exit(1)
 	}
-	cmd := osexec.Command(execPath, "serve")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
+	if err := reexecReplaceProcess(execPath, []string{execPath, "serve"}); err != nil {
 		fmt.Fprintf(os.Stderr, "bootstrap: failed to relaunch serve: %v\n", err)
 		os.Exit(1)
 	}
-	os.Exit(0)
 }
 
 // --- Minimal HTTP handler set ---------------------------------------------

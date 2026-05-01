@@ -7,7 +7,6 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { AppBackButton } from "../../src/components/AppBackButton";
-import { DeviceAttentionBanner } from "../../src/components/DeviceAttentionBanner";
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
@@ -157,9 +156,7 @@ export default function TabLayout() {
   }, [isConnected, devices]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <DeviceAttentionBanner />
-      <Tabs
+    <Tabs
       screenOptions={{
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.textPrimary,
@@ -249,7 +246,6 @@ export default function TabLayout() {
         options={{ href: null, title: "Agent Mode", headerShown: true, headerLeft: backToMore }}
       />
     </Tabs>
-    </View>
   );
 }
 

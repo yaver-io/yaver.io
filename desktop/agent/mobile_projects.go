@@ -154,7 +154,8 @@ func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobile
 	subproject := ""
 	genericAppName := func(v string) bool {
 		switch strings.TrimSpace(strings.ToLower(v)) {
-		case "", "workspace", "project", "app", "mobile app", "web app":
+		case "", "workspace", "workspaces", "project", "projects", "app", "apps",
+			"code", "src", "dev", "work", "repos", "repo", "mobile app", "web app":
 			return true
 		default:
 			return false
@@ -171,6 +172,15 @@ func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobile
 	}
 	if repoName == "" {
 		repoName = "project"
+	}
+	// If repoName is itself a generic container directory like "Workspace"
+	// or "Projects" (a yaver.workspace.yaml manifest at /home/$USER/Workspace
+	// pulls $HOME/Workspace in as the "repo root"), promote the subproject
+	// to the primary name so the user sees `sfmg / mobile` instead of
+	// `Workspace (sfmg) / mobile`. The container directory carries no
+	// product meaning — the leaf is what the user named their project.
+	if subproject != "" && genericAppName(repoName) {
+		return fmt.Sprintf("%s / %s", subproject, kind)
 	}
 	if subproject != "" {
 		return fmt.Sprintf("%s (%s) / %s", repoName, subproject, kind)

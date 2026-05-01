@@ -1567,7 +1567,7 @@ export default function DevicesView({
                       })()}
                     </div>
                     <div className="mt-1"><TransportBadge device={device} /></div>
-                    <p className="text-sm text-slate-600 dark:text-surface-500">
+                    <p className="text-sm text-slate-600 dark:text-surface-400">
                       {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
                       {device.agentVersion ? (
                         <>
@@ -1672,13 +1672,13 @@ export default function DevicesView({
                   />
                 ) : null}
                 {device.edgeProfile ? (
-                  <p className="text-xs text-slate-500 dark:text-surface-500">
+                  <p className="text-xs text-slate-500 dark:text-surface-400">
                     {device.edgeProfile.supportsLocalInference ? "Local inference" : "No local inference"} · max {device.edgeProfile.maxModelClass} model · {device.edgeProfile.preferredTasks.slice(0, 3).join(", ")}
                   </p>
                 ) : null}
                 {shareSummary?.viewerIsGuest && shareSummary?.hostLabel ? (
                   <div className="mt-3">
-                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
                       Shared from
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -1713,7 +1713,7 @@ export default function DevicesView({
                 ) : null}
                 {shareSummary && shareSummary.guestChips.length > 0 ? (
                   <div className="mt-3">
-                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
+                    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
                       Shared with
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -1768,7 +1768,7 @@ export default function DevicesView({
                   const availableOthers = availableStates.filter((s) => s.id !== primaryId);
                   return (
                     <div className="mt-3">
-                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">
+                      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
                         Coding agents
                       </div>
                       {/* Primary agent — promoted to its own card. This
