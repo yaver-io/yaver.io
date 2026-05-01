@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/use-auth";
-import { useDevices, type Device } from "@/lib/use-devices";
+import { useDevices, usePendingClaims, type Device } from "@/lib/use-devices";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
@@ -38,6 +38,7 @@ import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
 import VibeCodingView from "@/components/dashboard/VibeCodingView";
+import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
 import DevicesView, { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice, RUNNER_WHITELIST_SET, OPENCODE_PROVIDER_CATALOGUE } from "@/components/dashboard/DevicesView";
@@ -551,6 +552,11 @@ export default function DashboardPage() {
   // ── ALL hooks unconditionally at the top ────────────────────────
   const { user, token, isLoading, isAuthenticated, logout } = useAuth();
   const { devices, refreshDevices, hiddenIds } = useDevices(token);
+  // Bootstrap-pending claims — boxes that joined the user's relay but
+  // don't have a Convex devices row yet. Surfaced to the user so a
+  // freshly-installed remote box becomes claimable from the dashboard
+  // without ever touching the LAN.
+  const { pending: pendingClaims, refreshPending, claimPending } = usePendingClaims(token);
   const { theme, toggle: toggleTheme } = useTheme();
   const router = useRouter();
 
@@ -953,7 +959,13 @@ export default function DashboardPage() {
       // ownership via Convex round-trip and splices our bearer into
       // the active pair session. One round-trip, no URL paste.
       if (lifecycle === "bootstrap") {
-        const claim = await agentClient.ownerClaimDevice(d.id);
+        const claim = await agentClient.ownerClaimDevice(d.id, {
+          host: d.host,
+          port: d.port,
+          tunnelUrl: d.tunnelUrl,
+          publicEndpoints: d.publicEndpoints,
+          lanIps: d.localIps,
+        });
         if (claim.ok) {
           setReauthMsg({
             deviceId: d.id,
@@ -1106,7 +1118,13 @@ export default function DashboardPage() {
     ) {
       lastAutoReauthRef.current.set(device.id, Date.now());
       try {
-        const claimed = await agentClient.ownerClaimDevice(device.id);
+        const claimed = await agentClient.ownerClaimDevice(device.id, {
+          host: device.host,
+          port: device.port,
+          tunnelUrl: device.tunnelUrl,
+          publicEndpoints: device.publicEndpoints,
+          lanIps: device.localIps,
+        });
         if (!claimed.ok) {
           await agentClient.reauthAgent({
             deviceId: device.id,
@@ -1165,7 +1183,13 @@ export default function DashboardPage() {
         setConnectDiagnostics(firstDiagnostics);
         try {
           const recovered = lifecycle === "bootstrap"
-            ? await agentClient.ownerClaimDevice(device.id)
+            ? await agentClient.ownerClaimDevice(device.id, {
+                host: device.host,
+                port: device.port,
+                tunnelUrl: device.tunnelUrl,
+                publicEndpoints: device.publicEndpoints,
+                lanIps: device.localIps,
+              })
             : await agentClient.reauthAgent({
                 deviceId: device.id,
                 hostSessionToken: token,
@@ -2105,7 +2129,21 @@ export default function DashboardPage() {
           ) : activeTab === "exec" ? (
             <div className="flex-1 min-h-0 w-full"><ExecView /></div>
           ) : activeTab === "devices" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full">
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full space-y-4">
+              <PendingClaimsSection
+                items={pendingClaims}
+                onClaim={async (deviceId, name) => {
+                  const result = await claimPending(deviceId, name);
+                  if (result.ok) {
+                    // The claim flips the row to a real devices entry —
+                    // pick it up immediately instead of waiting on the
+                    // next 10s poll.
+                    await refreshDevices();
+                  }
+                  return result;
+                }}
+                onRefresh={refreshPending}
+              />
               <DevicesView
                 devices={displayDevices}
                 onRefresh={refreshDevices}

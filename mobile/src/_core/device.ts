@@ -75,17 +75,30 @@ function normHost(host: string | undefined): string {
 // ── Keys ──────────────────────────────────────────────────────────────
 
 export function deviceIdentityKey(d: CoreDevice): string {
+  // Stable cryptographic identity wins. Without hwid or publicKey a
+  // non-guest row is a "ghost" — its identity is unstable across
+  // renames and platform reads. We deliberately stop falling back
+  // to (platform, name) here: that fallback collapsed unrelated
+  // boxes that happened to share a hostname, and split a single
+  // box across renames. Ghost rows are still addressable per
+  // deviceId so the dashboard can list and warn about them.
   if (d.hwid) return `hwid:${d.hwid}`;
   if (d.publicKey) return `pub:${d.publicKey}`;
   if (d.isGuest) {
     const scope = d.hostEmail || d.hostName || 'guest';
     return `guest:${scope}:${d.deviceId || d.name}`;
   }
-  const n = normName(d.name);
-  const os = String(d.platform || '').trim().toLowerCase();
-  if (n && os) return `host:${os}:${n}`;
   if (d.deviceId) return `id:${d.deviceId}`;
   return `name:${d.name}`;
+}
+
+/**
+ * True when the device has neither hwid nor publicKey AND is not a
+ * guest. Reconnect targets must guard on this — a ghost row cannot
+ * be reliably matched to a live agent across renames or restarts.
+ */
+export function isGhostDevice(d: CoreDevice): boolean {
+  return !d.hwid && !d.publicKey && !d.isGuest;
 }
 
 export function deviceAliasKey(d: CoreDevice): string | null {

@@ -2714,11 +2714,19 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
               <>
           {row("Status", deriveDeviceLifecycleState(device).replace(/-/g, " "))}
           {row("Auth", authLabel)}
+          {/* Agent-reported usable + recoverable bits. Surfacing them
+              instead of letting them rot turns a regression into
+              something a user can spot — e.g. lifecycle.recoverable=false
+              on an "auth-expired" row indicates the agent has lost the
+              hooks needed for /auth/recover and should be re-paired. */}
+          {row("Agent reports usable", typeof lifecycle?.usable === "boolean" ? (lifecycle.usable ? "yes" : "no") : null)}
+          {row("Agent reports recoverable", typeof lifecycle?.recoverable === "boolean" ? (lifecycle.recoverable ? "yes" : "no") : null)}
           {row("Agent mode", typeof effectiveInfo?.mode === "string" ? effectiveInfo.mode : null)}
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
           {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
           {row("Authenticated probe", device.probeState ? `${device.probeState}${device.probePath ? ` via ${device.probePath}` : ""}${device.probeCheckedAt ? ` (${formatLastSeen(device.probeCheckedAt)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
+          {device.ghost ? row("Identity", "missing hwid + publicKey — re-pair recommended") : null}
               </>
             );
           })()}

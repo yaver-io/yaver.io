@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func setRequirePrivateRecoveryForTest(t *testing.T, enabled bool) {
@@ -312,5 +314,139 @@ func TestAuthRecoverRateLimitsPerIP(t *testing.T) {
 	(&HTTPServer{}).handleAuthRecover(second, mkReq())
 	if second.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected second request 429, got %d", second.Code)
+	}
+}
+
+// TestAuthRecoverPairUnblocksBootstrapLoopWaiter is the regression test for
+// the audit's G6: the bootstrap-loop in runBootstrapServe holds a local
+// pointer to its pair session and blocks on session.done. /auth/recover
+// mode=pair, when no fresh-bootstrap session exists, falls into one of two
+// shapes:
+//
+//   1. Reuse: an active session already exists with no token →
+//      handleAuthRecover returns its code. /auth/pair/submit fills it
+//      and closes session.done. The bootstrap loop unblocks and sees
+//      ReceivedToken set → re-execs into authenticated `yaver serve`.
+//
+//   2. Replace: no active session (or expired) → handleAuthRecover starts
+//      a NEW session via StartPairingSession, which closes the previous
+//      session's done as a side effect. The bootstrap loop's old pointer
+//      unblocks, sees ReceivedToken empty, and rotates by calling
+//      StartPairingSession itself — which would replace the recovery's
+//      brand-new session. That rotation closes the recovery session's
+//      done. completePairRecoveryInBackground checks ReceivedToken AT
+//      THAT POINT — and if no submit landed first, the recovery is
+//      effectively dropped.
+//
+// We test the safe path (#1, the reuse case) here. The unsafe path (#2,
+// the rotation race) is covered by the next test, which proves it is at
+// least observable rather than silent.
+func TestAuthRecoverPairUnblocksBootstrapLoopWaiter(t *testing.T) {
+	withTempHome(t)
+	recoveryLimiter.reset()
+	EndPairingSession()
+	if err := SetBootstrapSecret("loop-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	// Stand in for the bootstrap loop: open a session, block on its done.
+	loopSession, err := StartPairingSession(bootstrapPairingTTL)
+	if err != nil {
+		t.Fatalf("StartPairingSession: %v", err)
+	}
+
+	// Recovery comes in: should REUSE loopSession because it's active and
+	// has no token yet.
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover",
+		strings.NewReader(`{"secret":"loop-secret","mode":"pair"}`))
+	req.RemoteAddr = "192.168.1.50:40000"
+	rec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from /auth/recover, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), loopSession.Code) {
+		t.Fatalf("recovery did not reuse bootstrap-loop session: body=%s want code=%s",
+			rec.Body.String(), loopSession.Code)
+	}
+
+	// Now simulate the user's pair-submit landing on the loop session.
+	submitBody := bytes.NewReader([]byte(`{"token":"recovered-token","convexSiteUrl":"https://example.convex.cloud"}`))
+	submitReq := httptest.NewRequest(http.MethodPost,
+		"/auth/pair/submit?code="+loopSession.Code, submitBody)
+	submitRec := httptest.NewRecorder()
+	(&HTTPServer{}).handlePairSubmit(submitRec, submitReq)
+	if submitRec.Code != http.StatusOK {
+		t.Fatalf("submit failed: %d %s", submitRec.Code, submitRec.Body.String())
+	}
+
+	// The bootstrap loop's waiter must wake.
+	select {
+	case <-loopSession.done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("bootstrap-loop session.done never closed after recovery submit")
+	}
+	if loopSession.ReceivedToken != "recovered-token" {
+		t.Fatalf("bootstrap-loop session did not receive token: got %q", loopSession.ReceivedToken)
+	}
+}
+
+// TestAuthRecoverPairRotatesWhenActiveExpired pins down the documented but
+// previously untested behavior that recovery falls back to starting a new
+// session when activePairingSnapshot returns nil due to expiry. Anyone
+// holding a pointer to the expired session must see their done channel
+// closed — otherwise CLI callers (the bootstrap loop, `yaver auth pair`)
+// will hang indefinitely.
+func TestAuthRecoverPairRotatesWhenActiveExpired(t *testing.T) {
+	withTempHome(t)
+	recoveryLimiter.reset()
+	EndPairingSession()
+	if err := SetBootstrapSecret("rotation-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	// Open an expired session — TTL of 0 expires immediately.
+	expired, err := StartPairingSession(0)
+	if err != nil {
+		t.Fatalf("StartPairingSession: %v", err)
+	}
+	// Wait one Unix-time tick to push the wall clock past ExpiresAt.
+	time.Sleep(2 * time.Millisecond)
+	if activePairingSnapshot() != nil {
+		t.Fatalf("snapshot should be nil for an expired session")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover",
+		strings.NewReader(`{"secret":"rotation-secret","mode":"pair"}`))
+	req.RemoteAddr = "192.168.1.51:40000"
+	rec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	// The rotation must have closed the expired session's done so that
+	// any waiter (the bootstrap loop) is unblocked and can reschedule.
+	select {
+	case <-expired.done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expired session.done not closed after rotation; loop callers will hang")
+	}
+
+	// And a fresh session must be active.
+	snap := activePairingSnapshot()
+	if snap == nil {
+		t.Fatalf("expected a fresh active pairing session after rotation")
+	}
+	if snap.Code == expired.Code {
+		t.Fatalf("rotation produced identical code — generatePairCode collision or no rotation")
 	}
 }

@@ -66,11 +66,22 @@ import (
 	"net/http"
 	"os"
 	osexec "os/exec"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// runtimeGOOS returns the platform name in the shape the Convex
+// devices schema accepts. Convex's `platform` enum is "macos" not
+// "darwin"; everything else is verbatim.
+func runtimeGOOS() string {
+	if runtime.GOOS == "darwin" {
+		return "macos"
+	}
+	return runtime.GOOS
+}
 
 var tailscaleCGNAT = mustCIDR("100.64.0.0/10")
 
@@ -710,6 +721,13 @@ func notifyConvexAuthExpired(cfg *Config, httpPort int) {
 // Auth is by (deviceId, hardwareId, publicKey) triple — Convex
 // verifies they match the existing record from the first yaver auth.
 // Retries every 30s to keep the "online" status fresh.
+//
+// Truly-fresh boxes (never paired before, no Convex devices row) get
+// a 404 from /devices/bootstrap. We fall back to /devices/bootstrap-
+// pending, which uses the agent's relay password as the per-user
+// signal so the rightful user's dashboard can list and claim the
+// box. Without this fallback a clean install is invisible from
+// anywhere except the LAN beacon.
 func notifyConvexBootstrap(cfg *Config, httpPort int) {
 	if cfg == nil || cfg.ConvexSiteURL == "" || cfg.DeviceID == "" {
 		return
@@ -722,7 +740,67 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 	pubKey := dk.PublicKeyBase64()
 	hwid := HardwareID()
 	host := getLocalIP()
-	url := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap"
+	hostname, _ := os.Hostname()
+	bootstrapURL := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap"
+	pendingURL := strings.TrimRight(cfg.ConvexSiteURL, "/") + "/devices/bootstrap-pending"
+
+	// Pick the relay password the agent is actually using. Per-relay
+	// password wins over global; cached creds win over nothing.
+	pickRelayPassword := func() (string, string) {
+		relays := cfg.RelayServers
+		if len(relays) == 0 {
+			relays = cfg.CachedRelayServers
+		}
+		globalPw := cfg.RelayPassword
+		if globalPw == "" {
+			globalPw = cfg.CachedRelayPassword
+		}
+		for _, r := range relays {
+			pw := r.Password
+			if pw == "" {
+				pw = globalPw
+			}
+			if pw != "" {
+				return pw, r.QuicAddr
+			}
+		}
+		return "", ""
+	}
+
+	registerPending := func(client *http.Client) {
+		pw, label := pickRelayPassword()
+		if pw == "" {
+			// No relay password configured. The pending-claim flow
+			// can't help — the box is LAN-only until the user pairs
+			// it via beacon. Don't spam the endpoint without proof.
+			log.Printf("[bootstrap-convex] no Convex row and no relay password — pending-claim flow skipped (LAN beacon pairing required)")
+			return
+		}
+		body := map[string]interface{}{
+			"deviceId":      cfg.DeviceID,
+			"hardwareId":    hwid,
+			"publicKey":     pubKey,
+			"relayPassword": pw,
+			"name":          hostname,
+			"platform":      runtimeGOOS(),
+			"quicHost":      host,
+			"quicPort":      httpPort,
+			"relayLabel":    label,
+		}
+		data, _ := json.Marshal(body)
+		resp, err := client.Post(pendingURL, "application/json", strings.NewReader(string(data)))
+		if err != nil {
+			log.Printf("[bootstrap-pending] request failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 400 {
+			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			log.Printf("[bootstrap-pending] Convex returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+			return
+		}
+		log.Printf("[bootstrap-pending] Registered as pending claim (device %s) — visit dashboard to claim", cfg.DeviceID[:8])
+	}
 
 	register := func() {
 		body := map[string]interface{}{
@@ -734,18 +812,21 @@ func notifyConvexBootstrap(cfg *Config, httpPort int) {
 		}
 		data, _ := json.Marshal(body)
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Post(url, "application/json", strings.NewReader(string(data)))
+		resp, err := client.Post(bootstrapURL, "application/json", strings.NewReader(string(data)))
 		if err != nil {
 			log.Printf("[bootstrap-convex] request failed: %v", err)
 			return
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusNotFound {
+			// Truly-fresh box — no Convex row matches this triple.
+			// Fall through to the pending-claim path so the user can
+			// adopt the box from their dashboard.
+			log.Printf("[bootstrap-convex] no Convex row for device %s — registering as pending claim", cfg.DeviceID[:8])
+			registerPending(client)
+			return
+		}
 		if resp.StatusCode >= 400 {
-			// Read a short snippet of the body so the real error shows up in
-			// logs instead of an opaque status code. The most common cause is
-			// "Device not found" (config.json carries a deviceId Convex has
-			// never seen — e.g. a CI-stamped value leaking onto a real user
-			// machine). Cap at 512 bytes in case Convex ever returns HTML.
 			snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 			log.Printf("[bootstrap-convex] Convex returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
 			return

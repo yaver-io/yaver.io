@@ -97,6 +97,14 @@ export interface Device {
   agentVersion?: string;
   /** Epoch ms of the last server-side write of agentVersion. */
   agentVersionReportedAt?: number;
+  /**
+   * True when this row lacks both hardwareId and publicKey AND is not a
+   * guest. Such rows have unstable identity — a rename or platform
+   * change splits them, and two unrelated boxes can collapse onto the
+   * same (platform, name) key. We never use them as a reconnect target;
+   * the UI surfaces a "re-pair from the box" warning instead.
+   */
+  ghost?: boolean;
 }
 
 interface DevicesState {
@@ -179,15 +187,20 @@ function normalizedHost(host: string | undefined): string {
 }
 
 function deviceIdentityKey(device: Device): string {
+  // Stable cryptographic identity wins. hardwareId is the most stable
+  // (survives renames and reinstalls); publicKey survives renames but
+  // rotates on factory reset.
   if (device.hardwareId) return `hwid:${device.hardwareId}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
   if (device.isGuest) {
     const scope = device.hostEmail || device.hostName || "guest";
     return `guest:${scope}:${device.id || device.name}`;
   }
-  const name = normalizedName(device.name);
-  const platform = String(device.platform || "").trim().toLowerCase();
-  if (name && platform) return `host:${platform}:${name}`;
+  // No stable identity. The previous fallback to `host:platform:name`
+  // was a footgun: it merged unrelated boxes that happened to share a
+  // hostname (common in fleets) and split a single box across renames.
+  // Keep the row addressable per-deviceId — the `ghost` flag in
+  // refreshDevices marks it so the UI can warn the user.
   if (device.id) return `id:${device.id}`;
   return `name:${device.name}`;
 }
@@ -465,6 +478,10 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         agentVersion: typeof d.agentVersion === "string" ? d.agentVersion : undefined,
         agentVersionReportedAt:
           typeof d.agentVersionReportedAt === "number" ? d.agentVersionReportedAt : undefined,
+        // Ghost: non-guest row lacking both stable identifiers. Cannot
+        // be reliably reconnect-targeted. Surfaced in the UI so the
+        // user knows to re-pair from the device.
+        ghost: !(d.hardwareId || d.hwid) && !d.publicKey && !d.isGuest,
       }});
 
       const collapsed = collapseDevices(mapped);
@@ -523,4 +540,88 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
   const visible = devices.filter((d) => !hiddenIds.has(d.id));
 
   return { devices: visible, refreshDevices, hiddenIds };
+}
+
+// PendingDeviceClaim mirrors the row shape returned by
+// /devices/pending-list. A pending claim is a bootstrap-mode box that
+// joined the user's relay but has no Convex devices row yet — the
+// dashboard surfaces it with a "Claim" CTA so a freshly-installed
+// remote box becomes attached in one tap.
+export interface PendingDeviceClaim {
+  id: string;
+  deviceId: string;
+  hardwareId: string;
+  name?: string;
+  platform?: string;
+  quicHost?: string;
+  quicPort?: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  relayLabel?: string;
+}
+
+export function usePendingClaims(token: string | null): {
+  pending: PendingDeviceClaim[];
+  refreshPending: () => Promise<void>;
+  claimPending: (deviceId: string, name?: string) => Promise<{ ok: boolean; error?: string }>;
+} {
+  const [pending, setPending] = useState<PendingDeviceClaim[]>([]);
+
+  const refreshPending = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${CONVEX_URL}/devices/pending-list`, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        // Silent — endpoint not deployed yet on older backends shouldn't
+        // wedge the dashboard.
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const items: PendingDeviceClaim[] = Array.isArray(data?.items) ? data.items : [];
+      setPending(items);
+    } catch {
+      // Network blip — keep prior list, retry next tick.
+    }
+  }, [token]);
+
+  const claimPending = useCallback(
+    async (deviceId: string, name?: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!token) return { ok: false, error: "Not signed in" };
+      try {
+        const res = await fetch(`${CONVEX_URL}/devices/pending-claim`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deviceId, name }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          return { ok: false, error: body?.error || `HTTP ${res.status}` };
+        }
+        // Refresh both lists. The pending row was deleted server-side
+        // and a real devices row was created; the next /devices/list
+        // poll will pick it up.
+        await refreshPending();
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+    [token, refreshPending],
+  );
+
+  useEffect(() => {
+    refreshPending();
+    // Poll on the same 10s cadence as devices so pending rows appear
+    // and disappear in lockstep with the main list.
+    const iv = setInterval(refreshPending, 10000);
+    return () => clearInterval(iv);
+  }, [refreshPending]);
+
+  return { pending, refreshPending, claimPending };
 }

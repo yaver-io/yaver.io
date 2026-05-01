@@ -2675,29 +2675,78 @@ export class AgentClient {
     return { ok: false, error: "no relay path reached the device" };
   }
 
-  /** One-click pair for a device that's in bootstrap mode (relay
-   *  tunnel up, no auth_token). Hits the agent's
-   *  /auth/pair/owner-claim with the user's bearer; the agent
-   *  verifies ownership via Convex round-trip and splices the
-   *  bearer into the active pair session. No URL composition,
+  /** One-click pair for a device in bootstrap mode. Hits the
+   *  agent's /auth/pair/owner-claim with the user's bearer; the
+   *  agent verifies ownership via Convex round-trip and splices
+   *  the bearer into the active pair session. No URL composition,
    *  no passkey copy-paste, no expiry races on the user.
    *
-   *  Use case: user clicks "Pair Device" on a device card whose
-   *  state shows needsAuth=true. Replaces the multi-step
-   *  /pair URL flow that broke for kivanc tonight.
+   *  Tries relays first (most reliable for off-LAN reach), then
+   *  any device-specific transport hints the caller passes —
+   *  direct host, tunnelUrl, publicEndpoints. The previous
+   *  relay-only version broke reclaim for boxes reachable only
+   *  via Cloudflare tunnel or LAN when the relay was degraded,
+   *  even though the agent itself was up.
+   *
+   *  Use case: user clicks "Pair Device" / "Reclaim" on a card
+   *  whose state shows bootstrap or needsAuth=true.
    */
   async ownerClaimDevice(
     deviceId: string,
+    opts: {
+      host?: string;
+      port?: number;
+      lanIps?: string[];
+      tunnelUrl?: string;
+      publicEndpoints?: string[];
+    } = {},
   ): Promise<{ ok: true; via: string; host?: string } | { ok: false; status?: number; error: string }> {
     if (!this.token) return { ok: false, error: "not signed in" };
     const userBearer = this.token;
-    const tryOne = async (
-      base: string,
-      relayPassword?: string,
-    ): Promise<{ ok: true; host?: string } | { ok: false; status: number; error: string }> => {
-      const url = `${base}/auth/pair/owner-claim` + (relayPassword ? `?__rp=${encodeURIComponent(relayPassword)}` : "");
+
+    type Target = { url: string; label: string };
+    const seen = new Set<string>();
+    const targets: Target[] = [];
+    const push = (url: string | null | undefined, label: string) => {
+      const normalized = (url || "").replace(/\/+$/, "");
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      targets.push({ url: normalized, label });
+    };
+
+    // Relay first.
+    for (const relay of this.relayServers) {
+      const url = `${relay.httpUrl}/d/${deviceId}/auth/pair/owner-claim`
+        + (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      push(url, `relay ${relay.id || relay.httpUrl}`);
+    }
+    // Direct host + LAN IPs.
+    const port = opts.port || 18080;
+    if (opts.host) {
+      push(`http://${opts.host}:${port}/auth/pair/owner-claim`, `direct ${opts.host}`);
+    }
+    for (const ip of opts.lanIps || []) {
+      if (!ip) continue;
+      push(`http://${ip}:${port}/auth/pair/owner-claim`, `lan ${ip}`);
+    }
+    // Tunnel + public endpoints.
+    if (opts.tunnelUrl) {
+      push(`${opts.tunnelUrl.replace(/\/+$/, "")}/auth/pair/owner-claim`, `tunnel ${opts.tunnelUrl}`);
+    }
+    for (const endpoint of opts.publicEndpoints || []) {
+      if (!endpoint) continue;
+      push(`${endpoint.replace(/\/+$/, "")}/auth/pair/owner-claim`, `public ${endpoint}`);
+    }
+
+    if (targets.length === 0) {
+      return { ok: false, error: "no transport configured for owner-claim" };
+    }
+
+    let lastError = "no transport reached the device";
+    let lastStatus: number | undefined;
+    for (const target of targets) {
       try {
-        const res = await this.fetchWithTimeout(url, {
+        const res = await this.fetchWithTimeout(target.url, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${userBearer}`,
@@ -2707,31 +2756,23 @@ export class AgentClient {
         }, 12000);
         if (res.ok) {
           const data = await res.json().catch(() => ({} as Record<string, unknown>));
-          return { ok: true, host: typeof data.host === "string" ? data.host : undefined };
+          return {
+            ok: true,
+            via: target.label,
+            host: typeof data.host === "string" ? data.host : undefined,
+          };
         }
-        const text = await res.text().catch(() => "");
-        return { ok: false, status: res.status, error: text.slice(0, 200) || `HTTP ${res.status}` };
+        // Terminal: agent reached us, parsed, rejected. Won't change
+        // across transports.
+        if (res.status === 401 || res.status === 403 || res.status === 409) {
+          const text = await res.text().catch(() => "");
+          return { ok: false, status: res.status, error: text.slice(0, 200) || `HTTP ${res.status}` };
+        }
+        lastError = `HTTP ${res.status} on ${target.label}`;
+        lastStatus = res.status;
       } catch (e: unknown) {
-        return { ok: false, status: 0, error: e instanceof Error ? e.message : String(e) };
+        lastError = e instanceof Error ? e.message : String(e);
       }
-    };
-
-    if (this.relayServers.length === 0) {
-      return { ok: false, error: "no relay servers configured" };
-    }
-    let lastError = "no relay path reached the device";
-    let lastStatus: number | undefined;
-    for (const relay of this.relayServers) {
-      const base = `${relay.httpUrl}/d/${deviceId}`;
-      const r = await tryOne(base, relay.password || undefined);
-      if (r.ok) return { ok: true, via: relay.id || base, host: r.host };
-      // 401/403/409 mean "this relay reached the agent and the
-      // agent rejected" — next relay won't change the verdict.
-      if (r.status === 401 || r.status === 403 || r.status === 409) {
-        return { ok: false, status: r.status, error: r.error };
-      }
-      lastError = r.error;
-      lastStatus = r.status;
     }
     return { ok: false, status: lastStatus, error: lastError };
   }

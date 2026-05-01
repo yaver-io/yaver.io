@@ -332,7 +332,7 @@ for (const path of [
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
   "/auth/device-code/authorize",
-  "/devices/list", "/devices/owner-by-hardware", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
@@ -1210,7 +1210,80 @@ http.route({
       });
       return jsonResponse({ ok: true, userId: res.userId });
     } catch (e: any) {
+      // "Device not found" is the structured signal an agent uses to
+      // decide whether to fall back to /devices/bootstrap-pending.
+      // Return 404 (not 400) so the agent's retry path is unambiguous.
+      if (errorMessageIncludes(e, "Device not found")) {
+        return errorResponse("Device not found", 404);
+      }
       return errorResponse(e?.message || "bootstrap failed", 400);
+    }
+  }),
+});
+
+/** POST /devices/bootstrap-pending — A truly-fresh box (no prior Convex
+ *  row) registers itself for later claim by its relay-password-bearing
+ *  user. The agent calls this only after /devices/bootstrap returned 404.
+ *
+ *  Why a separate endpoint: the original /devices/bootstrap requires a
+ *  pre-existing devices row keyed by (deviceId, hardwareId, publicKey)
+ *  for trust. There is no pre-existing row for a clean install, but we
+ *  still need a way to make the box visible to ITS owner — the user
+ *  whose relay password is configured on the box. We hash the relay
+ *  password server-side and store it on a holding row in
+ *  `pendingDeviceClaims`. The dashboard scopes its listing to the
+ *  caller's managedRelay password hash, so only the rightful user
+ *  ever sees the pending row.
+ *
+ *  Auth: relay password presence is the proof. We rely on the fact
+ *  that the agent could only have registered its tunnel with the relay
+ *  by also presenting that password — i.e. the password is already
+ *  validated by the relay before this endpoint sees it. The user
+ *  proves possession on their end by hashing managedRelays.password
+ *  and matching it to relayPasswordHash on the row they want to claim.
+ */
+http.route({
+  path: "/devices/bootstrap-pending",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => null);
+    if (
+      !body ||
+      !body.deviceId ||
+      !body.hardwareId ||
+      !body.publicKey ||
+      !body.relayPassword
+    ) {
+      return errorResponse(
+        "deviceId, hardwareId, publicKey, relayPassword required",
+        400,
+      );
+    }
+    try {
+      const relayPasswordHash = await sha256Hex(String(body.relayPassword));
+      const result = await ctx.runMutation(internal.pendingDeviceClaims.createOrUpdate, {
+        deviceId: String(body.deviceId),
+        hardwareId: String(body.hardwareId),
+        publicKey: String(body.publicKey),
+        relayPasswordHash,
+        name: typeof body.name === "string" ? body.name : undefined,
+        platform: typeof body.platform === "string" ? body.platform : undefined,
+        quicHost: typeof body.quicHost === "string" ? body.quicHost : undefined,
+        quicPort: typeof body.quicPort === "number" ? body.quicPort : undefined,
+        relayLabel: typeof body.relayLabel === "string" ? body.relayLabel : undefined,
+      });
+      // alreadyClaimed=true means the agent got confused: a real
+      // devices row exists for this triple, the agent should have
+      // succeeded on /devices/bootstrap. We answer 200 anyway so the
+      // agent stops retrying, but flag it so log forwarders can spot
+      // misrouted calls.
+      return jsonResponse({
+        ok: true,
+        pending: !result.alreadyClaimed,
+        alreadyClaimed: !!result.alreadyClaimed,
+      });
+    } catch (e: any) {
+      return errorResponse(e?.message || "bootstrap-pending failed", 400);
     }
   }),
 });
@@ -1525,6 +1598,69 @@ http.route({
     });
 
     return jsonResponse({ devices });
+  }),
+});
+
+/** GET /devices/pending-list — list bootstrap-pending claims that came
+ *  in via the caller's managed-relay password. Returns [] when the
+ *  user has no managed relay or no pending claims. The dashboard polls
+ *  this alongside /devices/list and surfaces "pending" rows so a
+ *  freshly-installed remote box becomes claimable in one tap. */
+http.route({
+  path: "/devices/pending-list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const result = await ctx.runQuery(api.pendingDeviceClaims.listForUser, {
+      tokenHash,
+    });
+    return jsonResponse(result);
+  }),
+});
+
+/** POST /devices/pending-claim — claim a bootstrap-pending box. The
+ *  agent's relay-password hash must match the caller's managedRelay
+ *  password hash; on success, a real `devices` row is created with
+ *  needsAuth=true so the existing reauth/owner-claim UI can take over
+ *  and finish the pairing handshake. */
+http.route({
+  path: "/devices/pending-claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || !body.deviceId) {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.pendingDeviceClaims.claim, {
+        tokenHash,
+        deviceId: String(body.deviceId),
+        name: typeof body.name === "string" ? body.name : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "claim failed";
+      // Map known shapes to clean status codes so the dashboard can
+      // distinguish 404 (no row) from 403 (relay-password mismatch)
+      // from 409 (already owned by another user).
+      if (errorMessageIncludes(e, "no pending claim")) return errorResponse(msg, 404);
+      if (errorMessageIncludes(e, "another user")) return errorResponse(msg, 409);
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
+      if (errorMessageIncludes(e, "relay-password mismatch")) return errorResponse(msg, 403);
+      if (errorMessageIncludes(e, "no managed relay")) return errorResponse(msg, 403);
+      return errorResponse(msg, 400);
+    }
   }),
 });
 
@@ -3968,6 +4104,13 @@ const runCron = httpAction(async (ctx, req) => {
       break;
     case "pruneDeviceEvents":
       await ctx.scheduler.runAfter(0, internal.cleanup.pruneDeviceEvents, {});
+      break;
+    case "sweepStalePendingClaims":
+      // Daily sweep so unclaimed bootstrap-pending rows don't pile up
+      // when a fresh box joins the relay and the user never visits
+      // their dashboard. 24h is enough for a real claim while still
+      // bounding the table.
+      await ctx.scheduler.runAfter(0, internal.pendingDeviceClaims.sweepStale, {});
       break;
     default:
       return new Response(`Unknown cron: ${name}`, { status: 404 });

@@ -70,6 +70,33 @@ function installMissingCodingRunners() {
   }
 }
 
+// ensureLinuxHermescBuildDeps installs the apt packages required to
+// compile hermesc from facebook/hermes sources on linux/arm64 (no
+// upstream prebuilt exists for that arch). Best-effort; only runs as
+// root. Mirrors ci/remote/install-hermesc.sh's dep list so the
+// outcome matches the Hetzner test-box bootstrap path.
+function ensureLinuxHermescBuildDeps() {
+  try {
+    if (process.platform !== "linux") return;
+    if (typeof process.geteuid !== "function" || process.geteuid() !== 0) {
+      log("linux/arm64 hermesc build needs cmake/ninja/clang/libicu-dev — re-run `npm install -g yaver-cli` as root to provision them, or install manually.");
+      return;
+    }
+    const required = ["git", "cmake", "ninja-build", "clang", "python3", "build-essential", "ca-certificates", "libicu-dev", "zlib1g-dev"];
+    if (!commandExists("apt-get")) {
+      log(`hermesc build deps missing (${required.join(", ")}) and no apt-get available. Install manually then re-run \`yaver install mobile\`.`);
+      return;
+    }
+    execSync("apt-get update -y", { stdio: ["ignore", "ignore", "ignore"] });
+    execSync(`DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${required.join(" ")}`, {
+      stdio: "inherit",
+    });
+    log("Installed Linux hermesc build deps (cmake/ninja/clang/libicu-dev).");
+  } catch (error) {
+    log(`Skipping hermesc build deps install: ${error.message}`);
+  }
+}
+
 function ensureLinuxRunnerSandboxPackages() {
   try {
     if (process.platform !== "linux") return;
@@ -229,7 +256,21 @@ async function main() {
   // Never blocks install — the bundler falls back to project-local RN
   // if this step skipped or failed.
   try {
-    const hermescPath = await ensureHermesc({ quiet: true });
+    let hermescPath = await ensureHermesc({ quiet: true });
+    // linux/arm64 (and any other platform with no upstream prebuilt)
+    // falls through to build-from-source. Without this branch the
+    // first `yaver-push` on the box pays a 1–2 min CMake bill — bad UX
+    // on a fresh Hetzner ARM dev box. Install the toolchain (apt only,
+    // when running as root) and try the source build now so push is
+    // instant later. Never blocks npm install on failure.
+    if (!hermescPath && process.platform === "linux" && process.arch === "arm64") {
+      ensureLinuxHermescBuildDeps();
+      try {
+        hermescPath = await ensureHermesc({ quiet: true, allowBuildFromSource: true });
+      } catch (buildErr) {
+        log(`Source build of hermesc failed: ${buildErr.message}`);
+      }
+    }
     if (hermescPath) {
       log(`Hermes compiler ready at ${hermescPath}.`);
     } else {

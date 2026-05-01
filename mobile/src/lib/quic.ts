@@ -6407,40 +6407,101 @@ export class QuicClient {
     return { ok: false, error: lastError };
   }
 
-  /** One-click pair for a device in bootstrap mode (relay tunnel
-   *  up, no auth_token). Hits /auth/pair/owner-claim — agent
-   *  verifies ownership via Convex round-trip and splices the
-   *  bearer into the active pair session. No URL paste, no
-   *  passkey, no expiry race. Mirror of the web AgentClient's
-   *  ownerClaimDevice. */
+  /** One-click pair for a device in bootstrap mode. Hits
+   *  /auth/pair/owner-claim — agent verifies ownership via
+   *  Convex round-trip and splices the bearer into the active
+   *  pair session. No URL paste, no passkey, no expiry race.
+   *
+   *  Tries every transport the device exposes: relay, direct LAN,
+   *  Cloudflare/ngrok tunnel, public endpoints. Previous version
+   *  was relay-only, which broke reclaim for boxes reachable only
+   *  via tunnel or LAN when the relay was degraded — even though
+   *  the agent itself was up. Mirror of the web AgentClient's
+   *  ownerClaimDevice.
+   *
+   *  When `opts` carries device-specific transport hints (host,
+   *  lanIps, tunnelUrl, publicEndpoints) we try them too. The
+   *  caller — typically DeviceContext.recoverDeviceAuth — has a
+   *  Device record with those fields; without them we fall back
+   *  to relay-only. */
   async ownerClaimDevice(
     deviceId: string,
+    opts: {
+      host?: string;
+      port?: number;
+      lanIps?: string[];
+      tunnelUrl?: string;
+      publicEndpoints?: string[];
+    } = {},
   ): Promise<{ ok: true; via: string; host?: string } | { ok: false; error: string }> {
     if (!this.token) return { ok: false, error: "not signed in" };
     if (!deviceId) return { ok: false, error: "missing deviceId" };
     const userBearer = this.token;
-    const relayList = [...this.relayServers];
-    if (relayList.length === 0) return { ok: false, error: "no relay servers configured" };
 
-    let lastError = "no relay reached the device";
-    for (const relay of relayList) {
+    type Target = { url: string; label: string; headers: Record<string, string> };
+    const seen = new Set<string>();
+    const targets: Target[] = [];
+    const push = (url: string | null | undefined, label: string, headers: Record<string, string>) => {
+      const normalized = (url || "").replace(/\/+$/, "");
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      targets.push({ url: normalized, label, headers });
+    };
+
+    const baseHeaders: Record<string, string> = {
+      Authorization: `Bearer ${userBearer}`,
+      "Content-Type": "application/json",
+      "X-Client-Platform": Platform.OS,
+    };
+
+    // Relay first — works through arbitrary NATs. Most reliable for
+    // a remote box.
+    for (const relay of this.relayServers) {
       const url = `${relay.httpUrl}/d/${deviceId}/auth/pair/owner-claim` +
         (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      push(url, `relay ${relay.id || relay.httpUrl}`, baseHeaders);
+    }
+
+    // Direct LAN host + LAN IPs (LAN/home-network reach).
+    const port = opts.port || 18080;
+    if (opts.host) {
+      push(`http://${opts.host}:${port}/auth/pair/owner-claim`, `direct ${opts.host}`, baseHeaders);
+    }
+    for (const ip of opts.lanIps || []) {
+      if (!ip) continue;
+      push(`http://${ip}:${port}/auth/pair/owner-claim`, `lan ${ip}`, baseHeaders);
+    }
+
+    // Cloudflare/ngrok tunnel and public endpoints (off-LAN reach
+    // when relay is degraded).
+    if (opts.tunnelUrl) {
+      push(`${opts.tunnelUrl.replace(/\/+$/, "")}/auth/pair/owner-claim`, `tunnel ${opts.tunnelUrl}`, baseHeaders);
+    }
+    for (const endpoint of opts.publicEndpoints || []) {
+      if (!endpoint) continue;
+      push(`${endpoint.replace(/\/+$/, "")}/auth/pair/owner-claim`, `public ${endpoint}`, baseHeaders);
+    }
+
+    if (targets.length === 0) {
+      return { ok: false, error: "no transport configured for owner-claim" };
+    }
+
+    let lastError = "no transport reached the device";
+    for (const target of targets) {
       try {
-        const res = await this.fetchWithTimeout(url, {
+        const res = await this.fetchWithTimeout(target.url, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${userBearer}`,
-            "Content-Type": "application/json",
-            "X-Client-Platform": Platform.OS,
-          },
+          headers: target.headers,
           body: JSON.stringify({}),
         }, 12000);
         if (res.ok) {
           let host: string | undefined;
           try { host = (await res.json())?.host; } catch {}
-          return { ok: true, via: relay.id || relay.httpUrl, host };
+          return { ok: true, via: target.label, host };
         }
+        // The agent reached us, parsed the request, and rejected for a
+        // reason that won't change across transports. Fail fast — trying
+        // another path against the same agent will return the same code.
         if (res.status === 401 || res.status === 403 || res.status === 409) {
           let body = "";
           try { body = (await res.json())?.error || ""; } catch {
@@ -6448,7 +6509,7 @@ export class QuicClient {
           }
           return { ok: false, error: `${res.status}: ${body || "rejected"}` };
         }
-        lastError = `${res.status} on relay ${relay.id || relay.httpUrl}`;
+        lastError = `${res.status} on ${target.label}`;
       } catch (e: unknown) {
         lastError = e instanceof Error ? e.message : String(e);
       }

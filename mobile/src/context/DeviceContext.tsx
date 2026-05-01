@@ -12,6 +12,7 @@ import Constants from "expo-constants";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
 import { useAuth } from "./AuthContext";
 import { getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
@@ -328,18 +329,26 @@ function deviceEndpointKey(device: Pick<Device, "host" | "port" | "isGuest">): s
 }
 
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "name" | "os" | "isGuest" | "hostEmail" | "hostName">): string {
+  // Stable cryptographic identity wins. Without hwid or publicKey a
+  // non-guest row is a "ghost": (platform, name) used to be the
+  // fallback but it collided across fleets that share hostnames and
+  // split single boxes across renames. Mark them as their own per-id
+  // entry so reconnect can refuse to act on them.
   if (device.hwid) return `hwid:${device.hwid}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
   if (device.isGuest) {
     const hostScope = device.hostEmail || device.hostName || "guest";
     return `guest:${hostScope}:${device.id || device.name}`;
   }
-  const normalizedName = normalizedDeviceName(device.name);
-  if (normalizedName && device.os) {
-    return `host:${device.os}:${normalizedName}`;
-  }
   if (device.id) return `id:${device.id}`;
   return `name:${device.name}`;
+}
+
+/** True when the device row has unstable identity (no hwid, no publicKey,
+ *  not a guest). Reconnect, owner-claim, and reauth targets all need to
+ *  block on this so a stale row doesn't accidentally match a live agent. */
+export function isGhostDevice(device: Pick<Device, "hwid" | "publicKey" | "isGuest">): boolean {
+  return !device.hwid && !device.publicKey && !device.isGuest;
 }
 
 function mergeDeviceEntries(existing: Device, incoming: Device): Device {
@@ -476,6 +485,23 @@ interface GuestInvitation {
   proposedDeviceIds?: string[];
 }
 
+// PendingDeviceClaim mirrors the shape returned by /devices/pending-list.
+// Bootstrap-pending boxes that joined the user's relay but have no
+// Convex devices row yet — surfaced to the user so a freshly-installed
+// remote box becomes claimable from the phone in one tap.
+export interface PendingDeviceClaim {
+  id: string;
+  deviceId: string;
+  hardwareId: string;
+  name?: string;
+  platform?: string;
+  quicHost?: string;
+  quicPort?: number;
+  firstSeenAt: number;
+  lastSeenAt: number;
+  relayLabel?: string;
+}
+
 interface DeviceState {
   devices: Device[];
   activeDevice: Device | null;
@@ -489,6 +515,12 @@ interface DeviceState {
   agentAuthExpired: boolean;
   /** Trigger phone-driven auth recovery for a device. */
   recoverDeviceAuth: (device: Device) => Promise<RecoveryResult | null>;
+  /** Bootstrap-pending claims (boxes that joined the user's relay but
+   *  have no Convex devices row yet). Surfaced so a fresh remote
+   *  install is claimable in one tap from the phone. */
+  pendingClaims: PendingDeviceClaim[];
+  refreshPendingClaims: () => Promise<void>;
+  claimPendingDevice: (deviceId: string, name?: string) => Promise<{ ok: boolean; error?: string }>;
   selectDevice: (device: Device) => Promise<void>;
   disconnect: () => void;
   refreshDevices: () => Promise<void>;
@@ -1596,7 +1628,92 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     [token]
   );
 
-  const recoverBootstrapDevice = useCallback(async (device: Device): Promise<{ ok: boolean; targetUrl?: string; error?: string }> => {
+  // recoverBootstrapDevice handles the DIRECT-reach reclaim path: the agent's
+  // bootstrap HTTP server is reachable on the LAN (or any network where /info
+  // exposes its passkey), so we can run encrypted-pair or passkey-pair
+  // straight against the agent.
+  //
+  // It deliberately does NOT iterate relay targets. The bootstrap server
+  // suppresses bootstrapPasskey on /info whenever the request looks
+  // proxied — X-Forwarded-For, X-Relay-Password, or non-LAN remote IP — so
+  // the relay arm of this function would always fail at the "did not expose
+  // a passkey" branch. The relay path is owner-claim's job; recoverDeviceAuth
+  // dispatches to whichever fits the lifecycle probe.
+  //
+  // The optional `cachedInfo` lets the caller pass an already-fetched /info
+  // payload to skip the duplicate round-trip when probeMobileDeviceStatus
+  // already proved the device was direct-reachable.
+  // ── Bootstrap-pending claims ────────────────────────────────────
+  // Tracks boxes that registered themselves on the user's relay with
+  // a `bootstrap-pending` token but have no Convex devices row yet.
+  // The user's dashboard uses this to surface fresh installs that
+  // would otherwise be invisible to anyone off-LAN.
+  const [pendingClaims, setPendingClaims] = useState<PendingDeviceClaim[]>([]);
+  const refreshPendingClaims = useCallback(async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${CONVEX_SITE_URL}/devices/pending-list`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        // Older backends without the endpoint return 404 — keep
+        // current state and try again next tick.
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      const items: PendingDeviceClaim[] = Array.isArray(data?.items) ? data.items : [];
+      setPendingClaims(items);
+    } catch {
+      // Network blip; keep prior state.
+    }
+  }, [token]);
+
+  const claimPendingDevice = useCallback(
+    async (deviceId: string, name?: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!token) return { ok: false, error: "Not signed in" };
+      try {
+        const res = await fetch(`${CONVEX_SITE_URL}/devices/pending-claim`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deviceId, name }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({} as Record<string, unknown>));
+          const msg = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
+          return { ok: false, error: msg };
+        }
+        // Pending row was deleted server-side and a real devices row
+        // was created. Refresh both lists immediately so the UI
+        // doesn't blink.
+        await Promise.all([refreshPendingClaims(), refreshDevices()]);
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    [token, refreshPendingClaims, refreshDevices],
+  );
+
+  // Poll pending claims on the same cadence as devices (10s) so the
+  // pending banner appears within one tick of a fresh install joining
+  // the relay.
+  useEffect(() => {
+    if (!token) {
+      setPendingClaims([]);
+      return;
+    }
+    refreshPendingClaims();
+    const iv = setInterval(refreshPendingClaims, 10000);
+    return () => clearInterval(iv);
+  }, [token, refreshPendingClaims]);
+
+  const recoverBootstrapDevice = useCallback(async (
+    device: Device,
+    cachedInfo?: Record<string, any> | null,
+  ): Promise<{ ok: boolean; targetUrl?: string; error?: string }> => {
     if (!token || !user?.id) return { ok: false, error: "Not signed in" };
 
     const port = device.port || 18080;
@@ -1611,60 +1728,77 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     });
-    const relayTargets = quicClient.getRelayServers().map((relay) => ({
-      url: `${relay.httpUrl}/d/${device.id}`,
-      label: relay.id || relay.httpUrl,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(relay.password ? { "X-Relay-Password": relay.password } : {}),
-      } as Record<string, string>,
-    }));
-    const targets = [
-      ...directTargets.map((url) => ({ url, label: url, headers: {} as Record<string, string> })),
-      ...relayTargets,
-    ];
+
+    const tryPairAtUrl = async (
+      targetUrl: string,
+      info: Record<string, any>,
+    ): Promise<{ ok: boolean; host?: string; error?: string } | { skip: true; reason: string }> => {
+      const inBootstrap = info?.needsAuth === true || info?.mode === "bootstrap"
+        || info?.lifecycleState === "bootstrap" || info?.lifecycle?.state === "bootstrap";
+      if (!inBootstrap) {
+        return { skip: true, reason: `${targetUrl} is up but not in bootstrap` };
+      }
+      const pairCode = info?.bootstrapPasskey || info?.passkey;
+      if (device.publicKey) {
+        const res = await submitEncryptedPair(targetUrl, token, device.publicKey, pairCode);
+        // Encrypted pair without a code is rejected by the agent (400).
+        // Without a passkey AND without success, fall through.
+        if (res.ok) return res;
+        if (!pairCode) return { skip: true, reason: `${targetUrl} did not expose a passkey for encrypted pair` };
+        return res;
+      }
+      if (!pairCode) {
+        return { skip: true, reason: `${targetUrl} did not expose a passkey and device has no publicKey` };
+      }
+      return await submitPair({ code: pairCode, targetUrl, token, userId: user.id });
+    };
 
     let lastError = "bootstrap endpoint did not respond";
-    for (const target of targets) {
+
+    // First, if the caller passed a fresh /info that already shows bootstrap
+    // and a usable passkey, attempt against device.host without re-fetching.
+    if (cachedInfo) {
+      const primaryUrl = `http://${device.host}:${port}`;
+      const out = await tryPairAtUrl(primaryUrl, cachedInfo);
+      if ("ok" in out && out.ok) {
+        quicClient.agentAuthExpired = false;
+        setAgentAuthExpired(false);
+        clearDeviceUnreachable(device.id);
+        appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via cached /info`);
+        setTimeout(() => refreshDevices(), 1200);
+        return { ok: true, targetUrl: ("host" in out && out.host) || primaryUrl };
+      }
+      if ("skip" in out) {
+        lastError = out.reason;
+      } else if ("error" in out && out.error) {
+        lastError = out.error;
+      }
+    }
+
+    for (const targetUrl of directTargets) {
       try {
-        const infoRes = await fetch(`${target.url}/info`, {
-          headers: target.headers,
+        const infoRes = await fetch(`${targetUrl}/info`, {
           signal: AbortSignal.timeout(3500),
         });
         if (!infoRes.ok) {
-          lastError = `HTTP ${infoRes.status} from ${target.label}`;
+          lastError = `HTTP ${infoRes.status} from ${targetUrl}`;
           continue;
         }
         const info = await infoRes.json().catch(() => ({} as any));
-        const inBootstrap = info?.needsAuth === true || info?.mode === "bootstrap";
-        if (!inBootstrap) {
-          lastError = `${target.label} is up but not in bootstrap`;
-          continue;
-        }
-        const pairCode = info?.bootstrapPasskey || info?.passkey;
-        let pairRes: { ok: boolean; host?: string; error?: string };
-        if (device.publicKey) {
-          pairRes = await submitEncryptedPair(target.url, token, device.publicKey, pairCode);
-        } else if (pairCode) {
-          pairRes = await submitPair({
-            code: pairCode,
-            targetUrl: target.url,
-            token,
-            userId: user.id,
-          });
-        } else {
-          lastError = `${target.label} is in bootstrap but did not expose a passkey`;
-          continue;
-        }
-        if (pairRes.ok) {
+        const out = await tryPairAtUrl(targetUrl, info);
+        if ("ok" in out && out.ok) {
           quicClient.agentAuthExpired = false;
           setAgentAuthExpired(false);
           clearDeviceUnreachable(device.id);
-          appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via ${target.label}`);
+          appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via ${targetUrl}`);
           setTimeout(() => refreshDevices(), 1200);
-          return { ok: true, targetUrl: pairRes.host || target.url };
+          return { ok: true, targetUrl: ("host" in out && out.host) || targetUrl };
         }
-        lastError = pairRes.error || `pair submit failed for ${target.label}`;
+        if ("skip" in out) {
+          lastError = out.reason;
+        } else if ("error" in out && out.error) {
+          lastError = out.error;
+        }
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
@@ -1677,33 +1811,72 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: "Not signed in" };
     }
 
+    // Ghost rows lack hwid/publicKey so any reconnect attempt would be
+    // matching against unstable identity. Refuse early — let the user
+    // re-pair from the box (or rely on the bootstrap-pending flow on a
+    // truly fresh install) instead of silently hitting whatever row
+    // happens to share a hostname.
+    if (isGhostDevice(device)) {
+      const msg = "Cannot recover: device row is missing identity (hwid/publicKey). Re-pair from the device.";
+      appLog("warn", `${device.name}: ${msg}`);
+      return { ok: false, error: msg };
+    }
+
     const lifecycleProbe = await probeMobileDeviceStatus(device, token, 3500).catch(() => null);
     const lifecycleState = lifecycleProbe?.lifecycleState;
     const shouldTryBootstrap =
       lifecycleState === "bootstrap" || (!lifecycleState && device.needsAuth === true);
 
     if (shouldTryBootstrap) {
-      const bootstrapRecovery = await recoverBootstrapDevice(device);
-      if (bootstrapRecovery.ok) {
-        return {
-          ok: true,
-          targetUrl: bootstrapRecovery.targetUrl,
-        };
+      // Route by transport. recoverBootstrapDevice can only succeed when
+      // /info exposed a usable passkey, which the agent suppresses on
+      // proxied requests (relay, X-Forwarded-For). When the probe found
+      // the device only over relay, jump straight to owner-claim instead
+      // of doing a round-trip we know will fail.
+      const probedDirect = lifecycleProbe?.path === "direct" && !!lifecycleProbe.info;
+      const probedRelay = lifecycleProbe?.path === "relay";
+
+      if (probedDirect) {
+        const bootstrapRecovery = await recoverBootstrapDevice(device, lifecycleProbe?.info);
+        if (bootstrapRecovery.ok) {
+          return { ok: true, targetUrl: bootstrapRecovery.targetUrl };
+        }
+        appLog("warn",
+          `Direct bootstrap recovery failed for ${device.name}: ${bootstrapRecovery.error || "unknown"} — falling through to owner-claim`);
       }
 
-      const claimed = await quicClient.ownerClaimDevice(device.id);
+      const claimed = await quicClient.ownerClaimDevice(device.id, {
+        host: device.host,
+        port: device.port,
+        lanIps: device.lanIps,
+        tunnelUrl: device.tunnelUrl,
+        publicEndpoints: device.publicEndpoints,
+      });
       if (claimed.ok) {
         quicClient.agentAuthExpired = false;
         setAgentAuthExpired(false);
         clearDeviceUnreachable(device.id);
         appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via owner claim`);
         setTimeout(() => refreshDevices(), 800);
-        return {
-          ok: true,
-          targetUrl: claimed.host,
-        };
+        return { ok: true, targetUrl: claimed.host };
       }
       appLog("warn", `Owner-claim recovery failed for ${device.name}: ${claimed.error}`);
+
+      // Last resort: if probe was direct but cached attempt failed, OR
+      // probe was relay (so we never tried direct), try direct now.
+      // Catches the case where probe ran over relay first but a direct
+      // path is also reachable (e.g. LAN became available between probe
+      // and reclaim).
+      if (!probedDirect) {
+        const fallbackDirect = await recoverBootstrapDevice(device);
+        if (fallbackDirect.ok) {
+          return { ok: true, targetUrl: fallbackDirect.targetUrl };
+        }
+        if (probedRelay) {
+          appLog("warn",
+            `Relay-probed bootstrap reclaim exhausted for ${device.name}: owner-claim and direct both failed`);
+        }
+      }
     }
 
     quicClient.primeTarget(
@@ -1739,10 +1912,41 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!recovery?.ok || !recovery.pairCode) {
+      // Pair-mode (which uses the phone's existing bearer to splice a token
+      // back into the agent) didn't work — most often because the phone
+      // bearer doesn't own this device, the agent's pair session rotated
+      // mid-flight, or the user signed in to the phone as a different
+      // identity than the device's last owner. Fall through to device-code:
+      // the agent starts a fresh Convex OAuth session and prints a URL we
+      // open *in-app* (SafariViewController on iOS, Custom Tabs on Android)
+      // so the user does Apple / Google / Microsoft / GitHub / GitLab sign-
+      // in without leaving Yaver. The agent polls Convex; when OAuth
+      // completes the agent receives a fresh session token and the device
+      // flips out of bootstrap. We refresh on browser dismiss so the UI
+      // catches the state change as soon as the user is back.
       const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
       if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
         appLog("info", `Opened device-code recovery for ${device.name}: ${deviceCode.userCode || "code unavailable"}`);
-        Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
+        try {
+          await WebBrowser.openBrowserAsync(deviceCode.deviceCodeUrl, {
+            // iOS: dismiss button label inside the in-app Safari sheet
+            dismissButtonStyle: "done",
+            // Match the app's tone so the sign-in sheet doesn't feel like
+            // a foreign tab.
+            controlsColor: "#8b5cf6",
+            presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+          });
+        } catch (err) {
+          // openBrowserAsync rejects on Android < API 18 / web — fall back
+          // to the system browser so the user can still complete OAuth.
+          appLog("warn", `WebBrowser open failed for ${device.name}, falling back to Linking: ${err instanceof Error ? err.message : String(err)}`);
+          Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
+        }
+        // The agent is polling Convex for the new token. By the time the
+        // user dismisses the sheet they may already be authed, or the
+        // agent may need a few more seconds. Two refreshes catch both.
+        setTimeout(() => refreshDevices(), 1000);
+        setTimeout(() => refreshDevices(), 5000);
       } else {
         appLog("warn", `Device-code recovery did not start for ${device.name}: ${deviceCode?.error || recovery?.error || "unknown error"}`);
       }
@@ -1962,6 +2166,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       lastError,
       agentAuthExpired,
       recoverDeviceAuth,
+      pendingClaims,
+      refreshPendingClaims,
+      claimPendingDevice,
       selectDevice,
       disconnect,
       refreshDevices,
@@ -1981,7 +2188,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryModelByDevice,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

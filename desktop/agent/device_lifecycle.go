@@ -5,34 +5,45 @@ package main
 // that reflects an active client session, not just box-level reachability.
 type AgentLifecycleState string
 
+// AgentLifecycleRecoveryMode is the typed string for the recoveryMode field
+// on AgentLifecycleInfo. Tightening from a raw string prevents typos at the
+// (few) callsites that build lifecycle info — the compiler now catches a
+// stray "boostrap-reclaim" the way it always caught stray State values.
+type AgentLifecycleRecoveryMode string
+
 const (
-	AgentLifecycleBootstrap        AgentLifecycleState = "bootstrap"
-	AgentLifecycleAuthExpired      AgentLifecycleState = "yaver-auth-expired"
-	AgentLifecycleReadyToConnect   AgentLifecycleState = "ready-to-connect"
-	AgentLifecycleFreshBootstrap   string              = "first-pair"
-	AgentLifecycleBootstrapRecover string              = "bootstrap-reclaim"
-	AgentLifecycleReauthRecover    string              = "reauth"
-	AgentLifecycleNoRecovery       string              = "none"
+	AgentLifecycleBootstrap      AgentLifecycleState = "bootstrap"
+	AgentLifecycleAuthExpired    AgentLifecycleState = "yaver-auth-expired"
+	AgentLifecycleReadyToConnect AgentLifecycleState = "ready-to-connect"
+
+	AgentLifecycleFreshBootstrap   AgentLifecycleRecoveryMode = "first-pair"
+	AgentLifecycleBootstrapRecover AgentLifecycleRecoveryMode = "bootstrap-reclaim"
+	AgentLifecycleReauthRecover    AgentLifecycleRecoveryMode = "reauth"
+	AgentLifecycleNoRecovery       AgentLifecycleRecoveryMode = "none"
 )
 
 type AgentLifecycleInfo struct {
-	State              AgentLifecycleState `json:"state"`
-	Usable             bool                `json:"usable"`
-	Recoverable        bool                `json:"recoverable"`
-	RecoveryMode       string              `json:"recoveryMode,omitempty"`
-	SupportsOwnerClaim bool                `json:"supportsOwnerClaim,omitempty"`
-	OwnerClaimReady    bool                `json:"ownerClaimReady,omitempty"`
-	RequiresFirstPair  bool                `json:"requiresFirstPair,omitempty"`
+	State              AgentLifecycleState        `json:"state"`
+	Usable             bool                       `json:"usable"`
+	Recoverable        bool                       `json:"recoverable"`
+	RecoveryMode       AgentLifecycleRecoveryMode `json:"recoveryMode,omitempty"`
+	SupportsOwnerClaim bool                       `json:"supportsOwnerClaim,omitempty"`
+	OwnerClaimReady    bool                       `json:"ownerClaimReady,omitempty"`
+	RequiresFirstPair  bool                       `json:"requiresFirstPair,omitempty"`
 }
 
 func bootstrapLifecycleInfo(cfg *Config) AgentLifecycleInfo {
 	hasIdentity := cfg != nil && cfg.DeviceID != "" && cfg.ConvexSiteURL != ""
 	ownerClaimReady := hasIdentity && activePairingSnapshot() != nil
+	mode := AgentLifecycleFreshBootstrap
+	if hasIdentity {
+		mode = AgentLifecycleBootstrapRecover
+	}
 	return AgentLifecycleInfo{
 		State:              AgentLifecycleBootstrap,
 		Usable:             false,
 		Recoverable:        true,
-		RecoveryMode:       map[bool]string{true: AgentLifecycleBootstrapRecover, false: AgentLifecycleFreshBootstrap}[hasIdentity],
+		RecoveryMode:       mode,
 		SupportsOwnerClaim: hasIdentity,
 		OwnerClaimReady:    ownerClaimReady,
 		RequiresFirstPair:  !hasIdentity,

@@ -775,7 +775,11 @@ export default function DevicesScreen() {
     unreachableDeviceIds,
     primaryDeviceId,
     setPrimaryDevice,
+    pendingClaims,
+    refreshPendingClaims,
+    claimPendingDevice,
   } = useDevice();
+  const [pendingBusyId, setPendingBusyId] = useState<string | null>(null);
 
   const [guestCode, setGuestCode] = useState("");
   const [guestLoading, setGuestLoading] = useState(false);
@@ -940,6 +944,74 @@ export default function DevicesScreen() {
             <Text style={styles.guestCodeBtnText}>{guestLoading ? "..." : "Join"}</Text>
           </Pressable>
         </View>
+
+        {/* Pending claims section: fresh yaver boxes that joined the
+            user's relay but have no Convex devices row yet. Different
+            reachability path from the LAN bootstrap section above
+            (those use UDP beacon discovery, these are surfaced via
+            the relay -> Convex pending-claim table) but the user
+            intent is the same: adopt the box so it shows up as a
+            normal device. */}
+        {pendingClaims.length > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", marginBottom: 6 }}>
+              PENDING CLAIMS ({pendingClaims.length})
+            </Text>
+            <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+              Boxes joined your relay but haven&apos;t been signed in yet. Tap Claim to add them to your account.
+            </Text>
+            {pendingClaims.map((pc) => {
+              const isBusy = pendingBusyId === pc.deviceId;
+              return (
+                <Pressable
+                  key={pc.id}
+                  onPress={async () => {
+                    if (isBusy) return;
+                    setPendingBusyId(pc.deviceId);
+                    try {
+                      const result = await claimPendingDevice(pc.deviceId, pc.name);
+                      if (!result.ok) {
+                        Alert.alert("Claim failed", result.error || "Unknown error");
+                      }
+                    } finally {
+                      setPendingBusyId(null);
+                    }
+                  }}
+                  onLongPress={() => { void refreshPendingClaims(); }}
+                  disabled={isBusy}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    padding: 12,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    backgroundColor: c.bgCard,
+                    marginBottom: 8,
+                    gap: 12,
+                    opacity: isBusy ? 0.6 : 1,
+                  }}
+                >
+                  <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: c.warn }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>
+                      {pc.name || `Pending ${pc.deviceId.slice(0, 8)}`}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>
+                      {(pc.platform || "unknown")} — tap to claim
+                      {pc.relayLabel ? ` · ${pc.relayLabel}` : ""}
+                    </Text>
+                  </View>
+                  {isBusy ? (
+                    <ActivityIndicator color={c.accent} />
+                  ) : (
+                    <Text style={{ color: c.accent, fontSize: 13, fontWeight: "600" }}>Claim</Text>
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
 
         {/* Needs-auth section: fresh yaver boxes on this LAN */}
         {bootstrapDevices.length > 0 && (

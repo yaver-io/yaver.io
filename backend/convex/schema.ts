@@ -232,6 +232,53 @@ export default defineSchema({
     .index("by_deviceId", ["deviceId"])
     .index("by_hardwareId", ["hardwareId"]),
 
+  // Pending device claims — bootstrap-mode boxes that registered a relay
+  // tunnel but have no Convex row yet. Created when a fresh agent runs
+  // `yaver serve` with no token AND no prior Convex device record:
+  // /devices/bootstrap returns "Device not found", and the agent retries
+  // against /devices/bootstrap-pending with its relay password. The
+  // password's SHA-256 hash is the only per-user signal we have without
+  // a session token — it lets the user's dashboard list "boxes that just
+  // joined my relay but I haven't claimed yet" and convert them into
+  // owned `devices` rows with one tap.
+  //
+  // Why a separate table instead of allowing devices.userId to be optional:
+  //   - keeps every devices.userId-scoped query (the vast majority) free
+  //     of "is this row actually mine" branching;
+  //   - the row only lives until the user claims it OR the cron sweeps
+  //     stale entries — short-lived state, not real device state;
+  //   - mismatch between agent-supplied identity (deviceId/hardwareId/
+  //     publicKey) and an existing devices row is a hard rejection
+  //     instead of an accidental ownership flip.
+  //
+  // Lifecycle: created on bootstrap-pending; refreshed on every retry;
+  // deleted on claimPendingDevice or by stale-claim sweep (>24h since
+  // lastSeenAt with no claim).
+  pendingDeviceClaims: defineTable({
+    deviceId: v.string(),
+    hardwareId: v.string(),
+    publicKey: v.string(),
+    name: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    quicHost: v.optional(v.string()),
+    quicPort: v.optional(v.number()),
+    // SHA-256 hex of the relay password the agent registered with.
+    // We never store the plaintext — the user's managedRelays.password
+    // gets hashed for the same comparison.
+    relayPasswordHash: v.string(),
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+    // Best-effort label populated when we can resolve the hash to a
+    // managedRelay (helps the UI explain "this came in via your relay
+    // 'home-mac'"). Optional: self-hosted shared-password setups won't
+    // have it.
+    relayLabel: v.optional(v.string()),
+  })
+    .index("by_relayPasswordHash", ["relayPasswordHash"])
+    .index("by_deviceId", ["deviceId"])
+    .index("by_hardwareId", ["hardwareId"])
+    .index("by_lastSeenAt", ["lastSeenAt"]),
+
   // Rescue command queue — the *only* control channel that survives a
   // broken relay tunnel. The agent's heartbeat (independent network
   // path from the relay) polls here for pending commands and executes

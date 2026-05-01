@@ -50,8 +50,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"crypto/sha256"
+	"encoding/hex"
 	"runtime"
 	"sort"
 	"strings"
@@ -64,13 +65,26 @@ import (
 // disk. Manager mirrors binary_discovery.go's labels but with a few
 // yaver-specific additions ("yaver-update" for ~/.yaver/bin/<v>/
 // auto-update path; "running" for the process executable).
+//
+// Version detection notes:
+//   - For the running binary we use the compile-time `version`
+//     constant directly — no exec needed and 100% reliable.
+//   - For others we sha256-hash the bytes. If the hash matches the
+//     running binary's hash, it's the same version. If it doesn't,
+//     we report it as "drift" without claiming a specific version
+//     string — `--version` probing across recursive yaver→yaver execs
+//     turned out to be flaky on macOS (child exits in <2ms with empty
+//     stdout when invoked from a yaver parent process).
 type YaverInstall struct {
 	Path            string `json:"path"`
 	Version         string `json:"version"`
+	SHA256          string `json:"sha256,omitempty"`
+	Size            int64  `json:"size,omitempty"`
 	Manager         string `json:"manager,omitempty"`
 	Writable        bool   `json:"writable"`
 	IsRunningBinary bool   `json:"isRunningBinary"`
 	IsManaged       bool   `json:"isManaged"`
+	SameAsRunning   bool   `json:"sameAsRunning"`
 	ProbeError      string `json:"probeError,omitempty"`
 }
 
@@ -101,18 +115,25 @@ type SelfHealOptions struct {
 // DiscoverYaverInstalls walks PATH + commonInstallPrefixes() and
 // returns every `yaver` executable it finds, deduplicated by absolute
 // path (after symlink resolution). The running binary is always the
-// first entry if found.
+// first entry if found, with version pulled from the in-process
+// constant. All others are sha256-compared against the running binary
+// — matching hash means same version, differing hash means drift.
 func DiscoverYaverInstalls() []YaverInstall {
 	seen := map[string]bool{}
 	out := []YaverInstall{}
+	var runningHash string
 
-	// Always start with the running binary so the running version is
-	// authoritative even when PATH is misleading.
+	// Always start with the running binary. We know our own version
+	// from the compile-time `version` constant — no need to exec.
 	if exePath, err := os.Executable(); err == nil {
 		if real, rerr := filepath.EvalSymlinks(exePath); rerr == nil {
 			exePath = real
 		}
-		out = append(out, probeYaverBinary(exePath, true))
+		bi := inspectYaverBinary(exePath, true, "")
+		bi.Version = version // compile-time const (top of main.go)
+		bi.SameAsRunning = true
+		runningHash = bi.SHA256
+		out = append(out, bi)
 		seen[exePath] = true
 	}
 
@@ -139,7 +160,7 @@ func DiscoverYaverInstalls() []YaverInstall {
 			continue
 		}
 		seen[real] = true
-		out = append(out, probeYaverBinary(candidate, false))
+		out = append(out, inspectYaverBinary(candidate, false, runningHash))
 	}
 	return out
 }
@@ -151,7 +172,11 @@ func yaverBinaryName() string {
 	return "yaver"
 }
 
-func probeYaverBinary(path string, isRunning bool) YaverInstall {
+// inspectYaverBinary collects metadata about one binary on disk.
+// Hash + size are always computed; version is set only for the running
+// binary (using the compile-time constant) or when the file's hash
+// matches the running binary (so we know it's the same version).
+func inspectYaverBinary(path string, isRunning bool, runningHash string) YaverInstall {
 	bi := YaverInstall{
 		Path:            path,
 		IsRunningBinary: isRunning,
@@ -159,9 +184,10 @@ func probeYaverBinary(path string, isRunning bool) YaverInstall {
 	}
 	bi.IsManaged = bi.Manager == "system" || bi.Manager == "brew"
 
-	// Writable check: try to open the file for append. We don't actually
-	// write anything; OpenFile with O_WRONLY|O_APPEND fails fast on
-	// permission errors. Falls back to Stat-based heuristic on Windows.
+	if info, err := os.Stat(path); err == nil {
+		bi.Size = info.Size()
+	}
+
 	if runtime.GOOS == "windows" {
 		bi.Writable = true
 	} else if f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0); err == nil {
@@ -169,75 +195,29 @@ func probeYaverBinary(path string, isRunning bool) YaverInstall {
 		_ = f.Close()
 	}
 
-	// Probe version. Yaver `--version` prints the version line FAST,
-	// then runs checkLatestVersion() which can hang on GitHub for
-	// seconds. We don't want to wait for that — start the process,
-	// stream-read its stdout, kill it as soon as we see "yaver X.Y.Z"
-	// or after a short cap.
-	for _, args := range [][]string{{"--version"}, {"-v"}, {"version"}, {"-version"}} {
-		if v, err := probeVersionStream(path, args, 8*time.Second); err == nil && v != "" {
-			bi.Version = v
-			return bi
-		} else if err != nil {
-			bi.ProbeError = fmt.Sprintf("%s: %v", strings.Join(args, " "), err)
+	if h, err := sha256File(path); err == nil {
+		bi.SHA256 = h
+		if runningHash != "" && h == runningHash {
+			bi.SameAsRunning = true
+			bi.Version = version
 		}
+	} else {
+		bi.ProbeError = "sha256: " + err.Error()
 	}
 	return bi
 }
 
-// probeVersionStream runs `path args...`, reads stdout incrementally,
-// and returns the parsed version as soon as a "yaver X.Y.Z" line shows
-// up. The subprocess is then killed so we don't wait for any post-print
-// network work (e.g., yaver's checkLatestVersion ping to GitHub).
-func probeVersionStream(path string, args []string, timeout time.Duration) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, args...)
-	pr, pw, err := os.Pipe()
+func sha256File(path string) (string, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	cmd.Stdout = pw
-	cmd.Stderr = pw
-	if err := cmd.Start(); err != nil {
-		_ = pr.Close()
-		_ = pw.Close()
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
 		return "", err
 	}
-	// Close the write end in this process so reads see EOF when the
-	// child exits or we kill it.
-	_ = pw.Close()
-	stdout := pr
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-		_ = pr.Close()
-	}()
-	var sb strings.Builder
-	buf := make([]byte, 256)
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		n, rerr := stdout.Read(buf)
-		if n > 0 {
-			sb.Write(buf[:n])
-			if v := parseYaverVersionLine(sb.String()); v != "" {
-				return v, nil
-			}
-			if sb.Len() > 4096 {
-				break // junk output, no version line in 4 KB
-			}
-		}
-		if rerr != nil {
-			break
-		}
-	}
-	if v := parseYaverVersionLine(sb.String()); v != "" {
-		return v, nil
-	}
-	if sb.Len() == 0 {
-		return "", fmt.Errorf("no output within %s", timeout)
-	}
-	return "", fmt.Errorf("no version in output: %s", truncateOneLine(sb.String(), 80))
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // parseYaverVersionLine accepts either:
@@ -295,41 +275,34 @@ func fetchLatestYaverRelease(ctx context.Context) (string, error) {
 	return strings.TrimPrefix(strings.TrimSpace(rel.TagName), "v"), nil
 }
 
-// chooseCanonical picks the install with the highest valid semver as
-// the source of truth. The running binary breaks ties so we don't
-// pointlessly reshuffle equally-versioned copies. If GitHub reports a
-// newer release than any local install, the running binary still wins
-// for now — the apply path will trigger a self-update first when
-// AllowSelfUpdate is set.
+// chooseCanonical picks the source-of-truth binary. The running
+// binary always wins — we know its version exactly via the compile-
+// time constant, and we know it works (it's literally executing this
+// code right now). When the running binary has a known version, every
+// other install is reconciled against it. If we somehow couldn't even
+// resolve our own executable (extremely rare), fall back to the first
+// install with a known version.
 func chooseCanonical(installs []YaverInstall) YaverInstall {
-	best := YaverInstall{}
-	bestSV := "v0.0.0"
 	for _, inst := range installs {
-		if inst.Version == "" {
-			continue
-		}
-		sv := "v" + inst.Version
-		if !semver.IsValid(sv) {
-			continue
-		}
-		switch semver.Compare(sv, bestSV) {
-		case 1:
-			best, bestSV = inst, sv
-		case 0:
-			// Tie: prefer the running binary (we know it works on this
-			// process), then prefer ~/.yaver/bin (our own update path).
-			if inst.IsRunningBinary && !best.IsRunningBinary {
-				best = inst
-			} else if !best.IsRunningBinary && inst.Manager == "yaver" {
-				best = inst
-			}
+		if inst.IsRunningBinary && inst.Version != "" {
+			return inst
 		}
 	}
-	return best
+	for _, inst := range installs {
+		if inst.Version != "" {
+			return inst
+		}
+	}
+	if len(installs) > 0 {
+		return installs[0]
+	}
+	return YaverInstall{}
 }
 
 // driftLines describes mismatches the operator should know about,
-// independent of whether we're going to fix them.
+// independent of whether we're going to fix them. With hash-based
+// detection we can call out three states: identical to canonical,
+// known-different, or unreadable.
 func driftLines(installs []YaverInstall, canonical YaverInstall, latest string) []string {
 	out := []string{}
 	for _, inst := range installs {
@@ -337,10 +310,10 @@ func driftLines(installs []YaverInstall, canonical YaverInstall, latest string) 
 			continue
 		}
 		switch {
-		case inst.Version == "":
-			out = append(out, fmt.Sprintf("%s — couldn't read version (%s)", inst.Path, inst.ProbeError))
-		case inst.Version != canonical.Version:
-			out = append(out, fmt.Sprintf("%s @ v%s (canonical is v%s)", inst.Path, inst.Version, canonical.Version))
+		case inst.SHA256 == "":
+			out = append(out, fmt.Sprintf("%s — unreadable (%s)", inst.Path, inst.ProbeError))
+		case !inst.SameAsRunning:
+			out = append(out, fmt.Sprintf("%s — bytes differ from canonical (sha256 %s vs %s)", inst.Path, shortHashSelfHeal(inst.SHA256), shortHashSelfHeal(canonical.SHA256)))
 		}
 	}
 	if latest != "" && canonical.Version != "" {
@@ -351,6 +324,13 @@ func driftLines(installs []YaverInstall, canonical YaverInstall, latest string) 
 		}
 	}
 	return out
+}
+
+func shortHashSelfHeal(h string) string {
+	if len(h) < 12 {
+		return h
+	}
+	return h[:12]
 }
 
 // BuildSelfHealReport assembles the read-only snapshot. Apply paths
@@ -425,7 +405,7 @@ func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOption
 		if inst.Path == canonical.Path {
 			continue
 		}
-		if inst.Version == canonical.Version {
+		if inst.SameAsRunning {
 			continue
 		}
 		if !inst.Writable {
@@ -436,15 +416,16 @@ func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOption
 			rep.ApplyErrors = append(rep.ApplyErrors, fmt.Sprintf("%s — managed by %s; pass --include-managed to override (will be reverted on next package upgrade)", inst.Path, inst.Manager))
 			continue
 		}
-		backupName := inst.Path + ".previous-" + inst.Version
-		if inst.Version == "" {
-			backupName = inst.Path + ".previous"
+		stamp := shortHashSelfHeal(inst.SHA256)
+		if stamp == "" {
+			stamp = "unknown"
 		}
+		backupName := inst.Path + ".previous-" + stamp
 		if err := atomicReplaceBinary(inst.Path, canonicalBytes, backupName); err != nil {
 			rep.ApplyErrors = append(rep.ApplyErrors, fmt.Sprintf("%s: %v", inst.Path, err))
 			continue
 		}
-		rep.Applied = append(rep.Applied, fmt.Sprintf("%s: v%s -> v%s (backup at %s)", inst.Path, displayVersion(inst.Version), canonical.Version, filepath.Base(backupName)))
+		rep.Applied = append(rep.Applied, fmt.Sprintf("%s: was sha256 %s, now v%s (backup at %s)", inst.Path, stamp, canonical.Version, filepath.Base(backupName)))
 	}
 }
 
@@ -529,9 +510,17 @@ func PrintSelfHealReport(w io.Writer, rep *SelfHealReport) {
 		if !inst.Writable {
 			writable = "ro"
 		}
-		fmt.Fprintf(w, "  %s %s\n      v%-12s manager=%-10s %s%s\n",
+		state := "differs"
+		if inst.SameAsRunning {
+			state = "same"
+		} else if inst.SHA256 == "" {
+			state = "unreadable"
+		}
+		fmt.Fprintf(w, "  %s %s\n      v%-10s sha256=%s state=%-10s manager=%-10s %s%s\n",
 			marker, inst.Path,
 			displayVersion(inst.Version),
+			shortHashSelfHeal(inst.SHA256),
+			state,
 			displayManager(inst.Manager),
 			writable,
 			managedSuffix(inst))
@@ -588,7 +577,10 @@ func managedSuffix(inst YaverInstall) string {
 	return ""
 }
 
-func truncateOneLine(s string, n int) string {
+// truncateOneLine kept for diagnostic helpers that may flatten
+// multi-line probe output into a single log line. Intentionally
+// unexported and small enough to live alongside the rest of self_heal.
+func truncateOneLineSelfHeal(s string, n int) string {
 	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
 	if len(s) <= n {
 		return s

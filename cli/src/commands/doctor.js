@@ -1,6 +1,89 @@
 const fs = require('fs');
+const path = require('path');
+const dgram = require('dgram');
+const { execSync } = require('child_process');
 const { analyzeProject } = require('../analyzer');
 const { loadSDKManifest } = require('../sdk-manifest');
+
+// commandExists checks PATH for an executable. Matches the helper used
+// by postinstall.js — kept inline to avoid a new module dependency.
+function commandExists(name) {
+  try {
+    execSync(`command -v ${name}`, { stdio: ['ignore', 'pipe', 'ignore'] });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// stunPing sends one STUN binding request to the given host:port and
+// resolves true if a response comes back within `timeoutMs`. Used to
+// verify WebRTC ICE connectivity during `yaver doctor`. No external
+// libraries required — STUN binding requests are 20 bytes.
+function stunPing(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try { sock.close(); } catch (_) {}
+      resolve(ok);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    sock.on('message', () => {
+      clearTimeout(timer);
+      finish(true);
+    });
+    sock.on('error', () => {
+      clearTimeout(timer);
+      finish(false);
+    });
+    // STUN binding request (RFC 5389): 0x0001, length 0, magic cookie,
+    // 12-byte transaction ID. Total: 20 bytes.
+    const buf = Buffer.alloc(20);
+    buf.writeUInt16BE(0x0001, 0); // message type: binding request
+    buf.writeUInt16BE(0x0000, 2); // length
+    buf.writeUInt32BE(0x2112A442, 4); // magic cookie
+    for (let i = 0; i < 12; i++) buf[8 + i] = Math.floor(Math.random() * 256);
+    sock.send(buf, port, host, (err) => {
+      if (err) {
+        clearTimeout(timer);
+        finish(false);
+      }
+    });
+  });
+}
+
+// reportWebRTCReadiness prints a one-block summary of WebRTC bootstrap
+// state: ffmpeg (mobile container frame encoding), Yaver agent binary
+// (Pion server-side), and STUN reachability for ICE. Each line is
+// independently actionable.
+async function reportWebRTCReadiness() {
+  console.log('─── WebRTC + Streaming Readiness ──────────────\n');
+
+  const ffmpeg = commandExists('ffmpeg');
+  console.log(`  ${ffmpeg ? '✅' : '❌'} ffmpeg ${ffmpeg ? 'installed' : 'missing — needed for screen capture transcode (auto-installed via `yaver install vibe-preview`)'}`);
+
+  const yaverBin = commandExists('yaver') || commandExists('yaver.exe');
+  console.log(`  ${yaverBin ? '✅' : '❌'} yaver agent binary ${yaverBin ? 'on PATH (embeds Pion WebRTC server)' : 'not on PATH'}`);
+
+  // Best-effort STUN ping to Google's public STUN server. Confirms UDP
+  // egress works — without it, ICE candidate gathering fails and the
+  // WebRTC stream falls back to relay-jpeg-poll.
+  const stunHost = 'stun.l.google.com';
+  const stunPort = 19302;
+  process.stdout.write(`  ⏳ STUN reachability (${stunHost}:${stunPort})…`);
+  const stunOk = await stunPing(stunHost, stunPort, 1500);
+  process.stdout.write('\r');
+  console.log(`  ${stunOk ? '✅' : '⚠️ '} STUN ${stunOk ? 'reachable' : 'unreachable — ICE may fail; configure TURN on your relay (relay/deploy/coturn.conf, when added)'} (${stunHost}:${stunPort})`);
+
+  // Note about TURN. Yaver doesn't ship coturn yet (planned in the
+  // Phase 2 WebRTC plan). When the user has a managed relay running
+  // coturn, `yaver relay test` will surface its TURN port.
+  console.log('  ℹ️  TURN: configured per-relay. `yaver relay test` to verify your relay\'s TURN port.');
+  console.log('');
+}
 
 async function doctor(options = {}) {
   if (!fs.existsSync('package.json')) {
@@ -76,6 +159,12 @@ async function doctor(options = {}) {
     console.log(`  ${name}@${version}${inProject ? ' ← used in your project' : ''}`);
   }
   console.log('');
+
+  // WebRTC + streaming readiness — opt-out with --no-webrtc so CI
+  // doesn't pay the 1.5s STUN probe per run. Default on.
+  if (options.webrtc !== false) {
+    await reportWebRTCReadiness();
+  }
 
   // Summary
   const total = analysis.availableModules.length + analysis.missingModules.length;
