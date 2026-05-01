@@ -1760,6 +1760,11 @@ If you use Tailscale, you don't need a relay server at all. Just use `yaver serv
 
 There is a single small Hetzner box named **`yaver-test-ephemeral`** (cax21, arm64, 4 vCPU / 8 GB, Helsinki) used purely for **remote integration testing**: hybrid mode with Ollama, guest-sharing, remote-worker, `ops` verb routing. It is **not** a Yaver service and must **never** be confused with the relay server, a customer cloud machine, or any other permanent infrastructure. Delete it whenever. Kill the whole project, and nothing real breaks.
 
+Operational note:
+- In Hetzner / CI / infra docs, refer to this box as `yaver-test-ephemeral`.
+- In Yaver device lists / Convex rows / `yaver ssh`, the same box may appear under the Linux host-style name `ubuntu-4gb-hel1-1` instead. Treat that as the same test device, not a second box.
+- When you need a stable human-facing handle in Yaver, prefer setting a per-user alias such as `test` and using `yaver ssh test`.
+
 Rules:
 - **It is disposable.** The whole install is reproducible from `ci/remote/bootstrap.sh`. Any state worth keeping must already live in this repo or in a snapshot — not on the box.
 - **No secrets on the box.** Customer keys, production tokens, Convex prod deploy keys etc. never ship here.
