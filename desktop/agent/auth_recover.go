@@ -75,6 +75,10 @@ type RecoveryResponse struct {
 	DeviceCodeURL string `json:"deviceCodeUrl,omitempty"`
 	UserCode      string `json:"userCode,omitempty"`
 	ExpiresAt     string `json:"expiresAt,omitempty"`
+	RecoveryID    string `json:"recovery_id,omitempty"`
+	WaitToken     string `json:"wait_token,omitempty"`
+	NextAction    string `json:"next_action,omitempty"`
+	State         string `json:"state,omitempty"`
 }
 
 // applyRecoveredAuthToken persists a newly recovered auth token and updates
@@ -101,6 +105,13 @@ type RecoveryResponse struct {
 //     re-admits revoked sessions and routes the wrong isolation slot.
 //     A full Range+Delete is the safe thing — the cache is small and
 //     the next request repopulates whatever it needs.
+// validateRecoveredTokenFn is the seam that lets unit tests stub out the
+// pre-persist Convex validation in applyRecoveredAuthToken. Production
+// path delegates to ValidateTokenUser (real HTTP). Tests swap it for a
+// no-Convex stub so the recovery handler can exercise its persistence
+// branch without standing up a fake Convex.
+var validateRecoveredTokenFn = ValidateTokenUser
+
 func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 	cfg, _ := LoadConfig()
 	if cfg == nil {
@@ -125,7 +136,7 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 	// because each push re-installs the same dead token. With this
 	// guard, a recovery push that doesn't validate is rejected and
 	// the existing token (if any) is preserved.
-	uid, validateErr := ValidateTokenUser(resolvedConvex, token)
+	uid, validateErr := validateRecoveredTokenFn(resolvedConvex, token)
 	if validateErr != nil || strings.TrimSpace(uid) == "" {
 		log.Printf("[auth-recover] rejecting incoming token: validation against Convex failed (%v) — keeping existing token", validateErr)
 		if s != nil {
@@ -169,17 +180,64 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 // completePairRecoveryInBackground waits for a recovery-initiated pairing
 // session to receive a token, then persists it so the daemon actually exits
 // the degraded auth-expired state.
-func completePairRecoveryInBackground(session *pairingSession, s *HTTPServer) {
+func completePairRecoveryInBackground(session *pairingSession, recovery *recoverySession, s *HTTPServer) {
 	if session == nil {
 		return
 	}
+	if recovery != nil {
+		updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+			rs.State = "awaiting_pair_submit"
+			rs.NextAction = "submit-pair-code"
+			rs.PairCode = session.Code
+		})
+	}
 	select {
 	case <-session.done:
-		if strings.TrimSpace(session.ReceivedToken) == "" {
+		pairingMu.Lock()
+		active := activePairing
+		var token, convexURL string
+		if active != nil && active.Code == session.Code {
+			token = strings.TrimSpace(active.ReceivedToken)
+			convexURL = strings.TrimSpace(active.ReceivedURL)
+		}
+		pairingMu.Unlock()
+		if token == "" {
+			if recovery != nil {
+				updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+					if rs.State != "recovered" {
+						rs.State = "failed"
+						rs.NextAction = ""
+						rs.LastError = "pair session closed before a token was submitted"
+					}
+				})
+			}
 			return
 		}
-		applyRecoveredAuthToken(session.ReceivedToken, session.ReceivedURL, s)
+		if recovery != nil {
+			updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+				rs.State = "applying_token"
+				rs.NextAction = ""
+				rs.LastError = ""
+			})
+		}
+		applyRecoveredAuthToken(token, convexURL, s)
+		if recovery != nil {
+			updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+				rs.State = "recovered"
+				rs.NextAction = ""
+				rs.LastError = ""
+			})
+		}
 	case <-time.After(time.Until(session.ExpiresAt) + 5*time.Second):
+		if recovery != nil {
+			updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+				if rs.State != "recovered" {
+					rs.State = "expired"
+					rs.NextAction = ""
+					rs.LastError = "pair session expired"
+				}
+			})
+		}
 		return
 	}
 }
@@ -385,23 +443,32 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case "pair":
+		recovery, err := newRecoverySession("pair", "submit-pair-code", authMethod, 10*time.Minute)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "create recovery session: "+err.Error())
+			return
+		}
 		session := activePairingSnapshot()
 		reused := session != nil && strings.TrimSpace(session.ReceivedToken) == ""
 		if !reused {
-			var err error
 			session, err = StartPairingSession(10 * time.Minute)
 			if err != nil {
 				jsonError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 		}
-		go completePairRecoveryInBackground(session, s)
+		recovery.PairCode = session.Code
+		go completePairRecoveryInBackground(session, recovery, s)
 		resp := RecoveryResponse{
 			OK:            true,
 			Mode:          "pair",
 			PairCode:      session.Code,
 			PairSubmitURL: fmt.Sprintf("/auth/pair/submit?code=%s", session.Code),
 			ExpiresAt:     session.ExpiresAt.UTC().Format(time.RFC3339),
+			RecoveryID:    recovery.ID,
+			WaitToken:     recovery.WaitToken,
+			NextAction:    "submit-pair-code",
+			State:         "awaiting_pair_submit",
 		}
 		reportRecoveryEventFn(s, "pair_started", map[string]interface{}{
 			"ip":         ip,
@@ -426,12 +493,26 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, http.StatusBadGateway, "device-code request failed: "+err.Error())
 			return
 		}
+		recovery, err := newRecoverySession("device-code", "open-browser", authMethod, 15*time.Minute)
+		if err != nil {
+			jsonError(w, http.StatusInternalServerError, "create recovery session: "+err.Error())
+			return
+		}
+		recovery.BrowserURL = "https://yaver.io/auth/device?code=" + dc.UserCode
+		recovery.UserCode = dc.UserCode
+		updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+			rs.State = "awaiting_browser_oauth"
+			rs.NextAction = "open-browser"
+			rs.BrowserURL = "https://yaver.io/auth/device?code=" + dc.UserCode
+			rs.UserCode = dc.UserCode
+			rs.ExpiresAt = time.UnixMilli(dc.ExpiresAt)
+		})
 		// Start a background goroutine that polls Convex for
 		// the token and writes it to config on success. The
 		// caller doesn't need to hang — it can poll
 		// /auth/pair/info or the existing /agent/status to
 		// know when auth is live again.
-		go completeDeviceCodeInBackground(cfg.ConvexSiteURL, dc.DeviceCode, s)
+		go completeDeviceCodeInBackground(cfg.ConvexSiteURL, dc.DeviceCode, recovery, s)
 
 		resp := RecoveryResponse{
 			OK:            true,
@@ -439,6 +520,10 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 			DeviceCodeURL: "https://yaver.io/auth/device?code=" + dc.UserCode,
 			UserCode:      dc.UserCode,
 			ExpiresAt:     time.UnixMilli(dc.ExpiresAt).UTC().Format(time.RFC3339),
+			RecoveryID:    recovery.ID,
+			WaitToken:     recovery.WaitToken,
+			NextAction:    "open-browser",
+			State:         "awaiting_browser_oauth",
 		}
 		reportRecoveryEventFn(s, "device_code_started", map[string]interface{}{"ip": ip, "authMethod": authMethod, "transport": ingress.Transport})
 		jsonReply(w, http.StatusOK, resp)
@@ -447,6 +532,25 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		reportRecoveryEventFn(s, "invalid_mode", map[string]interface{}{"ip": ip, "mode": body.Mode, "authMethod": authMethod})
 		jsonError(w, http.StatusBadRequest, "mode must be 'direct', 'pair', or 'device-code'")
 	}
+}
+
+func (s *HTTPServer) handleAuthRecoverSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	waitToken := strings.TrimSpace(r.URL.Query().Get("wait_token"))
+	if id == "" || waitToken == "" {
+		jsonError(w, http.StatusBadRequest, "id and wait_token are required")
+		return
+	}
+	sess, err := recoverySessionStatus(id, waitToken)
+	if err != nil {
+		jsonError(w, http.StatusNotFound, "no recovery session matches the supplied credentials")
+		return
+	}
+	jsonReply(w, http.StatusOK, recoverySessionPayload(sess))
 }
 
 // extractBearerToken pulls a Bearer token out of the
@@ -532,22 +636,60 @@ func requestDeviceCode(convexURL string) (*deviceCodeResponse, error) {
 // finishes the browser OAuth flow, then writes the token to
 // config. On success, the agent picks up the new token on the
 // next request through the auth cache.
-func completeDeviceCodeInBackground(convexURL, deviceCode string, s *HTTPServer) {
+func completeDeviceCodeInBackground(convexURL, deviceCode string, recovery *recoverySession, s *HTTPServer) {
 	deadline := time.Now().Add(15 * time.Minute)
 	for time.Now().Before(deadline) {
 		token, done, err := pollDeviceCode(convexURL, deviceCode)
 		if err != nil {
+			if recovery != nil {
+				updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+					if rs.State != "recovered" {
+						rs.State = "awaiting_browser_oauth"
+						rs.LastError = ""
+					}
+				})
+			}
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		if done && token != "" {
+			if recovery != nil {
+				updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+					rs.State = "applying_token"
+					rs.NextAction = ""
+					rs.LastError = ""
+				})
+			}
 			applyRecoveredAuthToken(token, convexURL, s)
+			if recovery != nil {
+				updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+					rs.State = "recovered"
+					rs.NextAction = ""
+					rs.LastError = ""
+				})
+			}
 			return
 		}
 		if done {
+			if recovery != nil {
+				updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+					rs.State = "expired"
+					rs.NextAction = ""
+					rs.LastError = "device-code flow expired"
+				})
+			}
 			return // expired
 		}
 		time.Sleep(5 * time.Second)
+	}
+	if recovery != nil {
+		updateRecoverySession(recovery.ID, func(rs *recoverySession) {
+			if rs.State != "recovered" {
+				rs.State = "expired"
+				rs.NextAction = ""
+				rs.LastError = "device-code flow timed out"
+			}
+		})
 	}
 }
 

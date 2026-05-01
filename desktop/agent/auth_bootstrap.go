@@ -260,6 +260,7 @@ func runBootstrapServe(httpPort int) {
 	// signed-in mobile client. The handler is the same one used
 	// in normal serve mode (auth_recover.go).
 	mux.HandleFunc("/auth/recover", bs.handleAuthRecover)
+	mux.HandleFunc("/auth/recover/session", bs.handleAuthRecoverSession)
 	// One-click owner claim for the dashboard / mobile UI. Caller's
 	// bearer is verified against Convex /devices/list (must be
 	// owner). On success we splice it into the active pair session.
@@ -536,6 +537,10 @@ func (bs *bootstrapHTTPServer) handlePairEncrypted(w http.ResponseWriter, r *htt
 // the HTTPServer fields it would otherwise read are needed.
 func (bs *bootstrapHTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 	(&HTTPServer{}).handleAuthRecover(w, r)
+}
+
+func (bs *bootstrapHTTPServer) handleAuthRecoverSession(w http.ResponseWriter, r *http.Request) {
+	(&HTTPServer{}).handleAuthRecoverSession(w, r)
 }
 
 // corsWrap lets the mobile app and browsers on the LAN hit the

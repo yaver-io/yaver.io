@@ -409,6 +409,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// rate limited. Intentionally NOT wrapped in auth() because
 	// the whole point is to bring a locked-out agent back online.
 	mux.HandleFunc("/auth/recover", s.handleAuthRecover)
+	mux.HandleFunc("/auth/recover/session", s.handleAuthRecoverSession)
 	// /auth/factory-reset verifies caller's identity via Convex
 	// round-trip inside the handler (auth_factory_reset_http.go),
 	// NOT via the regular auth() middleware — the bug it fixes is
@@ -8723,6 +8724,63 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
+	case "recovery_transport_status":
+		return mcpToolJSON(mcpRecoveryTransportStatus())
+	case "recovery_target_status":
+		var a struct {
+			TargetURL             string `json:"target_url"`
+			RelayPassword         string `json:"relay_password"`
+			AllowPublicDirectHTTP bool   `json:"allow_public_direct_http"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRecoveryTargetStatus(a.TargetURL, a.RelayPassword, a.AllowPublicDirectHTTP))
+	case "recovery_target_start":
+		var a struct {
+			TargetURL             string `json:"target_url"`
+			Mode                  string `json:"mode"`
+			BootstrapSecret       string `json:"bootstrap_secret"`
+			BearerToken           string `json:"bearer_token"`
+			RelayPassword         string `json:"relay_password"`
+			AllowPublicDirectHTTP bool   `json:"allow_public_direct_http"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRecoveryTargetStart(a.TargetURL, a.Mode, a.BootstrapSecret, a.BearerToken, a.RelayPassword, a.AllowPublicDirectHTTP))
+	case "recovery_target_wait":
+		var a struct {
+			TargetURL             string `json:"target_url"`
+			RecoveryID            string `json:"recovery_id"`
+			WaitToken             string `json:"wait_token"`
+			RelayPassword         string `json:"relay_password"`
+			AllowPublicDirectHTTP bool   `json:"allow_public_direct_http"`
+			TimeoutSeconds        int    `json:"timeout_seconds"`
+			PollIntervalSeconds   int    `json:"poll_interval_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRecoveryTargetWait(a.TargetURL, a.RecoveryID, a.WaitToken, a.RelayPassword, a.TimeoutSeconds, a.PollIntervalSeconds, a.AllowPublicDirectHTTP))
+	case "device_reauth_status":
+		var a struct {
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeviceReauthStatus(a.DeviceID))
+	case "device_reauth_start":
+		var a struct {
+			DeviceID        string `json:"device_id"`
+			Mode            string `json:"mode"`
+			BootstrapSecret string `json:"bootstrap_secret"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeviceReauthStart(a.DeviceID, a.Mode, a.BootstrapSecret))
+	case "device_reauth_wait":
+		var a struct {
+			RecoveryID          string `json:"recovery_id"`
+			WaitToken           string `json:"wait_token"`
+			DeviceID            string `json:"device_id"`
+			TimeoutSeconds      int    `json:"timeout_seconds"`
+			PollIntervalSeconds int    `json:"poll_interval_seconds"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpDeviceReauthWait(a.DeviceID, a.RecoveryID, a.WaitToken, a.TimeoutSeconds, a.PollIntervalSeconds))
 	case "runner_auth_status":
 		var a struct {
 			DeviceID string `json:"device_id"`
@@ -9202,6 +9260,35 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			CodexLogin:           a.CodexLogin,
 			SetupMCP:             a.SetupMCP,
 		}))
+	case "runner_auth_browser_start":
+		var a struct {
+			DeviceID string `json:"device_id"`
+			Runner   string `json:"runner"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerBrowserAuthStart(a.DeviceID, a.Runner))
+	case "runner_auth_browser_status":
+		var a struct {
+			DeviceID  string `json:"device_id"`
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerBrowserAuthStatus(a.DeviceID, a.SessionID))
+	case "runner_auth_browser_submit_code":
+		var a struct {
+			DeviceID  string `json:"device_id"`
+			SessionID string `json:"session_id"`
+			Code      string `json:"code"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerBrowserAuthSubmitCode(a.DeviceID, a.SessionID, a.Code))
+	case "runner_auth_browser_cancel":
+		var a struct {
+			DeviceID  string `json:"device_id"`
+			SessionID string `json:"session_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerBrowserAuthCancel(a.DeviceID, a.SessionID))
 	case "machine_onboarding_status":
 		var a struct {
 			DeviceID  string   `json:"device_id"`

@@ -46,6 +46,54 @@ function transportFor(device: Device): TransportInfo {
   });
 }
 
+function sshSelectorForDevice(device: Pick<Device, "alias" | "id">): string {
+  const alias = String(device.alias || "").trim();
+  if (alias) return `@${alias}`;
+  return device.id.slice(0, 8);
+}
+
+function stripSSHHost(raw: string | undefined): string {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  try {
+    if (text.startsWith("http://") || text.startsWith("https://")) {
+      return new URL(text).host;
+    }
+  } catch {}
+  return text.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+function isUsefulDirectSSHHost(host: string): boolean {
+  return Boolean(
+    host &&
+      host !== "0.0.0.0" &&
+      host !== "::" &&
+      host !== "::1" &&
+      !host.startsWith("127.") &&
+      !/^172\.(1[6-9]|2\d|3[0-1])\.0\.1$/.test(host),
+  );
+}
+
+function directSSHHostForDevice(device: Pick<Device, "publicEndpoints" | "localIps" | "host">): string {
+  for (const endpoint of device.publicEndpoints || []) {
+    const host = stripSSHHost(endpoint);
+    if (isUsefulDirectSSHHost(host)) return host;
+  }
+  for (const ip of device.localIps || []) {
+    if (/^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return ip;
+  }
+  for (const ip of device.localIps || []) {
+    if (isUsefulDirectSSHHost(ip)) return ip;
+  }
+  const host = stripSSHHost(device.host);
+  if (isUsefulDirectSSHHost(host)) return host;
+  return "";
+}
+
+function sshCommandForDevice(device: Pick<Device, "alias" | "id">): string {
+  return `yaver ssh ${sshSelectorForDevice(device)}`;
+}
+
 function TransportBadge({ device }: { device: Device }) {
   const t = transportFor(device);
   return (
@@ -1453,6 +1501,7 @@ export default function DevicesView({
   // modal as the home tab, including the reauth-required guidance
   // when the agent's session has expired.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
+  const [sshCopiedDeviceId, setSshCopiedDeviceId] = useState<string | null>(null);
   const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
   const [showDormantDevices, setShowDormantDevices] = useState(false);
   const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
@@ -1524,6 +1573,8 @@ export default function DevicesView({
           {renderedDevices.map((device) => {
             const shareSummary = deviceShareSummary(device);
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
+            const sshCommand = sshCommandForDevice(device);
+            const directSSHHost = directSSHHostForDevice(device);
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
@@ -1598,34 +1649,45 @@ export default function DevicesView({
                       })()}
                     </div>
                     <div className="mt-1"><TransportBadge device={device} /></div>
-                    <p className="text-sm text-slate-600 dark:text-surface-400">
-                      {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
-                      {device.agentVersion ? (
-                        <>
-                          {" "}· v{String(device.agentVersion).replace(/^v/i, "")}
-                          {latestAgentVersion ? (() => {
-                            const cur = String(device.agentVersion).replace(/^v/i, "");
-                            const cmp = compareSemver(cur, latestAgentVersion);
-                            if (cmp >= 0) {
-                              return (
-                                <span title={`Latest agent (v${latestAgentVersion})`} className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>
-                              );
-                            }
-                            return (
-                              <button
-                                onClick={() => setUpdateModalDevice(device)}
-                                title={`Update v${cur} → v${latestAgentVersion} on ${device.name}`}
-                                className="mx-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
-                              >
-                                update → v{latestAgentVersion}
-                              </button>
-                            );
-                          })() : null}
-                        </>
+                    <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">
+                      <p>
+                        {devicePlatformLabel(device)} · Last agent signal {formatLastSeen(device.lastSeen)}
+                        {device.agentVersion ? (
+                          <>
+                            {" "}· v{String(device.agentVersion).replace(/^v/i, "")}
+                            {latestAgentVersion ? (() => {
+                              const cur = String(device.agentVersion).replace(/^v/i, "");
+                              const cmp = compareSemver(cur, latestAgentVersion);
+                              if (cmp >= 0) {
+                                return (
+                                  <span title={`Latest agent (v${latestAgentVersion})`} className="ml-1 text-emerald-600 dark:text-emerald-400">✓</span>
+                                );
+                              }
+                              return null;
+                            })() : null}
+                          </>
+                        ) : null}
+                      </p>
+                      {(device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0) ||
+                      device.probeState === "ok" ||
+                      device.probeState === "auth-expired" ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                          {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (
+                            <button
+                              onClick={() => setUpdateModalDevice(device)}
+                              title={`Update v${String(device.agentVersion).replace(/^v/i, "")} → v${latestAgentVersion} on ${device.name}`}
+                              className="rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                            >
+                              update → v{latestAgentVersion}
+                            </button>
+                          ) : null}
+                          {device.probeState === "ok" && device.probePath ? (
+                            <span>· probed via {device.probePath}</span>
+                          ) : null}
+                          {device.probeState === "auth-expired" ? <span>· auth expired</span> : null}
+                        </div>
                       ) : null}
-                      {device.probeState === "ok" && device.probePath ? ` · probed via ${device.probePath}` : ""}
-                      {device.probeState === "auth-expired" ? " · auth expired" : ""}
-                    </p>
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -1678,6 +1740,27 @@ export default function DevicesView({
                         <path d="M12 19h8" />
                       </svg>
                       Shell
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(sshCommand);
+                          setSshCopiedDeviceId(device.id);
+                          window.setTimeout(() => {
+                            setSshCopiedDeviceId((current) => (current === device.id ? null : current));
+                          }, 2000);
+                        } catch (e: any) {
+                          alert(`Copy failed: ${e?.message || e}`);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium leading-none text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/20"
+                      title={directSSHHost ? `Copy ${sshCommand} — direct fallback: ssh ${directSSHHost}` : `Copy ${sshCommand}`}
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      {sshCopiedDeviceId === device.id ? "SSH Copied" : "SSH"}
                     </button>
                     <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
@@ -2054,22 +2137,9 @@ export default function DevicesView({
       {shellDevice ? (
         <WebShellModal
           device={shellDevice}
-          // DevicesView doesn't own the workspace agentClient (the
-          // dashboard home tab does). Treat the shell modal as
-          // "always needs a connect" here — the shell modal's own
-          // "Connect & open shell" CTA is the only safe entry path
-          // because we can't sniff agentClient.baseUrl from this
-          // component without coupling it to the home-tab state.
-          isCurrentDeviceConnected={false}
+          isCurrentDeviceConnected={activeWorkspaceDeviceId === shellDevice.id}
           onConnect={() => {
-            // Best-effort: bounce the user back to the home tab,
-            // where the device card's Open Workspace flow will
-            // wire the agentClient to this device. The user can
-            // then click Shell from there to open a live PTY.
-            setShellDevice(null);
-            if (typeof window !== "undefined") {
-              window.dispatchEvent(new CustomEvent("yaver-open-device", { detail: { deviceId: shellDevice.id } }));
-            }
+            onOpen?.(shellDevice);
           }}
           onOpenRescue={() => setRescueOpenDeviceId(shellDevice.id)}
           onClose={() => setShellDevice(null)}

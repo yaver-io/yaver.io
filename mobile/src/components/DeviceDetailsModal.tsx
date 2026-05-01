@@ -5,6 +5,7 @@
 
 import React, { useEffect, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
@@ -41,6 +42,54 @@ function timeAgo(epochMs: number | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+function sshSelectorForDevice(device: Pick<Device, "alias" | "id">): string {
+  const alias = String(device.alias || "").trim();
+  if (alias) return `@${alias}`;
+  return device.id.slice(0, 8);
+}
+
+function stripSSHHost(raw: string | undefined): string {
+  const text = String(raw || "").trim();
+  if (!text) return "";
+  try {
+    if (text.startsWith("http://") || text.startsWith("https://")) {
+      return new URL(text).host;
+    }
+  } catch {}
+  return text.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+}
+
+function isUsefulDirectSSHHost(host: string): boolean {
+  return Boolean(
+    host &&
+      host !== "0.0.0.0" &&
+      host !== "::" &&
+      host !== "::1" &&
+      !host.startsWith("127.") &&
+      !/^172\.(1[6-9]|2\d|3[0-1])\.0\.1$/.test(host),
+  );
+}
+
+function directSSHHostForDevice(device: Pick<Device, "publicEndpoints" | "lanIps" | "host">): string {
+  for (const endpoint of device.publicEndpoints || []) {
+    const host = stripSSHHost(endpoint);
+    if (isUsefulDirectSSHHost(host)) return host;
+  }
+  for (const ip of device.lanIps || []) {
+    if (/^100\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) return ip;
+  }
+  for (const ip of device.lanIps || []) {
+    if (isUsefulDirectSSHHost(ip)) return ip;
+  }
+  const host = stripSSHHost(device.host);
+  if (isUsefulDirectSSHHost(host)) return host;
+  return "";
+}
+
+function sshCommandForDevice(device: Pick<Device, "alias" | "id">): string {
+  return `yaver ssh ${sshSelectorForDevice(device)}`;
 }
 
 // Inline alias editor — shown only on owned devices. Tap the chip
@@ -181,6 +230,8 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
   const router = useRouter();
   const { activeDevice, connectionStatus } = useDevice();
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
+  const sshCommand = sshCommandForDevice(device);
+  const directSSHHost = directSSHHostForDevice(device);
 
   return (
     <View style={{
@@ -215,6 +266,29 @@ function ShellActionRow({ device, onClose }: { device: Device; onClose: () => vo
         {!isActive ? (
           <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connect first)</Text>
         ) : null}
+      </Pressable>
+      <Pressable
+        onPress={async () => {
+          try {
+            await Clipboard.setStringAsync(sshCommand);
+            const detail = directSSHHost ? `\n\nDirect fallback: ssh ${directSSHHost}` : "";
+            Alert.alert("SSH command copied", `${sshCommand}${detail}`);
+          } catch (e: any) {
+            Alert.alert("Clipboard Failed", e?.message ?? String(e));
+          }
+        }}
+        style={{
+          flexDirection: "row", alignItems: "center", gap: 6,
+          paddingHorizontal: 12, paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: "rgba(16,185,129,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(16,185,129,0.45)",
+        }}
+      >
+        <Text style={{ color: "#a7f3d0", fontSize: 13, fontWeight: "700" }}>
+          ⎘  Copy SSH
+        </Text>
       </Pressable>
     </View>
   );

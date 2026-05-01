@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.107"
+const version = "1.99.108"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6219,8 +6219,16 @@ func runDevices(args []string) {
 // then case-insensitive name. Returns ambiguity errors so the caller
 // can prompt the user to be more specific. Used by `yaver ssh` and
 // `yaver alias` so a single resolution rule applies everywhere.
-func resolveDevice(target string, devices []DeviceInfo) (*DeviceInfo, error) {
+func normalizeDeviceHint(target string) string {
 	target = strings.TrimSpace(target)
+	if strings.HasPrefix(target, "@") && strings.Count(target, "@") == 1 {
+		return strings.TrimPrefix(target, "@")
+	}
+	return target
+}
+
+func resolveDevice(target string, devices []DeviceInfo) (*DeviceInfo, error) {
+	target = normalizeDeviceHint(target)
 	if target == "" {
 		return nil, fmt.Errorf("device identifier required")
 	}
@@ -6437,6 +6445,7 @@ func runSSHWrap(args []string) {
 // raw hostname) and returns the best IP/hostname for ssh. Returns ""
 // if it has nothing better than the input.
 func resolveSSHHost(target string) string {
+	target = normalizeDeviceHint(target)
 	if target == "" {
 		return ""
 	}

@@ -27,6 +27,15 @@ type Config struct {
 	CachedRelayPassword           string                   `json:"cached_relay_password,omitempty"`
 	CachedRelayServers            []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
 	CloudflareTunnels             []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
+	// PublicEndpoints is a manual list of hostnames or URLs that the
+	// agent advertises to Convex on top of Cloudflare-tunnel and
+	// relay-assigned URLs. Useful for headless boxes with a stable
+	// public IP (Hetzner, EC2, …) where you want `yaver ssh @alias`
+	// and the dashboard Shell tooltip to resolve to the public host
+	// without standing up a Cloudflare tunnel. Each entry can be a
+	// bare host (e.g. "157.180.114.179") or an https URL — the
+	// resolver strips schemes + trailing slashes for SSH use.
+	PublicEndpoints []string `json:"public_endpoints,omitempty"`
 	MacOSPermissionOnboardingDone bool                     `json:"macos_permission_onboarding_done,omitempty"`
 	HostShare                     *HostShareConfig         `json:"host_share,omitempty"`
 	Sandbox                       *SandboxConfig           `json:"sandbox,omitempty"`

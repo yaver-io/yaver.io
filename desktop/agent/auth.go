@@ -1380,6 +1380,22 @@ func configuredPublicEndpoints(cfg *Config) []string {
 		seen[assigned] = true
 		out = append(out, assigned)
 	}
+	// Manual list from config.json wins on first-position so
+	// `yaver ssh @alias` and the dashboard SSH/Shell tooltip resolve
+	// to the operator-provided host even when Cloudflare is wired
+	// up too. Preserve the user-supplied order in the prefix.
+	manual := make([]string, 0, len(cfg.PublicEndpoints))
+	for _, raw := range cfg.PublicEndpoints {
+		ep := strings.TrimRight(strings.TrimSpace(raw), "/")
+		if ep == "" || seen[ep] {
+			continue
+		}
+		seen[ep] = true
+		manual = append(manual, ep)
+	}
+	if len(manual) > 0 {
+		out = append(manual, out...)
+	}
 	return out
 }
 

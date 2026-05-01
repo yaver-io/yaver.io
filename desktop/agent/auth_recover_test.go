@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,6 +111,9 @@ func TestAuthRecoverHostTokenCanStartDeviceCode(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"mode":"device-code"`) {
 		t.Fatalf("expected device-code response, got %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"recovery_id"`) || !strings.Contains(rec.Body.String(), `"wait_token"`) {
+		t.Fatalf("expected recovery session fields, got %s", rec.Body.String())
+	}
 }
 
 func TestAuthRecoverPairWorksWithBootstrapSecret(t *testing.T) {
@@ -153,16 +157,25 @@ func TestAuthRecoverDirectRejectsBootstrapSecret(t *testing.T) {
 }
 
 func TestAuthRecoverDirectAppliesHostTokenImmediately(t *testing.T) {
+	withTempHome(t)
 	recoveryLimiter.reset()
 	oldVerify := verifyHostTokenFn
 	oldReport := reportRecoveryEventFn
+	oldValidate := validateRecoveredTokenFn
 	verifyHostTokenFn = func(bearer string) (bool, error) {
 		return bearer == "owner-token", nil
 	}
 	reportRecoveryEventFn = func(*HTTPServer, string, map[string]interface{}) {}
+	validateRecoveredTokenFn = func(_, token string) (string, error) {
+		if token == "owner-token" {
+			return "test-user-id", nil
+		}
+		return "", nil
+	}
 	defer func() {
 		verifyHostTokenFn = oldVerify
 		reportRecoveryEventFn = oldReport
+		validateRecoveredTokenFn = oldValidate
 	}()
 
 	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"mode":"direct"}`))
@@ -222,6 +235,72 @@ func TestAuthRecoverPairReusesExistingWindow(t *testing.T) {
 	}
 	if !strings.Contains(secondRec.Body.String(), code) {
 		t.Fatalf("expected reused code in second response, got %s", secondRec.Body.String())
+	}
+}
+
+func TestAuthRecoverPairReturnsRecoverySessionAndStatus(t *testing.T) {
+	withTempHome(t)
+	recoveryLimiter.reset()
+	EndPairingSession()
+	if err := SetBootstrapSecret("session-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() {
+		_ = SetBootstrapSecret("")
+		EndPairingSession()
+	}()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"session-secret","mode":"pair"}`))
+	req.RemoteAddr = "192.168.1.32:40000"
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var start map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &start); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	recoveryID := strings.TrimSpace(anyString(start["recovery_id"]))
+	waitToken := strings.TrimSpace(anyString(start["wait_token"]))
+	pairCode := strings.TrimSpace(anyString(start["pairCode"]))
+	if recoveryID == "" || waitToken == "" || pairCode == "" {
+		t.Fatalf("expected recovery_id, wait_token, pairCode in response, got %#v", start)
+	}
+
+	statusReq := httptest.NewRequest(http.MethodGet, "/auth/recover/session?id="+recoveryID+"&wait_token="+waitToken, nil)
+	statusRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecoverSession(statusRec, statusReq)
+	if statusRec.Code != http.StatusOK {
+		t.Fatalf("status before submit: expected 200, got %d: %s", statusRec.Code, statusRec.Body.String())
+	}
+	if !strings.Contains(statusRec.Body.String(), `"state":"awaiting_pair_submit"`) {
+		t.Fatalf("expected awaiting_pair_submit, got %s", statusRec.Body.String())
+	}
+
+	submitBody := bytes.NewReader([]byte(`{"token":"recovered-token","convexSiteUrl":"https://example.convex.cloud"}`))
+	submitReq := httptest.NewRequest(http.MethodPost, "/auth/pair/submit?code="+pairCode, submitBody)
+	submitRec := httptest.NewRecorder()
+	(&HTTPServer{}).handlePairSubmit(submitRec, submitReq)
+	if submitRec.Code != http.StatusOK {
+		t.Fatalf("submit failed: %d %s", submitRec.Code, submitRec.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		finalReq := httptest.NewRequest(http.MethodGet, "/auth/recover/session?id="+recoveryID+"&wait_token="+waitToken, nil)
+		finalRec := httptest.NewRecorder()
+		(&HTTPServer{}).handleAuthRecoverSession(finalRec, finalReq)
+		if finalRec.Code != http.StatusOK {
+			t.Fatalf("status after submit: expected 200, got %d: %s", finalRec.Code, finalRec.Body.String())
+		}
+		if strings.Contains(finalRec.Body.String(), `"state":"recovered"`) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected recovered state, got %s", finalRec.Body.String())
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }
 
@@ -323,20 +402,20 @@ func TestAuthRecoverRateLimitsPerIP(t *testing.T) {
 // mode=pair, when no fresh-bootstrap session exists, falls into one of two
 // shapes:
 //
-//   1. Reuse: an active session already exists with no token →
-//      handleAuthRecover returns its code. /auth/pair/submit fills it
-//      and closes session.done. The bootstrap loop unblocks and sees
-//      ReceivedToken set → re-execs into authenticated `yaver serve`.
+//  1. Reuse: an active session already exists with no token →
+//     handleAuthRecover returns its code. /auth/pair/submit fills it
+//     and closes session.done. The bootstrap loop unblocks and sees
+//     ReceivedToken set → re-execs into authenticated `yaver serve`.
 //
-//   2. Replace: no active session (or expired) → handleAuthRecover starts
-//      a NEW session via StartPairingSession, which closes the previous
-//      session's done as a side effect. The bootstrap loop's old pointer
-//      unblocks, sees ReceivedToken empty, and rotates by calling
-//      StartPairingSession itself — which would replace the recovery's
-//      brand-new session. That rotation closes the recovery session's
-//      done. completePairRecoveryInBackground checks ReceivedToken AT
-//      THAT POINT — and if no submit landed first, the recovery is
-//      effectively dropped.
+//  2. Replace: no active session (or expired) → handleAuthRecover starts
+//     a NEW session via StartPairingSession, which closes the previous
+//     session's done as a side effect. The bootstrap loop's old pointer
+//     unblocks, sees ReceivedToken empty, and rotates by calling
+//     StartPairingSession itself — which would replace the recovery's
+//     brand-new session. That rotation closes the recovery session's
+//     done. completePairRecoveryInBackground checks ReceivedToken AT
+//     THAT POINT — and if no submit landed first, the recovery is
+//     effectively dropped.
 //
 // We test the safe path (#1, the reuse case) here. The unsafe path (#2,
 // the rotation race) is covered by the next test, which proves it is at

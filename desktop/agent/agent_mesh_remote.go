@@ -230,6 +230,7 @@ func remoteAgentBaseAndToken(deviceHint string) (string, string, error) {
 }
 
 func resolveRemoteAgentCandidates(deviceHint string) ([]RemoteAgentCandidate, string, error) {
+	deviceHint = normalizeDeviceHint(deviceHint)
 	if strings.TrimSpace(deviceHint) == "" {
 		return nil, "", fmt.Errorf("remote device id required")
 	}
@@ -253,7 +254,9 @@ func resolveRemoteAgentCandidates(deviceHint string) ([]RemoteAgentCandidate, st
 		d := &devices[i]
 		if strings.HasPrefix(d.DeviceID, deviceHint) ||
 			strings.EqualFold(d.Name, deviceHint) ||
-			strings.HasPrefix(strings.ToLower(d.Name), strings.ToLower(deviceHint)) {
+			strings.HasPrefix(strings.ToLower(d.Name), strings.ToLower(deviceHint)) ||
+			(strings.TrimSpace(d.Alias) != "" && strings.EqualFold(d.Alias, deviceHint)) ||
+			(strings.TrimSpace(d.Alias) != "" && strings.HasPrefix(strings.ToLower(d.Alias), strings.ToLower(deviceHint))) {
 			target = d
 			break
 		}
