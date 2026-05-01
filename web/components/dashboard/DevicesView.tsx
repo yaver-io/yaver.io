@@ -230,10 +230,7 @@ function deviceReachabilitySummary(
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Recently confirmed by agent";
-  if (
-    device.needsAuth &&
-    (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))
-  ) {
+  if (device.needsAuth && device.online) {
     return "Bootstrap agent advertised recently; reclaim or pair may still work";
   }
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
@@ -2696,13 +2693,35 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         </div>
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
+          {(() => {
+            const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || deriveDeviceLifecycleState(device));
+            const lifecycle = device.probeInfo?.lifecycle;
+            const authLabel =
+              lifecycleState === "bootstrap"
+                ? lifecycle?.requiresFirstPair
+                  ? "Bootstrap (first pair required)"
+                  : lifecycle?.supportsOwnerClaim
+                    ? lifecycle?.ownerClaimReady
+                      ? "Bootstrap (reclaim ready)"
+                      : "Bootstrap (reclaim rotating)"
+                    : "Bootstrap"
+                : lifecycleState === "yaver-auth-expired"
+                  ? "Expired"
+                  : device.workspaceLive
+                    ? "Authenticated workspace"
+                    : "Authenticated";
+            return (
+              <>
           {row("Status", deriveDeviceLifecycleState(device).replace(/-/g, " "))}
-          {row("Auth", device.needsAuth ? "Bootstrap" : effectiveInfo?.authExpired === true || device.probeState === "auth-expired" ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
+          {row("Auth", authLabel)}
           {row("Agent mode", typeof effectiveInfo?.mode === "string" ? effectiveInfo.mode : null)}
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
           {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
           {row("Authenticated probe", device.probeState ? `${device.probeState}${device.probePath ? ` via ${device.probePath}` : ""}${device.probeCheckedAt ? ` (${formatLastSeen(device.probeCheckedAt)})` : ""}` : null)}
           {row("Reachability", deviceReachabilitySummary(device))}
+              </>
+            );
+          })()}
           {row("Last agent signal", device.lastSeen ? `${formatLastSeen(device.lastSeen)} (${device.lastSeen})` : null)}
           {row(
             "Yaver version",

@@ -176,10 +176,7 @@ function deviceReachabilitySummary(
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Recently confirmed by agent";
-  if (
-    device.needsAuth &&
-    (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))
-  ) {
+  if (device.needsAuth && device.online) {
     return "Bootstrap agent advertised recently; reclaim or pair may still work";
   }
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
