@@ -768,6 +768,7 @@ export const listMyDevices = query({
     const result: ListedDevice[] = ownDevices.map((d) => ({
       deviceId: d.deviceId,
       name: d.name,
+      alias: d.alias,
       platform: d.platform,
       publicKey: d.publicKey,
       hardwareId: d.hardwareId,
@@ -1148,6 +1149,74 @@ export const removeDevice = mutation({
     }
 
     await ctx.db.delete(device._id);
+  },
+});
+
+// ALIAS_PATTERN: a-z, 0-9, dash, underscore, dot. 1–48 chars. Lower-cased
+// before storage; we intentionally reject whitespace and uppercase so
+// `yaver ssh prod-mac` is the same identifier across CLI / web / mobile
+// without callers having to remember the original casing the user typed.
+const ALIAS_PATTERN = /^[a-z0-9._-]{1,48}$/;
+
+/**
+ * Set or clear the per-user alias for one of the caller's devices.
+ *
+ * Pass alias: "" (or omit) to clear. Aliases are normalized to lower
+ * case before storage and must be unique within a single user's set
+ * of devices — re-using an alias for a different device of the same
+ * user is rejected (callers should clear the old one first or pass
+ * the same deviceId to rename in place).
+ *
+ * Throws:
+ *   "Unauthorized"        — session invalid or device not owned
+ *   "Device not found"
+ *   "alias invalid"       — failed ALIAS_PATTERN
+ *   "alias already used"  — another device of this user owns it
+ */
+export const setDeviceAlias = mutation({
+  args: {
+    tokenHash: v.string(),
+    deviceId: v.string(),
+    alias: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const session = await validateSessionInternal(ctx, args.tokenHash);
+    if (!session) throw new Error("Unauthorized");
+
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q) => q.eq("deviceId", args.deviceId))
+      .unique();
+    if (!device) throw new Error("Device not found");
+    if (device.userId !== session.user._id) throw new Error("Unauthorized");
+
+    const raw = (args.alias ?? "").trim().toLowerCase();
+    if (raw === "") {
+      if (device.alias !== undefined) {
+        await ctx.db.patch(device._id, { alias: undefined });
+      }
+      return { ok: true, alias: null };
+    }
+
+    if (!ALIAS_PATTERN.test(raw)) {
+      throw new Error("alias invalid: use 1-48 chars from a-z, 0-9, '.', '-', '_'");
+    }
+
+    // Per-user uniqueness — scan the caller's devices and reject if
+    // any other row already holds this alias.
+    const peers = await ctx.db
+      .query("devices")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+    for (const peer of peers) {
+      if (peer._id === device._id) continue;
+      if ((peer.alias ?? "").toLowerCase() === raw) {
+        throw new Error(`alias already used by device ${peer.deviceId.slice(0, 8)} (${peer.name})`);
+      }
+    }
+
+    await ctx.db.patch(device._id, { alias: raw });
+    return { ok: true, alias: raw };
   },
 });
 

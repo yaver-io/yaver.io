@@ -245,6 +245,10 @@ func main() {
 		runStatus()
 	case "devices":
 		runDevices(os.Args[2:])
+	case "alias":
+		runAlias(os.Args[2:])
+	case "ssh":
+		runSSHWrap(os.Args[2:])
 	case "config":
 		runConfig(os.Args[2:])
 	case "auto-update":
@@ -6071,7 +6075,7 @@ func runDevices(args []string) {
 		}
 	}
 
-	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	devices, err := listDevicesEnsuringAuth(cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -6091,8 +6095,8 @@ func runDevices(args []string) {
 		runnerByDevice[d.DeviceID] = summarizeDeviceRunners(cfg, d)
 	}
 
-	fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s\n",
-		"ID", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "RUNNERS", "ADDRESS")
+	fmt.Printf("%-10s  %-16s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s\n",
+		"ID", "ALIAS", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "RUNNERS", "ADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
@@ -6102,6 +6106,13 @@ func runDevices(args []string) {
 		if len(id) > 8 {
 			id = id[:8] + "..."
 		}
+		alias := d.Alias
+		if strings.TrimSpace(alias) == "" {
+			alias = "-"
+		}
+		if len(alias) > 16 {
+			alias = alias[:15] + "…"
+		}
 		runners := runnerByDevice[d.DeviceID]
 		if strings.TrimSpace(runners) == "" {
 			runners = "-"
@@ -6109,9 +6120,309 @@ func runDevices(args []string) {
 		if len(runners) > 36 {
 			runners = runners[:35] + "…"
 		}
-		fmt.Printf("%-10s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s:%d\n",
-			id, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, d.QuicHost, d.QuicPort)
+		fmt.Printf("%-10s  %-16s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s:%d\n",
+			id, alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, d.QuicHost, d.QuicPort)
 	}
+}
+
+// resolveDevice picks a device from `devices` by user-supplied target,
+// matched (in order) against alias, deviceId (full or 8-char prefix),
+// then case-insensitive name. Returns ambiguity errors so the caller
+// can prompt the user to be more specific. Used by `yaver ssh` and
+// `yaver alias` so a single resolution rule applies everywhere.
+func resolveDevice(target string, devices []DeviceInfo) (*DeviceInfo, error) {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil, fmt.Errorf("device identifier required")
+	}
+	lower := strings.ToLower(target)
+
+	var aliasHits, idHits, nameHits []DeviceInfo
+	for _, d := range devices {
+		if d.Alias != "" && strings.ToLower(d.Alias) == lower {
+			aliasHits = append(aliasHits, d)
+			continue
+		}
+		if d.DeviceID == target {
+			idHits = append(idHits, d)
+			continue
+		}
+		if len(target) >= 4 && strings.HasPrefix(d.DeviceID, target) {
+			idHits = append(idHits, d)
+			continue
+		}
+		if strings.EqualFold(d.Name, target) {
+			nameHits = append(nameHits, d)
+		}
+	}
+
+	for _, bucket := range [][]DeviceInfo{aliasHits, idHits, nameHits} {
+		if len(bucket) == 1 {
+			d := bucket[0]
+			return &d, nil
+		}
+		if len(bucket) > 1 {
+			labels := make([]string, 0, len(bucket))
+			for _, d := range bucket {
+				labels = append(labels, fmt.Sprintf("%s (%s)", d.DeviceID[:8], d.Name))
+			}
+			return nil, fmt.Errorf("%q matches multiple devices: %s — use the full deviceId", target, strings.Join(labels, ", "))
+		}
+	}
+
+	return nil, fmt.Errorf("no device matches %q (try `yaver devices` to list)", target)
+}
+
+// runAlias implements `yaver alias` — set / clear / list per-user
+// device aliases. Aliases are stored in Convex (POST /devices/alias)
+// so the dashboard, mobile app, and `yaver ssh` all see the same
+// names. Per-user uniqueness is enforced server-side: the same alias
+// cannot point at two of the caller's devices.
+//
+//   yaver alias                       — list current aliases
+//   yaver alias set <id|name> <alias> — assign or rename
+//   yaver alias rm  <id|name|alias>   — clear
+func runAlias(args []string) {
+	cfg := mustLoadAuthConfig()
+
+	if len(args) == 0 {
+		devices, err := listDevicesEnsuringAuth(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		any := false
+		for _, d := range devices {
+			if d.IsGuest || strings.TrimSpace(d.Alias) == "" {
+				continue
+			}
+			any = true
+			fmt.Printf("%-16s  %-20s  %s\n", d.Alias, d.Name, d.DeviceID)
+		}
+		if !any {
+			fmt.Println("No aliases set. Use: yaver alias set <device-id-or-name> <alias>")
+		}
+		return
+	}
+
+	switch strings.ToLower(args[0]) {
+	case "set", "rename":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: yaver alias set <device-id|name|current-alias> <new-alias>")
+			os.Exit(1)
+		}
+		target := args[1]
+		newAlias := strings.TrimSpace(args[2])
+		devices, err := listDevicesEnsuringAuth(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		dev, err := resolveDevice(target, devices)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if dev.IsGuest {
+			fmt.Fprintln(os.Stderr, "Cannot set alias on a shared/guest device — only the host can.")
+			os.Exit(1)
+		}
+		if err := SetDeviceAlias(cfg.ConvexSiteURL, cfg.AuthToken, dev.DeviceID, newAlias); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Alias %q → %s (%s)\n", newAlias, dev.Name, dev.DeviceID[:8])
+	case "rm", "remove", "clear", "delete", "unset":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: yaver alias rm <device-id|name|alias>")
+			os.Exit(1)
+		}
+		target := args[1]
+		devices, err := listDevicesEnsuringAuth(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		dev, err := resolveDevice(target, devices)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := SetDeviceAlias(cfg.ConvexSiteURL, cfg.AuthToken, dev.DeviceID, ""); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Alias cleared for %s (%s)\n", dev.Name, dev.DeviceID[:8])
+	case "list", "ls":
+		runAlias(nil)
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: yaver alias [set|rm|list] ...")
+		os.Exit(1)
+	}
+}
+
+// runSSHWrap implements `yaver ssh <target> [extra ssh args]`. It
+// resolves `<target>` against the user's devices (alias > deviceId
+// prefix > name) and execs the system `ssh` (OpenSSH) binary against
+// an IP it learned from one of three sources, in priority order:
+//
+//   1. `tailscale ip <hostname-or-alias>` — when Tailscale is reachable
+//      and knows about the host. This handles "yaver test ephemeral"
+//      style boxes that join the tailnet but never register a public
+//      endpoint with Convex.
+//   2. The device row from Convex — publicEndpoints first (clean DNS
+//      via Cloudflare Tunnel etc.), then localIps that look like
+//      Tailscale (100.64.0.0/10), then the first non-loopback localIp,
+//      then quicHost.
+//   3. The literal target as the SSH host — last-resort so the user
+//      can still type `yaver ssh user@host` for an unregistered box.
+//
+// Any extra args after the target are passed through to ssh untouched
+// (so `yaver ssh prod-mac -L 5432:localhost:5432` works). Named
+// runSSHWrap (not runSSH) because multiregion_orchestrate.go already
+// owns runSSH for the sshpass-based provisioning helper.
+func runSSHWrap(args []string) {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: yaver ssh <device-id|name|alias|user@host> [ssh args...]")
+		os.Exit(1)
+	}
+
+	target := args[0]
+	passthrough := args[1:]
+
+	user := ""
+	hostPart := target
+	if at := strings.LastIndex(target, "@"); at > 0 {
+		user = target[:at]
+		hostPart = target[at+1:]
+	}
+
+	host := resolveSSHHost(hostPart)
+	if host == "" {
+		// Couldn't resolve via Tailscale or Convex — fall through to
+		// whatever the user typed. ssh will give a sensible error if
+		// it's not actually a hostname.
+		host = hostPart
+	}
+
+	dest := host
+	if user != "" {
+		dest = user + "@" + host
+	}
+
+	sshPath, err := osexec.LookPath("ssh")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ssh not found in PATH — install OpenSSH and try again.")
+		os.Exit(1)
+	}
+
+	fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
+	cmd := osexec.Command(sshPath, append([]string{dest}, passthrough...)...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		// Surface ssh's own exit code so shell scripts can branch on it.
+		if ee, ok := err.(*osexec.ExitError); ok {
+			os.Exit(ee.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// resolveSSHHost takes a literal target (alias, deviceId, name, or
+// raw hostname) and returns the best IP/hostname for ssh. Returns ""
+// if it has nothing better than the input.
+func resolveSSHHost(target string) string {
+	if target == "" {
+		return ""
+	}
+
+	// 1. Tailscale lookup is cheapest and handles ephemeral boxes that
+	//    never registered with Convex. `tailscale ip` accepts the
+	//    Tailscale-side hostname and returns one IP per line.
+	if tsPath, err := osexec.LookPath("tailscale"); err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		out, err := osexec.CommandContext(ctx, tsPath, "ip", target).Output()
+		if err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				ip := strings.TrimSpace(line)
+				// Prefer IPv4 from the tailnet (100.64/10).
+				if strings.Contains(ip, ".") && strings.HasPrefix(ip, "100.") {
+					return ip
+				}
+			}
+			// Fallback: first non-empty line.
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				ip := strings.TrimSpace(line)
+				if ip != "" {
+					return ip
+				}
+			}
+		}
+	}
+
+	// 2. Ask Convex. If we're not signed in we silently skip — the
+	//    user might be ssh'ing a literal host they already know.
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.AuthToken == "" || cfg.ConvexSiteURL == "" {
+		return ""
+	}
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil {
+		return ""
+	}
+	dev, err := resolveDevice(target, devices)
+	if err != nil {
+		return ""
+	}
+	if len(dev.PublicEndpoints) > 0 {
+		// Strip scheme if present — ssh wants a host, not a URL.
+		ep := dev.PublicEndpoints[0]
+		ep = strings.TrimPrefix(ep, "https://")
+		ep = strings.TrimPrefix(ep, "http://")
+		ep = strings.TrimSuffix(ep, "/")
+		return ep
+	}
+	for _, ip := range dev.LocalIps {
+		if strings.HasPrefix(ip, "100.") && strings.Contains(ip, ".") {
+			return ip
+		}
+	}
+	for _, ip := range dev.LocalIps {
+		if ip != "" && !strings.HasPrefix(ip, "127.") && ip != "::1" {
+			return ip
+		}
+	}
+	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" {
+		return dev.QuicHost
+	}
+	return ""
+}
+
+// SetDeviceAlias calls POST /devices/alias to set or clear an alias
+// for one of the caller's devices. Pass alias="" to clear.
+func SetDeviceAlias(baseURL, token, deviceId, alias string) error {
+	payload, _ := json.Marshal(map[string]string{
+		"deviceId": deviceId,
+		"alias":    alias,
+	})
+	req, err := newBearerRequest("POST", baseURL+"/devices/alias", token, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("set alias failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
 }
 
 func deviceAccessLabel(d DeviceInfo) string {
@@ -6499,6 +6810,7 @@ func mustLoadAuthConfig() *Config {
 type DeviceInfo struct {
 	DeviceID                  string   `json:"deviceId"`
 	Name                      string   `json:"name"`
+	Alias                     string   `json:"alias,omitempty"`
 	Platform                  string   `json:"platform"`
 	QuicHost                  string   `json:"quicHost"`
 	LocalIps                  []string `json:"localIps,omitempty"`
@@ -6540,6 +6852,54 @@ func listDevices(baseURL, token string) ([]DeviceInfo, error) {
 		return nil, fmt.Errorf("parse devices: %w", err)
 	}
 	return result.Devices, nil
+}
+
+// listDevicesEnsuringAuth wraps listDevices with automatic recovery
+// when the saved bearer token is no longer accepted. It first tries
+// the request as-is. If the call fails AND /auth/validate confirms
+// the token is rejected, it attempts a silent refresh against the
+// existing token, persisting any rotated token; if that does not
+// restore access it falls through to the interactive browser OAuth
+// flow (yaver auth) and retries once. cfg is updated in place so
+// subsequent calls in the same process see the fresh credentials.
+func listDevicesEnsuringAuth(cfg *Config) ([]DeviceInfo, error) {
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err == nil {
+		return devices, nil
+	}
+
+	// If the token still validates the failure is unrelated to auth —
+	// surface the original error so we don't paper over real backend
+	// problems with a re-auth flow.
+	if vErr := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); vErr == nil {
+		return nil, err
+	}
+
+	fmt.Fprintln(os.Stderr, "Session expired. Refreshing token...")
+	refreshed := false
+	if newToken, rErr := RefreshToken(cfg.ConvexSiteURL, cfg.AuthToken); rErr == nil {
+		if newToken != "" {
+			if pErr := persistRotatedAuthToken(cfg, newToken); pErr != nil {
+				log.Printf("[auth] (warn) persist rotated token: %v", pErr)
+			}
+			cfg.AuthToken = newToken
+		}
+		if vErr := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); vErr == nil {
+			refreshed = true
+		}
+	}
+
+	if !refreshed {
+		fmt.Fprintln(os.Stderr, "Refresh did not restore access — opening browser to re-authenticate...")
+		runAuth(nil)
+		fresh, lErr := LoadConfig()
+		if lErr != nil || fresh == nil || strings.TrimSpace(fresh.AuthToken) == "" {
+			return nil, fmt.Errorf("re-authentication did not complete")
+		}
+		*cfg = *fresh
+	}
+
+	return listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
 }
 
 func summarizePeerStates(peers []*PeerState) (online, stale, offline int) {

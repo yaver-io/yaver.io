@@ -126,6 +126,11 @@ export default defineSchema({
     userId: v.id("users"),
     deviceId: v.string(),
     name: v.string(),
+    // User-set short alias used by `yaver ssh <alias>`, the dashboard,
+    // and the mobile app. Per-user uniqueness is enforced in the
+    // setDeviceAlias mutation. Lower-cased and trimmed before storage
+    // so lookups don't have to re-normalize.
+    alias: v.optional(v.string()),
     platform: v.union(
       v.literal("macos"),
       v.literal("windows"),

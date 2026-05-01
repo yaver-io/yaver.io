@@ -332,7 +332,7 @@ for (const path of [
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
   "/auth/device-code/authorize",
-  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/config", "/settings", "/settings/repair-relay", "/packages",
+  "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
@@ -1706,6 +1706,44 @@ http.route({
     });
 
     return jsonResponse({ ok: true });
+  }),
+});
+
+/** POST /devices/alias — Set or clear a device alias (authed).
+ *  Body: { deviceId, alias?: string }. Pass alias: "" or omit to
+ *  clear. Aliases are scoped to the caller's user and must be unique
+ *  across that user's devices — used by `yaver ssh <alias>`, the
+ *  dashboard device list, and the mobile app. */
+http.route({
+  path: "/devices/alias",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string" || !body.deviceId.trim()) {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const result = await ctx.runMutation(api.devices.setDeviceAlias, {
+        tokenHash,
+        deviceId: body.deviceId,
+        alias: typeof body.alias === "string" ? body.alias : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      const msg = e?.message || "alias update failed";
+      if (errorMessageIncludes(e, "Unauthorized")) return errorResponse(msg, 401);
+      if (errorMessageIncludes(e, "Device not found")) return errorResponse(msg, 404);
+      if (errorMessageIncludes(e, "alias already used")) return errorResponse(msg, 409);
+      if (errorMessageIncludes(e, "alias invalid")) return errorResponse(msg, 400);
+      return errorResponse(msg, 400);
+    }
   }),
 });
 
