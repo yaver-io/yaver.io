@@ -1,13 +1,8 @@
-// Polyfill global crypto.getRandomValues used by tweetnacl during the
-// encrypted pair flow (`nacl.box.keyPair()` → "no PRNG" without this).
-// MUST be imported BEFORE anything that transitively pulls in tweetnacl
-// (DeviceContext → encryptedPair). Hermes/RN ships no built-in CSPRNG;
-// this package wires libsodium-compatible randombytes from the platform
-// secure RNG (SecRandomCopyBytes on iOS, SecureRandom on Android). One
-// line, mandatory — its absence broke every reclaim attempt because
-// the banner CTA would generate a pair keypair, hit "no PRNG", and
-// surface that string back to the user as the failure subtitle.
-import "react-native-get-random-values";
+// Crypto + tweetnacl setup. MUST be the first import — everything
+// else (DeviceContext → encryptedPair → tweetnacl) depends on the
+// PRNG being installed before tweetnacl's import-time IIFE runs.
+// See ../src/lib/cryptoSetup.ts for why this is two steps.
+import "../src/lib/cryptoSetup";
 
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
