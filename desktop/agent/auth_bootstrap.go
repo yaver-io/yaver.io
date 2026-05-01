@@ -439,8 +439,16 @@ func reexecAsServe() {
 type bootstrapHTTPServer struct{}
 
 func (bs *bootstrapHTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	cfg, _ := LoadConfig()
+	lifecycle := bootstrapLifecycleInfo(cfg)
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(`{"ok":true,"mode":"bootstrap"}`))
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":             true,
+		"mode":           "bootstrap",
+		"needsAuth":      true,
+		"lifecycleState": lifecycle.State,
+		"lifecycle":      lifecycle,
+	})
 }
 
 // handleInfo lets the mobile app verify "yes, this is a yaver
@@ -449,6 +457,8 @@ func (bs *bootstrapHTTPServer) handleHealth(w http.ResponseWriter, r *http.Reque
 // display something in the Pair Device modal.
 func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	hostname, _ := os.Hostname()
+	cfg, _ := LoadConfig()
+	lifecycle := bootstrapLifecycleInfo(cfg)
 	// Include the passkey + public key so the mobile app can pair
 	// over a direct HTTP connection without needing to receive the
 	// UDP beacon. Do NOT reveal the passkey on proxied requests:
@@ -456,11 +466,13 @@ func (bs *bootstrapHTTPServer) handleInfo(w http.ResponseWriter, r *http.Request
 	// wider networks, so returning the active bootstrap secret there
 	// turns discovery into takeover.
 	resp := map[string]interface{}{
-		"ok":        true,
-		"mode":      "bootstrap",
-		"needsAuth": true,
-		"hostname":  hostname,
-		"version":   version,
+		"ok":             true,
+		"mode":           "bootstrap",
+		"needsAuth":      true,
+		"hostname":       hostname,
+		"version":        version,
+		"lifecycleState": lifecycle.State,
+		"lifecycle":      lifecycle,
 	}
 	// Current passkey (only on direct requests, and only if not suppressed).
 	if sess := activePairingSnapshot(); sess != nil && bootstrapPasskeyVisible(r) {

@@ -20,6 +20,7 @@ import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
 import { CONVEX_SITE_URL } from "../lib/constants";
+import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import {
   fetchGuestHosts,
   acceptGuestInvitation as apiAcceptInvitation,
@@ -1613,16 +1614,23 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     const relayTargets = quicClient.getRelayServers().map((relay) => ({
       url: `${relay.httpUrl}/d/${device.id}`,
       label: relay.id || relay.httpUrl,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(relay.password ? { "X-Relay-Password": relay.password } : {}),
+      } as Record<string, string>,
     }));
     const targets = [
-      ...directTargets.map((url) => ({ url, label: url })),
+      ...directTargets.map((url) => ({ url, label: url, headers: {} as Record<string, string> })),
       ...relayTargets,
     ];
 
     let lastError = "bootstrap endpoint did not respond";
     for (const target of targets) {
       try {
-        const infoRes = await fetch(`${target.url}/info`, { signal: AbortSignal.timeout(3500) });
+        const infoRes = await fetch(`${target.url}/info`, {
+          headers: target.headers,
+          signal: AbortSignal.timeout(3500),
+        });
         if (!infoRes.ok) {
           lastError = `HTTP ${infoRes.status} from ${target.label}`;
           continue;
@@ -1669,15 +1677,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       return { ok: false, error: "Not signed in" };
     }
 
-    const bootstrapRecovery = await recoverBootstrapDevice(device);
-    if (bootstrapRecovery.ok) {
-      return {
-        ok: true,
-        targetUrl: bootstrapRecovery.targetUrl,
-      };
-    }
+    const lifecycleProbe = await probeMobileDeviceStatus(device, token, 3500).catch(() => null);
+    const lifecycleState = lifecycleProbe?.lifecycleState;
+    const shouldTryBootstrap =
+      lifecycleState === "bootstrap" || (!lifecycleState && device.needsAuth === true);
 
-    if (device.needsAuth === true) {
+    if (shouldTryBootstrap) {
+      const bootstrapRecovery = await recoverBootstrapDevice(device);
+      if (bootstrapRecovery.ok) {
+        return {
+          ok: true,
+          targetUrl: bootstrapRecovery.targetUrl,
+        };
+      }
+
       const claimed = await quicClient.ownerClaimDevice(device.id);
       if (claimed.ok) {
         quicClient.agentAuthExpired = false;

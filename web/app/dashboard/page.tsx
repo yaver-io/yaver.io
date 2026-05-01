@@ -1321,6 +1321,12 @@ export default function DashboardPage() {
     };
     return next;
   });
+  const connectedDeviceNeedsRecovery = connectedDevice
+    ? (() => {
+        const lifecycle = deriveDeviceLifecycleState(connectedDevice);
+        return lifecycle === "bootstrap" || lifecycle === "yaver-auth-expired";
+      })()
+    : false;
   const runningTask = tasks.find(t => t.status === "running");
   const activeRunnerId = activeTask?.runnerId || selectedRunner;
   const activeRunnerRow = runners.find((r) => r.id === activeRunnerId) || null;
@@ -2022,7 +2028,7 @@ export default function DashboardPage() {
                 onSelectPreviewTarget={handleSelectPreviewTarget}
                 onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
                 onRepairRelay={token ? repairRelay : undefined}
-                connectedDeviceNeedsAuth={!!connectedDevice?.needsAuth}
+                connectedDeviceNeedsAuth={connectedDeviceNeedsRecovery}
                 onSwitchAgent={() => setActiveTab("devices")}
                 onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
                 primaryRunner={connectedDevicePrimaryRunner}
@@ -2079,7 +2085,7 @@ export default function DashboardPage() {
           ) : activeTab === "vault" ? (
             <div className="flex-1 min-h-0 w-full max-w-4xl mx-auto">
               <VaultView
-                needsAuth={!!connectedDevice?.needsAuth}
+                needsAuth={connectedDeviceNeedsRecovery}
                 onReconnect={connectedDevice ? async () => { await connectToDevice(connectedDevice); } : undefined}
               />
             </div>

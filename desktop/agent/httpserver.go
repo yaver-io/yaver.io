@@ -236,6 +236,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/bus/publish", s.auth(s.handleBusPublish))
 	mux.HandleFunc("/agent/status", s.auth(s.handleAgentStatus))
 	mux.HandleFunc("/agent/capabilities", s.auth(s.handleAgentCapabilities))
+	// Multi-source yaver-binary reconcile (apt/brew/npm/manual/auto-update).
+	// Owner-only; never exposed to guests or SDK tokens. See self_heal.go.
+	mux.HandleFunc("/agent/self-heal", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			handleSelfHealReport(w, r)
+		} else {
+			handleSelfHealApply(w, r)
+		}
+	}))
 	mux.HandleFunc("/agent/graphs", s.auth(s.handleAgentGraphs))
 	mux.HandleFunc("/agent/graphs/", s.auth(s.handleAgentGraphByID))
 	mux.HandleFunc("/agent/runners", s.authSDKOrGuest(s.handleRunners))
@@ -2056,10 +2065,13 @@ func withCORS(next http.Handler) http.Handler {
 // ---------------------------------------------------------------------------
 
 func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	lifecycle := s.lifecycleInfo()
 	resp := map[string]interface{}{
-		"ok":       true,
-		"hostname": s.hostname,
-		"version":  version,
+		"ok":             true,
+		"hostname":       s.hostname,
+		"version":        version,
+		"lifecycleState": lifecycle.State,
+		"lifecycle":      lifecycle,
 	}
 	if s.tlsFingerprint != "" {
 		resp["tlsFingerprint"] = s.tlsFingerprint
@@ -2097,12 +2109,15 @@ func (s *HTTPServer) handleSelfCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	hostname, _ := os.Hostname()
+	lifecycle := s.lifecycleInfo()
 	info := map[string]interface{}{
-		"ok":       true,
-		"hostname": hostname,
-		"version":  version,
-		"workDir":  s.taskMgr.workDir,
-		"hwid":     HardwareID(),
+		"ok":             true,
+		"hostname":       hostname,
+		"version":        version,
+		"workDir":        s.taskMgr.workDir,
+		"hwid":           HardwareID(),
+		"lifecycleState": lifecycle.State,
+		"lifecycle":      lifecycle,
 		"runner": map[string]interface{}{
 			"id":    s.taskMgr.runner.RunnerID,
 			"name":  s.taskMgr.runner.Name,
@@ -2144,6 +2159,9 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		info["todoFailed"] = failed
 		info["todoImplementing"] = implementing
 		info["autoConsume"] = s.todolistMgr.IsAutoConsume()
+	}
+	if lifecycle.State == AgentLifecycleAuthExpired {
+		info["authExpired"] = true
 	}
 
 	// Session task stats

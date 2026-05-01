@@ -5,6 +5,7 @@ export type MobileDeviceStatusProbe = {
   reachable: boolean;
   bootstrap: boolean;
   authExpired: boolean;
+  lifecycleState?: MobileDeviceLifecycleState | null;
   checkedAt: number;
   path?: "relay" | "direct";
   info?: Record<string, any> | null;
@@ -42,10 +43,24 @@ function hasRecentLiveSignal(device: Pick<DeviceLike, "lastTunnelEvent">, maxAge
 }
 
 function parseInfo(data: Record<string, any> | null | undefined) {
+  const lifecycleState = String(
+    data?.lifecycle?.state || data?.lifecycleState || "",
+  ).trim().toLowerCase();
   const mode = String(data?.mode || "").trim().toLowerCase();
   return {
-    bootstrap: data?.needsAuth === true || mode === "bootstrap",
-    authExpired: data?.authExpired === true && !(data?.needsAuth === true || mode === "bootstrap"),
+    lifecycleState:
+      lifecycleState === "bootstrap" ||
+      lifecycleState === "yaver-auth-expired" ||
+      lifecycleState === "ready-to-connect"
+        ? (lifecycleState as MobileDeviceLifecycleState)
+        : null,
+    bootstrap:
+      lifecycleState === "bootstrap" ||
+      data?.needsAuth === true ||
+      mode === "bootstrap",
+    authExpired:
+      lifecycleState === "yaver-auth-expired" ||
+      (data?.authExpired === true && !(data?.needsAuth === true || mode === "bootstrap")),
   };
 }
 
@@ -89,6 +104,7 @@ export async function probeMobileDeviceStatus(
           reachable: true,
           bootstrap: parsed.bootstrap,
           authExpired: parsed.authExpired,
+          lifecycleState: parsed.lifecycleState,
           checkedAt,
           path: "relay",
           info,
@@ -112,6 +128,7 @@ export async function probeMobileDeviceStatus(
         reachable: true,
         bootstrap: parsed.bootstrap,
         authExpired: parsed.authExpired,
+        lifecycleState: parsed.lifecycleState,
         checkedAt,
         path: "direct",
         info,
@@ -124,6 +141,7 @@ export async function probeMobileDeviceStatus(
     reachable: false,
     bootstrap: false,
     authExpired: false,
+    lifecycleState: null,
     checkedAt,
     error: lastError,
   };
@@ -138,6 +156,7 @@ export function deriveMobileDeviceLifecycleState(args: {
 }): MobileDeviceLifecycleState {
   const { device, probe, isConnected = false, authExpired = false, unreachable = false } = args;
   if (isConnected) return "connected";
+  if (probe?.lifecycleState) return probe.lifecycleState;
   if (probe?.bootstrap) return "bootstrap";
   if (probe?.authExpired || authExpired) return "yaver-auth-expired";
   if (

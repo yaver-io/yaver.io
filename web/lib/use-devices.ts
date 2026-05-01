@@ -76,6 +76,16 @@ export interface Device {
     mode?: string;
     autoStart?: string;
     authExpired?: boolean;
+    lifecycleState?: "bootstrap" | "yaver-auth-expired" | "ready-to-connect";
+    lifecycle?: {
+      state?: "bootstrap" | "yaver-auth-expired" | "ready-to-connect";
+      usable?: boolean;
+      recoverable?: boolean;
+      recoveryMode?: string;
+      supportsOwnerClaim?: boolean;
+      ownerClaimReady?: boolean;
+      requiresFirstPair?: boolean;
+    };
     runtime?: Record<string, unknown>;
     system?: Record<string, unknown>;
   } | null;

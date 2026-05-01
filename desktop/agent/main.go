@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.100"
+const version = "1.99.101"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -387,6 +387,16 @@ func main() {
 		runInstall(os.Args[2:])
 	case "update", "self-update", "upgrade":
 		runManualUpdate()
+	case "self":
+		// `yaver self heal [--apply ...]` reconciles every yaver
+		// binary on the box (apt, brew, npm, ~/.yaver/bin/<v>/, manual)
+		// to a single canonical version. See self_heal.go.
+		if len(os.Args) > 2 && os.Args[2] == "heal" {
+			runSelfHealCommand(os.Args[3:])
+			return
+		}
+		fmt.Println("usage: yaver self heal [--apply] [--include-managed] [--self-update] [--json]")
+		os.Exit(2)
 	case "doctor":
 		// `yaver doctor build [--target=X]` is a focused preflight for
 		// deploy toolchains. Everything else falls through to the
@@ -456,6 +466,7 @@ Usage:
   yaver permissions Open the one-time macOS permission checklist again
   yaver logs        Show agent logs
   yaver clear-logs  Clear agent log file
+  yaver self heal [--apply] [--include-managed] [--self-update]  Reconcile multi-source yaver installs
   yaver config      Show current configuration
   yaver config set <key> <value>  Set a config value (auto-start, auto-update, headless-keep-awake)
   yaver relay add <url> [--password <pass>] [--label <name>]  Add a relay server
@@ -1763,6 +1774,13 @@ func runServe(args []string) {
 
 	// Check for auto-update before forking
 	checkAutoUpdate(cfg)
+
+	// Multi-source install reconciler: report-only at startup. If the
+	// box has a stale apt/brew/npm `yaver` shadowing the auto-updated
+	// one in ~/.yaver/bin/<v>/, log a drift warning so the operator
+	// knows about it without us silently rewriting their package
+	// manager's files. See self_heal.go.
+	runSelfHealOnStartup()
 
 	// Validate token before forking — try refresh if expired, but never exit
 	if _, err := ValidateTokenUser(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {

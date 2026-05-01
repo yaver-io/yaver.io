@@ -31,6 +31,8 @@ import (
 	"strings"
 )
 
+var listDevicesForOwnerClaimFn = listDevices
+
 func (bs *bootstrapHTTPServer) handleOwnerClaim(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "use POST"})
@@ -41,7 +43,9 @@ func (bs *bootstrapHTTPServer) handleOwnerClaim(w http.ResponseWriter, r *http.R
 		bearer = r.URL.Query().Get("token")
 	}
 	if bearer == "" {
-		var body struct{ Token string `json:"token"` }
+		var body struct {
+			Token string `json:"token"`
+		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		bearer = body.Token
 	}
@@ -73,7 +77,7 @@ func (bs *bootstrapHTTPServer) handleOwnerClaim(w http.ResponseWriter, r *http.R
 	// Verify the bearer is the owner of THIS device per Convex.
 	// Same lookup as the factory-reset endpoint — the trust anchor
 	// is Convex /devices/list, not anything on the box.
-	devices, err := listDevices(cfg.ConvexSiteURL, bearer)
+	devices, err := listDevicesForOwnerClaimFn(cfg.ConvexSiteURL, bearer)
 	if err != nil {
 		jsonReply(w, http.StatusUnauthorized, map[string]string{
 			"error": fmt.Sprintf("Convex rejected the bearer: %v", err),
