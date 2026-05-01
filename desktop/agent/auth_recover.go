@@ -106,13 +106,36 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 	if cfg == nil {
 		cfg = &Config{}
 	}
+	resolvedConvex := strings.TrimSpace(convexURL)
+	if resolvedConvex == "" {
+		resolvedConvex = strings.TrimSpace(cfg.ConvexSiteURL)
+	}
+	if resolvedConvex == "" {
+		resolvedConvex = defaultConvexSiteURL
+	}
+
+	// Pre-validate the incoming token against Convex BEFORE we
+	// persist it. The previous flow saved unconditionally and then
+	// validated — a recovery push from a mobile client whose own
+	// session had gone stale (e.g. user signed out + back in
+	// elsewhere, or just hit Reclaim repeatedly with a token Convex
+	// already deleted) would overwrite the agent's prior working
+	// token with the stale one, leaving the agent in a permanent
+	// auth-expired state that no further mobile push could fix
+	// because each push re-installs the same dead token. With this
+	// guard, a recovery push that doesn't validate is rejected and
+	// the existing token (if any) is preserved.
+	uid, validateErr := ValidateTokenUser(resolvedConvex, token)
+	if validateErr != nil || strings.TrimSpace(uid) == "" {
+		log.Printf("[auth-recover] rejecting incoming token: validation against Convex failed (%v) — keeping existing token", validateErr)
+		if s != nil {
+			s.authExpired.Store(true)
+		}
+		return
+	}
+
 	cfg.AuthToken = token
-	if convexURL != "" {
-		cfg.ConvexSiteURL = convexURL
-	}
-	if cfg.ConvexSiteURL == "" {
-		cfg.ConvexSiteURL = defaultConvexSiteURL
-	}
+	cfg.ConvexSiteURL = resolvedConvex
 	_ = SaveConfig(cfg)
 
 	if s != nil {
@@ -122,17 +145,9 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 			s.taskMgr.AuthToken = token
 			s.taskMgr.ConvexURL = cfg.ConvexSiteURL
 		}
-		// Rebind ownership. Best-effort — if Convex is unreachable
-		// right now we keep the old ownerUserID and the next heartbeat
-		// will 401→refresh us into a consistent state anyway. The
-		// common case (Convex reachable during a live reauth from the
-		// mobile app or web dashboard) succeeds inline and future
-		// requests immediately see the right identity.
-		if uid, err := ValidateTokenUser(cfg.ConvexSiteURL, token); err == nil {
-			if trimmed := strings.TrimSpace(uid); trimmed != "" {
-				s.ownerUserID = trimmed
-			}
-		}
+		// Bind ownership using the validated user id from the
+		// pre-flight ValidateTokenUser call above.
+		s.ownerUserID = strings.TrimSpace(uid)
 		// Invalidate cached token→user decisions so stale bearers
 		// (old owner, old guest grants, old host-share verdicts) can't
 		// short-circuit past the fresh Convex validation.
