@@ -1539,18 +1539,18 @@ export default function DashboardPage() {
                       // action: pair the agent first. Once paired,
                       // the runner row reappears below for the
                       // separate codex/claude OAuth flow.
-                      <div className="mt-1 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-[10px]">
-                        <div className="font-semibold text-amber-200">
+                      <div className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] dark:border-amber-500/30 dark:bg-amber-500/5">
+                        <div className="font-semibold text-amber-800 dark:text-amber-200">
                           Yaver agent needs auth
                         </div>
-                        <div className="mt-0.5 text-surface-400">
+                        <div className="mt-0.5 text-slate-600 dark:text-surface-400">
                           Pair this device to your account before signing in to Codex / Claude.
                           Yaver auth and coding-agent auth are separate.
                         </div>
                         <button
                           onClick={() => reauthDevice(liveDevice)}
                           disabled={connectedIsReauthing}
-                          className="mt-1.5 rounded bg-amber-500/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-500/40 disabled:opacity-40"
+                          className="mt-1.5 rounded bg-amber-200 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900 hover:bg-amber-300 disabled:opacity-40 dark:bg-amber-500/30 dark:text-amber-100 dark:hover:bg-amber-500/40"
                         >
                           {connectedIsReauthing ? "Pairing…" : "Pair device"}
                         </button>
@@ -1591,7 +1591,7 @@ export default function DashboardPage() {
                           ) : (
                             <button
                               onClick={() => setChatRunnerAuthModal(runnerId)}
-                              className="ml-auto rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-100 hover:bg-amber-500/25"
+                              className="ml-auto rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-800 hover:border-amber-500 hover:bg-amber-200 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/25"
                               title={`OAuth-sign-in to the ${runnerLabel(runnerId)} CLI on this device. Separate from Yaver-agent auth.`}
                             >
                               Sign in {runnerLabel(runnerId)}

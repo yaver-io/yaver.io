@@ -343,6 +343,7 @@ for (const path of [
   "/host-share/access", "/host-share/touch",
   "/host-share/peer-access",
   "/users/lookup",
+  "/agent-rescue/queue", "/agent-rescue/list",
 ]) {
   http.route({
     path,

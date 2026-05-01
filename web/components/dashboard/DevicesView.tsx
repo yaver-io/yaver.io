@@ -1779,17 +1779,19 @@ export default function DevicesView({
                       <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-400">
                         Coding agents
                       </div>
-                      {/* Primary agent — promoted to its own card. This
+                      {/* Preferred coding agent — promoted to its own card. This
                           is the default runner used when chat / hot
                           reload / web reload opens a workspace on this
                           device, so we make it visually load-bearing
-                          instead of one chip among many. */}
+                          instead of one chip among many. Labelled
+                          "Preferred" (not "Primary") so it doesn't
+                          collide with the device-level PRIMARY star. */}
                       <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
                         <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                            <path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 22 12 17.51 5.79 22l2.39-8.15L2 9.36h7.61z"/>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
                           </svg>
-                          Primary
+                          Preferred
                         </span>
                         {primaryState ? (
                           <RunnerChipWithTest
@@ -2315,16 +2317,16 @@ function DeviceProjectsRail({
       : "(— unavailable)";
 
   return (
-    <details className="rounded-lg border border-surface-800 bg-surface-900/30">
-      <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-surface-400 hover:text-surface-200">
+    <details className="mt-1.5 rounded-lg border border-slate-200 bg-slate-50/70 dark:border-surface-800 dark:bg-surface-900/30">
+      <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-slate-600 hover:text-slate-900 dark:text-surface-400 dark:hover:text-surface-200">
         <span>Git projects</span>
-        <span className="text-[10px] text-surface-500">{headerCount}</span>
+        <span className="text-[10px] text-slate-500 dark:text-surface-500">{headerCount}</span>
       </summary>
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-surface-800/60 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 px-3 py-2 dark:border-surface-800/60">
         {loading ? (
-          <span className="text-[10px] text-surface-500">Loading project list from agent…</span>
+          <span className="text-[10px] text-slate-500 dark:text-surface-500">Loading project list from agent…</span>
         ) : error ? (
-          <span className="text-[10px] text-surface-600">
+          <span className="text-[10px] text-slate-500 dark:text-surface-600">
             Project list unavailable — agent transport returned: {error}.
           </span>
         ) : (
@@ -2346,12 +2348,12 @@ function DeviceProjectsRail({
                 key={`pr:${device.id}:${p.name}`}
                 type="button"
                 onClick={onShowDetails}
-                className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-200 hover:bg-emerald-500/20"
+                className="inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tracking-wider text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20"
                 title={tip || undefined}
               >
-                <span className="text-emerald-100">{p.name}</span>
+                <span className="text-emerald-900 dark:text-emerald-100">{p.name}</span>
                 {stack ? (
-                  <span className="rounded bg-emerald-500/15 px-1 text-[9px] font-normal normal-case text-emerald-300/80">
+                  <span className="rounded bg-emerald-100 px-1 text-[9px] font-normal normal-case text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300/80">
                     {stack}
                   </span>
                 ) : null}
@@ -2360,16 +2362,16 @@ function DeviceProjectsRail({
                     pushable; absence means the dir is on disk but has
                     no git history yet. */}
                 {hasGit ? (
-                  <span className="text-emerald-300/80" title={`git remote: ${p.remote}`}>⌬</span>
+                  <span className="text-emerald-700 dark:text-emerald-300/80" title={`git remote: ${p.remote}`}>⌬</span>
                 ) : (
-                  <span className="text-surface-600" title="no git remote configured">∅</span>
+                  <span className="text-slate-400 dark:text-surface-600" title="no git remote configured">∅</span>
                 )}
                 {/* Monorepo-app marker. Filled when the agent's
                     workspace manifest declares this project as one app
                     inside a multi-app yaver.workspace.yaml — distinct
                     from a top-level repo. */}
                 {isMonorepoApp ? (
-                  <span className="text-amber-300/80" title={`monorepo app · root ${p.monorepoRoot}`}>◫</span>
+                  <span className="text-amber-700 dark:text-amber-300/80" title={`monorepo app · root ${p.monorepoRoot}`}>◫</span>
                 ) : null}
               </button>
             );
@@ -3186,25 +3188,25 @@ function RescueInlinePanel({
   const tone = statusMsg?.tone || "info";
   const toneCls =
     tone === "ok"
-      ? "text-emerald-300"
+      ? "text-emerald-700 dark:text-emerald-300"
       : tone === "err"
-        ? "text-red-300"
-        : "text-amber-200";
+        ? "text-red-700 dark:text-red-300"
+        : "text-amber-800 dark:text-amber-200";
   return (
-    <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+    <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/5">
       <div className="mb-2 flex items-center justify-between">
-        <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-300">
+        <p className="text-[10px] font-semibold uppercase tracking-widest text-amber-800 dark:text-amber-300">
           Rescue {device.name}
         </p>
         <button
           onClick={onClose}
-          className="text-[10px] text-amber-300/60 hover:text-amber-200"
+          className="text-[10px] text-amber-700/70 hover:text-amber-900 dark:text-amber-300/60 dark:hover:text-amber-200"
           title="Close"
         >
           close
         </button>
       </div>
-      <p className="mb-3 text-[11px] text-amber-200/70">
+      <p className="mb-3 text-[11px] text-amber-800/80 dark:text-amber-200/70">
         These commands ride on Convex (not the relay), so they work
         even when the agent&apos;s tunnel is broken. The agent picks
         the command up on its next heartbeat (~30 s).
@@ -3212,21 +3214,21 @@ function RescueInlinePanel({
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => onQueue("restart")}
-          className="rounded border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-200 hover:bg-emerald-500/20"
+          className="rounded border border-emerald-400 bg-emerald-50 px-2.5 py-1 text-[11px] text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:bg-emerald-500/20"
           title="systemctl restart yaver-agent (Linux) — clears stale tunnels, picks up new config"
         >
           ↻ Restart
         </button>
         <button
           onClick={() => onQueue("reinstall-latest")}
-          className="rounded border border-sky-500/40 bg-sky-500/10 px-2.5 py-1 text-[11px] text-sky-200 hover:bg-sky-500/20"
+          className="rounded border border-sky-400 bg-sky-50 px-2.5 py-1 text-[11px] text-sky-800 hover:bg-sky-100 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200 dark:hover:bg-sky-500/20"
           title="Download latest .deb from GitHub releases + dpkg -i + restart (Linux only)"
         >
           ⬇ Reinstall latest
         </button>
         <button
           onClick={() => onQueue("tunnel-reset")}
-          className="rounded border border-indigo-500/40 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-200 hover:bg-indigo-500/20"
+          className="rounded border border-indigo-400 bg-indigo-50 px-2.5 py-1 text-[11px] text-indigo-800 hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-500/10 dark:text-indigo-200 dark:hover:bg-indigo-500/20"
           title="Drop the relay tunnel and reconnect — same effect as restart today; lighter once the relay client gets a public Reset hook"
         >
           ⟳ Reset tunnel
@@ -3242,8 +3244,8 @@ function RescueInlinePanel({
           }}
           className={`rounded border px-2.5 py-1 text-[11px] ${
             confirmReset
-              ? "border-red-500/60 bg-red-500/20 text-red-100 hover:bg-red-500/30"
-              : "border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+              ? "border-red-500 bg-red-100 text-red-900 hover:bg-red-200 dark:border-red-500/60 dark:bg-red-500/20 dark:text-red-100 dark:hover:bg-red-500/30"
+              : "border-red-400 bg-red-50 text-red-800 hover:bg-red-100 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-200 dark:hover:bg-red-500/20"
           }`}
           title="Move ~/.yaver/config.json aside — device becomes unauthenticated; requires re-pair on next boot"
         >
