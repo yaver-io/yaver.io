@@ -48,6 +48,12 @@ import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEEC
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
+import {
+  deriveMobileDeviceLifecycleState,
+  probeMobileDeviceStatus,
+  type MobileDeviceLifecycleState,
+  type MobileDeviceStatusProbe,
+} from "../../src/lib/deviceStatus";
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -134,28 +140,6 @@ function preferredDefaultModelForRunner(
   if (normalized === "claude") return "claude-opus-4-7";
   if (normalized === "codex") return "gpt-5.4";
   return null;
-}
-
-type DeviceProbeState = {
-  reachable: boolean;
-  needsAuth: boolean;
-  checkedAt: number;
-};
-
-async function probeDeviceInfo(device: { host: string; port: number }): Promise<DeviceProbeState | null> {
-  try {
-    const res = await fetch(`http://${device.host}:${device.port || 18080}/info`, {
-      signal: AbortSignal.timeout(2500),
-    });
-    if (!res.ok) {
-      return { reachable: false, needsAuth: false, checkedAt: Date.now() };
-    }
-    const info = await res.json().catch(() => ({}));
-    const needsAuth = info?.needsAuth === true || info?.mode === "bootstrap";
-    return { reachable: true, needsAuth, checkedAt: Date.now() };
-  } catch {
-    return { reachable: false, needsAuth: false, checkedAt: Date.now() };
-  }
 }
 
 // ── Typing indicator ─────────────────────────────────────────────────
@@ -728,7 +712,7 @@ export default function TasksScreen() {
     (taskParams.openNew === "1" || taskParams.openNew === "true");
   const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
-  const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, DeviceProbeState>>({});
+  const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>(getLogEntries());
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
@@ -1618,13 +1602,14 @@ export default function TasksScreen() {
     setReconnectError(null);
     try {
       const probe = deviceProbeMap[device.id];
+      const lifecycleState = deriveMobileDeviceLifecycleState({
+        device,
+        probe,
+        unreachable: unreachableSet.has(device.id),
+      });
       const shouldRecoverAuth =
         !device.isGuest &&
-        (
-          device.needsAuth === true ||
-          probe?.needsAuth === true ||
-          (unreachableSet.has(device.id) && device.online)
-        );
+        (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired");
 
       if (shouldRecoverAuth) {
         setRecoveringDeviceId(device.id);
@@ -1669,12 +1654,15 @@ export default function TasksScreen() {
   useEffect(() => {
     if (isEffectivelyConnected || devices.length === 0) return;
     let cancelled = false;
-    const targets = devices.filter((device) => !device.isGuest && (device.online || unreachableSet.has(device.id)));
+    const targets = devices.filter((device) => !device.isGuest);
     if (targets.length === 0) return;
 
     const run = async () => {
       const updates = await Promise.all(
-        targets.map(async (device) => ({ id: device.id, result: await probeDeviceInfo(device) }))
+        targets.map(async (device) => ({
+          id: device.id,
+          result: await probeMobileDeviceStatus(device, token),
+        }))
       );
       if (cancelled) return;
       setDeviceProbeMap((prev) => {
@@ -1692,7 +1680,7 @@ export default function TasksScreen() {
       cancelled = true;
       clearInterval(iv);
     };
-  }, [devices, isEffectivelyConnected, unreachableSet]);
+  }, [devices, isEffectivelyConnected, token]);
 
   // Fetch agent info (project, todo stats) every 5s
   useEffect(() => {
@@ -2087,27 +2075,30 @@ export default function TasksScreen() {
                 {devices.map((d) => {
                   const unreachable = unreachableSet.has(d.id);
                   const probe = deviceProbeMap[d.id];
-                  const hasReachableProbe = probe?.reachable === true;
-                  const needsAuth = d.needsAuth === true || probe?.needsAuth === true;
+                  const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
+                    device: d,
+                    probe,
+                    unreachable,
+                  });
                   const statusText =
-                    needsAuth && hasReachableProbe
-                      ? "Recover"
-                      : d.online && !unreachable
-                        ? "Online"
-                        : hasReachableProbe
-                          ? "Reachable"
-                          : unreachable && d.online
-                            ? "Stale"
+                    lifecycleState === "connected"
+                      ? "Connected"
+                      : lifecycleState === "bootstrap"
+                        ? "Bootstrap"
+                        : lifecycleState === "yaver-auth-expired"
+                          ? "Auth Expired"
+                          : lifecycleState === "ready-to-connect"
+                            ? "Ready"
                             : "Offline";
                   const statusColor =
-                    needsAuth && hasReachableProbe
-                      ? "#f59e0b"
-                      : d.online && !unreachable
-                        ? "#22c55e"
-                        : hasReachableProbe
-                          ? "#38bdf8"
-                          : unreachable && d.online
-                            ? "#eab308"
+                    lifecycleState === "connected"
+                      ? "#22c55e"
+                      : lifecycleState === "bootstrap"
+                        ? "#8b5cf6"
+                        : lifecycleState === "yaver-auth-expired"
+                          ? "#f59e0b"
+                          : lifecycleState === "ready-to-connect"
+                            ? "#38bdf8"
                             : "#a1a1aa";
                   const isRetrying = reconnectingDeviceId === d.id;
                   const isRecovering = recoveringDeviceId === d.id;
@@ -2140,20 +2131,20 @@ export default function TasksScreen() {
                             {d.os} · {d.host}
                             {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
                           </Text>
-                          {needsAuth && hasReachableProbe ? (
+                          {lifecycleState === "bootstrap" ? (
+                            <Text style={[s.devicePickerMeta, { color: "#8b5cf6", marginTop: 2 }]}>
+                              Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
+                            </Text>
+                          ) : lifecycleState === "yaver-auth-expired" ? (
                             <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
-                              Machine is up, but Yaver auth expired. Tap to recover and connect.
+                              Machine is up, but the agent session expired. Tap to re-auth and connect.
                             </Text>
-                          ) : hasReachableProbe ? (
+                          ) : lifecycleState === "ready-to-connect" ? (
                             <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
-                              Machine answered an unauthenticated probe. Tap to attach again.
-                            </Text>
-                          ) : unreachable && d.online ? (
-                            <Text style={[s.devicePickerMeta, { color: "#eab308", marginTop: 2 }]}>
-                              Last attach failed. We will keep probing before calling it offline.
+                              Machine is reachable or has a recent live signal. Tap to connect.
                             </Text>
                           ) : null}
-                          {!hasReachableProbe && !d.online && (
+                          {lifecycleState === "offline" && (
                             <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
                               No recent heartbeat. Power on and run yaver serve.
                             </Text>

@@ -26,6 +26,12 @@ import {
   transportToneRGB,
   type TransportInfo,
 } from "../../src/lib/transport";
+import {
+  deriveMobileDeviceLifecycleState,
+  probeMobileDeviceStatus,
+  type MobileDeviceLifecycleState,
+  type MobileDeviceStatusProbe,
+} from "../../src/lib/deviceStatus";
 
 function transportFor(device: Device): TransportInfo {
   return classifyTransport({
@@ -228,16 +234,7 @@ function DeviceCard({
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
   const [autoPairing, setAutoPairing] = useState(false);
-  const [directReachable, setDirectReachable] = useState<boolean | null>(null);
-  // Three-state status: green / yellow / gray. The old binary
-  // online|offline missed the "Convex thinks live, we can't reach"
-  // case which flickered between two wrong answers.
-  const authRecoverable = needsAuth || authExpired || remoteAuthExpired;
-  const hasBusLiveSignal = device.peerState === "online";
-  const hasBusStaleSignal = device.peerState === "stale";
-  const isOnline = (device.online || hasBusLiveSignal) && !(isStale && !hasBusLiveSignal) && !authRecoverable;
-  const isOffline = !device.online && !hasBusLiveSignal;
-
+  const [statusProbe, setStatusProbe] = useState<MobileDeviceStatusProbe | null>(null);
   // Keep state in sync when Convex list refreshes
   useEffect(() => {
     setNeedsAuth(device.needsAuth === true);
@@ -293,79 +290,71 @@ function DeviceCard({
     };
   }, [device.id, device.host, device.port, device.online, token]);
 
-  // Poll /info for bootstrap/auth state — shows a "needs auth" badge
-  // on the card AND auto-pairs when the remote agent is in bootstrap.
-  // This runs for every visible device card (not just the "active" one),
-  // so a Convex-offline device that's really in bootstrap gets paired
-  // without the user having to "activate" it first.
+  // Probe relay/direct /info for bootstrap/auth state — shows the
+  // correct device lifecycle and auto-pairs boxes that are up in
+  // bootstrap mode even when the direct host address is not reachable
+  // from the phone.
   useEffect(() => {
-    if (!device.host || !token) return;
+    if (!device.host) return;
     let cancelled = false;
     let paired = false;
     const check = async () => {
       if (paired || cancelled) return;
-      const targetUrl = `http://${device.host}:${device.port || 18080}`;
-      console.log(`[auto-pair] polling ${targetUrl}/info for ${device.name}`);
       try {
-        const res = await fetch(`${targetUrl}/info`, { signal: AbortSignal.timeout(3000) });
-        if (!res.ok) {
-          console.log(`[auto-pair] ${device.name}: /info returned ${res.status}`);
-          return;
-        }
+        const probe = await probeMobileDeviceStatus(device, token, 3000);
         if (cancelled) return;
-        const info = await res.json();
-        const inBootstrap = info.needsAuth === true || info.mode === "bootstrap";
-        const autoStartType = String(info?.autoStart?.type || "").trim().toLowerCase();
-        if (typeof info?.version === "string" && !cancelled) {
-          setAgentVersion(info.version);
+        setStatusProbe(probe);
+        const info = probe.info || {};
+        const inBootstrap = probe.bootstrap;
+        const autoStartType = String((info as any)?.autoStart?.type || "").trim().toLowerCase();
+        if (typeof (info as any)?.version === "string" && !cancelled) {
+          setAgentVersion((info as any).version);
         }
         if (autoStartType.startsWith("wsl-") && !cancelled) {
           setRuntimeLabel("WSL");
         }
-        console.log(`[auto-pair] ${device.name}: needsAuth=${info.needsAuth} mode=${info.mode} → inBootstrap=${inBootstrap}`);
         if (cancelled) return;
-        setDirectReachable(true);
         setNeedsAuth(inBootstrap);
         if (!inBootstrap) return;
+        if (!token) return;
         setAutoPairing(true);
         try {
           const { submitEncryptedPair } = await import("../../src/lib/encryptedPair");
           const { submitPair } = await import("../../src/lib/pairDevice");
-          const pubKey = device.publicKey || info.devicePublicKey;
+          const targetUrl =
+            probe.path === "relay" && quicClient.getRelayServers()[0]
+              ? `${quicClient.getRelayServers()[0].httpUrl}/d/${device.id}`
+              : `http://${device.host}:${device.port || 18080}`;
+          const pubKey = device.publicKey || (info as any).devicePublicKey;
           if (pubKey) {
-            console.log(`[auto-pair] ${device.name}: trying encrypted pair with pubkey ${pubKey.slice(0,12)}...`);
-            const r = await submitEncryptedPair(targetUrl, token, pubKey, info.bootstrapPasskey);
-            console.log(`[auto-pair] ${device.name}: encrypted pair result ok=${r.ok} error=${r.error}`);
+            const r = await submitEncryptedPair(targetUrl, token, pubKey, (info as any).bootstrapPasskey);
             if (r.ok) {
               paired = true;
               setNeedsAuth(false);
+              setStatusProbe((prev) => prev ? { ...prev, bootstrap: false } : prev);
               return;
             }
           }
-          const passkey = info.bootstrapPasskey;
+          const passkey = (info as any).bootstrapPasskey;
           if (passkey) {
-            console.log(`[auto-pair] ${device.name}: trying passkey pair ${passkey}`);
             const r = await submitPair({ code: passkey, targetUrl, token, userId: "" });
-            console.log(`[auto-pair] ${device.name}: passkey pair result ok=${r.ok} error=${r.error}`);
             if (r.ok) {
               paired = true;
               setNeedsAuth(false);
+              setStatusProbe((prev) => prev ? { ...prev, bootstrap: false } : prev);
             }
-          } else {
-            console.log(`[auto-pair] ${device.name}: no passkey in /info — cannot fall back`);
           }
         } finally {
           if (!cancelled) setAutoPairing(false);
         }
-      } catch (err: any) {
-        if (!cancelled) setDirectReachable(false);
-        console.log(`[auto-pair] ${device.name}: error ${err?.message || err}`);
+      } catch {
+        if (!cancelled) setStatusProbe(null);
       }
     };
     check();
     const iv = setInterval(check, 8000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [device.host, device.port, device.publicKey, token]);
+  }, [device.id, device.host, device.port, device.publicKey, token]);
   const timeSince = (ts: number) => {
     if (!ts) return "never";
     const seconds = Math.floor((Date.now() - ts) / 1000);
@@ -406,39 +395,56 @@ function DeviceCard({
 
   const platformLabel = formatDevicePlatform(device, runtimeLabel);
   const projectCount = projectSummary?.total ?? 0;
-  const statusLabel = needsAuth
-    ? "yaver needs auth"
-    : (authExpired || remoteAuthExpired)
-      ? "yaver expired"
-      : isOnline
-        ? "authenticated"
-        : directReachable
-          ? "reachable"
-          : (hasBusStaleSignal || isStale)
-            ? "stale"
+  const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
+    device,
+    probe: statusProbe,
+    authExpired: authExpired || remoteAuthExpired,
+    isConnected: isActive,
+    unreachable: isStale,
+  });
+  const statusLabel =
+    lifecycleState === "connected"
+      ? "connected"
+      : lifecycleState === "bootstrap"
+        ? "bootstrap"
+        : lifecycleState === "yaver-auth-expired"
+          ? "yaver auth expired"
+          : lifecycleState === "ready-to-connect"
+            ? "ready to connect"
             : "offline";
-  const statusTone = authRecoverable
-    ? "#f59e0b"
-    : isOnline
+  const statusTone =
+    lifecycleState === "connected"
       ? c.success
-      : directReachable
-        ? "#38bdf8"
-        : (hasBusStaleSignal || isStale)
-          ? "#eab308"
-          : c.textMuted;
-  const primaryActionLabel = authRecoverable
-    ? "Recover & Connect"
-    : (isStale || isOffline)
-      ? "Connect"
-      : "Details";
-  const primaryActionTone = authRecoverable
-    ? "#f59e0b"
-    : isStale
-      ? "#eab308"
-      : c.accent;
+      : lifecycleState === "bootstrap"
+        ? "#8b5cf6"
+        : lifecycleState === "yaver-auth-expired"
+          ? "#f59e0b"
+          : lifecycleState === "ready-to-connect"
+            ? "#38bdf8"
+            : c.textMuted;
+  const primaryActionLabel =
+    lifecycleState === "bootstrap"
+      ? "Reclaim & Connect"
+      : lifecycleState === "yaver-auth-expired"
+        ? "Re-auth & Connect"
+        : lifecycleState === "ready-to-connect"
+          ? "Connect"
+          : "Details";
+  const primaryActionTone =
+    lifecycleState === "bootstrap"
+      ? "#8b5cf6"
+      : lifecycleState === "yaver-auth-expired"
+        ? "#f59e0b"
+        : lifecycleState === "ready-to-connect"
+          ? "#38bdf8"
+          : c.accent;
   const handleSmartConnect = async () => {
     if (recovering) return;
-    if (!authRecoverable) {
+    if (lifecycleState === "offline" || lifecycleState === "connected") {
+      if (lifecycleState === "connected") setDetailsOpen(true);
+      return;
+    }
+    if (lifecycleState === "ready-to-connect") {
       await onSelect();
       return;
     }
@@ -503,26 +509,33 @@ function DeviceCard({
               }}>
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PAIRING…</Text>
               </View>
-            ) : authExpired || remoteAuthExpired ? (
+            ) : lifecycleState === "bootstrap" ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#8b5cf622", borderWidth: 1, borderColor: "#8b5cf666",
+              }}>
+                <Text style={{ color: "#8b5cf6", fontSize: 10, fontWeight: "700" }}>BOOTSTRAP</Text>
+              </View>
+            ) : lifecycleState === "yaver-auth-expired" ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
               }}>
-                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>YAVER EXPIRED</Text>
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>YAVER AUTH EXPIRED</Text>
               </View>
-            ) : needsAuth ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#eab30822", borderWidth: 1, borderColor: "#eab30866",
-              }}>
-                <Text style={{ color: "#eab308", fontSize: 10, fontWeight: "700" }}>YAVER NEEDS AUTH</Text>
-              </View>
-            ) : isOnline ? (
+            ) : lifecycleState === "connected" ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
                 backgroundColor: "#22c55e22", borderWidth: 1, borderColor: "#22c55e66",
               }}>
-                <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "700" }}>AUTHENTICATED</Text>
+                <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "700" }}>CONNECTED</Text>
+              </View>
+            ) : lifecycleState === "ready-to-connect" ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#38bdf822", borderWidth: 1, borderColor: "#38bdf866",
+              }}>
+                <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700" }}>READY TO CONNECT</Text>
               </View>
             ) : null}
           </View>
@@ -536,6 +549,17 @@ function DeviceCard({
           <Text style={[styles.deviceMeta, { color: statusTone, marginTop: 4 }]}>
             {statusLabel}
             {device.lastSeen > 0 ? ` · ${timeSince(device.lastSeen)}` : ""}
+          </Text>
+          <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+            {lifecycleState === "bootstrap"
+              ? "Machine is up in bootstrap mode. Reclaim Yaver from this phone."
+              : lifecycleState === "yaver-auth-expired"
+                ? "Machine is up, but the agent session expired."
+                : lifecycleState === "ready-to-connect"
+                  ? "Machine is reachable or has a recent live signal."
+                  : lifecycleState === "offline"
+                    ? "No recent heartbeat. Power on and run yaver serve."
+                    : "This phone is attached to the device."}
           </Text>
           <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
             {agentVersion ? `Yaver v${agentVersion}` : "Yaver version unknown"}
@@ -560,14 +584,28 @@ function DeviceCard({
             style={[
               styles.pingBtn,
               {
-                backgroundColor: authRecoverable ? "#f59e0b18" : (isStale || isOffline) ? primaryActionTone + "22" : c.accent + "18",
+                backgroundColor:
+                  lifecycleState === "bootstrap"
+                    ? "#8b5cf618"
+                    : lifecycleState === "yaver-auth-expired"
+                      ? "#f59e0b18"
+                      : lifecycleState === "ready-to-connect"
+                        ? primaryActionTone + "22"
+                        : c.accent + "18",
                 borderWidth: 1,
-                borderColor: authRecoverable ? "#f59e0b44" : (isStale || isOffline) ? primaryActionTone + "55" : c.accent + "40",
+                borderColor:
+                  lifecycleState === "bootstrap"
+                    ? "#8b5cf644"
+                    : lifecycleState === "yaver-auth-expired"
+                      ? "#f59e0b44"
+                      : lifecycleState === "ready-to-connect"
+                        ? primaryActionTone + "55"
+                        : c.accent + "40",
                 opacity: recovering ? 0.7 : 1,
               },
             ]}
             onPress={() => {
-              if (authRecoverable || isStale || isOffline) {
+              if (lifecycleState !== "connected") {
                 void handleSmartConnect();
               } else {
                 setDetailsOpen(true);

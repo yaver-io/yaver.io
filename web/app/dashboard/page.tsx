@@ -183,6 +183,31 @@ function deviceReachabilitySummary(
   return "No recent agent signal";
 }
 
+type DeviceLifecycleState =
+  | "offline"
+  | "bootstrap"
+  | "yaver-auth-expired"
+  | "ready-to-connect"
+  | "connected";
+
+function deriveDeviceLifecycleState(
+  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent">,
+): DeviceLifecycleState {
+  if (device.workspaceLive) return "connected";
+  if (device.needsAuth) return "bootstrap";
+  if (device.probeState === "auth-expired") return "yaver-auth-expired";
+  if (
+    device.probeState === "ok" ||
+    device.peerState === "online" ||
+    device.peerState === "stale" ||
+    device.online ||
+    hasRecentLiveSignal(device)
+  ) {
+    return "ready-to-connect";
+  }
+  return "offline";
+}
+
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
@@ -316,7 +341,27 @@ function DeviceConnectCard({
     ? formatHeartbeatAge(new Date(device.lastTunnelEvent.at).toISOString())
     : heartbeatAge;
   const lanIps = lanIpsForDevice(device);
-  const isOffline = !device.online;
+  const lifecycleState = deriveDeviceLifecycleState(device);
+  const statusTone =
+    lifecycleState === "connected"
+      ? "bg-emerald-400"
+      : lifecycleState === "bootstrap"
+        ? "bg-violet-400"
+        : lifecycleState === "yaver-auth-expired"
+          ? "bg-amber-400"
+          : lifecycleState === "ready-to-connect"
+            ? "bg-cyan-400"
+            : "bg-surface-600";
+  const statusLabel =
+    lifecycleState === "connected"
+      ? "connected"
+      : lifecycleState === "bootstrap"
+        ? "bootstrap"
+        : lifecycleState === "yaver-auth-expired"
+          ? "yaver auth expired"
+          : lifecycleState === "ready-to-connect"
+            ? "ready to connect"
+            : "offline";
 
   return (
     <div
@@ -339,27 +384,13 @@ function DeviceConnectCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="truncate text-[15px] font-semibold text-surface-100">{device.name}</h3>
-            <span
-              className={`inline-flex h-2 w-2 rounded-full ${
-                connectionError ? "bg-red-400" : isOffline ? "bg-surface-600" : isConnecting ? "bg-amber-400" : "bg-emerald-400"
-              }`}
-            />
+            <span className={`inline-flex h-2 w-2 rounded-full ${connectionError ? "bg-red-400" : isConnecting ? "bg-amber-400" : statusTone}`} />
             <span className="text-[11px] text-surface-400">
               {connectionError
                 ? "failed"
                 : isConnecting
                   ? "connecting"
-                  : device.workspaceLive
-                    ? "workspace live"
-                    : device.peerState === "online"
-                      ? "bus live"
-                      : device.peerState === "stale"
-                        ? "bus stale"
-                        : isOffline
-                          ? "offline"
-                          : liveSignal
-                            ? "relay live"
-                            : "online"} · {liveSignalAge}
+                  : statusLabel} · {liveSignalAge}
             </span>
           </div>
           <p className="mt-1 text-[11px] leading-5 text-surface-500">
@@ -367,7 +398,7 @@ function DeviceConnectCard({
             {device.host ? ` · ${device.host}:${device.port}` : ""}
             {device.isGuest && device.hostName ? ` · from ${device.hostName}` : ""}
           </p>
-          {!connectionError && isOffline ? (
+          {!connectionError && lifecycleState !== "connected" ? (
             <p className="mt-1 text-[11px] leading-5 text-amber-300/80">{reachability}</p>
           ) : null}
           {connectionError ? (
@@ -485,7 +516,7 @@ function DeviceConnectCard({
               : "border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15"
           }`}
         >
-          {isConnecting ? "Connecting…" : isOffline ? "Try Connect" : "Open Workspace"}
+          {isConnecting ? "Connecting…" : lifecycleState === "connected" ? "Open Workspace" : lifecycleState === "bootstrap" ? "Reclaim & Connect" : lifecycleState === "yaver-auth-expired" ? "Re-auth & Connect" : "Connect"}
         </button>
         {canTogglePrimary && onTogglePrimary ? (
           <button
@@ -1057,11 +1088,14 @@ export default function DashboardPage() {
     ) {
       lastAutoReauthRef.current.set(device.id, Date.now());
       try {
-        await agentClient.reauthAgent({
-          deviceId: device.id,
-          hostSessionToken: token,
-          convexSiteUrl: CONVEX_URL,
-        });
+        const claimed = await agentClient.ownerClaimDevice(device.id);
+        if (!claimed.ok) {
+          await agentClient.reauthAgent({
+            deviceId: device.id,
+            hostSessionToken: token,
+            convexSiteUrl: CONVEX_URL,
+          });
+        }
       } catch {
         // Best-effort. Errors here are not user-actionable — the
         // user-visible failure path is the connect catch below,
@@ -1112,11 +1146,13 @@ export default function DashboardPage() {
         setConnectError("Connection failed. Trying automatic re-auth recovery…");
         setConnectDiagnostics(firstDiagnostics);
         try {
-          const recovered = await agentClient.reauthAgent({
-            deviceId: device.id,
-            hostSessionToken: token,
-            convexSiteUrl: CONVEX_URL,
-          });
+          const recovered = device.needsAuth
+            ? await agentClient.ownerClaimDevice(device.id)
+            : await agentClient.reauthAgent({
+                deviceId: device.id,
+                hostSessionToken: token,
+                convexSiteUrl: CONVEX_URL,
+              });
           if (recovered.ok) {
             await agentClient.connect(device.host, device.port, token, device.id, { tunnelUrls });
             setConnectError(null);
@@ -1532,26 +1568,26 @@ export default function DashboardPage() {
                   const isSelected = connectedDevice?.id === d.id;
                   const isConnecting = isSelected && connState === "connecting";
                   const hasError = isSelected && connState === "error";
-                  const needsAuth = !!d.needsAuth && !d.isGuest;
                   const isReauthing = reauthBusy === d.id;
-                  const reachableNow = d.workspaceLive || d.probeState === "ok";
-                  const authExpired = d.probeState === "auth-expired" || needsAuth;
+                  const lifecycle = deriveDeviceLifecycleState(d);
+                  const needsRecovery = lifecycle === "bootstrap" || lifecycle === "yaver-auth-expired";
+                  const readyToConnect = lifecycle === "ready-to-connect" || lifecycle === "connected";
                   const dotClass = hasError
                     ? "bg-red-400"
                     : isConnecting || isReauthing
                       ? "bg-amber-400 animate-pulse"
-                      : authExpired
+                      : lifecycle === "bootstrap"
+                        ? "bg-violet-400"
+                        : lifecycle === "yaver-auth-expired"
                         ? "bg-amber-400"
-                        : reachableNow
+                        : readyToConnect
                           ? "bg-cyan-400"
-                          : d.online
-                            ? "bg-emerald-400"
                           : "bg-surface-600";
                   const wrapClass = hasError
                     ? "border border-red-500/30 bg-red-500/5"
                     : isConnecting
                       ? "border border-amber-500/30 bg-amber-500/5"
-                      : authExpired
+                      : needsRecovery
                         ? "border border-amber-500/30 bg-amber-500/5"
                         : "border border-transparent hover:bg-surface-800/80";
                   const showReauthMsg = reauthMsg && reauthMsg.deviceId === d.id;
@@ -1572,14 +1608,18 @@ export default function DashboardPage() {
                             <span className="shrink-0 rounded bg-sky-500/15 px-1 text-[9px] uppercase text-sky-300">shared</span>
                           ) : null}
                         </button>
-                        {authExpired ? (
+                        {needsRecovery ? (
                           <button
                             onClick={() => reauthDevice(d)}
                             disabled={isReauthing}
-                            title="Agent's session token expired — click to re-auth via /auth/recover"
-                            className="mr-1 shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"
+                            title={lifecycle === "bootstrap" ? "Device is in bootstrap mode — reclaim it from the browser" : "Agent session expired — re-auth via the browser"}
+                            className={`mr-1 shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide disabled:opacity-40 ${
+                              lifecycle === "bootstrap"
+                                ? "bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+                                : "bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+                            }`}
                           >
-                            {isReauthing ? "…" : "Re-auth"}
+                            {isReauthing ? "…" : lifecycle === "bootstrap" ? "Reclaim" : "Re-auth"}
                           </button>
                         ) : null}
                       </div>

@@ -237,6 +237,31 @@ function deviceReachabilitySummary(
   return "No recent agent signal";
 }
 
+type DeviceLifecycleState =
+  | "offline"
+  | "bootstrap"
+  | "yaver-auth-expired"
+  | "ready-to-connect"
+  | "connected";
+
+function deriveDeviceLifecycleState(
+  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent">,
+): DeviceLifecycleState {
+  if (device.workspaceLive) return "connected";
+  if (device.needsAuth) return "bootstrap";
+  if (device.probeState === "auth-expired") return "yaver-auth-expired";
+  if (
+    device.probeState === "ok" ||
+    device.peerState === "online" ||
+    device.peerState === "stale" ||
+    device.online ||
+    hasRecentLiveSignal(device)
+  ) {
+    return "ready-to-connect";
+  }
+  return "offline";
+}
+
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
@@ -1493,38 +1518,37 @@ export default function DevicesView({
                           {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
                         </span>
                       ) : null}
-                      <span
-                        className={`inline-flex h-2 w-2 rounded-full ${
-                          device.workspaceLive
+                      {(() => {
+                        const lifecycle = deriveDeviceLifecycleState(device);
+                        const dotClass =
+                          lifecycle === "connected"
                             ? "bg-emerald-300"
-                            : device.probeState === "ok"
-                              ? "bg-cyan-400"
-                              : device.probeState === "auth-expired"
+                            : lifecycle === "bootstrap"
+                              ? "bg-violet-400"
+                              : lifecycle === "yaver-auth-expired"
                                 ? "bg-amber-400"
-                            : device.peerState === "online"
-                            ? "bg-cyan-400"
-                            : device.online
-                              ? "bg-green-400"
-                              : device.peerState === "stale"
-                                ? "bg-amber-400"
-                                : "bg-surface-600"
-                        }`}
-                      />
-                      <span className="text-xs text-slate-500 dark:text-surface-500">
-                        {device.workspaceLive
-                          ? "Workspace Live"
-                          : device.probeState === "ok"
-                            ? "Probed"
-                            : device.probeState === "auth-expired"
-                              ? "Needs Auth"
-                          : device.peerState === "online"
-                          ? "Bus Live"
-                          : device.online
-                            ? "Online"
-                            : device.peerState === "stale"
-                              ? "Bus Stale"
-                              : "Offline"}
-                      </span>
+                                : lifecycle === "ready-to-connect"
+                                  ? "bg-cyan-400"
+                                  : "bg-surface-600";
+                        const label =
+                          lifecycle === "connected"
+                            ? "Connected"
+                            : lifecycle === "bootstrap"
+                              ? "Bootstrap"
+                              : lifecycle === "yaver-auth-expired"
+                                ? "Yaver Auth Expired"
+                                : lifecycle === "ready-to-connect"
+                                  ? "Ready to Connect"
+                                  : "Offline";
+                        return (
+                          <>
+                            <span className={`inline-flex h-2 w-2 rounded-full ${dotClass}`} />
+                            <span className="text-xs text-slate-500 dark:text-surface-500">
+                              {label}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
                     <div className="mt-1"><TransportBadge device={device} /></div>
                     <p className="text-sm text-slate-600 dark:text-surface-500">
@@ -2653,8 +2677,8 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
         </div>
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>
-          {row("Status", device.workspaceLive ? "Workspace Live" : device.probeState === "ok" ? "Reachable" : device.online ? "Online" : "Offline")}
-          {row("Auth", device.needsAuth ? "Needs auth" : effectiveInfo?.authExpired === true || device.probeState === "auth-expired" ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
+          {row("Status", deriveDeviceLifecycleState(device).replace(/-/g, " "))}
+          {row("Auth", device.needsAuth ? "Bootstrap" : effectiveInfo?.authExpired === true || device.probeState === "auth-expired" ? "Expired" : device.workspaceLive ? "Authenticated workspace" : "Authenticated")}
           {row("Agent mode", typeof effectiveInfo?.mode === "string" ? effectiveInfo.mode : null)}
           {row("Live signal", device.lastTunnelEvent?.at ? `${device.lastTunnelEvent.online ? "relay-online" : "relay-offline"} (${formatLastSeen(new Date(device.lastTunnelEvent.at).toISOString())})` : null)}
           {row("Peer bus", device.peerState ? `${device.peerState}${device.peerLastSeen ? ` (${formatLastSeen(device.peerLastSeen)})` : ""}` : null)}
