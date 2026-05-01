@@ -16,7 +16,6 @@
 import React, { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useColors } from "../context/ThemeContext";
 import { useDevice, type Device, type PendingDeviceClaim } from "../context/DeviceContext";
 
@@ -54,7 +53,6 @@ function pickAttention(
 export function DeviceAttentionBanner() {
   const c = useColors();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const {
     devices,
     pendingClaims,
@@ -156,7 +154,6 @@ export function DeviceAttentionBanner() {
       style={[
         styles.container,
         {
-          paddingTop: insets.top > 0 ? insets.top + 8 : 12,
           backgroundColor: tone + "1a",
           borderBottomColor: tone + "55",
         },
@@ -198,6 +195,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 12,
+    paddingTop: 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
     gap: 10,
