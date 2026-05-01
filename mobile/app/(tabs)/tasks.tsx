@@ -726,7 +726,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, DeviceProbeState>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -2128,7 +2128,14 @@ export default function TasksScreen() {
                     >
                       <View style={s.devicePickerRow}>
                         <View style={{ flex: 1 }}>
-                          <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
+                          <View style={s.devicePickerNameRow}>
+                            <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
+                            {primaryDeviceId === d.id ? (
+                              <View style={[s.devicePickerPrimaryBadge, { borderColor: c.accent + "88", backgroundColor: c.accent + "22" }]}>
+                                <Text style={[s.devicePickerPrimaryText, { color: c.accent }]}>PRIMARY</Text>
+                              </View>
+                            ) : null}
+                          </View>
                           <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>
                             {d.os} · {d.host}
                             {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
@@ -3079,7 +3086,10 @@ const s = StyleSheet.create({
   // Device picker cards (multi-device selection)
   devicePickerCard: { width: "100%", borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 },
   devicePickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  devicePickerNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   devicePickerName: { fontSize: 16, fontWeight: "600" },
+  devicePickerPrimaryBadge: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 8, paddingVertical: 2 },
+  devicePickerPrimaryText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.6 },
   devicePickerMeta: { fontSize: 12, marginTop: 2 },
   devicePickerDot: { width: 10, height: 10, borderRadius: 5 },
 

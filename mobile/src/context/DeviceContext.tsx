@@ -1595,9 +1595,86 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     [token]
   );
 
+  const recoverBootstrapDevice = useCallback(async (device: Device): Promise<{ ok: boolean; targetUrl?: string; error?: string }> => {
+    if (!token || !user?.id) return { ok: false, error: "Not signed in" };
+
+    const port = device.port || 18080;
+    const directTargets = Array.from(new Set([
+      `http://${device.host}:${port}`,
+      ...(device.lanIps || []).filter(Boolean).map((ip) => `http://${ip}:${port}`),
+    ])).filter((url) => {
+      try {
+        const parsed = new URL(url);
+        return !!parsed.hostname;
+      } catch {
+        return false;
+      }
+    });
+    const relayTargets = quicClient.getRelayServers().map((relay) => ({
+      url: `${relay.httpUrl}/d/${device.id}`,
+      label: relay.id || relay.httpUrl,
+    }));
+    const targets = [
+      ...directTargets.map((url) => ({ url, label: url })),
+      ...relayTargets,
+    ];
+
+    let lastError = "bootstrap endpoint did not respond";
+    for (const target of targets) {
+      try {
+        const infoRes = await fetch(`${target.url}/info`, { signal: AbortSignal.timeout(3500) });
+        if (!infoRes.ok) {
+          lastError = `HTTP ${infoRes.status} from ${target.label}`;
+          continue;
+        }
+        const info = await infoRes.json().catch(() => ({} as any));
+        const inBootstrap = info?.needsAuth === true || info?.mode === "bootstrap";
+        if (!inBootstrap) {
+          lastError = `${target.label} is up but not in bootstrap`;
+          continue;
+        }
+        const pairCode = info?.bootstrapPasskey || info?.passkey;
+        let pairRes: { ok: boolean; host?: string; error?: string };
+        if (device.publicKey) {
+          pairRes = await submitEncryptedPair(target.url, token, device.publicKey, pairCode);
+        } else if (pairCode) {
+          pairRes = await submitPair({
+            code: pairCode,
+            targetUrl: target.url,
+            token,
+            userId: user.id,
+          });
+        } else {
+          lastError = `${target.label} is in bootstrap but did not expose a passkey`;
+          continue;
+        }
+        if (pairRes.ok) {
+          quicClient.agentAuthExpired = false;
+          setAgentAuthExpired(false);
+          clearDeviceUnreachable(device.id);
+          appLog("info", `Recovered bootstrap-mode Yaver auth for ${device.name} via ${target.label}`);
+          setTimeout(() => refreshDevices(), 1200);
+          return { ok: true, targetUrl: pairRes.host || target.url };
+        }
+        lastError = pairRes.error || `pair submit failed for ${target.label}`;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+      }
+    }
+    return { ok: false, error: lastError };
+  }, [token, user?.id, refreshDevices, clearDeviceUnreachable]);
+
   const recoverDeviceAuth = useCallback(async (device: Device): Promise<RecoveryResult | null> => {
     if (!token || !user?.id) {
       return { ok: false, error: "Not signed in" };
+    }
+
+    const bootstrapRecovery = await recoverBootstrapDevice(device);
+    if (bootstrapRecovery.ok) {
+      return {
+        ok: true,
+        targetUrl: bootstrapRecovery.targetUrl,
+      };
     }
 
     if (device.needsAuth === true) {
@@ -1681,7 +1758,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     appLog("info", `Recovered expired agent session for ${device.name} from mobile`);
     setTimeout(() => refreshDevices(), 2000);
     return { ...recovery, ok: true };
-  }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable]);
+  }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable, recoverBootstrapDevice]);
 
   // Auth-expired recovery: the agent is still reachable, but its own
   // Convex session is stale. Use the PHONE'S valid bearer token to
