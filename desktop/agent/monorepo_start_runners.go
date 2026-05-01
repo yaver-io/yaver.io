@@ -214,49 +214,6 @@ func pickDefaultRunnerID(loc *runnerLocation) string {
 	return "claude"
 }
 
-// runnerAuthGuidance returns a one-line hint to display when the
-// chosen (location, runner) is reachable but not yet usable. Empty
-// string means "no guidance needed — proceed".
-//
-// The wizard intentionally does NOT spawn the auth flow inline:
-// running `claude /login` or the runner-auth browser dance from inside
-// stdin-driven code is fragile (terminal modes collide, the runner
-// process owns stdin). Instead we point the user at the canonical
-// `yaver runner-auth setup` command which already handles install +
-// vault + MCP + Codex headless login, and whose remote-target form
-// (--target <id>) maps 1:1 to picking a remote location here.
-func runnerAuthGuidance(loc *runnerLocation, runner string) string {
-	if loc == nil {
-		return ""
-	}
-	var row *runnerAuthStatusRow
-	for i := range loc.Rows {
-		if loc.Rows[i].ID == runner {
-			row = &loc.Rows[i]
-			break
-		}
-	}
-	if row == nil {
-		return ""
-	}
-	switch {
-	case strings.EqualFold(row.Detail, "unreachable"):
-		return fmt.Sprintf("%s on %s is unreachable — make sure `yaver serve` is running there.",
-			runner, loc.Label)
-	case !row.Installed:
-		if loc.ID == "this" {
-			return fmt.Sprintf("%s isn't installed on this machine. Run `yaver install %s` to install + sign in.", runner, runner)
-		}
-		return fmt.Sprintf("%s isn't installed on %s. Run `yaver runner-auth setup %s --target %s`.", runner, loc.Label, runner, loc.ID)
-	case !row.AuthConfigured || !row.Ready:
-		if loc.ID == "this" {
-			return fmt.Sprintf("%s is installed but not signed in. Run `yaver runner-auth setup %s` to authenticate.", runner, runner)
-		}
-		return fmt.Sprintf("%s on %s is installed but not signed in. Run `yaver runner-auth setup %s --target %s`.", runner, loc.Label, runner, loc.ID)
-	}
-	return ""
-}
-
 // runnerDisplayName returns the human label used in the matrix for a
 // runner ID. Kept tight — the matrix already shows the ID column;
 // this is just a fallback when `Name` isn't populated.

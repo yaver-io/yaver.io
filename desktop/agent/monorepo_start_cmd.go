@@ -75,14 +75,9 @@ func runMonorepoStart(args []string) {
 	chosenLoc := runnerLocationByID(locations, locID)
 	runnerDflt := pickDefaultRunnerID(chosenLoc)
 	runner := promptChoice(r, "Runner", []string{"claude", "codex", "opencode"}, runnerDflt)
-	authHint := runnerAuthGuidance(chosenLoc, runner)
-	if authHint != "" {
-		fmt.Println("  ! " + authHint)
-		cont := promptChoice(r, "Continue anyway", []string{"yes", "no"}, "yes")
-		if cont == "no" {
-			fmt.Println("  Aborted — sign in first, then re-run `yaver monorepo start`.")
-			os.Exit(0)
-		}
+	if !runMonorepoAuthInteractive(r, chosenLoc, runner) {
+		fmt.Println("  Aborted — re-run `yaver monorepo start` after you've authenticated.")
+		os.Exit(0)
 	}
 	fmt.Println()
 
