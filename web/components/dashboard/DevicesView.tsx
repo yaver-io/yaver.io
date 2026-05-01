@@ -1584,7 +1584,7 @@ export default function DevicesView({
                               <button
                                 onClick={() => setUpdateModalDevice(device)}
                                 title={`Update v${cur} → v${latestAgentVersion} on ${device.name}`}
-                                className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                                className="mx-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
                               >
                                 update → v{latestAgentVersion}
                               </button>
@@ -1623,10 +1623,18 @@ export default function DevicesView({
                     {!device.isGuest ? (
                       <button
                         onClick={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium leading-none text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
                         title="Recover a wedged agent — works even when the relay tunnel is broken"
                       >
-                        🩹 Rescue
+                        {/* svg matches PRIMARY/Details size so this button stays the same height as its siblings;
+                           previous emoji 🩹 rendered at native emoji line-height which made the row taller */}
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M9 12 3 6l3-3 6 6" />
+                          <path d="m12 9 3 3-6 6-3-3" />
+                          <path d="m14 6 4 4" />
+                          <path d="M21 12c-2 2-3.5 2-5 0" />
+                        </svg>
+                        Rescue
                       </button>
                     ) : null}
                     <button
