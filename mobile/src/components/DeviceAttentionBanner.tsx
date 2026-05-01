@@ -102,7 +102,20 @@ export function DeviceAttentionBanner() {
   let title = "";
   let subtitle = "";
   let actionLabel = "Open";
-  let tone = "#8b5cf6"; // bootstrap purple
+  // Theme-aware palette so the banner matches the rest of the app in
+  // both dark + light. The previous hardcoded `#8b5cf6 + alpha hex`
+  // style produced a faint, washed purple on dark UIs that didn't fit
+  // the surrounding bgCard tone. The DarkColors / LightColors tokens
+  // already define a coherent warn family (bg / fg / border) we can
+  // lean on for every CTA state — pending / bootstrap / auth-expired
+  // are all "needs your attention" of the same severity, so they
+  // share the same surface and only differ in the subtitle copy and
+  // the action button label.
+  let bg = c.warnBg;
+  let border = c.warnBorder;
+  let fg = c.warn;
+  let buttonBg = c.warn;
+  let buttonFg = c.textInverse;
   let onAction: () => void | Promise<void> = navigateToDevices;
 
   if (item.kind === "pending") {
@@ -111,7 +124,6 @@ export function DeviceAttentionBanner() {
       : `${item.count} new devices waiting to be claimed`;
     subtitle = `${item.first.name || item.first.deviceId.slice(0, 8)} joined your relay. Tap Claim to add it.`;
     actionLabel = "Claim";
-    tone = "#f59e0b";
     onAction = async () => {
       if (busy) return;
       setBusy(true); setErrorText(null);
@@ -129,7 +141,6 @@ export function DeviceAttentionBanner() {
     title = `${item.device.name} needs to be reclaimed`;
     subtitle = `Bootstrap mode — tap to restore the Yaver session from this phone.`;
     actionLabel = "Reclaim";
-    tone = "#8b5cf6";
     onAction = async () => {
       if (busy) return;
       setBusy(true); setErrorText(null);
@@ -152,7 +163,6 @@ export function DeviceAttentionBanner() {
     title = `${item.device.name} session expired`;
     subtitle = `Tap to refresh the agent's Yaver session.`;
     actionLabel = "Re-auth";
-    tone = "#f59e0b";
     onAction = async () => {
       if (busy) return;
       setBusy(true); setErrorText(null);
@@ -176,8 +186,13 @@ export function DeviceAttentionBanner() {
       style={[
         styles.container,
         {
-          backgroundColor: tone + "1a",
-          borderBottomColor: tone + "55",
+          backgroundColor: bg,
+          borderBottomColor: border,
+          // 3px left accent stripe — visually anchors the banner as an
+          // alert without needing an icon. Same stripe color as the
+          // primary text so the eye groups them together.
+          borderLeftColor: fg,
+          borderLeftWidth: 3,
         },
       ]}
     >
@@ -188,24 +203,24 @@ export function DeviceAttentionBanner() {
         accessibilityRole="button"
         accessibilityLabel={`${title}. ${subtitle}`}
       >
-        <Text style={[styles.title, { color: tone }]} numberOfLines={1}>
+        <Text style={[styles.title, { color: fg }]} numberOfLines={1}>
           {title}
         </Text>
-        <Text style={[styles.subtitle, { color: c.textMuted }]} numberOfLines={2}>
+        <Text style={[styles.subtitle, { color: c.textSecondary }]} numberOfLines={2}>
           {errorText || subtitle}
         </Text>
       </Pressable>
       <Pressable
-        style={[styles.actionButton, { backgroundColor: tone }, busy && styles.actionButtonBusy]}
+        style={[styles.actionButton, { backgroundColor: buttonBg }, busy && styles.actionButtonBusy]}
         onPress={() => { void onAction(); }}
         disabled={busy}
         accessibilityRole="button"
         accessibilityLabel={actionLabel}
       >
         {busy ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={buttonFg} />
         ) : (
-          <Text style={styles.actionText}>{actionLabel}</Text>
+          <Text style={[styles.actionText, { color: buttonFg }]}>{actionLabel}</Text>
         )}
       </Pressable>
     </View>
@@ -234,5 +249,5 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   actionButtonBusy: { opacity: 0.6 },
-  actionText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  actionText: { fontSize: 12, fontWeight: "700" },
 });
