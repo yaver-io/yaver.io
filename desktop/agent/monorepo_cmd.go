@@ -16,6 +16,25 @@ import (
 )
 
 func runMonorepo(args []string) {
+	// Subcommand dispatch — `yaver monorepo start` runs the
+	// project-creation wizard (mirrors the mobile sandbox flow at
+	// mobile/app/phone-projects.tsx). Bare `yaver monorepo` keeps
+	// the existing detection / framework-listing behaviour for
+	// backwards compatibility.
+	if len(args) >= 1 {
+		switch args[0] {
+		case "start":
+			runMonorepoStart(args[1:])
+			return
+		case "help", "--help", "-h":
+			fmt.Println("Usage:")
+			fmt.Println("  yaver monorepo                    Detect & list projects in cwd")
+			fmt.Println("  yaver monorepo [--json] [dir]     Same, but for a specific dir")
+			fmt.Println("  yaver monorepo start              Interactive wizard — create a new monorepo")
+			return
+		}
+	}
+
 	fs := flag.NewFlagSet("monorepo", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "Emit raw JSON instead of a table")
 	maxDepth := fs.Int("max-depth", 0, "Maximum recursion depth (default 6)")

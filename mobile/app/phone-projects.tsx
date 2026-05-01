@@ -60,6 +60,7 @@ type SurveyAnswers = {
   auth?: "none" | "apple" | "google" | "email";
   persistence?: "persist" | "ephemeral";
   theme?: "minimal" | "playful" | "professional";
+  palette?: "slate" | "zinc" | "blue" | "emerald" | "rose" | "amber" | "violet" | "neutral";
 };
 
 const SURVEY_QUESTIONS: Array<{
@@ -113,6 +114,20 @@ const SURVEY_QUESTIONS: Array<{
       { value: "professional", label: "Professional & dark", sub: "Pro tool" },
     ],
   },
+  {
+    key: "palette",
+    title: "Color palette?",
+    options: [
+      { value: "slate", label: "Slate", sub: "Cool grey-blue" },
+      { value: "zinc", label: "Zinc", sub: "Neutral grey" },
+      { value: "blue", label: "Blue", sub: "Classic tech" },
+      { value: "emerald", label: "Emerald", sub: "Fresh + green" },
+      { value: "rose", label: "Rose", sub: "Warm + pink" },
+      { value: "amber", label: "Amber", sub: "Yellow + orange" },
+      { value: "violet", label: "Violet", sub: "Purple + bold" },
+      { value: "neutral", label: "Neutral", sub: "Black & white" },
+    ],
+  },
 ];
 
 function buildSurveyParagraph(answers: SurveyAnswers): string {
@@ -134,6 +149,9 @@ function buildSurveyParagraph(answers: SurveyAnswers): string {
   }
   if (answers.theme) {
     lines.push(`Style: ${answers.theme}`);
+  }
+  if (answers.palette) {
+    lines.push(`Palette: ${answers.palette}`);
   }
   return lines.length > 0 ? `[Survey]\n${lines.join("\n")}\n` : "";
 }
@@ -213,6 +231,11 @@ export default function PhoneProjectsScreen() {
   // user can paste (CDN, gist, GitHub raw, etc.) — gallery upload is
   // a follow-up that needs an upload pipeline + storage.
   const [logoUrl, setLogoUrl] = useState("");
+  // Optional primary-color hex override. Pairs with the survey's
+  // palette pick — palette is a named choice, hex is a free-form
+  // override for users who already know the exact brand colour.
+  // Loose validation only (CSS hex shape); blank means "no override".
+  const [primaryHex, setPrimaryHex] = useState("");
   // Optional refinement loop: after the user types a description,
   // they can tap "Refine with AI" to have the LLM check whether
   // 1-3 follow-up questions would meaningfully shape the schema.
@@ -395,7 +418,10 @@ export default function PhoneProjectsScreen() {
     // intent in one blob. Logo URL (when set) joins as a separate
     // [Brand] line so the LLM can fetch and reference it.
     const surveyParagraph = surveySkipped ? "" : buildSurveyParagraph(surveyAnswers);
-    const brandParagraph = logoUrl.trim() ? `[Brand]\nLogo URL: ${logoUrl.trim()}\n` : "";
+    const brandLines: string[] = [];
+    if (logoUrl.trim()) brandLines.push(`Logo URL: ${logoUrl.trim()}`);
+    if (primaryHex.trim()) brandLines.push(`Primary color: ${primaryHex.trim()}`);
+    const brandParagraph = brandLines.length > 0 ? `[Brand]\n${brandLines.join("\n")}\n` : "";
     // Clarifying-question answers (if the user used the Refine pass
     // and typed answers) get folded in as a [Clarifications] block
     // so the LLM sees them alongside the survey + prose.
@@ -1161,6 +1187,17 @@ export default function PhoneProjectsScreen() {
                     Paste a public URL or tap 📷 to pick from your photos.
                   </Text>
                 )}
+                <Text style={[styles.label, { color: c.textMuted }]}>Primary color (optional)</Text>
+                <TextInput
+                  value={primaryHex}
+                  onChangeText={setPrimaryHex}
+                  placeholder="#0066ff — overrides the palette pick"
+                  placeholderTextColor={c.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  style={[styles.input, { color: c.textPrimary, borderColor: c.border, marginBottom: 12 }]}
+                />
                 <Text style={[styles.label, { color: c.textMuted }]}>Describe the app *</Text>
                 <TextInput
                   value={prompt}
