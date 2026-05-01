@@ -6110,7 +6110,7 @@ func runDevices(args []string) {
 		}
 		alias := d.Alias
 		if strings.TrimSpace(alias) == "" {
-			alias = "-"
+			alias = "not set"
 		}
 		if len(alias) > 16 {
 			alias = alias[:15] + "…"
@@ -6181,9 +6181,9 @@ func resolveDevice(target string, devices []DeviceInfo) (*DeviceInfo, error) {
 // names. Per-user uniqueness is enforced server-side: the same alias
 // cannot point at two of the caller's devices.
 //
-//   yaver alias                       — list current aliases
-//   yaver alias set <id|name> <alias> — assign or rename
-//   yaver alias rm  <id|name|alias>   — clear
+//	yaver alias                       — list current aliases
+//	yaver alias set <id|name> <alias> — assign or rename
+//	yaver alias rm  <id|name|alias>   — clear
 func runAlias(args []string) {
 	cfg := mustLoadAuthConfig()
 
@@ -6268,16 +6268,16 @@ func runAlias(args []string) {
 // prefix > name) and execs the system `ssh` (OpenSSH) binary against
 // an IP it learned from one of three sources, in priority order:
 //
-//   1. `tailscale ip <hostname-or-alias>` — when Tailscale is reachable
-//      and knows about the host. This handles "yaver test ephemeral"
-//      style boxes that join the tailnet but never register a public
-//      endpoint with Convex.
-//   2. The device row from Convex — publicEndpoints first (clean DNS
-//      via Cloudflare Tunnel etc.), then localIps that look like
-//      Tailscale (100.64.0.0/10), then the first non-loopback localIp,
-//      then quicHost.
-//   3. The literal target as the SSH host — last-resort so the user
-//      can still type `yaver ssh user@host` for an unregistered box.
+//  1. `tailscale ip <hostname-or-alias>` — when Tailscale is reachable
+//     and knows about the host. This handles "yaver test ephemeral"
+//     style boxes that join the tailnet but never register a public
+//     endpoint with Convex.
+//  2. The device row from Convex — publicEndpoints first (clean DNS
+//     via Cloudflare Tunnel etc.), then localIps that look like
+//     Tailscale (100.64.0.0/10), then the first non-loopback localIp,
+//     then quicHost.
+//  3. The literal target as the SSH host — last-resort so the user
+//     can still type `yaver ssh user@host` for an unregistered box.
 //
 // Any extra args after the target are passed through to ssh untouched
 // (so `yaver ssh prod-mac -L 5432:localhost:5432` works). Named
@@ -6341,29 +6341,16 @@ func resolveSSHHost(target string) string {
 		return ""
 	}
 
+	var tsPath string
+	if path, err := osexec.LookPath("tailscale"); err == nil {
+		tsPath = path
+	}
+
 	// 1. Tailscale lookup is cheapest and handles ephemeral boxes that
 	//    never registered with Convex. `tailscale ip` accepts the
 	//    Tailscale-side hostname and returns one IP per line.
-	if tsPath, err := osexec.LookPath("tailscale"); err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		out, err := osexec.CommandContext(ctx, tsPath, "ip", target).Output()
-		if err == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				ip := strings.TrimSpace(line)
-				// Prefer IPv4 from the tailnet (100.64/10).
-				if strings.Contains(ip, ".") && strings.HasPrefix(ip, "100.") {
-					return ip
-				}
-			}
-			// Fallback: first non-empty line.
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				ip := strings.TrimSpace(line)
-				if ip != "" {
-					return ip
-				}
-			}
-		}
+	if ip := lookupTailscaleIP(tsPath, target); ip != "" {
+		return ip
 	}
 
 	// 2. Ask Convex. If we're not signed in we silently skip — the
@@ -6380,6 +6367,9 @@ func resolveSSHHost(target string) string {
 	if err != nil {
 		return ""
 	}
+	if ip := lookupTailscaleIP(tsPath, dev.Alias, dev.Name, strings.TrimSuffix(dev.Name, ".local")); ip != "" {
+		return ip
+	}
 	if len(dev.PublicEndpoints) > 0 {
 		// Strip scheme if present — ssh wants a host, not a URL.
 		ep := dev.PublicEndpoints[0]
@@ -6394,18 +6384,81 @@ func resolveSSHHost(target string) string {
 		}
 	}
 	for _, ip := range dev.LocalIps {
-		if ip != "" && !strings.HasPrefix(ip, "127.") && ip != "::1" {
+		if ip != "" && !strings.HasPrefix(ip, "127.") && ip != "::1" && !isLikelyDockerBridgeIP(ip) {
 			return ip
 		}
 	}
-	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" {
+	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" && !isLikelyDockerBridgeIP(dev.QuicHost) {
 		return dev.QuicHost
 	}
 	return ""
 }
 
-// SetDeviceAlias calls POST /devices/alias to set or clear an alias
-// for one of the caller's devices. Pass alias="" to clear.
+func lookupTailscaleIP(tsPath string, names ...string) string {
+	if strings.TrimSpace(tsPath) == "" {
+		return ""
+	}
+	seen := map[string]struct{}{}
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		out, err := osexec.CommandContext(ctx, tsPath, "ip", name).Output()
+		cancel()
+		if err != nil {
+			continue
+		}
+		if ip := firstPreferredTailscaleIP(string(out)); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func firstPreferredTailscaleIP(out string) string {
+	var fallback string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		ip := strings.TrimSpace(line)
+		if ip == "" {
+			continue
+		}
+		if strings.Contains(ip, ".") && strings.HasPrefix(ip, "100.") {
+			return ip
+		}
+		if fallback == "" {
+			fallback = ip
+		}
+	}
+	return fallback
+}
+
+func isLikelyDockerBridgeIP(host string) bool {
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	// Common Docker bridge gateways are 172.17.0.1, 172.18.0.1, etc.
+	// These are valid inside the container namespace but almost never a
+	// useful SSH target from the caller's machine.
+	return ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 && ip4[2] == 0 && ip4[3] == 1
+}
+
+// SetDeviceAlias calls POST /devices/alias to set or clear the
+// per-user alias for one of the caller's Yaver devices. Convex stores
+// the alias on the device row so `yaver devices`, `yaver ssh <alias>`,
+// web, and mobile all resolve the same short name. Pass alias="" to
+// clear it.
 func SetDeviceAlias(baseURL, token, deviceId, alias string) error {
 	payload, _ := json.Marshal(map[string]string{
 		"deviceId": deviceId,
@@ -6810,8 +6863,10 @@ func mustLoadAuthConfig() *Config {
 }
 
 type DeviceInfo struct {
-	DeviceID                  string   `json:"deviceId"`
-	Name                      string   `json:"name"`
+	DeviceID string `json:"deviceId"`
+	Name     string `json:"name"`
+	// Alias is the caller's optional short name for this Yaver device,
+	// stored in Convex and shared across CLI / web / mobile surfaces.
 	Alias                     string   `json:"alias,omitempty"`
 	Platform                  string   `json:"platform"`
 	QuicHost                  string   `json:"quicHost"`

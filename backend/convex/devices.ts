@@ -51,6 +51,13 @@ function deriveIsOnline(d: { isOnline: boolean; lastHeartbeat: number }): boolea
 type ListedDevice = {
   deviceId: string;
   name: string;
+  /**
+   * Optional per-user alias for this Yaver device. Set via
+   * `yaver alias set ...` or the dashboard/device UI; stored on the
+   * device row in Convex so CLI, web, and mobile all resolve the same
+   * short name.
+   */
+  alias?: string;
   platform: string;
   publicKey?: string;
   hardwareId?: string;
@@ -1159,13 +1166,16 @@ export const removeDevice = mutation({
 const ALIAS_PATTERN = /^[a-z0-9._-]{1,48}$/;
 
 /**
- * Set or clear the per-user alias for one of the caller's devices.
+ * Set or clear the per-user alias for one of the caller's Yaver devices.
  *
- * Pass alias: "" (or omit) to clear. Aliases are normalized to lower
- * case before storage and must be unique within a single user's set
- * of devices — re-using an alias for a different device of the same
- * user is rejected (callers should clear the old one first or pass
- * the same deviceId to rename in place).
+ * Pass alias: "" (or omit) to clear. This writes the normalized alias
+ * onto the device's Convex row so every surface that lists devices
+ * (`yaver devices`, `yaver ssh <alias>`, web, mobile) sees the same
+ * short name. Aliases are normalized to lower case before storage and
+ * must be unique within a single user's set of devices — re-using an
+ * alias for a different device of the same user is rejected (callers
+ * should clear the old one first or pass the same deviceId to rename
+ * in place).
  *
  * Throws:
  *   "Unauthorized"        — session invalid or device not owned

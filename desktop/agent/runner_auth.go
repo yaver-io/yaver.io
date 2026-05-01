@@ -217,21 +217,27 @@ func detectCodexStatus() RunnerRuntimeStatus {
 			return status
 		}
 	}
-	switch {
-	case func() bool {
-		value, _ := hostSecretValue("OPENAI_API_KEY")
-		return value != ""
-	}():
+	if value, source := hostSecretValue("OPENAI_API_KEY"); value != "" {
 		status.AuthConfigured = true
-		_, source := hostSecretValue("OPENAI_API_KEY")
 		status.AuthSource = source
-	case runnerFileExists(codexAuthPath()):
-		status.AuthConfigured = true
-		status.AuthSource = codexAuthPath()
-	default:
-		status.Ready = false
-		status.Error = "Codex is installed but not authenticated. Set `OPENAI_API_KEY` or run the Codex login flow first."
+		return status
 	}
+	// Check every path the codex CLI is known to drop credentials at,
+	// across versions / install methods. The original detector only
+	// looked at ~/.codex/auth.json and missed installs that write
+	// credentials.json (newer device-auth) or store the OAuth payload
+	// under ~/.codex/sessions/. When the file is missing, the dashboard
+	// re-prompts for sign-in even though the user just completed the
+	// flow — that surfaced as the "Test → Sign In Codex" loop in #19.
+	for _, path := range codexAuthCandidatePaths() {
+		if runnerFileExists(path) {
+			status.AuthConfigured = true
+			status.AuthSource = path
+			return status
+		}
+	}
+	status.Ready = false
+	status.Error = "Codex is installed but no credentials were found. Set `OPENAI_API_KEY` or run `codex login --device-auth` (and complete it in the browser). Checked: " + strings.Join(codexAuthCandidatePaths(), ", ") + "."
 	return status
 }
 
@@ -269,6 +275,54 @@ func codexAuthPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".codex", "auth.json")
+}
+
+// codexAuthCandidatePaths returns every plausible location the codex
+// CLI may drop credentials at, in priority order. Different versions
+// of the codex CLI use different file names — older cuts wrote
+// `auth.json`, the device-auth flow we shell out to writes
+// `credentials.json`, and the OAuth-session variant stashes a
+// directory of session JSON under `sessions/`. We treat any of them
+// existing as "authenticated" so the readiness probe stops re-asking
+// the user to sign in after they've already completed the flow.
+//
+// Honors CODEX_HOME, then $HOME/.codex/* and $HOME/.openai/codex/*
+// (the latter is what the OpenAI CLI defaults to when codex is
+// installed as part of the unified `openai` Python package).
+func codexAuthCandidatePaths() []string {
+	out := []string{}
+	add := func(parent string) {
+		if parent == "" {
+			return
+		}
+		out = append(out,
+			filepath.Join(parent, "auth.json"),
+			filepath.Join(parent, "credentials.json"),
+			filepath.Join(parent, "session.json"),
+			filepath.Join(parent, "sessions"),
+		)
+	}
+	if dir := strings.TrimSpace(os.Getenv("CODEX_HOME")); dir != "" {
+		add(dir)
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		add(filepath.Join(home, ".codex"))
+		add(filepath.Join(home, ".openai", "codex"))
+		add(filepath.Join(home, ".config", "codex"))
+	}
+	// De-dup while preserving order so the AuthSource we report is the
+	// first match the user is most likely to recognise.
+	seen := map[string]bool{}
+	dedup := make([]string, 0, len(out))
+	for _, p := range out {
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		dedup = append(dedup, p)
+	}
+	return dedup
 }
 
 func detectOpenCodeStatus(workDir string) RunnerRuntimeStatus {

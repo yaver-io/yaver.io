@@ -1356,6 +1356,20 @@ export default function DashboardPage() {
     const targetRunner = runners.find((r) => r.id === (activeTask?.runnerId || selectedRunner)) || runners.find((r) => r.id === selectedRunner) || null;
     const authIssue = runnerAuthIssue(targetRunner);
     if (authIssue) {
+      // Don't drop the user's input on the floor. Surface the reason
+      // both as an inline assistant-style notice (so the chat doesn't
+      // appear to swallow the prompt) and as the existing connect-error
+      // banner — the user typed "hello" once and saw nothing happen,
+      // which read as "the chat is broken".
+      setChatMsgs((prev) => [
+        ...prev,
+        { role: "user", text },
+        {
+          role: "assistant",
+          text: `⚠ ${runnerLabel(targetRunner?.id || "")} needs sign-in on this device before it can answer. Opening the sign-in dialog…`,
+        },
+      ]);
+      setConnectError(authIssue);
       if (targetRunner && (targetRunner.id === "claude" || targetRunner.id === "codex")) {
         setChatRunnerAuthModal(targetRunner.id);
       }

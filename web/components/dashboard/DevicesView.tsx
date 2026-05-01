@@ -555,7 +555,24 @@ function RunnerChipWithTest({
         <button
           onClick={runTest}
           disabled={local.kind === "running"}
-          className="rounded-md border border-surface-700 bg-surface-950/60 px-1.5 py-0.5 text-[10px] font-semibold text-surface-300 hover:border-surface-600 hover:text-surface-100 disabled:opacity-60"
+          // Tint matches the last result so the eye lands on the
+          // runner that needs attention. Default neutral hid failures
+          // when the chip itself flipped red. The runner-specific
+          // accent (codex=sky, claude=violet) on idle adds enough
+          // visual identity to tell the chips apart in a row.
+          className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
+            local.kind === "ok"
+              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+              : local.kind === "fail" || local.kind === "error"
+                ? "border-red-400/60 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                : local.kind === "running"
+                  ? "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                  : state.id === "codex"
+                    ? "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400/60 hover:text-sky-100"
+                    : state.id === "claude"
+                      ? "border-violet-500/30 bg-violet-500/10 text-violet-200 hover:border-violet-400/60 hover:text-violet-100"
+                      : "border-surface-700 bg-surface-950/60 text-surface-300 hover:border-surface-600 hover:text-surface-100"
+          }`}
           title={
             isLocalLLM
               ? `Probe local ${state.label} daemon for pass/fail`
