@@ -295,20 +295,34 @@ export interface DeviceDetailsModalProps {
 
 function OwnerClaimAuthRow({ device }: { device: Device }) {
   const c = useColors();
-  const { refreshDevices } = useDevice();
+  const { recoverDeviceAuth, refreshDevices } = useDevice();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // Routes through the smart dispatcher in DeviceContext, NOT the
+  // raw quicClient.ownerClaimDevice. The previous implementation hit
+  // owner-claim directly, which is only registered while the agent
+  // is in bootstrap mode — once the agent transitions to
+  // auth-expired (its token went stale, it kept the row, it just
+  // can't talk to Convex), the relay returns 404 for the owner-claim
+  // path and the user sees "✗ 404 on relay public-free" against an
+  // agent that's actually fine. recoverDeviceAuth probes /info first
+  // to figure out which recovery surface is live (owner-claim vs
+  // /auth/recover vs device-code OAuth) and routes accordingly.
   const onPress = async () => {
     setBusy(true);
     setMsg(null);
     try {
-      const res = await quicClient.ownerClaimDevice(device.id);
-      if (res.ok) {
-        setMsg(`✓ claimed via ${res.via}${res.host ? ` (${res.host})` : ""}`);
+      const res = await recoverDeviceAuth(device);
+      if (res && (res as any).ok !== false) {
+        const where = (res as any).targetUrl
+          ? ` (${(res as any).targetUrl})`
+          : "";
+        setMsg(`✓ recovered${where}`);
         setTimeout(() => { refreshDevices().catch(() => {}); }, 1000);
       } else {
-        setMsg(`✗ ${res.error}`);
+        const err = (res as any)?.error || "recovery failed";
+        setMsg(`✗ ${err}`);
       }
     } catch (e: any) {
       setMsg(`✗ ${e?.message ?? String(e)}`);

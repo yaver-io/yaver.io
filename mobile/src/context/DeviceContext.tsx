@@ -2034,6 +2034,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // the token back immediately. This is the critical "remote box
   // rebooted, phone must recover it without SSH" path.
   const recoveringAuthRef = useRef<Set<string>>(new Set());
+  // Set of device IDs we've already nagged about Yaver auth this
+  // session. Cleared on logout / app restart. Prevents the auto-
+  // guide Alert from re-firing on every 30s heartbeat poll.
+  const guideShownRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!token || !user?.id || !activeDevice || !agentAuthExpired) return;
     if (recoveringAuthRef.current.has(activeDevice.id)) return;
@@ -2061,6 +2065,37 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       appLog("warn", `Auth recovery failed for ${activeDevice.name}: ${msg}`);
       if (!cancelled) {
         setLastError(`Auth recovery failed for ${activeDevice.name}: ${msg}. Sign in again from Settings or pick another device.`);
+        // Auto-guide the user to the per-device Recovery UI in Device
+        // Details. The auto-recovery loop above tried silently; if it
+        // failed, the user needs the in-Modal "Recover Yaver Auth"
+        // button (which uses the smart dispatcher and surfaces the
+        // detailed error). Only prompt once per device per session
+        // — guideShownRef prevents Alert spam if the polling loop
+        // re-detects the same auth-expired state every 30s.
+        if (!guideShownRef.current.has(activeDevice.id)) {
+          guideShownRef.current.add(activeDevice.id);
+          const dev = activeDevice;
+          setTimeout(() => {
+            if (cancelled) return;
+            Alert.alert(
+              `${dev.name} needs Yaver auth`,
+              "The agent's session expired and the auto-recovery couldn't refresh it. Open the device details to run a manual recover, or dismiss to handle later.",
+              [
+                { text: "Later", style: "cancel" },
+                {
+                  text: "Open recovery",
+                  onPress: () => {
+                    router.push({
+                      pathname: "/(tabs)/devices",
+                      params: { openDetails: dev.id, focus: "recovery" },
+                    } as any);
+                  },
+                },
+              ],
+              { cancelable: true },
+            );
+          }, 800);
+        }
       }
     });
 

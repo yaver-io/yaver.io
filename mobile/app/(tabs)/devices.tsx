@@ -13,6 +13,7 @@ import * as Clipboard from "expo-clipboard";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Alert } from "react-native";
 import { TextInput } from "react-native";
+import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
@@ -208,6 +209,7 @@ function DeviceCard({
   onLongPress,
   onRecoverAuth,
   token,
+  forceDetailsOpen,
 }: {
   device: Device;
   isActive: boolean;
@@ -221,6 +223,12 @@ function DeviceCard({
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
   token: string | null;
+  // When true (set by DevicesScreen via openDetails query param —
+  // e.g. the "Open recovery" alert from DeviceContext fires
+  // router.push("/(tabs)/devices?openDetails=<deviceId>")), the
+  // matching card opens its DeviceDetailsModal automatically. Used
+  // for the auto-guide-to-recovery flow on the active device.
+  forceDetailsOpen?: boolean;
 }) {
   const c = useColors();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
@@ -230,6 +238,13 @@ function DeviceCard({
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [remoteAuthExpired, setRemoteAuthExpired] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  // When DevicesScreen receives the openDetails query param it sets
+  // forceDetailsOpen=true on the matching card. Honor it once on
+  // transition. Used by the auto-guide flow that fires when the
+  // active device hits auth-expired.
+  useEffect(() => {
+    if (forceDetailsOpen) setDetailsOpen(true);
+  }, [forceDetailsOpen]);
   // Seed needsAuth from Convex device record so the badge shows immediately
   // (without waiting for the /info poll to complete).
   const [needsAuth, setNeedsAuth] = useState<boolean>(device.needsAuth === true);
@@ -798,6 +813,24 @@ export default function DevicesScreen() {
   } = useDevice();
   const [pendingBusyId, setPendingBusyId] = useState<string | null>(null);
 
+  // Auto-open device details when navigated in with ?openDetails=<id>.
+  // DeviceContext fires router.push("/(tabs)/devices?openDetails=...")
+  // when the active device hits auth-expired and the silent recovery
+  // loop fails — that drops the user directly on the per-card
+  // DeviceDetailsModal scrolled to the Recover Yaver Auth button so
+  // they can run the manual recovery without hunting through the UI.
+  const params = useLocalSearchParams<{ openDetails?: string; focus?: string }>();
+  const openDetailsId = typeof params.openDetails === "string" ? params.openDetails : "";
+  // Clear the param once we've consumed it so back-navigation /
+  // refresh doesn't re-open the modal endlessly.
+  useEffect(() => {
+    if (!openDetailsId) return;
+    const t = setTimeout(() => {
+      router.setParams({ openDetails: undefined, focus: undefined } as any);
+    }, 800);
+    return () => clearTimeout(t);
+  }, [openDetailsId]);
+
   const [guestCode, setGuestCode] = useState("");
   const [guestLoading, setGuestLoading] = useState(false);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: number }>>({});
@@ -1100,6 +1133,7 @@ export default function DevicesScreen() {
               isPrimary={primaryDeviceId === item.id}
               onSelect={() => selectDevice(item)}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
+              forceDetailsOpen={openDetailsId === item.id}
               onLongPress={() => {
                 const actionLabel = item.isGuest ? "Detach" : "Remove";
                 const message = item.isGuest
