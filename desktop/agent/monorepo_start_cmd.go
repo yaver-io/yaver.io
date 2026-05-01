@@ -22,6 +22,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,10 +61,29 @@ func runMonorepoStart(args []string) {
 	}
 	fmt.Println()
 
-	// Step 3 — Runner (mobile sandbox's "Who codes?" step)
+	// Step 3 — Coding location + runner. Yaver wraps Claude Code,
+	// Codex, and OpenCode; the wizard probes each runner's install +
+	// auth state on every machine connected to the user's account so
+	// the user can pick the right wrapper on the right host. The
+	// matrix mirrors what the mobile sandbox shows under
+	// `activeRunnerDevice?.runners` — same data, different surface.
 	fmt.Println("3. Who will code?")
-	fmt.Println("   Codex / Claude Code / OpenCode — Yaver wraps all three.")
-	runner := promptChoice(r, "Runner", []string{"claude", "codex", "opencode"}, defaultMonorepoRunner())
+	fmt.Println("   Yaver supports Claude Code, Codex, and OpenCode. Probing your machines…")
+	locations := probeRunnerLocations()
+	printRunnerLocationMatrix(locations)
+	locID := promptChoice(r, "Where", runnerLocationIDs(locations), "this")
+	chosenLoc := runnerLocationByID(locations, locID)
+	runnerDflt := pickDefaultRunnerID(chosenLoc)
+	runner := promptChoice(r, "Runner", []string{"claude", "codex", "opencode"}, runnerDflt)
+	authHint := runnerAuthGuidance(chosenLoc, runner)
+	if authHint != "" {
+		fmt.Println("  ! " + authHint)
+		cont := promptChoice(r, "Continue anyway", []string{"yes", "no"}, "yes")
+		if cont == "no" {
+			fmt.Println("  Aborted — sign in first, then re-run `yaver monorepo start`.")
+			os.Exit(0)
+		}
+	}
 	fmt.Println()
 
 	// Step 4 — Quick survey (skippable). Order + keys MUST match
@@ -103,7 +123,7 @@ func runMonorepoStart(args []string) {
 	primaryHex := promptLine(r, "Primary color hex (optional, e.g. #0066ff)", "")
 	fmt.Println()
 
-	effectivePrompt := buildMonorepoEffectivePrompt(answers, skipped, logoURL, primaryHex, description)
+	effectivePrompt := buildMonorepoEffectivePrompt(answers, skipped, logoURL, primaryHex, description, chosenLoc, runner)
 
 	fmt.Println("Creating project on disk…")
 	spec := PhoneCreateSpec{
@@ -136,7 +156,11 @@ func runMonorepoStart(args []string) {
 	fmt.Println()
 	fmt.Println("Next:")
 	fmt.Printf("  cd %s\n", proj.Dir)
-	fmt.Printf("  yaver code --runner %s\n", runner)
+	if chosenLoc != nil && chosenLoc.ID != "this" {
+		fmt.Printf("  yaver code --runner %s --attach %s\n", runner, chosenLoc.ID)
+	} else {
+		fmt.Printf("  yaver code --runner %s\n", runner)
+	}
 	fmt.Println()
 	fmt.Println("It's also already in your mobile sandbox — open the Yaver app → Phone Backend.")
 }
@@ -157,7 +181,12 @@ type surveyQuestion struct {
 // Survey + brand blocks get prepended to the user's free-text
 // description so the LLM-driven generator sees the same structured
 // blob whether the user came in via CLI or the in-app wizard.
-func buildMonorepoEffectivePrompt(answers map[string]string, skipped bool, logoURL, primaryHex, description string) string {
+//
+// CLI-only addition: if the user picked a coding location + runner
+// in step 3, that gets prepended as a [Coding] block so the LLM
+// knows which wrapper will execute its plan and (if remote) which
+// machine the project is going to be vibed on.
+func buildMonorepoEffectivePrompt(answers map[string]string, skipped bool, logoURL, primaryHex, description string, loc *runnerLocation, runner string) string {
 	parts := []string{}
 
 	if !skipped && len(answers) > 0 {
@@ -206,6 +235,23 @@ func buildMonorepoEffectivePrompt(answers map[string]string, skipped bool, logoU
 		parts = append(parts, "[Brand]\n"+strings.Join(brandLines, "\n")+"\n")
 	}
 
+	if strings.TrimSpace(runner) != "" || loc != nil {
+		codingLines := []string{"[Coding]"}
+		if strings.TrimSpace(runner) != "" {
+			codingLines = append(codingLines, "Runner: "+strings.TrimSpace(runner))
+		}
+		if loc != nil {
+			where := loc.Label
+			if loc.ID != "this" {
+				where += " (remote: " + loc.ID + ")"
+			}
+			codingLines = append(codingLines, "Host: "+where)
+		}
+		if len(codingLines) > 1 {
+			parts = append(parts, strings.Join(codingLines, "\n")+"\n")
+		}
+	}
+
 	parts = append(parts, strings.TrimSpace(description))
 	return strings.Join(parts, "\n")
 }
@@ -242,7 +288,14 @@ func promptLine(r *bufio.Reader, label, dflt string) string {
 	} else {
 		fmt.Printf("> %s: ", label)
 	}
-	line, _ := r.ReadString('\n')
+	line, err := r.ReadString('\n')
+	if err == io.EOF && line == "" {
+		// stdin closed (Ctrl+D, redirected file ran out, etc.) — abort
+		// rather than spin forever in a "Required" loop.
+		fmt.Println()
+		fmt.Fprintln(os.Stderr, "stdin closed — aborting")
+		os.Exit(1)
+	}
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return dflt
@@ -251,13 +304,16 @@ func promptLine(r *bufio.Reader, label, dflt string) string {
 }
 
 func promptRequired(r *bufio.Reader, label, dflt string) string {
-	for {
+	for i := 0; i < 5; i++ {
 		v := promptLine(r, label, dflt)
 		if strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
 		fmt.Println("  ! Required.")
 	}
+	fmt.Fprintln(os.Stderr, "too many empty answers — aborting")
+	os.Exit(1)
+	return ""
 }
 
 func promptChoice(r *bufio.Reader, label string, choices []string, dflt string) string {
@@ -287,11 +343,3 @@ func sliceContains(haystack []string, needle string) bool {
 	return false
 }
 
-// defaultMonorepoRunner picks the runner to highlight first in the
-// wizard prompt. The authoritative "default runner" lives in Convex
-// (settable via `yaver set-runner`); fetching it would mean a
-// network round-trip just to label a CLI prompt, which is not worth
-// it. Hard-default to claude — the user can override interactively.
-func defaultMonorepoRunner() string {
-	return "claude"
-}
