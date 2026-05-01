@@ -163,16 +163,25 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError" | "probeInfo">,
 ): string {
   if (device.workspaceLive) return "Active workspace connection";
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (lifecycleState === "bootstrap") return "Bootstrap server reached; reclaim or pair Yaver first";
+  if (lifecycleState === "yaver-auth-expired") return "Agent reached, but its session is expired";
+  if (lifecycleState === "ready-to-connect") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
   if (device.probeState === "ok") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
   if (device.probeState === "auth-expired") return "Agent reached, but its session is expired";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Recently confirmed by agent";
-  if (device.needsAuth) return "Agent session expired; relay recovery may still work";
+  if (
+    device.needsAuth &&
+    (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))
+  ) {
+    return "Bootstrap agent advertised recently; reclaim or pair may still work";
+  }
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
   const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
   if (age && hasPublicPath) return `No recent agent signal for ${age}; relay or tunnel may still be worth probing`;
@@ -191,10 +200,18 @@ type DeviceLifecycleState =
   | "connected";
 
 function deriveDeviceLifecycleState(
-  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent">,
+  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent" | "probeInfo">,
 ): DeviceLifecycleState {
   if (device.workspaceLive) return "connected";
-  if (device.needsAuth) return "bootstrap";
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (
+    lifecycleState === "bootstrap" ||
+    lifecycleState === "yaver-auth-expired" ||
+    lifecycleState === "ready-to-connect"
+  ) {
+    return lifecycleState as DeviceLifecycleState;
+  }
+  if (device.needsAuth && (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))) return "bootstrap";
   if (device.probeState === "auth-expired") return "yaver-auth-expired";
   if (
     device.probeState === "ok" ||
@@ -211,11 +228,13 @@ function deriveDeviceLifecycleState(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState" | "probeInfo">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
   if (device.workspaceLive) return false;
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired" || lifecycleState === "ready-to-connect") return false;
   if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
@@ -366,7 +385,7 @@ function DeviceConnectCard({
   return (
     <div
       className={[
-        "rounded-2xl border bg-surface-900/80 transition-colors",
+        "rounded-2xl border bg-surface-900/80 shadow-sm transition-colors dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]",
         compact ? "p-3" : "p-3.5",
         isSelected
           ? connectionError
@@ -374,11 +393,11 @@ function DeviceConnectCard({
             : isConnecting
               ? "border-amber-500/30 bg-amber-500/[0.04]"
               : "border-emerald-500/30 bg-emerald-500/[0.05]"
-          : "border-surface-800 hover:border-surface-700",
+          : "border-surface-800 hover:border-surface-700 dark:hover:border-surface-600",
       ].join(" ")}
     >
       <div className="flex items-start gap-2.5">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-surface-800 bg-surface-950 text-surface-400">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-surface-800 bg-surface-950 text-surface-400 dark:border-surface-700/80 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
           <DeviceIcon platform={device.platform} />
         </div>
         <div className="min-w-0 flex-1">
@@ -927,6 +946,7 @@ export default function DashboardPage() {
 
   const reauthDevice = async (d: Device) => {
     if (!token) return;
+    const lifecycle = deriveDeviceLifecycleState(d);
     setReauthBusy(d.id);
     setReauthMsg(null);
     try {
@@ -935,7 +955,7 @@ export default function DashboardPage() {
       // Use the new owner-claim flow instead — the agent verifies
       // ownership via Convex round-trip and splices our bearer into
       // the active pair session. One round-trip, no URL paste.
-      if (d.needsAuth) {
+      if (lifecycle === "bootstrap") {
         const claim = await agentClient.ownerClaimDevice(d.id);
         if (claim.ok) {
           setReauthMsg({
@@ -1080,8 +1100,9 @@ export default function DashboardPage() {
     const reauthRateMs = 8_000;
     const lastReauth = lastAutoReauthRef.current.get(device.id) || 0;
     const sinceLast = Date.now() - lastReauth;
+    const lifecycle = deriveDeviceLifecycleState(device);
     if (
-      device.needsAuth &&
+      lifecycle === "bootstrap" &&
       !device.isGuest &&
       agentClient.configuredRelayServers.length > 0 &&
       sinceLast > reauthRateMs
@@ -1146,7 +1167,7 @@ export default function DashboardPage() {
         setConnectError("Connection failed. Trying automatic re-auth recovery…");
         setConnectDiagnostics(firstDiagnostics);
         try {
-          const recovered = device.needsAuth
+          const recovered = lifecycle === "bootstrap"
             ? await agentClient.ownerClaimDevice(device.id)
             : await agentClient.reauthAgent({
                 deviceId: device.id,

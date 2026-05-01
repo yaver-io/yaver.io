@@ -217,16 +217,25 @@ function hasRecentLiveSignal(
 }
 
 function deviceReachabilitySummary(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "host" | "lastTunnelEvent" | "peerState" | "workspaceLive" | "probeState" | "probePath" | "probeError" | "probeInfo">,
 ): string {
   if (device.workspaceLive) return "Active workspace connection";
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (lifecycleState === "bootstrap") return "Bootstrap server reached; reclaim or pair Yaver first";
+  if (lifecycleState === "yaver-auth-expired") return "Agent reached, but its session is expired";
+  if (lifecycleState === "ready-to-connect") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
   if (device.probeState === "ok") return `Authenticated agent probe succeeded via ${device.probePath || "device path"}`;
   if (device.probeState === "auth-expired") return "Agent reached, but its session is expired";
   if (device.peerState === "online") return "Live bus signal";
   if (hasRecentLiveSignal(device)) return "Live relay signal";
   if (device.peerState === "stale") return "Bus saw this machine recently, but no current transport is healthy";
   if (device.online) return "Recently confirmed by agent";
-  if (device.needsAuth) return "Agent session expired; relay recovery may still work";
+  if (
+    device.needsAuth &&
+    (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))
+  ) {
+    return "Bootstrap agent advertised recently; reclaim or pair may still work";
+  }
   const age = formatAgeShort(lastSeenAgeMs(device.lastSeen));
   const hasPublicPath = Boolean(device.tunnelUrl) || Boolean(device.publicEndpoints?.length);
   if (age && hasPublicPath) return `No recent agent signal for ${age}; relay or tunnel may still be worth probing`;
@@ -245,10 +254,18 @@ type DeviceLifecycleState =
   | "connected";
 
 function deriveDeviceLifecycleState(
-  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent">,
+  device: Pick<Device, "online" | "needsAuth" | "peerState" | "workspaceLive" | "probeState" | "lastTunnelEvent" | "probeInfo">,
 ): DeviceLifecycleState {
   if (device.workspaceLive) return "connected";
-  if (device.needsAuth) return "bootstrap";
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (
+    lifecycleState === "bootstrap" ||
+    lifecycleState === "yaver-auth-expired" ||
+    lifecycleState === "ready-to-connect"
+  ) {
+    return lifecycleState as DeviceLifecycleState;
+  }
+  if (device.needsAuth && (device.online || device.peerState === "online" || device.peerState === "stale" || hasRecentLiveSignal(device))) return "bootstrap";
   if (device.probeState === "auth-expired") return "yaver-auth-expired";
   if (
     device.probeState === "ok" ||
@@ -265,11 +282,13 @@ function deriveDeviceLifecycleState(
 const DORMANT_DEVICE_HIDE_MS = 10 * 60 * 1000;
 
 function isDormantUnreachableDevice(
-  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState">,
+  device: Pick<Device, "online" | "needsAuth" | "lastSeen" | "publicEndpoints" | "tunnelUrl" | "isGuest" | "peerState" | "workspaceLive" | "probeState" | "probeInfo">,
 ): boolean {
   if (device.isGuest) return false;
   if (device.online) return false;
   if (device.workspaceLive) return false;
+  const lifecycleState = String(device.probeInfo?.lifecycle?.state || device.probeInfo?.lifecycleState || "");
+  if (lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired" || lifecycleState === "ready-to-connect") return false;
   if (device.probeState === "ok" || device.probeState === "auth-expired") return false;
   if (device.peerState === "online") return false;
   if (device.needsAuth) return false;
@@ -1486,8 +1505,8 @@ export default function DevicesView({
             const shareSummary = deviceShareSummary(device);
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
             return (
-            <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-800 dark:bg-surface-900/40">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-surface-800 dark:text-surface-400">
+            <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
                 <DeviceIcon platform={device.platform} />
               </div>
               <div className="min-w-0 flex-1">
@@ -1594,7 +1613,7 @@ export default function DevicesView({
                         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                           primaryDeviceId === device.id
                             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-amber-300 hover:text-amber-700 dark:border-surface-700 dark:bg-surface-900/40 dark:text-surface-300 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-amber-300 hover:text-amber-700 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
                         }`}
                         title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
                       >
@@ -1615,7 +1634,7 @@ export default function DevicesView({
                     ) : null}
                     <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-800 dark:bg-surface-900/40 dark:text-surface-300 dark:hover:border-surface-700 dark:hover:bg-surface-800/60 dark:hover:text-surface-100"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-100"
                       aria-expanded={expandedId === device.id}
                       title="Show runtime, hardware, network and sharing details"
                     >
@@ -1861,7 +1880,7 @@ export default function DevicesView({
                           to expose the full chip rail with Test +
                           Sign-in buttons preserved for each one. */}
                       {availableOthers.length > 0 ? (
-                        <details className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-surface-800 dark:bg-surface-900/30">
+                        <details className="rounded-lg border border-slate-200 bg-slate-50/70 dark:border-surface-700/70 dark:bg-[rgba(22,24,31,0.78)]">
                           <summary className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-[11px] text-slate-600 hover:text-slate-900 dark:text-surface-400 dark:hover:text-surface-200">
                             <span>Other available agents</span>
                             <span className="text-[10px] text-slate-500 dark:text-surface-500">({availableOthers.length})</span>
@@ -1896,7 +1915,7 @@ export default function DevicesView({
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-surface-900/60 dark:text-surface-100 dark:hover:border-surface-600 dark:hover:bg-surface-800"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-sm hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-100 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)]"
                       title="Disconnect from this machine and close the active workspace"
                     >
                       <span aria-hidden>×</span>
