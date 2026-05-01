@@ -17,7 +17,9 @@ import React, { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useColors } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 import { useDevice, type Device, type PendingDeviceClaim } from "../context/DeviceContext";
+import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 
 type AttentionItem =
   | { kind: "pending"; count: number; first: PendingDeviceClaim }
@@ -72,6 +74,7 @@ function pickAttention(
 export function DeviceAttentionBanner() {
   const c = useColors();
   const router = useRouter();
+  const { token } = useAuth();
   const {
     devices,
     pendingClaims,
@@ -81,9 +84,28 @@ export function DeviceAttentionBanner() {
     connectionStatus,
     recoverDeviceAuth,
     claimPendingDevice,
+    refreshDevices,
   } = useDevice();
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
+
+  // Pre-flight check before firing recoverDeviceAuth: probe the
+  // device's /info via relay/direct first. If lifecycleState is
+  // already "ready-to-connect" and there's no auth-expired flag,
+  // the device has self-recovered (or our local state was just
+  // stale) and we should NOT call recovery — calling owner-claim
+  // against a healthy agent returns 404 because the bootstrap
+  // pair-session endpoint isn't registered in active mode, and the
+  // user sees a confusing "Reclaim failed" error against a perfectly
+  // working device. Returns true if recovery should proceed,
+  // false if the device is fine and we should just refresh state.
+  const preflightStillNeedsRecovery = async (device: Device): Promise<boolean> => {
+    const probe = await probeMobileDeviceStatus(device, token, 3000).catch(() => null);
+    if (!probe) return true; // unreachable — let recoverDeviceAuth try
+    if (probe.lifecycleState === "ready-to-connect") return false;
+    if (!probe.bootstrap && !probe.authExpired) return false;
+    return true;
+  };
 
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
@@ -145,6 +167,17 @@ export function DeviceAttentionBanner() {
       if (busy) return;
       setBusy(true); setErrorText(null);
       try {
+        // Re-probe before recovering: the device may have self-
+        // recovered since the last cached probe, in which case
+        // owner-claim would return 404 against an already-active
+        // agent and the user would see a confusing failure.
+        const stillNeeds = await preflightStillNeedsRecovery(item.device);
+        if (!stillNeeds) {
+          // Already healthy — refresh devices list so the banner clears.
+          await refreshDevices();
+          navigateToDevices();
+          return;
+        }
         const r = await recoverDeviceAuth(item.device);
         if (r && (r as any).ok === false) {
           setErrorText((r as any).error || "Reclaim failed");
@@ -167,6 +200,16 @@ export function DeviceAttentionBanner() {
       if (busy) return;
       setBusy(true); setErrorText(null);
       try {
+        // Same pre-flight idea as the bootstrap branch — if the
+        // agent has already cleared its authExpired flag (its
+        // internal retry loop succeeded, or another client just
+        // reauth'd it), don't fire another recovery on top.
+        const stillNeeds = await preflightStillNeedsRecovery(item.device);
+        if (!stillNeeds) {
+          await refreshDevices();
+          navigateToDevices();
+          return;
+        }
         const r = await recoverDeviceAuth(item.device);
         if (r && (r as any).ok === false) {
           setErrorText((r as any).error || "Re-auth failed");

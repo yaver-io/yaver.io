@@ -352,9 +352,26 @@ function DeviceCard({
       }
     };
     check();
-    const iv = setInterval(check, 8000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [device.id, device.host, device.port, device.publicKey, token]);
+    // Probe interval: 8s baseline, but drop to 3s when the device
+    // is in a degraded auth state (bootstrap or auth-expired). This
+    // closes the "stale banner" window — once the agent recovers
+    // (either via the user's reauth tap or the agent's own retry
+    // loop), the next probe lands within ~3s instead of up to 8s,
+    // so the banner clears almost as soon as the device is healthy.
+    let currentInterval = 8000;
+    let iv = setInterval(check, currentInterval);
+    const adjustInterval = () => {
+      const wantsFast = needsAuth || authExpired || remoteAuthExpired;
+      const target = wantsFast ? 3000 : 8000;
+      if (target !== currentInterval) {
+        clearInterval(iv);
+        currentInterval = target;
+        iv = setInterval(check, currentInterval);
+      }
+    };
+    const adjustIv = setInterval(adjustInterval, 1500);
+    return () => { cancelled = true; clearInterval(iv); clearInterval(adjustIv); };
+  }, [device.id, device.host, device.port, device.publicKey, token, needsAuth, authExpired, remoteAuthExpired]);
   const timeSince = (ts: number) => {
     if (!ts) return "never";
     const seconds = Math.floor((Date.now() - ts) / 1000);
