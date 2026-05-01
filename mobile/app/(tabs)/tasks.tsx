@@ -48,12 +48,22 @@ import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEEC
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   deriveMobileDeviceLifecycleState,
   probeMobileDeviceStatus,
   type MobileDeviceLifecycleState,
   type MobileDeviceStatusProbe,
 } from "../../src/lib/deviceStatus";
+
+// Persisted toggle state — codeMode (a.k.a. "yaver code mode" / wrap mode)
+// defaults to ON for new users so the agent invokes claude/codex/opencode
+// in terminal-wrapping mode out of the box. Persisting the user's override
+// means a user who explicitly turns it OFF on one task session keeps that
+// choice on the next; without the persistence layer the default would
+// re-assert itself every screen mount.
+const CODE_MODE_KEY = "@yaver/tasks_code_mode_enabled";
+const CODE_MODE_DEFAULT = true;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -785,14 +795,39 @@ export default function TasksScreen() {
   // a short MP4 demo after the task finishes (vibe-preview pipeline);
   // the task row gets a "▶ Watch demo" button when ready.
   const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
-  // codeMode toggle = "yaver code mode". When ON, the task is sent
-  // with source="mobile-code" so the agent applies the same prompt
-  // wrapping the `yaver code` CLI uses (terminal-style, no markdown
-  // headings by default) instead of the mobile dev-server / Hermes
-  // wrapping. Same /tasks endpoint, same TaskManager — only the
-  // prompt prefix differs. See mobile/src/lib/quic.ts::sendTask doc
-  // for the wrapping contract.
-  const [codeModeEnabled, setCodeModeEnabled] = useState(false);
+  // codeMode toggle = "yaver code mode" (a.k.a. wrap mode). When ON,
+  // the task is sent with source="mobile-code" so the agent applies
+  // the same prompt wrapping the `yaver code` CLI uses (terminal-style,
+  // no markdown headings by default) — i.e. the user's prompt is forwarded
+  // to the Go agent which invokes claude / codex / opencode from the
+  // terminal and pipes back the response. OFF = mobile dev-server /
+  // Hermes wrapping (markdown answers, dev-server hot-reload context).
+  // Same /tasks endpoint, same TaskManager — only the prompt prefix
+  // differs. See mobile/src/lib/quic.ts::sendTask doc for the wire
+  // contract. Default ON; persisted to AsyncStorage so the user's
+  // override survives across screen mounts (the previous code reset
+  // to true on every visit, fighting any opt-out).
+  const [codeModeEnabled, setCodeModeEnabledState] = useState<boolean>(CODE_MODE_DEFAULT);
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(CODE_MODE_KEY)
+      .then((raw) => {
+        if (cancelled) return;
+        if (raw === null || raw === undefined) return; // first run — keep default ON
+        setCodeModeEnabledState(raw === "1");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const setCodeModeEnabled = useCallback((next: boolean | ((v: boolean) => boolean)) => {
+    setCodeModeEnabledState((prev) => {
+      const value = typeof next === "function" ? next(prev) : next;
+      AsyncStorage.setItem(CODE_MODE_KEY, value ? "1" : "0").catch(() => {});
+      return value;
+    });
+  }, []);
   // Inline player state — set the clipId to open the modal that plays
   // the task's recorded demo MP4. Sourced from the agent at
   // /vibing/preview/clip/<id>.
@@ -851,68 +886,90 @@ export default function TasksScreen() {
     return () => clearInterval(interval);
   }, [connectionStatus]);
 
-  // Fetch available runners + models when connected
+  // Fetch available runners — runs once per (connection, device). Splitting
+  // this from the seeding effect below matters: previously they were one
+  // effect with `selectedRunner` and `primaryRunnerByDevice` in its dep
+  // array, so every chip tap (which calls setSelectedRunner +
+  // setPrimaryRunnerForDevice) triggered a fresh GET /agent/runners and
+  // a setAvailableRunners replacement. The new array identity caused the
+  // chip Pressables to re-mount mid-tap, which on Android can swallow the
+  // gesture so the picker selection appears to revert. Now we only refetch
+  // when the connection or device changes.
   useEffect(() => {
     if (connectionStatus !== "connected") {
       setAvailableRunners([]);
       setAvailableModels([]);
       return;
     }
-    quicClient.getRunners().then(r => {
-      if (r.length > 0) {
-        setAvailableRunners(r);
-        const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
-        const installed = r.filter((runner) => runner.installed && RUNNER_WL.has(runner.id));
-        const ready = installed.filter((runner) => runner.ready !== false);
-        const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
-        if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
-          setSelectedRunner(explicitRunner);
-          return;
-        }
-        const seededRunner = activeDevice
-          ? preferredDefaultRunnerForDevice(activeDevice, user?.email, ready.map((runner) => runner.id).concat(installed.map((runner) => runner.id)))
-          : null;
-        const preferred =
-          ready.find((runner) => runner.id === seededRunner) ||
-          installed.find((runner) => runner.id === seededRunner) ||
-          ready.find((runner) => runner.isDefault) ||
-          ready.find((runner) => runner.id === "claude") ||
-          ready.find((runner) => runner.id === "codex") ||
-          ready.find((runner) => runner.id === "opencode") ||
-          installed.find((runner) => runner.isDefault) ||
-          installed[0];
-        if (!selectedRunner && preferred) setSelectedRunner(preferred.id);
-      }
+    let cancelled = false;
+    quicClient.getRunners().then((r) => {
+      if (cancelled) return;
+      if (r.length > 0) setAvailableRunners(r);
     });
-  }, [activeDevice, connectionStatus, primaryRunnerByDevice, selectedRunner, user?.email]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeDevice?.id, connectionStatus]);
 
-  // Update models when runner selection changes
+  // Seed selectedRunner when runners load or the active device / pin
+  // changes. Uses a functional setState callback so we can read the
+  // latest selectedRunner without listing it as a dep — that would
+  // re-trigger the seeding loop on every chip tap and undo the user's
+  // choice in the small race window before primaryRunnerByDevice
+  // updates.
   useEffect(() => {
-    const runner = availableRunners.find(r => r.id === selectedRunner);
-    if (runner?.models?.length) {
-      setAvailableModels(runner.models);
-      const explicitModel = activeDevice ? primaryModelByDevice[activeDevice.id] : "";
-      if (explicitModel && runner.models.find((model) => model.id === explicitModel)?.id && selectedModel !== explicitModel) {
-        setSelectedModel(explicitModel);
-        return;
-      }
-      if (selectedModel && runner.models.some((model) => model.id === selectedModel)) {
-        return;
-      }
+    if (availableRunners.length === 0) return;
+    const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
+    const installed = availableRunners.filter((runner) => runner.installed && RUNNER_WL.has(runner.id));
+    if (installed.length === 0) return;
+    const ready = installed.filter((runner) => runner.ready !== false);
+    const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
+    setSelectedRunner((current) => {
+      // User has already picked a valid (installed) runner — leave it.
+      if (current && installed.some((r) => r.id === current)) return current;
+      if (explicitRunner && installed.some((r) => r.id === explicitRunner)) return explicitRunner;
+      const seededRunner = activeDevice
+        ? preferredDefaultRunnerForDevice(activeDevice, user?.email, ready.map((r) => r.id).concat(installed.map((r) => r.id)))
+        : null;
+      const preferred =
+        ready.find((r) => r.id === seededRunner) ||
+        installed.find((r) => r.id === seededRunner) ||
+        ready.find((r) => r.isDefault) ||
+        ready.find((r) => r.id === "claude") ||
+        ready.find((r) => r.id === "codex") ||
+        ready.find((r) => r.id === "opencode") ||
+        installed.find((r) => r.isDefault) ||
+        installed[0];
+      return preferred ? preferred.id : current;
+    });
+  }, [availableRunners, activeDevice, primaryRunnerByDevice, user?.email]);
+
+  // Update models when runner selection changes. Uses functional
+  // setState so it doesn't need selectedModel as a dep — same fight-the-
+  // user concern as the runner seeding above.
+  useEffect(() => {
+    const runner = availableRunners.find((r) => r.id === selectedRunner);
+    if (!runner?.models?.length) {
+      setAvailableModels([]);
+      setSelectedModel("");
+      return;
+    }
+    setAvailableModels(runner.models);
+    const explicitModel = activeDevice ? primaryModelByDevice[activeDevice.id] : "";
+    setSelectedModel((current) => {
+      // User's current pick is still valid for this runner — keep it.
+      if (current && runner.models!.some((m) => m.id === current)) return current;
+      if (explicitModel && runner.models!.some((m) => m.id === explicitModel)) return explicitModel;
       const seededModel = activeDevice
         ? preferredDefaultModelForRunner(runner.id, activeDevice, user?.email)
         : null;
       const preferredModel =
-        (explicitModel && runner.models.find((model) => model.id === explicitModel)?.id) ||
-        (seededModel && runner.models.find((model) => model.id === seededModel)?.id) ||
-        runner.models.find(m => m.isDefault)?.id ||
-        runner.models[0].id;
-      setSelectedModel(preferredModel);
-    } else {
-      setAvailableModels([]);
-      setSelectedModel("");
-    }
-  }, [activeDevice, availableRunners, primaryModelByDevice, selectedModel, selectedRunner, user?.email]);
+        (seededModel && runner.models!.find((m) => m.id === seededModel)?.id) ||
+        runner.models!.find((m) => m.isDefault)?.id ||
+        runner.models![0].id;
+      return preferredModel || current;
+    });
+  }, [availableRunners, activeDevice, primaryModelByDevice, selectedRunner, user?.email]);
 
   useEffect(() => {
     if (didApplyRouteSeedRef.current) return;
@@ -2175,9 +2232,14 @@ export default function TasksScreen() {
           )}
         />
 
-        {/* FAB */}
+        {/* FAB. Rendered as a bare Pressable, not wrapped in a full-screen
+            absoluteFillObject layer: that wrapper (even with
+            pointerEvents="box-none") regressed the second-open path —
+            after a Cancel/backdrop dismiss, taps on the + would silently
+            fall through on Android. Keep this simple. */}
         {isEffectivelyConnected && (
           <Pressable
+            hitSlop={12}
             style={({ pressed }) => [s.fab, pressed && s.fabPressed]}
             onPress={() => {
               // Defensive reset — guarantees the modal opens cleanly even if
@@ -2318,11 +2380,11 @@ export default function TasksScreen() {
                 wrapping. Both modes use the same /tasks endpoint and
                 same TaskManager; they differ only in the prompt
                 prefix the agent injects:
-                  • OFF (default): mobile-style. Agent layers in the
+                  • OFF: mobile-style. Agent layers in the
                     Hermes / Metro / dev-server hot-reload context
                     so an Expo project can call /dev/start. Markdown
                     answers, bullet framing, the works. (yaver go)
-                  • ON: terminal-style. Agent skips the dev-server
+                  • ON (default): terminal-style. Agent skips the dev-server
                     prefix and instead injects the same wrapper
                     capability context the `yaver code` CLI uses —
                     plain terminal output, no canned formatting.
@@ -2467,8 +2529,12 @@ export default function TasksScreen() {
                           // Persist per-device so the seeding effect on
                           // re-render reads the user's choice instead of
                           // reverting to the previously-pinned default.
+                          // Pass model=null to clear any stale model pin
+                          // from the previously-selected runner — the
+                          // model-seeding effect will pick a sensible
+                          // default for the new runner on the next render.
                           if (activeDevice?.id) {
-                            void setPrimaryRunnerForDevice(activeDevice.id, r.id).catch(() => {});
+                            void setPrimaryRunnerForDevice(activeDevice.id, r.id, null).catch(() => {});
                           }
                         }}
                       >
@@ -3165,7 +3231,7 @@ const s = StyleSheet.create({
   taskFooterMeta: { fontSize: 11, fontWeight: "600" },
 
   // FAB
-  fab: { position: "absolute", bottom: 24, right: 20, width: 58, height: 58, borderRadius: 29, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 12 },
+  fab: { position: "absolute", bottom: 24, right: 20, width: 58, height: 58, borderRadius: 29, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", elevation: 12, zIndex: 41, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 12 },
   fabPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
   fabText: { fontSize: 28, color: "#ffffff", fontWeight: "300" },
 
