@@ -4,6 +4,17 @@
 // See ../src/lib/cryptoSetup.ts for why this is two steps.
 import "../src/lib/cryptoSetup";
 
+// Runtime debug — install global JS error + unhandled-rejection
+// handlers so uncaught errors land in the appLog ring buffer AND
+// (when a device is connected) get forwarded to that agent's
+// BlackBox stream. Pairs with the agent's `debug=true` build flag
+// in /dev/build-native — once SFMG/yaver bundle is compiled with
+// hermesc -g + sourcemaps, the captured stacks here can be
+// symbolicated against the .map sidecar to point at real source
+// lines. Side-effect import; install fires at module load.
+import { installRuntimeDebugHandlers } from "../src/lib/runtimeDebug";
+installRuntimeDebugHandlers();
+
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect } from "react";

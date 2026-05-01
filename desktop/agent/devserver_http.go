@@ -2235,6 +2235,17 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ConsumerCurrentFamilyID  string          `json:"consumerCurrentRuntimeFamilyId,omitempty"`
 		ConsumerDefaultFamilyID  string          `json:"consumerDefaultRuntimeFamilyId,omitempty"`
 		ConsumerRuntimeFamilies  []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
+		// Debug: when true, hermesc compiles with -Og (opts suitable
+		// for debugging) + -g (full debug info for backtraces) + emits
+		// a source map sidecar (.map) alongside the .jsbundle. The
+		// resulting bundle is ~2-3x larger and a few % slower at
+		// runtime, but: (a) Hermes crash backtraces include source
+		// file/line so the captured EXC_BAD_ACCESS dumps from
+		// YaverGuestCrashReporter point at actual JS code instead of
+		// hermes::vm internals; (b) the source map lets the symbolicator
+		// turn minified function names back into their source forms.
+		// Off by default — production loads stay fast.
+		Debug bool `json:"debug,omitempty"`
 	}
 	if r.Body != nil {
 		json.NewDecoder(r.Body).Decode(&req)
@@ -2728,7 +2739,19 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// Re-register under the hermesc cancel so /dev/stop can also
 		// interrupt the compile phase, not just the Metro bundle phase.
 		releaseHermesBuild := registerActiveBuild(workDir, req.Platform, hermesCancel)
-		hermesCmd := exec.CommandContext(hermesCtx, hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
+		// Default: -O (heavy optimization) — production-grade bundle.
+		// Debug=true: -Og + -g + -output-source-map — keeps Hermes
+		// runtime backtraces symbolicatable. See req.Debug docs above.
+		hermesArgs := []string{"-emit-binary", "-out", bundlePath}
+		if req.Debug {
+			hermesArgs = append(hermesArgs, "-Og", "-g", "-output-source-map")
+			log.Printf("[super-host] hermesc DEBUG mode: emitting -Og -g + source map")
+			s.devServerMgr.EmitLog("Hermes debug build (source maps + line info)")
+		} else {
+			hermesArgs = append(hermesArgs, "-O")
+		}
+		hermesArgs = append(hermesArgs, tmpPath)
+		hermesCmd := exec.CommandContext(hermesCtx, hermescPath, hermesArgs...)
 		hermesCmd.Dir = workDir
 		hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
 		hermesCmd.Stdout = hermesLogW
