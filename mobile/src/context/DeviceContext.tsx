@@ -1947,6 +1947,29 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // Try mode=direct first — single round-trip that hands this
+    // mobile's bearer to the agent as its new token. Verified
+    // end-to-end against the Hetzner test box from a host-authed
+    // CLI: 1 HTTP call flips lifecycleState from yaver-auth-expired
+    // to ready-to-connect with no pair session, no OAuth, no user
+    // interaction. The agent's /auth/recover requires the caller to
+    // be host-authed (verifyHostToken: caller's userId owns the
+    // device) which mobile always is when its own session is alive.
+    // If direct fails (host check rejects, or this client's session
+    // itself has died), we fall through to the pair / device-code
+    // paths below — those still cover the off-LAN / brand-new-box /
+    // multi-account scenarios.
+    const directRecovery = await quicClient.recoverAgent(undefined, "direct");
+    if (directRecovery?.ok) {
+      quicClient.agentAuthExpired = false;
+      setAgentAuthExpired(false);
+      clearDeviceUnreachable(device.id);
+      appLog("info", `Recovered ${device.name} via direct host-token push (1-call)`);
+      setTimeout(() => refreshDevices(), 800);
+      return { ok: true, targetUrl: directRecovery.targetUrl };
+    }
+    appLog("warn", `Direct recovery rejected for ${device.name} (${directRecovery?.error || "unknown"}) — falling back to pair-session path`);
+
     let recovery = await quicClient.recoverAgent(undefined, "pair");
     if (!recovery?.ok || !recovery.pairCode) {
       appLog("warn", `Host-token recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);

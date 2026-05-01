@@ -6519,8 +6519,14 @@ export class QuicClient {
 
   async recoverAgent(
     secret?: string,
-    mode: "pair" | "device-code" = "pair",
+    mode: "pair" | "device-code" | "direct" = "pair",
   ): Promise<RecoveryResult | null> {
+    // mode=direct hands this client's already-authenticated Bearer to
+    // the remote agent as its new token in a single round-trip.
+    // Requires the agent to verify the caller as host (same Convex
+    // userId owns the device). Used when mobile is signed-in and the
+    // remote agent is in auth-expired — skips the pair-session dance
+    // entirely. Falls back to pair / device-code if direct is rejected.
     const body = JSON.stringify(secret ? { secret, mode } : { mode });
     let lastError = "network error";
     for (const target of this.recoveryTargets()) {
