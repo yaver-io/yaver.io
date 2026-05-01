@@ -974,23 +974,23 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
       {/* Header — device, viewport picker, global actions, all on one
           row. Inline viewport saves ~40 px of vertical space the
           iframe gets back. */}
-      <div className="flex flex-wrap items-center gap-3 rounded-md border border-surface-800 bg-surface-900/40 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-surface-800 dark:bg-surface-900/40">
         <div className="flex items-center gap-2 text-xs">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          <span className="font-medium text-surface-100">{connectedDevice?.name}</span>
-          <span className="text-[10px] uppercase tracking-widest text-surface-500">{connectionLabel}</span>
+          <span className="h-2 w-2 rounded-full bg-emerald-500 dark:bg-emerald-400" />
+          <span className="font-semibold text-slate-900 dark:text-surface-100">{connectedDevice?.name}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">{connectionLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[9px] uppercase tracking-widest text-surface-500">View</span>
-          <div className="flex rounded-md border border-surface-800 bg-surface-900">
+          <span className="text-[9px] font-semibold uppercase tracking-widest text-slate-500 dark:text-surface-500">View</span>
+          <div className="flex rounded-md border border-slate-200 bg-slate-50 dark:border-surface-800 dark:bg-surface-900">
             {WEB_PREVIEW_VIEWPORTS.map((v) => (
               <button
                 key={v.id}
                 onClick={() => setViewport(v.id)}
-                className={`px-2 py-0.5 text-[10px] transition-colors first:rounded-l-md last:rounded-r-md ${
+                className={`px-2 py-0.5 text-[10px] font-medium transition-colors first:rounded-l-md last:rounded-r-md ${
                   viewport === v.id
-                    ? "bg-indigo-500/20 text-indigo-200"
-                    : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
+                    ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-surface-400 dark:hover:bg-surface-800 dark:hover:text-surface-200"
                 }`}
                 title={v.id === "fluid" ? "Fill container" : `${v.width}×${v.height}`}
               >
@@ -999,7 +999,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             ))}
           </div>
           {viewport !== "fluid" ? (
-            <span className="text-[9px] text-surface-500">
+            <span className="text-[9px] text-slate-500 dark:text-surface-500">
               {activeViewport.width}×{activeViewport.height}
             </span>
           ) : null}
@@ -1009,7 +1009,7 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
             <button
               onClick={() => void repairRelayThenReconnect("manual")}
               disabled={relayRepairState === "repairing"}
-              className="rounded border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-200 hover:bg-amber-500/20 disabled:opacity-50"
+              className="rounded border border-amber-400 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:bg-amber-500/20"
               title="Re-sync userSettings.relayPassword with the platform default — fixes 'invalid relay password' iframe failures"
             >
               {relayRepairState === "repairing" ? "Repairing…" : "Repair relay"}
@@ -1018,10 +1018,10 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
           <button
             onClick={() => void handleRecover()}
             disabled={recovering}
-            className={`rounded border px-2.5 py-1 text-[11px] ${
+            className={`rounded border px-2.5 py-1 text-[11px] font-semibold ${
               recovering
-                ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
-                : "border-surface-700 text-surface-300 hover:border-emerald-500/40 hover:text-emerald-300"
+                ? "border-amber-400 bg-amber-50 text-amber-700 cursor-wait dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                : "border-slate-300 bg-white text-slate-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-surface-700 dark:bg-transparent dark:text-surface-300 dark:hover:border-emerald-500/40 dark:hover:text-emerald-300"
             }`}
             title="Full recovery: ping agent, repair relay, stop, git pull, pkill, clear caches, restart, refresh"
           >

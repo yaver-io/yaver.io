@@ -3,6 +3,7 @@
 import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
+import WebShellModal from "@/components/dashboard/WebShellModal";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
@@ -1447,6 +1448,11 @@ export default function DevicesView({
   // heartbeat polls Convex on a separate path). Tracks which device's
   // panel is open + the latest queued command for status feedback.
   const [rescueOpenDeviceId, setRescueOpenDeviceId] = useState<string | null>(null);
+  // Browser-shell modal state. Lives at the DevicesView level so the
+  // Shell button next to Rescue/Details on each card opens the same
+  // modal as the home tab, including the reauth-required guidance
+  // when the agent's session has expired.
+  const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [rescueStatus, setRescueStatus] = useState<Record<string, { msg: string; tone: "info" | "ok" | "err" } | undefined>>({});
   const [showDormantDevices, setShowDormantDevices] = useState(false);
   const actionableDevices = devices.filter((device) => !isDormantUnreachableDevice(device));
@@ -1530,6 +1536,14 @@ export default function DevicesView({
                       <h3 className="font-semibold text-slate-900 dark:text-surface-50">
                         {device.name}
                       </h3>
+                      {device.alias ? (
+                        <span
+                          className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-semibold text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200"
+                          title={`Alias used by \`yaver ssh @${device.alias}\` and the dashboard. Edit from the home tab card or run \`yaver alias set ${device.id.slice(0, 8)} <new>\`.`}
+                        >
+                          @{device.alias}
+                        </span>
+                      ) : null}
                       {device.isGuest ? (
                         <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200">
                           Shared Device
@@ -1654,6 +1668,17 @@ export default function DevicesView({
                         Rescue
                       </button>
                     ) : null}
+                    <button
+                      onClick={() => setShellDevice(device)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-medium leading-none text-cyan-700 hover:border-cyan-400 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-200 dark:hover:border-cyan-500/60 dark:hover:bg-cyan-500/20"
+                      title="Open a browser shell on this device (PTY over relay) — Hetzner / GCP-style"
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M4 17l6-6-6-6" />
+                        <path d="M12 19h8" />
+                      </svg>
+                      Shell
+                    </button>
                     <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-100"
@@ -2026,6 +2051,30 @@ export default function DevicesView({
           })}
         </div>
       )}
+      {shellDevice ? (
+        <WebShellModal
+          device={shellDevice}
+          // DevicesView doesn't own the workspace agentClient (the
+          // dashboard home tab does). Treat the shell modal as
+          // "always needs a connect" here — the shell modal's own
+          // "Connect & open shell" CTA is the only safe entry path
+          // because we can't sniff agentClient.baseUrl from this
+          // component without coupling it to the home-tab state.
+          isCurrentDeviceConnected={false}
+          onConnect={() => {
+            // Best-effort: bounce the user back to the home tab,
+            // where the device card's Open Workspace flow will
+            // wire the agentClient to this device. The user can
+            // then click Shell from there to open a live PTY.
+            setShellDevice(null);
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("yaver-open-device", { detail: { deviceId: shellDevice.id } }));
+            }
+          }}
+          onOpenRescue={() => setRescueOpenDeviceId(shellDevice.id)}
+          onClose={() => setShellDevice(null)}
+        />
+      ) : null}
       {authModal && token ? (
         <RunnerAuthModal
           runner={authModal.runner}

@@ -6299,6 +6299,15 @@ func runSSHWrap(args []string) {
 		hostPart = target[at+1:]
 	}
 
+	var resolvedDevice *DeviceInfo
+	if cfg, err := LoadConfig(); err == nil && cfg != nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
+		if devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); err == nil {
+			if dev, err := resolveDevice(hostPart, devices); err == nil {
+				resolvedDevice = dev
+			}
+		}
+	}
+
 	host := resolveSSHHost(hostPart)
 	if host == "" {
 		// Couldn't resolve via Tailscale or Convex — fall through to
@@ -6310,6 +6319,10 @@ func runSSHWrap(args []string) {
 	dest := host
 	if user != "" {
 		dest = user + "@" + host
+	} else if resolvedDevice != nil {
+		if inferred := inferSSHUser(host, *resolvedDevice); inferred != "" {
+			dest = inferred + "@" + host
+		}
 	}
 
 	sshPath, err := osexec.LookPath("ssh")
@@ -6452,6 +6465,42 @@ func isLikelyDockerBridgeIP(host string) bool {
 	// These are valid inside the container namespace but almost never a
 	// useful SSH target from the caller's machine.
 	return ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 && ip4[2] == 0 && ip4[3] == 1
+}
+
+func inferSSHUser(host string, dev DeviceInfo) string {
+	if strings.TrimSpace(host) == "" {
+		return ""
+	}
+	if !strings.EqualFold(strings.TrimSpace(dev.Platform), "linux") {
+		return ""
+	}
+	if !strings.Contains(host, ".") {
+		return ""
+	}
+	currentUser := strings.TrimSpace(os.Getenv("USER"))
+	if currentUser != "" && probeSSHUser(host, currentUser) {
+		return currentUser
+	}
+	if probeSSHUser(host, "root") {
+		return "root"
+	}
+	return ""
+}
+
+func probeSSHUser(host, user string) bool {
+	sshPath, err := osexec.LookPath("ssh")
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, sshPath,
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=5",
+		user+"@"+host,
+		"true",
+	)
+	return cmd.Run() == nil
 }
 
 // SetDeviceAlias calls POST /devices/alias to set or clear the

@@ -1316,10 +1316,10 @@ export default function PreviewPane({
         <button
           onClick={() => void handleReconnect()}
           disabled={recovering}
-          className={`text-[10px] rounded border px-2 py-0.5 ${
+          className={`text-[10px] font-semibold rounded border px-2 py-0.5 ${
             recovering
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-300 cursor-wait"
-              : "border-surface-700 text-surface-400 hover:border-emerald-500/40 hover:text-emerald-300"
+              ? "border-amber-400 bg-amber-50 text-amber-700 cursor-wait dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+              : "border-slate-300 bg-white text-slate-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-surface-700 dark:bg-transparent dark:text-surface-400 dark:hover:border-emerald-500/40 dark:hover:text-emerald-300"
           }`}
           title="Try to recover: ping agent, stop, clear caches, restart, refresh"
         >
@@ -1392,14 +1392,14 @@ export default function PreviewPane({
 
       {/* Target picker (mobile workers) */}
       {mobileWorkers.length > 0 && (
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-surface-800 bg-surface-950/60 overflow-x-auto">
-          <span className="text-[10px] uppercase tracking-widest text-surface-500 shrink-0">Target</span>
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50 overflow-x-auto dark:border-surface-800 dark:bg-surface-950/60">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 shrink-0 dark:text-surface-500">Target</span>
           <button
             onClick={() => onSelectPreviewTarget(null)}
-            className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
+            className={`px-2 py-1 text-[10px] font-medium rounded border shrink-0 ${
               !selectedPreviewTarget
-                ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
-                : "border-surface-800 text-surface-500"
+                ? "border-sky-400 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+                : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-surface-800 dark:bg-transparent dark:text-surface-500"
             }`}
           >
             Current device
@@ -1408,10 +1408,10 @@ export default function PreviewPane({
             <button
               key={device.id}
               onClick={() => onSelectPreviewTarget(device.id)}
-              className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
+              className={`px-2 py-1 text-[10px] font-medium rounded border shrink-0 ${
                 selectedPreviewTarget?.id === device.id
-                  ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
-                  : "border-surface-800 text-surface-500"
+                  ? "border-sky-400 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+                  : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 dark:border-surface-800 dark:bg-transparent dark:text-surface-500"
               }`}
             >
               {device.name}
@@ -1421,8 +1421,8 @@ export default function PreviewPane({
       )}
 
       {/* Skin + orientation picker */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-surface-800 bg-surface-950/60 overflow-x-auto">
-        <span className="text-[10px] uppercase tracking-widest text-surface-500 shrink-0">Device</span>
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50 overflow-x-auto dark:border-surface-800 dark:bg-surface-950/60">
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 shrink-0 dark:text-surface-500">Device</span>
         {DEVICES.map((d) => (
           <button
             key={d.id}
@@ -1430,10 +1430,10 @@ export default function PreviewPane({
               setSkinId(d.id);
               setUserPickedSkin(true);
             }}
-            className={`px-2 py-1 text-[10px] rounded border shrink-0 ${
+            className={`px-2 py-1 text-[10px] font-medium rounded border shrink-0 ${
               skinId === d.id
-                ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
-                : "border-surface-800 text-surface-500 hover:text-surface-300"
+                ? "border-sky-400 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300"
+                : "border-slate-300 bg-white text-slate-600 hover:border-slate-400 hover:text-slate-900 dark:border-surface-800 dark:bg-transparent dark:text-surface-500 dark:hover:text-surface-300"
             }`}
             title={d.plain ? "No chrome, full pane" : `${d.width}×${d.height}`}
           >

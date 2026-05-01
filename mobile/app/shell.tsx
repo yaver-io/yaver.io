@@ -164,6 +164,57 @@ export default function ShellScreen() {
     );
   }
 
+  // Reauth-required surface — mirrors the web modal's three concrete
+  // next-step cards. Showing this instead of the terminal prevents
+  // the WS from 401'ing during browser_session issue, and points the
+  // user at the path most likely to work from a phone (the device's
+  // own attention banner / Reauth this device).
+  if (activeDevice.needsAuth && !activeDevice.isGuest) {
+    return (
+      <View style={{ flex: 1, backgroundColor: c.bg, paddingTop: insets.top + 16, paddingHorizontal: 16 }}>
+        <AppBackButton onPress={() => router.back()} />
+        <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }}>
+          <View style={{ alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "rgba(245,158,11,0.12)", borderWidth: 1, borderColor: "rgba(245,158,11,0.45)" }}>
+            <Text style={{ color: "#fcd34d", fontSize: 10, fontWeight: "700", letterSpacing: 0.8 }}>REAUTH REQUIRED</Text>
+          </View>
+          <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>
+            {activeDevice.alias ? `@${activeDevice.alias}` : activeDevice.name}'s agent needs to sign back in
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 13, lineHeight: 19 }}>
+            The agent is reachable but its Yaver session expired. The PTY won't authenticate until the agent re-auths. Pick the path that fits where you are right now.
+          </Text>
+
+          <View style={{ borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 }}>FROM THE PHONE (FASTEST)</Text>
+            <Text style={{ color: c.textPrimary, fontSize: 13, lineHeight: 19 }}>
+              Go back to the home screen and tap <Text style={{ fontWeight: "700", color: c.accent }}>Reauth this device</Text> on the attention banner. Pairing finishes over the relay even on cellular.
+            </Text>
+            <Pressable
+              onPress={() => router.back()}
+              style={{ marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 6, backgroundColor: "rgba(56,189,248,0.12)", borderWidth: 1, borderColor: "rgba(56,189,248,0.45)" }}
+            >
+              <Text style={{ color: "#7dd3fc", fontSize: 12, fontWeight: "700" }}>← Back to devices</Text>
+            </Pressable>
+          </View>
+
+          <View style={{ borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 }}>FROM THE WEB DASHBOARD</Text>
+            <Text style={{ color: c.textPrimary, fontSize: 13, lineHeight: 19 }}>
+              Open the Devices tab on yaver.io, click <Text style={{ fontWeight: "700", color: "#fcd34d" }}>Rescue → Reset Auth</Text>, then re-pair from this app or the box.
+            </Text>
+          </View>
+
+          <View style={{ borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard, padding: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 6 }}>FROM THE DEVICE TERMINAL</Text>
+            <Text style={{ color: c.textPrimary, fontSize: 13, lineHeight: 19 }}>
+              Run <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", color: "#a7f3d0" }}>yaver auth</Text> on the box itself. The browser sign-in opens automatically; come back to this screen once it finishes.
+            </Text>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === "ios" ? "padding" : undefined}

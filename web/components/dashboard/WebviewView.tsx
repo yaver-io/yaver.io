@@ -56,25 +56,25 @@ export default function WebviewView({
           old "Webview / One surface for both…" title block was
           decorative and burned vertical real estate that the
           viewport could use. */}
-      <div className="flex flex-shrink-0 items-center gap-2 border-b border-surface-800 bg-surface-950/70 px-3 py-1.5">
+      <div className="flex flex-shrink-0 items-center gap-2 border-b border-slate-200 bg-white/90 px-3 py-1.5 dark:border-surface-800 dark:bg-surface-950/70">
         <span className="text-[14px] leading-none">📱</span>
-        <div className="inline-flex rounded-md border border-surface-800 bg-surface-900/70 p-0.5">
+        <div className="inline-flex rounded-md border border-slate-200 bg-slate-50 p-0.5 dark:border-surface-800 dark:bg-surface-900/70">
           <button
             onClick={() => setMode("mobile")}
-            className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-[11px] font-semibold transition-colors ${
               mode === "mobile"
-                ? "bg-emerald-500/15 text-emerald-200"
-                : "text-surface-400 hover:text-surface-200"
+                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-200"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-surface-400 dark:hover:bg-transparent dark:hover:text-surface-200"
             }`}
           >
             Mobile App
           </button>
           <button
             onClick={() => setMode("web")}
-            className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-[11px] font-semibold transition-colors ${
               mode === "web"
-                ? "bg-sky-500/15 text-sky-200"
-                : "text-surface-400 hover:text-surface-200"
+                ? "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-200"
+                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-surface-400 dark:hover:bg-transparent dark:hover:text-surface-200"
             }`}
           >
             Web App
