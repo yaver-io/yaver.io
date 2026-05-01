@@ -39,11 +39,12 @@
       "hermesVersion": "0.81.5",
       "hermesBCVersion": 96,
       "supportedRNRange": "0.81.x",
-      "compiledIn": true,
-      "status": "pilot",
+      "compiledIn": false,
+      "status": "planned",
       "manifestResource": "runtime-families/family-b/sdk-manifest.json",
       "packageRoot": "mobile-family-b",
-      "preferredPackageNames": ["sfmg"]
+      "preferredPackageNames": ["sfmg"],
+      "compiledInDisabledReason": "family-b declared compiledIn=true but the iOS binary only ships React 19.1.0 (mobile/package.json). The packageRoot directory mobile-family-b/ does not exist, so React 19.2.5 is NOT compiled into Yaver. The agent honored the preferredPackageNames hint and built SFMG against this family's contract (React 19.2.5), and Hermes crashed at JSObject::hasComputed with a corrupted HermesValue when SFMG's JSI calls hit the React 19.1.0 ABI on the device. Forcing this to false makes the runtime-family selector fall back to family-a (the real, compiled-in family) until a true family-b binary is built. To re-enable: actually compile React 19.2.5 + matching native modules into a separate iOS bundle slot, then flip this back to true."
     }
   ],
   "nativeModules": {
