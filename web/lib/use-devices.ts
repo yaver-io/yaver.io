@@ -6,6 +6,13 @@ import { CONVEX_URL } from "@/lib/constants";
 export interface Device {
   id: string;
   name: string;
+  /**
+   * Per-user short alias. Set via `yaver alias set ...` on the CLI or
+   * the inline editor in the dashboard. Lower-cased on the server,
+   * unique within a single user's set of devices, used by
+   * `yaver ssh <alias>` and as the display label whenever it's set.
+   */
+  alias?: string;
   platform: string;
   host: string;
   port: number;
@@ -376,6 +383,36 @@ export function unhideDevice(id: string): void {
   }
 }
 
+/**
+ * Set or clear the per-user alias for a device. Pass alias="" (or
+ * undefined) to clear. Server enforces per-user uniqueness — callers
+ * surface the returned error verbatim ("alias already used …",
+ * "alias invalid …") so the user knows what to fix.
+ */
+export async function setDeviceAlias(
+  token: string,
+  deviceId: string,
+  alias: string,
+): Promise<{ ok: true; alias: string | null } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${CONVEX_URL}/devices/alias`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ deviceId, alias }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: body?.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, alias: body?.alias ?? null };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export function unhideAll(): void {
   writeHiddenIds(new Set());
   if (typeof window !== "undefined") {
@@ -437,6 +474,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         return {
         id: deviceId,
         name: d.isGuest ? `${d.name || d.hostname || ""} (${d.hostName || "guest"})` : d.name || d.hostname || "",
+        alias: typeof d.alias === "string" && d.alias.trim() !== "" ? d.alias : undefined,
         platform: d.platform || "",
         host: d.quicHost || d.host || "",
         port: d.quicPort || d.port || 18080,

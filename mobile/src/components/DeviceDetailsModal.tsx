@@ -4,7 +4,8 @@
 // breakdown, and runtime info on the phone.
 
 import React, { useEffect, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
 import { quicClient } from "../lib/quic";
@@ -40,6 +41,183 @@ function timeAgo(epochMs: number | undefined): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+// Inline alias editor — shown only on owned devices. Tap the chip
+// to edit, Save to commit, Clear to remove. Surfaces server-side
+// uniqueness errors verbatim so the user knows which alias is taken.
+function AliasRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { setDeviceAlias } = useDevice();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(device.alias ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(device.alias ?? "");
+      setError(null);
+    }
+  }, [device.alias, editing]);
+
+  const commit = async (next: string) => {
+    setSaving(true);
+    setError(null);
+    const res = await setDeviceAlias(device, next);
+    setSaving(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <Pressable
+        onPress={() => setEditing(true)}
+        style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}
+      >
+        <Text style={{ color: c.textMuted, fontSize: 12, width: 110 }}>Alias</Text>
+        <View style={{ flex: 1, flexDirection: "row", alignItems: "center" }}>
+          <Text style={{
+            color: device.alias ? "#a7f3d0" : c.textMuted,
+            fontSize: 13,
+            fontFamily: device.alias ? "Menlo" : undefined,
+            fontWeight: device.alias ? "600" : "400",
+          }}>
+            {device.alias ? `@${device.alias}` : "tap to set"}
+          </Text>
+          <Text style={{ color: c.accent, fontSize: 11, marginLeft: 8, fontWeight: "600" }}>
+            EDIT
+          </Text>
+        </View>
+      </Pressable>
+    );
+  }
+
+  return (
+    <View style={{ paddingVertical: 6 }}>
+      <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 6 }}>Alias</Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          autoFocus
+          autoCapitalize="none"
+          autoCorrect={false}
+          editable={!saving}
+          placeholder="prod-mac"
+          placeholderTextColor={c.textMuted}
+          style={{
+            flex: 1,
+            color: c.textPrimary,
+            backgroundColor: c.bgCard,
+            borderWidth: 1,
+            borderColor: c.border,
+            borderRadius: 6,
+            paddingHorizontal: 10,
+            paddingVertical: 8,
+            fontFamily: "Menlo",
+            fontSize: 13,
+          }}
+        />
+        <Pressable
+          onPress={() => void commit(draft.trim().toLowerCase())}
+          disabled={saving}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 6,
+            backgroundColor: "rgba(16,185,129,0.15)",
+            borderWidth: 1,
+            borderColor: "rgba(16,185,129,0.45)",
+            opacity: saving ? 0.5 : 1,
+          }}
+        >
+          <Text style={{ color: "#a7f3d0", fontSize: 12, fontWeight: "700" }}>
+            {saving ? "..." : "Save"}
+          </Text>
+        </Pressable>
+        {device.alias ? (
+          <Pressable
+            onPress={() => void commit("")}
+            disabled={saving}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 6,
+              backgroundColor: "rgba(244,63,94,0.10)",
+              borderWidth: 1,
+              borderColor: "rgba(244,63,94,0.40)",
+              opacity: saving ? 0.5 : 1,
+            }}
+          >
+            <Text style={{ color: "#fecdd3", fontSize: 12, fontWeight: "700" }}>Clear</Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          onPress={() => { setEditing(false); setError(null); }}
+          disabled={saving}
+          style={{ paddingHorizontal: 8, paddingVertical: 8 }}
+        >
+          <Text style={{ color: c.textMuted, fontSize: 12 }}>Cancel</Text>
+        </Pressable>
+      </View>
+      {error ? (
+        <Text style={{ marginTop: 6, fontSize: 11, color: "#fecdd3" }}>{error}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+// Quick-action row in the modal header. Currently a single "Open
+// Shell" button that pushes to /shell — disabled (with a hint) for
+// devices that aren't the currently active connection because the
+// shell screen rides the active quicClient.baseUrl.
+function ShellActionRow({ device, onClose }: { device: Device; onClose: () => void }) {
+  const c = useColors();
+  const router = useRouter();
+  const { activeDevice, connectionStatus } = useDevice();
+  const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
+
+  return (
+    <View style={{
+      flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4,
+    }}>
+      <Pressable
+        onPress={() => {
+          if (!isActive) {
+            Alert.alert(
+              "Connect first",
+              `Open ${device.name} from the home screen so the agent connection is active, then come back to start a shell.`,
+            );
+            return;
+          }
+          onClose();
+          // Slight delay so the modal close animation doesn't fight
+          // the navigation push on iOS.
+          setTimeout(() => { router.push("/shell"); }, 200);
+        }}
+        style={{
+          flexDirection: "row", alignItems: "center", gap: 6,
+          paddingHorizontal: 12, paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: isActive ? "rgba(34,211,238,0.12)" : "rgba(75,85,99,0.10)",
+          borderWidth: 1,
+          borderColor: isActive ? "rgba(34,211,238,0.45)" : c.border,
+        }}
+      >
+        <Text style={{ color: isActive ? "#67e8f9" : c.textMuted, fontSize: 13, fontWeight: "700" }}>
+          ⌨  Open Shell
+        </Text>
+        {!isActive ? (
+          <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>(connect first)</Text>
+        ) : null}
+      </Pressable>
+    </View>
+  );
 }
 
 function FactoryResetAuthRow({ device }: { device: Device }) {
@@ -224,13 +402,33 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
           borderBottomWidth: 1, borderBottomColor: c.border,
         }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "700" }}>{device.name}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 18, fontWeight: "700" }}>{device.name}</Text>
+              {device.alias ? (
+                <View style={{
+                  paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
+                  backgroundColor: "rgba(16,185,129,0.15)",
+                  borderWidth: 1, borderColor: "rgba(16,185,129,0.45)",
+                }}>
+                  <Text style={{ color: "#a7f3d0", fontSize: 11, fontWeight: "700", fontFamily: "Menlo" }}>
+                    @{device.alias}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Text style={{ color: c.textMuted, fontSize: 12, marginTop: 2 }}>{device.os} · {device.host}:{device.port}</Text>
           </View>
           <Pressable onPress={onClose} style={{ paddingHorizontal: 12, paddingVertical: 6 }}>
             <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>Done</Text>
           </Pressable>
         </View>
+
+        {/* Quick actions row — Hetzner-style "open shell from console".
+            Mobile shell only works when this device is the active
+            connection (the WS rides quicClient.baseUrl). For non-active
+            devices we still show the button but it'll route through
+            the shell screen, which guards against the wrong-device case. */}
+        <ShellActionRow device={device} onClose={onClose} />
 
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
           {/* Connection */}
@@ -278,6 +476,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               IDENTITY
             </Text>
             <Row label="Device ID" value={device.id} mono />
+            {!device.isGuest ? <AliasRow device={device} /> : device.alias ? <Row label="Alias" value={`@${device.alias}`} mono /> : null}
             {device.hwid ? <Row label="Hardware ID" value={device.hwid.slice(0, 16) + "…"} mono /> : null}
             {device.publicKey ? <Row label="Primary key" value={device.publicKey.slice(0, 16) + "…"} mono /> : null}
             {device.accessScope ? <Row label="Access scope" value={device.accessScope} /> : null}

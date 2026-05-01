@@ -1,7 +1,8 @@
 "use client";
 
 import { useAuth } from "@/lib/use-auth";
-import { useDevices, usePendingClaims, type Device } from "@/lib/use-devices";
+import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
+import TerminalView from "@/components/dashboard/TerminalView";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
@@ -329,6 +330,191 @@ function lanIpsForDevice(device: Pick<Device, "host" | "localIps">): string[] {
   return [...ips].slice(0, 3);
 }
 
+// Hetzner / GCP / AWS-style "open shell from console" — a full-bleed
+// modal that hosts the existing xterm.js TerminalView (which talks to
+// the agent's /ws/terminal PTY endpoint via the relay). Mounting it
+// only when the modal is open means the WS is created on demand and
+// torn down on close (TerminalView's cleanup closes the socket and
+// disposes the terminal).
+//
+// The modal does NOT establish the underlying agent connection — that
+// has to happen first (`agentClient.connect(...)`), because terminalWsUrl
+// reads `agentClient.baseUrl`. We surface a clear "device not
+// connected" state instead of silently producing an unauthenticated
+// WebSocket that 401s.
+function WebShellModal({
+  device,
+  isCurrentDeviceConnected,
+  onClose,
+  onConnect,
+}: {
+  device: Device;
+  isCurrentDeviceConnected: boolean;
+  onClose: () => void;
+  onConnect: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-8"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex w-full max-w-5xl flex-col overflow-hidden rounded-none border border-surface-700 bg-[#0b0d10] shadow-2xl sm:rounded-xl"
+      >
+        <div className="flex items-center justify-between border-b border-surface-800 bg-surface-900/80 px-4 py-2.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+            <span className="truncate text-[13px] font-semibold text-surface-100">
+              Shell · {device.alias ? `@${device.alias}` : device.name}
+            </span>
+            <span className="hidden sm:inline truncate text-[11px] text-surface-500">
+              {device.host}:{device.port}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline rounded-full border border-surface-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-surface-400">
+              via relay · PTY
+            </span>
+            <button
+              onClick={onClose}
+              className="rounded-md border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-600 hover:text-surface-100"
+              title="Close (Esc)"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-hidden p-2">
+          {isCurrentDeviceConnected ? (
+            <TerminalView />
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-surface-300">
+              <p className="text-[13px]">
+                Browser shell needs an active agent connection to{" "}
+                <span className="font-mono text-emerald-300">
+                  {device.alias ? `@${device.alias}` : device.name}
+                </span>
+                .
+              </p>
+              <button
+                onClick={onConnect}
+                className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-500/15"
+              >
+                Connect & open shell
+              </button>
+              <p className="text-[11px] text-surface-500">
+                Once connected the PTY opens through the relay — works even when
+                direct LAN is unreachable.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Inline alias editor: click the chip to edit, Enter to save, Esc
+// to cancel. Shown only for devices the caller owns (the API rejects
+// alias writes on guest devices). When no alias is set we render a
+// muted "+ alias" affordance so the slot is still discoverable.
+function DeviceAliasChip({
+  device,
+  token,
+  onSaved,
+}: {
+  device: Device;
+  token: string;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(device.alias ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!editing) setDraft(device.alias ?? "");
+  }, [device.alias, editing]);
+
+  const commit = useCallback(async () => {
+    const next = draft.trim().toLowerCase();
+    if (next === (device.alias ?? "")) {
+      setEditing(false);
+      setError(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    const res = await setDeviceAlias(token, device.id, next);
+    setSaving(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    setEditing(false);
+    onSaved();
+  }, [draft, device.alias, device.id, token, onSaved]);
+
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <input
+          autoFocus
+          value={draft}
+          disabled={saving}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void commit();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setEditing(false);
+              setError(null);
+              setDraft(device.alias ?? "");
+            }
+          }}
+          onBlur={() => {
+            // Defer so click on the inline error/help link still works
+            setTimeout(() => void commit(), 120);
+          }}
+          placeholder="prod-mac"
+          spellCheck={false}
+          className="w-28 rounded-full border border-emerald-500/40 bg-surface-950 px-2 py-0.5 font-mono text-[10px] text-emerald-200 outline-none focus:border-emerald-400"
+        />
+        {error ? (
+          <span title={error} className="text-[10px] text-red-300/80">!</span>
+        ) : null}
+      </span>
+    );
+  }
+
+  if (!device.alias) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="rounded-full border border-dashed border-surface-700 bg-transparent px-2 py-0.5 text-[10px] font-medium text-surface-400 hover:border-emerald-500/40 hover:text-emerald-200"
+        title="Add a short alias (used by `yaver ssh <alias>`)"
+      >
+        + alias
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-200 hover:border-emerald-400/60"
+      title="Click to rename this alias"
+    >
+      @{device.alias}
+    </button>
+  );
+}
+
 function DeviceConnectCard({
   device,
   isPrimary,
@@ -338,6 +524,9 @@ function DeviceConnectCard({
   onConnect,
   onTogglePrimary,
   canTogglePrimary,
+  onAliasSaved,
+  onOpenShell,
+  token,
   compact = false,
 }: {
   device: Device;
@@ -348,6 +537,9 @@ function DeviceConnectCard({
   onConnect: () => void;
   onTogglePrimary?: () => void;
   canTogglePrimary?: boolean;
+  onAliasSaved?: () => void;
+  onOpenShell?: () => void;
+  token?: string | null;
   compact?: boolean;
 }) {
   const shareSummary = deviceAccessSummary(device);
@@ -401,6 +593,15 @@ function DeviceConnectCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <h3 className="truncate text-[15px] font-semibold text-surface-100">{device.name}</h3>
+            {!device.isGuest && token ? (
+              <DeviceAliasChip
+                device={device}
+                token={token}
+                onSaved={() => { if (onAliasSaved) onAliasSaved(); }}
+              />
+            ) : device.alias ? (
+              <span className="rounded-full border border-emerald-500/20 bg-emerald-500/5 px-2 py-0.5 font-mono text-[10px] text-emerald-300/80">@{device.alias}</span>
+            ) : null}
             <span className={`inline-flex h-2 w-2 rounded-full ${connectionError ? "bg-red-400" : isConnecting ? "bg-amber-400" : statusTone}`} />
             <span className="text-[11px] text-surface-400">
               {connectionError
@@ -535,6 +736,15 @@ function DeviceConnectCard({
         >
           {isConnecting ? "Connecting…" : lifecycleState === "connected" ? "Open Workspace" : lifecycleState === "bootstrap" ? "Reclaim & Connect" : lifecycleState === "yaver-auth-expired" ? "Re-auth & Connect" : "Connect"}
         </button>
+        {onOpenShell ? (
+          <button
+            onClick={onOpenShell}
+            className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 hover:bg-cyan-500/15"
+            title="Open a browser shell on this device (PTY over relay)"
+          >
+            <span aria-hidden className="mr-1">⌨</span>Shell
+          </button>
+        ) : null}
         {canTogglePrimary && onTogglePrimary ? (
           <button
             onClick={onTogglePrimary}
@@ -584,6 +794,11 @@ export default function DashboardPage() {
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
   const [reauthBusy, setReauthBusy] = useState<string | null>(null);
   const [reauthMsg, setReauthMsg] = useState<{ deviceId: string; ok: boolean; text: string } | null>(null);
+  // Browser-shell modal state. We track the device the user clicked
+  // "Shell" on so the modal can decide whether agentClient is already
+  // pointed at it; if not it offers a "Connect & open shell" affordance
+  // instead of silently opening a WS against the wrong baseUrl.
+  const [shellDevice, setShellDevice] = useState<Device | null>(null);
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
@@ -1986,6 +2201,9 @@ export default function DashboardPage() {
                           isPrimary={primaryDeviceId === d.id}
                           isSelected={false}
                           isConnecting={false}
+                          token={token}
+                          onAliasSaved={refreshDevices}
+                          onOpenShell={() => setShellDevice(d)}
                           onConnect={() => connectToDevice(d)}
                           onTogglePrimary={!d.isGuest && token ? async () => {
                             const nextId = primaryDeviceId === d.id ? null : d.id;
@@ -2508,6 +2726,17 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+      {/* Browser-shell modal — opens xterm.js connected to the agent's
+          /ws/terminal PTY endpoint via the relay. Only mounted while
+          open so the WebSocket lifecycle matches the modal. */}
+      {shellDevice ? (
+        <WebShellModal
+          device={shellDevice}
+          isCurrentDeviceConnected={Boolean(connectedDevice && connectedDevice.id === shellDevice.id)}
+          onConnect={() => { void connectToDevice(shellDevice); }}
+          onClose={() => setShellDevice(null)}
+        />
+      ) : null}
       {/* Lifted out of the chat-tab branch so the Hot Reload "Sign in
           & reconnect" button can open the modal regardless of which
           tab is active. The modal handles its own backdrop + z-index. */}

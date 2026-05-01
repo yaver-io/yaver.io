@@ -160,6 +160,13 @@ export interface RunnerInfo {
 export interface Device {
   id: string;
   name: string;
+  /**
+   * Per-user short alias (lower-cased server-side, unique within the
+   * caller's own devices). Set via the inline editor on the device
+   * card or `yaver alias set ...` from the CLI. Used by
+   * `yaver ssh <alias>` and shown as "@alias" next to the name.
+   */
+  alias?: string;
   host: string;
   port: number;
   online: boolean;
@@ -526,6 +533,16 @@ interface DeviceState {
   refreshDevices: () => Promise<void>;
   detachDevice: (device: Device) => Promise<void>;
   removeDevice: (device: Device) => Promise<void>;
+  /**
+   * Set or clear the per-user alias for a device. Returns the
+   * server-normalized alias on success (lower-cased). Server enforces
+   * uniqueness — surface the returned error verbatim
+   * ("alias already used …", "alias invalid …").
+   */
+  setDeviceAlias: (
+    device: Device,
+    alias: string,
+  ) => Promise<{ ok: true; alias: string | null } | { ok: false; error: string }>;
   /** Device IDs the phone has failed to reach this session. Cleared on successful connect. */
   unreachableDeviceIds: string[];
   /** Flag a device as not reachable (e.g. after user hit Stop on a reconnect loop). */
@@ -752,6 +769,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           return {
             id: deviceId,
             name: d.isGuest ? `${d.name} (${d.hostName || "guest"})` : d.name,
+            alias: typeof d.alias === "string" && d.alias.trim() !== "" ? d.alias : undefined,
             host: d.quicHost || d.host,
             port: d.quicPort || d.port,
             online: isActivelyConnected || (() => {
@@ -1007,6 +1025,39 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
   }, [activeDevice]);
+
+  const handleSetDeviceAlias = useCallback(
+    async (
+      device: Device,
+      alias: string,
+    ): Promise<{ ok: true; alias: string | null } | { ok: false; error: string }> => {
+      if (!token) return { ok: false, error: "Not signed in" };
+      try {
+        const res = await fetch(`${CONVEX_SITE_URL}/devices/alias`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deviceId: device.id, alias }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          return { ok: false, error: body?.error || `HTTP ${res.status}` };
+        }
+        const next = body?.alias ?? null;
+        // Optimistically update local state so the UI re-renders without
+        // waiting for the next /devices/list poll.
+        setDevices((prev) =>
+          prev.map((d) => (d.id === device.id ? { ...d, alias: next ?? undefined } : d)),
+        );
+        return { ok: true, alias: next };
+      } catch (e: any) {
+        return { ok: false, error: e?.message || String(e) };
+      }
+    },
+    [token],
+  );
 
   const handleRemoveDevice = useCallback(async (device: Device) => {
     if (!token) throw new Error("Not signed in");
@@ -2174,6 +2225,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       refreshDevices,
       detachDevice: handleDetachDevice,
       removeDevice: handleRemoveDevice,
+      setDeviceAlias: handleSetDeviceAlias,
       unreachableDeviceIds: Array.from(unreachableSet),
       markDeviceUnreachable,
       manualAuthRequiredDeviceIds: Array.from(manualAuthRequiredSet),
@@ -2188,7 +2240,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryModelByDevice,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;
