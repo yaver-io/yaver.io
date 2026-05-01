@@ -2,7 +2,7 @@
 
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
-import TerminalView from "@/components/dashboard/TerminalView";
+import WebShellModal from "@/components/dashboard/WebShellModal";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
@@ -328,91 +328,6 @@ function lanIpsForDevice(device: Pick<Device, "host" | "localIps">): string[] {
     if (ip) ips.add(ip);
   }
   return [...ips].slice(0, 3);
-}
-
-// Hetzner / GCP / AWS-style "open shell from console" — a full-bleed
-// modal that hosts the existing xterm.js TerminalView (which talks to
-// the agent's /ws/terminal PTY endpoint via the relay). Mounting it
-// only when the modal is open means the WS is created on demand and
-// torn down on close (TerminalView's cleanup closes the socket and
-// disposes the terminal).
-//
-// The modal does NOT establish the underlying agent connection — that
-// has to happen first (`agentClient.connect(...)`), because terminalWsUrl
-// reads `agentClient.baseUrl`. We surface a clear "device not
-// connected" state instead of silently producing an unauthenticated
-// WebSocket that 401s.
-function WebShellModal({
-  device,
-  isCurrentDeviceConnected,
-  onClose,
-  onConnect,
-}: {
-  device: Device;
-  isCurrentDeviceConnected: boolean;
-  onClose: () => void;
-  onConnect: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-8"
-      onClick={onClose}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="flex w-full max-w-5xl flex-col overflow-hidden rounded-none border border-surface-700 bg-[#0b0d10] shadow-2xl sm:rounded-xl"
-      >
-        <div className="flex items-center justify-between border-b border-surface-800 bg-surface-900/80 px-4 py-2.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            <span className="truncate text-[13px] font-semibold text-surface-100">
-              Shell · {device.alias ? `@${device.alias}` : device.name}
-            </span>
-            <span className="hidden sm:inline truncate text-[11px] text-surface-500">
-              {device.host}:{device.port}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="hidden sm:inline rounded-full border border-surface-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-surface-400">
-              via relay · PTY
-            </span>
-            <button
-              onClick={onClose}
-              className="rounded-md border border-surface-700 bg-surface-950 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-600 hover:text-surface-100"
-              title="Close (Esc)"
-            >
-              Close
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 overflow-hidden p-2">
-          {isCurrentDeviceConnected ? (
-            <TerminalView />
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-surface-300">
-              <p className="text-[13px]">
-                Browser shell needs an active agent connection to{" "}
-                <span className="font-mono text-emerald-300">
-                  {device.alias ? `@${device.alias}` : device.name}
-                </span>
-                .
-              </p>
-              <button
-                onClick={onConnect}
-                className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-[12px] font-semibold text-emerald-200 hover:bg-emerald-500/15"
-              >
-                Connect & open shell
-              </button>
-              <p className="text-[11px] text-surface-500">
-                Once connected the PTY opens through the relay — works even when
-                direct LAN is unreachable.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // Inline alias editor: click the chip to edit, Enter to save, Esc
@@ -2734,6 +2649,15 @@ export default function DashboardPage() {
           device={shellDevice}
           isCurrentDeviceConnected={Boolean(connectedDevice && connectedDevice.id === shellDevice.id)}
           onConnect={() => { void connectToDevice(shellDevice); }}
+          onOpenRescue={() => {
+            // Devices tab owns the Rescue panel + Reset Auth flow.
+            // We can't deep-link to a specific device's open Rescue
+            // section from here, but switching tabs gets the user one
+            // click away — DevicesView preserves rescueOpenDeviceId
+            // state per-card and the cards are sorted with the
+            // attention-needed devices on top.
+            setActiveTab("devices");
+          }}
           onClose={() => setShellDevice(null)}
         />
       ) : null}
