@@ -29,18 +29,34 @@ function pickAttention(
   pendingClaims: PendingDeviceClaim[],
   activeDevice: Device | null,
   agentAuthExpired: boolean,
+  isConnected: boolean,
 ): AttentionItem | null {
   if (pendingClaims.length > 0) {
     return { kind: "pending", count: pendingClaims.length, first: pendingClaims[0] };
   }
-  if (activeDevice && activeDevice.needsAuth) {
+  // SUPPRESS bootstrap/reauth banner for the active device when we're
+  // already connected and serving from it. Connection itself is proof
+  // the agent is past bootstrap and accepting our token; Convex's
+  // `needsAuth` flag is heartbeat-driven and goes stale for tens of
+  // seconds after a recent recovery / re-exec. Showing the banner in
+  // that window is a false positive — the user sees "Reclaim" while
+  // happily using the device, taps it, and gets a fresh "no PRNG" /
+  // "502" error against an agent that's healthy. Active-device-but-
+  // truly-needs-auth is an `agentAuthExpired` signal (set by the
+  // /info-driven probe), which we keep as a separate branch below.
+  if (
+    activeDevice &&
+    activeDevice.needsAuth &&
+    !(isConnected && !agentAuthExpired)
+  ) {
     return { kind: "bootstrap", device: activeDevice };
   }
   if (activeDevice && agentAuthExpired) {
     return { kind: "auth-expired", device: activeDevice };
   }
-  // Any other device that's online/recently-online and lost auth.
-  // Skip long-offline boxes so the banner only flags actionable state.
+  // Any OTHER device (not the one we're currently connected to) that's
+  // online/recently-online and lost auth. Skip long-offline boxes so
+  // the banner only flags actionable state.
   const reachable = devices.find((d) =>
     d.id !== activeDevice?.id &&
     d.needsAuth &&
@@ -59,15 +75,18 @@ export function DeviceAttentionBanner() {
     activeDevice,
     agentAuthExpired,
     isLoadingDevices,
+    connectionStatus,
     recoverDeviceAuth,
     claimPendingDevice,
   } = useDevice();
   const [busy, setBusy] = useState(false);
   const [errorText, setErrorText] = useState<string | null>(null);
 
+  const isConnected = connectionStatus === "connected" && !!activeDevice;
+
   const item = useMemo(
-    () => pickAttention(devices, pendingClaims, activeDevice, agentAuthExpired),
-    [devices, pendingClaims, activeDevice, agentAuthExpired],
+    () => pickAttention(devices, pendingClaims, activeDevice, agentAuthExpired, isConnected),
+    [devices, pendingClaims, activeDevice, agentAuthExpired, isConnected],
   );
 
   if (isLoadingDevices && !item) return null;
