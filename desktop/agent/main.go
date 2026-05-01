@@ -4662,6 +4662,7 @@ func runStatus() {
 		}
 	}
 
+	printStatusRemoteAccess(cfg)
 	printStatusSharing(statusClient, cfg)
 
 	// Voice / Speech status
@@ -4988,6 +4989,92 @@ func statusUnixMilliOrDash(ms int64) string {
 		return "-"
 	}
 	return time.UnixMilli(ms).Format("2006-01-02")
+}
+
+func statusDateTimeUnixMilliOrDash(ms int64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return time.UnixMilli(ms).Local().Format("2006-01-02 15:04")
+}
+
+func statusAgoOrDash(ms int64) string {
+	if ms <= 0 {
+		return "-"
+	}
+	return humanRoundDuration(time.Since(time.UnixMilli(ms)))
+}
+
+func filterHostShareSessionsForDevice(sessions []HostShareSessionInfo, deviceID string) []HostShareSessionInfo {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return nil
+	}
+	filtered := make([]HostShareSessionInfo, 0, len(sessions))
+	for _, session := range sessions {
+		if strings.TrimSpace(session.HostDeviceID) != deviceID {
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].LastActivityAt != filtered[j].LastActivityAt {
+			return filtered[i].LastActivityAt > filtered[j].LastActivityAt
+		}
+		return filtered[i].StartedAt > filtered[j].StartedAt
+	})
+	return filtered
+}
+
+func printStatusRemoteAccess(cfg *Config) {
+	fmt.Println()
+	fmt.Println("Remote access:")
+	if strings.TrimSpace(cfg.DeviceID) == "" {
+		fmt.Println("  Host-share: local device id unknown")
+		return
+	}
+
+	sessions, err := FetchHostShareSessions(cfg.ConvexSiteURL, cfg.AuthToken, "host")
+	if err != nil {
+		fmt.Printf("  Host-share: unavailable (%v)\n", err)
+		return
+	}
+
+	deviceSessions := filterHostShareSessionsForDevice(sessions, cfg.DeviceID)
+	if len(deviceSessions) == 0 {
+		fmt.Println("  Host-share: no active remote sessions on this device")
+		return
+	}
+
+	fmt.Printf("  Host-share: %d active remote session(s) on this device\n", len(deviceSessions))
+	fmt.Printf("  Last activity: %s (%s ago)\n",
+		statusDateTimeUnixMilliOrDash(deviceSessions[0].LastActivityAt),
+		statusAgoOrDash(deviceSessions[0].LastActivityAt),
+	)
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "    GUEST\tSTATUS\tSTARTED\tLAST ACTIVE\tEXPIRES")
+	for _, session := range deviceSessions {
+		guest := strings.TrimSpace(session.GuestEmail)
+		if guest == "" {
+			guest = strings.TrimSpace(session.GuestName)
+		}
+		if guest == "" {
+			guest = session.SessionID
+		}
+		status := strings.TrimSpace(session.Status)
+		if status == "" {
+			status = "active"
+		}
+		fmt.Fprintf(w, "    %s\t%s\t%s\t%s\t%s\n",
+			guest,
+			status,
+			statusDateTimeUnixMilliOrDash(session.StartedAt),
+			statusDateTimeUnixMilliOrDash(session.LastActivityAt),
+			statusDateTimeUnixMilliOrDash(session.ExpiresAt),
+		)
+	}
+	w.Flush()
 }
 
 func statusTimeOrDash(value string) string {
