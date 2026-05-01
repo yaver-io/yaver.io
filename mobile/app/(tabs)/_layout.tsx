@@ -2,37 +2,17 @@ import { Tabs, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import * as ExpoDevice from "expo-device";
-import { Header, getHeaderTitle } from "@react-navigation/elements";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { AppBackButton } from "../../src/components/AppBackButton";
-import { DeviceAttentionBanner } from "../../src/components/DeviceAttentionBanner";
 
-// HeaderWithBanner wraps the standard react-navigation Header (which
-// keeps title centering, back-button, and any per-screen headerLeft /
-// headerRight intact) and renders the DeviceAttentionBanner BELOW it.
-// Used as the screenOptions.header for visible tabs so the cross-tab
-// "claim/reauth" CTA is always present without disturbing the existing
-// app-bar layout. Hidden tabs (headerShown: false) skip this wrapper.
-function HeaderWithBanner(props: any) {
-  const title = getHeaderTitle(props.options, props.route.name);
-  return (
-    <View>
-      <Header
-        title={title}
-        headerStyle={props.options?.headerStyle}
-        headerTintColor={props.options?.headerTintColor}
-        headerTitleStyle={props.options?.headerTitleStyle}
-        headerTitleAlign={props.options?.headerTitleAlign}
-        headerLeft={props.options?.headerLeft}
-        headerRight={props.options?.headerRight}
-      />
-      <DeviceAttentionBanner />
-    </View>
-  );
-}
+// (DeviceAttentionBanner / HeaderWithBanner removed — see commit
+// notes. Recovery is now silent: the agent and the per-tab UI hooks
+// kick recoverDeviceAuth themselves when needed, and on hard auth
+// failures we route the user through the normal Yaver web OAuth
+// flow rather than surfacing a confusing global "Reclaim" CTA.)
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
@@ -187,14 +167,6 @@ export default function TabLayout() {
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.textPrimary,
         headerTitleStyle: { fontWeight: "700" },
-        // Use one consistent app-bar across every visible tab. The
-        // wrapper renders the standard expo-router header (title,
-        // back-button, headerLeft/Right) and appends the global
-        // device-attention banner below it. Hidden tabs that set
-        // headerShown:false (the `href: null` set) bypass this entirely
-        // because expo-router skips the header callback when
-        // headerShown is false.
-        header: (props) => <HeaderWithBanner {...props} />,
         tabBarStyle: {
           backgroundColor: c.bgTabBar,
           borderTopColor: c.border,
