@@ -489,17 +489,46 @@ export default function VibeCodingView({
       setBusy(selectedRunnerRow.error || selectedRunnerRow.warning || `${selectedRunnerRow.name} is installed but not ready on this machine.`);
       return;
     }
+    const promptText = buildVibeContinuationPrompt({
+      project: selectedProject,
+      prompt: composer.trim(),
+      gitStatus,
+      deployTargets,
+      machine: connectedMachine,
+    });
+
+    // Runtime agent switch: if the user picked a different runner in the
+    // composer than the parent task's runner, fork a child task with
+    // the new runner instead of continuing the parent. Keeps the parent
+    // session immutable (Claude/Codex/OpenCode don't share session
+    // formats) while carrying a bounded recent-context handoff to the
+    // new runner. See task_fork.go and
+    // CODING_AGENT_CHANGE_FROM_MOBILE_APP_CHAT.md.
+    const parentRunner = (activeTask.runnerId || "").trim();
+    const desiredRunner = (selectedRunner || "").trim();
+    const switching = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
+
+    if (switching) {
+      setBusy(`Switching ${activeTask.title} to ${desiredRunner}…`);
+      try {
+        const result = await agentClient.forkTask(activeTask.id, {
+          runner: desiredRunner,
+          model: selectedModel || undefined,
+          mode: selectedMode || undefined,
+          input: promptText,
+        });
+        setComposer("");
+        setActiveTaskId(result.taskId);
+        setBusy(`Forked to ${desiredRunner} (${result.contextWordsUsed} words of context carried).`);
+        setRefreshNonce((value) => value + 1);
+      } catch (err) {
+        setBusy(`Switch to ${desiredRunner} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
     setBusy(`Continuing ${activeTask.title}…`);
-    await agentClient.continueTask(
-      activeTask.id,
-      buildVibeContinuationPrompt({
-        project: selectedProject,
-        prompt: composer.trim(),
-        gitStatus,
-        deployTargets,
-        machine: connectedMachine,
-      }),
-    );
+    await agentClient.continueTask(activeTask.id, promptText);
     setComposer("");
     setBusy(`Continued ${activeTask.title}.`);
   }

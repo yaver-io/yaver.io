@@ -1758,6 +1758,43 @@ export class QuicClient {
     if (!res.ok) throw new Error(`Failed to continue task: ${res.status}`);
   }
 
+  /**
+   * Fork an existing task to a different runner/model/mode with bounded
+   * recent-context handoff. Use this when the user changes the agent
+   * picker mid-conversation — preserves the parent task immutable
+   * (Claude/Codex/OpenCode don't share session formats) while spawning
+   * a child with a clipped excerpt of recent turns + the latest result
+   * tail as context. Server side: desktop/agent/task_fork.go.
+   */
+  async forkTask(
+    taskId: string,
+    args: { runner: string; model?: string; mode?: string; input: string; contextWords?: number },
+  ): Promise<{ taskId: string; runnerId: string; parentTaskId: string; contextWordsUsed: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/fork`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runner: args.runner,
+        model: args.model ?? "",
+        mode: args.mode ?? "",
+        input: args.input,
+        contextWords: args.contextWords,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Failed to fork task: ${res.status} ${text}`);
+    }
+    const json = await res.json();
+    return {
+      taskId: json.taskId,
+      runnerId: json.runnerId,
+      parentTaskId: json.parentTaskId,
+      contextWordsUsed: json.contextWordsUsed ?? 0,
+    };
+  }
+
   /** Delete a completed or failed task. */
   async deleteTask(taskId: string): Promise<void> {
     this.assertConnected();

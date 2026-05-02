@@ -3329,6 +3329,11 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		s.exitTask(w, r, taskID)
 	case "continue":
 		s.continueTask(w, r, taskID)
+	case "fork":
+		// Runtime agent switch: keep parent immutable, spawn child with
+		// new runner/model/mode + bounded recent-context handoff. See
+		// task_fork.go and CODING_AGENT_CHANGE_FROM_MOBILE_APP_CHAT.md.
+		s.handleTaskFork(w, r, taskID)
 	default:
 		jsonError(w, http.StatusNotFound, "unknown action")
 	}

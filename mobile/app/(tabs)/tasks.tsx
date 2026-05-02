@@ -1594,14 +1594,37 @@ export default function TasksScreen() {
         // For adopted tmux sessions, send input directly via tmux send-keys
         await quicClient.sendTmuxInput(selectedTask.id, followUpText.trim());
       } else {
-        // For regular tasks, stop then resume with new input
-        const isTaskRunning = selectedTask.status === "running" || selectedTask.status === "queued";
-        if (isTaskRunning) {
-          await quicClient.stopTask(selectedTask.id);
-          // Wait briefly for task to fully stop
-          await new Promise((r) => setTimeout(r, 500));
+        // Runtime agent switch: if the user changed the runner picker
+        // since this task was started, fork a child task with the new
+        // runner instead of continuing the parent in place. Parent
+        // session stays immutable. See task_fork.go on the agent side.
+        const parentRunner = (selectedTask.runnerId || "").trim();
+        const desiredRunner = (selectedRunner || "").trim();
+        const switching = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
+
+        if (switching) {
+          // Don't bother stopping the parent — fork is non-destructive
+          // by design. Image attachments don't carry over (the child
+          // gets the conversation context instead, which is text-only).
+          const result = await quicClient.forkTask(selectedTask.id, {
+            runner: desiredRunner,
+            input: followUpText.trim(),
+          });
+          // Switch the chat to the new child so subsequent follow-ups
+          // continue against the forked task.
+          setSelectedTask((prev) => prev && prev.id === selectedTask.id
+            ? { ...prev, id: result.taskId, runnerId: result.runnerId }
+            : prev);
+        } else {
+          // Same runner: regular continue. Stop a still-running parent
+          // first so its state machine accepts the new input.
+          const isTaskRunning = selectedTask.status === "running" || selectedTask.status === "queued";
+          if (isTaskRunning) {
+            await quicClient.stopTask(selectedTask.id);
+            await new Promise((r) => setTimeout(r, 500));
+          }
+          await quicClient.continueTask(selectedTask.id, followUpText.trim(), followUpImages.length > 0 ? followUpImages : undefined);
         }
-        await quicClient.continueTask(selectedTask.id, followUpText.trim(), followUpImages.length > 0 ? followUpImages : undefined);
       }
       setFollowUpText("");
       setFollowUpImages([]);

@@ -1347,6 +1347,42 @@ export class AgentClient {
     if (!res.ok) throw new Error(`Failed to continue task: ${res.status}`);
   }
 
+  /**
+   * Fork an existing task to a different runner/model/mode with bounded
+   * recent-context handoff. Use when the user changes the agent picker
+   * mid-conversation — this preserves the parent task immutable and
+   * spawns a child with the new runner that gets a clipped excerpt of
+   * the chat as context. See task_fork.go on the agent side.
+   */
+  async forkTask(
+    taskId: string,
+    args: { runner: string; model?: string; mode?: string; input: string; contextWords?: number },
+  ): Promise<{ taskId: string; runnerId: string; parentTaskId: string; contextWordsUsed: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/fork`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runner: args.runner,
+        model: args.model ?? "",
+        mode: args.mode ?? "",
+        input: args.input,
+        contextWords: args.contextWords,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Failed to fork task: ${res.status} ${text}`);
+    }
+    const json = await res.json();
+    return {
+      taskId: json.taskId,
+      runnerId: json.runnerId,
+      parentTaskId: json.parentTaskId,
+      contextWordsUsed: json.contextWordsUsed ?? 0,
+    };
+  }
+
   async deleteTask(taskId: string): Promise<void> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks/${taskId}`, {
