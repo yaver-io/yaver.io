@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	osexec "os/exec"
 	"strings"
 	"time"
 )
@@ -46,6 +47,12 @@ func runPrimary(args []string) {
 		return
 	case "auth":
 		runPrimaryAuth(ctx, args[1:])
+		return
+	case "signout", "logout":
+		runPrimarySignout(ctx, args[1:])
+		return
+	case "stop":
+		runPrimaryStop(ctx, args[1:])
 		return
 	}
 	if runner := normalizePrimaryRunnerQuickArg(args[0]); runner != "" {
@@ -145,6 +152,116 @@ func runPrimaryAuth(ctx context.Context, args []string) {
 	runRunnerQuickFlow(current, runner, args[1:])
 }
 
+// resolvePrimaryDeviceForRemote loads the caller's Convex creds, looks up the
+// primaryDeviceId, and returns the device row. Used by primary signout / stop /
+// auth — every remote-target verb needs the same prelude.
+func resolvePrimaryDeviceForRemote(ctx context.Context) (*Config, string, *DeviceInfo, error) {
+	token, convex, err := primaryLoadAuth()
+	if err != nil {
+		return nil, "", nil, err
+	}
+	current, err := primaryGetCurrent(ctx, token, convex)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("read userSettings: %w", err)
+	}
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return nil, "", nil, fmt.Errorf("no primary device set — run `yaver primary set <deviceId>` first")
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return nil, "", nil, fmt.Errorf("load config: %w", err)
+	}
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("list devices: %w", err)
+	}
+	for i := range devices {
+		if devices[i].DeviceID == current {
+			return cfg, current, &devices[i], nil
+		}
+	}
+	return nil, "", nil, fmt.Errorf("primary device %q is no longer in your registered devices — run `yaver primary clear` to reset", current)
+}
+
+func primaryConfirm(prompt string, args []string) bool {
+	if primaryHasFlag(args, "-y") || primaryHasFlag(args, "--yes") {
+		return true
+	}
+	fmt.Print(prompt + " [y/N]: ")
+	var resp string
+	fmt.Scanln(&resp)
+	resp = strings.ToLower(strings.TrimSpace(resp))
+	return resp == "y" || resp == "yes"
+}
+
+// runPrimarySignout SSH-runs `yaver signout` on the primary device. Clears the
+// remote box's auth token + marks it offline in Convex but leaves the agent
+// process running (sits in yaver-auth-expired state, ready to be re-auth'd
+// via `yaver primary auth`). Confirms before acting.
+func runPrimarySignout(ctx context.Context, args []string) {
+	_, _, target, err := resolvePrimaryDeviceForRemote(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary signout: %v\n", err)
+		os.Exit(1)
+	}
+	label := strings.TrimSpace(target.Alias)
+	if label == "" {
+		label = target.Name
+	}
+	if !primaryConfirm(fmt.Sprintf("Sign out primary device %q (%s)?", label, target.DeviceID[:8]), args) {
+		fmt.Println("Aborted.")
+		return
+	}
+	hint := strings.TrimSpace(target.Alias)
+	if hint == "" {
+		hint = target.DeviceID
+	}
+	yaverPath := findYaverBinary()
+	cmd := osexec.Command(yaverPath, "ssh", hint, "--", "yaver", "signout")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "primary signout: remote ssh failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Primary %s signed out. Re-auth with `yaver primary auth`.\n", label)
+}
+
+// runPrimaryStop SSH-runs `yaver stop` on the primary device. Stops the agent
+// process AND disables auto-start so it doesn't immediately resurrect. Confirms
+// before acting because this takes the box offline until someone restarts it.
+func runPrimaryStop(ctx context.Context, args []string) {
+	_, _, target, err := resolvePrimaryDeviceForRemote(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary stop: %v\n", err)
+		os.Exit(1)
+	}
+	label := strings.TrimSpace(target.Alias)
+	if label == "" {
+		label = target.Name
+	}
+	if !primaryConfirm(fmt.Sprintf("Stop the agent on primary device %q (%s)? This takes it offline until restarted.", label, target.DeviceID[:8]), args) {
+		fmt.Println("Aborted.")
+		return
+	}
+	hint := strings.TrimSpace(target.Alias)
+	if hint == "" {
+		hint = target.DeviceID
+	}
+	yaverPath := findYaverBinary()
+	cmd := osexec.Command(yaverPath, "ssh", hint, "--", "yaver", "stop")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "primary stop: remote ssh failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Primary %s stopped. Restart from the box with `yaver serve` (or via systemd/launchd if installed).\n", label)
+}
+
 func primaryUsage() {
 	fmt.Print(`yaver primary — manage + inspect the auto-connect preferred device
 
@@ -159,6 +276,14 @@ Usage:
   yaver primary auth <claude|claude-code|codex>
                                   Run the runner sanity/auth flow on the
                                   primary device for the named coding agent
+  yaver primary signout [-y]      Sign the primary device out (clears its
+                                  Yaver auth token + marks it offline; the
+                                  agent stays running but enters
+                                  yaver-auth-expired state). Prompts for
+                                  confirmation unless -y is given.
+  yaver primary stop [-y]         Stop the agent process on the primary
+                                  device + disable its auto-start service.
+                                  Prompts for confirmation unless -y.
   yaver primary <claude|claude-code|codex>
                                   Same as 'auth <runner>' — kept as a
                                   shortcut so existing scripts still work

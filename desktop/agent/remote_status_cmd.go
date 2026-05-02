@@ -477,6 +477,24 @@ func runRemoteAgentStatusByHint(deviceHint string, asJSON bool) {
 	defer cancel()
 	report, err := fetchRemoteAgentStatusByHint(ctx, deviceHint)
 	if err != nil {
+		// Resolve the deviceID for the friendly renderer; if we can't,
+		// fall through to the raw error.
+		cfg, _ := LoadConfig()
+		if cfg != nil {
+			if devices, derr := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); derr == nil {
+				hint := normalizeDeviceHint(deviceHint)
+				for i := range devices {
+					d := &devices[i]
+					if strings.HasPrefix(d.DeviceID, hint) ||
+						strings.EqualFold(d.Name, hint) ||
+						strings.HasPrefix(strings.ToLower(d.Name), strings.ToLower(hint)) ||
+						(strings.TrimSpace(d.Alias) != "" && strings.EqualFold(d.Alias, hint)) {
+						renderRemoteAgentStatusError(ctx, d.DeviceID, err, asJSON)
+						os.Exit(1)
+					}
+				}
+			}
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -524,8 +542,92 @@ func runPrimaryStatus(ctx context.Context, asJSON bool) {
 	}
 	report, err := fetchRemoteAgentStatusByDeviceID(ctx, current)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		renderRemoteAgentStatusError(ctx, current, err, asJSON)
 		os.Exit(1)
 	}
 	renderRemoteAgentStatus(report, asJSON)
+}
+
+// renderRemoteAgentStatusError prints a clean "primary unreachable" summary
+// when fetchRemoteAgentStatus failed across every transport candidate. The
+// raw error from doRemoteAgentRequest is a `|`-joined wall of attempt URLs +
+// reasons (Docker bridge IPs the box reported as local IPs, relay 502 because
+// the box's tunnel is down, etc.) — useful for debugging but unreadable as
+// the default output. We replace it with: device label + a one-line cause
+// classification + the most likely recovery command. Falls back to the raw
+// error for --json or when device metadata can't be loaded.
+func renderRemoteAgentStatusError(ctx context.Context, deviceID string, err error, asJSON bool) {
+	if asJSON {
+		jsonErr := map[string]interface{}{
+			"deviceId": deviceID,
+			"error":    err.Error(),
+		}
+		out, _ := json.MarshalIndent(jsonErr, "", "  ")
+		fmt.Fprintln(os.Stderr, string(out))
+		return
+	}
+	cfg, _ := LoadConfig()
+	var target *DeviceInfo
+	if cfg != nil && strings.TrimSpace(cfg.AuthToken) != "" {
+		if devices, derr := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); derr == nil {
+			for i := range devices {
+				if devices[i].DeviceID == deviceID {
+					target = &devices[i]
+					break
+				}
+			}
+		}
+	}
+	label := deviceID
+	if len(label) > 8 {
+		label = label[:8]
+	}
+	hostLabel := ""
+	if target != nil {
+		alias := strings.TrimSpace(target.Alias)
+		if alias != "" {
+			label = fmt.Sprintf("%s (@%s) [%s]", target.Name, alias, label)
+		} else {
+			label = fmt.Sprintf("%s [%s]", target.Name, label)
+		}
+		hostLabel = strings.TrimSpace(target.Platform)
+	}
+	cause, hint := classifyRemoteStatusError(err, target)
+	fmt.Println(label)
+	if hostLabel != "" {
+		fmt.Printf("  host:           %s\n", hostLabel)
+	}
+	if target != nil && !target.IsOnline {
+		fmt.Println("  status:         offline (no recent heartbeat)")
+	} else {
+		fmt.Println("  status:         online per Convex but unreachable from here")
+	}
+	fmt.Printf("  cause:          %s\n", cause)
+	if hint != "" {
+		fmt.Printf("  next step:      %s\n", hint)
+	}
+}
+
+// classifyRemoteStatusError boils a verbose multi-candidate transport failure
+// down to one short cause + a recovery hint. The match patterns are intentionally
+// loose — false positives just mean the user gets the wrong hint, not a hidden
+// error (the raw error is still in --json output).
+func classifyRemoteStatusError(err error, target *DeviceInfo) (cause, hint string) {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case target != nil && !target.IsOnline:
+		return "device offline (last heartbeat too old)", "ssh into the box and run `yaver serve`, or check `systemctl --user status yaver`"
+	case strings.Contains(msg, "device not connected to relay"):
+		return "relay tunnel down (typically Yaver auth expired on the box)", "run `yaver primary auth` to re-sign in on the primary device"
+	case strings.Contains(msg, "i/o timeout") && strings.Contains(msg, "172.") || strings.Contains(msg, "i/o timeout") && strings.Contains(msg, "10."):
+		return "no LAN path + relay tunnel unavailable", "run `yaver primary auth` (re-establishes the relay tunnel) or join the same LAN as the primary"
+	case strings.Contains(msg, "i/o timeout"):
+		return "every transport timed out", "run `yaver primary auth` to refresh the relay tunnel; if you're on cellular, the LAN candidates were never going to work anyway"
+	case strings.Contains(msg, "connection refused"):
+		return "agent process not listening on its HTTP port", "ssh in and check `pgrep -af 'yaver serve'` and `journalctl --user -u yaver -n 50`"
+	case strings.Contains(msg, "401") || strings.Contains(msg, "403"):
+		return "agent rejected our auth token", "your local CLI's session may be stale — run `yaver auth` here, or `yaver primary auth` if the box is the one with bad auth"
+	default:
+		return "every transport candidate failed", "see `yaver primary status --json` for the raw error list"
+	}
 }
