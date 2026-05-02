@@ -93,7 +93,7 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 194
-        versionName "1.18.42"
+        versionName "1.18.43"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -164,6 +164,13 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+
+    // ChromeCustomTabs — used by YaverAgentsPane.kt's runner-auth flow
+    // to open OAuth pages (claude.com / OpenAI device-auth) in an in-app
+    // browser, mirroring iOS SFSafariViewController. androidx.browser is
+    // a small support lib; runtime falls back to plain Intent.ACTION_VIEW
+    // if the user has no browser supporting Custom Tabs.
+    implementation("androidx.browser:browser:1.8.0")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
