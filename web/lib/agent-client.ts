@@ -4872,19 +4872,29 @@ export class AgentClient {
   }
 
   // WebSocket URL builders — issue short-lived browser session tokens so the
-  // browser never has to put the real bearer token into a URL.
+  // browser never has to put the real bearer token into a URL. When the
+  // dashboard is talking to the agent through the relay, we also append
+  // `__rp=<password>` because browsers can't set custom headers on WS
+  // upgrades and the relay's password gate (relay/server.go:953) rejects
+  // the upgrade with 401 before it ever reaches the agent.
   async metricsWsUrl(): Promise<string> {
     const token = await this.issueBrowserSession("/ws/metrics");
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/metrics?browser_session=${encodeURIComponent(token)}`;
+    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/metrics?browser_session=${encodeURIComponent(token)}`);
   }
   async containerLogsWsUrl(id: string): Promise<string> {
     const token = await this.issueBrowserSession("/ws/logs");
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&browser_session=${encodeURIComponent(token)}`;
+    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/logs?id=${encodeURIComponent(id)}&browser_session=${encodeURIComponent(token)}`);
   }
   async terminalWsUrl(cwd?: string): Promise<string> {
     const token = await this.issueBrowserSession("/ws/terminal");
     const c = cwd ? `&cwd=${encodeURIComponent(cwd)}` : "";
-    return `${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}`;
+    return this.appendRelayPwToWs(`${this.baseUrl.replace(/^http/, "ws")}/ws/terminal?browser_session=${encodeURIComponent(token)}${c}`);
+  }
+
+  private appendRelayPwToWs(url: string): string {
+    if (!this._activeRelayUrl || !this.activeRelayPassword) return url;
+    const join = url.includes("?") ? "&" : "?";
+    return `${url}${join}__rp=${encodeURIComponent(this.activeRelayPassword)}`;
   }
 
   // ── Vault (secrets stored encrypted on host disk) ─────────────────

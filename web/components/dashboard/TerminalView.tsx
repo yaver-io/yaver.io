@@ -76,8 +76,8 @@ export default function TerminalView({ cwd }: { cwd?: string }) {
   }, [cwd]);
 
   return (
-    <div className="bg-[#0b0d10] border border-surface-800 rounded-lg overflow-hidden">
-      <div ref={ref} className="h-[500px] p-2" />
+    <div className="h-full w-full bg-[#0b0d10] overflow-hidden">
+      <div ref={ref} className="h-full w-full p-2" />
     </div>
   );
 }

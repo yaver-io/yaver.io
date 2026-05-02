@@ -74,7 +74,7 @@ export default function WebShellModal({
             </button>
           </div>
         </div>
-        <div className="flex-1 overflow-hidden bg-slate-50/70 p-2 dark:bg-transparent">
+        <div className={`flex-1 overflow-hidden ${state === "ready" ? "bg-[#0b0d10]" : "bg-slate-50/70 dark:bg-transparent p-2"}`}>
           {state === "ready" ? (
             <TerminalView />
           ) : state === "needs-reauth" ? (
