@@ -1327,8 +1327,20 @@ http.route({
       // path can race them in parallel. Older agents don't send the field
       // at all — then undefined is correct and the mutation leaves the
       // stored list untouched.
-      localIps: Array.isArray(body.localIps) ? body.localIps : undefined,
-      publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
+      // Treat both [] and null as deliberate clear. Pre-fix only Array
+      // values made it through, so a Go agent sending nil-slice → JSON
+      // null was silently ignored, leaving stale Docker-bridge IPs on
+      // the device row across upgrades.
+      localIps: Array.isArray(body.localIps)
+        ? body.localIps
+        : body.localIps === null
+          ? []
+          : undefined,
+      publicEndpoints: Array.isArray(body.publicEndpoints)
+        ? body.publicEndpoints
+        : body.publicEndpoints === null
+          ? []
+          : undefined,
       hardwareId: body.hardwareId || undefined,
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,

@@ -1524,6 +1524,17 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 	// bridge address in mobile's device list because the field was
 	// just never re-sent.
 	payload["quicHost"] = quicHost
+	// Coerce nil slices to empty arrays so JSON encodes them as `[]` not
+	// `null`. The Convex http wrapper treats Array-valued localIps as
+	// "deliberate clear", but `null` short-circuits to `undefined` and
+	// skips the clear entirely — leaving stale Docker-bridge IPs frozen
+	// on the device row across upgrades.
+	if localIps == nil {
+		localIps = []string{}
+	}
+	if publicEndpoints == nil {
+		publicEndpoints = []string{}
+	}
 	payload["localIps"] = localIps
 	payload["publicEndpoints"] = publicEndpoints
 	if recoveryPosture != nil {
