@@ -2,7 +2,7 @@
   "sdkVersion": "1.0.0",
   "expo": "54.0.33",
   "reactNative": "0.81.5",
-  "react": "19.2.5",
+  "react": "19.1.0",
   "hermes": {
     "version": "0.81.5",
     "bytecodeVersion": 96
@@ -16,11 +16,11 @@
   "runtimeFamilies": [
     {
       "id": "family-a",
-      "label": "Family A \u00b7 Expo 54.0.33 / RN 0.81.5 / React 19.2.5 / BC96",
+      "label": "Family A \u00b7 Expo 54.0.33 / RN 0.81.5 / React 19.1.0 / BC96",
       "sdkVersion": "1.0.0",
       "expoVersion": "54.0.33",
       "reactNativeVersion": "0.81.5",
-      "reactVersion": "19.2.5",
+      "reactVersion": "19.1.0",
       "hermesVersion": "0.81.5",
       "hermesBCVersion": 96,
       "supportedRNRange": "0.81.x",
