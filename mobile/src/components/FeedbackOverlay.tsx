@@ -100,11 +100,16 @@ export function FeedbackOverlay() {
   }, []);
 
   useEffect(() => {
-    return subscribeFeedbackLaunch(() => {
-      if (!enabled) return;
+    return subscribeFeedbackLaunch(({ source }) => {
+      // Implicit opt-in sources bypass the Settings toggle: a shake while a
+      // guest bundle is loaded (Hermes push from the agent) or a remote-
+      // runtime session is the user telling us they want feedback right
+      // now, regardless of whether the floating button is on.
+      const isImplicitOptIn = source === "native-guest-shake" || source === "remote-runtime";
+      if (!enabled && !isImplicitOptIn) return;
       setChatOpen(true);
       setFullSize(false);
-      addOutput("> feedback opened");
+      addOutput("> feedback opened" + (isImplicitOptIn ? ` (${source})` : ""));
     });
   }, [enabled, addOutput]);
 

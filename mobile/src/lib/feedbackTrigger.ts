@@ -44,8 +44,23 @@ async function currentFeedbackConfig(userId?: string | null): Promise<{ enabled?
 
 async function maybeLaunchFeedbackFromShake(source: FeedbackLaunchSource, userId?: string | null): Promise<void> {
   if (nowMs() < cooldownUntil) return;
-  const cfg = await currentFeedbackConfig(userId);
-  if (!cfg?.enabled || cfg.trigger !== "shake") return;
+  // `native-guest-shake` and `remote-runtime` are unconditional: the user
+  // explicitly entered guest-runtime mode (Hermes-pushed bundle inside the
+  // Yaver host, or a remote-runtime session bridging an external app), so
+  // a shake there IS the opt-in signal. Don't gate it on the user's
+  // settings.feedback.enabled toggle — that toggle is for the standalone
+  // Yaver app's own draggable mic/icon. If we honored it here, every
+  // first-time guest-app shake would silently no-op and the user would
+  // think the SDK is broken.
+  //
+  // For non-guest sources (a shake while standing on Yaver's own surfaces
+  // with no guest active) we keep the toggle gate so the floating button
+  // stays opt-in.
+  const isImplicitOptIn = source === "native-guest-shake" || source === "remote-runtime";
+  if (!isImplicitOptIn) {
+    const cfg = await currentFeedbackConfig(userId);
+    if (!cfg?.enabled || cfg.trigger !== "shake") return;
+  }
   cooldownUntil = nowMs() + 2500;
   if (activeRemoteRuntimeSessionID && quicClient.isConnected) {
     quicClient.sendRemoteRuntimeCommand(activeRemoteRuntimeSessionID, "launch-feedback", source).catch(() => {});
