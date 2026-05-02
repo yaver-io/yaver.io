@@ -2084,6 +2084,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // the token back immediately. This is the critical "remote box
   // rebooted, phone must recover it without SSH" path.
   const recoveringAuthRef = useRef<Set<string>>(new Set());
+  // Auto-recovery fail count per device per session. After 2 failures
+  // we stop silently retrying — every state change that re-fired the
+  // effect was burning the agent's 5s rate-limit window without any
+  // user feedback, and made the manual Re-auth button race the silent
+  // retries. After cap is hit, the banner + Re-auth button is the
+  // only recovery path. Cleared on logout / app restart / successful
+  // recovery.
+  const autoRecoveryFailRef = useRef<Map<string, number>>(new Map());
+  const AUTO_RECOVERY_MAX_FAILS = 2;
   // Set of device IDs we've already nagged about Yaver auth this
   // session. Cleared on logout / app restart. Prevents the auto-
   // guide Alert from re-firing on every 30s heartbeat poll.
@@ -2091,13 +2100,39 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!token || !user?.id || !activeDevice || !agentAuthExpired) return;
     if (recoveringAuthRef.current.has(activeDevice.id)) return;
+    // Cap reached — wait for the user to tap Re-auth manually.
+    if ((autoRecoveryFailRef.current.get(activeDevice.id) ?? 0) >= AUTO_RECOVERY_MAX_FAILS) {
+      return;
+    }
+    // Silent recovery is gated to the primary device only. Other devices
+    // (including non-primary owned + guest-shared) require an explicit
+    // user tap. Avoids hammering the agent's rate-limit budget on devices
+    // the user isn't actively trying to use.
+    if (!primaryDeviceId || primaryDeviceId !== activeDevice.id) return;
+    // And only when the device is up — no point burning our 2-attempt
+    // budget against a box that's offline or stale.
+    const recentTunnel = activeDevice.lastTunnelEvent && activeDevice.lastTunnelEvent.online &&
+      Date.now() - activeDevice.lastTunnelEvent.at < 90_000;
+    const peerOnline = activeDevice.peerState === "online";
+    const isUp = peerOnline || recentTunnel || activeDevice.online;
+    if (!isUp) return;
 
     let cancelled = false;
     const tryRecover = async () => {
       if (cancelled || recoveringAuthRef.current.has(activeDevice.id)) return;
       recoveringAuthRef.current.add(activeDevice.id);
       try {
-        await recoverDeviceAuth(activeDevice);
+        const result = await recoverDeviceAuth(activeDevice);
+        if (result?.ok) {
+          autoRecoveryFailRef.current.delete(activeDevice.id);
+        } else {
+          // Anything not-OK (including rateLimited) counts toward the cap so
+          // the auto loop eventually yields to the user. The user's manual
+          // tap can still fire — it goes through a separate code path that
+          // doesn't read this counter.
+          const prev = autoRecoveryFailRef.current.get(activeDevice.id) ?? 0;
+          autoRecoveryFailRef.current.set(activeDevice.id, prev + 1);
+        }
       } finally {
         if (!cancelled) {
           setTimeout(() => {
@@ -2109,6 +2144,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     tryRecover().catch((err) => {
       recoveringAuthRef.current.delete(activeDevice.id);
+      // Exceptional path also counts toward the cap.
+      const prev = autoRecoveryFailRef.current.get(activeDevice.id) ?? 0;
+      autoRecoveryFailRef.current.set(activeDevice.id, prev + 1);
       // Surface the recovery failure so the user isn't stuck with a blank
       // "connection lost" banner — they at least know what to try next.
       const msg = err instanceof Error ? err.message : String(err);
@@ -2152,7 +2190,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, user?.id, activeDevice, agentAuthExpired, recoverDeviceAuth]);
+  }, [token, user?.id, activeDevice, agentAuthExpired, recoverDeviceAuth, primaryDeviceId]);
 
   // Fetch devices when token becomes available + poll every 30s (lightweight)
   useEffect(() => {
