@@ -2118,6 +2118,50 @@ export class QuicClient {
     };
   }
 
+  /** List mobile-capable projects discovered by the agent's framework-aware scanner. */
+  async listMobileProjectsDetailed(): Promise<{
+    projects: { name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; tags?: string[] }[];
+    discovery?: {
+      status?: "idle" | "discovering" | "partial" | "ready";
+      discovering?: boolean;
+      partiallyReady?: boolean;
+      lastCompletedAt?: string;
+    };
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/mobile`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to list mobile projects: ${res.status}`);
+    const data = await res.json();
+    const projects = Array.isArray(data.projects) ? data.projects : [];
+    return {
+      projects: projects.map((p: any) => {
+        const framework = typeof p?.framework === "string" ? p.framework : "";
+        const tags = new Set<string>();
+        if (framework) tags.add(framework);
+        if (p?.mobileCapable) tags.add("mobile");
+        if (typeof p?.primarySurface === "string" && p.primarySurface) tags.add(p.primarySurface);
+        if (typeof p?.executionMode === "string" && p.executionMode) tags.add(p.executionMode);
+        return {
+          name: p?.name ?? "",
+          path: p?.path ?? "",
+          branch: p?.branch,
+          framework,
+          executionMode: p?.executionMode,
+          primarySurface: p?.primarySurface,
+          tags: Array.from(tags),
+        };
+      }),
+      discovery: {
+        status: data.scanning ? "discovering" : (data.scannedAt ? "ready" : "idle"),
+        discovering: !!data.scanning,
+        partiallyReady: !!data.scanning && projects.length > 0,
+        lastCompletedAt: data.scannedAt,
+      },
+    };
+  }
+
   /** List discovered projects on the machine. */
   async listProjects(): Promise<{ name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; gitRemote?: string; tags?: string[] }[]> {
     const data = await this.listProjectsDetailed();
@@ -2132,6 +2176,17 @@ export class QuicClient {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to refresh projects: ${res.status}`);
+    return res.json();
+  }
+
+  /** Trigger a fresh mobile-project scan for the Hot Reload tab. */
+  async refreshMobileProjects(): Promise<{ ok?: boolean; message?: string }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/mobile`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to refresh mobile projects: ${res.status}`);
     return res.json();
   }
 
@@ -2162,6 +2217,19 @@ export class QuicClient {
   }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/projects/actions?query=${encodeURIComponent(query)}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);
+    return res.json();
+  }
+
+  async getProjectActionsByPath(path: string): Promise<{
+    project: string;
+    path: string;
+    actions: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; icon?: string }[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects/actions?path=${encodeURIComponent(path)}`, {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to get project actions: ${res.status}`);

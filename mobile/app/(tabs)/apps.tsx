@@ -56,6 +56,25 @@ const SECOND_CLASS_MOBILE_FRAMEWORKS = ["flutter", "swift", "kotlin"];
 const WEB_FRAMEWORKS = ["nextjs", "vite", "react"];
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
+function pathLeaf(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+function findProjectMatch(projects: ProjectItem[], query: string): ProjectItem | null {
+  const target = query.trim().toLowerCase();
+  if (!target) return null;
+  const exact = projects.find((p) =>
+    p.name.trim().toLowerCase() === target ||
+    pathLeaf(p.path).trim().toLowerCase() === target,
+  );
+  if (exact) return exact;
+  return projects.find((p) =>
+    p.name.toLowerCase().includes(target) ||
+    pathLeaf(p.path).toLowerCase().includes(target) ||
+    p.path.toLowerCase().includes(target),
+  ) || null;
+}
+
 function isHermesMobileFramework(framework?: string): boolean {
   return framework === "expo" || framework === "react-native";
 }
@@ -393,7 +412,7 @@ export default function AppsScreen() {
 
     const fetchProjects = async () => {
       try {
-        const data = await quicClient.listProjectsDetailed();
+        const data = await quicClient.listMobileProjectsDetailed();
         if (!mounted) return;
         setProjects(data.projects);
         setProjectsDiscovering(!!data.discovery?.discovering);
@@ -448,8 +467,13 @@ export default function AppsScreen() {
   // Tap project → if dev server running, always use Hermes push (fast, ~10s).
   // This keeps iPhone testing working from Linux, WSL, and remote hosts.
   // Xcode native build is available via "Install Native" action in the sheet.
-  const handleTapProject = useCallback(async (projectName: string) => {
-    const isRunning = devStatus?.workDir?.endsWith(projectName);
+  const handleTapProject = useCallback(async (projectOrQuery: ProjectItem | string) => {
+    const selectedProject = typeof projectOrQuery === "string"
+      ? findProjectMatch(projects, projectOrQuery)
+      : projectOrQuery;
+    const projectName = selectedProject?.name || (typeof projectOrQuery === "string" ? projectOrQuery : projectOrQuery.name);
+    const projectPath = selectedProject?.path || "";
+    const isRunning = !!projectPath && devStatus?.workDir === projectPath;
     if (isRunning) {
       if (isHermesMobileFramework(devStatus?.framework)) {
         handleOpenNative(devStatus!.workDir!, devStatus?.framework);
@@ -465,7 +489,9 @@ export default function AppsScreen() {
 
     setLoadingActions(true);
     try {
-      const result = await quicClient.getProjectActions(projectName);
+      const result = projectPath
+        ? await quicClient.getProjectActionsByPath(projectPath)
+        : await quicClient.getProjectActions(projectName);
       let compatibility: DevCompatibilityStatus | null = null;
       const hermesFramework = result.actions.find((a: any) => isHermesMobileFramework(a.framework))?.framework;
       const secondClassFramework = result.actions.find((a: any) => isSecondClassMobileFramework(a.framework))?.framework;
@@ -571,7 +597,7 @@ export default function AppsScreen() {
     } finally {
       setLoadingActions(false);
     }
-  }, [devStatus, isDirectConnection, connectionStatus, router]);
+  }, [devStatus, isDirectConnection, connectionStatus, router, projects]);
 
   // `yaver insert <app>` from the dev machine ends up here:
   // _layout.tsx receives the open_app command, navigates to this
@@ -1672,7 +1698,7 @@ export default function AppsScreen() {
               <Pressable
                 style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border },
                   isRunning && { borderColor: "#22c55e44" }]}
-                onPress={() => handleTapProject(item.name)}
+                onPress={() => handleTapProject(item)}
                 disabled={isStarting || loadingActions}
               >
                 <View style={s.cardHeader}>
@@ -1713,7 +1739,7 @@ export default function AppsScreen() {
                 onPress={async () => {
                   try {
                     setProjectsDiscovering(true);
-                    await quicClient.refreshProjects();
+                    await quicClient.refreshMobileProjects();
                   } catch {}
                 }}
               >

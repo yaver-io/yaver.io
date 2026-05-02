@@ -325,3 +325,69 @@ func TestHasProjectGitContext_RejectsRandomPathWithoutGit(t *testing.T) {
 		t.Fatalf("expected stray path with no git and no workspace parent to be rejected")
 	}
 }
+
+// The Hot Reload tab is supposed to show mobile-capable projects found inside
+// a larger repo like ~/Workspace/yaver.io, not just standalone repos. This
+// test simulates that exact layout and locks in framework classification for
+// the nested mobile projects the agent scanner is expected to surface.
+func TestScanMobileProjects_DiscoversNestedFrameworksInsideYaverRepo(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	repo := filepath.Join(tmp, "Workspace", "yaver.io")
+	mustMkdirAllMobileScan(t, filepath.Join(repo, ".git"))
+
+	expoDir := filepath.Join(repo, "mobile")
+	writeManifestFile(t, filepath.Join(expoDir, "package.json"), `{"name":"yaver-mobile","dependencies":{"expo":"~54.0.0","react-native-web":"^0.20.0"}}`)
+	writeManifestFile(t, filepath.Join(expoDir, "app.json"), `{"expo":{"name":"Yaver Mobile"}}`)
+
+	rnDir := filepath.Join(repo, "apps", "todo-rn")
+	writeManifestFile(t, filepath.Join(rnDir, "package.json"), `{"name":"todo-rn","dependencies":{"react-native":"0.81.5"}}`)
+	writeManifestFile(t, filepath.Join(rnDir, "app.json"), `{"name":"Todo RN"}`)
+
+	flutterDir := filepath.Join(repo, "tests", "fixtures", "native-flutter-app")
+	writeManifestFile(t, filepath.Join(flutterDir, "pubspec.yaml"), "name: yaver_native_flutter_app\n")
+
+	swiftDir := filepath.Join(repo, "tests", "fixtures", "native-ios-swift")
+	writeManifestFile(t, filepath.Join(swiftDir, "Package.swift"), "// swift-tools-version:5.9\n")
+
+	kotlinDir := filepath.Join(repo, "tests", "fixtures", "native-android-kotlin")
+	writeManifestFile(t, filepath.Join(kotlinDir, "settings.gradle.kts"), `rootProject.name = "android-fixture"`)
+	writeManifestFile(t, filepath.Join(kotlinDir, "build.gradle.kts"), `plugins { id("com.android.application") }`)
+	writeManifestFile(t, filepath.Join(kotlinDir, "app", "src", "main", "AndroidManifest.xml"), "<manifest package=\"com.example.fixture\" />")
+
+	projects := scanMobileProjects()
+	if len(projects) == 0 {
+		t.Fatal("scanMobileProjects returned no projects")
+	}
+
+	assertProjectFramework(t, projects, expoDir, "expo")
+	assertProjectFramework(t, projects, rnDir, "react-native")
+	assertProjectFramework(t, projects, flutterDir, "flutter")
+	assertProjectFramework(t, projects, swiftDir, "swift")
+	assertProjectFramework(t, projects, kotlinDir, "kotlin")
+}
+
+func mustMkdirAllMobileScan(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+}
+
+func assertProjectFramework(t *testing.T, projects []MobileProject, path, wantFramework string) {
+	t.Helper()
+	for _, p := range projects {
+		if filepath.Clean(p.Path) != filepath.Clean(path) {
+			continue
+		}
+		if p.Framework != wantFramework {
+			t.Fatalf("project %s framework = %q, want %q", path, p.Framework, wantFramework)
+		}
+		if !p.MobileCapable {
+			t.Fatalf("project %s should be mobile-capable", path)
+		}
+		return
+	}
+	t.Fatalf("project %s was not discovered", path)
+}
