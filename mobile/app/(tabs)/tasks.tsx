@@ -2029,11 +2029,27 @@ export default function TasksScreen() {
             )}
           </View>
           {isEffectivelyConnected && agentAuthExpired && (
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, marginLeft: 18, gap: 8, flexWrap: "wrap" }}>
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
-              <Text style={{ color: "#fbbf24", fontSize: 11, marginLeft: 6 }}>
-                Agent session expired. Reconnect will recover it from this phone.
+              <Text style={{ color: "#fbbf24", fontSize: 11, flexShrink: 1 }}>
+                Machine is up but Yaver auth on it expired.
               </Text>
+              {activeDevice ? (
+                <Pressable
+                  onPress={() => !(isReconnecting || recoveringDeviceId === activeDevice.id) && handleReconnect(activeDevice)}
+                  disabled={isReconnecting || recoveringDeviceId === activeDevice.id}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
+                    borderWidth: 1, borderColor: "#f59e0b88",
+                    backgroundColor: "#f59e0b22",
+                    opacity: isReconnecting || recoveringDeviceId === activeDevice.id ? 0.5 : 1,
+                  }}
+                >
+                  <Text style={{ color: "#fbbf24", fontSize: 11, fontWeight: "700" }}>
+                    {recoveringDeviceId === activeDevice.id ? "Re-authing…" : "Re-auth"}
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
           )}
           {isEffectivelyConnected && !agentAuthExpired && (

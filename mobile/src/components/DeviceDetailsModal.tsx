@@ -905,7 +905,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
                     Recover Yaver auth without wiping the machine
                   </Text>
                   <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
-                    This box is already in bootstrap mode. Claim it back to your account over relay without factory-resetting the agent identity or touching projects.
+                    The agent on this box is reachable but its Yaver session expired (or never claimed). Claim it back to your account over relay — agent identity, projects, and vault stay intact.
                   </Text>
                   <OwnerClaimAuthRow device={device} />
                   <View style={{ height: 14 }} />

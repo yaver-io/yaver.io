@@ -6603,6 +6603,17 @@ export class QuicClient {
               }
             } catch {}
           }
+          // Statuses where the agent has spoken and retrying another
+          // target hits the SAME agent through a different path — so
+          // the 429/409/403 just repeats and burns through the rate
+          // budget on what looks (to the agent) like a flood from one
+          // user. Stop iterating; surface the agent's verdict directly.
+          //   429 — rate-limited (recoveryLimiter, 5s per IP)
+          //   409 — agent-auth healthy, recovery not allowed
+          //   403 — host-token check failed / forbidden mode
+          if (res.status === 429 || res.status === 409 || res.status === 403) {
+            return { ok: false, error: message } as RecoveryResult;
+          }
           lastError = message;
           continue;
         }
