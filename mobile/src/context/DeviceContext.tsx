@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { Alert, AppState, AppStateStatus, Linking, Platform } from "react-native";
 import Constants from "expo-constants";
+import { appTag } from "../lib/appVersion";
 import NetInfo from "@react-native-community/netinfo";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
@@ -2167,7 +2168,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             if (cancelled) return;
             Alert.alert(
               `${dev.name} needs Yaver auth`,
-              "The agent's session expired and the auto-recovery couldn't refresh it. Open the device details to run a manual recover, or dismiss to handle later.",
+              `The agent's session expired and the auto-recovery couldn't refresh it. Open the device details to run a manual recover, or dismiss to handle later.\n\n${appTag()}`,
               [
                 { text: "Later", style: "cancel" },
                 {

@@ -27,6 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
+import { appTag } from "../../src/lib/appVersion";
 import * as ExpoClipboard from "expo-clipboard";
 import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import {
@@ -2056,17 +2057,17 @@ export default function TasksScreen() {
                       }
                       if (result?.rateLimited) {
                         Alert.alert(
-                          "Just a moment",
-                          "Yaver auto-recovery is already running. Wait ~5 seconds and try again.",
+                          "Agent rate-limited",
+                          `Agent's per-IP recovery cooldown is still active (5s window). Wait a few seconds and tap Re-auth again.\n\n${appTag()}`,
                         );
                         return;
                       }
                       Alert.alert(
                         "Re-auth Failed",
-                        result?.error || `Could not recover ${activeDevice.name}.`,
+                        `${result?.error || `Could not recover ${activeDevice.name}.`}\n\n${appTag()}`,
                       );
                     } catch (e: any) {
-                      Alert.alert("Re-auth Failed", e?.message || "Unexpected error.");
+                      Alert.alert("Re-auth Failed", `${e?.message || "Unexpected error."}\n\n${appTag()}`);
                     } finally {
                       setRecoveringDeviceId((cur) => (cur === activeDevice.id ? null : cur));
                       setIsReconnecting(false);

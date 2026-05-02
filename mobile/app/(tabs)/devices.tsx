@@ -15,6 +15,7 @@ import { Alert } from "react-native";
 import { TextInput } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
+import { appTag } from "../../src/lib/appVersion";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
@@ -1191,20 +1192,21 @@ export default function DevicesScreen() {
                     return;
                   }
                   if (result?.rateLimited) {
-                    // The 5s rate limit is almost always tripped by the
-                    // app's own auto-recovery effect firing on mount —
-                    // by the time the user taps Re-auth manually they
-                    // race the silent retry. Tell them to wait, not
-                    // that they did anything wrong.
                     Alert.alert(
-                      "Just a moment",
-                      "Yaver auto-recovery is already running on this device. Wait ~5 seconds and try again — it usually finishes on its own.",
+                      "Agent rate-limited",
+                      `Agent's per-IP recovery cooldown is still active (5s window). Wait a few seconds and tap Re-auth again.\n\n${appTag()}`,
                     );
                     return;
                   }
-                  Alert.alert("Recovery Failed", result?.error || "Could not recover this machine from the phone.");
+                  Alert.alert(
+                    "Recovery Failed",
+                    `${result?.error || "Could not recover this machine from the phone."}\n\n${appTag()}`,
+                  );
                 } catch (e: any) {
-                  Alert.alert("Recovery Failed", e?.message || "Could not recover this machine from the phone.");
+                  Alert.alert(
+                    "Recovery Failed",
+                    `${e?.message || "Could not recover this machine from the phone."}\n\n${appTag()}`,
+                  );
                 }
               }}
               token={token}

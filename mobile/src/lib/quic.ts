@@ -896,15 +896,6 @@ export class QuicClient {
   // progress or just completed. 0 means idle (connected or never started).
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _reconnectAttempt = 0;
-
-  // Client-side cooldown for /auth/recover. The agent rate-limits per
-  // caller IP at 5s; the auto-recovery effect (DeviceContext.tsx:2064)
-  // and a manual user tap can race within those 5s and both end up
-  // 429-rejected. Tracking last attempt here lets us synthesize the
-  // rate-limit response WITHOUT a network round-trip when something
-  // already tried in the last 6s — keeping a small margin over the
-  // server's 5s for clock skew + relay-forwarding latency.
-  private _lastRecoveryAttemptAt = 0;
   private _reconnectStopped = false;
   private _isForeground = true;
   private readonly baseBackoffMs = 1000;
@@ -6588,19 +6579,6 @@ export class QuicClient {
     // userId owns the device). Used when mobile is signed-in and the
     // remote agent is in auth-expired — skips the pair-session dance
     // entirely. Falls back to pair / device-code if direct is rejected.
-    // Client-side cooldown — see _lastRecoveryAttemptAt definition.
-    const now = Date.now();
-    const sinceLast = now - this._lastRecoveryAttemptAt;
-    if (this._lastRecoveryAttemptAt > 0 && sinceLast < 6_000) {
-      const waitSec = Math.ceil((6_000 - sinceLast) / 1000);
-      return {
-        ok: false,
-        error: `wait ${waitSec}s before retrying recovery`,
-        rateLimited: true,
-      } as RecoveryResult;
-    }
-    this._lastRecoveryAttemptAt = now;
-
     const body = JSON.stringify(secret ? { secret, mode } : { mode });
     let lastError = "network error";
     for (const target of this.recoveryTargets()) {
