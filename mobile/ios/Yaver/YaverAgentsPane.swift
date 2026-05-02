@@ -252,26 +252,53 @@ final class YaverAgentsPane: NSObject {
   private func refreshAuthStatus() {
     let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
     let auth = bestAuthToken()
-    guard let url = URL(string: "\(agentBase)/runner-auth/status") else {
-      setRowStatus(runner: "claude", text: "no agent URL", tone: .error)
-      setRowStatus(runner: "codex", text: "no agent URL", tone: .error)
-      setRowStatus(runner: "opencode", text: "no agent URL", tone: .error)
+    guard !agentBase.isEmpty, let url = URL(string: "\(agentBase)/runner-auth/status") else {
+      let msg = "no agent URL set — load a guest bundle first"
+      setRowStatus(runner: "claude", text: msg, tone: .error)
+      setRowStatus(runner: "codex", text: msg, tone: .error)
+      setRowStatus(runner: "opencode", text: msg, tone: .error)
       return
     }
     var req = URLRequest(url: url)
     req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
-    URLSession.shared.dataTask(with: req) { data, resp, _ in
+    URLSession.shared.dataTask(with: req) { data, resp, err in
       DispatchQueue.main.async {
+        // Surface the actual failure so we can debug — was just "status
+        // check failed" before, which hid auth/URL/parse issues.
+        if let err = err {
+          let msg = "status: \(err.localizedDescription)"
+          self.setRowStatus(runner: "claude", text: msg, tone: .error)
+          self.setRowStatus(runner: "codex", text: msg, tone: .error)
+          self.setRowStatus(runner: "opencode", text: msg, tone: .error)
+          return
+        }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+          var detail = "HTTP \(code)"
+          if let data = data, let body = String(data: data, encoding: .utf8) {
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { detail = "HTTP \(code): \(trimmed.prefix(160))" }
+          }
+          self.setRowStatus(runner: "claude", text: detail, tone: .error)
+          self.setRowStatus(runner: "codex", text: detail, tone: .error)
+          self.setRowStatus(runner: "opencode", text: detail, tone: .error)
+          return
+        }
         guard
           let data = data,
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let runners = json["runners"] as? [[String: Any]]
         else {
-          self.setRowStatus(runner: "claude", text: "status check failed", tone: .error)
-          self.setRowStatus(runner: "codex", text: "status check failed", tone: .error)
-          self.setRowStatus(runner: "opencode", text: "status check failed", tone: .error)
+          self.setRowStatus(runner: "claude", text: "could not parse status response", tone: .error)
+          self.setRowStatus(runner: "codex", text: "could not parse status response", tone: .error)
+          self.setRowStatus(runner: "opencode", text: "could not parse status response", tone: .error)
           return
         }
+        // Initialize all rows to "not installed" then apply observed runners,
+        // so a runner missing entirely from the response shows the right state.
+        self.setRowStatus(runner: "claude", text: "not installed on agent", tone: .warning)
+        self.setRowStatus(runner: "codex", text: "not installed on agent", tone: .warning)
+        self.setRowStatus(runner: "opencode", text: "not installed on agent", tone: .warning)
         for r in runners {
           guard let id = r["id"] as? String else { continue }
           let normalized = id.lowercased() == "claude-code" ? "claude" : id.lowercased()
@@ -366,10 +393,19 @@ final class YaverAgentsPane: NSObject {
           self.finishBrowserAuth(runner: runner, ok: false, msg: errStr)
           return
         }
-        let sessionId = (json["id"] as? String) ?? ""
-        let openUrl = (json["openUrl"] as? String) ?? ""
+        // Agent wraps the session in {ok, session: {...}} — see
+        // desktop/agent/runner_auth_browser_http.go::handleRunnerBrowserAuthStart.
+        // First commit of this pane unwrapped the wrong layer and
+        // never got an id/openUrl, so the SFSafariViewController never
+        // opened. Read session.id / session.openUrl now.
+        let session = (json["session"] as? [String: Any]) ?? [:]
+        let sessionId = (session["id"] as? String) ?? ""
+        let openUrl = (session["openUrl"] as? String) ?? ""
         if sessionId.isEmpty || openUrl.isEmpty {
-          self.finishBrowserAuth(runner: runner, ok: false, msg: "agent did not return session URL")
+          let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+          let body = String(data: data, encoding: .utf8)?.prefix(180) ?? ""
+          self.finishBrowserAuth(runner: runner, ok: false,
+                                 msg: "no session URL (HTTP \(code)) \(body)")
           return
         }
         self.pendingSession = (runner: runner, sessionId: sessionId)
@@ -394,14 +430,15 @@ final class YaverAgentsPane: NSObject {
           guard let data = data,
                 let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
           else { return }
-          let status = (json["status"] as? String) ?? ""
+          let session = (json["session"] as? [String: Any]) ?? [:]
+          let status = (session["status"] as? String) ?? (json["status"] as? String) ?? ""
           if status == "completed" {
             self.pollTimer?.invalidate(); self.pollTimer = nil
             self.finishBrowserAuth(runner: runner, ok: true, msg: "✓ signed in")
             self.refreshAuthStatus()
           } else if status == "failed" || status == "cancelled" {
             self.pollTimer?.invalidate(); self.pollTimer = nil
-            let detail = (json["error"] as? String) ?? status
+            let detail = (session["error"] as? String) ?? (json["error"] as? String) ?? status
             self.finishBrowserAuth(runner: runner, ok: false, msg: "sign-in \(status): \(detail)")
           }
         }
