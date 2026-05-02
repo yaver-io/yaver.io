@@ -26,14 +26,69 @@ const EXECUTABLE_MAGICS = [
 ];
 
 async function ensureAgentBinary({ quiet = false } = {}) {
-  const asset = await resolveAsset();
-  const localAgentPath = resolveLocalAgentBinary(asset);
-  if (localAgentPath) {
-    return localAgentPath;
+  // Try cache first — when the user already has any version of yaver
+  // installed locally, we shouldn't fail just because GitHub's API
+  // rate-limited the unauthenticated /releases call. Falling back to
+  // the cached binary keeps every yaver subcommand working through
+  // GH's daily rate-limit windows. Only call resolveAsset (which can
+  // throw on 403) when no cache hit AND no repo binary is present.
+  try {
+    const asset = await resolveAsset();
+    const localAgentPath = resolveLocalAgentBinary(asset);
+    if (localAgentPath) return localAgentPath;
+    const installDir = path.join(CACHE_ROOT, asset.version, asset.cacheKey);
+    const binaryPath = path.join(installDir, asset.binaryName);
+    if (fs.existsSync(binaryPath)) {
+      if (process.platform !== 'win32') fs.chmodSync(binaryPath, 0o755);
+      return binaryPath;
+    }
+    return await downloadAndCacheAgent(asset, { quiet });
+  } catch (err) {
+    // GH rate-limit OR network failure — try the most recent cached
+    // version so the user can continue using yaver. If nothing is
+    // cached either, surface the original error so the install path
+    // is clear.
+    const fallback = findMostRecentCachedAgent();
+    if (fallback) {
+      if (!quiet) {
+        console.error(
+          `[yaver] release lookup failed (${String(err.message || err).split('\n')[0]}); ` +
+          `using cached agent at ${fallback}`,
+        );
+      }
+      return fallback;
+    }
+    throw err;
   }
+}
+
+/** Walk CACHE_ROOT and return the path to the newest yaver binary
+ *  matching this platform — used as fallback when GH /releases is
+ *  rate-limited and no specific version was resolvable. */
+function findMostRecentCachedAgent() {
+  if (!fs.existsSync(CACHE_ROOT)) return null;
+  const platform = process.platform;
+  const arch = process.arch;
+  const goArch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : arch;
+  const cacheKey = `${platform}-${goArch}`;
+  const binaryName = platform === 'win32' ? 'yaver.exe' : 'yaver';
+  const versions = fs.readdirSync(CACHE_ROOT).filter((v) => semver.valid(v));
+  versions.sort(semver.rcompare);
+  for (const v of versions) {
+    const p = path.join(CACHE_ROOT, v, cacheKey, binaryName);
+    if (fs.existsSync(p)) {
+      if (process.platform !== 'win32') {
+        try { fs.chmodSync(p, 0o755); } catch (_) {}
+      }
+      return p;
+    }
+  }
+  return null;
+}
+
+async function downloadAndCacheAgent(asset, { quiet }) {
   const installDir = path.join(CACHE_ROOT, asset.version, asset.cacheKey);
   const binaryPath = path.join(installDir, asset.binaryName);
-
   if (fs.existsSync(binaryPath)) {
     if (process.platform !== 'win32') {
       fs.chmodSync(binaryPath, 0o755);
