@@ -454,7 +454,11 @@ func runPrimaryShow(ctx context.Context) {
 		if d.DeviceID == current {
 			marker = "★ "
 		}
-		status := "offline"
+		// IsOnline = had a heartbeat in the last ~5 min. Without one,
+		// the box may still be reachable over SSH; "bootstrap" reflects
+		// that better than "offline" (which we reserve for genuinely
+		// unreachable, no-internet boxes).
+		status := "bootstrap"
 		if d.IsOnline {
 			status = "online"
 		}

@@ -157,6 +157,74 @@ jobs:
           go build -ldflags="-s -w" -o "$BINARY_NAME" .
           echo "Built: $BINARY_NAME"
 
+      # Sign + notarize macOS binaries so Gatekeeper doesn't kill them
+      # on first run. Without this, every fresh release ships unsigned
+      # and macOS Sequoia (and recent kernels) SIGKILL the binary on
+      # selected code paths — observed locally on `yaver primary status`
+      # while plain `yaver auth` would still run.
+      #
+      # We sign with hardened runtime + secure timestamp (mandatory for
+      # notarization) and submit a ZIP to notarytool. Stapling does not
+      # apply to raw Mach-O — Gatekeeper does the online check on first
+      # launch instead. Once notarized, the binary is greenlit on every
+      # Mac with internet on its first run.
+      - name: Sign + notarize macOS binary
+        if: matrix.goos == 'darwin'
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_STORE_CONNECT_API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          cd desktop/agent
+          BINARY="yaver-${{ matrix.goos }}-${{ matrix.goarch }}"
+
+          # 1. Build a temp keychain and import the Developer ID cert.
+          KEYCHAIN_PATH="$RUNNER_TEMP/yaver-build.keychain-db"
+          KEYCHAIN_PWD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PWD" "$KEYCHAIN_PATH"
+
+          P12_PATH="$RUNNER_TEMP/cert.p12"
+          echo "$APPLE_CERTIFICATE_P12" | base64 -d > "$P12_PATH"
+          security import "$P12_PATH" -k "$KEYCHAIN_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security list-keychain -d user -s "$KEYCHAIN_PATH" \
+            $(security list-keychain -d user | xargs)
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PWD" "$KEYCHAIN_PATH" >/dev/null
+
+          # 2. Sign with hardened runtime + secure timestamp.
+          SIGN_IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
+            | awk '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "$SIGN_IDENTITY" ]; then
+            echo "no Developer ID Application identity found in keychain"; exit 1
+          fi
+          codesign --force --timestamp --options runtime \
+            --sign "$SIGN_IDENTITY" --keychain "$KEYCHAIN_PATH" "$BINARY"
+          codesign --verify --verbose=2 "$BINARY"
+
+          # 3. Notarize the signed binary. notarytool requires a ZIP
+          # wrapper for raw Mach-O. We don't staple — that doesn't
+          # apply to raw binaries.
+          API_KEY_PATH="$RUNNER_TEMP/api_key.p8"
+          echo "$APP_STORE_CONNECT_API_KEY" > "$API_KEY_PATH"
+          ZIP_PATH="$RUNNER_TEMP/yaver-notarize.zip"
+          /usr/bin/zip -j "$ZIP_PATH" "$BINARY"
+          xcrun notarytool submit "$ZIP_PATH" \
+            --key "$API_KEY_PATH" \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait --timeout 20m
+
+          # 4. Cleanup
+          rm -f "$P12_PATH" "$API_KEY_PATH" "$ZIP_PATH"
+          security delete-keychain "$KEYCHAIN_PATH" || true
+
       - name: Package tar.gz (Linux/macOS)
         if: matrix.goos != 'windows'
         run: |
@@ -166,117 +234,11 @@ jobs:
           tar czf "yaver-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" yaver
           rm yaver
 
-      - name: Build deb and rpm packages (Linux)
-        if: matrix.goos == 'linux'
-        run: |
-          sudo apt-get update && sudo apt-get install -y rpm
-          cd desktop/agent
-          BINARY="yaver-${{ matrix.goos }}-${{ matrix.goarch }}"
-          DEB_ARCH="${{ matrix.goarch }}"
-          RPM_ARCH="${{ matrix.goarch }}"
-          if [ "$DEB_ARCH" = "amd64" ]; then RPM_ARCH="x86_64"; fi
-          if [ "$DEB_ARCH" = "arm64" ]; then RPM_ARCH="aarch64"; fi
-
-          # Build .deb
-          DEB_DIR="/tmp/yaver-deb"
-          rm -rf "$DEB_DIR"
-          mkdir -p "$DEB_DIR/usr/local/bin" "$DEB_DIR/DEBIAN"
-          cp "$BINARY" "$DEB_DIR/usr/local/bin/yaver"
-          chmod 755 "$DEB_DIR/usr/local/bin/yaver"
-          cat > "$DEB_DIR/DEBIAN/control" <<CONTROL
-          Package: yaver
-          Version: ${VERSION}
-          Architecture: ${DEB_ARCH}
-          Maintainer: Yaver <packages@yaver.io>
-          Description: AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama
-          Homepage: https://yaver.io
-          Section: devel
-          Priority: optional
-          Depends: nodejs (>= 18)
-          Recommends: npm
-          CONTROL
-          dpkg-deb --build "$DEB_DIR" "yaver_${VERSION}_${DEB_ARCH}.deb"
-
-          # Build .rpm
-          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-          cp "$BINARY" ~/rpmbuild/SOURCES/yaver
-          cat > ~/rpmbuild/SPECS/yaver.spec <<SPEC
-          Name: yaver
-          Version: ${VERSION}
-          Release: 1
-          Summary: AI coding agent — P2P remote control for Claude Code, Codex, Aider, Ollama
-          License: LicenseRef-FSL-1.1-Apache-2.0
-          URL: https://yaver.io
-          Requires: nodejs >= 18
-
-          %description
-          Run AI coding agents from your phone — Claude Code, Codex, Aider, or custom.
-          Requires Node.js at runtime for \`yaver push\` (React Native to device).
-
-          %install
-          mkdir -p %{buildroot}/usr/local/bin
-          cp %{_sourcedir}/yaver %{buildroot}/usr/local/bin/yaver
-          chmod 755 %{buildroot}/usr/local/bin/yaver
-
-          %files
-          /usr/local/bin/yaver
-          SPEC
-          rpmbuild -bb --target "${RPM_ARCH}" ~/rpmbuild/SPECS/yaver.spec
-          cp ~/rpmbuild/RPMS/${RPM_ARCH}/yaver-${VERSION}-1.${RPM_ARCH}.rpm "yaver_${VERSION}_${RPM_ARCH}.rpm"
-
-      - name: Package zip (Windows)
+      - name: Package zip (Windows / WSL2 fallback)
         if: matrix.goos == 'windows'
         run: |
           cd desktop/agent
           zip "yaver-windows-${{ matrix.goarch }}.zip" "yaver-windows-${{ matrix.goarch }}.exe"
-
-      - name: Create DMG (macOS)
-        if: matrix.goos == 'darwin'
-        run: |
-          cd desktop/agent
-          BINARY="yaver-${{ matrix.goos }}-${{ matrix.goarch }}"
-          ARCH_LABEL="${{ matrix.goarch }}"
-          if [ "$ARCH_LABEL" = "arm64" ]; then ARCH_LABEL="apple-silicon"; fi
-          if [ "$ARCH_LABEL" = "amd64" ]; then ARCH_LABEL="intel"; fi
-          DMG_NAME="Yaver-${VERSION}-${ARCH_LABEL}.dmg"
-
-          # Create .app bundle
-          APP_DIR="/tmp/Yaver.app"
-          rm -rf "$APP_DIR"
-          mkdir -p "$APP_DIR/Contents/MacOS"
-          mkdir -p "$APP_DIR/Contents/Resources"
-          cp "$BINARY" "$APP_DIR/Contents/MacOS/yaver"
-          chmod +x "$APP_DIR/Contents/MacOS/yaver"
-
-          cat > "$APP_DIR/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>Yaver</string>
-            <key>CFBundleDisplayName</key><string>Yaver CLI</string>
-            <key>CFBundleIdentifier</key><string>io.yaver.cli</string>
-            <key>CFBundleVersion</key><string>${VERSION}</string>
-            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-            <key>CFBundleExecutable</key><string>yaver</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-          </dict>
-          </plist>
-          PLIST
-
-          # Create DMG
-          DMG_DIR="/tmp/dmg-staging"
-          rm -rf "$DMG_DIR"
-          mkdir -p "$DMG_DIR"
-          cp -R "$APP_DIR" "$DMG_DIR/"
-          ln -s /Applications "$DMG_DIR/Applications"
-
-          hdiutil create -volname "Yaver $VERSION" \
-            -srcfolder "$DMG_DIR" \
-            -ov -format UDZO \
-            "$DMG_NAME"
-
-          echo "Created: $DMG_NAME"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -286,9 +248,6 @@ jobs:
             desktop/agent/yaver-*.tar.gz
             desktop/agent/yaver-*.zip
             desktop/agent/yaver-*.exe
-            desktop/agent/yaver_*.deb
-            desktop/agent/yaver_*.rpm
-            desktop/agent/Yaver-*.dmg
           retention-days: 7
 
   release:
@@ -308,13 +267,15 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" -o -name "*.dmg" -o -name "*.deb" -o -name "*.rpm" \) -exec cp {} release/ \;
+          # npm postinstall fetches these tarballs (and the WSL2 .exe)
+          # from GitHub Releases; they're the only artifacts we ship.
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" -o -name "*.exe" \) -exec cp {} release/ \;
           cd release
           sha256sum * > checksums.txt
           echo "Release files:"
           ls -la
 
-      - name: Create draft GitHub release
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
@@ -326,413 +287,5 @@ jobs:
             release/*
 
           echo "Release published: v${VERSION}"
-          echo "Windows EXE is unsigned — sign with SimplySign before publishing."
+          echo "These tarballs are consumed by the npm postinstall hook in yaver-cli."
 
-  update-package-managers:
-    needs: [validate, release]
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-    steps:
-      - name: Download release assets and compute SHA256
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          mkdir -p assets
-
-          # Download tar.gz archives (macOS/Linux) and exe (Windows)
-          for ASSET in yaver-darwin-arm64.tar.gz yaver-darwin-amd64.tar.gz yaver-linux-arm64.tar.gz yaver-linux-amd64.tar.gz yaver-windows-amd64.exe; do
-            gh release download "v${VERSION}" --repo "$REPO" --pattern "$ASSET" --dir assets
-          done
-
-          cd assets
-          sha256sum * > ../checksums.txt
-          cat ../checksums.txt
-
-          # Export hashes — brew/AUR use tar.gz hashes, Scoop/Winget/Choco use exe hash
-          echo "SHA_DARWIN_ARM64=$(sha256sum yaver-darwin-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_DARWIN_AMD64=$(sha256sum yaver-darwin-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_ARM64=$(sha256sum yaver-linux-arm64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_LINUX_AMD64=$(sha256sum yaver-linux-amd64.tar.gz | cut -d' ' -f1)" >> "$GITHUB_ENV"
-          echo "SHA_WINDOWS_AMD64=$(sha256sum yaver-windows-amd64.exe | cut -d' ' -f1)" >> "$GITHUB_ENV"
-
-      - name: Update Homebrew tap
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/homebrew-yaver.git" homebrew-yaver
-          cat > homebrew-yaver/Formula/yaver.rb <<FORMULA
-          class Yaver < Formula
-            desc "AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama"
-            homepage "https://yaver.io"
-            version "${VERSION}"
-            license :cannot_represent   # FSL-1.1-Apache-2.0; see LICENSING.md
-
-            # Runtime dep: \`yaver push\` shells out to \`npm exec --package
-            # yaver-cli@<version>\` which pulls hermesc + the RN bundler on
-            # first use (see runPushBridge in desktop/agent/main.go). The
-            # Go binary itself doesn't embed hermesc, so we depend on Node
-            # to make Homebrew installs self-contained for push-to-device.
-            depends_on "node"
-
-            on_macos do
-              if Hardware::CPU.arm?
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-arm64.tar.gz"
-                sha256 "${SHA_DARWIN_ARM64}"
-              else
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-darwin-amd64.tar.gz"
-                sha256 "${SHA_DARWIN_AMD64}"
-              end
-            end
-
-            on_linux do
-              if Hardware::CPU.arm?
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-arm64.tar.gz"
-                sha256 "${SHA_LINUX_ARM64}"
-              else
-                url "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-linux-amd64.tar.gz"
-                sha256 "${SHA_LINUX_AMD64}"
-              end
-            end
-
-            def install
-              bin.install "yaver"
-            end
-
-            test do
-              assert_match "yaver", shell_output("#{bin}/yaver version")
-            end
-          end
-          FORMULA
-          cd homebrew-yaver
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update yaver to v${VERSION}"
-          git push origin main
-
-      - name: Update Scoop manifest
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/scoop-yaver.git" scoop-yaver
-          # Scoop scans the repo root AND bucket/ when both exist. We
-          # wrote to the root historically, but an older manifest at
-          # bucket/yaver.json still existed and shadowed ours for
-          # users whose scoop client prefers bucket/. Keep both files
-          # identical from now on (write to root, copy to bucket/).
-          mkdir -p scoop-yaver/bucket
-          cat > scoop-yaver/yaver.json <<MANIFEST
-          {
-            "version": "${VERSION}",
-            "description": "AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama",
-            "homepage": "https://yaver.io",
-            "license": "FSL-1.1-Apache-2.0",
-            "architecture": {
-              "64bit": {
-                "url": "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-windows-amd64.exe",
-                "hash": "${SHA_WINDOWS_AMD64}"
-              }
-            },
-            "bin": [["yaver-windows-amd64.exe", "yaver"]],
-            "checkver": {
-              "github": "https://github.com/${REPO}"
-            },
-            "autoupdate": {
-              "architecture": {
-                "64bit": {
-                  "url": "https://github.com/${REPO}/releases/download/v\$version/yaver-windows-amd64.exe"
-                }
-              }
-            }
-          }
-          MANIFEST
-          cp scoop-yaver/yaver.json scoop-yaver/bucket/yaver.json
-          cd scoop-yaver
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update yaver to v${VERSION}"
-          git push origin main
-
-      - name: Update AUR PKGBUILD
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/aur-yaver.git" aur-yaver
-          cat > aur-yaver/PKGBUILD <<'PKGBUILD_HEADER'
-          # Maintainer: Yaver <packages@yaver.io>
-          pkgname=yaver
-          PKGBUILD_HEADER
-          cat >> aur-yaver/PKGBUILD <<PKGBUILD_BODY
-          pkgver=${VERSION}
-          pkgrel=1
-          pkgdesc="Run AI coding agents from your phone — Claude, Codex, Aider, or custom"
-          arch=('x86_64' 'aarch64')
-          url="https://yaver.io"
-          license=('custom:FSL-1.1-Apache-2.0')
-          provides=('yaver')
-          depends=('nodejs')
-          optdepends=('npm: for yaver push (React Native to device)')
-
-          source_x86_64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-amd64.tar.gz")
-          source_aarch64=("https://github.com/${REPO}/releases/download/v\${pkgver}/yaver-linux-arm64.tar.gz")
-
-          sha256sums_x86_64=('${SHA_LINUX_AMD64}')
-          sha256sums_aarch64=('${SHA_LINUX_ARM64}')
-
-          package() {
-              install -Dm755 yaver "\$pkgdir/usr/bin/yaver"
-          }
-          PKGBUILD_BODY
-          cd aur-yaver
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update yaver to v${VERSION}"
-          git push origin main
-
-      - name: Submit Winget manifest
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          MDIR="manifests/y/Yaver/Yaver/${VERSION}"
-          mkdir -p "$MDIR"
-
-          cat > "$MDIR/Yaver.Yaver.yaml" <<WINGET
-          # yaml-language-server: \$schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
-          PackageIdentifier: Yaver.Yaver
-          PackageVersion: "${VERSION}"
-          PackageName: Yaver CLI
-          Publisher: Yaver
-          License: FSL-1.1-Apache-2.0
-          ShortDescription: AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama
-          PackageUrl: https://yaver.io
-          Installers:
-            - Architecture: x64
-              InstallerType: portable
-              InstallerUrl: https://github.com/${REPO}/releases/download/v${VERSION}/yaver-windows-amd64.exe
-              InstallerSha256: ${SHA_WINDOWS_AMD64}
-              Commands:
-                - yaver
-          ManifestType: singleton
-          ManifestVersion: 1.6.0
-          WINGET
-
-          echo "Winget manifest generated at $MDIR/Yaver.Yaver.yaml"
-          echo "To publish: fork microsoft/winget-pkgs, add this manifest, and submit a PR."
-          echo "Or use: wingetcreate submit --token \$GH_TOKEN $MDIR"
-
-      - name: Update Chocolatey package
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          mkdir -p choco-yaver/tools
-          cat > choco-yaver/yaver.nuspec <<NUSPEC
-          <?xml version="1.0" encoding="utf-8"?>
-          <package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
-            <metadata>
-              <id>yaver</id>
-              <version>${VERSION}</version>
-              <title>Yaver CLI</title>
-              <authors>Yaver</authors>
-              <owners>kivanccakmak</owners>
-              <projectUrl>https://yaver.io</projectUrl>
-              <licenseUrl>https://github.com/${REPO}/blob/main/LICENSE</licenseUrl>
-              <requireLicenseAcceptance>false</requireLicenseAcceptance>
-              <description>AI coding agent on your phone — P2P remote control for Claude Code, Codex, Aider, Ollama</description>
-              <summary>Run AI coding agents from your phone</summary>
-              <tags>yaver ai cli developer-tools remote</tags>
-            </metadata>
-          </package>
-          NUSPEC
-
-          cat > choco-yaver/tools/chocolateyinstall.ps1 <<'CHOCO_HEADER'
-          \$ErrorActionPreference = 'Stop'
-          CHOCO_HEADER
-          cat >> choco-yaver/tools/chocolateyinstall.ps1 <<CHOCO_BODY
-          \$url = "https://github.com/${REPO}/releases/download/v${VERSION}/yaver-windows-amd64.exe"
-          \$checksum = "${SHA_WINDOWS_AMD64}"
-          \$installDir = "\$(Split-Path -parent \$MyInvocation.MyCommand.Definition)"
-          Get-ChocolateyWebFile -PackageName 'yaver' -FileFullPath "\$installDir/yaver.exe" -Url64bit \$url -Checksum64 \$checksum -ChecksumType64 'sha256'
-          CHOCO_BODY
-
-          echo "Chocolatey package generated at choco-yaver/"
-          echo "To publish: choco pack choco-yaver/yaver.nuspec && choco push yaver.${VERSION}.nupkg --api-key \$CHOCO_API_KEY"
-
-      - name: Update apt repository
-        env:
-          GH_TOKEN: ${{ secrets.YAVER_CLI_REPO_TOKEN }}
-        run: |
-          REPO="${{ secrets.YAVER_CLI_REPO || github.repository }}"
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/kivanccakmak/apt-yaver.git" apt-yaver
-
-          # Download deb packages from release into pool/main (existing repo layout)
-          mkdir -p apt-yaver/pool/main
-          for ARCH in amd64 arm64; do
-            DEB="yaver_${VERSION}_${ARCH}.deb"
-            gh release download "v${VERSION}" --repo "$REPO" --pattern "$DEB" --dir apt-yaver/pool/main/ 2>/dev/null || echo "No $DEB found in release"
-          done
-
-          # Regenerate Packages index (scan pool/main, which is where debs live)
-          cd apt-yaver
-          mkdir -p dists/stable/main/binary-amd64 dists/stable/main/binary-arm64
-          for ARCH in amd64 arm64; do
-            if ls pool/main/yaver_*_${ARCH}.deb 1>/dev/null 2>&1; then
-              dpkg-scanpackages --arch "$ARCH" pool/main/ > "dists/stable/main/binary-${ARCH}/Packages"
-              gzip -k -f "dists/stable/main/binary-${ARCH}/Packages"
-            fi
-          done
-
-          # Regenerate apt metadata and remove stale signed metadata until signing is wired in here.
-          cat > apt-release.conf <<'EOF'
-          APT::FTPArchive::Release::Origin "Yaver";
-          APT::FTPArchive::Release::Label "Yaver";
-          APT::FTPArchive::Release::Suite "stable";
-          APT::FTPArchive::Release::Codename "stable";
-          APT::FTPArchive::Release::Architectures "amd64 arm64";
-          APT::FTPArchive::Release::Components "main";
-          APT::FTPArchive::Release::Description "Yaver CLI apt repository";
-          EOF
-          apt-ftparchive -c=apt-release.conf release dists/stable > dists/stable/Release
-          rm -f dists/stable/InRelease dists/stable/Release.gpg
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git diff --cached --quiet || git commit -m "Update yaver to v${VERSION}"
-          git push origin main
-
-  # Build each arch on its native runner so the arm64 image stops
-  # taking 10+ min under QEMU emulation. Each matrix job pushes by
-  # digest only; the manifest job below stitches the two digests
-  # into single multi-arch `:latest` + `:<version>` tags at the end.
-  # Keeps Raspberry Pi / Apple Silicon / other arm64 hosts working.
-  docker-build:
-    needs: [validate, release]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-            platform: linux/amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-    runs-on: ${{ matrix.runner }}
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-      DOCKERHUB_IMAGE: kivanccakmak/yaver-cli
-      GHCR_IMAGE: ghcr.io/${{ github.repository }}/cli
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: desktop/agent
-          platforms: ${{ matrix.platform }}
-          # push-by-digest: uploads the image with no tag and
-          # emits a sha256 digest we feed to the manifest job.
-          outputs: type=image,name=${{ env.DOCKERHUB_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-
-      - name: Push by digest to ghcr.io
-        id: build-ghcr
-        uses: docker/build-push-action@v6
-        with:
-          context: desktop/agent
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ env.GHCR_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-
-      - name: Export digests
-        run: |
-          mkdir -p /tmp/digests/dockerhub /tmp/digests/ghcr
-          echo "${{ steps.build.outputs.digest }}" > /tmp/digests/dockerhub/${{ matrix.arch }}
-          echo "${{ steps.build-ghcr.outputs.digest }}" > /tmp/digests/ghcr/${{ matrix.arch }}
-
-      - name: Upload digests
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ matrix.arch }}
-          path: /tmp/digests/**
-          if-no-files-found: error
-          retention-days: 1
-
-  # Stitch the per-arch digests into a single multi-arch manifest
-  # tagged :latest and :<version>. Runs once (amd64-only) — no
-  # compilation here, just registry metadata.
-  docker-manifest:
-    needs: [validate, docker-build]
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.validate.outputs.version }}
-      DOCKERHUB_IMAGE: kivanccakmak/yaver-cli
-      GHCR_IMAGE: ghcr.io/${{ github.repository }}/cli
-    steps:
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create + push Docker Hub manifest
-        working-directory: /tmp/digests/dockerhub
-        run: |
-          docker buildx imagetools create \
-            -t ${DOCKERHUB_IMAGE}:latest \
-            -t ${DOCKERHUB_IMAGE}:${VERSION} \
-            $(for f in *; do echo ${DOCKERHUB_IMAGE}@$(cat $f); done)
-
-      - name: Create + push ghcr manifest
-        working-directory: /tmp/digests/ghcr
-        run: |
-          docker buildx imagetools create \
-            -t ${GHCR_IMAGE}:latest \
-            -t ${GHCR_IMAGE}:${VERSION} \
-            $(for f in *; do echo ${GHCR_IMAGE}@$(cat $f); done)
-
-      - name: Inspect
-        run: |
-          docker buildx imagetools inspect ${DOCKERHUB_IMAGE}:${VERSION}
-          docker buildx imagetools inspect ${GHCR_IMAGE}:${VERSION}

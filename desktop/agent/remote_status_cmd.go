@@ -278,7 +278,11 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	}
 	fmt.Println(header)
 	if !report.IsOnline {
-		fmt.Println("  status: offline")
+		// "Bootstrap" not "offline": the device may be perfectly reachable
+		// via SSH/LAN — the agent just hasn't refreshed its heartbeat lately
+		// (auth expired, daemon stopped, etc). True "offline" is when the
+		// box itself is unplugged, which we can't tell from Convex alone.
+		fmt.Println("  status: bootstrap (no recent heartbeat — try `yaver ssh primary`)")
 		return
 	}
 	if report.Hostname != "" || report.Platform != "" {
@@ -598,9 +602,14 @@ func renderRemoteAgentStatusError(ctx context.Context, deviceID string, err erro
 		fmt.Printf("  host:           %s\n", hostLabel)
 	}
 	if target != nil && !target.IsOnline {
-		fmt.Println("  status:         offline (no recent heartbeat)")
+		// Convex hasn't seen a heartbeat in 5+ minutes. Not necessarily
+		// offline-as-in-unplugged — the box could just have its agent
+		// stopped or unauth'd. We can still SSH to it.
+		fmt.Println("  status:         bootstrap (no recent heartbeat — device reachable via `yaver ssh primary`)")
 	} else {
-		fmt.Println("  status:         online per Convex but unreachable from here")
+		// Heartbeat fresh, but the relay tunnel is down — typically
+		// auth expired on the box. Same recovery: SSH in and re-auth.
+		fmt.Println("  status:         bootstrap (online per Convex, relay tunnel unreachable from here)")
 	}
 	fmt.Printf("  cause:          %s\n", cause)
 	if hint != "" {
