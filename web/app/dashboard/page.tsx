@@ -1735,10 +1735,10 @@ export default function DashboardPage() {
                           ) : (
                             <button
                               onClick={() => setChatRunnerAuthModal(runnerId)}
-                              className="ml-auto rounded-md border border-amber-400 bg-amber-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-800 hover:border-amber-500 hover:bg-amber-200 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/25"
+                              className="ml-auto whitespace-nowrap rounded-md border border-amber-400/60 bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 hover:border-amber-500 hover:bg-amber-200 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/25"
                               title={`OAuth-sign-in to the ${runnerLabel(runnerId)} CLI on this device. Separate from Yaver-agent auth.`}
                             >
-                              Sign in {runnerLabel(runnerId)}
+                              Sign in &rarr;
                             </button>
                           )}
                         </div>
