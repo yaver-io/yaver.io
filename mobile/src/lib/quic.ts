@@ -1062,6 +1062,21 @@ export class QuicClient {
    *  /auth/pair/submit can follow the same path instead of falling back to a
    *  stale relay URL. */
   private recoveryTargets(): Array<{ baseUrl: string; headers: Record<string, string> }> {
+    // Recovery posts the user's bearer to the agent (mode=direct hands it
+    // over as the agent's new session token). Prefer transports where the
+    // bearer is end-to-end encrypted on the wire over plain-HTTP direct
+    // paths — relay (HTTPS to relay → QUIC to agent) and HTTPS tunnels are
+    // safe even on hostile WiFi, while http://lan-ip:18080 leaks the
+    // bearer if anyone is sniffing the network. Order:
+    //   1. Currently-active baseUrl — already chosen by the connection
+    //      manager based on the user's network + forceRelay preference
+    //   2. Relays (encrypted, password-gated)
+    //   3. HTTPS Cloudflare/private tunnels
+    //   4. LAN-beacon-discovered IP (private RFC1918, can't leak to public)
+    //   5. Convex-stored host:port — last resort; may be a public IP, so
+    //      try only after every encrypted+private path failed
+    // The agent's classifyRecoveryIngress (recovery_transport.go) is the
+    // authoritative gate; this ordering is defense-in-depth on the client.
     const seen = new Set<string>();
     const targets: Array<{ baseUrl: string; headers: Record<string, string> }> = [];
     const push = (baseUrl: string | null | undefined, headers: Record<string, string>) => {
@@ -1073,19 +1088,17 @@ export class QuicClient {
 
     push(this.baseUrl, this.authHeaders);
 
-    const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
-    if (lanInfo) {
-      push(`http://${lanInfo.ip}:${lanInfo.port}`, {
-        Authorization: `Bearer ${this.token}`,
-        "X-Client-Platform": Platform.OS,
-      });
-    }
-
-    if (this.host && this.port) {
-      push(`http://${this.host}:${this.port}`, {
-        Authorization: `Bearer ${this.token}`,
-        "X-Client-Platform": Platform.OS,
-      });
+    if (this.deviceId) {
+      for (const relay of this.relayServers) {
+        const headers: Record<string, string> = {
+          Authorization: `Bearer ${this.token}`,
+          "X-Client-Platform": Platform.OS,
+        };
+        if (relay.password) {
+          headers["X-Relay-Password"] = relay.password;
+        }
+        push(`${relay.httpUrl}/d/${this.deviceId}`, headers);
+      }
     }
 
     for (const tunnel of this.effectiveTunnelServers) {
@@ -1100,17 +1113,19 @@ export class QuicClient {
       push(tunnel.url, headers);
     }
 
-    if (this.deviceId) {
-      for (const relay of this.relayServers) {
-        const headers: Record<string, string> = {
-          Authorization: `Bearer ${this.token}`,
-          "X-Client-Platform": Platform.OS,
-        };
-        if (relay.password) {
-          headers["X-Relay-Password"] = relay.password;
-        }
-        push(`${relay.httpUrl}/d/${this.deviceId}`, headers);
-      }
+    const lanInfo = this.deviceId ? beaconListener.getLocalIP(this.deviceId) : null;
+    if (lanInfo) {
+      push(`http://${lanInfo.ip}:${lanInfo.port}`, {
+        Authorization: `Bearer ${this.token}`,
+        "X-Client-Platform": Platform.OS,
+      });
+    }
+
+    if (this.host && this.port) {
+      push(`http://${this.host}:${this.port}`, {
+        Authorization: `Bearer ${this.token}`,
+        "X-Client-Platform": Platform.OS,
+      });
     }
 
     return targets;

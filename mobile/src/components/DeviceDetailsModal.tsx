@@ -3,14 +3,21 @@
 // transport classification, relay version, LAN/Tailscale/Cloudflare
 // breakdown, and runtime info on the phone.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
-import { quicClient } from "../lib/quic";
+import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
+import RunnerAuthModal from "./RunnerAuthModal";
+
+const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label: string }> = [
+  { id: "claude", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
+  { id: "opencode", label: "OpenCode" },
+];
 import {
   classifyTransport,
   fetchRelayHealth,
@@ -551,6 +558,157 @@ function PingRow({ device }: { device: Device }) {
   );
 }
 
+// Coding agents auth + default-runner picker. Same agent surface (claude /
+// codex / opencode) on every device, so we render the rows from a constant
+// instead of relying on whatever the agent reports — that way "agent
+// installed but never authed" still surfaces a Sign in button. authConfigured
+// comes from /runner-auth/status (per-device, peered when not active).
+function CodingAgentsSection({ device }: { device: Device }) {
+  const c = useColors();
+  const { activeDevice, connectionStatus, primaryRunnerByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
+  const [defaultBusy, setDefaultBusy] = useState<string | null>(null);
+
+  const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
+  // /runner-auth/status routes via /peer/<id> when target is set; pass it
+  // for non-active devices so the agent forwards the call to the right peer.
+  const target = isActive ? undefined : device.id;
+  const currentDefault = primaryRunnerByDevice[device.id] || "";
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const rows = await quicClient.runnerAuthStatus(target);
+      setStatusRows(rows || []);
+    } catch {
+      setStatusRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [target]);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  const findStatus = (id: string): RunnerAuthStatusRow | undefined =>
+    (statusRows || []).find((r) => {
+      const rid = String(r.id || "").toLowerCase();
+      return rid === id || (id === "claude" && rid === "claude-code");
+    });
+
+  return (
+    <View style={{
+      borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
+    }}>
+      <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
+        CODING AGENTS
+      </Text>
+
+      {/* Auth status + sign-in. */}
+      {CODING_AGENTS.map(({ id, label }) => {
+        const row = findStatus(id);
+        const authed = row?.authConfigured === true;
+        return (
+          <View
+            key={id}
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              paddingVertical: 8,
+              borderTopWidth: id === CODING_AGENTS[0].id ? 0 : 1,
+              borderTopColor: c.border,
+              gap: 8,
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>{label}</Text>
+              <Text style={{
+                color: authed ? "#22c55e" : loading ? c.textMuted : "#f59e0b",
+                fontSize: 11,
+                marginTop: 2,
+              }}>
+                {loading && !row ? "checking…" : authed ? "✓ signed in" : "not signed in"}
+              </Text>
+            </View>
+            {authed ? null : (
+              <Pressable
+                onPress={() => setAuthModalRunner(id)}
+                style={{
+                  paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                  backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+                }}
+              >
+                <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>Sign in →</Text>
+              </Pressable>
+            )}
+          </View>
+        );
+      })}
+
+      {/* Default runner pill row. Tapping a pill writes through to userSettings.
+          Stays usable even when the runner isn't authed yet — picking it as
+          default is just a preference; sign-in is a separate action. */}
+      <Text style={{
+        color: c.textMuted, fontSize: 11, fontWeight: "600",
+        marginTop: 14, marginBottom: 6,
+      }}>
+        Default runner
+      </Text>
+      <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+        {CODING_AGENTS.map(({ id, label }) => {
+          const isDefault = currentDefault === id || (id === "claude" && currentDefault === "claude-code");
+          const busy = defaultBusy === id;
+          return (
+            <Pressable
+              key={`pill-${id}`}
+              disabled={busy || isDefault}
+              onPress={async () => {
+                setDefaultBusy(id);
+                try {
+                  await setPrimaryRunnerForDevice(device.id, id);
+                } catch (err: any) {
+                  Alert.alert("Failed", err?.message || "Could not save default runner");
+                } finally {
+                  setDefaultBusy(null);
+                }
+              }}
+              style={{
+                paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+                backgroundColor: isDefault ? c.accent + "22" : "transparent",
+                borderWidth: 1, borderColor: isDefault ? c.accent + "88" : c.border,
+                opacity: busy ? 0.5 : 1,
+              }}
+            >
+              <Text style={{
+                color: isDefault ? c.accent : c.textPrimary,
+                fontSize: 12,
+                fontWeight: isDefault ? "700" : "500",
+              }}>
+                {isDefault ? `★ ${label}` : label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <RunnerAuthModal
+        visible={!!authModalRunner}
+        runner={authModalRunner || ""}
+        deviceName={device.name}
+        target={target}
+        onClose={() => setAuthModalRunner(null)}
+        onCompleted={() => {
+          setAuthModalRunner(null);
+          // Re-poll status so the row flips to ✓ signed in immediately.
+          void refresh();
+        }}
+      />
+    </View>
+  );
+}
+
 export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
   const c = useColors();
   const t = device ? transportFor(device) : null;
@@ -763,17 +921,23 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             </View>
           ) : null}
 
-          {/* Runners */}
-          {(device.runners || []).length > 0 ? (
+          {/* Coding agents — auth status + sign-in + default runner picker.
+              Replaces the old RUNNERS section, which surfaced active task
+              entries (often empty) instead of the actually-useful
+              "is claude/codex/opencode signed in on this box?" view. */}
+          <CodingAgentsSection device={device} />
+
+          {/* Active task runners — only shown if there are any. */}
+          {(device.runners || []).filter((r) => r.pid).length > 0 ? (
             <View style={{
               borderWidth: 1, borderColor: c.border, borderRadius: 8,
               backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
             }}>
               <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
-                RUNNERS
+                ACTIVE TASKS
               </Text>
-              {(device.runners || []).map((r, i) => (
-                <Row key={`r-${i}`} label={r.runnerId || "runner"} value={`${r.title || ""}${r.pid ? ` · pid ${r.pid}` : ""}`} />
+              {(device.runners || []).filter((r) => r.pid).map((r, i) => (
+                <Row key={`r-${i}`} label={r.runnerId || "runner"} value={`${r.title || ""} · pid ${r.pid}`} />
               ))}
             </View>
           ) : null}

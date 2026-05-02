@@ -968,9 +968,16 @@ export default function TasksScreen() {
     const ready = installed.filter((runner) => runner.ready !== false);
     const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
     setSelectedRunner((current) => {
-      // User has already picked a valid (installed) runner — leave it.
+      // Preserve any explicit user pick — including the three first-class
+      // agents that may not be installed YET on this box (codex/opencode
+      // commonly need `yaver install` first). Reverting to claude here
+      // silently swallowed chip taps on a fresh test box. The composer's
+      // ready-check banner (line ~2760) already surfaces "needs install"
+      // separately, and the auth modal handles sign-in, so keeping the
+      // selection stable across the seeding effect is the right call.
+      if (current && (RUNNER_WL.has(current) || current === "custom")) return current;
       if (current && installed.some((r) => r.id === current)) return current;
-      if (explicitRunner && installed.some((r) => r.id === explicitRunner)) return explicitRunner;
+      if (explicitRunner && (RUNNER_WL.has(explicitRunner) || installed.some((r) => r.id === explicitRunner))) return explicitRunner;
       const seededRunner = activeDevice
         ? preferredDefaultRunnerForDevice(activeDevice, user?.email, ready.map((r) => r.id).concat(installed.map((r) => r.id)))
         : null;

@@ -481,7 +481,7 @@ function DeviceCard({
   const handleSmartConnect = async () => {
     if (recovering) return;
     if (lifecycleState === "offline" || lifecycleState === "connected") {
-      if (lifecycleState === "connected") setDetailsOpen(true);
+      setDetailsOpen(true);
       return;
     }
     if (lifecycleState === "ready-to-connect") {
@@ -656,12 +656,14 @@ function DeviceCard({
               {recovering ? "Recovering..." : primaryActionLabel}
             </Text>
           </Pressable>
-          <Pressable
-            style={[styles.pingBtn, { backgroundColor: c.accent + "18" }]}
-            onPress={() => setDetailsOpen(true)}
-          >
-            <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
-          </Pressable>
+          {primaryActionLabel === "Details" ? null : (
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: c.accent + "18" }]}
+              onPress={() => setDetailsOpen(true)}
+            >
+              <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
+            </Pressable>
+          )}
         </View>
       </View>
       <DeviceDetailsModal

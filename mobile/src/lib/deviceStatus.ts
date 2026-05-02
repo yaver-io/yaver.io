@@ -155,10 +155,17 @@ export function deriveMobileDeviceLifecycleState(args: {
   unreachable?: boolean;
 }): MobileDeviceLifecycleState {
   const { device, probe, isConnected = false, authExpired = false, unreachable = false } = args;
-  if (isConnected) return "connected";
-  if (probe?.lifecycleState) return probe.lifecycleState;
+  // Auth state is independent of transport. Even when this mobile reached
+  // the agent (isConnected=true), the agent's own yaver session can be
+  // expired — manifests as 401 on subsequent requests (agentAuthExpired)
+  // or as needsAuth on the convex row. Surface the auth state first so
+  // the card flips to "Re-auth & Connect" instead of silently claiming
+  // "connected" while the user's tasks 401.
   if (probe?.bootstrap) return "bootstrap";
   if (probe?.authExpired || authExpired) return "yaver-auth-expired";
+  if (device.needsAuth) return "yaver-auth-expired";
+  if (isConnected) return "connected";
+  if (probe?.lifecycleState) return probe.lifecycleState;
   if (
     probe?.reachable ||
     device.online ||
