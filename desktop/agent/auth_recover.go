@@ -411,7 +411,25 @@ func (s *HTTPServer) handleAuthRecover(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusMethodNotAllowed, "use POST")
 		return
 	}
+	// Rate-limit key. Default clientIP() reads only r.RemoteAddr —
+	// for relay-tunneled traffic that's always 127.0.0.1 (the relay
+	// terminates TCP locally and proxies to the agent on loopback),
+	// so EVERY relay client across mobile / web / CLI shares ONE
+	// bucket. Honor X-Forwarded-For when present so each remote
+	// client gets its own 5s window. Spoofing X-FF doesn't reduce
+	// other clients' budgets — the attacker just lands in their own
+	// bucket — so trusting it for rate-limit keying is safe even
+	// without verifying the proxy.
 	ip := clientIP(r)
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		// X-FF is a comma-separated chain "client, proxy1, proxy2"; the
+		// leftmost entry is the original client. Use it.
+		if comma := strings.IndexByte(xff, ','); comma > 0 {
+			ip = strings.TrimSpace(xff[:comma])
+		} else {
+			ip = xff
+		}
+	}
 	if !recoveryLimiter.allow(ip) {
 		reportRecoveryEventFn(s, "rate_limited", map[string]interface{}{"ip": ip})
 		jsonError(w, http.StatusTooManyRequests, "too many recovery attempts — wait 5 seconds")

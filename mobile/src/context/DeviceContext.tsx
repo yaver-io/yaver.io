@@ -1992,91 +1992,43 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     appLog("warn", `Direct recovery rejected for ${device.name} (${directRecovery?.error || "unknown"}) — falling back to pair-session path`);
 
-    let recovery = await quicClient.recoverAgent(undefined, "pair");
-    if (recovery?.rateLimited) {
-      return recovery;
-    }
-    if (!recovery?.ok || !recovery.pairCode) {
-      appLog("warn", `Host-token recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);
-
-      const bootstrapSecret = await getLocalSecret(LOCAL_KEYS.bootstrapSecret);
-      if (bootstrapSecret) {
-        recovery = await quicClient.recoverAgent(bootstrapSecret, "pair");
-        if (recovery?.rateLimited) {
-          return recovery;
-        }
-        if (recovery?.ok && recovery.pairCode) {
-          appLog("info", `Recovered ${device.name} using stored bootstrap secret`);
-        } else {
-          appLog("warn", `Bootstrap-secret recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);
-        }
+    // Direct mode failed for a non-rate-limit reason. Skip the legacy
+    // pair-session cascade — both pair and bootstrap-secret-pair hit
+    // the SAME /auth/recover endpoint and contribute another POST per
+    // mode to the agent's 5s rate window. They've also been redundant
+    // since direct host-token push landed: any caller who can pass
+    // verifyHostToken (mobile signed in as the device owner) gets a
+    // 1-call success in direct mode; if that fails, pair won't fix it.
+    // Jump straight to device-code, which is the equivalent of running
+    // `yaver primary auth` from the desktop CLI — opens a Convex OAuth
+    // page in an in-app browser for explicit re-authorization.
+    const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
+    if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
+      appLog("info", `Opened device-code recovery for ${device.name}: ${deviceCode.userCode || "code unavailable"}`);
+      try {
+        await WebBrowser.openBrowserAsync(deviceCode.deviceCodeUrl, {
+          // iOS: dismiss button label inside the in-app Safari sheet
+          dismissButtonStyle: "done",
+          // Match the app's tone so the sign-in sheet doesn't feel like
+          // a foreign tab.
+          controlsColor: "#8b5cf6",
+          presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+        });
+      } catch (err) {
+        // openBrowserAsync rejects on Android < API 18 / web — fall back
+        // to the system browser so the user can still complete OAuth.
+        appLog("warn", `WebBrowser open failed for ${device.name}, falling back to Linking: ${err instanceof Error ? err.message : String(err)}`);
+        Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
       }
-    }
-
-    if (!recovery?.ok || !recovery.pairCode) {
-      // Pair-mode (which uses the phone's existing bearer to splice a token
-      // back into the agent) didn't work — most often because the phone
-      // bearer doesn't own this device, the agent's pair session rotated
-      // mid-flight, or the user signed in to the phone as a different
-      // identity than the device's last owner. Fall through to device-code:
-      // the agent starts a fresh Convex OAuth session and prints a URL we
-      // open *in-app* (SafariViewController on iOS, Custom Tabs on Android)
-      // so the user does Apple / Google / Microsoft / GitHub / GitLab sign-
-      // in without leaving Yaver. The agent polls Convex; when OAuth
-      // completes the agent receives a fresh session token and the device
-      // flips out of bootstrap. We refresh on browser dismiss so the UI
-      // catches the state change as soon as the user is back.
-      const deviceCode = await quicClient.recoverAgent(undefined, "device-code");
-      if (deviceCode?.ok && deviceCode.deviceCodeUrl) {
-        appLog("info", `Opened device-code recovery for ${device.name}: ${deviceCode.userCode || "code unavailable"}`);
-        try {
-          await WebBrowser.openBrowserAsync(deviceCode.deviceCodeUrl, {
-            // iOS: dismiss button label inside the in-app Safari sheet
-            dismissButtonStyle: "done",
-            // Match the app's tone so the sign-in sheet doesn't feel like
-            // a foreign tab.
-            controlsColor: "#8b5cf6",
-            presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-          });
-        } catch (err) {
-          // openBrowserAsync rejects on Android < API 18 / web — fall back
-          // to the system browser so the user can still complete OAuth.
-          appLog("warn", `WebBrowser open failed for ${device.name}, falling back to Linking: ${err instanceof Error ? err.message : String(err)}`);
-          Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
-        }
-        // The agent is polling Convex for the new token. By the time the
-        // user dismisses the sheet they may already be authed, or the
-        // agent may need a few more seconds. Two refreshes catch both.
-        setTimeout(() => refreshDevices(), 1000);
-        setTimeout(() => refreshDevices(), 5000);
-      } else {
-        appLog("warn", `Device-code recovery did not start for ${device.name}: ${deviceCode?.error || recovery?.error || "unknown error"}`);
-      }
-      return deviceCode ?? recovery;
-    }
-
-    const targetUrl = recovery.targetUrl || quicClient.baseUrl;
-    let pairRes: { ok: boolean; host?: string; error?: string };
-    if (device.publicKey) {
-      pairRes = await submitEncryptedPair(targetUrl, token, device.publicKey, recovery.pairCode);
+      // The agent is polling Convex for the new token. By the time the
+      // user dismisses the sheet they may already be authed, or the
+      // agent may need a few more seconds. Two refreshes catch both.
+      setTimeout(() => refreshDevices(), 1000);
+      setTimeout(() => refreshDevices(), 5000);
     } else {
-      pairRes = await submitPair({
-        code: recovery.pairCode,
-        targetUrl,
-        token,
-        userId: user.id,
-      });
+      appLog("warn", `Device-code recovery did not start for ${device.name}: ${deviceCode?.error || "unknown error"}`);
     }
-    if (!pairRes.ok) {
-      appLog("warn", `Auth recovery pair submit failed for ${device.name}: ${pairRes.error || "unknown error"}`);
-      return { ok: false, error: pairRes.error || "Auth recovery pair submit failed" };
-    }
-    quicClient.agentAuthExpired = false;
-    setAgentAuthExpired(false);
-    clearDeviceUnreachable(device.id);
-    appLog("info", `Recovered expired agent session for ${device.name} from mobile`);
-    setTimeout(() => refreshDevices(), 2000);
-    return { ...recovery, ok: true };
+    return deviceCode;
   }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable, recoverBootstrapDevice]);
 
   // Auth-expired recovery: the agent is still reachable, but its own

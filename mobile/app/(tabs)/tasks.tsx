@@ -1284,9 +1284,15 @@ export default function TasksScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    // Refresh device list FIRST so a stale "agent session expired" banner
+    // clears as soon as the agent's auth has actually been recovered (e.g.
+    // by another client or the silent auto-recovery). Without this the
+    // banner would persist until the next 30s heartbeat poll, masking
+    // the real state.
+    try { await refreshDevices(); } catch {}
     await fetchTasks();
     setRefreshing(false);
-  }, [fetchTasks]);
+  }, [fetchTasks, refreshDevices]);
 
   // ── Voice recording ─────────────────────────────────────────────────
 
