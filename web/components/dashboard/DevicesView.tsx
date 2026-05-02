@@ -1587,13 +1587,14 @@ export default function DevicesView({
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
             const sshCommand = sshCommandForDevice(device);
             const directSSHHost = directSSHHostForDevice(device);
+            const sshHref = directSSHHost ? `ssh://${directSSHHost}` : null;
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
                 <DeviceIcon platform={device.platform} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold text-slate-900 dark:text-surface-50">
@@ -1702,7 +1703,7 @@ export default function DevicesView({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
                     {!device.isGuest && token ? (
                       <button
                         onClick={async () => {
@@ -1712,7 +1713,7 @@ export default function DevicesView({
                             alert(`Failed to update primary: ${e?.message ?? e}`);
                           }
                         }}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
                           primaryDeviceId === device.id
                             ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
                             : "border-slate-300 bg-white text-slate-700 hover:border-amber-300 hover:text-amber-700 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
@@ -1722,13 +1723,13 @@ export default function DevicesView({
                         <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                           <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
                         </svg>
-                        {primaryDeviceId === device.id ? "Primary" : "Set as primary"}
+                        {primaryDeviceId === device.id ? "Primary" : "Set Primary"}
                       </button>
                     ) : null}
                     {!device.isGuest ? (
                       <button
                         onClick={() => setRescueOpenDeviceId(rescueOpenDeviceId === device.id ? null : device.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium leading-none text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-medium leading-none text-amber-700 hover:border-amber-400 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:border-amber-500/60 dark:hover:bg-amber-500/20"
                         title="Recover a wedged agent — works even when the relay tunnel is broken"
                       >
                         {/* svg matches PRIMARY/Details size so this button stays the same height as its siblings;
@@ -1744,7 +1745,7 @@ export default function DevicesView({
                     ) : null}
                     <button
                       onClick={() => setShellDevice(device)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-medium leading-none text-cyan-700 hover:border-cyan-400 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-200 dark:hover:border-cyan-500/60 dark:hover:bg-cyan-500/20"
+                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-medium leading-none text-cyan-700 hover:border-cyan-400 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-200 dark:hover:border-cyan-500/60 dark:hover:bg-cyan-500/20"
                       title="Open a browser shell on this device (PTY over relay) — Hetzner / GCP-style"
                     >
                       <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -1754,29 +1755,8 @@ export default function DevicesView({
                       Shell
                     </button>
                     <button
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(sshCommand);
-                          setSshCopiedDeviceId(device.id);
-                          window.setTimeout(() => {
-                            setSshCopiedDeviceId((current) => (current === device.id ? null : current));
-                          }, 2000);
-                        } catch (e: any) {
-                          alert(`Copy failed: ${e?.message || e}`);
-                        }
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium leading-none text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/20"
-                      title={directSSHHost ? `Copy ${sshCommand} — direct fallback: ssh ${directSSHHost}` : `Copy ${sshCommand}`}
-                    >
-                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <rect x="9" y="9" width="13" height="13" rx="2" />
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                      </svg>
-                      {sshCopiedDeviceId === device.id ? "SSH Copied" : "SSH"}
-                    </button>
-                    <button
                       onClick={() => setExpandedId(expandedId === device.id ? null : device.id)}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-100"
+                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-100"
                       aria-expanded={expandedId === device.id}
                       title="Show runtime, hardware, network and sharing details"
                     >
@@ -1976,32 +1956,35 @@ export default function DevicesView({
                           instead of one chip among many. Labelled
                           "Preferred" (not "Primary") so it doesn't
                           collide with the device-level PRIMARY star. */}
-                      <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
-                        <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
-                          </svg>
-                          Preferred
-                        </span>
-                        {primaryState ? (
-                          <RunnerChipWithTest
-                            device={device}
-                            state={primaryState}
-                            token={token ?? null}
-                            onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
-                          />
-                        ) : (
-                          <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
-                        )}
-                        {!explicitPrimary && seededPrimary ? (
-                          <span
-                            className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
-                            title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
-                          >
-                            suggested
-                          </span>
-                        ) : null}
-                        <span className="ml-auto flex items-center gap-1.5">
+                      <div className="mb-2 rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 dark:border-indigo-500/30 dark:bg-indigo-500/5">
+                        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest text-indigo-700 dark:text-indigo-300">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                              </svg>
+                              Preferred
+                            </span>
+                            {primaryState ? (
+                              <RunnerChipWithTest
+                                device={device}
+                                state={primaryState}
+                                token={token ?? null}
+                                onSignIn={(runnerId) => setAuthModal({ device, runner: runnerId })}
+                              />
+                            ) : (
+                              <span className="text-[12px] text-slate-500 dark:text-surface-500">(none set)</span>
+                            )}
+                            {!explicitPrimary && seededPrimary ? (
+                              <span
+                                className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-300"
+                                title="Suggested default based on which runners are ready on this device. Click Confirm to persist."
+                              >
+                                suggested
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 xl:justify-end">
                           <select
                             value={primaryId}
                             onChange={(e) => {
@@ -2070,7 +2053,8 @@ export default function DevicesView({
                               Confirm
                             </button>
                           ) : null}
-                        </span>
+                          </div>
+                        </div>
                       </div>
                       {/* Other available agents — collapsed by default
                           since the user already chose a primary. Click
@@ -2109,6 +2093,25 @@ export default function DevicesView({
                 })()}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
                   <InlinePingButton device={device} token={token ?? null} />
+                  <InlineSSHButton sshHref={sshHref} />
+                  <CopySSHButton
+                    command={sshCommand}
+                    copied={sshCopiedDeviceId === device.id}
+                    onCopy={() => {
+                      void (async () => {
+                        try {
+                          await navigator.clipboard.writeText(sshCommand);
+                          setSshCopiedDeviceId(device.id);
+                          window.setTimeout(() => {
+                            setSshCopiedDeviceId((current) => (current === device.id ? null : current));
+                          }, 2000);
+                        } catch (e: any) {
+                          alert(`Copy failed: ${e?.message || e}`);
+                        }
+                      })();
+                    }}
+                    title={directSSHHost ? `Copy ${sshCommand} — direct fallback: ssh ${directSSHHost}` : `Copy ${sshCommand}`}
+                  />
                   {isActiveWorkspace && onCloseWorkspace ? (
                     <button
                       onClick={onCloseWorkspace}
@@ -2600,6 +2603,54 @@ function InlinePingButton({ device, token }: { device: Device; token: string | n
           : pingState.ok === false
             ? "Unreachable"
             : "Ping"}
+    </button>
+  );
+}
+
+function InlineSSHButton({
+  sshHref,
+  disabled,
+}: {
+  sshHref: string | null;
+  disabled?: boolean;
+}) {
+  return (
+    <a
+      href={disabled || !sshHref ? undefined : sshHref}
+      onClick={(e) => {
+        if (disabled || !sshHref) e.preventDefault();
+      }}
+      aria-disabled={disabled || !sshHref}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold shadow-sm ${
+        disabled || !sshHref
+          ? "cursor-not-allowed border-surface-800 bg-surface-900/40 text-surface-500"
+          : "border-emerald-500/30 bg-emerald-500/10 text-emerald-200 hover:border-emerald-500/50 hover:bg-emerald-500/15"
+      }`}
+      title={sshHref ? "Open your system SSH handler for this machine" : "No direct SSH host advertised by this device"}
+    >
+      SSH
+    </a>
+  );
+}
+
+function CopySSHButton({
+  command,
+  copied,
+  onCopy,
+  title,
+}: {
+  command: string;
+  copied: boolean;
+  onCopy: () => void;
+  title: string;
+}) {
+  return (
+    <button
+      onClick={onCopy}
+      className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-semibold leading-none text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-200 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/20"
+      title={title}
+    >
+      {copied ? "SSH Copied" : "Copy SSH"}
     </button>
   );
 }
