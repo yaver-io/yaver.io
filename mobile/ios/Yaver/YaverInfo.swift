@@ -30,6 +30,15 @@ final class YaverInfo: NSObject {
       payload["preferredPackageNames"] = family.preferredPackageNames ?? []
       return payload
     }
+    // Inherited auth so a guest's bundled feedback SDK can skip its own
+    // login flow. AppDelegate persists these into UserDefaults at the
+    // moment the guest bundle is loaded (YaverBundleLoader writes
+    // yaverAgentBaseURL + yaverAgentAuth on every loadBundle call).
+    // The user's Convex bearer is also stored when Yaver authenticates.
+    let inheritedToken = UserDefaults.standard.string(forKey: "yaverInheritedAuthToken") ?? ""
+    let inheritedAgentURL = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
+    let inheritedDeviceId = UserDefaults.standard.string(forKey: "yaverInheritedDeviceId") ?? ""
+
     return [
       "isYaver": true,
       "version": (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "",
@@ -48,6 +57,13 @@ final class YaverInfo: NSObject {
       "suppressLocalizationProbe": true,
       "availableModules": availableModules,
       "lastGuestCrashReport": YaverGuestCrashReporter.loadLastCrashReport() ?? NSNull(),
+      // Inherited from the host so the guest's SDK can do auth pass-through
+      // without re-prompting the user. The SDK validates the token before
+      // trusting it; a stale value just falls through to the SDK's own
+      // login screen, never crashes.
+      "inheritedAuthToken": inheritedToken,
+      "inheritedAgentUrl": inheritedAgentURL,
+      "inheritedDeviceId": inheritedDeviceId,
     ]
   }
 
@@ -74,5 +90,25 @@ final class YaverInfo: NSObject {
       UserDefaults.standard.removeObject(forKey: "yaverPendingFeedbackLaunch")
     }
     resolve(pending)
+  }
+
+  // Called by Yaver mobile (host) JS on sign-in / heartbeat so the
+  // guest's bundled feedback SDK can read the user's Convex bearer +
+  // selected agent URL + deviceId via constantsToExport (above) and
+  // skip its own login screen. Stored in NSUserDefaults so it survives
+  // a guest-bundle reload — the guest's YaverInfo NativeModule.
+  // constants are evaluated each time the bundle initialises, picking
+  // up whatever's currently in UserDefaults.
+  @objc func setInheritedAuth(_ token: String, agentUrl: String, deviceId: String) {
+    let defaults = UserDefaults.standard
+    if !token.isEmpty { defaults.set(token, forKey: "yaverInheritedAuthToken") }
+    if !agentUrl.isEmpty { defaults.set(agentUrl, forKey: "yaverAgentBaseURL") }
+    if !deviceId.isEmpty { defaults.set(deviceId, forKey: "yaverInheritedDeviceId") }
+  }
+
+  @objc func clearInheritedAuth() {
+    let defaults = UserDefaults.standard
+    defaults.removeObject(forKey: "yaverInheritedAuthToken")
+    defaults.removeObject(forKey: "yaverInheritedDeviceId")
   }
 }

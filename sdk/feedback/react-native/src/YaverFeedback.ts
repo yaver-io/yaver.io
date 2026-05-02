@@ -92,15 +92,53 @@ let hostActivated = false;
 // Yaver overlay tap can wake the SDK even before the guest's
 // YaverFeedback.init() runs. AppDelegate (mobile/ios/Yaver/AppDelegate.
 // swift::handleFeedbackTap) sends `yaverFeedback:startReport` into the
-// guest bridge when the user picks Feedback on the shake overlay; the
-// listener flips `enabled` and triggers the modal flow.
+// guest bridge when the user picks Feedback on the shake overlay.
+//
+// Activation flow:
+//   1. Try Yaver's existing bearer (NativeModules.YaverInfo.
+//      inheritedAuthToken, populated by Yaver mobile's auth.ts on
+//      sign-in). Validate against /auth/validate before trusting.
+//   2. If valid: setAuthToken + open feedback modal in-place (the
+//      modal already supports hot reload, screenshot, vibing chat).
+//   3. If missing or invalid: open the SDK's own login screen.
 if (IS_HOST_MODE) {
   try {
     const { DeviceEventEmitter } = require('react-native');
     DeviceEventEmitter.addListener('yaverFeedback:startReport', () => {
       hostActivated = true;
       enabled = true;
-      void YaverFeedback.startReport();
+      void (async () => {
+        const yi = (NativeModules as any)?.YaverInfo;
+        const inheritedToken = String(yi?.inheritedAuthToken || '').trim();
+        const inheritedAgent = String(yi?.inheritedAgentUrl || '').trim();
+        const inheritedDevice = String(yi?.inheritedDeviceId || '').trim();
+        if (inheritedToken) {
+          // Lazy-import auth.ts so module load doesn't drag the auth
+          // network code into the active set when the SDK is dormant.
+          const { validateToken } = require('./auth');
+          const user = await validateToken(inheritedToken).catch(() => null);
+          if (user) {
+            // Seed config + connect the SDK to the host's auth.
+            if (!config) {
+              YaverFeedback.init({
+                authToken: inheritedToken,
+                agentUrl: inheritedAgent || undefined,
+                preferredDeviceId: inheritedDevice || undefined,
+              } as FeedbackConfig);
+            }
+            await YaverFeedback.setAuthToken(inheritedToken);
+            await YaverFeedback.startReport();
+            return;
+          }
+        }
+        // No token, or token invalid — fall through to the SDK's own
+        // login screen. The user picks an OAuth provider; on success
+        // the modal continues with the new token.
+        if (!config) {
+          YaverFeedback.init({} as FeedbackConfig);
+        }
+        YaverFeedback.showLogin();
+      })();
     });
   } catch { /* react-native unavailable in jsdom unit tests */ }
 }

@@ -45,11 +45,22 @@ export async function getToken(): Promise<string | null> {
 
 export async function saveToken(token: string): Promise<void> {
   await SecureStore.setItemAsync(TOKEN_KEY, token);
+  // Mirror into UserDefaults so guest bundles loaded inside Yaver can
+  // read the user's bearer via NativeModules.YaverInfo and skip their
+  // own login. Best-effort — module is iOS-only, no-ops elsewhere.
+  try {
+    const { NativeModules } = require("react-native");
+    NativeModules.YaverInfo?.setInheritedAuth?.(token, "", "");
+  } catch {}
 }
 
 export async function clearToken(): Promise<void> {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
   await SecureStore.deleteItemAsync(USER_KEY);
+  try {
+    const { NativeModules } = require("react-native");
+    NativeModules.YaverInfo?.clearInheritedAuth?.();
+  } catch {}
 }
 
 export async function getUser(): Promise<User | null> {
