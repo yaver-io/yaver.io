@@ -6612,7 +6612,12 @@ export class QuicClient {
           //   409 — agent-auth healthy, recovery not allowed
           //   403 — host-token check failed / forbidden mode
           if (res.status === 429 || res.status === 409 || res.status === 403) {
-            return { ok: false, error: message } as RecoveryResult;
+            return {
+              ok: false,
+              error: message,
+              rateLimited: res.status === 429,
+              alreadyHealthy: res.status === 409,
+            } as RecoveryResult;
           }
           lastError = message;
           continue;
@@ -7128,6 +7133,15 @@ export interface RecoveryResult {
   expiresAt?: string;
   error?: string;
   targetUrl?: string;
+  /** Set when /auth/recover returned 429. Outer recoverDeviceAuth uses
+   *  this to bail out instead of falling back to pair / bootstrap-secret /
+   *  device-code modes (which all hit the SAME endpoint and would just
+   *  re-trigger the same 5s rate limit, producing the user-facing
+   *  "too many recovery attempts" alert from one tap). */
+  rateLimited?: boolean;
+  /** Set when /auth/recover returned 409 (agent-auth healthy). Caller
+   *  should treat this as success — no recovery needed. */
+  alreadyHealthy?: boolean;
 }
 
 /** Feature flag — one entry in the ledger. */

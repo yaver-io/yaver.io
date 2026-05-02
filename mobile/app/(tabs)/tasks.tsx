@@ -2036,7 +2036,42 @@ export default function TasksScreen() {
               </Text>
               {activeDevice ? (
                 <Pressable
-                  onPress={() => !(isReconnecting || recoveringDeviceId === activeDevice.id) && handleReconnect(activeDevice)}
+                  onPress={async () => {
+                    if (isReconnecting || recoveringDeviceId === activeDevice.id) return;
+                    // Tap directly into recoverDeviceAuth so we can surface
+                    // the rate-limit / auth-healthy / failure outcomes via
+                    // Alert. handleReconnect set reconnectError state but
+                    // nothing rendered it, so the user saw "nothing happen"
+                    // when the recovery actually returned an error.
+                    setRecoveringDeviceId(activeDevice.id);
+                    setIsReconnecting(true);
+                    try {
+                      const result = await recoverDeviceAuth(activeDevice);
+                      if (result?.ok) {
+                        // selectDevice will re-establish the connection on
+                        // the new token. handleReconnect path does this; we
+                        // mirror it.
+                        await selectDevice(activeDevice);
+                        return;
+                      }
+                      if (result?.rateLimited) {
+                        Alert.alert(
+                          "Just a moment",
+                          "Yaver auto-recovery is already running. Wait ~5 seconds and try again.",
+                        );
+                        return;
+                      }
+                      Alert.alert(
+                        "Re-auth Failed",
+                        result?.error || `Could not recover ${activeDevice.name}.`,
+                      );
+                    } catch (e: any) {
+                      Alert.alert("Re-auth Failed", e?.message || "Unexpected error.");
+                    } finally {
+                      setRecoveringDeviceId((cur) => (cur === activeDevice.id ? null : cur));
+                      setIsReconnecting(false);
+                    }
+                  }}
                   disabled={isReconnecting || recoveringDeviceId === activeDevice.id}
                   style={{
                     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,

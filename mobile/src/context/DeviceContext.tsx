@@ -1968,15 +1968,42 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setTimeout(() => refreshDevices(), 800);
       return { ok: true, targetUrl: directRecovery.targetUrl };
     }
+    if (directRecovery?.alreadyHealthy) {
+      // Agent's session is already valid — nothing to do, just clear our
+      // stale flag and refresh. This happens when one client (auto-recovery
+      // in this same app, or the web dashboard) recovered moments ago and
+      // we're still showing the pre-recovery state.
+      quicClient.agentAuthExpired = false;
+      setAgentAuthExpired(false);
+      clearDeviceUnreachable(device.id);
+      setTimeout(() => refreshDevices(), 200);
+      return { ok: true, targetUrl: directRecovery.targetUrl };
+    }
+    if (directRecovery?.rateLimited) {
+      // Agent's per-IP recovery rate limiter (5s) just rejected us. Falling
+      // back to pair / bootstrap-secret / device-code modes hits the SAME
+      // /auth/recover endpoint and would just reproduce the 429 — the user
+      // sees "too many recovery attempts" from a single tap. Surface the
+      // signal up so the UI can show "wait a few seconds and retry"
+      // instead of failing through 4 modes for nothing.
+      appLog("warn", `Direct recovery rate-limited for ${device.name} — surface to caller`);
+      return directRecovery;
+    }
     appLog("warn", `Direct recovery rejected for ${device.name} (${directRecovery?.error || "unknown"}) — falling back to pair-session path`);
 
     let recovery = await quicClient.recoverAgent(undefined, "pair");
+    if (recovery?.rateLimited) {
+      return recovery;
+    }
     if (!recovery?.ok || !recovery.pairCode) {
       appLog("warn", `Host-token recovery did not open a pair session for ${device.name}: ${recovery?.error || "unknown error"}`);
 
       const bootstrapSecret = await getLocalSecret(LOCAL_KEYS.bootstrapSecret);
       if (bootstrapSecret) {
         recovery = await quicClient.recoverAgent(bootstrapSecret, "pair");
+        if (recovery?.rateLimited) {
+          return recovery;
+        }
         if (recovery?.ok && recovery.pairCode) {
           appLog("info", `Recovered ${device.name} using stored bootstrap secret`);
         } else {

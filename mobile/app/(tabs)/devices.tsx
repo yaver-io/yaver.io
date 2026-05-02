@@ -1190,6 +1190,18 @@ export default function DevicesScreen() {
                     Alert.alert("Recovered", `${item.name} is signing back into Yaver now.`);
                     return;
                   }
+                  if (result?.rateLimited) {
+                    // The 5s rate limit is almost always tripped by the
+                    // app's own auto-recovery effect firing on mount —
+                    // by the time the user taps Re-auth manually they
+                    // race the silent retry. Tell them to wait, not
+                    // that they did anything wrong.
+                    Alert.alert(
+                      "Just a moment",
+                      "Yaver auto-recovery is already running on this device. Wait ~5 seconds and try again — it usually finishes on its own.",
+                    );
+                    return;
+                  }
                   Alert.alert("Recovery Failed", result?.error || "Could not recover this machine from the phone.");
                 } catch (e: any) {
                   Alert.alert("Recovery Failed", e?.message || "Could not recover this machine from the phone.");
