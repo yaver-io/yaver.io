@@ -1,8 +1,0 @@
-{
-  "name": "bento-backend",
-  "version": "0.0.1",
-  "private": true,
-  "dependencies": {
-    "convex": "^1.17.0"
-  }
-}

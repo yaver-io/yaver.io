@@ -11,6 +11,7 @@
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
 		413A35D852A63899F6BB9167 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = BFBCBDCEA23E250BCD12802F /* PrivacyInfo.xcprivacy */; };
 		4A7B250A91EA8FF2C570B433 /* YaverInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2F41372579DD8DC9D6912E /* YaverInfo.swift */; };
+		9F7E1A0B2C3D4E5F60A1B2C3 /* YaverFeedbackPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F7E1A0B2C3D4E5F60A1B2C4 /* YaverFeedbackPane.swift */; };
 		55C84A3C59BD3872719E3447 /* libPods-Yaver.a in Frameworks */ = {isa = PBXBuildFile; fileRef = AC887EE616ACA6170AEBCC9F /* libPods-Yaver.a */; };
 		6C14694BF3B023E182EEC337 /* YaverInfo.m in Sources */ = {isa = PBXBuildFile; fileRef = 0164C4E1814C83FA4EA7EE66 /* YaverInfo.m */; };
 		6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */; };
@@ -33,6 +34,7 @@
 		3A027291C28B8C619D5DCBBC /* sdk-manifest.json */ = {isa = PBXFileReference; includeInIndex = 1; path = "Yaver/sdk-manifest.json"; sourceTree = "<group>"; };
 		415536B78C32721035E86A5D /* YaverBundleLoader.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; name = YaverBundleLoader.m; path = Yaver/YaverBundleLoader.m; sourceTree = "<group>"; };
 		6A2F41372579DD8DC9D6912E /* YaverInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverInfo.swift; sourceTree = "<group>"; };
+		9F7E1A0B2C3D4E5F60A1B2C4 /* YaverFeedbackPane.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverFeedbackPane.swift; sourceTree = "<group>"; };
 		70A18B45D1C24F9BB4A10002 /* YaverGuestCrashReporter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverGuestCrashReporter.swift; sourceTree = "<group>"; };
 		97047227A457584A52C75D70 /* YaverBundleLoader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = YaverBundleLoader.swift; path = Yaver/YaverBundleLoader.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverBundleValidator.swift; sourceTree = "<group>"; };
@@ -72,6 +74,7 @@
 				BFBCBDCEA23E250BCD12802F /* PrivacyInfo.xcprivacy */,
 				BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */,
 				6A2F41372579DD8DC9D6912E /* YaverInfo.swift */,
+				9F7E1A0B2C3D4E5F60A1B2C4 /* YaverFeedbackPane.swift */,
 				70A18B45D1C24F9BB4A10002 /* YaverGuestCrashReporter.swift */,
 				0164C4E1814C83FA4EA7EE66 /* YaverInfo.m */,
 				3A027291C28B8C619D5DCBBC /* sdk-manifest.json */,
@@ -456,6 +459,7 @@
 				6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */,
 				70A18B45D1C24F9BB4A10001 /* YaverGuestCrashReporter.swift in Sources */,
 				4A7B250A91EA8FF2C570B433 /* YaverInfo.swift in Sources */,
+				9F7E1A0B2C3D4E5F60A1B2C3 /* YaverFeedbackPane.swift in Sources */,
 				6C14694BF3B023E182EEC337 /* YaverInfo.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -485,7 +489,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.38;
+				MARKETING_VERSION = 1.18.39;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -519,7 +523,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.18.38;
+				MARKETING_VERSION = 1.18.39;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",

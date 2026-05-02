@@ -460,19 +460,16 @@ public class AppDelegate: ExpoAppDelegate {
   }
 
   @objc private func handleFeedbackTap() {
-    NSLog("[AppDelegate] Feedback tapped — dispatching to guest SDK")
+    NSLog("[AppDelegate] Feedback tapped — presenting native pane")
     dismissOverlay()
-    // Stay in the guest bundle. Send a DeviceEventEmitter event into the
-    // current bridge so the guest's bundled YaverFeedback SDK opens its
-    // own feedback modal in-place. The bounce-back-to-Yaver behaviour
-    // (UserDefaults flag + YaverBundleLoaderRestore notification) was
-    // wrong for this model — Yaver is the runtime, sfmg / talos / etc.
-    // own their own feedback flow.
-    if let rootView = window?.rootViewController?.view as? RCTRootView {
-      rootView.bridge.eventDispatcher().sendDeviceEvent(withName: "yaverFeedback:startReport", body: nil)
-    } else {
-      NSLog("[AppDelegate] Feedback: no guest bridge available — overlay just dismisses")
-    }
+    // Present Yaver's native feedback pane over the guest bundle. Works
+    // for ANY guest app regardless of which version of yaver-feedback-
+    // react-native it ships with — even apps without the SDK at all.
+    // The pane talks directly to the agent's HTTP API (/tasks +
+    // /dev/reload) using the user's bearer + agent URL stored in
+    // UserDefaults by YaverBundleLoader / auth.ts.
+    guard let win = self.window else { return }
+    YaverFeedbackPane.shared.present(in: win)
   }
 
   /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),
