@@ -1,19 +1,24 @@
 # Runtime Families
 
-This directory is the beginning of the single-Yaver-shell / multi-host-family split.
+This directory is scaffolding for the eventual single-Yaver-shell / multi-host-family split.
 
-Current state:
+Current state (2026-05-02):
 
-- `family-a/` mirrors the default Yaver host contract.
-- `family-b/` is a pilot slot pinned to the current `sfmg` runtime contract so the
-  runtime-family selector can be exercised end to end on the Hetzner ephemeral path.
+- Only `family-a/` is shipped. It mirrors the default Yaver host contract.
+- `family-b/` was removed after build 297 crashed on TestFlight with a Hermes
+  heap-corruption signature inside `JSError::setMessage` → `HiddenClass::addProperty`.
+  The two families had been merged into the same compiled runtime weeks earlier
+  (per `mobile/sdk-manifest.json`'s `compiledInNote`), so the routing distinction
+  added no production value while keeping a non-trivial init-path surface area.
+- Cross-project loading is done via the **yaver agent remote-compile + Hermes
+  bundle push** path (`/dev/build-native` on the agent → host's super-host
+  loads the signed bundle URL). That flow does not depend on multi-family
+  routing — the host accepts any bundle whose Hermes BC version + native-module
+  fingerprint match the family-a manifest.
 
-Important constraint:
+When we want a real second compiled family in the future, restore this
+directory with a second pinned native dependency graph (own `Podfile.lock`,
+own pinned `package.json`) and add it back to all six `sdk-manifest.json`
+copies.
 
-- Today both family manifests still point at the same compiled native dependency graph.
-- The selector and shell/family plumbing are real.
-- A truly distinct Family B native runtime still requires a second pinned mobile host
-  dependency graph and build pipeline.
-
-The source of truth for the active shell contract is still `mobile/sdk-manifest.json`.
-The family manifests here are repo scaffolding for the eventual shell-plus-families split.
+The source of truth for the active shell contract is `mobile/sdk-manifest.json`.
