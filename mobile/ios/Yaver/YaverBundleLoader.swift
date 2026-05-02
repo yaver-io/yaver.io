@@ -182,14 +182,48 @@ class YaverBundleLoader: RCTEventEmitter {
           bundleMeta?.runtimeFamilySelection?.selected.label ?? "",
           forKey: "yaverSelectedRuntimeFamilyLabel")
 
-        // Store agent base URL + auth token so AppDelegate can call /dev/stop
-        // when user taps "Back to Yaver" from the shake overlay.
+        // Store agent base URL + auth token so AppDelegate / native panes
+        // (YaverFeedbackPane, YaverAgentsPane) can call agent endpoints.
+        // PRESERVE the relay-routing path prefix `/d/<deviceId>` when the
+        // bundle came from a relay-proxied URL — without it, calls to
+        // `<base>/runner-auth/status` etc. land on the relay's root and
+        // get back "subdomain 'public' not registered" because the relay
+        // doesn't know which agent to forward to.
+        //
+        // Strip only the trailing `/yaver/main.jsbundle`-style path tail
+        // (the bundle file path), keeping everything up to and including
+        // the device-routing segment. For direct URLs (no /d/<id>),
+        // scheme://host[:port] is what we want anyway — same outcome.
         if let parsed = URL(string: urlString),
            let scheme = parsed.scheme,
            let host = parsed.host {
           var baseURL = "\(scheme)://\(host)"
           if let port = parsed.port { baseURL += ":\(port)" }
+          // Walk up the path one segment at a time, dropping the bundle
+          // file but keeping the routing prefix. Bundle URLs look like:
+          //   https://public.yaver.io/d/<deviceId>/yaver/main.jsbundle
+          //   https://public.yaver.io/d/<deviceId>/dev/native-bundle
+          //   http://192.168.1.42:18080/dev/native-bundle  (direct)
+          // We want everything up to (and including) the last segment
+          // BEFORE /yaver/, /dev/, etc. — for the relay case that's
+          // `/d/<deviceId>`; for direct it's empty (root).
+          let path = parsed.path
+          if !path.isEmpty {
+            // Find the LAST occurrence of "/yaver/" or "/dev/" or "/info"
+            // in the path and trim from there.
+            var trimmed = path
+            for marker in ["/yaver/", "/dev/", "/info"] {
+              if let r = trimmed.range(of: marker) {
+                trimmed = String(trimmed[..<r.lowerBound])
+                break
+              }
+            }
+            // Defensive: don't end up with a trailing slash.
+            while trimmed.hasSuffix("/") { trimmed.removeLast() }
+            if !trimmed.isEmpty { baseURL += trimmed }
+          }
           UserDefaults.standard.set(baseURL, forKey: "yaverAgentBaseURL")
+          NSLog("[YaverBundleLoader] yaverAgentBaseURL = \(baseURL)")
         }
         if let headers = headers as? [String: String],
            let auth = headers["Authorization"] ?? headers["authorization"] {
