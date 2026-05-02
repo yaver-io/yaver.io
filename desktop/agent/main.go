@@ -392,6 +392,18 @@ func main() {
 		runChangePassword(os.Args[2:])
 	case "install":
 		runInstall(os.Args[2:])
+	case "swift":
+		// `yaver swift {doctor,logic}` — Linux Swift toolchain
+		// helpers. UI builds still need a Mac; this covers the
+		// Foundation-only Swift code path. See
+		// docs/native-webrtc-web-streaming.md §9.
+		runSwift(os.Args[2:])
+	case "builder":
+		// `yaver builder {add,list,use,forget,ping}` — manages
+		// paired remote-mac builders for iOS / Swift sessions on
+		// non-darwin hosts. See docs §9.3 (and Phase 5 status in
+		// §16).
+		runBuilder(os.Args[2:])
 	case "update", "self-update", "upgrade":
 		runManualUpdate()
 	case "self":
@@ -406,10 +418,16 @@ func main() {
 		os.Exit(2)
 	case "doctor":
 		// `yaver doctor build [--target=X]` is a focused preflight for
-		// deploy toolchains. Everything else falls through to the
-		// legacy wide-scan runDoctor().
+		// deploy toolchains. `yaver doctor webrtc [--install] [--json]`
+		// probes the native-WebRTC remote-runtime stack — adb, xcrun,
+		// the in-tree H.264 extractor, paired Mac builders. Everything
+		// else falls through to the legacy wide-scan runDoctor().
 		if len(os.Args) > 2 && os.Args[2] == "build" {
 			runDoctorBuild(os.Args[3:])
+			return
+		}
+		if len(os.Args) > 2 && os.Args[2] == "webrtc" {
+			runDoctorWebRTC(os.Args[3:])
 			return
 		}
 		runDoctor()
@@ -443,6 +461,8 @@ func main() {
 		runPhone(os.Args[2:])
 	case "wire":
 		runWire(os.Args[2:])
+	case "wireless":
+		runWireless(os.Args[2:])
 	case "remote":
 		runRemote(os.Args[2:])
 	case "insert":
@@ -1770,6 +1790,12 @@ func runServe(args []string) {
 	iosInstall := fs.String("ios-install", "", "iOS install method: auto (default), native (xcodebuild+xcrun), bundle (Hermes push)")
 	containerizeGuests := fs.Bool("containerize-guests", false, "Run guest tasks inside Docker containers (requires yaver-sandbox image)")
 	containerizeHost := fs.Bool("containerize-host", false, "Run host tasks inside Docker containers (requires yaver-sandbox image)")
+	// Phase 5 — opt this agent in as a remote-mac builder for paired
+	// Linux dev boxes. Empty (default) means "not a builder", which
+	// is the correct posture for almost every host. Typical Mac
+	// usage: `yaver serve --builder-platforms=ios` so a paired Linux
+	// box can dispatch Swift / iOS Simulator sessions here.
+	builderPlatformsArg := fs.String("builder-platforms", "", "Advertise this agent as a builder for the listed platforms (e.g. ios,macos). Empty = not a builder.")
 	containerNetwork := fs.String("container-network", "", "Container network mode: host (default), bridge, none")
 	containerReadOnly := fs.Bool("container-read-only", false, "Read-only container root filesystem (only /workspace and /tmp writable)")
 	fs.Parse(args)
@@ -1783,6 +1809,10 @@ func runServe(args []string) {
 		installLaunchdDaemonService()
 		return
 	}
+
+	// Builder role advertisement is process-local — set once here,
+	// read on every /info request. Empty list = not a builder.
+	SetBuilderPlatforms(splitCSV(*builderPlatformsArg))
 
 	if *workDir == "." {
 		wd, err := os.Getwd()

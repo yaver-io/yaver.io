@@ -145,13 +145,37 @@ func listIOSWireDevices(ctx context.Context) []wireDevice {
 		return nil
 	}
 
-	if devs := iosDevicesFromDevicectl(ctx); len(devs) > 0 {
+	if devs := iosDevicesFromDevicectl(ctx, iosTransportWired); len(devs) > 0 {
 		return devs
 	}
 	return iosDevicesFromXctrace(ctx)
 }
 
-func iosDevicesFromDevicectl(ctx context.Context) []wireDevice {
+// listIOSWirelessDevices returns iPhones/iPads paired over WiFi. The
+// device must have been paired via Xcode (cable initially) with
+// "Connect via network" enabled — once that's set, devicectl reports
+// the device whenever it's on the same network as the Mac with
+// transportType containing "wireless"/"network". xcrun devicectl install
+// + launch work the same regardless of transport, so the rest of the
+// push pipeline is shared with the wired path.
+func listIOSWirelessDevices(ctx context.Context) []wireDevice {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	if _, err := exec.LookPath("xcrun"); err != nil {
+		return nil
+	}
+	return iosDevicesFromDevicectl(ctx, iosTransportWireless)
+}
+
+type iosTransportFilter int
+
+const (
+	iosTransportWired iosTransportFilter = iota
+	iosTransportWireless
+)
+
+func iosDevicesFromDevicectl(ctx context.Context, filter iosTransportFilter) []wireDevice {
 	tmp, err := os.CreateTemp("", "yaver-wire-devices-*.json")
 	if err != nil {
 		return nil
@@ -200,11 +224,23 @@ func iosDevicesFromDevicectl(ctx context.Context) []wireDevice {
 		if !(strings.Contains(dt, "iphone") || strings.Contains(dt, "ipad")) {
 			continue
 		}
-		// Only keep cable-attached devices. WiFi-paired devices show
-		// up as "wireless"; we want USB.
+		// Filter by transport type per caller's request.
+		// devicectl reports "wired" / "usb" for cable, and "wireless" /
+		// "network" for WiFi-paired devices. An empty transportType
+		// usually means a stale or just-connected entry; keep it on the
+		// wired path (legacy behavior) and drop on the wireless path
+		// (to avoid showing offline cable-paired entries).
 		tt := strings.ToLower(d.ConnectionProperties.TransportType)
-		if tt != "" && !strings.Contains(tt, "wired") && !strings.Contains(tt, "usb") {
-			continue
+		switch filter {
+		case iosTransportWired:
+			if tt != "" && !strings.Contains(tt, "wired") && !strings.Contains(tt, "usb") {
+				continue
+			}
+		case iosTransportWireless:
+			if !strings.Contains(tt, "wireless") && !strings.Contains(tt, "network") &&
+				!strings.Contains(tt, "wifi") {
+				continue
+			}
 		}
 		udid := d.HardwareProperties.UDID
 		if udid == "" {
