@@ -186,12 +186,18 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 // reports "expired" even though disk already holds a fresh token.
 //
 // Loopback-only. The handler reads the token + Convex URL straight from
-// config.json and delegates to applyRecoveredAuthToken, which Convex-validates
-// the token, persists it (idempotent), updates s.token + s.taskMgr.AuthToken,
-// flushes s.tokenCache, clears s.authExpired, and triggers an out-of-band
-// heartbeat. A loopback caller already has full access to ~/.yaver/config.json
-// on this machine, so the only thing we add over a `kill -HUP` is portability
-// (Windows has no SIGHUP) and the Convex pre-validation safety net.
+// config.json and adopts them directly into s.token / s.taskMgr.AuthToken /
+// s.ownerUserID, clears s.authExpired, flushes s.tokenCache, and kicks the
+// heartbeat. We deliberately do NOT pre-validate against Convex here — that's
+// what the regular /auth/recover guard is for, where the token comes from an
+// untrusted mobile push. The token here was just written to disk by the same
+// `yaver auth` invocation that already validated it; a second Convex round-trip
+// flakes on rate limits + replica lag and (in the worst case we hit on
+// yaver-test-ephemeral) rejects a perfectly good fresh token because the
+// previous heartbeat with the OLD token poisoned a per-IP rate window. The
+// next heartbeat tick is the authoritative liveness check; if the disk token
+// is genuinely bad, that tick will flip authExpired back on and Convex
+// will surface the truth.
 func (s *HTTPServer) handleAuthReloadFromDisk(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
@@ -214,14 +220,35 @@ func (s *HTTPServer) handleAuthReloadFromDisk(w http.ResponseWriter, r *http.Req
 		http.Error(w, "no auth token on disk", http.StatusBadRequest)
 		return
 	}
-	applyRecoveredAuthToken(token, cfg.ConvexSiteURL, s)
-	// applyRecoveredAuthToken sets authExpired=true on validation failure
-	// and clears it on success. Mirror that into the response so the caller
-	// can distinguish "I told the daemon to reload but the disk token didn't
-	// validate" from "everything is healthy now".
-	if s != nil && s.authExpired.Load() {
-		http.Error(w, "disk token failed Convex validation", http.StatusUnauthorized)
-		return
+	convexURL := strings.TrimSpace(cfg.ConvexSiteURL)
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+	if s != nil {
+		s.token = token
+		s.authExpired.Store(false)
+		if s.taskMgr != nil {
+			s.taskMgr.AuthToken = token
+			s.taskMgr.ConvexURL = convexURL
+		}
+		// Best-effort owner rebind. The disk token was just minted by
+		// finalizeAuthConfig which already called ValidateToken
+		// successfully; we try to re-resolve here for cache cleanliness
+		// but a Convex hiccup at this exact moment is non-fatal — the
+		// next heartbeat will refresh ownerUserID anyway.
+		if uid, verr := ValidateTokenUser(convexURL, token); verr == nil && strings.TrimSpace(uid) != "" {
+			s.ownerUserID = strings.TrimSpace(uid)
+		}
+		// Invalidate cached token→user decisions so stale bearers
+		// (old guest grants, old host-share verdicts) can't short-circuit
+		// past the new owner identity.
+		s.tokenCache.Range(func(k, _ interface{}) bool {
+			s.tokenCache.Delete(k)
+			return true
+		})
+		// Kick heartbeat so Convex sees needsAuth=false within ~100 ms
+		// instead of waiting for the next 5-min tick.
+		s.TriggerHeartbeat()
 	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":             true,
