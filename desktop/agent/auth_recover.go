@@ -42,6 +42,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -175,6 +176,57 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 		// yaver-test-ephemeral after `direct` recovery.
 		s.TriggerHeartbeat()
 	}
+}
+
+// handleAuthReloadFromDisk lets a sibling local process (typically a fresh
+// `yaver auth` run) nudge the running daemon to re-read its on-disk token
+// after writing it. Without this nudge, an out-of-process auth run leaves the
+// daemon's in-memory s.token / s.authExpired state stale until the next 5-min
+// heartbeat tick — `yaver primary status` then races the heartbeat and
+// reports "expired" even though disk already holds a fresh token.
+//
+// Loopback-only. The handler reads the token + Convex URL straight from
+// config.json and delegates to applyRecoveredAuthToken, which Convex-validates
+// the token, persists it (idempotent), updates s.token + s.taskMgr.AuthToken,
+// flushes s.tokenCache, clears s.authExpired, and triggers an out-of-band
+// heartbeat. A loopback caller already has full access to ~/.yaver/config.json
+// on this machine, so the only thing we add over a `kill -HUP` is portability
+// (Windows has no SIGHUP) and the Convex pre-validation safety net.
+func (s *HTTPServer) handleAuthReloadFromDisk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	peer := clientIP(r)
+	ip := net.ParseIP(peer)
+	if ip == nil || !ip.IsLoopback() {
+		http.Error(w, "loopback only", http.StatusForbidden)
+		return
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		http.Error(w, "load config failed", http.StatusInternalServerError)
+		return
+	}
+	token := strings.TrimSpace(cfg.AuthToken)
+	if token == "" {
+		http.Error(w, "no auth token on disk", http.StatusBadRequest)
+		return
+	}
+	applyRecoveredAuthToken(token, cfg.ConvexSiteURL, s)
+	// applyRecoveredAuthToken sets authExpired=true on validation failure
+	// and clears it on success. Mirror that into the response so the caller
+	// can distinguish "I told the daemon to reload but the disk token didn't
+	// validate" from "everything is healthy now".
+	if s != nil && s.authExpired.Load() {
+		http.Error(w, "disk token failed Convex validation", http.StatusUnauthorized)
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":             true,
+		"lifecycleState": string(s.lifecycleInfo().State),
+	})
 }
 
 // completePairRecoveryInBackground waits for a recovery-initiated pairing

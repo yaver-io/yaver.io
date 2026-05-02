@@ -415,6 +415,13 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// the whole point is to bring a locked-out agent back online.
 	mux.HandleFunc("/auth/recover", s.handleAuthRecover)
 	mux.HandleFunc("/auth/recover/session", s.handleAuthRecoverSession)
+	// /auth/reload-from-disk: loopback-only nudge that lets an
+	// out-of-process `yaver auth` (or anything else that writes a
+	// fresh token to ~/.yaver/config.json) tell the running daemon
+	// to re-read disk + validate + clear authExpired immediately
+	// instead of waiting up to 5 min for the next heartbeat tick.
+	// The peer-IP loopback gate lives inside the handler.
+	mux.HandleFunc("/auth/reload-from-disk", s.handleAuthReloadFromDisk)
 	// /auth/factory-reset verifies caller's identity via Convex
 	// round-trip inside the handler (auth_factory_reset_http.go),
 	// NOT via the regular auth() middleware — the bug it fixes is

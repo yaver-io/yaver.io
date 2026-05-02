@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 func runPrimary(args []string) {
@@ -103,6 +104,36 @@ func runPrimaryAuth(ctx context.Context, args []string) {
 		if err := runRemoteHeadlessYaverAuthOverSSH(current); err != nil {
 			fmt.Fprintf(os.Stderr, "primary auth: %v\n", err)
 			os.Exit(1)
+		}
+		// Wait for the remote daemon's lifecycle to actually flip out of
+		// "yaver-auth-expired" before returning. SSH `yaver auth` writes
+		// a fresh token to disk in a separate process; the running
+		// daemon may still hold the old token in memory until the
+		// /auth/reload-from-disk nudge propagates or the next 5-min
+		// heartbeat tick runs. Without this wait, an immediate
+		// `yaver primary status` races the heartbeat and reports
+		// "expired (needs reauth)" — the exact symptom we just chased.
+		// Bound matches runRunnerAuthQuickFlow so the two surfaces
+		// behave the same.
+		localCfg, err := LoadConfig()
+		if err == nil && localCfg != nil && strings.TrimSpace(localCfg.AuthToken) != "" {
+			if devices, derr := listDevices(localCfg.ConvexSiteURL, localCfg.AuthToken); derr == nil {
+				var target *DeviceInfo
+				for i := range devices {
+					if devices[i].DeviceID == current {
+						target = &devices[i]
+						break
+					}
+				}
+				if target != nil {
+					probe, werr := waitForRemoteYaverAuth(localCfg, target, 2*time.Minute)
+					if werr != nil {
+						fmt.Fprintf(os.Stderr, "primary auth: %v\n", werr)
+						os.Exit(1)
+					}
+					fmt.Printf("Remote yaver: %s\n", describeDeviceReauthProbe(probe))
+				}
+			}
 		}
 		return
 	}

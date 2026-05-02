@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.115"
+const version = "1.99.116"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1367,6 +1367,19 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	if err := SaveConfig(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
+	// If a daemon is already running locally, nudge it to re-read the
+	// fresh token from disk + clear its in-memory authExpired flag.
+	// Without this hop, the running daemon keeps serving /info with
+	// authExpired=true until the next 5-min heartbeat tick — making
+	// `yaver primary status` race the heartbeat right after a successful
+	// `yaver auth`. Loopback-only endpoint; best-effort.
+	nudgeRunningDaemonToReloadAuth()
+	// First-auth ergonomics: if the user has no primary device set
+	// yet, mark THIS box as primary. Subsequent `yaver primary status` /
+	// `yaver primary auth` then have a target without an explicit
+	// `yaver primary set` step. Skipped when a primary already exists
+	// — never silently overwrite the user's choice.
+	maybeSetSelfAsPrimaryAfterAuth(cfg)
 	if printSuccess {
 		fmt.Println("Signed in successfully.")
 		fmt.Println("  Free relay: public.yaver.io (included, no setup needed)")
@@ -1545,6 +1558,67 @@ func startServeIfStopped() {
 		fmt.Fprintf(os.Stderr, "auto-start: %v\n", err)
 		fmt.Fprintln(os.Stderr, "Run `yaver serve` manually to start the agent.")
 	}
+}
+
+// nudgeRunningDaemonToReloadAuth POSTs /auth/reload-from-disk on the local
+// daemon (if one is running). The handler reads ~/.yaver/config.json fresh
+// and applies the new token to in-memory state via applyRecoveredAuthToken,
+// clearing authExpired and triggering a heartbeat. Best-effort: a missing
+// daemon, network blip, or non-2xx response is logged at debug-level and
+// ignored — the heartbeat loop's currentToken() closure will catch up on
+// its next tick (~5 min) regardless. The whole call is bounded at 3 s so a
+// hung daemon never wedges `yaver auth`.
+func nudgeRunningDaemonToReloadAuth() {
+	if probeLocalAgentHealthInfo(18080) == nil {
+		return
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequest(http.MethodPost, "http://127.0.0.1:18080/auth/reload-from-disk", nil)
+	if err != nil {
+		return
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// Not a hard failure — the daemon will catch up on its next
+		// heartbeat. Worst case the user sees one stale `primary status`
+		// before the 5-min tick recovers state.
+		return
+	}
+}
+
+// maybeSetSelfAsPrimaryAfterAuth marks this device as the user's primary
+// when no primary is set yet. Called from finalizeAuthConfig after a
+// successful `yaver auth`. Idempotent + non-destructive: a non-empty
+// primaryDeviceId in userSettings is left alone, even if it points at a
+// different device. Best-effort with a tight timeout — a Convex hiccup
+// here never blocks the auth flow.
+func maybeSetSelfAsPrimaryAfterAuth(cfg *Config) {
+	if cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.DeviceID) == "" {
+		return
+	}
+	convexURL := strings.TrimSpace(cfg.ConvexSiteURL)
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	current, err := primaryGetCurrent(ctx, cfg.AuthToken, convexURL)
+	if err != nil {
+		// Convex unreachable / misconfigured. Silent — primary can be
+		// set later via `yaver primary set self`.
+		return
+	}
+	if strings.TrimSpace(current) != "" {
+		return
+	}
+	if err := primarySaveRaw(ctx, cfg.AuthToken, convexURL, cfg.DeviceID, false); err != nil {
+		return
+	}
+	fmt.Println("  Primary device: set to this machine (first device — change with `yaver primary set <other>`)")
 }
 
 // isAgentRunning checks if the agent process is alive.
