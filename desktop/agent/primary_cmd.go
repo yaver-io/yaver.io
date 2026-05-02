@@ -131,8 +131,11 @@ Usage:
   yaver primary <claude|claude-code|codex>
                                   Same as 'auth <runner>' — kept as a
                                   shortcut so existing scripts still work
-  yaver primary set <deviceId|name|alias>
-                                  Mark a device as primary (partial deviceId OK)
+  yaver primary set [deviceId|name|alias|self]
+                                  Mark a device as primary. With NO arg (or
+                                  'self' / 'me' / 'local' / '.') marks THIS
+                                  machine as primary. Otherwise resolves a
+                                  partial deviceId / name / alias prefix.
   yaver primary clear             Unset the preference (multi-device users
                                   will have to pick manually again)
 
@@ -308,11 +311,25 @@ func runPrimaryShow(ctx context.Context) {
 }
 
 func runPrimarySet(ctx context.Context, args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver primary set <deviceId|name>")
-		os.Exit(1)
+	target := ""
+	if len(args) > 0 {
+		target = strings.TrimSpace(args[0])
 	}
-	target := strings.TrimSpace(args[0])
+	// No arg, or explicit "self" / "me" / "local" / "." → mark THIS
+	// machine as primary. Most natural after `yaver auth` on a fresh
+	// machine: register, then claim primary in one step. Reads
+	// device_id from ~/.yaver/config.json (populated when the agent
+	// completes its first registration round-trip).
+	if target == "" || strings.EqualFold(target, "self") || strings.EqualFold(target, "me") || strings.EqualFold(target, "local") || target == "." {
+		cfg, _ := LoadConfig()
+		if cfg == nil || strings.TrimSpace(cfg.DeviceID) == "" {
+			fmt.Fprintln(os.Stderr, "This machine has no registered deviceId yet.")
+			fmt.Fprintln(os.Stderr, "Run `yaver auth` and then `yaver serve` once so the agent registers,")
+			fmt.Fprintln(os.Stderr, "then re-run `yaver primary set` to claim primary on this machine.")
+			os.Exit(1)
+		}
+		target = cfg.DeviceID
+	}
 	token, convex, err := primaryLoadAuth()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

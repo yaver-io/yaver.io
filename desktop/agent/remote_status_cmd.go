@@ -279,6 +279,12 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	if report.Transport != "" {
 		fmt.Printf("  transport:      %s\n", report.Transport)
 	}
+	// Multi-layer auth summary: yaver-level (Convex token alive on the
+	// remote box) + per-runner (claude-code, codex, etc. logged in on
+	// that box). Pre-fix this was scattered across the lifecycle line +
+	// the runners table; surfacing it as one block makes the "is this
+	// machine ready to receive work" question answerable at a glance.
+	renderAuthSummary(report)
 	if report.DefaultRunner != "" {
 		fmt.Printf("  default runner: %s\n", report.DefaultRunner)
 	}
@@ -344,6 +350,80 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	} else if report.HTTPStatusRunner != 0 {
 		fmt.Printf("  runners:        (could not fetch — HTTP %d on /agent/runners)\n", report.HTTPStatusRunner)
 	}
+}
+
+// renderAuthSummary prints a "auth:" block summarising the auth state
+// of the remote box across all relevant layers:
+//
+//   - yaver  — is the box's own Convex session token still alive?
+//     Comes from /info.authExpired (and lifecycleState).
+//   - claude — is claude-code installed AND logged in?  From
+//     /agent/runners[id=claude-code].AuthConfigured.
+//   - codex  — same shape as claude.
+//
+// When /agent/runners returns 403 (typical when the remote box's
+// yaver auth is expired — it can't validate caller tokens), we fall
+// back to "(unknown — fix yaver auth first)" rather than silently
+// hiding the layers.
+func renderAuthSummary(report *remoteAgentStatusReport) {
+	// Yaver-level auth.
+	yaverState := "✓ active"
+	if report.NeedsAuth || report.LifecycleState == "yaver-auth-expired" {
+		yaverState = "✗ expired (run: yaver primary auth)"
+	}
+	fmt.Printf("  auth:\n")
+	fmt.Printf("    yaver:        %s\n", yaverState)
+
+	runnersByID := map[string]*remoteRunnerSummary{}
+	for i := range report.Runners {
+		runnersByID[strings.ToLower(report.Runners[i].ID)] = &report.Runners[i]
+	}
+	// We surface the two coding runners that have first-class quick
+	// flows (`yaver primary auth claude` / `yaver primary auth codex`).
+	// Other runners (aider / opencode / ollama) are visible in the
+	// detailed "runners:" table below.
+	for _, ridLabel := range [][2]string{{"claude-code", "claude"}, {"codex", "codex"}} {
+		runner := runnersByID[ridLabel[0]]
+		label := ridLabel[1]
+		state := authStateStringForRunner(runner, report)
+		fmt.Printf("    %-13s %s\n", label+":", state)
+	}
+}
+
+// authStateStringForRunner translates a single runner's installed/auth
+// shape into a one-line state string.
+func authStateStringForRunner(runner *remoteRunnerSummary, report *remoteAgentStatusReport) string {
+	if runner == nil {
+		// /agent/runners didn't return data. Distinguish "auth-expired
+		// blocked the call" from "runner genuinely not present" using
+		// the HTTP status — 403/401 → permissions, anything else →
+		// likely missing.
+		if report.HTTPStatusRunner == 401 || report.HTTPStatusRunner == 403 {
+			return "(unknown — fix yaver auth first)"
+		}
+		if report.HTTPStatusRunner == 0 {
+			return "(unknown — runners endpoint unreachable)"
+		}
+		return "✗ not installed"
+	}
+	if !runner.Installed {
+		return "✗ not installed"
+	}
+	if runner.AuthConfigured {
+		src := strings.TrimSpace(runner.AuthSource)
+		if src != "" {
+			return "✓ active (" + src + ")"
+		}
+		return "✓ active"
+	}
+	suffix := ""
+	switch strings.ToLower(runner.ID) {
+	case "claude-code":
+		suffix = " (run: yaver primary auth claude)"
+	case "codex":
+		suffix = " (run: yaver primary auth codex)"
+	}
+	return "✗ not configured" + suffix
 }
 
 func numFromAny(v interface{}) int {
