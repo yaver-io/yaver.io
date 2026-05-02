@@ -587,8 +587,13 @@ export const heartbeat = mutation({
         patch.agentVersionReportedAt = Date.now();
       }
     }
-    // Update stored IP if the agent reports a new one
-    if (args.quicHost && args.quicHost !== device.quicHost) {
+    // Update stored IP if the agent reports a new one. An empty string
+    // is a deliberate clear (agent had a stale Docker-bridge address it
+    // wants to retract) — apply it instead of treating empty-string as
+    // "no opinion." Mobile reads quicHost as the direct-connect target;
+    // a stale 172.18.0.1 keeps mobile stuck CONNECTING instead of
+    // falling through to the relay.
+    if (args.quicHost !== undefined && args.quicHost !== device.quicHost) {
       patch.quicHost = args.quicHost;
     }
     // Replace the full IP set on each heartbeat — interfaces come and

@@ -1515,15 +1515,17 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 		"hardwareId":   HardwareID(),
 		"agentVersion": version,
 	}
-	if quicHost != "" {
-		payload["quicHost"] = quicHost
-	}
-	if len(localIps) > 0 {
-		payload["localIps"] = localIps
-	}
-	if len(publicEndpoints) > 0 {
-		payload["publicEndpoints"] = publicEndpoints
-	}
+	// Always include quicHost + localIps + publicEndpoints in the
+	// heartbeat payload — even if empty — so a previously-set
+	// Docker-bridge or stale public IP gets cleared on Convex.
+	// Pre-fix the omit-on-empty branch left stale values in place: a
+	// box that USED to advertise 172.18.0.1 (Docker bridge) and then
+	// upgraded to a binary that filters those out would still see the
+	// bridge address in mobile's device list because the field was
+	// just never re-sent.
+	payload["quicHost"] = quicHost
+	payload["localIps"] = localIps
+	payload["publicEndpoints"] = publicEndpoints
 	if recoveryPosture != nil {
 		payload["recoveryPosture"] = recoveryPosture
 	}
