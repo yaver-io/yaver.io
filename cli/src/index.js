@@ -116,6 +116,14 @@ async function runPushCli(args) {
 async function runUnified(args) {
   const command = args[0];
 
+  // Mark agent commands that originate from the npm bootstrap so the
+  // Go binary can keep install/update behavior aligned with the actual
+  // distribution path (`yaver-cli` via npm) instead of guessing from
+  // argv[0] or filesystem layout.
+  process.env.YAVER_INSTALL_SOURCE = 'npm';
+  process.env.YAVER_NPM_PACKAGE = PACKAGE.name;
+  process.env.YAVER_NPM_VERSION = PACKAGE.version;
+
   if (!command || command === '--help' || command === '-h' || command === 'help') {
     console.log(UNIFIED_HELP);
     process.exit(0);
