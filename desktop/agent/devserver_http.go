@@ -2235,6 +2235,14 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ConsumerCurrentFamilyID  string          `json:"consumerCurrentRuntimeFamilyId,omitempty"`
 		ConsumerDefaultFamilyID  string          `json:"consumerDefaultRuntimeFamilyId,omitempty"`
 		ConsumerRuntimeFamilies  []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
+		// AutoAlignRuntime asks the agent to rewrite the project's
+		// package.json overrides to match the closest compiledIn host
+		// runtime family (and run npm install once) before bundling. This
+		// fixes the "React 19.2.5 vs host 19.1.0" failure mode that
+		// otherwise turns into a 409 RUNTIME_FAMILY_MISMATCH at the load
+		// step. Default true — pass false to opt out for projects whose
+		// owner manages overrides themselves.
+		AutoAlignRuntime *bool `json:"autoAlignRuntime,omitempty"`
 		// Debug: when true, hermesc compiles with -Og (opts suitable
 		// for debugging) + -g (full debug info for backtraces) + emits
 		// a source map sidecar (.map) alongside the .jsbundle. The
@@ -2545,6 +2553,52 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		}
 	} else {
 		log.Printf("[super-host] runtime-family probe skipped: %v", err)
+	}
+
+	// ── Auto-align project runtime to a compiledIn host family ──
+	// When the project's React/RN/Expo doesn't already match a compiledIn
+	// host family, rewrite package.json `overrides` and run `npm install`
+	// once so the bundle is ABI-compatible with the device. Idempotent on
+	// subsequent builds. Default behavior; caller passes
+	// `autoAlignRuntime: false` to opt out.
+	autoAlign := true
+	if req.AutoAlignRuntime != nil {
+		autoAlign = *req.AutoAlignRuntime
+	}
+	if compatReport != nil && autoAlign {
+		candidateFamilies := req.ConsumerRuntimeFamilies
+		if len(candidateFamilies) == 0 {
+			if hostFams, herr := HostRuntimeFamilies(); herr == nil {
+				candidateFamilies = hostFams
+			}
+		}
+		chosen, skipReason := pickCompiledInRuntimeFamily(compatReport.GuestRuntime, candidateFamilies)
+		if chosen == nil {
+			if skipReason != "" {
+				log.Printf("[runtime-align] skipped: %s", skipReason)
+			}
+		} else {
+			alignCtx, alignCancel := context.WithTimeout(r.Context(), 4*time.Minute)
+			alignReport := alignProjectRuntimeIfNeeded(alignCtx, workDir, chosen, compatReport.GuestRuntime, true)
+			alignCancel()
+			if alignReport.Error != "" {
+				log.Printf("[runtime-align] error: %s", alignReport.Error)
+				s.devServerMgr.EmitLog("Runtime auto-align failed: " + alignReport.Error)
+			} else if alignReport.Applied {
+				log.Printf("[runtime-align] applied target=%s overrides=%v", alignReport.TargetFamilyID, alignReport.OverridesAfter)
+				s.devServerMgr.EmitLog(fmt.Sprintf(
+					"Aligned project runtime to host family %s (npm install %dms)",
+					alignReport.TargetFamilyID, alignReport.NPMInstallMs,
+				))
+				// Re-run the compat probe so subsequent stages see the
+				// post-align fingerprint, not the pre-align one.
+				if rebuilt, rerr := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); rerr == nil {
+					compatReport = rebuilt
+				}
+			} else if strings.TrimSpace(alignReport.SkippedReason) != "" {
+				log.Printf("[runtime-align] skipped: %s", alignReport.SkippedReason)
+			}
+		}
 	}
 
 	// ── Detect project type ──

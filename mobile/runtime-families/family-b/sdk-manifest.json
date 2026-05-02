@@ -16,11 +16,11 @@
   "runtimeFamilies": [
     {
       "id": "family-a",
-      "label": "Family A · Expo 54.0.33 / RN 0.81.5 / React 19.1.0 / BC96",
+      "label": "Family A · Expo 54.0.33 / RN 0.81.5 / React 19.2.5 / BC96",
       "sdkVersion": "1.0.0",
       "expoVersion": "54.0.33",
       "reactNativeVersion": "0.81.5",
-      "reactVersion": "19.1.0",
+      "reactVersion": "19.2.5",
       "hermesVersion": "0.81.5",
       "hermesBCVersion": 96,
       "supportedRNRange": "0.81.x",
@@ -31,7 +31,7 @@
     },
     {
       "id": "family-b",
-      "label": "Family B · SFMG pilot / Hetzner ephemeral proof slot",
+      "label": "Family B · Expo 54.0.33 / RN 0.81.5 / React 19.2.5 / BC96 (merged into Family A 2026-05-02)",
       "sdkVersion": "1.0.0",
       "expoVersion": "54.0.33",
       "reactNativeVersion": "0.81.5",
@@ -40,10 +40,11 @@
       "hermesBCVersion": 96,
       "supportedRNRange": "0.81.x",
       "compiledIn": true,
-      "status": "pilot",
-      "manifestResource": "runtime-families/family-b/sdk-manifest.json",
-      "packageRoot": "mobile-family-b",
-      "preferredPackageNames": ["sfmg"]
+      "status": "active",
+      "manifestResource": "sdk-manifest.json",
+      "packageRoot": "mobile",
+      "preferredPackageNames": ["sfmg"],
+      "compiledInNote": "Mobile/package.json now installs React 19.2.5, so the iOS binary natively supports the same ABI as Family B. Family A and Family B share the same compiled runtime — a guest project that fingerprinted to either one loads safely. The preferredPackageNames hint stays so SFMG's selection logs still surface family-b as the historical pilot slot."
     }
   ],
   "nativeModules": {

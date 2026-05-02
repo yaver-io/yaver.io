@@ -1,6 +1,6 @@
 {
   "name": "yaver-mobile",
-  "version": "1.18.28",
+  "version": "1.18.29",
   "license": "SEE LICENSE IN LICENSE",
   "main": "expo-router/entry",
   "scripts": {
@@ -85,8 +85,8 @@
     "expo-web-browser": "~15.0.10",
     "lottie-react-native": "^7.3.6",
     "posthog-react-native": "^4.42.1",
-    "react": "^19.1.0",
-    "react-dom": "19.1.0",
+    "react": "^19.2.5",
+    "react-dom": "19.2.5",
     "react-native": "^0.81.5",
     "react-native-audio-api": "^0.11.7",
     "react-native-background-actions": "^4.1.0",
