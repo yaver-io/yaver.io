@@ -11,9 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"net/http/httptest"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1405,6 +1405,9 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	if strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID")) == "" {
+		s.maybePullBeforeHotReloadBuild(req.WorkDir)
+	}
 
 	if err := mgr.Start(req.Framework, req.WorkDir, req.Platform, req.Port, DevServerTarget{
 		DeviceID:    req.TargetDeviceID,
@@ -2358,6 +2361,9 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		workDir = status.WorkDir
+	}
+	if guestUID == "" {
+		s.maybePullBeforeHotReloadBuild(workDir)
 	}
 	// Pick output dir per target so concurrent mobile+web builds for
 	// the same project don't trash each other's bundles.
