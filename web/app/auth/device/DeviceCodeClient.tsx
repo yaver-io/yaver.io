@@ -449,7 +449,7 @@ export default function DeviceCodeClient({
                 {provider.icon}
                 {provider.label}
                 {provider.primary && (
-                  <span className="rounded-full border border-indigo-300/30 px-2 py-0.5 text-[10px] uppercase tracking-[0.16em] text-indigo-200">
+                  <span className="rounded-full border border-indigo-500/40 bg-indigo-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-indigo-700 dark:border-indigo-300/30 dark:bg-transparent dark:text-indigo-200">
                     Recommended
                   </span>
                 )}

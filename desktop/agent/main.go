@@ -7569,6 +7569,17 @@ func getLocalIPs() []string {
 			if _, dup := seen[s]; dup {
 				continue
 			}
+			// Skip Docker bridge gateway IPs (172.17.0.1, 172.18.0.1, ...).
+			// Inside a Linux box with Docker, these are valid local
+			// interfaces but mobile can't reach them — and worse, the
+			// mobile UI heuristic flags 172.16-31.x.y as "WSL-like" and
+			// shows the box as PUBLIC IP / direct-reachable. The mobile
+			// then gets stuck CONNECTING because it tries that IP first
+			// instead of falling through to the relay. Filtering at the
+			// emit side keeps Convex's localIps record clean.
+			if isLikelyDockerBridgeIP(s) {
+				continue
+			}
 			seen[s] = struct{}{}
 			ips = append(ips, s)
 		}

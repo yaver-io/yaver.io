@@ -2688,9 +2688,18 @@ The human is reading this in a terminal session, not a rich markdown surface.
 - Do NOT use markdown headings, tables, or fenced code blocks unless the user explicitly asks for them.
 - Keep progress updates short and concrete.
 - Prefer natural status lines over template bullets.
-- If a command succeeds, summarize the result instead of dumping the full output.
-- Only show raw command output when it is the point of the answer or needed for debugging.
-- Keep the final answer brief, direct, and agent-agnostic unless the user asked about a specific tool.`
+- Keep the final answer brief, direct, and agent-agnostic unless the user asked about a specific tool.
+
+[Inspection commands — show raw output]
+When the user asks you to run a short read-only inspection command — e.g. "run ls", "ls", "pwd", "cat <file>", "git status", "git log -5", "find …", "grep …", "ps aux", "uname -a", "df -h", "head/tail <file>", "which <bin>", "<tool> --version", "echo …", "wc …", "tree …" — the answer the human wants IS the command's stdout.
+- Paste the actual output verbatim inside a fenced block.
+- Do NOT paraphrase ("50+ entries including backend, cli, desktop…").
+- Do NOT replace the listing with a summary like "checked: working dir is …".
+- Trim only when the output exceeds ~100 lines, and say what you trimmed (e.g. "first 80 lines, 423 more").
+- A one-line lead-in before the block is fine ("here's the listing:") but the block itself is the answer.
+
+[Long-running / build / test / deploy output]
+For commands whose value is success/failure (build, test, deploy, migration, install) the rule above does NOT apply — summarize the outcome and surface only the lines that explain failures. The "show raw output" rule is specifically for inspection asks where the human wants to read the output themselves.`
 }
 
 func mobileTaskResponseContext() string {
@@ -2702,11 +2711,20 @@ The human is reading this on a phone. Optimize for fast scanning, not rich markd
 - Start the final answer with a plain-language outcome sentence.
 - After that, use at most three short bullets chosen from: changed, checked, blocked, next.
 - Do NOT use tables.
-- Do NOT dump long command outputs unless they are essential to understand a failure.
-- If a command succeeds, summarize the result in plain language instead of pasting the whole output.
 - Keep markdown light: short bullets and inline code are fine; avoid heavy heading stacks and long fenced blocks unless truly necessary.
 - Stay agent-agnostic in wording. Do not mention a specific coding assistant brand unless the user asked about it.
-- Never hide important failures, commands, or file changes. Be concise without dropping critical information.`
+- Never hide important failures, commands, or file changes. Be concise without dropping critical information.
+
+[Inspection commands — show raw output]
+When the user asks you to run a short read-only inspection command — e.g. "run ls", "ls", "pwd", "cat <file>", "git status", "git log -5", "find …", "grep …", "ps aux", "uname -a", "df -h", "head/tail <file>", "which <bin>", "<tool> --version", "echo …", "wc …", "tree …" — the answer the human wants IS the command's stdout.
+- Paste the actual output verbatim inside a fenced block.
+- Do NOT paraphrase ("50+ entries including backend, cli, desktop…").
+- Do NOT replace the listing with a summary like "checked: working dir is …".
+- On a phone the screen is small, so cap raw output at ~50 lines: paste the first 50 and add a one-line "(N more — ask 'show all' to see the rest)" footer when truncating.
+- A short outcome sentence above the block is allowed and welcome ("here are the 27 entries in the repo root:").
+
+[Long-running / build / test / deploy output]
+For commands whose value is success/failure (build, test, deploy, migration, install) the rule above does NOT apply — summarize the outcome and surface only the lines that explain failures. The "show raw output" rule is specifically for inspection asks where the human wants to read the output themselves.`
 }
 
 // ListTasks returns info about all tasks.
