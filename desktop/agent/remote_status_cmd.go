@@ -163,6 +163,33 @@ func fetchRemoteAgentStatus(ctx context.Context, candidates []RemoteAgentCandida
 	report.HTTPStatusInfo = status
 	report.Transport = firstNonEmpty(strings.TrimSpace(chosen.Label), chosen.Kind)
 	report.BaseURL = chosen.BaseURL
+	// Auth-expired detection fallback: /info is auth'd, so when the
+	// remote box's own Convex token is dead it cannot validate caller
+	// tokens and returns 401/403 — the very signal we need is absent
+	// from the response. /health is unauth and returns authExpired
+	// even in this state, so probe it as a side-channel.
+	if status == 401 || status == 403 {
+		healthCtx, healthCancel := context.WithTimeout(ctx, 5*time.Second)
+		_, hstatus, hraw, herr := doRemoteAgentRequest(healthCtx, candidates, "", http.MethodGet, "/health", nil, 4*time.Second)
+		healthCancel()
+		if herr == nil && hstatus >= 200 && hstatus < 300 && len(hraw) > 0 {
+			var hinfo map[string]interface{}
+			if json.Unmarshal(hraw, &hinfo) == nil {
+				if exp, ok := hinfo["authExpired"].(bool); ok && exp {
+					report.NeedsAuth = true
+				}
+				if v, ok := hinfo["lifecycleState"].(string); ok {
+					report.LifecycleState = v
+				}
+				if v, ok := hinfo["version"].(string); ok && report.Version == "" {
+					report.Version = v
+				}
+				if v, ok := hinfo["hostname"].(string); ok && report.Hostname == "" {
+					report.Hostname = v
+				}
+			}
+		}
+	}
 	if status >= 200 && status < 300 && len(raw) > 0 {
 		var info map[string]interface{}
 		if err := json.Unmarshal(raw, &info); err == nil {
