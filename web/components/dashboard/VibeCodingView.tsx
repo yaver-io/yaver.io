@@ -82,6 +82,27 @@ type DeployPreviewSummary = {
 
 type DeployActionKind = "testflight" | "play-internal" | "eas";
 
+// analyticsAgentSwitch is a thin best-effort logger for runtime
+// agent-switch events. We don't have a central analytics pipeline on
+// the web side yet, so for now this writes a structured console line
+// the user can grep + a navigator.sendBeacon to /activity if the agent
+// is reachable. Both are wrapped in try/catch by the caller — analytics
+// must NEVER block a user-driven action.
+function analyticsAgentSwitch(
+  event: "agent_switch_requested" | "agent_switch_completed" | "agent_switch_failed",
+  data: Record<string, unknown>,
+) {
+  const payload = { event, source: "web", ...data, ts: Date.now() };
+  try {
+    // eslint-disable-next-line no-console
+    console.log("[yaver-analytics]", JSON.stringify(payload));
+  } catch { /* ignore */ }
+  // Beacon path intentionally elided until a /activity endpoint exists
+  // on the agent. Console line is the only sink for now; that's enough
+  // to verify the flow during dev. Wire up sendBeacon when we add a
+  // real ingest endpoint server-side.
+}
+
 function previewPlatformForFramework(framework?: string): "web" | undefined {
   const fw = (framework || "").toLowerCase();
   if (
@@ -509,7 +530,27 @@ export default function VibeCodingView({
     const switching = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
 
     if (switching) {
-      setBusy(`Switching ${activeTask.title} to ${desiredRunner}…`);
+      // Confirm before forking — this creates a new child task and
+      // changes which task subsequent sends target. The recent-context
+      // copy avoids forwarding the full transcript by default.
+      const niceName = desiredRunner.charAt(0).toUpperCase() + desiredRunner.slice(1);
+      const confirmed = typeof window !== "undefined"
+        ? window.confirm(
+            `Switching to ${niceName} will start a new child chat. ` +
+            `Yaver will include the most recent part of this conversation as context ` +
+            `so the new agent can pick up where you left off.\n\n` +
+            `For speed and token safety, Yaver sends roughly the last ~1200 words plus ` +
+            `the latest task summary, not the entire chat history.`,
+          )
+        : true;
+      if (!confirmed) {
+        setBusy("");
+        return;
+      }
+      try {
+        analyticsAgentSwitch("agent_switch_requested", { from: parentRunner, to: desiredRunner });
+      } catch { /* analytics is best-effort */ }
+      setBusy(`Switching ${activeTask.title} to ${niceName}…`);
       try {
         const result = await agentClient.forkTask(activeTask.id, {
           runner: desiredRunner,
@@ -519,10 +560,21 @@ export default function VibeCodingView({
         });
         setComposer("");
         setActiveTaskId(result.taskId);
-        setBusy(`Forked to ${desiredRunner} (${result.contextWordsUsed} words of context carried).`);
+        setBusy(`Forked to ${niceName} — ${result.contextWordsUsed} words of context carried.`);
         setRefreshNonce((value) => value + 1);
+        try {
+          analyticsAgentSwitch("agent_switch_completed", {
+            from: parentRunner,
+            to: desiredRunner,
+            contextWords: result.contextWordsUsed,
+          });
+        } catch { /* analytics is best-effort */ }
       } catch (err) {
-        setBusy(`Switch to ${desiredRunner} failed: ${err instanceof Error ? err.message : String(err)}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        setBusy(`Switch to ${niceName} failed: ${msg}`);
+        try {
+          analyticsAgentSwitch("agent_switch_failed", { from: parentRunner, to: desiredRunner, error: msg });
+        } catch { /* analytics is best-effort */ }
       }
       return;
     }

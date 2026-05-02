@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -757,12 +758,15 @@ func runCodeContinueControl(args []string) error {
 }
 
 func runCodeForkControl(args []string) error {
+	usage := "usage: yaver code fork <task-id> --agent <runner> [--model <model>] [--mode <mode>] [--context-words <N>] <message>"
 	if len(args) < 3 {
-		return fmt.Errorf("usage: yaver code fork <task-id> --agent <runner> [--model <model>] <message>")
+		return fmt.Errorf("%s", usage)
 	}
 	parentTaskID := strings.TrimSpace(args[0])
 	runner := ""
 	model := ""
+	mode := ""
+	contextWords := 0
 	var messageParts []string
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
@@ -778,24 +782,97 @@ func runCodeForkControl(args []string) error {
 			}
 			model = strings.TrimSpace(args[i+1])
 			i++
+		case "--mode":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --mode")
+			}
+			mode = strings.TrimSpace(args[i+1])
+			i++
+		case "--context-words":
+			if i+1 >= len(args) {
+				return fmt.Errorf("missing value for --context-words")
+			}
+			n, err := strconv.Atoi(strings.TrimSpace(args[i+1]))
+			if err != nil {
+				return fmt.Errorf("--context-words expects an integer, got %q", args[i+1])
+			}
+			contextWords = n
+			i++
 		default:
 			messageParts = append(messageParts, args[i])
 		}
 	}
 	if parentTaskID == "" || runner == "" || len(messageParts) == 0 {
-		return fmt.Errorf("usage: yaver code fork <task-id> --agent <runner> [--model <model>] <message>")
+		return fmt.Errorf("%s", usage)
 	}
 	_, profile, err := loadCodeConfig()
 	if err != nil {
 		return err
 	}
 	childPrompt := strings.TrimSpace(strings.Join(messageParts, " "))
-	task, err := codeForkTask(codeAttachedDevice(profile), parentTaskID, runner, model, childPrompt)
+	task, err := codeForkTaskHTTP(codeAttachedDevice(profile), parentTaskID, runner, model, mode, contextWords, childPrompt)
 	if err != nil {
 		return err
 	}
 	fmt.Printf("Forked child task %s from %s using %s\n", task.ID, parentTaskID, firstNonEmpty(task.RunnerID, runner))
 	return nil
+}
+
+// codeForkTaskHTTP routes through the new POST /tasks/{id}/fork endpoint
+// (which handles bounded recent-context handoff server-side) instead of
+// the older codeFetchTask + codeCreateTask client-side path. Keeps
+// behaviour identical to web/mobile fork — same context budget logic,
+// same parent immutability guarantee, same opencode mode forwarding.
+//
+// codeForkTask (the older path) is preserved as a fallback for the rare
+// cross-version case where the remote agent is older than 1.99.129 and
+// doesn't have the /tasks/{id}/fork route. We never need to call it
+// from new code paths; HTTP 404 → fallback if needed.
+func codeForkTaskHTTP(deviceID, parentTaskID, runner, model, mode string, contextWords int, childPrompt string) (*TaskInfo, error) {
+	body := map[string]interface{}{
+		"runner": strings.TrimSpace(runner),
+		"input":  childPrompt,
+	}
+	if m := strings.TrimSpace(model); m != "" {
+		body["model"] = m
+	}
+	if m := strings.TrimSpace(mode); m != "" {
+		body["mode"] = m
+	}
+	if contextWords > 0 {
+		body["contextWords"] = contextWords
+	}
+	path := "/tasks/" + strings.TrimSpace(parentTaskID) + "/fork"
+	var resp struct {
+		OK           bool   `json:"ok"`
+		TaskID       string `json:"taskId"`
+		RunnerID     string `json:"runnerId"`
+		Status       string `json:"status"`
+		ParentTaskID string `json:"parentTaskId"`
+	}
+	if deviceID == "" {
+		raw, err := localAgentRequest("POST", path, body)
+		if err != nil {
+			// Older remote agents don't have /tasks/{id}/fork — fall
+			// back to the legacy client-side codeForkTask.
+			if strings.Contains(strings.ToLower(err.Error()), "404") {
+				return codeForkTask(deviceID, parentTaskID, runner, model, childPrompt)
+			}
+			return nil, err
+		}
+		data, _ := json.Marshal(raw)
+		if err := json.Unmarshal(data, &resp); err != nil {
+			return nil, err
+		}
+		return &TaskInfo{ID: resp.TaskID, Status: TaskStatus(resp.Status), RunnerID: resp.RunnerID}, nil
+	}
+	if err := remoteAgentJSONForDevice(context.Background(), deviceID, "POST", path, body, &resp); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "404") {
+			return codeForkTask(deviceID, parentTaskID, runner, model, childPrompt)
+		}
+		return nil, err
+	}
+	return &TaskInfo{ID: resp.TaskID, Status: TaskStatus(resp.Status), RunnerID: resp.RunnerID}, nil
 }
 
 func codeListTasks(deviceID string) ([]TaskInfo, error) {

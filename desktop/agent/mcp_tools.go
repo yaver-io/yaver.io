@@ -101,6 +101,43 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "fork_task",
+			"description": "Switch the coding agent (claude/codex/opencode) for an existing task. Creates a NEW child task running on the requested runner with a bounded recent-context handoff (last few turns + assistant tail) — the parent task stays immutable. Use this instead of continue_task when the user wants a different runner/model/mode mid-conversation. Claude/Codex/OpenCode don't share session formats, so an in-place runner swap would corrupt session state. Returns the child task ID + runner + how many words of context were carried.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"task_id", "runner", "input"},
+				"properties": map[string]interface{}{
+					"task_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The parent task ID to fork from.",
+					},
+					"runner": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"claude", "codex", "opencode"},
+						"description": "Target runner for the child task.",
+					},
+					"model": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional model id. Empty = runner default.",
+					},
+					"mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional opencode mode: 'build', 'plan', or any custom agent in the user's opencode.json. Empty = opencode defaultAgent. Other runners ignore.",
+					},
+					"input": map[string]interface{}{
+						"type":        "string",
+						"description": "User's new prompt for the forked agent.",
+					},
+					"context_words": map[string]interface{}{
+						"type":        "integer",
+						"description": "Word budget for the recent-context handoff. Default 1200. Clamped to [100, 5000].",
+						"minimum":     100,
+						"maximum":     5000,
+					},
+				},
+			},
+		},
+		{
 			"name":        "get_info",
 			"description": "Get information about the connected development machine (hostname, working directory, version).",
 			"inputSchema": map[string]interface{}{

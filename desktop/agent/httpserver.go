@@ -4555,6 +4555,76 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		log.Printf("[MCP] Task resumed: %s (session=%s)", args.TaskID, task.SessionID)
 		return mcpToolResult(fmt.Sprintf("Task resumed. Task ID: %s", task.ID))
 
+	case "fork_task":
+		// Runtime agent switch over MCP. Same shape as POST /tasks/{id}/fork.
+		// Returns a structured object so calling AI agents can chain follow-ups
+		// to the new child task.
+		var args struct {
+			TaskID       string `json:"task_id"`
+			Runner       string `json:"runner"`
+			Model        string `json:"model"`
+			Mode         string `json:"mode"`
+			Input        string `json:"input"`
+			ContextWords int    `json:"context_words"`
+		}
+		_ = json.Unmarshal(call.Arguments, &args)
+		parent, ok := s.taskMgr.GetTask(args.TaskID)
+		if !ok || parent == nil {
+			return mcpToolError("parent task not found: " + args.TaskID)
+		}
+		runner := normalizeRunnerID(strings.TrimSpace(args.Runner))
+		if runner == "" {
+			return mcpToolError("runner is required (claude, codex, or opencode)")
+		}
+		input := strings.TrimSpace(args.Input)
+		if input == "" {
+			return mcpToolError("input is required")
+		}
+		if !isSupportedForkRunner(runner) {
+			return mcpToolError("unsupported runner: " + runner)
+		}
+		req := taskForkRequest{
+			Runner:       runner,
+			Model:        strings.TrimSpace(args.Model),
+			Mode:         strings.TrimSpace(args.Mode),
+			Input:        input,
+			ContextWords: args.ContextWords,
+		}
+		ctxWords := req.ContextWords
+		if ctxWords <= 0 {
+			ctxWords = defaultForkContextWords
+		}
+		if ctxWords < minForkContextWords {
+			ctxWords = minForkContextWords
+		}
+		if ctxWords > maxForkContextWords {
+			ctxWords = maxForkContextWords
+		}
+		handoff := buildForkHandoffPrompt(parent, req, ctxWords)
+		taskOpts := TaskCreateOptions{
+			WorkDir:           parent.WorkDir,
+			InitialUserPrompt: req.Input,
+			Mode:              req.Mode,
+		}
+		if parent.GuestUserID != "" {
+			taskOpts.GuestUserID = parent.GuestUserID
+			taskOpts.GuestUseHostAPIKeys = parent.GuestUseHostAPIKeys
+			taskOpts.GuestRequireIsolation = parent.GuestRequireIsolation
+			taskOpts.GuestAllowGuestProvidedKeys = parent.GuestAllowGuestProvidedKeys
+		}
+		child, err := s.taskMgr.CreateTaskWithOptions(handoff, "forked from "+parent.ID+" (runner switch)", req.Model, "runner-switch-fork", req.Runner, "", nil, taskOpts)
+		if err != nil {
+			return mcpToolError("create child task: " + err.Error())
+		}
+		log.Printf("[MCP] Task forked: parent=%s child=%s runner=%s", parent.ID, child.ID, child.RunnerID)
+		return mcpToolJSON(map[string]interface{}{
+			"taskId":           child.ID,
+			"runnerId":         child.RunnerID,
+			"parentTaskId":     parent.ID,
+			"relationship":     "forked-by-yaver",
+			"contextWordsUsed": countWords(handoff),
+		})
+
 	case "get_info":
 		hostname, _ := os.Hostname()
 		return mcpToolResult(fmt.Sprintf("Hostname: %s\nVersion: %s\nWork Dir: %s", hostname, version, s.taskMgr.workDir))

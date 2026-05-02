@@ -1603,9 +1603,41 @@ export default function TasksScreen() {
         const switching = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
 
         if (switching) {
-          // Don't bother stopping the parent — fork is non-destructive
-          // by design. Image attachments don't carry over (the child
-          // gets the conversation context instead, which is text-only).
+          // Confirm before forking — explains that this creates a new
+          // child task and only the recent part of the conversation
+          // travels with it.
+          const niceName = desiredRunner.charAt(0).toUpperCase() + desiredRunner.slice(1);
+          const confirmed = await new Promise<boolean>((resolve) => {
+            Alert.alert(
+              `Switch to ${niceName}?`,
+              `Switching to ${niceName} will start a new child chat. ` +
+                `Yaver will include the most recent part of this conversation as context ` +
+                `so the new agent can pick up where you left off.\n\n` +
+                `For speed and token safety, Yaver sends roughly the last ~1200 words plus ` +
+                `the latest task summary, not the entire chat history.`,
+              [
+                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                { text: `Switch to ${niceName}`, style: "default", onPress: () => resolve(true) },
+              ],
+            );
+          });
+          if (!confirmed) {
+            // user backed out — drop the throw so the catch below
+            // doesn't double-handle, then leave the input in place.
+            return;
+          }
+          try {
+            console.log("[yaver-analytics]", JSON.stringify({
+              event: "agent_switch_requested",
+              source: "mobile",
+              from: parentRunner,
+              to: desiredRunner,
+              ts: Date.now(),
+            }));
+          } catch { /* analytics is best-effort */ }
+          // Fork is non-destructive — no need to stop the parent.
+          // Image attachments don't carry over (the child receives
+          // text-only conversation context instead).
           const result = await quicClient.forkTask(selectedTask.id, {
             runner: desiredRunner,
             input: followUpText.trim(),
@@ -1615,6 +1647,16 @@ export default function TasksScreen() {
           setSelectedTask((prev) => prev && prev.id === selectedTask.id
             ? { ...prev, id: result.taskId, runnerId: result.runnerId }
             : prev);
+          try {
+            console.log("[yaver-analytics]", JSON.stringify({
+              event: "agent_switch_completed",
+              source: "mobile",
+              from: parentRunner,
+              to: desiredRunner,
+              contextWords: result.contextWordsUsed,
+              ts: Date.now(),
+            }));
+          } catch { /* analytics is best-effort */ }
         } else {
           // Same runner: regular continue. Stop a still-running parent
           // first so its state machine accepts the new input.
@@ -1629,7 +1671,23 @@ export default function TasksScreen() {
       setFollowUpText("");
       setFollowUpImages([]);
       await fetchTasks();
-    } catch {
+    } catch (err) {
+      // Best-effort analytics for runtime-switch failures. Other
+      // continue-task failures don't have analytics yet; if we add
+      // them later, gate this on an explicit "was a switch" flag.
+      try {
+        const desiredRunner = (selectedRunner || "").trim();
+        if (desiredRunner && selectedTask?.runnerId && desiredRunner !== selectedTask.runnerId) {
+          console.log("[yaver-analytics]", JSON.stringify({
+            event: "agent_switch_failed",
+            source: "mobile",
+            from: selectedTask.runnerId,
+            to: desiredRunner,
+            error: err instanceof Error ? err.message : String(err),
+            ts: Date.now(),
+          }));
+        }
+      } catch { /* analytics is best-effort */ }
     } finally {
       setIsSendingFollowUp(false);
     }
