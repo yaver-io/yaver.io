@@ -341,11 +341,13 @@ public class AppDelegate: ExpoAppDelegate {
   // MARK: - Shake to reveal Back to Yaver
 
   /// Called by ShakeDetectingWindow when device is shaken while guest app is running.
-  /// In guest mode, shake is reserved for Yaver Feedback parity, so we jump
-  /// back into the host shell and open feedback instead of showing a second menu.
+  /// Shows the 2-button overlay (Feedback / Back to Yaver). Feedback opens
+  /// the guest's bundled SDK in-place (it owns the loaded app's feedback
+  /// flow); Back to Yaver restores Yaver's bundle.
   func handleShakeGesture() {
     guard isGuestAppRunning else { return }
-    handleFeedbackTap()
+    guard let window = self.window else { return }
+    showShakeOverlay(in: window)
   }
 
   private func showShakeOverlay(in window: UIWindow) {
@@ -385,14 +387,17 @@ public class AppDelegate: ExpoAppDelegate {
       return btn
     }
 
-    let reloadBtn = makeButton(title: "Reload App", icon: "arrow.clockwise", color: greenColor,
-                               action: #selector(handleReloadTap))
+    // Two options: stay in the guest app and open its bundled feedback
+    // SDK in-place ("Feedback"), or exit back to the Yaver shell
+    // ("Back to Yaver"). Reload was previously a 3rd option but it
+    // belongs inside the guest SDK, not the host overlay — when the
+    // guest's feedback modal is open it owns the reload flow.
     let feedbackBtn = makeButton(title: "Feedback", icon: "bubble.left.and.bubble.right", color: accentColor,
                                  action: #selector(handleFeedbackTap))
     let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
                              action: #selector(handleBackTap))
 
-    let stack = UIStackView(arrangedSubviews: [reloadBtn, feedbackBtn, backBtn])
+    let stack = UIStackView(arrangedSubviews: [feedbackBtn, backBtn])
     stack.axis = .vertical
     stack.spacing = 10
     stack.distribution = .fillEqually
@@ -455,11 +460,20 @@ public class AppDelegate: ExpoAppDelegate {
   }
 
   @objc private func handleFeedbackTap() {
-    NSLog("[AppDelegate] Feedback tapped from shake overlay")
+    NSLog("[AppDelegate] Feedback tapped — dispatching to guest SDK")
     dismissOverlay()
-    UserDefaults.standard.set(true, forKey: "yaverPendingFeedbackLaunch")
-    isGuestAppRunning = false
-    NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)
+    // Stay in the guest bundle. Send a DeviceEventEmitter event into the
+    // current bridge so the guest's bundled YaverFeedback SDK opens its
+    // own feedback modal in-place. The bounce-back-to-Yaver behaviour
+    // (UserDefaults flag + YaverBundleLoaderRestore notification) was
+    // wrong for this model — Yaver is the runtime, sfmg / talos / etc.
+    // own their own feedback flow.
+    if let rootView = window?.rootViewController?.view as? RCTRootView,
+       let bridge = rootView.bridge {
+      bridge.eventDispatcher().sendDeviceEvent(withName: "yaverFeedback:startReport", body: nil)
+    } else {
+      NSLog("[AppDelegate] Feedback: no guest bridge available — overlay just dismisses")
+    }
   }
 
   /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),

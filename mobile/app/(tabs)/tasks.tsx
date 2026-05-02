@@ -1008,8 +1008,14 @@ export default function TasksScreen() {
     setAvailableModels(runner.models);
     const explicitModel = activeDevice ? primaryModelByDevice[activeDevice.id] : "";
     setSelectedModel((current) => {
-      // User's current pick is still valid for this runner — keep it.
-      if (current && runner.models!.some((m) => m.id === current)) return current;
+      // Preserve any explicit user pick — same fight-the-user concern as
+      // the runner seeding above. Even if the model isn't in the current
+      // runner.models list (e.g. fresh /agent/runners response dropped a
+      // staged model the user just tapped), keep their choice; the send
+      // path validates and surfaces a clear error if it's actually
+      // invalid. Reverting silently to the default makes Sonnet-vs-Opus
+      // chips look broken when they're tapped.
+      if (current) return current;
       if (explicitModel && runner.models!.some((m) => m.id === explicitModel)) return explicitModel;
       const seededModel = activeDevice
         ? preferredDefaultModelForRunner(runner.id, activeDevice, user?.email)
