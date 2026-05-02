@@ -48,6 +48,41 @@ func canonicalBinaryPath(path string) string {
 	return path
 }
 
+func npmAgentCacheRoot() string {
+	if root := canonicalBinaryPath(os.Getenv("YAVER_AGENT_CACHE_DIR")); root != "" {
+		return root
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return canonicalBinaryPath(filepath.Join(home, ".yaver", "bin"))
+}
+
+func isExpectedNPMWrapperBinaryPair(pathBinary string, active string) bool {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("YAVER_INSTALL_SOURCE")), "npm") {
+		return false
+	}
+	pathBinary = canonicalBinaryPath(pathBinary)
+	active = canonicalBinaryPath(active)
+	if pathBinary == "" || active == "" {
+		return false
+	}
+	pkg := strings.TrimSpace(os.Getenv("YAVER_NPM_PACKAGE"))
+	if pkg == "" {
+		pkg = "yaver-cli"
+	}
+	wrapperSuffix := filepath.Join("node_modules", pkg, "bin", "yaver")
+	if runtime.GOOS == "windows" {
+		wrapperSuffix += ".cmd"
+	}
+	if !strings.HasSuffix(pathBinary, wrapperSuffix) {
+		return false
+	}
+	cacheRoot := npmAgentCacheRoot()
+	return cacheRoot != "" && strings.HasPrefix(active, cacheRoot+string(os.PathSeparator))
+}
+
 func discoverYaverBinariesOnPATH() []string {
 	seen := map[string]struct{}{}
 	var out []string
@@ -131,7 +166,7 @@ func describeYaverBinaryDrift() []string {
 	if len(pathBinaries) > 1 {
 		warnings = append(warnings, fmt.Sprintf("multiple yaver binaries on PATH: %s (running %s)", strings.Join(pathBinaries, ", "), active))
 	}
-	if active != "" && len(pathBinaries) > 0 && pathBinaries[0] != active {
+	if active != "" && len(pathBinaries) > 0 && pathBinaries[0] != active && !isExpectedNPMWrapperBinaryPair(pathBinaries[0], active) {
 		warnings = append(warnings, fmt.Sprintf("PATH resolves yaver to %s but this process is running %s", pathBinaries[0], active))
 	}
 	for _, target := range detectSystemdExecTargets() {
@@ -145,6 +180,18 @@ func describeYaverBinaryDrift() []string {
 }
 
 func logYaverBinaryDriftWarnings() {
+	// We're npm-only as of 1.99.124. The warning's original purpose was
+	// to flag drift between an apt-installed and a brew-installed yaver
+	// (or a manually-cp'd binary). With one canonical install path, the
+	// "yaver shim resolves to the npm wrapper, process is the cached
+	// agent binary" case is the EXPECTED relationship, not drift.
+	//
+	// Keep the underlying check available for `yaver doctor` and for
+	// users who explicitly opt in via YAVER_DEBUG_BINARY_PATHS=1, but
+	// don't spam every command invocation.
+	if os.Getenv("YAVER_DEBUG_BINARY_PATHS") == "" && os.Getenv("YAVER_DEBUG") == "" {
+		return
+	}
 	for _, warning := range describeYaverBinaryDrift() {
 		log.Printf("[binary-paths] WARNING: %s", warning)
 	}
