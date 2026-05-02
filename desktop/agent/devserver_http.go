@@ -11,9 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"net/http/httptest"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1261,7 +1261,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 				jsonReply(w, http.StatusOK, map[string]interface{}{
 					"ok":          true,
 					"mode":        "static-bundle",
-					"bundleUrl":   "/dev/web-bundle/",
+					"bundleUrl":   signedWebBundleURL(w),
 					"bundleReady": info.BuildDir != "" && info.FileCount > 0,
 					"bundleHint":  "POST /dev/build-native target=web-js-bundle",
 					"appName":     matched.Name,
@@ -1324,7 +1324,7 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 					jsonReply(w, http.StatusOK, map[string]interface{}{
 						"ok":          true,
 						"mode":        "static-bundle",
-						"bundleUrl":   "/dev/web-bundle/",
+						"bundleUrl":   signedWebBundleURL(w),
 						"bundleReady": info.BuildDir != "" && info.FileCount > 0,
 						"bundleHint":  "POST /dev/build-native target=web-js-bundle",
 						"projectName": req.ProjectName,
@@ -1843,11 +1843,12 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		// Build succeeded. Tell SDKs to fetch the fresh bundle.
 		s.emitBuildProgress("Sending fresh bundle + restart command to phone…", "push")
 		s.upsertDevOperation("reload_app", "running", "restart", "Bundle ready. Sending restart command so the phone can swap the guest bridge in Yaver.", projectPath, target.DeviceID, phaseProgress("restart"), map[string]interface{}{"mode": "bundle"})
+		bundleURL, assetsURL := signedNativeBundleURLs(s)
 		cmd := BlackBoxCommand{
 			Command: "reload_bundle",
 			Data: map[string]interface{}{
-				"bundleUrl": "/dev/native-bundle",
-				"assetsUrl": "/dev/native-assets",
+				"bundleUrl": bundleURL,
+				"assetsUrl": assetsURL,
 			},
 		}
 		if sent := s.sendCommandToPreviewTarget(cmd); sent {
@@ -1878,11 +1879,12 @@ func (s *HTTPServer) sendCommandToPreviewTarget(cmd BlackBoxCommand) bool {
 }
 
 func (s *HTTPServer) sendPreviewWorkerReloadCommand() bool {
+	bundleURL, assetsURL := signedNativeBundleURLs(s)
 	return s.sendCommandToPreviewTarget(BlackBoxCommand{
 		Command: "reload_bundle",
 		Data: map[string]interface{}{
-			"bundleUrl":  "/dev/native-bundle",
-			"assetsUrl":  "/dev/native-assets",
+			"bundleUrl":  bundleURL,
+			"assetsUrl":  assetsURL,
 			"moduleName": "main",
 		},
 	})
@@ -3111,8 +3113,20 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 
 	s.devServerMgr.SetBundleMetadata(meta.JSON())
 	buildID := fmt.Sprintf("%s-%d", meta.MD5, time.Now().UTC().UnixNano())
-	bundleURL := "/dev/native-bundle?build=" + url.QueryEscape(buildID)
-	assetsURL := "/dev/native-assets?build=" + url.QueryEscape(buildID)
+	// C-4: mint signed URLs for the bundle + assets. The native bundle
+	// fetch happens from the phone over the relay so we cannot rely on
+	// owner-bearer auth — but we can require the URL itself to carry an
+	// HMAC tied to (buildID, kind, exp). 30 min covers a slow phone
+	// + retry pattern; the buildID rotates on every rebuild so a
+	// captured URL for build N is dead the moment build N+1 ships.
+	bundleSig, sigErr := signDevBundleURL(buildID, "native", 30*time.Minute)
+	if sigErr != nil {
+		http.Error(w, "failed to sign bundle URL: "+sigErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	assetsSig, _ := signDevBundleURL(buildID, "assets", 30*time.Minute)
+	bundleURL := "/dev/native-bundle?" + bundleSig
+	assetsURL := "/dev/native-assets?" + assetsSig
 	s.devServerMgr.SetNativeBundleInfo(NativeBundleInfo{
 		BuildID:      buildID,
 		WorkDir:      workDir,
@@ -3197,14 +3211,28 @@ func hermescErrString(err error) string {
 }
 
 // handleServeNativeBundle serves the compiled native bundle file.
-// GET /dev/native-bundle
+// GET /dev/native-bundle?build=<id>&exp=<unix>&sig=<hex>
+//
+// C-4 fix: previously unauth — anyone scanning a public IP while a
+// dev session was active could pull the compiled Hermes bundle (full
+// transpiled source). Now the URL must carry an HMAC signature minted
+// by the owner via signDevBundleURL, scoped to a specific build ID
+// and expiring within minutes. The same agent-local secret used for
+// /blobs/public is reused; a new secret would force a new persisted
+// file on disk and the threat profile is identical.
 func (s *HTTPServer) handleServeNativeBundle(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		http.Error(w, "no dev server", http.StatusServiceUnavailable)
 		return
 	}
 
-	info := s.devServerMgr.GetNativeBundleInfo(strings.TrimSpace(r.URL.Query().Get("build")))
+	build := strings.TrimSpace(r.URL.Query().Get("build"))
+	if err := verifyDevBundleSig(build, "native", r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	info := s.devServerMgr.GetNativeBundleInfo(build)
 	bundlePath := info.BundlePath
 	if bundlePath == "" {
 		status := s.devServerMgr.Status()
@@ -3276,14 +3304,23 @@ func detectModuleName(bundlePath, workDir string) string {
 }
 
 // handleServeNativeAssets serves the assets directory as a zip archive.
-// GET /dev/native-assets
+// GET /dev/native-assets?build=<id>&exp=<unix>&sig=<hex>
+//
+// Same C-4 protection as handleServeNativeBundle: the bundle's sibling
+// assets must not leak to unauthenticated scanners either.
 func (s *HTTPServer) handleServeNativeAssets(w http.ResponseWriter, r *http.Request) {
 	if s.devServerMgr == nil {
 		http.Error(w, "no dev server", http.StatusServiceUnavailable)
 		return
 	}
 
-	info := s.devServerMgr.GetNativeBundleInfo(strings.TrimSpace(r.URL.Query().Get("build")))
+	build := strings.TrimSpace(r.URL.Query().Get("build"))
+	if err := verifyDevBundleSig(build, "assets", r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	info := s.devServerMgr.GetNativeBundleInfo(build)
 	assetsDir := info.AssetsDir
 	if assetsDir == "" {
 		status := s.devServerMgr.Status()

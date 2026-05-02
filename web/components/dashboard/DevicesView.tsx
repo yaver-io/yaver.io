@@ -1309,7 +1309,18 @@ export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
 };
 
 export function isKivancAccount(email: string | null | undefined): boolean {
-  return String(email || "").trim().toLowerCase() === "kivanc.cakmak@icloud.com";
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return false;
+  const raw =
+    process.env.NEXT_PUBLIC_YAVER_OWNER_EMAIL ||
+    process.env.NEXT_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
+    "";
+  const allowed = raw
+    .split(",")
+    .map((item: string) => item.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowed.length === 0) return false;
+  return allowed.includes(normalized);
 }
 
 export function isKivancMacBook(device: Pick<Device, "name" | "hostName" | "platform">): boolean {

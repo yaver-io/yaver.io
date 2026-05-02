@@ -433,7 +433,7 @@ func publicAgentBaseCandidates(target *DeviceInfo) []string {
 			add(base)
 			continue
 		}
-		// Bare host (e.g. "157.180.114.179" set via config.public_endpoints
+		// Bare host (e.g. "198.51.100.20" set via config.public_endpoints
 		// for SSH discovery). Synthesize the agent's default HTTP URL so
 		// remote callers actually have something to dial. The web UI's
 		// SSH copy still works against the same bare-host string because

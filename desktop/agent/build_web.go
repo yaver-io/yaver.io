@@ -267,10 +267,14 @@ func (s *HTTPServer) buildWebJSBundle(w http.ResponseWriter, r *http.Request, re
 	s.devServerMgr.SetWebTransport(newWebTransport(s.devServerMgr.emit, "web-js-bundle", req.Caller, bundleManifest))
 	s.devServerMgr.GetWebTransport().transition("ready_to_serve")
 
+	webSig, _ := signDevBundleURL("", "web", defaultDevBundleTTL)
+	if webSig != "" {
+		setDevWebBundleCookie(w, webSig)
+	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":    "ok",
 		"target":    "web-js-bundle",
-		"bundleUrl": "/dev/web-bundle/",
+		"bundleUrl": "/dev/web-bundle/?" + webSig,
 		"size":      totalBytes,
 		"fileCount": fileCount,
 		"caller":    req.Caller,
@@ -431,10 +435,14 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 		Caller:    req.Caller,
 	})
 
+	webSig, _ := signDevBundleURL("", "web", defaultDevBundleTTL)
+	if webSig != "" {
+		setDevWebBundleCookie(w, webSig)
+	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":     "ok",
 		"target":     "web-hermes-wasm",
-		"bundleUrl":  "/dev/web-bundle/",
+		"bundleUrl":  "/dev/web-bundle/?" + webSig,
 		"hermesWasm": "/dev/hermes-wasm-runtime",
 		"hbcBytes":   len(bundleBytes),
 		"hbcMD5":     bundleMD5,
@@ -602,6 +610,25 @@ func jsonStringify(v interface{}) string {
 // topic=webview/transport so the dashboard CONSOLE renders a live
 // "sending bundle…" phase instead of going silent right after compile.
 func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request) {
+	// C-4: require an HMAC-signed URL even though the bundle is meant
+	// to be loaded by an iframe. The dashboard owner mints the URL
+	// once via /dev/web-bundle/info (auth'd) and the resulting
+	// /dev/web-bundle/?sig=... is what the iframe sees. Public
+	// scanners hitting /dev/web-bundle/ directly hit the sig check
+	// and 403 instead of getting the source.
+	if err := verifyDevBundleSig("", "web", r); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	// On every successful index.html fetch (i.e. the iframe loading a
+	// fresh bundle), refresh the cookie. Asset fetches inside the
+	// iframe rely on this cookie because <base href> drops query
+	// strings during relative-URL resolution.
+	if rel := strings.TrimPrefix(r.URL.Path, "/dev/web-bundle/"); rel == "" || rel == "/" || strings.HasSuffix(rel, ".html") {
+		if newSig, err := signDevBundleURL("", "web", defaultDevBundleTTL); err == nil && newSig != "" {
+			setDevWebBundleCookie(w, newSig)
+		}
+	}
 	// Lazy-init the manager so a fresh agent process (after a restart
 	// or auto-update) can serve a bundle that's still on disk via the
 	// persisted web-bundle-info.json. Returning 503 here used to drop
@@ -924,6 +951,17 @@ func (s *HTTPServer) handleWebBundleInfo(w http.ResponseWriter, r *http.Request)
 		jsonReply(w, http.StatusOK, map[string]interface{}{"built": false})
 		return
 	}
+	// C-4: mint a signed iframe URL + matching cookie. The dashboard
+	// reads bundleUrl, sets iframe.src — the cookie travels along
+	// because the iframe is same-origin with the agent and SameSite=Lax.
+	webSig, _ := signDevBundleURL("", "web", defaultDevBundleTTL)
+	if webSig != "" {
+		setDevWebBundleCookie(w, webSig)
+	}
+	bundleURL := "/dev/web-bundle/"
+	if webSig != "" {
+		bundleURL = "/dev/web-bundle/?" + webSig
+	}
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"built":     true,
 		"target":    info.Target,
@@ -933,5 +971,6 @@ func (s *HTTPServer) handleWebBundleInfo(w http.ResponseWriter, r *http.Request)
 		"fileCount": info.FileCount,
 		"builtAt":   info.BuiltAt,
 		"caller":    info.Caller,
+		"bundleUrl": bundleURL,
 	})
 }

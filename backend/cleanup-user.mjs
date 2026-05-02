@@ -16,23 +16,29 @@
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "./convex/_generated/api.js";
 
-const EMAILS = [
-  "kivanc.cakmak@simkab.com",
-  "kivanccakmak@gmail.com",
-  "kivanc.cakmak@icloud.com",
-];
+const ownerEmail = process.env.YAVER_OWNER_EMAIL;
+if (!ownerEmail) {
+  console.error("ERROR: YAVER_OWNER_EMAIL must be set explicitly — no default.");
+  console.error("       Comma-separated list of emails to clean up.");
+  console.error("Example:");
+  console.error("  YAVER_OWNER_EMAIL=foo@example.com,bar@example.com \\");
+  console.error("    CONVEX_URL=https://your-deployment.convex.cloud node cleanup-user.mjs");
+  process.exit(2);
+}
+const EMAILS = ownerEmail
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const CONVEX_URL =
   process.env.CONVEX_URL;
 
 if (!CONVEX_URL) {
   console.error("ERROR: CONVEX_URL must be set explicitly — no default.");
-  console.error("       Use the dev URL to clean dev data, or the prod URL");
-  console.error("       (see backend/.env.local for the dev URL; prod is");
-  console.error("       https://perceptive-minnow-557.eu-west-1.convex.cloud).");
+  console.error("       Use the dev URL to clean dev data, or the prod URL.");
   console.error("");
   console.error("Example:");
-  console.error("  CONVEX_URL=https://shocking-echidna-394.eu-west-1.convex.cloud node cleanup-user.mjs");
+  console.error("  CONVEX_URL=https://your-deployment.convex.cloud node cleanup-user.mjs");
   process.exit(2);
 }
 

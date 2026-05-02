@@ -69,6 +69,12 @@ var guestFullAllowedPrefixes = []string{
 	"/agent/status",
 	"/agent/runners",
 	"/projects",
+	// /repos/list (read-only enumeration: name, path, branch, remote,
+	// lastCommit, dirty) is the ONLY repo endpoint full-scope guests
+	// reach — they cannot clone, delete, or read credentials. Listed
+	// in guestExactOnlyEntries below so /repos/clone & friends do not
+	// silently inherit access via prefix-matching.
+	"/repos/list",
 	"/todolist",
 	"/builds",
 	"/health",
@@ -197,6 +203,10 @@ var guestExactOnlyEntries = map[string]struct{}{
 	"/info":          {},
 	"/health":        {},
 	"/agent/status":  {},
+	// /repos/list is the read-only enumeration; siblings clone/pull/
+	// credentials/delete share the /repos/ prefix and must NOT be
+	// reachable, so /repos/list is matched exact-only.
+	"/repos/list": {},
 }
 
 // matchGuestAllowEntry implements the segment-aware match described on

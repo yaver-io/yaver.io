@@ -16,7 +16,7 @@ This runbook matches the current Go agent architecture:
 ## Rules
 
 - Do not uninstall the agent from the persistent Hetzner test box during normal CI use.
-- Keep `kivanc.cakmak@icloud.com` as the primary owner on the machine.
+- Keep `your-owner-email@example.com` as the primary owner on the machine.
 - Store the Codex/OpenAI key in the Yaver vault, not in committed files.
 - Treat CI and newly created users as additional users or guests, not replacement owners.
 - Do not grant host API keys to CI/guest sessions unless you explicitly want them spending against your account.
@@ -80,7 +80,7 @@ For remote-box safety:
 
 ## 2. Authenticate the box as the owner
 
-SSH into the machine and authenticate as `kivanc.cakmak@icloud.com`.
+SSH into the machine and authenticate as `your-owner-email@example.com`.
 
 Headless OAuth:
 
@@ -201,7 +201,7 @@ This is useful for trusted collaborators or your own alternate accounts, but sti
 
 ## 8. Suggested operating model for this repo
 
-- Persistent Hetzner box stays installed and owner-authenticated as `kivanc.cakmak@icloud.com`.
+- Persistent Hetzner box stays installed and owner-authenticated as `your-owner-email@example.com`.
 - GitHub remote workflows continue using it as the canonical host.
 - GitHub-runner-originated checks act as guests against that host.
 - Personal Codex use happens as the owner through vault-backed `OPENAI_API_KEY`.

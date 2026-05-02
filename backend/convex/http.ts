@@ -4,7 +4,6 @@ import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
 
 const http = httpRouter();
-const CLOUD_PREVIEW_EMAIL = "kivanc.cakmak@icloud.com";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -30,13 +29,15 @@ function isCloudPreviewUser(email?: string | null): boolean {
   const normalized = (email ?? "").trim().toLowerCase();
   if (!normalized) return false;
   const raw =
+    process.env.CLOUD_PREVIEW_OWNER_EMAIL ||
     process.env.YAVER_CLOUD_PREVIEW_EMAILS ||
     process.env.NEXT_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
-    CLOUD_PREVIEW_EMAIL;
+    "";
   const allowed = raw
     .split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+  if (allowed.length === 0) return false;
   return allowed.includes(normalized);
 }
 

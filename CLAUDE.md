@@ -1965,7 +1965,7 @@ Then tap **Reload JS** on the error screen — the app will fetch the bundle and
 
 - **`uploadSymbols` must be `false` in ExportOptions.plist** (already set in `scripts/deploy-testflight.sh`). Xcode 15+ treats missing dSYMs as fatal export errors, and `rnwhisper` ships without dSYMs. Apple symbolicates server-side from bitcode anyway, so skipping local dSYM upload is safe and lets the export succeed.
 - **After TestFlight daily-limit error, wait ~24h**. There is no API to reset or query the remaining quota; the script will just keep failing with `Upload limit reached` until the window rolls over.
-- **On this Mac, a local deploy may still work when `yaver vault env --project mobile` is unauthenticated.** The operational fallback is the explicit `APP_STORE_KEY_*` + `APPLE_TEAM_ID` export path documented below in the "iOS — TestFlight" section; the local `.p8` is typically resolved from `~/.appstoreconnect/private_keys/` or the sibling Talos checkout.
+- **On this Mac, a local deploy may still work when `yaver vault env --project mobile` is unauthenticated.** The operational fallback is the explicit `APP_STORE_KEY_*` + `APPLE_TEAM_ID` export path documented below in the "iOS — TestFlight" section; the local `.p8` is typically resolved from `~/.appstoreconnect/private_keys/` or a sibling checkout outside the repo.
 - **A "hung" `scripts/deploy-testflight.sh` is often just another archive already holding Xcode busy.** Before blaming Apple auth, check `ps -axo pid,command | rg 'xcodebuild .*archive'` for stale `talos`, `sfmg`, or prior `yaver` archives.
 - **If an earlier archive polluted `/tmp`, clear only the exact Yaver paths after inspecting them first.** The safe cleanup set is `/tmp/YaverBuild`, `/tmp/Yaver.xcarchive`, and `/tmp/YaverExport`; always `ls -la` them before deleting.
 - **Archive is at `/tmp/Yaver.xcarchive`** after a successful archive phase. If the upload portion fails (e.g. Apple transient error, exit 70), re-run just the export step instead of rebuilding:
@@ -2260,16 +2260,16 @@ This is compile-only — never rename the dev keystore to the non-dev name, neve
 
 ### Mobile Release Policy — Local-First, CI Optional
 
-**Primary path: local deploys from this Mac.** The iOS signing keychain, Apple `.p8` under `~/Workspace/talos/mobile/ios/`, and upload keystore under `keys/yaver-upload.keystore` live on the host, and local builds are the fastest feedback loop. **Secondary path: `release-mobile.yml` on GitHub Actions** — free to run on a public repo, uses the `APP_STORE_CONNECT_API_KEY_*` + `ANDROID_KEYSTORE*` secrets. CI fires automatically on every `mobile/v*` tag push or via `workflow_dispatch`.
+**Primary path: local deploys from this Mac.** The iOS signing keychain, Apple `.p8` (kept outside the repo at `<your-apple-key-path>`), and upload keystore under `keys/yaver-upload.keystore` live on the host, and local builds are the fastest feedback loop. **Secondary path: `release-mobile.yml` on GitHub Actions** — free to run on a public repo, uses the `APP_STORE_CONNECT_API_KEY_*` + `ANDROID_KEYSTORE*` secrets. CI fires automatically on every `mobile/v*` tag push or via `workflow_dispatch`.
 
 **No manual approval on release workflows.** The `environment: production` gate was removed from release-cli / release-mobile / release-web / release-relay because only the repo owner (`kivanc`) can push tags, so the implicit auth gate is sufficient. Deploys proceed directly once the tag push or `workflow_dispatch` fires.
 
 Single-command release (both stores, version already bumped + committed):
 ```bash
-export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
-export APP_STORE_KEY_ID="77Z6B543D5"
-export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
-export APPLE_TEAM_ID="5SJZ4KA39A"
+export APP_STORE_KEY_PATH="<your-apple-key-path>"
+export APP_STORE_KEY_ID="<your-apple-key-id>"
+export APP_STORE_KEY_ISSUER="<your-issuer-uuid>"
+export APPLE_TEAM_ID="<your-apple-team-id>"
 
 ./scripts/deploy-testflight.sh & TESTFLIGHT_PID=$!
 JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && \
@@ -2293,20 +2293,20 @@ cd ios && pod install
 
 #### Deploy to TestFlight
 ```bash
-export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
-export APP_STORE_KEY_ID="77Z6B543D5"
-export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
-export APPLE_TEAM_ID="5SJZ4KA39A"
+export APP_STORE_KEY_PATH="<your-apple-key-path>"
+export APP_STORE_KEY_ID="<your-apple-key-id>"
+export APP_STORE_KEY_ISSUER="<your-issuer-uuid>"
+export APPLE_TEAM_ID="<your-apple-team-id>"
 ./scripts/deploy-testflight.sh
 ```
 > The script auto-bumps CFBundleVersion, archives, and uploads to TestFlight in one step.
 > **Always deploy iOS and Android together** when making mobile changes:
 > ```bash
 > # iOS
-> export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
-> export APP_STORE_KEY_ID="77Z6B543D5"
-> export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
-> export APPLE_TEAM_ID="5SJZ4KA39A"
+> export APP_STORE_KEY_PATH="<your-apple-key-path>"
+> export APP_STORE_KEY_ID="<your-apple-key-id>"
+> export APP_STORE_KEY_ISSUER="<your-issuer-uuid>"
+> export APPLE_TEAM_ID="<your-apple-team-id>"
 > ./scripts/deploy-testflight.sh
 >
 > # Android

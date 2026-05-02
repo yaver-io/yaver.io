@@ -4,10 +4,11 @@ export function isCloudPreviewUser(email?: string | null): boolean {
   const raw =
     process.env.EXPO_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
     process.env.EXPO_PUBLIC_CLOUD_PREVIEW_EMAILS ||
-    "kivanc.cakmak@icloud.com";
-  return raw
+    "";
+  const allowed = raw
     .split(",")
     .map((item: string) => item.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(normalized);
+    .filter(Boolean);
+  if (allowed.length === 0) return false;
+  return allowed.includes(normalized);
 }

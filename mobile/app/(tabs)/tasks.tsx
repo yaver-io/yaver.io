@@ -111,7 +111,18 @@ const BANNER_CONFIG: Record<
 };
 
 function isKivancAccount(email: string | null | undefined): boolean {
-  return String(email || "").trim().toLowerCase() === "kivanc.cakmak@icloud.com";
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized) return false;
+  const raw =
+    process.env.EXPO_PUBLIC_YAVER_OWNER_EMAIL ||
+    process.env.EXPO_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
+    "";
+  const allowed = raw
+    .split(",")
+    .map((item: string) => item.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowed.length === 0) return false;
+  return allowed.includes(normalized);
 }
 
 function isKivancMacBook(device: { name?: string | null; hostName?: string | null; os?: string | null }): boolean {

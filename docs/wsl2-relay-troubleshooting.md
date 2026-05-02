@@ -9,7 +9,7 @@ table at the bottom for the exact errors you'll see.
 
 | Symptom in mobile Connection Logs | Root cause on the WSL2 box | Fix |
 |---|---|---|
-| `sendmsg: invalid argument` with `->:0` as the peer address | `cached_relay_servers[].quic_addr` is empty in `~/.yaver/config.json`; agent knows the HTTPS relay URL but not its UDP address, so QUIC dial is a zero-port write | Patch `quic_addr` to the canonical relay UDP (`46.224.110.38:4433` for `public.yaver.io`), then restart. `yaver auth` on a fresh box writes this correctly; an older cached config may be missing it. |
+| `sendmsg: invalid argument` with `->:0` as the peer address | `cached_relay_servers[].quic_addr` is empty in `~/.yaver/config.json`; agent knows the HTTPS relay URL but not its UDP address, so QUIC dial is a zero-port write | Patch `quic_addr` to the canonical relay UDP (`relay.example.com:4433` for `public.yaver.io`), then restart. `yaver auth` on a fresh box writes this correctly; an older cached config may be missing it. |
 | `dial relay: timeout: no recent network activity` immediately after connect | Kernel UDP buffers too small for the quic-go handshake (WSL2 defaults to ~208 KiB; quic-go wants ≥ 7.5 MiB on every tunnel) | `yaver serve` now raises this automatically (`maybeRunWSL2NetworkTuning` in `desktop/agent/wsl.go`). Manual: `sudo sysctl -w net.core.rmem_max=7500000 net.core.wmem_max=7500000`. |
 | Same `no recent network activity` *after* the buffers are raised | WSL2's default NAT drops QUIC handshake packets (Microsoft-side Hyper-V virtual-switch issue; confirmed on Ubuntu 22.04/24.04 + WSL2 kernel 6.6.x) | Switch the Windows host to **mirrored networking** (`[wsl2] networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`, then `wsl --shutdown`). Requires Windows 11 22H2+. If that's not possible, run the agent on the Windows host itself, or use the remote-worker pattern below. |
 
@@ -65,7 +65,7 @@ cfg = json.load(open(p))
 changed = False
 for r in cfg.get("cached_relay_servers", []):
     if not r.get("quic_addr"):
-        r["quic_addr"] = "46.224.110.38:4433"
+        r["quic_addr"] = "relay.example.com:4433"
         changed = True
 if changed:
     json.dump(cfg, open(p, "w"), indent=2)
@@ -124,7 +124,7 @@ From the WSL box:
 
 ```bash
 # UDP path clear to the relay?
-nc -vzu -w 3 46.224.110.38 4433
+nc -vzu -w 3 relay.example.com 4433
 
 # Buffers big enough?
 sysctl net.core.rmem_max net.core.wmem_max
@@ -152,7 +152,7 @@ From the phone:
 
 The incident that motivated this doc:
 
-- Config had `quic_addr: ""` — the agent dialed `46.224.110.38:0`
+- Config had `quic_addr: ""` — the agent dialed `relay.example.com:0`
   which returned `sendmsg: invalid argument` every 30 s.
 - Node was not installed, so every attempt to run a mobile project
   would have failed at `/usr/bin/env: 'node': No such file or
@@ -161,7 +161,7 @@ The incident that motivated this doc:
   After raising to 7.5 MiB, the error changed from
   `sendmsg: invalid argument` to `timeout: no recent network
   activity` — progress, but not enough on default WSL2 NAT.
-- `nc -u -w 3 46.224.110.38 4433` from WSL succeeded. That's what
+- `nc -u -w 3 relay.example.com 4433` from WSL succeeded. That's what
   made this one confusing: plain UDP connectivity tests pass but
   real QUIC handshakes don't.
 

@@ -215,6 +215,11 @@ func (s *HTTPServer) TriggerHeartbeat() {
 func (s *HTTPServer) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
+	// Wire this server into the dev-bundle bearer fallback so unauth
+	// /dev/native-bundle / /dev/web-bundle requests carrying a known
+	// SDK token can be admitted (matches authSDK's behaviour).
+	SetDevBundleServerRef(s)
+
 	// Public
 	mux.HandleFunc("/health", s.handleHealth)
 

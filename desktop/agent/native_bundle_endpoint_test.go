@@ -37,6 +37,7 @@ func TestNativeBundleEndpointUsesBuildSpecificInfoWithoutActiveProject(t *testin
 	srv := &HTTPServer{devServerMgr: mgr}
 
 	req := httptest.NewRequest(http.MethodGet, "/dev/native-bundle?build=ios-build-1", nil)
+	req.RemoteAddr = "127.0.0.1:1234" // loopback bypasses sig per dev_bundle_sig.go
 	rr := httptest.NewRecorder()
 	srv.handleServeNativeBundle(rr, req)
 
@@ -79,6 +80,7 @@ func TestNativeAssetsEndpointUsesBuildSpecificInfoWithoutActiveProject(t *testin
 	srv := &HTTPServer{devServerMgr: mgr}
 
 	req := httptest.NewRequest(http.MethodGet, "/dev/native-assets?build=android-build-1", nil)
+	req.RemoteAddr = "127.0.0.1:1234" // loopback bypasses sig per dev_bundle_sig.go
 	rr := httptest.NewRecorder()
 	srv.handleServeNativeAssets(rr, req)
 

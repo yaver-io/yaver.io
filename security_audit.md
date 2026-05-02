@@ -1,5 +1,34 @@
 # Yaver Security Audit — 2026-05-02
 
+> **Status (as of 2026-05-02)**: Critical and High findings shipped in
+> agent 1.99.111 (commit `0f524484`). Mobile + web + relay updated
+> together for compatibility. Remaining items: git-history scrub
+> (still pending — credentials are out of HEAD but old commits retain
+> the leaked values), and the verify-android-keystore one-off check.
+>
+> Client compatibility notes:
+> - `/dev/native-bundle` + `/dev/native-assets` accept either signed
+>   URLs (mobile-app path) or owner/paired/SDK Bearer tokens (SDK
+>   reload path). Loopback 127.0.0.1 is exempt for the dev-preview
+>   iframe.
+> - `/dev/web-bundle/` requires either a signed query string OR a
+>   `yaver-dev-web-sig` cookie set by `/dev/web-bundle/info`. The web
+>   dashboard iframe gets the cookie automatically.
+> - `/repos/list` is allowed for full-scope guests (read-only); other
+>   `/repos/*` endpoints are owner-only.
+> - `/agent/runners` is exact-match-only — `/agent/runners/test` (RCE
+>   surface) is blocked even for full-scope guests.
+> - `/info` redaction applies to ALL non-owner callers (guest tier,
+>   support session, host-share peer, SDK delegation).
+> - Default support session is read-only; `yaver support start --shell`
+>   is the explicit opt-in for `/exec` + `/ws/terminal` + `/browser/`.
+> - Relay `--allow-open` flag now required to start without password
+>   or Convex URL. `RELAY_ADMIN_TOKEN` env var gates `/admin/*`.
+> - Mobile presence polling uses 50-id batches via the relay's new
+>   ?ids= cap; clients gracefully fall back to per-device polling
+>   on relay 400.
+
+
 **Threat model**: Yaver agent running `yaver serve` on a public-IP machine (HTTP :18080, HTTPS :18443, QUIC :4433, UDP beacon :19837). Open-source code on GitHub. Attacker has full source code, no credentials, can issue any HTTP/UDP/QUIC traffic, can run modified `yaver` binary, may hold a low-trust legitimate guest token.
 
 **Goal**: prevent RCE, prevent reading code/secrets, prevent token theft, prevent persistence, prevent cross-tenant pivot.

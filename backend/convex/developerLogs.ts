@@ -1,14 +1,20 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-// Only these emails can write/read developer logs
-const DEVELOPER_EMAILS = [
-  "kivanc.cakmak@icloud.com",
-  "kivanccakmak@gmail.com",
-];
+// Only emails listed in CLOUD_PREVIEW_OWNER_EMAIL can write/read developer logs.
+// Comma-separated list set in the Convex deployment env. Empty = no developers.
+function getDeveloperEmails(): string[] {
+  const raw = process.env.CLOUD_PREVIEW_OWNER_EMAIL ?? "";
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
 
 function isDeveloper(email?: string): boolean {
-  return !!email && DEVELOPER_EMAILS.includes(email.toLowerCase());
+  if (!email) return false;
+  const allow = getDeveloperEmails();
+  return allow.includes(email.toLowerCase());
 }
 
 /** Write a developer log entry. Only accepted from developer emails. */

@@ -97,7 +97,7 @@ jobs:
 
       - name: Tail relay journald (relay box)
         run: |
-          # Relay's IP from relay-deploy-binary.yml is hardcoded as 46.224.110.38
+          # Relay host comes from the RELAY_SSH_HOST secret
           ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              "root@46.224.110.38" \
+              "root@${{ secrets.RELAY_SSH_HOST }}" \
               "journalctl -u yaver-relay -n 80 --no-pager | tail -60; echo '--- nginx access (last 8) ---'; tail -n 8 /var/log/nginx/access.log 2>/dev/null || tail -n 8 /var/log/nginx/yaver-relay-access.log 2>/dev/null || echo '(no access log found)'; echo '--- nginx error (last 8) ---'; tail -n 8 /var/log/nginx/error.log 2>/dev/null || echo '(no error log found)'; echo '--- nginx config for SSE ---'; grep -A3 'proxy_buffering\\|location /' /etc/nginx/sites-enabled/* 2>/dev/null | head -30"

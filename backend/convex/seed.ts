@@ -62,7 +62,7 @@ export const all = mutation({
     const defaults: Record<string, string> = {
       relay_servers: JSON.stringify([{
         id: "public-free",
-        quicAddr: "46.224.110.38:4433",
+        quicAddr: "relay.example.com:4433",
         httpUrl: "https://public.yaver.io",
         region: "eu",
         priority: 1,

@@ -33,7 +33,7 @@ type Config struct {
 	// public IP (Hetzner, EC2, …) where you want `yaver ssh @alias`
 	// and the dashboard Shell tooltip to resolve to the public host
 	// without standing up a Cloudflare tunnel. Each entry can be a
-	// bare host (e.g. "157.180.114.179") or an https URL — the
+	// bare host (e.g. "198.51.100.20") or an https URL — the
 	// resolver strips schemes + trailing slashes for SSH use.
 	PublicEndpoints []string `json:"public_endpoints,omitempty"`
 	MacOSPermissionOnboardingDone bool                     `json:"macos_permission_onboarding_done,omitempty"`

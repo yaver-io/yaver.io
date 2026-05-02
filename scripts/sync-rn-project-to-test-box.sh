@@ -12,7 +12,8 @@
 #
 # Required env:
 #   SSH_KEY      — private key (default ~/.ssh/hetzner_ci_ed25519)
-#   REMOTE_HOST  — agent hostname or IP (default 157.180.114.179)
+#   REMOTE_HOST  — agent hostname or IP. Set REMOTE_HOST=… in your
+#                  environment to override the default placeholder.
 #   REMOTE_USER  — SSH user (default root)
 #
 # After sync, runs `npm install --no-audit --no-fund` remotely so Metro
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/hetzner_ci_ed25519}"
-REMOTE_HOST="${REMOTE_HOST:-157.180.114.179}"
+REMOTE_HOST="${REMOTE_HOST:-198.51.100.20}"
 REMOTE_USER="${REMOTE_USER:-root}"
 
 if [ "$#" -lt 1 ]; then

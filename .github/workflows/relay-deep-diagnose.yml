@@ -19,7 +19,7 @@ jobs:
         run: |
           ssh -i "$CI_KEY_PATH" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              root@46.224.110.38 bash -s <<'REMOTE'
+              root@${{ secrets.RELAY_SSH_HOST }} bash -s <<'REMOTE'
           set +e
           echo "=== running yaver-relay process ==="
           ps -eo pid,etime,args | grep -i yaver-relay | grep -v grep

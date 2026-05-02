@@ -6,7 +6,7 @@ trying to ship a TestFlight build, the short form is:
 
 ```bash
 yaver vault add APP_STORE_KEY_PATH --project mobile --value ~/keys/AuthKey.p8
-yaver vault add APP_STORE_KEY_ID   --project mobile --value 77Z6B543D5
+yaver vault add APP_STORE_KEY_ID   --project mobile --value <your-key-id>
 yaver deploy generate --app mobile --target testflight --out scripts/deploy-mobile-ios.sh
 bash scripts/deploy-mobile-ios.sh
 ```
@@ -85,8 +85,8 @@ passphrase, the agent can't decrypt the old file. Back up with
 The same `name` is allowed under multiple projects. A common pattern:
 
 ```
-(global)   APPLE_TEAM_ID     = 5SJZ4KA39A      # shared across all iOS projects
-mobile     APP_STORE_KEY_ID  = 77Z6B543D5      # mobile-specific
+(global)   APPLE_TEAM_ID     = ABCDEF1234      # shared across all iOS projects
+mobile     APP_STORE_KEY_ID  = XYZ9876543      # mobile-specific
 sfmg       APP_STORE_KEY_ID  = ABC0123XYZ      # different app, different key
 ```
 

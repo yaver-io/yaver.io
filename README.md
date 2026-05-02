@@ -247,10 +247,10 @@ release minutes for no shipped build.
 Always ship iOS from this Mac with the existing local script:
 
 ```bash
-export APP_STORE_KEY_PATH="$HOME/Workspace/talos/mobile/ios/AuthKey_77Z6B543D5.p8"
-export APP_STORE_KEY_ID="77Z6B543D5"
-export APP_STORE_KEY_ISSUER="7bd9329e-49b0-440a-97ed-873c74244c12"
-export APPLE_TEAM_ID="5SJZ4KA39A"
+export APP_STORE_KEY_PATH="<your-apple-key-path>"
+export APP_STORE_KEY_ID="<your-apple-key-id>"
+export APP_STORE_KEY_ISSUER="<your-issuer-uuid>"
+export APPLE_TEAM_ID="<your-apple-team-id>"
 ./scripts/deploy-testflight.sh
 ```
 
@@ -1161,9 +1161,9 @@ CI bill.
 ```bash
 # 1. Put credentials in the vault (project-scoped).
 yaver vault add APP_STORE_KEY_PATH   --project mobile --value ~/keys/AuthKey.p8
-yaver vault add APP_STORE_KEY_ID     --project mobile --value 77Z6B543D5
-yaver vault add APP_STORE_KEY_ISSUER --project mobile --value 7bd9...
-yaver vault add APPLE_TEAM_ID        --project mobile --value 5SJZ4KA39A
+yaver vault add APP_STORE_KEY_ID     --project mobile --value <your-key-id>
+yaver vault add APP_STORE_KEY_ISSUER --project mobile --value <your-issuer-uuid>
+yaver vault add APPLE_TEAM_ID        --project mobile --value <your-team-id>
 
 # 2. Check the toolchain + vault are ready to ship.
 yaver doctor build --target testflight --project mobile

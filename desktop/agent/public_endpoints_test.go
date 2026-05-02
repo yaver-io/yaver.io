@@ -7,10 +7,10 @@ import (
 
 func TestConfiguredPublicEndpointsManualList(t *testing.T) {
 	cfg := &Config{
-		PublicEndpoints: []string{"157.180.114.179", "https://example.com/"},
+		PublicEndpoints: []string{"198.51.100.20", "https://example.com/"},
 	}
 	got := configuredPublicEndpoints(cfg)
-	want := []string{"157.180.114.179", "https://example.com"}
+	want := []string{"198.51.100.20", "https://example.com"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("manual: got %#v, want %#v", got, want)
 	}
@@ -18,13 +18,13 @@ func TestConfiguredPublicEndpointsManualList(t *testing.T) {
 
 func TestConfiguredPublicEndpointsManualBeatsCloudflare(t *testing.T) {
 	cfg := &Config{
-		PublicEndpoints: []string{"157.180.114.179"},
+		PublicEndpoints: []string{"198.51.100.20"},
 		CloudflareTunnels: []CloudflareTunnelConfig{
 			{URL: "https://tunnel.example.com", Priority: 5},
 		},
 	}
 	got := configuredPublicEndpoints(cfg)
-	if len(got) < 1 || got[0] != "157.180.114.179" {
+	if len(got) < 1 || got[0] != "198.51.100.20" {
 		t.Fatalf("manual entry must come first, got %#v", got)
 	}
 }

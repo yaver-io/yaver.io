@@ -45,12 +45,16 @@ func TestGuestScopeAllowList(t *testing.T) {
 	// audit (H-5) reclassified it as owner-only — clone/credentials/delete
 	// are too dangerous to hand to a teammate-tier guest. Both scopes
 	// must now reject the prefix.
+	// /repos/clone, /repos/credentials, /repos/delete are owner-only.
+	// /repos/list (read-only enumeration) is allowed for full-scope
+	// guests so the mobile UI can show "what repos are on the dev
+	// machine"; feedback-only guests still cannot reach it.
 	mustBlockBothRepos := []string{
 		"/repos",
-		"/repos/list",
 		"/repos/clone",
 		"/repos/credentials",
 		"/repos/delete",
+		"/repos/pull",
 	}
 	for _, path := range mustBlockBothRepos {
 		for _, scope := range []string{GuestScopeFeedbackOnly, GuestScopeFull} {
@@ -58,6 +62,12 @@ func TestGuestScopeAllowList(t *testing.T) {
 				t.Errorf("%s scope must NOT reach %q — owner-only per H-5", scope, path)
 			}
 		}
+	}
+	if !isGuestAllowedPathForScope("/repos/list", GuestScopeFull) {
+		t.Error("/repos/list must remain reachable for full-scope guests (mobile UI)")
+	}
+	if isGuestAllowedPathForScope("/repos/list", GuestScopeFeedbackOnly) {
+		t.Error("/repos/list must NOT be reachable for feedback-only guests")
 	}
 
 	// /agent/runners is read-only loadout enumeration. Exact-match-only

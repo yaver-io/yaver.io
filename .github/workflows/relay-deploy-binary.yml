@@ -73,15 +73,15 @@ jobs:
           # never drift away from the repo's source of truth.
           scp -i "$CI_KEY_PATH" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              /tmp/relay-dl/yaver-relay root@46.224.110.38:/tmp/yaver-relay.new
+              /tmp/relay-dl/yaver-relay root@${{ secrets.RELAY_SSH_HOST }}:/tmp/yaver-relay.new
           scp -i "$CI_KEY_PATH" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              relay/deploy/yaver-relay.service root@46.224.110.38:/tmp/yaver-relay.service.new
+              relay/deploy/yaver-relay.service root@${{ secrets.RELAY_SSH_HOST }}:/tmp/yaver-relay.service.new
 
           # Swap + restart in one shot to minimize downtime
           ssh -i "$CI_KEY_PATH" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              root@46.224.110.38 bash -s <<'REMOTE'
+              root@${{ secrets.RELAY_SSH_HOST }} bash -s <<'REMOTE'
           set -euo pipefail
           BIN=/opt/yaver-relay/yaver-relay
           NEW=/tmp/yaver-relay.new
