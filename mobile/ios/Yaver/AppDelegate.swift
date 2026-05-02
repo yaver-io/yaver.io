@@ -387,17 +387,17 @@ public class AppDelegate: ExpoAppDelegate {
       return btn
     }
 
-    // Two options: stay in the guest app and open its bundled feedback
-    // SDK in-place ("Feedback"), or exit back to the Yaver shell
-    // ("Back to Yaver"). Reload was previously a 3rd option but it
-    // belongs inside the guest SDK, not the host overlay — when the
-    // guest's feedback modal is open it owns the reload flow.
+    // Three options: in-place feedback (vibe + reload + screenshot),
+    // coding-agent setup (claude/codex/opencode auth + opencode config),
+    // and exit back to the Yaver shell.
     let feedbackBtn = makeButton(title: "Feedback", icon: "bubble.left.and.bubble.right", color: accentColor,
                                  action: #selector(handleFeedbackTap))
+    let agentsBtn = makeButton(title: "Agents", icon: "person.crop.circle.badge.checkmark", color: accentColor,
+                               action: #selector(handleAgentsTap))
     let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
                              action: #selector(handleBackTap))
 
-    let stack = UIStackView(arrangedSubviews: [feedbackBtn, backBtn])
+    let stack = UIStackView(arrangedSubviews: [feedbackBtn, agentsBtn, backBtn])
     stack.axis = .vertical
     stack.spacing = 10
     stack.distribution = .fillEqually
@@ -470,6 +470,13 @@ public class AppDelegate: ExpoAppDelegate {
     // UserDefaults by YaverBundleLoader / auth.ts.
     guard let win = self.window else { return }
     YaverFeedbackPane.shared.present(in: win)
+  }
+
+  @objc private func handleAgentsTap() {
+    NSLog("[AppDelegate] Agents tapped — presenting native agents pane")
+    dismissOverlay()
+    guard let win = self.window else { return }
+    YaverAgentsPane.shared.present(in: win)
   }
 
   /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),

@@ -70,6 +70,10 @@ final class YaverFeedbackPane: NSObject {
     bg.layer.cornerRadius = 22
     bg.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
     bg.clipsToBounds = true
+    // Tint the blur with a deep purple-black so the card feels rooted
+    // in Yaver's accent palette rather than the system's neutral dark
+    // material. ~RGB(14,12,28) at 60% opacity layered onto the blur.
+    bg.contentView.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.110, alpha: 0.62)
 
     // Drag handle at top
     let handle = UIView()
@@ -345,7 +349,7 @@ final class YaverFeedbackPane: NSObject {
     req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-    URLSession.shared.dataTask(with: req) { _, resp, err in
+    URLSession.shared.dataTask(with: req) { data, resp, err in
       DispatchQueue.main.async {
         self.inFlight = false
         if let err = err {
@@ -356,7 +360,17 @@ final class YaverFeedbackPane: NSObject {
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
         } else {
           let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-          self.setStatus("Send failed (HTTP \(code))", tone: .error)
+          // Surface the agent's error body so failures aren't opaque
+          // (auth failure, missing runner, no workDir, etc. all return
+          // structured JSON {error: "..."} the user needs to see).
+          var detail = "HTTP \(code)"
+          if let data = data, let body = String(data: data, encoding: .utf8) {
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+              detail = "HTTP \(code): \(trimmed.prefix(220))"
+            }
+          }
+          self.setStatus("Send failed — \(detail)", tone: .error)
         }
       }
     }.resume()
