@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 )
 
 type runnerAuthEntry struct {
@@ -22,6 +23,10 @@ type runnerAuthEntry struct {
 func runRunnerAuth(args []string) {
 	if len(args) == 0 {
 		printRunnerAuthUsage()
+		return
+	}
+	if target, runner, extra, ok := parseRunnerAuthQuickFlow(args); ok {
+		runRunnerAuthQuickFlow(target, runner, extra)
 		return
 	}
 	switch args[0] {
@@ -45,6 +50,7 @@ func printRunnerAuthUsage() {
 
 Usage:
   yaver runner-auth status [--target <deviceId>]
+  yaver runner-auth <deviceId|name|alias> <claude|claude-code|codex>
   yaver runner-auth set claude [--target <deviceId>] [--anthropic-api-key <key> | --anthropic-auth-token <token> | --claude-code-oauth-token <token>]
   yaver runner-auth set codex [--target <deviceId>] --openai-api-key <key>
   yaver runner-auth set opencode [--target <deviceId>] [--openai-api-key <key>] [--anthropic-api-key <key>] [--glm-api-key <key>] [--zai-api-key <key>]
@@ -52,16 +58,34 @@ Usage:
   yaver runner-auth setup codex [--target <deviceId>] [--openai-api-key <key>] [--no-install] [--no-login] [--no-mcp]
 
 Examples:
+  yaver runner-auth test codex
+  yaver runner-auth test claude-code
   yaver runner-auth set codex --openai-api-key $OPENAI_API_KEY
   yaver runner-auth setup codex --target cloud-12345678 --openai-api-key $OPENAI_API_KEY
   yaver runner-auth set opencode --glm-api-key $GLM_API_KEY --target cloud-12345678
   yaver runner-auth status --target cloud-12345678
 
 Notes:
+  - <device> <runner> is the interactive remote auth shortcut: it checks local Yaver auth, checks the target machine's Yaver auth, runs remote 'yaver auth --headless' over 'yaver ssh' if needed, then starts the remote Claude/Codex browser auth flow and prints the link/code.
   - Values are stored in the target machine's Yaver vault.
   - setup also installs the runner when missing and wires Yaver into the runner's MCP config when supported.
   - --target uses the existing Yaver remote-agent channel; it does not require SSH.
 `)
+}
+
+func parseRunnerAuthQuickFlow(args []string) (target string, runner string, extra []string, ok bool) {
+	if len(args) < 2 {
+		return "", "", nil, false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "status", "ls", "list", "set", "setup", "help", "-h", "--help":
+		return "", "", nil, false
+	}
+	runner = normalizeRunnerAuthName(args[1])
+	if runner != "claude" && runner != "codex" {
+		return "", "", nil, false
+	}
+	return strings.TrimSpace(args[0]), runner, args[2:], true
 }
 
 func normalizeRunnerAuthName(name string) string {
@@ -257,6 +281,271 @@ func stringValue(v any) string {
 func boolValue(v any) bool {
 	b, _ := v.(bool)
 	return b
+}
+
+func ensureRunnerAuthLocalConfig() (*Config, error) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		cfg = &Config{}
+	}
+	if strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+		cfg.ConvexSiteURL = defaultConvexSiteURL
+	}
+	if strings.TrimSpace(cfg.AuthToken) == "" || strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+		fmt.Println("Yaver is not signed in locally. Starting `yaver auth` first...")
+		runAuth(nil)
+		cfg, err = LoadConfig()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		return nil, fmt.Errorf("local Yaver auth did not complete")
+	}
+	return cfg, nil
+}
+
+func resolveRunnerAuthTarget(targetHint string) (*Config, *DeviceInfo, error) {
+	cfg, err := ensureRunnerAuthLocalConfig()
+	if err != nil {
+		return nil, nil, err
+	}
+	devices, err := listDevicesEnsuringAuth(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	target, err := resolveDevice(targetHint, devices)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, target, nil
+}
+
+func summarizeRunnerAuthRow(row runnerAuthStatusRow) string {
+	if !row.Installed {
+		return "not installed"
+	}
+	if row.Ready {
+		if strings.TrimSpace(row.AuthSource) != "" {
+			return "ready via " + strings.TrimSpace(row.AuthSource)
+		}
+		return "ready"
+	}
+	if strings.TrimSpace(row.Detail) != "" {
+		return strings.TrimSpace(row.Detail)
+	}
+	if strings.TrimSpace(row.Error) != "" {
+		return strings.TrimSpace(row.Error)
+	}
+	if strings.TrimSpace(row.Warning) != "" {
+		return strings.TrimSpace(row.Warning)
+	}
+	return "installed but not ready"
+}
+
+func findRunnerAuthStatusRow(rows []runnerAuthStatusRow, runner string) (runnerAuthStatusRow, bool) {
+	runner = normalizeRunnerAuthName(runner)
+	for _, row := range rows {
+		if normalizeRunnerAuthName(row.ID) == runner {
+			return row, true
+		}
+	}
+	return runnerAuthStatusRow{}, false
+}
+
+func describeDeviceReauthProbe(probe deviceReauthProbe) string {
+	switch probe.State {
+	case "healthy":
+		return "signed in"
+	case "ready-to-connect":
+		return "signed in (agent heartbeat catching up)"
+	case "bootstrap":
+		return "not signed in yet"
+	case "yaver-auth-expired":
+		return "signed out / token expired"
+	case "offline":
+		return "offline"
+	case "unreachable":
+		return "online but unreachable"
+	default:
+		if strings.TrimSpace(probe.Error) != "" {
+			return probe.State + ": " + strings.TrimSpace(probe.Error)
+		}
+		return probe.State
+	}
+}
+
+func runRemoteHeadlessYaverAuthOverSSH(targetHint string) error {
+	fmt.Printf("Target Yaver auth is missing. Running remote `yaver auth --headless` over `yaver ssh %s`...\n\n", targetHint)
+	yaverPath := findYaverBinary()
+	cmd := osexec.Command(yaverPath, "ssh", targetHint, "--", "yaver", "auth", "--headless")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func waitForRemoteYaverAuth(cfg *Config, target *DeviceInfo, timeout time.Duration) (deviceReauthProbe, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		probe := probeOwnedDeviceReauth(cfg, target)
+		switch probe.State {
+		case "healthy", "ready-to-connect":
+			return probe, nil
+		}
+		if time.Now().After(deadline) {
+			return probe, fmt.Errorf("remote Yaver auth still not ready: %s", describeDeviceReauthProbe(probe))
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+func runRunnerAuthQuickFlow(targetHint, runner string, extra []string) {
+	if len(extra) > 0 {
+		fmt.Fprintf(os.Stderr, "runner-auth: unexpected extra arguments after %s %s: %s\n", targetHint, runner, strings.Join(extra, " "))
+		os.Exit(1)
+	}
+	cfg, target, err := resolveRunnerAuthTarget(targetHint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner-auth: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Machine: %s (%s)\n", target.Name, target.DeviceID[:8])
+	if strings.TrimSpace(target.Alias) != "" {
+		fmt.Printf("Alias:   %s\n", target.Alias)
+	}
+
+	probe := probeOwnedDeviceReauth(cfg, target)
+	fmt.Printf("Yaver:   %s\n", describeDeviceReauthProbe(probe))
+	if strings.TrimSpace(probe.Error) != "" {
+		fmt.Printf("Detail:  %s\n", strings.TrimSpace(probe.Error))
+	}
+
+	switch probe.State {
+	case "bootstrap", "yaver-auth-expired":
+		if err := runRemoteHeadlessYaverAuthOverSSH(targetHint); err != nil {
+			fmt.Fprintf(os.Stderr, "runner-auth: remote yaver auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		probe, err = waitForRemoteYaverAuth(cfg, target, 2*time.Minute)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "runner-auth: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nYaver:   %s\n", describeDeviceReauthProbe(probe))
+	case "offline", "unreachable":
+		fmt.Fprintf(os.Stderr, "runner-auth: target machine is %s\n", describeDeviceReauthProbe(probe))
+		os.Exit(1)
+	}
+
+	rows, err := fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner-auth: fetch remote runner status: %v\n", err)
+		os.Exit(1)
+	}
+	row, ok := findRunnerAuthStatusRow(rows, runner)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "runner-auth: remote machine did not report %s status\n", runner)
+		os.Exit(1)
+	}
+	fmt.Printf("%s:  %s\n\n", runner, summarizeRunnerAuthRow(row))
+	if !row.Installed {
+		fmt.Fprintf(os.Stderr, "runner-auth: %s is not installed on %s. Run `yaver runner-auth setup %s --target %s` first.\n", runner, target.Name, runner, target.DeviceID)
+		os.Exit(1)
+	}
+
+	if err := runCodeBrowserAuthFlow(target.DeviceID, runner); err != nil {
+		fmt.Fprintf(os.Stderr, "runner-auth: %v\n", err)
+		os.Exit(1)
+	}
+
+	rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner-auth: recheck remote runner status: %v\n", err)
+		os.Exit(1)
+	}
+	row, _ = findRunnerAuthStatusRow(rows, runner)
+	fmt.Printf("%s:  %s\n", runner, summarizeRunnerAuthRow(row))
+}
+
+func runRunnerQuickFlow(targetHint, runner string, extra []string) {
+	if len(extra) > 0 {
+		fmt.Fprintf(os.Stderr, "runner: unexpected extra arguments after %s %s: %s\n", targetHint, runner, strings.Join(extra, " "))
+		os.Exit(1)
+	}
+	cfg, target, err := resolveRunnerAuthTarget(targetHint)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Machine: %s (%s)\n", target.Name, target.DeviceID[:8])
+	if strings.TrimSpace(target.Alias) != "" {
+		fmt.Printf("Alias:   %s\n", target.Alias)
+	}
+
+	probe := probeOwnedDeviceReauth(cfg, target)
+	fmt.Printf("Yaver:   %s\n", describeDeviceReauthProbe(probe))
+	if strings.TrimSpace(probe.Error) != "" {
+		fmt.Printf("Detail:  %s\n", strings.TrimSpace(probe.Error))
+	}
+
+	switch probe.State {
+	case "bootstrap", "yaver-auth-expired":
+		if err := runRemoteHeadlessYaverAuthOverSSH(targetHint); err != nil {
+			fmt.Fprintf(os.Stderr, "runner: remote yaver auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		probe, err = waitForRemoteYaverAuth(cfg, target, 2*time.Minute)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nYaver:   %s\n", describeDeviceReauthProbe(probe))
+	case "offline", "unreachable":
+		fmt.Fprintf(os.Stderr, "runner: target machine is %s\n", describeDeviceReauthProbe(probe))
+		os.Exit(1)
+	}
+
+	rows, err := fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner: fetch remote runner status: %v\n", err)
+		os.Exit(1)
+	}
+	row, ok := findRunnerAuthStatusRow(rows, runner)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "runner: remote machine did not report %s status\n", runner)
+		os.Exit(1)
+	}
+	fmt.Printf("%s:  %s\n\n", runner, summarizeRunnerAuthRow(row))
+	if !row.Installed {
+		fmt.Fprintf(os.Stderr, "runner: %s is not installed on %s. Run `yaver runner-auth setup %s --target %s` first.\n", runner, target.Name, runner, target.DeviceID)
+		os.Exit(1)
+	}
+	if !row.AuthConfigured {
+		if err := runCodeBrowserAuthFlow(target.DeviceID, runner); err != nil {
+			fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+			os.Exit(1)
+		}
+		rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "runner: recheck remote runner status: %v\n", err)
+			os.Exit(1)
+		}
+		row, _ = findRunnerAuthStatusRow(rows, runner)
+		fmt.Printf("%s:  %s\n", runner, summarizeRunnerAuthRow(row))
+	}
+	if !row.AuthConfigured {
+		fmt.Fprintf(os.Stderr, "runner: %s still is not authenticated on %s\n", runner, target.Name)
+		os.Exit(1)
+	}
+
+	if err := codeSwitchRunner(target.DeviceID, runner); err != nil {
+		fmt.Fprintf(os.Stderr, "runner: switch remote runner to %s: %v\n", runner, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Active coding runner on %s: %s\n", target.Name, runner)
 }
 
 func runRunnerAuthStatus(args []string) {
