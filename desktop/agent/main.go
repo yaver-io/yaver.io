@@ -6382,9 +6382,24 @@ func runAlias(args []string) {
 // runSSHWrap (not runSSH) because multiregion_orchestrate.go already
 // owns runSSH for the sshpass-based provisioning helper.
 func runSSHWrap(args []string) {
-	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: yaver ssh <device-id|name|alias|user@host> [ssh args...]")
-		os.Exit(1)
+	// Bare `yaver ssh` (no target) and `yaver ssh primary` both resolve
+	// to userSettings.primaryDeviceId (the same value `yaver primary`
+	// surfaces). Empty default lets `yaver ssh -L 5432:...` work too —
+	// passthrough flags after the implicit primary target.
+	if len(args) == 0 || strings.EqualFold(strings.TrimSpace(args[0]), "primary") {
+		resolved, err := resolveSSHPrimary()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		// Replace the primary token (or prepend, if there was none) with
+		// the resolved device handle so the rest of the function flows
+		// the normal alias/deviceId/name path.
+		if len(args) == 0 {
+			args = []string{resolved}
+		} else {
+			args = append([]string{resolved}, args[1:]...)
+		}
 	}
 
 	target := args[0]
@@ -6406,7 +6421,33 @@ func runSSHWrap(args []string) {
 		}
 	}
 
-	host := resolveSSHHost(hostPart)
+	// If the input was an alias ("test") and resolved to a device, try
+	// resolving SSH against the device's canonical name FIRST so users
+	// who already have a Host entry for the registered name (e.g.
+	// `Host yaver-test-ephemeral 157.180.114.179`) get a hit. Falling
+	// straight back to `ssh test` would skip that.
+	resolutionHints := []string{hostPart}
+	if resolvedDevice != nil {
+		if alias := strings.TrimSpace(resolvedDevice.Alias); alias != "" && !strings.EqualFold(alias, hostPart) {
+			resolutionHints = append(resolutionHints, alias)
+		}
+		if name := strings.TrimSpace(resolvedDevice.Name); name != "" && !strings.EqualFold(name, hostPart) {
+			resolutionHints = append(resolutionHints, name)
+		}
+	}
+	host := ""
+	for _, hint := range resolutionHints {
+		if h := resolveSSHHost(hint); h != "" {
+			host = h
+			break
+		}
+	}
+	if host == "" && resolvedDevice != nil && strings.TrimSpace(resolvedDevice.Name) != "" {
+		// Last fallback before raw input: hand ssh the device Name. The
+		// user's ~/.ssh/config probably aliases the registered name
+		// (`Host yaver-test-ephemeral …`).
+		host = resolvedDevice.Name
+	}
 	if host == "" {
 		// Couldn't resolve via Tailscale or Convex — fall through to
 		// whatever the user typed. ssh will give a sensible error if
@@ -6442,6 +6483,69 @@ func runSSHWrap(args []string) {
 		fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// resolveSSHPrimary returns the best handle to pass into the ssh
+// resolution pipeline for `yaver ssh primary` / bare `yaver ssh`.
+//
+// Priority:
+//   1. Convex userSettings.primaryDeviceId — explicit user choice.
+//   2. The single owner device, if exactly one is registered (the
+//      "I just ran yaver auth on my only machine" case).
+//
+// The returned string is whatever the device list considers the most
+// stable handle: alias if present, otherwise device name, otherwise
+// the deviceId. resolveDevice in the caller then takes it from there.
+func resolveSSHPrimary() (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		return "", fmt.Errorf("not signed in — run 'yaver auth' first")
+	}
+	convex := strings.TrimSpace(cfg.ConvexSiteURL)
+	if convex == "" {
+		convex = defaultConvexSiteURL
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	primaryID, _ := primaryGetCurrent(ctx, cfg.AuthToken, convex)
+	devices, derr := listDevices(convex, cfg.AuthToken)
+	if derr != nil {
+		return "", fmt.Errorf("could not list devices: %w", derr)
+	}
+	pickHandle := func(d DeviceInfo) string {
+		if a := strings.TrimSpace(d.Alias); a != "" {
+			return a
+		}
+		if n := strings.TrimSpace(d.Name); n != "" {
+			return n
+		}
+		return d.DeviceID
+	}
+	primaryID = strings.TrimSpace(primaryID)
+	if primaryID != "" {
+		for _, d := range devices {
+			if d.DeviceID == primaryID {
+				return pickHandle(d), nil
+			}
+		}
+		return "", fmt.Errorf("primary device %s is set but not in the device list — run 'yaver primary clear' to reset", primaryID[:min(8, len(primaryID))])
+	}
+	// No explicit primary — fall back to "exactly one owner device" so
+	// fresh single-device users don't have to set one before they can
+	// `yaver ssh`.
+	var owned []DeviceInfo
+	for _, d := range devices {
+		if !d.IsGuest {
+			owned = append(owned, d)
+		}
+	}
+	if len(owned) == 0 {
+		return "", fmt.Errorf("no registered owner devices — run 'yaver serve' on a machine to register it")
+	}
+	if len(owned) > 1 {
+		return "", fmt.Errorf("no primary device set and you have %d devices — run 'yaver primary set' first", len(owned))
+	}
+	return pickHandle(owned[0]), nil
 }
 
 // resolveSSHHost takes a literal target (alias, deviceId, name, or
