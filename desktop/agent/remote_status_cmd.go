@@ -15,8 +15,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	osexec "os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +51,7 @@ type remoteAgentStatusReport struct {
 	LifecycleState   string                 `json:"lifecycleState,omitempty"`
 	NeedsAuth        bool                   `json:"needsAuth,omitempty"`
 	IsOnline         bool                   `json:"isOnline"`
+	SSHReachable     *bool                  `json:"sshReachable,omitempty"`
 	Transport        string                 `json:"transport,omitempty"`
 	BaseURL          string                 `json:"baseUrl,omitempty"`
 	DefaultRunner    string                 `json:"defaultRunner,omitempty"`
@@ -130,6 +133,14 @@ func fetchRemoteAgentStatusByDeviceID(ctx context.Context, deviceID string) (*re
 			Platform: target.Platform,
 			IsOnline: false,
 		}
+		// Probe SSH reachability so the renderer can distinguish
+		// "agent stopped/unauth'd but the box is up" (recommend
+		// `yaver primary auth`) from "box truly unreachable"
+		// (recommend `yaver ssh primary` so the SSH error itself
+		// surfaces). Best-effort — false negatives just downgrade
+		// the hint, never block the status output.
+		reachable := probeSSHReachable(target, 1500*time.Millisecond)
+		report.SSHReachable = &reachable
 		return report, nil
 	}
 	candidates, err := buildRemoteAgentCandidates(cfg, target)
@@ -278,11 +289,20 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	}
 	fmt.Println(header)
 	if !report.IsOnline {
-		// "Bootstrap" not "offline": the device may be perfectly reachable
-		// via SSH/LAN — the agent just hasn't refreshed its heartbeat lately
-		// (auth expired, daemon stopped, etc). True "offline" is when the
-		// box itself is unplugged, which we can't tell from Convex alone.
-		fmt.Println("  status: bootstrap (no recent heartbeat — try `yaver ssh primary`)")
+		// Two sub-states share "no recent heartbeat":
+		//   - bootstrap: box reachable, agent just stopped or its
+		//     Yaver token expired → `yaver primary auth` re-auths
+		//     over SSH and brings the heartbeat back.
+		//   - fully offline: box itself unreachable → `yaver ssh
+		//     primary` surfaces the SSH error so the user can fix
+		//     the underlying network/power issue.
+		// SSHReachable is set by the offline branch of
+		// fetchRemoteAgentStatusByDeviceID via TCP probe of port 22.
+		if report.SSHReachable != nil && *report.SSHReachable {
+			fmt.Println("  status: bootstrap (no recent heartbeat — re-auth with `yaver primary auth`)")
+		} else {
+			fmt.Println("  status: offline (no recent heartbeat, SSH unreachable — try `yaver ssh primary`)")
+		}
 		return
 	}
 	if report.Hostname != "" || report.Platform != "" {
@@ -639,4 +659,153 @@ func classifyRemoteStatusError(err error, target *DeviceInfo) (cause, hint strin
 	default:
 		return "every transport candidate failed", "see `yaver primary status --json` for the raw error list"
 	}
+}
+
+// probeSSHReachable does a quick TCP dial to port 22 against each plausible
+// host for the device, mirroring the resolution pipeline `yaver ssh primary`
+// uses: Tailscale CLI lookup, Tailscale 100.x IPs from the device row,
+// publicEndpoints (skipping yaver.io HTTP relay hostnames which never
+// speak SSH), other LAN IPs, ~/.ssh/config entries (via `ssh -G`), and
+// finally the QUIC host. Returns true on the first successful handshake.
+//
+// Used to distinguish "agent stopped or unauth'd but the box itself is up"
+// (recommend `yaver primary auth`, which SSHes in to re-auth) from "box
+// truly unreachable" (recommend `yaver ssh primary` so the SSH error
+// itself is visible to the user). False negatives just downgrade the
+// hint, never block.
+func probeSSHReachable(target *DeviceInfo, timeout time.Duration) bool {
+	if target == nil {
+		return false
+	}
+	tried := map[string]struct{}{}
+	probe := func(host, port string) bool {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			return false
+		}
+		if port == "" {
+			port = "22"
+		}
+		addr := net.JoinHostPort(host, port)
+		if _, ok := tried[addr]; ok {
+			return false
+		}
+		tried[addr] = struct{}{}
+		conn, err := net.DialTimeout("tcp", addr, timeout)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}
+
+	// 1. Tailscale CLI lookup — handles ephemeral/roaming boxes whose
+	//    100.x IP isn't recorded on the device row but is reachable via
+	//    `tailscale ip <name>`.
+	if tsPath, err := osexec.LookPath("tailscale"); err == nil {
+		for _, name := range []string{strings.TrimSpace(target.Alias), target.Name, strings.TrimSuffix(target.Name, ".local")} {
+			name = strings.TrimSpace(name)
+			if name == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			out, err := osexec.CommandContext(ctx, tsPath, "ip", name).Output()
+			cancel()
+			if err != nil {
+				continue
+			}
+			if ip := firstPreferredTailscaleIP(string(out)); ip != "" {
+				if probe(ip, "22") {
+					return true
+				}
+			}
+		}
+	}
+
+	// 2. Tailscale 100.x IPs from the device row.
+	for _, ip := range target.LocalIps {
+		if strings.HasPrefix(ip, "100.") && strings.Contains(ip, ".") {
+			if probe(ip, "22") {
+				return true
+			}
+		}
+	}
+
+	// 3. Public endpoints — skip yaver.io HTTP relay gateways, which
+	//    terminate HTTPS only and never speak SSH.
+	for _, raw := range target.PublicEndpoints {
+		ep := strings.TrimPrefix(raw, "https://")
+		ep = strings.TrimPrefix(ep, "http://")
+		ep = strings.TrimSuffix(ep, "/")
+		if isYaverHTTPRelayHost(ep) {
+			continue
+		}
+		if probe(ep, "22") {
+			return true
+		}
+	}
+
+	// 4. Other LAN IPs.
+	for _, ip := range target.LocalIps {
+		if ip == "" || strings.HasPrefix(ip, "127.") || ip == "::1" || isLikelyDockerBridgeIP(ip) {
+			continue
+		}
+		if probe(ip, "22") {
+			return true
+		}
+	}
+
+	// 5. ~/.ssh/config — `ssh -G <hint>` returns the merged config
+	//    (HostName + Port) without connecting. This is the path
+	//    `yaver ssh primary` uses as its final fallback when the
+	//    device row has nothing routable, and it's how a user with
+	//    `Host yaver-test-ephemeral 157.180.114.179` reaches the box.
+	if sshPath, err := osexec.LookPath("ssh"); err == nil {
+		for _, hint := range []string{strings.TrimSpace(target.Alias), target.Name, target.DeviceID} {
+			hint = strings.TrimSpace(hint)
+			if hint == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+			out, err := osexec.CommandContext(ctx, sshPath, "-G", hint).Output()
+			cancel()
+			if err != nil {
+				continue
+			}
+			host, port := parseSSHGOutput(string(out))
+			// ssh -G echoes the input as `hostname` when no Host
+			// stanza matches — only act on it if it's not literally
+			// the input we already exhausted via the device row.
+			if host == "" || strings.EqualFold(host, hint) {
+				continue
+			}
+			if probe(host, port) {
+				return true
+			}
+		}
+	}
+
+	// 6. QUIC host as a last resort — usually a public IP the agent
+	//    registered when it bound its QUIC server.
+	if target.QuicHost != "" && target.QuicHost != "0.0.0.0" && !isLikelyDockerBridgeIP(target.QuicHost) {
+		if probe(target.QuicHost, "22") {
+			return true
+		}
+	}
+	return false
+}
+
+// parseSSHGOutput pulls the resolved hostname + port out of `ssh -G <hint>`
+// output. The output is `key value` lines; we only need `hostname` and
+// `port`. Empty strings on missing keys.
+func parseSSHGOutput(out string) (host, port string) {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "hostname ") {
+			host = strings.TrimSpace(strings.TrimPrefix(line, "hostname "))
+		} else if strings.HasPrefix(line, "port ") {
+			port = strings.TrimSpace(strings.TrimPrefix(line, "port "))
+		}
+	}
+	return host, port
 }
