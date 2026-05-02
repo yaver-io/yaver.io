@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.127"
+const version = "1.99.128"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -234,7 +234,10 @@ func main() {
 	case "shutdown":
 		runShutdown()
 	case "ping":
-		runPing(os.Args[2:])
+		// New-style reachability ping when invoked with a positional hint
+		// and no legacy flags: `yaver ping <alias|deviceId|name>`.
+		// Legacy QUIC ping (-c, --device, --relay) keeps its old behavior.
+		runPingDispatch(os.Args[2:])
 	case "attach":
 		runAttach(os.Args[2:])
 	case "code":

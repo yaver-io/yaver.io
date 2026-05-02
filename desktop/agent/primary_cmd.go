@@ -48,6 +48,9 @@ func runPrimary(args []string) {
 	case "auth":
 		runPrimaryAuth(ctx, args[1:])
 		return
+	case "ping":
+		runPrimaryPing(ctx, args[1:])
+		return
 	case "signout", "logout":
 		runPrimarySignout(ctx, args[1:])
 		return

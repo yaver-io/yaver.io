@@ -657,7 +657,12 @@ func classifyRemoteStatusError(err error, target *DeviceInfo) (cause, hint strin
 	case strings.Contains(msg, "401") || strings.Contains(msg, "403"):
 		return "agent rejected our auth token", "your local CLI's session may be stale — run `yaver auth` here, or `yaver primary auth` if the box is the one with bad auth"
 	default:
-		return "every transport candidate failed", "see `yaver primary status --json` for the raw error list"
+		// Generic transport failure with no specific cue. The most
+		// common cause we've actually seen is auth expired on the
+		// remote (relay refuses to bridge unregistered tunnels and
+		// the agent's tunnel registration depends on a valid Convex
+		// session). `--json` is still suggested for the raw list.
+		return "every transport candidate failed", "run `yaver primary auth` to re-sign in on the primary device, or `yaver primary status --json` for the raw error list"
 	}
 }
 
