@@ -4555,6 +4555,28 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		log.Printf("[MCP] Task resumed: %s (session=%s)", args.TaskID, task.SessionID)
 		return mcpToolResult(fmt.Sprintf("Task resumed. Task ID: %s", task.ID))
 
+	case "wire_detect":
+		// List USB-attached phones on the agent's host. See mcp_wire_tools.go.
+		out, err := mcpWireDetect()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wire_push":
+		// Build + install a self-contained native binary onto a USB-attached
+		// phone. Long-running; captures output to ~/.yaver/logs/wire-push-*.log
+		// and returns the log path + tail. See mcp_wire_tools.go.
+		var args mcpWirePushArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWirePush(args)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
 	case "fork_task":
 		// Runtime agent switch over MCP. Same shape as POST /tasks/{id}/fork.
 		// Returns a structured object so calling AI agents can chain follow-ups

@@ -101,6 +101,50 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "wire_detect",
+			"description": "List USB-cable-attached iPhones/iPads (xcrun devicectl, falls back to xctrace) plus Android devices (adb devices -l) on the agent's host machine. Skips simulators/emulators and WiFi-paired devices. Returns {devices:[{udid,name,platform,os}], count, hint}. Useful before calling wire_push to know which device IDs you can target. Same data the CLI's `yaver wire detect --json` returns.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "wire_push",
+			"description": "Build a self-contained native binary (xcodebuild Release / gradle installRelease) and install it on a USB-attached phone via the agent's host machine. No Metro / dev server is involved — JS is bundled into the .app/.apk at build time. Auto-detects the framework (Expo, React Native, Flutter, native iOS, native Android) and walks into common subdirs (mobile/, app/, apps/*, packages/*) when the path itself isn't a mobile project. Long-running (5-30 min); captures stdout/stderr to ~/.yaver/logs/wire-push-*.log and returns the path + last 30 lines so you can grep for errors. Returns {ok, exit_code, device, platform, stack, log_path, log_tail, elapsed_sec}.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Project path. Empty = the agent's current workdir. Walks one level into mobile/, app/, apps/*, packages/* if the given path isn't a mobile project itself.",
+					},
+					"device": map[string]interface{}{
+						"type":        "string",
+						"description": "Specific device UDID (iOS) or serial (Android). Empty = first attached. Run wire_detect first to see your options.",
+					},
+					"platform": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "ios", "android"},
+						"description": "Force a platform when the project supports both. Empty = auto-pick (native projects pick by stack; cross-platform projects pick ios on macOS, android elsewhere).",
+					},
+					"config": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "Debug", "Release"},
+						"description": "Build configuration. Default Release (self-contained binary, no Metro). Pass Debug only when iterating with a running Metro dev server.",
+					},
+					"no_launch": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Install the app but don't launch it after. Default false.",
+					},
+					"timeout_sec": map[string]interface{}{
+						"type":        "integer",
+						"description": "Hard timeout in seconds. Default 1800 (30 min). Cold-cache xcodebuild + pod install + hermesc compile easily hits 20+ min on first run.",
+						"minimum":     60,
+					},
+				},
+			},
+		},
+		{
 			"name":        "fork_task",
 			"description": "Switch the coding agent (claude/codex/opencode) for an existing task. Creates a NEW child task running on the requested runner with a bounded recent-context handoff (last few turns + assistant tail) — the parent task stays immutable. Use this instead of continue_task when the user wants a different runner/model/mode mid-conversation. Claude/Codex/OpenCode don't share session formats, so an in-place runner swap would corrupt session state. Returns the child task ID + runner + how many words of context were carried.",
 			"inputSchema": map[string]interface{}{
