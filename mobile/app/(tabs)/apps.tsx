@@ -25,6 +25,7 @@ import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
+import { isActiveDevServerStatus } from "../../src/lib/devServerState";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -381,7 +382,7 @@ export default function AppsScreen() {
           quicClient.getDevServerStatus(),
           quicClient.getMobileWorkerPreviewSession(),
         ]);
-        if (mounted) setDevStatus(status?.running ? status : null);
+        if (mounted) setDevStatus(isActiveDevServerStatus(status) ? status : null);
         if (mounted) setWorkerSession(session);
       } catch {
         if (mounted) setDevStatus(null);
@@ -1366,6 +1367,8 @@ export default function AppsScreen() {
   const currentProject = projects.find((project) => project.path === devStatus?.workDir) ?? null;
   const runningProject = currentProject?.name ?? devStatus?.workDir?.split("/").pop() ?? devStatus?.framework ?? "App";
   const runningSecondClassGuidance = secondClassGuidance(devStatus?.framework, isDirectConnection);
+  const devServerBuilding = devStatus?.building === true;
+  const devServerBusy = nativeLoading || devServerBuilding;
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
@@ -1375,18 +1378,22 @@ export default function AppsScreen() {
         {devStatus && (
           <View style={[s.card, s.activeCard]}>
             <View style={s.cardHeader}>
-              <View style={[s.statusDot, { backgroundColor: "#22c55e" }]} />
+              <View style={[s.statusDot, { backgroundColor: devServerBuilding ? "#eab308" : "#22c55e" }]} />
               <View style={s.cardTitleContainer}>
                 <Text style={s.cardTitle}>{runningProject}</Text>
                 <Text style={s.cardMeta}>
-                  {devStatus.framework} · port {devStatus.port} · hot reload {devStatus.hotReload ? "on" : "off"}
+                  {devServerBuilding
+                    ? `${devStatus.framework} · compiling for device`
+                    : `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`}
                 </Text>
                 <Text style={[s.cardMeta, { color: "#86efac" }]}>
-                  mode · {isHermesMobileFramework(devStatus.framework)
-                    ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
-                    : devStatus.framework === "flutter"
-                      ? "LAN app reload (second class)"
-                      : "native mobile flow"}
+                  mode · {devServerBuilding
+                    ? "build in progress"
+                    : isHermesMobileFramework(devStatus.framework)
+                      ? (devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bundle in Yaver")
+                      : devStatus.framework === "flutter"
+                        ? "LAN app reload (second class)"
+                        : "native mobile flow"}
                 </Text>
                 {devStatus.iosInstallReason ? (
                   <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
@@ -1415,8 +1422,8 @@ export default function AppsScreen() {
             {(() => {
               const isFlutterRunning = devStatus.framework === "flutter";
               const flutterBlocked = isFlutterRunning && !isDirectConnection;
-              const openDisabled = nativeLoading || flutterBlocked;
-              const reloadDisabled = flutterBlocked;
+              const openDisabled = devServerBusy || flutterBlocked;
+              const reloadDisabled = devServerBusy || flutterBlocked;
               const openLabel = isFlutterRunning ? "Flush to App" : "Open in Yaver";
               return (
                 <>
@@ -1426,10 +1433,12 @@ export default function AppsScreen() {
                       onPress={handleOpen}
                       disabled={openDisabled}
                     >
-                      {nativeLoading ? (
+                      {devServerBusy ? (
                         <>
                           <ActivityIndicator size="small" color="#000" />
-                          <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>Building...</Text>
+                          <Text style={[s.openBtnText, { fontSize: 11, marginLeft: 6 }]}>
+                            {devServerBuilding && !nativeLoading ? "Compiling..." : "Building..."}
+                          </Text>
                         </>
                       ) : (
                         <Text style={s.openBtnText}>{openLabel}</Text>
@@ -1468,13 +1477,15 @@ export default function AppsScreen() {
                 62.8% (953/1217)"). The second line is what the user actually
                 wants to see when a build seems "stuck" — it confirms whether
                 the agent is doing useful work or genuinely hung. */}
-            {nativeLoading && (
+            {devServerBusy && (
               <View style={s.progressContainer}>
                 <View style={s.progressTrack}>
                   <View style={[s.progressFill, { width: `${Math.max(buildProgress * 100, 5)}%` }]} />
                 </View>
                 {loadingStatus ? (
                   <Text style={s.progressText} numberOfLines={1}>{loadingStatus}</Text>
+                ) : devServerBuilding ? (
+                  <Text style={s.progressText} numberOfLines={1}>Build is still running on your machine...</Text>
                 ) : null}
                 {bundlerLine ? (
                   <Text

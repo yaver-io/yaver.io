@@ -15,6 +15,7 @@ import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
 import { loadApp, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
+import { isActiveDevServerStatus } from "../lib/devServerState";
 import { VibePreviewModal } from "./VibePreviewModal";
 
 // Web frameworks where the vibe-preview modal makes sense — chromedp on
@@ -91,7 +92,7 @@ export function DevPreview() {
     const poll = async () => {
       const s = await quicClient.getDevServerStatus();
       if (!mounted) return;
-      const isActive = s?.running === true || s?.building === true;
+      const isActive = isActiveDevServerStatus(s);
       setStatus(isActive ? s : null);
 
       // Auto-show banner when dev server first starts
@@ -702,7 +703,7 @@ export function useDevServerStatus() {
     let mounted = true;
     const poll = async () => {
       const s = await quicClient.getDevServerStatus();
-      if (mounted) setStatus(s?.running ? s : null);
+      if (mounted) setStatus(isActiveDevServerStatus(s) ? s : null);
     };
     poll();
     const interval = setInterval(poll, 5000);
