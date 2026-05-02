@@ -51,6 +51,12 @@ func runPrimary(args []string) {
 	case "ping":
 		runPrimaryPing(ctx, args[1:])
 		return
+	case "projects":
+		runPrimaryProjects(ctx, args[1:], false)
+		return
+	case "mobiles":
+		runPrimaryProjects(ctx, args[1:], true)
+		return
 	case "signout", "logout":
 		runPrimarySignout(ctx, args[1:])
 		return
@@ -265,6 +271,314 @@ func runPrimaryStop(ctx context.Context, args []string) {
 	fmt.Printf("Primary %s stopped. Restart from the box with `yaver serve` (or via systemd/launchd if installed).\n", label)
 }
 
+// runPrimaryProjects implements both `yaver primary projects` (every
+// project on the box) and `yaver primary mobiles` (mobile-capable filter).
+//
+// The agent already serves /projects (general scanner — flags monorepos,
+// branches, tags, subframeworks) and /projects/mobile (Expo / RN / Flutter
+// / Swift / Kotlin only — used by the mobile Hot Reload tab). This wires
+// the same surfaces to the CLI so we can confirm discovery on a remote
+// primary box without opening the phone — handy for shooting a marketing
+// demo or auditing a fresh ARM64 / Pi after pairing.
+//
+// Both endpoints are auth'd by the Yaver session token alone — no
+// coding-agent dependency. Boxes with neither claude nor codex installed
+// still surface projects identically.
+func runPrimaryProjects(ctx context.Context, args []string, mobileOnly bool) {
+	asJSON := false
+	for _, a := range args {
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case "--json":
+			asJSON = true
+		case "":
+			// noop
+		default:
+			verb := "projects"
+			if mobileOnly {
+				verb = "mobiles"
+			}
+			fmt.Fprintf(os.Stderr, "primary %s: unknown argument %q\n", verb, a)
+			os.Exit(1)
+		}
+	}
+
+	verb := "projects"
+	if mobileOnly {
+		verb = "mobiles"
+	}
+
+	cfg, _, target, err := resolvePrimaryDeviceForRemote(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary %s: %v\n", verb, err)
+		os.Exit(1)
+	}
+	if !target.IsOnline {
+		fmt.Fprintf(os.Stderr, "primary %s: %s is offline (no recent heartbeat). Try `yaver primary status`.\n", verb, target.Name)
+		os.Exit(1)
+	}
+	candidates, err := buildRemoteAgentCandidates(cfg, target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary %s: %v\n", verb, err)
+		os.Exit(1)
+	}
+	if len(candidates) == 0 {
+		fmt.Fprintf(os.Stderr, "primary %s: %s has no reachable transport candidates.\n", verb, target.Name)
+		os.Exit(1)
+	}
+
+	path := "/projects"
+	if mobileOnly {
+		path = "/projects/mobile"
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	// /projects/mobile may scan synchronously on cold cache (10-min TTL,
+	// fresh boxes have nothing). Give a generous slice so a first-time
+	// scan doesn't time out.
+	//
+	// We iterate candidates manually instead of calling doRemoteAgentRequest
+	// because some boxes publish a `<deviceID>.yaver.io` PublicEndpoint that
+	// resolves to a stale CF/Vercel wildcard returning 404 for everything
+	// except / and /info-cached. doRemoteAgentRequest returns immediately
+	// on 4xx, so the relay candidate (which actually proxies to the agent)
+	// is never tried. Treat 404 + 502/503 as "wrong host, try next" so we
+	// fall through to the relay /d/{deviceID} URL on its own.
+	raw, status, chosenURL, err := primaryFetchWithFallthrough(reqCtx, candidates, cfg.AuthToken, path, 20*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary %s: %v\n", verb, err)
+		os.Exit(1)
+	}
+	if status < 200 || status >= 300 {
+		fmt.Fprintf(os.Stderr, "primary %s: %s returned HTTP %d: %s\n", verb, chosenURL, status, strings.TrimSpace(string(raw)))
+		os.Exit(1)
+	}
+
+	if asJSON {
+		os.Stdout.Write(raw)
+		if len(raw) > 0 && raw[len(raw)-1] != '\n' {
+			fmt.Println()
+		}
+		return
+	}
+
+	// Both endpoints carry partially overlapping shapes. Decode into a
+	// permissive map so a missing field on one endpoint doesn't blank
+	// the column for the other (e.g. /projects has `tags` + `isMonorepo`
+	// but no `size`; /projects/mobile has `size` + `monorepoRoot` but no
+	// `tags`).
+	var resp struct {
+		Projects  []map[string]interface{} `json:"projects"`
+		ScannedAt string                   `json:"scannedAt"`
+		Scanning  bool                     `json:"scanning"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "primary %s: parse response: %v\n", verb, err)
+		os.Exit(1)
+	}
+
+	label := strings.TrimSpace(target.Alias)
+	if label == "" {
+		label = target.Name
+	}
+	scope := "all"
+	if mobileOnly {
+		scope = "mobile-capable"
+	}
+	fmt.Printf("%s — %d %s project(s)", label, len(resp.Projects), scope)
+	if resp.Scanning {
+		fmt.Print(" (scan in progress)")
+	}
+	if strings.TrimSpace(resp.ScannedAt) != "" {
+		fmt.Printf(" — scanned %s", resp.ScannedAt)
+	}
+	fmt.Println()
+	if len(resp.Projects) == 0 {
+		fmt.Println("  (none — try `yaver ssh primary` then check ~/Workspace, ~/Projects, ~/src on the box)")
+		return
+	}
+
+	rows := make([][]string, 0, len(resp.Projects))
+	for _, p := range resp.Projects {
+		framework := stringField(p, "framework")
+		if framework == "" {
+			framework = "?"
+		}
+		// Decorate framework with the monorepo flag from /projects, or
+		// monorepoApp/monorepoRoot from /projects/mobile so the output
+		// makes the layout obvious without forcing --json.
+		if b, _ := p["isMonorepo"].(bool); b {
+			framework = framework + " (monorepo)"
+		} else if app := stringField(p, "monorepoApp"); app != "" {
+			framework = framework + " (mono:" + app + ")"
+		}
+
+		var caps []string
+		if mobile, _ := p["mobileCapable"].(bool); mobile {
+			caps = append(caps, "mobile")
+		}
+		if web, _ := p["webCapable"].(bool); web {
+			caps = append(caps, "web")
+		}
+		if surface := stringField(p, "primarySurface"); surface != "" && surface != "none" {
+			caps = append(caps, "surface="+surface)
+		}
+		if subs, ok := p["subframeworks"].([]interface{}); ok && len(subs) > 0 {
+			subList := make([]string, 0, len(subs))
+			for _, s := range subs {
+				if str, ok := s.(string); ok && str != "" {
+					subList = append(subList, str)
+				}
+			}
+			if len(subList) > 0 {
+				caps = append(caps, "subs="+strings.Join(subList, "+"))
+			}
+		}
+		if tags, ok := p["tags"].([]interface{}); ok && len(tags) > 0 {
+			tagList := make([]string, 0, len(tags))
+			for _, t := range tags {
+				if str, ok := t.(string); ok && str != "" {
+					tagList = append(tagList, str)
+				}
+			}
+			if len(tagList) > 0 {
+				caps = append(caps, "tags="+strings.Join(tagList, ","))
+			}
+		}
+		capsStr := strings.Join(caps, " ")
+		if capsStr == "" {
+			capsStr = "-"
+		}
+
+		branch := stringField(p, "branch")
+		if branch == "" {
+			branch = "-"
+		}
+		path := stringField(p, "path")
+
+		rows = append(rows, []string{framework, branch, capsStr, path})
+	}
+
+	colW := []int{len("FRAMEWORK"), len("BRANCH"), len("FLAGS"), len("PATH")}
+	for _, r := range rows {
+		for i, cell := range r {
+			if l := len(cell); l > colW[i] {
+				colW[i] = l
+			}
+		}
+	}
+	// Cap PATH so a long workspace prefix doesn't swallow the terminal.
+	if colW[3] > 80 {
+		colW[3] = 80
+	}
+	headers := []string{"FRAMEWORK", "BRANCH", "FLAGS", "PATH"}
+	for i, h := range headers {
+		if i > 0 {
+			fmt.Print("  ")
+		} else {
+			fmt.Print("  ")
+		}
+		if i < len(headers)-1 {
+			fmt.Printf("%-*s", colW[i], h)
+		} else {
+			fmt.Print(h)
+		}
+	}
+	fmt.Println()
+	for _, r := range rows {
+		for i, cell := range r {
+			if i > 0 {
+				fmt.Print("  ")
+			} else {
+				fmt.Print("  ")
+			}
+			if i < len(r)-1 {
+				fmt.Printf("%-*s", colW[i], cell)
+			} else {
+				fmt.Print(cell)
+			}
+		}
+		fmt.Println()
+	}
+}
+
+// primaryFetchWithFallthrough iterates remote candidates and returns the
+// first 2xx response. On 4xx (except 401/403 which are real auth errors)
+// and 5xx it advances to the next candidate. doRemoteAgentRequest can't
+// do this because it bails on any 4xx — we want the more permissive
+// behavior here so a stale `<deviceID>.yaver.io` CF route doesn't shadow
+// the working relay route on the same device.
+func primaryFetchWithFallthrough(ctx context.Context, candidates []RemoteAgentCandidate, token, path string, perCallTimeout time.Duration) ([]byte, int, string, error) {
+	if len(candidates) == 0 {
+		return nil, 0, "", fmt.Errorf("no transport candidates available")
+	}
+	client := remoteHTTPClient(perCallTimeout)
+	orderRemoteAgentCandidates(candidates)
+	var errs []string
+	var lastRaw []byte
+	var lastStatus int
+	var lastURL string
+	for _, candidate := range candidates {
+		url := strings.TrimRight(candidate.BaseURL, "/") + path
+		lastURL = url
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", candidate.BaseURL, err))
+			continue
+		}
+		if strings.TrimSpace(token) != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		for k, v := range candidate.Headers {
+			if strings.TrimSpace(v) != "" {
+				req.Header.Set(k, v)
+			}
+		}
+		req.Header.Set("X-Yaver-Proxied-By", localDeviceID())
+		req.Header.Set("X-Yaver-Proxied-Tool", "primary-projects")
+
+		resp, err := client.Do(req)
+		if err != nil {
+			recordRemoteAgentFailure(candidate.DeviceID, candidate.BaseURL, time.Now())
+			errs = append(errs, fmt.Sprintf("%s: %v", candidate.BaseURL, err))
+			continue
+		}
+		raw, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			recordRemoteAgentFailure(candidate.DeviceID, candidate.BaseURL, time.Now())
+			errs = append(errs, fmt.Sprintf("%s: read response: %v", candidate.BaseURL, readErr))
+			continue
+		}
+		lastRaw, lastStatus = raw, resp.StatusCode
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			recordRemoteAgentSuccess(candidate.DeviceID, candidate.BaseURL, time.Now())
+			return raw, resp.StatusCode, url, nil
+		}
+		// 401/403 are real auth signals from the agent itself — surface
+		// those immediately so the caller can hint at re-auth.
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return raw, resp.StatusCode, url, nil
+		}
+		// Everything else (404, 5xx, gateway errors) likely means we hit
+		// a wrong host or a relay tunnel that's down. Try next candidate.
+		recordRemoteAgentFailure(candidate.DeviceID, candidate.BaseURL, time.Now())
+		errs = append(errs, fmt.Sprintf("%s: HTTP %d", candidate.BaseURL, resp.StatusCode))
+	}
+	if lastStatus != 0 {
+		return lastRaw, lastStatus, lastURL, fmt.Errorf("no candidate returned 2xx (last %d): %s", lastStatus, strings.Join(errs, " | "))
+	}
+	return nil, 0, lastURL, fmt.Errorf("all candidates failed: %s", strings.Join(errs, " | "))
+}
+
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
 func primaryUsage() {
 	fmt.Print(`yaver primary — manage + inspect the auto-connect preferred device
 
@@ -287,6 +601,13 @@ Usage:
   yaver primary stop [-y]         Stop the agent process on the primary
                                   device + disable its auto-start service.
                                   Prompts for confirmation unless -y.
+  yaver primary projects [--json] List ALL projects discovered on the primary
+                                  device by the agent's filesystem scanner
+                                  (mobile + web + native).
+  yaver primary mobiles [--json]  List ONLY mobile-capable projects (Expo /
+                                  React Native / Flutter / Swift / Kotlin).
+                                  Same scanner; filtered surface. Discovery
+                                  runs without any coding agent installed.
   yaver primary <claude|claude-code|codex>
                                   Same as 'auth <runner>' — kept as a
                                   shortcut so existing scripts still work
