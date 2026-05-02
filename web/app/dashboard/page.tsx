@@ -2661,7 +2661,8 @@ export default function DashboardPage() {
       {shellDevice ? (
         <WebShellModal
           device={shellDevice}
-          isCurrentDeviceConnected={Boolean(connectedDevice && connectedDevice.id === shellDevice.id)}
+          isCurrentDeviceSelected={Boolean(connectedDevice && connectedDevice.id === shellDevice.id)}
+          isCurrentDeviceConnected={Boolean(connectedDevice && connectedDevice.id === shellDevice.id && connState === "connected")}
           onConnect={() => { void connectToDevice(shellDevice); }}
           onOpenRescue={() => {
             // Devices tab owns the Rescue panel + Reset Auth flow.

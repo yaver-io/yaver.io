@@ -26,10 +26,6 @@ func TestGuestScopeAllowList(t *testing.T) {
 		"/builds",
 		"/projects",
 		"/projects/refresh",
-		"/repos/list",
-		"/repos/clone",
-		"/repos/pull",
-		"/repos/delete",
 		"/todolist",
 		"/agent/status",
 		"/agent/runners",
@@ -43,6 +39,40 @@ func TestGuestScopeAllowList(t *testing.T) {
 		if !isGuestAllowedPathForScope(path, GuestScopeFull) {
 			t.Errorf("full-scope guest SHOULD reach %q (backward-compat)", path)
 		}
+	}
+
+	// /repos/* used to be on the full-scope allow-list but the security
+	// audit (H-5) reclassified it as owner-only — clone/credentials/delete
+	// are too dangerous to hand to a teammate-tier guest. Both scopes
+	// must now reject the prefix.
+	mustBlockBothRepos := []string{
+		"/repos",
+		"/repos/list",
+		"/repos/clone",
+		"/repos/credentials",
+		"/repos/delete",
+	}
+	for _, path := range mustBlockBothRepos {
+		for _, scope := range []string{GuestScopeFeedbackOnly, GuestScopeFull} {
+			if isGuestAllowedPathForScope(path, scope) {
+				t.Errorf("%s scope must NOT reach %q — owner-only per H-5", scope, path)
+			}
+		}
+	}
+
+	// /agent/runners is read-only loadout enumeration. Exact-match-only
+	// in the allow-list (see guestExactOnlyEntries): the only sibling
+	// route registered today is /agent/runners/test which spawns AI
+	// runners (and thus burns the host's API budget) — must be blocked
+	// for guests.
+	if !isGuestAllowedPathForScope("/agent/runners", GuestScopeFull) {
+		t.Error("/agent/runners must be reachable by full-scope guests")
+	}
+	if isGuestAllowedPathForScope("/agent/runners/test", GuestScopeFull) {
+		t.Error("/agent/runners/test must be BLOCKED (it spawns runners → API budget burn)")
+	}
+	if isGuestAllowedPathForScope("/agent/runners-debug", GuestScopeFull) {
+		t.Error("/agent/runners-debug must be BLOCKED (prefix-collision class)")
 	}
 
 	// Paths both scopes must allow — the minimum Feedback SDK surface.

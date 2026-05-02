@@ -351,6 +351,29 @@ func TestAuthRecoverRejectsDirectPublicIngress(t *testing.T) {
 func TestAuthRecoverAllowsRelayIngress(t *testing.T) {
 	recoveryLimiter.reset()
 	setRequirePrivateRecoveryForTest(t, true)
+
+	// C-5: the test must register a real RelayPassword in the config.
+	// classifyRecoveryIngress now validates the X-Relay-Password header
+	// VALUE against this stored value (constant-time). Pre-fix this
+	// test passed by sending any non-empty header.
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	prevPw := cfg.RelayPassword
+	cfg.RelayPassword = "relay-password"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	t.Cleanup(func() {
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig cleanup: %v", err)
+		}
+		cfg.RelayPassword = prevPw
+		_ = SaveConfig(cfg)
+	})
+
 	if err := SetBootstrapSecret("relay-secret"); err != nil {
 		t.Fatalf("SetBootstrapSecret: %v", err)
 	}
@@ -367,6 +390,50 @@ func TestAuthRecoverAllowsRelayIngress(t *testing.T) {
 	(&HTTPServer{}).handleAuthRecover(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthRecoverRejectsBogusRelayHeader is the new positive control
+// for C-5: a non-empty but WRONG X-Relay-Password header must NOT
+// bypass the public-recovery block. Pre-fix this would have returned
+// 200; we now treat the bogus header as if it were absent and fall
+// through to the IP-based classification (which rejects 203.0.113.9
+// as a public IP under RequirePrivateRecoveryTransport=true).
+func TestAuthRecoverRejectsBogusRelayHeader(t *testing.T) {
+	recoveryLimiter.reset()
+	setRequirePrivateRecoveryForTest(t, true)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	prevPw := cfg.RelayPassword
+	cfg.RelayPassword = "the-real-password"
+	if err := SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	t.Cleanup(func() {
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig cleanup: %v", err)
+		}
+		cfg.RelayPassword = prevPw
+		_ = SaveConfig(cfg)
+	})
+
+	if err := SetBootstrapSecret("rec-secret"); err != nil {
+		t.Fatalf("SetBootstrapSecret: %v", err)
+	}
+	defer func() { _ = SetBootstrapSecret("") }()
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/recover", strings.NewReader(`{"secret":"rec-secret","mode":"pair"}`))
+	req.RemoteAddr = "203.0.113.9:40000"
+	req.Header.Set("X-Relay-Password", "wrong")
+	rec := httptest.NewRecorder()
+
+	(&HTTPServer{}).handleAuthRecover(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 (bogus header should not bypass), got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

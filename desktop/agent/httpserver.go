@@ -927,8 +927,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Log search — see line 186 for the primary registration (handleLogsSearch)
 	mux.HandleFunc("/logs/index/start", s.auth(s.handleLogIndexStart))
 
-	// Error tracking
-	mux.HandleFunc("/errors/ingest", s.handleErrorIngest)
+	// Error tracking. /errors/ingest accepts pushes from the
+	// Feedback SDK + 3rd-party app crash hooks, so it goes
+	// through authSDK (accepts owner tokens, paired tokens, and
+	// scoped SDK tokens). H-7 fix: previously unauth — disk-fill
+	// + host-existence-leak vector for any unauthenticated scanner.
+	mux.HandleFunc("/errors/ingest", s.rateLimit(s.authSDK(s.handleErrorIngest)))
 	mux.HandleFunc("/errors/groups", s.auth(s.handleErrorGroups))
 	mux.HandleFunc("/errors/instances", s.auth(s.handleErrorInstances))
 	// /errors/resolve registered at line 175 (handleErrorsResolve) — this duplicate removed
@@ -1263,11 +1267,21 @@ func (s *HTTPServer) applyDelegatedGuestSDKHeaders(w http.ResponseWriter, r *htt
 		jsonError(w, http.StatusForbidden, "SDK token is not valid for this device")
 		return false
 	}
+	// Same defensive strip as allowGuest: an SDK token caller can attach
+	// X-Yaver-GuestScope: full or X-Yaver-GuestAllowedProjects: every-app
+	// to their request; we must NOT honor those. Re-stamp every value
+	// from the cached token info, falling back to safe defaults.
+	stripGuestRequestHeaders(r)
 	r.Header.Set("X-Yaver-Guest", "true")
 	r.Header.Set("X-Yaver-GuestUserID", info.delegatedGuestUserID)
-	if info.delegatedGuestScope != "" {
-		r.Header.Set("X-Yaver-GuestScope", info.delegatedGuestScope)
+	scope := info.delegatedGuestScope
+	if strings.TrimSpace(scope) == "" {
+		// Default to the safer scope when the token didn't pin one.
+		// Pre-fix this fell through to the legacy "full" default,
+		// silently elevating SDK callers that lacked explicit scope.
+		scope = GuestScopeFeedbackOnly
 	}
+	r.Header.Set("X-Yaver-GuestScope", scope)
 	if info.sourceSurface != "" {
 		r.Header.Set("X-Yaver-SourceSurface", info.sourceSurface)
 	}
@@ -1551,11 +1565,44 @@ func (s *HTTPServer) allowGuest(w http.ResponseWriter, r *http.Request, uid stri
 			return true
 		}
 	}
+	// CRITICAL: strip every X-Yaver-Guest* header the caller might have
+	// pre-stamped on their inbound request. Downstream handlers
+	// (ops_execution_plan, /info redaction, project gate) trust these
+	// headers as if they were set by us, so a guest spoofing
+	// X-Yaver-GuestAllowedProjects (H-13) or X-Yaver-GuestScope (M-1)
+	// can broaden their own scope. Always re-stamp from server-resolved
+	// state below — never honor inbound values.
+	stripGuestRequestHeaders(r)
 	r.Header.Set("X-Yaver-Guest", "true")
 	r.Header.Set("X-Yaver-GuestUserID", uid)
 	r.Header.Set("X-Yaver-GuestScope", scope)
+	if s.guestConfigMgr != nil {
+		if allowed := cleanProjectList(s.guestConfigMgr.AllowedProjects(uid)); len(allowed) > 0 {
+			r.Header.Set("X-Yaver-GuestAllowedProjects", strings.Join(allowed, ","))
+		}
+	}
 	next(w, r)
 	return true
+}
+
+// stripGuestRequestHeaders deletes every X-Yaver-Guest* header from an
+// inbound request before downstream code reads them. The middleware
+// will re-stamp the legitimate values from server-resolved state.
+// Listed explicitly (rather than wildcard-deleting) so a future header
+// not yet in the audit doesn't silently bypass.
+func stripGuestRequestHeaders(r *http.Request) {
+	for _, name := range []string{
+		"X-Yaver-Guest",
+		"X-Yaver-GuestUserID",
+		"X-Yaver-GuestScope",
+		"X-Yaver-GuestAllowedProjects",
+		"X-Yaver-GuestAllowedRunners",
+		"X-Yaver-Support",
+		"X-Yaver-Proxied-By",
+		"X-Yaver-Proxied-Tool",
+	} {
+		r.Header.Del(name)
+	}
 }
 
 func (s *HTTPServer) resolveHostShareAccess(guestUserID string) *HostShareAccessInfo {
@@ -1649,7 +1696,7 @@ func (s *HTTPServer) auth(next http.HandlerFunc) http.HandlerFunc {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
 		// Fast path: exact match with the agent's own token
-		if token == s.token {
+		if secretEqual(token, s.token) {
 			next(w, r)
 			return
 		}
@@ -1796,7 +1843,7 @@ func (s *HTTPServer) authSDK(next http.HandlerFunc) http.HandlerFunc {
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
 		// Fast path: agent's own token (full access)
-		if token == s.token {
+		if secretEqual(token, s.token) {
 			next(w, r)
 			return
 		}
@@ -1926,7 +1973,7 @@ func (s *HTTPServer) authSDKOrGuest(next http.HandlerFunc) http.HandlerFunc {
 		}
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
-		if token == s.token {
+		if secretEqual(token, s.token) {
 			next(w, r)
 			return
 		}
@@ -2225,19 +2272,26 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	info["autoStart"] = autoStart
 
-	// Feedback-only guests get a redacted /info. We still need to answer
+	// Non-owner callers (any guest tier, host-share peer, SDK token,
+	// support session) get a redacted /info. We still need to answer
 	// "is the agent alive + which feedback endpoints are available"
 	// (the SDK probes this on startup), but we strip everything that leaks
 	// the dev-machine's project layout, task activity, auto-start config,
 	// hardware id, workDir, or hostname. A malicious end-user of a host's
 	// app should not learn what projects the dev is working on or how
 	// many tasks are in flight.
-	if r.Header.Get("X-Yaver-GuestScope") == GuestScopeFeedbackOnly {
+	//
+	// Pre-fix (H-17): only feedback-only guests got the redaction. Full
+	// guests, host-share peers, SDK callers all saw the absolute workDir
+	// (which contains /Users/<owner-username>/), the hostname, the hwid,
+	// the runner config, project list, and task stats. Privacy contract
+	// in CLAUDE.md forbids absolute paths and usernames flowing off-machine.
+	if isNonOwnerInfoCaller(r) {
 		redacted := map[string]interface{}{
 			"ok":      info["ok"],
 			"version": info["version"],
 		}
-		// Sandbox flag is safe — feedback-only tasks get force-containerized,
+		// Sandbox flag is safe — guest tasks get force-containerized,
 		// so the SDK can show "running sandboxed" without surfacing host config.
 		if sb, ok := info["sandbox"].(map[string]interface{}); ok {
 			redacted["sandbox"] = map[string]interface{}{
@@ -2249,6 +2303,26 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonReply(w, http.StatusOK, info)
+}
+
+// isNonOwnerInfoCaller reports whether the request is from anyone other
+// than the agent's owner. Used to gate /info redaction. Returns true for
+// any guest scope (feedback-only / full / deploy / sdk-project), any
+// support-session bearer, and any host-share peer.
+func isNonOwnerInfoCaller(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.Header.Get("X-Yaver-Guest") == "true" {
+		return true
+	}
+	if r.Header.Get("X-Yaver-Support") == "true" {
+		return true
+	}
+	if r.Header.Get("X-Yaver-HostShare") == "true" {
+		return true
+	}
+	return false
 }
 
 // handleProjectsRefresh forces a re-scan of projects on the machine.
@@ -4031,7 +4105,7 @@ func (s *HTTPServer) handleWebhookTrigger(w http.ResponseWriter, r *http.Request
 		jsonError(w, http.StatusServiceUnavailable, "webhook secret not configured — set via: yaver config set webhook-secret <secret>")
 		return
 	}
-	if secret != cfg.WebhookSecret {
+	if !secretEqual(secret, cfg.WebhookSecret) {
 		jsonError(w, http.StatusUnauthorized, "invalid webhook secret")
 		return
 	}
@@ -11242,6 +11316,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args struct {
 			TTL   string `json:"ttl"`
 			Label string `json:"label"`
+			Shell bool   `json:"shell"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		ttl := defaultSupportTTL
@@ -11250,7 +11325,11 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				ttl = d
 			}
 		}
-		sess := StartSupportSession(args.Label, ttl)
+		sess := StartSupportSession(SupportStartOptions{
+			Label: args.Label,
+			TTL:   ttl,
+			Shell: args.Shell,
+		})
 		return mcpToolJSON(supportSessionPayload(sess, s.deviceID, true))
 
 	case "support_status":

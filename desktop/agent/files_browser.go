@@ -165,6 +165,13 @@ func (s *HTTPServer) handleFilesRead(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, http.StatusBadRequest, "is a directory")
 		return
 	}
+	// M-13: refuse FIFOs, character/block devices, /proc/*, sockets, etc.
+	// os.Stat reports Size=0 for these and os.Open on a FIFO blocks the
+	// handler goroutine until something writes — connection-DoS surface.
+	if !info.Mode().IsRegular() {
+		jsonError(w, http.StatusBadRequest, "not a regular file")
+		return
+	}
 	truncated := false
 	readSize := info.Size()
 	if readSize > MaxReadableFileSize {
@@ -406,6 +413,13 @@ func (s *HTTPServer) handleHostShareFSDelete(w http.ResponseWriter, r *http.Requ
 // safeJoin resolves sub against root and verifies the resulting
 // absolute path is still inside root. Prevents ../../../etc/passwd
 // escapes even when the caller is malicious.
+//
+// H-9 fix: also call EvalSymlinks on the resolved path so a symlink
+// dropped into the project root cannot trick us into reading host
+// files outside the root. If EvalSymlinks resolves to a path outside
+// absRoot, the join is rejected. We deliberately do not return the
+// resolved path to callers — they continue to operate on the join
+// result they expect — but the *check* is against the resolved one.
 func safeJoin(root, sub string) (string, bool) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -417,6 +431,22 @@ func safeJoin(root, sub string) (string, bool) {
 		return "", false
 	}
 	if absJoined != absRoot && !strings.HasPrefix(absJoined, absRoot+string(os.PathSeparator)) {
+		return "", false
+	}
+	// Symlink-aware re-check. If the joined path doesn't exist yet
+	// (e.g. caller is creating a new file via the browser), Eval
+	// returns an error — that's fine, the textual containment check
+	// above is sufficient because there's no symlink to escape via.
+	resolvedJoined, errJ := filepath.EvalSymlinks(absJoined)
+	if errJ != nil {
+		return absJoined, true
+	}
+	resolvedRoot, errR := filepath.EvalSymlinks(absRoot)
+	if errR != nil {
+		// Root doesn't resolve cleanly — fall back to textual check.
+		return absJoined, true
+	}
+	if resolvedJoined != resolvedRoot && !strings.HasPrefix(resolvedJoined, resolvedRoot+string(os.PathSeparator)) {
 		return "", false
 	}
 	return absJoined, true

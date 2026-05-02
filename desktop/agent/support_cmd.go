@@ -5,11 +5,18 @@ package main
 //
 // Subcommands:
 //
-//   yaver support start  [--ttl 30m] [--label "cousin"]
-//   yaver support invite [--ttl 30m] [--label "X"]   (alias for start)
+//   yaver support start  [--ttl 30m] [--label "cousin"] [--shell]
+//   yaver support invite [--ttl 30m] [--label "X"] [--shell]   (alias for start)
 //   yaver support status
 //   yaver support stop
 //   yaver support connect <url> <CODE> [cmd…]  — agent-to-agent TeamViewer moment
+//
+// --shell is the explicit opt-in for /exec, /ws/terminal, /browser/*.
+// Without it the session is read-only (info, files, agent/status,
+// streams). The default is intentionally narrow because the redeem
+// surface is anonymous + 6-char-code: handing out a shell to whoever
+// brute-forces the code is too much trust. Pass --shell only when you
+// actually want a TeamViewer-style remote-help session.
 
 import (
 	"bufio"
@@ -52,13 +59,14 @@ func runSupport(args []string) {
 func printSupportUsage() {
 	fmt.Println(`usage: yaver support <subcommand>
 
-  start [--ttl 30m] [--label "cousin"]
+  start [--ttl 30m] [--label "cousin"] [--shell]
       Open a remote-support window: 6-char code + bearer token + URL.
-      A guest who opens the URL (or types the code in the Yaver app)
-      gets scoped access — terminal, exec, file browse, browser session,
-      system status — on this machine until the window closes.
+      Default scope is read-only (info, files, agent/status, streams).
+      Pass --shell to grant /exec, /ws/terminal, /browser/* — the
+      "TeamViewer remote help" UX. Without --shell, anyone redeeming
+      the code can browse logs and read files but cannot run commands.
 
-  invite [--ttl 30m] [--label "X"]
+  invite [--ttl 30m] [--label "X"] [--shell]
       Alias for 'start'. Also prints a ready-to-send URL.
 
   status
@@ -79,6 +87,7 @@ func printSupportUsage() {
 
 func runSupportStart(args []string) {
 	label, ttl := "", ""
+	shell := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--ttl":
@@ -91,6 +100,8 @@ func runSupportStart(args []string) {
 				label = args[i+1]
 				i++
 			}
+		case "--shell":
+			shell = true
 		}
 	}
 	body := map[string]interface{}{}
@@ -99,6 +110,9 @@ func runSupportStart(args []string) {
 	}
 	if label != "" {
 		body["label"] = label
+	}
+	if shell {
+		body["shell"] = true
 	}
 	resp, err := localAgentRequest("POST", "/support/start", body)
 	if err != nil {

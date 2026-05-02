@@ -315,6 +315,15 @@ func runIn(dir, bin string, args ...string) (string, error) {
 //
 //   POST /deploy/webhook?project=/abs/path
 //   Headers: X-Hub-Signature-256: sha256=<hex>
+//
+// The endpoint is intentionally unauthenticated (no Authorization header)
+// because GitHub/CI systems can't carry a Yaver bearer. The webhookSecret
+// is therefore the ONLY auth gate. We refuse the request when the project's
+// webhookSecret is empty — previously an empty secret short-circuited the
+// HMAC check, turning every default-config project into a drive-by RCE
+// surface (POST /deploy/webhook?project=/path/to/deployable → bash). If
+// you genuinely want push-to-deploy, set deploy.webhookSecret in the
+// project config and configure GitHub with the same value.
 func (s *HTTPServer) handleDeployWebhook(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("project")
 	if dir == "" {
@@ -322,13 +331,18 @@ func (s *HTTPServer) handleDeployWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cfg := loadDeployConfig(dir)
+	if strings.TrimSpace(cfg.WebhookSecret) == "" {
+		// No secret configured = no auth = no go. This matches GitHub's own
+		// "Secret" guidance and is the only sane default for an open-source
+		// agent that often runs on a public IP.
+		jsonError(w, http.StatusUnauthorized, "webhook secret not configured for this project")
+		return
+	}
 	body, _ := io.ReadAll(r.Body)
-	if cfg.WebhookSecret != "" {
-		sig := r.Header.Get("X-Hub-Signature-256")
-		if !verifyGithubHMAC(sig, cfg.WebhookSecret, body) {
-			jsonError(w, http.StatusUnauthorized, "bad signature")
-			return
-		}
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if !verifyGithubHMAC(sig, cfg.WebhookSecret, body) {
+		jsonError(w, http.StatusUnauthorized, "bad signature")
+		return
 	}
 	if !cfg.AutoDeploy {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"received": true, "note": "autoDeploy disabled"})

@@ -202,6 +202,7 @@ async function fetchMachineSummaryWithHeaders(
 function DeviceCard({
   device,
   isActive,
+  connectionStatus,
   authExpired,
   isStale,
   isPrimary,
@@ -213,6 +214,7 @@ function DeviceCard({
 }: {
   device: Device;
   isActive: boolean;
+  connectionStatus: "disconnected" | "connecting" | "connected" | "error";
   authExpired: boolean;
   // isStale = Convex still says online but the last connect we tried
   // failed. Drives the YELLOW badge + the explicit "Try to connect"
@@ -427,15 +429,19 @@ function DeviceCard({
 
   const platformLabel = formatDevicePlatform(device, runtimeLabel);
   const projectCount = projectSummary?.total ?? 0;
+  const isConnecting = isActive && connectionStatus === "connecting";
+  const isConnected = isActive && connectionStatus === "connected";
   const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
     device,
     probe: statusProbe,
     authExpired: authExpired || remoteAuthExpired,
-    isConnected: isActive,
+    isConnected,
     unreachable: isStale,
   });
   const statusLabel =
-    lifecycleState === "connected"
+    isConnecting
+      ? "connecting"
+      : lifecycleState === "connected"
       ? "connected"
       : lifecycleState === "bootstrap"
         ? "bootstrap"
@@ -445,7 +451,9 @@ function DeviceCard({
             ? "ready to connect"
             : "offline";
   const statusTone =
-    lifecycleState === "connected"
+    isConnecting
+      ? c.warn
+      : lifecycleState === "connected"
       ? c.success
       : lifecycleState === "bootstrap"
         ? "#8b5cf6"
@@ -519,14 +527,6 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
-            {isActive ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: c.accent + "22", borderWidth: 1, borderColor: c.accent + "55",
-              }}>
-                <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>ACTIVE</Text>
-              </View>
-            ) : null}
             {recovering ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -554,6 +554,13 @@ function DeviceCard({
                 backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
               }}>
                 <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>YAVER AUTH EXPIRED</Text>
+              </View>
+            ) : isConnecting ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+              }}>
+                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>CONNECTING</Text>
               </View>
             ) : lifecycleState === "connected" ? (
               <View style={{
@@ -1129,6 +1136,7 @@ export default function DevicesScreen() {
             <DeviceCard
               device={item}
               isActive={activeDevice?.id === item.id}
+              connectionStatus={connectionStatus}
               isStale={unreachableDeviceIds.includes(item.id)}
               isPrimary={primaryDeviceId === item.id}
               onSelect={() => selectDevice(item)}

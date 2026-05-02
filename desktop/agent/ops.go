@@ -138,6 +138,46 @@ func dispatchOps(octx OpsContext, req OpsRequest) (res OpsResult) {
 		machine = "local"
 	}
 
+	// C-6: gate guests against the per-verb AllowGuest flag BEFORE any
+	// remote routing happens. The previous order (proxy first, gate
+	// later) was a confused-deputy: a guest's call to /ops on the local
+	// agent would proxy to "primary" with the host's owner token,
+	// reaching the destination as caller="owner" and bypassing the
+	// AllowGuest check entirely. Look up the spec early and refuse if
+	// the caller is a guest and the verb isn't AllowGuest. The same
+	// check still runs at line ~227 for the local-dispatch path so we
+	// don't depend on the early exit.
+	if octx.Caller == "guest" {
+		opsRegistryMu.RLock()
+		spec, ok := opsRegistry[req.Verb]
+		opsRegistryMu.RUnlock()
+		if !ok {
+			return OpsResult{
+				OK:    false,
+				Code:  "unknown_verb",
+				Error: fmt.Sprintf("unknown verb %q; call ops_verbs to list available verbs", req.Verb),
+			}
+		}
+		if !spec.AllowGuest {
+			return OpsResult{
+				OK:    false,
+				Code:  "unauthorized",
+				Error: fmt.Sprintf("verb %q is owner-only; guest sessions cannot invoke it", req.Verb),
+			}
+		}
+		// Guests cannot use machine aliases that resolve via the host's
+		// own Convex token (machine="primary", machine="auto" when it
+		// resolves elsewhere). Force machine="local" so the guest's
+		// scope is enforced at the destination it actually called, not
+		// at the host's primaryDeviceId. Explicit deviceIds the guest
+		// could legitimately reach (their own host's deviceId) still
+		// work since machine != "primary" / "auto" stays untouched.
+		if machine == "primary" || machine == "auto" {
+			machine = "local"
+			req.Machine = "local"
+		}
+	}
+
 	executionPlan := buildOpsExecutionPlan(octx, req)
 	if denied := authorizeOpsExecution(octx, req, executionPlan); denied != nil {
 		return *denied

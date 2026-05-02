@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"path/filepath"
 	"strings"
 )
 
@@ -197,7 +199,11 @@ func (s *HTTPServer) handleFeedbackByID(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// serveFeedbackFile serves a file from a feedback report.
+// serveFeedbackFile serves a file from a feedback report. Defense in
+// depth: even though ReceiveFeedback now sanitizes filenames, older
+// reports persisted to disk with the previous (unsafe) code may have
+// VideoPath / Screenshots[i] pointing outside fm.baseDir. We refuse
+// to serve any path that escapes the manager's base directory.
 func (s *HTTPServer) serveFeedbackFile(w http.ResponseWriter, r *http.Request, feedbackID, fileHint string) {
 	report, ok := s.feedbackMgr.GetFeedback(feedbackID)
 	if !ok {
@@ -223,7 +229,41 @@ func (s *HTTPServer) serveFeedbackFile(w http.ResponseWriter, r *http.Request, f
 		return
 	}
 
+	if !pathInsideFeedbackBaseDir(s.feedbackMgr.baseDir, filePath) {
+		log.Printf("[feedback] refusing to serve path outside baseDir: %s", filePath)
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "file not accessible"})
+		return
+	}
+
 	http.ServeFile(w, r, filePath)
+}
+
+// pathInsideFeedbackBaseDir reports whether candidate (after symlink
+// resolution where possible) lives under baseDir. Used to refuse to
+// serve any feedback artifact pointing at the host filesystem outside
+// the per-report directory tree.
+func pathInsideFeedbackBaseDir(baseDir, candidate string) bool {
+	absBase, err := filepath.Abs(baseDir)
+	if err != nil {
+		return false
+	}
+	absCand, err := filepath.Abs(candidate)
+	if err != nil {
+		return false
+	}
+	// Resolve symlinks where present so a malicious symlink dropped
+	// into reportDir can't trick us into serving e.g. /etc/passwd.
+	if resolved, err := filepath.EvalSymlinks(absCand); err == nil {
+		absCand = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absBase); err == nil {
+		absBase = resolved
+	}
+	rel, err := filepath.Rel(absBase, absCand)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, "../") && !strings.HasPrefix(rel, `..\`)
 }
 
 // handleFeedbackFix creates a task from feedback.
@@ -278,11 +318,32 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 		// synthesized from user-controlled feedback content, so prompt-injection
 		// would otherwise give a malicious end-user arbitrary code execution
 		// against the dev machine's filesystem + network.
+		//
+		// Workdir resolution is server-side ONLY. We deliberately ignore
+		// report.Project.ProjectPath because the report itself is uploaded
+		// by the same untrusted party — accepting client-supplied paths would
+		// let a guest mount /Users/owner/.ssh as the AI agent's CWD. Instead
+		// we look up the project by name (DeviceInfo.AppName) against the
+		// host's mobile-projects registry. C-8 in security_audit.md.
 		opts := TaskCreateOptions{}
-		if report, ok := s.feedbackMgr.GetFeedback(feedbackID); ok {
-			if report.Project.ProjectPath != "" {
-				opts.WorkDir = report.Project.ProjectPath
+		report, _ := s.feedbackMgr.GetFeedback(feedbackID)
+		var resolvedProjectPath string
+		if report != nil {
+			projectName := report.DeviceInfo.AppName
+			if projectName == "" {
+				projectName = report.Project.ProjectName
 			}
+			if projectName == "" {
+				projectName = report.Project.AppName
+			}
+			if projectName != "" {
+				if mp := findMobileProjectByName(projectName); mp != nil && mp.Path != "" {
+					resolvedProjectPath = mp.Path
+				}
+			}
+		}
+		if resolvedProjectPath != "" {
+			opts.WorkDir = resolvedProjectPath
 		}
 		guestUID := r.Header.Get("X-Yaver-GuestUserID")
 		if guestUID != "" && s.guestConfigMgr != nil {
@@ -297,7 +358,7 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 			// Missing app name + restricted guest == reject: a guest who was
 			// pinned to Project A must not be able to trigger fixes on
 			// untagged reports that could be from any project.
-			if report, ok := s.feedbackMgr.GetFeedback(feedbackID); ok {
+			if report != nil {
 				projectName := report.DeviceInfo.AppName
 				if !s.guestConfigMgr.GuestCanAccessProject(guestUID, projectName) {
 					jsonReply(w, http.StatusForbidden, map[string]string{
@@ -305,15 +366,15 @@ func (s *HTTPServer) handleFeedbackFix(w http.ResponseWriter, r *http.Request, f
 					})
 					return
 				}
-				// Pin the task to the resolved project directory so the AI
-				// agent operates inside the right repo instead of whatever
-				// the agent's current workdir happens to be.
-				if report.Project.ProjectPath != "" {
-					opts.WorkDir = report.Project.ProjectPath
-				} else if projectName != "" {
-					if mp := findMobileProjectByName(projectName); mp != nil && mp.Path != "" {
-						opts.WorkDir = mp.Path
-					}
+				// Belt-and-suspenders: a guest fix MUST resolve to a known
+				// project. If we couldn't find one server-side, refuse rather
+				// than fall through to whatever directory the agent happens
+				// to be sitting in.
+				if resolvedProjectPath == "" {
+					jsonReply(w, http.StatusBadRequest, map[string]string{
+						"error": "feedback report does not resolve to a known mobile project; cannot create fix task",
+					})
+					return
 				}
 			}
 

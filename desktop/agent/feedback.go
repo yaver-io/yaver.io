@@ -188,9 +188,13 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 	}
 	_ = json.Unmarshal(metadata, &raw)
 
-	if report.ID == "" {
-		report.ID = uuid.New().String()[:8]
-	}
+	// Always overwrite the report ID with a fresh UUID, ignoring whatever
+	// the upload sent. The ID is later joined to fm.baseDir to compute
+	// the on-disk report directory; trusting client input here was the
+	// C-7 path-traversal vector ("metadata.id":"../../../tmp/x" → write
+	// outside baseDir). UUIDs are unique across guests so collisions
+	// can't be used as a guest-on-guest overwrite primitive either.
+	report.ID = uuid.New().String()[:8]
 	if report.CreatedAt == "" {
 		report.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -214,21 +218,31 @@ func (fm *FeedbackManager) ReceiveFeedback(metadata json.RawMessage, files map[s
 		return nil, fmt.Errorf("create dir: %w", err)
 	}
 
-	// Save files
+	// Save files. Each multipart Filename is sanitized to a basename and
+	// rejected if it contains a path separator, traversal segment, or
+	// hidden-file dot prefix. The previous code joined the raw multipart
+	// Filename to reportDir, letting an attacker write anywhere under
+	// the agent process's UID (~/.ssh/authorized_keys, ~/.npmrc,
+	// ~/.yaver/config.json which holds the owner bearer, etc).
 	for name, data := range files {
-		filePath := filepath.Join(reportDir, name)
+		safe := sanitizeFeedbackUploadName(name)
+		if safe == "" {
+			log.Printf("[feedback] rejecting upload with unsafe filename %q", name)
+			continue
+		}
+		filePath := filepath.Join(reportDir, safe)
 		if err := os.WriteFile(filePath, data, 0600); err != nil {
-			log.Printf("[feedback] failed to write %s: %v", name, err)
+			log.Printf("[feedback] failed to write %s: %v", safe, err)
 			continue
 		}
 
 		// Update report paths
 		switch {
-		case strings.HasSuffix(name, ".mp4") || strings.HasSuffix(name, ".mov"):
+		case strings.HasSuffix(safe, ".mp4") || strings.HasSuffix(safe, ".mov"):
 			report.VideoPath = filePath
-		case strings.HasSuffix(name, ".m4a") || strings.HasSuffix(name, ".aac") || strings.HasSuffix(name, ".wav"):
+		case strings.HasSuffix(safe, ".m4a") || strings.HasSuffix(safe, ".aac") || strings.HasSuffix(safe, ".wav"):
 			report.AudioPath = filePath
-		case strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".png"):
+		case strings.HasSuffix(safe, ".jpg") || strings.HasSuffix(safe, ".png"):
 			report.Screenshots = append(report.Screenshots, filePath)
 		}
 	}
@@ -573,6 +587,43 @@ func feedbackFirstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// sanitizeFeedbackUploadName returns a basename safe to join under
+// fm.baseDir/<reportID>/. Returns "" when the input cannot be made
+// safe (path separators, traversal segments, hidden files, empty).
+//
+// A guest sending a multipart Filename like "../../../tmp/x" would
+// previously be joined verbatim by filepath.Join, which collapses
+// internal "../" segments but does NOT block traversal out of the
+// parent directory. This helper closes that hole by:
+//   1. Reducing the input to its basename (filepath.Base).
+//   2. Rejecting if the basename equals "." or ".." or starts with
+//      "." (no hidden-file writes).
+//   3. Rejecting if the basename still contains a path separator on
+//      either platform (defense in depth — Base usually strips them).
+func sanitizeFeedbackUploadName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	base := filepath.Base(trimmed)
+	if base == "." || base == ".." || base == "" {
+		return ""
+	}
+	if strings.HasPrefix(base, ".") {
+		return ""
+	}
+	if strings.ContainsAny(base, "/\\") {
+		return ""
+	}
+	if strings.ContainsRune(base, 0) {
+		return ""
+	}
+	if len(base) > 200 {
+		return ""
+	}
+	return base
 }
 
 // interface check

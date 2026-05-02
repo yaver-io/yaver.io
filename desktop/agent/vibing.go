@@ -1475,10 +1475,30 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	// substring matcher that burned us on "in" → mprint).
 	req.ProjectPath, req.ProjectName = s.resolveVibingProjectForRequest(req.ProjectPath, req.ProjectName, req.BundleID)
 
+	// H-8: project-gate guest callers BEFORE we mutate s.taskMgr.workDir.
+	// Without this check a full-scope guest could pivot the agent's
+	// global workdir to /Users/owner/.ssh by passing projectPath in the
+	// request body — and any concurrent owner-spawned task would inherit
+	// that workdir. The /tasks handler already does this; /vibing/execute
+	// did not, until now.
+	guestUID := strings.TrimSpace(r.Header.Get("X-Yaver-GuestUserID"))
+	if guestUID != "" && s.guestConfigMgr != nil {
+		if !s.guestConfigMgr.GuestCanAccessProject(guestUID, req.ProjectName) {
+			jsonError(w, http.StatusForbidden, "this guest is scoped to specific projects; the requested project is not in the allowed list")
+			return
+		}
+	}
+
 	if req.ProjectPath != "" {
-		s.taskMgr.mu.Lock()
-		s.taskMgr.workDir = req.ProjectPath
-		s.taskMgr.mu.Unlock()
+		// Guest callers must NOT mutate the global taskMgr.workDir —
+		// a concurrent owner request would silently inherit the guest's
+		// chosen path. Pass workDir through TaskCreateOptions instead
+		// so it stays local to this task.
+		if guestUID == "" {
+			s.taskMgr.mu.Lock()
+			s.taskMgr.workDir = req.ProjectPath
+			s.taskMgr.mu.Unlock()
+		}
 	}
 
 	info := DetectProjectInfo(req.ProjectPath)
@@ -1518,7 +1538,26 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 	// behaviour for healthy machines is unchanged.
 	pickedRunner := pickReadyVibingRunner(s)
 
-	task, err := s.taskMgr.CreateTask(prompt, "", "", "vibing", pickedRunner, "", nil)
+	taskOpts := TaskCreateOptions{}
+	if guestUID != "" {
+		taskOpts.GuestUserID = guestUID
+		// Per-task workDir (instead of mutating the global taskMgr.workDir
+		// which would leak the guest's project choice to concurrent owner
+		// tasks). Empty string falls back to taskMgr.workDir as before.
+		taskOpts.WorkDir = req.ProjectPath
+		if s.guestConfigMgr != nil {
+			cfg := s.guestConfigMgr.GetConfig(guestUID)
+			taskOpts.GuestRequireIsolation = guestRequireIsolation(cfg) || s.guestConfigMgr.IsFeedbackOnly(guestUID)
+			taskOpts.GuestUseHostAPIKeys = guestUseHostAPIKeys(cfg)
+			taskOpts.GuestAllowGuestProvidedKeys = cfg == nil || cfg.AllowGuestProvidedAPIKeys == nil || *cfg.AllowGuestProvidedAPIKeys
+			if cfg != nil {
+				taskOpts.GuestCPULimitPercent = cfg.CPULimitPercent
+				taskOpts.GuestRAMLimitMB = cfg.RAMLimitMB
+			}
+		}
+	}
+
+	task, err := s.taskMgr.CreateTaskWithOptions(prompt, "", "", "vibing", pickedRunner, "", nil, taskOpts)
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return

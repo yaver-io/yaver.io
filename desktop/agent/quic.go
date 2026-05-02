@@ -156,7 +156,7 @@ func (s *QUICServer) handleStream(ctx context.Context, stream quic.Stream, authe
 
 	// Auth message must come first.
 	if msg.Type == "auth" {
-		if msg.Token != s.authToken {
+		if !secretEqual(msg.Token, s.authToken) {
 			s.sendMessage(stream, OutgoingMessage{Type: "error", Message: "invalid token"})
 			return
 		}

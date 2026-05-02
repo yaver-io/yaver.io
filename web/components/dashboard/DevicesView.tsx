@@ -1483,6 +1483,7 @@ export default function DevicesView({
   activeWorkspaceDeviceId = null,
   hiddenCount = 0,
 }: DevicesViewProps) {
+  const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const { primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Latest released agent version from GitHub. Drives the per-device
@@ -2137,7 +2138,8 @@ export default function DevicesView({
       {shellDevice ? (
         <WebShellModal
           device={shellDevice}
-          isCurrentDeviceConnected={activeWorkspaceDeviceId === shellDevice.id}
+          isCurrentDeviceSelected={activeWorkspaceDeviceId === shellDevice.id}
+          isCurrentDeviceConnected={activeWorkspaceDeviceId === shellDevice.id && agentConnectionState === "connected"}
           onConnect={() => {
             onOpen?.(shellDevice);
           }}

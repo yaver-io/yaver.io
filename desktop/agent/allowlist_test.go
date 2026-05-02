@@ -62,7 +62,7 @@ func TestSupportAllowlistHasNoOwnerOnlyPrefixes(t *testing.T) {
 // supportTokenValidFor function.
 func TestSupportTokenBlocksForbiddenPrefixes(t *testing.T) {
 	resetSupport(t)
-	sess := StartSupportSession("test", 0) // default TTL
+	sess := StartSupportSession(SupportStartOptions{Label: "test"}) // default TTL
 	defer StopSupportSession()
 
 	for _, forbidden := range forbiddenOnNonOwnerSurfaces {

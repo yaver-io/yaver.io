@@ -50,6 +50,15 @@ const (
 // Kept in sync with the documented table in CLAUDE.md. Host-only endpoints
 // (exec, vault, sessions, tmux, git, shutdown, …) are NOT listed here —
 // they fall through to the owner-only path.
+// H-4 / H-5 (security_audit.md):
+//   - Removed "/repos/" from the full-tier allow-list. /repos/* exposes
+//     git clone, credential reads/writes, and delete on the host's repo
+//     ledger; CLAUDE.md's documented guest table already says owner-only.
+//   - "/agent/runners" stays as an entry, but the matcher below is now
+//     segment-aware so /agent/runners (exact, the read-only loadout
+//     list) is allowed while /agent/runners/test (spawns AI runners,
+//     burns the host's API budget) is NOT. Adding the entry without the
+//     segment-aware match was the prefix-collision bug.
 var guestFullAllowedPrefixes = []string{
 	"/tasks",
 	"/feedback",
@@ -60,7 +69,6 @@ var guestFullAllowedPrefixes = []string{
 	"/agent/status",
 	"/agent/runners",
 	"/projects",
-	"/repos/",
 	"/todolist",
 	"/builds",
 	"/health",
@@ -149,6 +157,14 @@ func guestScopeOrDefault(s string) string {
 
 // isGuestAllowedPathForScope returns true if `path` is inside the allow-list
 // for the given scope. Unknown scopes collapse to "full" (legacy default).
+//
+// Match semantics: an entry that ends in "/" (e.g. "/dev/", "/blackbox/")
+// is a SUBTREE match — any path beginning with that string passes. An
+// entry without a trailing slash (e.g. "/tasks", "/agent/runners") is
+// a SEGMENT-AWARE match: it allows the entry exactly OR entry + "/..."
+// (sub-paths beneath it) but does NOT allow entry + "anything-else"
+// (so "/agent/runners-debug" stays blocked even though it shares the
+// /agent/runners prefix). This closes the H-4 collision class.
 func isGuestAllowedPathForScope(path, scope string) bool {
 	list := guestFullAllowedPrefixes
 	switch guestScopeOrDefault(scope) {
@@ -157,12 +173,48 @@ func isGuestAllowedPathForScope(path, scope string) bool {
 	case GuestScopeDeploy:
 		list = guestDeployAllowedPrefixes
 	}
+	if path == "" {
+		path = "/"
+	}
 	for _, prefix := range list {
-		if strings.HasPrefix(path, prefix) {
+		if matchGuestAllowEntry(path, prefix) {
 			return true
 		}
 	}
 	return false
+}
+
+// guestExactOnlyEntries is the set of allow-list entries whose match
+// must be EXACT — no sub-path traversal. /agent/runners is in this set
+// because /agent/runners/test exists as a write-side endpoint that
+// spawns AI runners (and burns the host's API budget); we want guests
+// to read the loadout list but not trigger runner spawns.
+//
+// Add new entries here whenever a new endpoint shares a prefix with a
+// safe-to-read base path but its sub-paths grant write/exec privilege.
+var guestExactOnlyEntries = map[string]struct{}{
+	"/agent/runners": {},
+	"/info":          {},
+	"/health":        {},
+	"/agent/status":  {},
+}
+
+// matchGuestAllowEntry implements the segment-aware match described on
+// isGuestAllowedPathForScope. Trailing-slash entries match the prefix
+// directly (subtree). Entries listed in guestExactOnlyEntries match
+// only the exact path. Other slashless entries match the exact path
+// or any path starting with entry + "/".
+func matchGuestAllowEntry(path, entry string) bool {
+	if entry == "" {
+		return false
+	}
+	if strings.HasSuffix(entry, "/") {
+		return strings.HasPrefix(path, entry)
+	}
+	if _, exactOnly := guestExactOnlyEntries[entry]; exactOnly {
+		return path == entry
+	}
+	return path == entry || strings.HasPrefix(path, entry+"/")
 }
 
 // GetScope returns the scope for a guest, defaulting to "full" when no

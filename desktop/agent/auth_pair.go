@@ -297,11 +297,11 @@ func (s *HTTPServer) handlePairSession(w http.ResponseWriter, r *http.Request) {
 	// For Slice A there's exactly one in-memory session and sid==code.
 	// We accept either form so a client built against the future
 	// session-id model works against today's agent.
-	if wantSid != "" && !strings.EqualFold(wantSid, session.Code) {
+	if wantSid != "" && !secretEqualFold(wantSid, session.Code) {
 		jsonError(w, http.StatusNotFound, "no pairing session matches sid")
 		return
 	}
-	if wantCode != "" && !strings.EqualFold(wantCode, session.Code) {
+	if wantCode != "" && !secretEqualFold(wantCode, session.Code) {
 		jsonError(w, http.StatusNotFound, "no pairing session matches code")
 		return
 	}
@@ -339,7 +339,7 @@ func (s *HTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	session := activePairing
 	// Validate + consume all under the same lock so two
 	// concurrent submits can't both win.
-	if session == nil || session.Code != code {
+	if session == nil || !secretEqualFold(session.Code, code) {
 		pairingMu.Unlock()
 		jsonError(w, http.StatusForbidden, "invalid or inactive pairing code")
 		return
@@ -374,7 +374,7 @@ func (s *HTTPServer) handlePairSubmit(w http.ResponseWriter, r *http.Request) {
 	// Re-check after unmarshal in case the session got ended
 	// mid-call.
 	session = activePairing
-	if session == nil || session.Code != code {
+	if session == nil || !secretEqualFold(session.Code, code) {
 		pairingMu.Unlock()
 		jsonError(w, http.StatusForbidden, "invalid or inactive pairing code")
 		return
@@ -426,7 +426,7 @@ func (s *HTTPServer) handlePairEncrypted(w http.ResponseWriter, r *http.Request)
 
 	pairingMu.Lock()
 	session := activePairing
-	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
+	if session == nil || !secretEqualFold(session.Code, body.Code) {
 		pairingMu.Unlock()
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
 		return
@@ -479,7 +479,7 @@ func (s *HTTPServer) handlePairEncrypted(w http.ResponseWriter, r *http.Request)
 
 	pairingMu.Lock()
 	session = activePairing
-	if session == nil || session.Code != strings.ToUpper(strings.TrimSpace(body.Code)) {
+	if session == nil || !secretEqualFold(session.Code, body.Code) {
 		pairingMu.Unlock()
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "invalid or inactive pairing code"})
 		return

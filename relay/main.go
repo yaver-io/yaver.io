@@ -108,6 +108,7 @@ func runServe(args []string) {
 	password := fs.String("password", "", "Shared password for relay authentication (env: RELAY_PASSWORD)")
 	convexURL := fs.String("convex-url", "", "Convex backend URL for per-user password validation (env: CONVEX_URL)")
 	exposeDomain := fs.String("expose-domain", "yaver.io", "Base domain for subdomain expose routing (env: EXPOSE_DOMAIN)")
+	allowOpen := fs.Bool("allow-open", false, "Explicitly allow running with no password and no Convex URL (open mode). Refuses to start otherwise. C-9 audit.")
 	fs.Parse(args)
 
 	pw := *password
@@ -149,6 +150,37 @@ func runServe(args []string) {
 		}
 	}
 
+	// C-9 (audit 2026-05-02): refuse to start in fully-open mode unless
+	// the operator explicitly opted in with --allow-open. Open mode means
+	// validatePassword() returns true for any password, so anyone reaching
+	// the relay can register tunnels, hijack /admin/set-password, and
+	// proxy /d/<id>/... — equivalent to giving the public an unrestricted
+	// shell into every connected agent. The legacy default silently
+	// became "open" when neither --password nor --convex-url was set;
+	// that footgun has now been closed off.
+	if pw == "" && cURL == "" && !*allowOpen {
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "ERROR: relay refusing to start without authentication.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "No password set and no Convex URL configured. The relay would")
+		fmt.Fprintln(os.Stderr, "accept any registration from anyone on the public internet.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Choose one of:")
+		fmt.Fprintln(os.Stderr, "  1. Set a shared password (recommended for self-hosted relays):")
+		fmt.Fprintln(os.Stderr, "       export RELAY_PASSWORD=<your-secret>")
+		fmt.Fprintln(os.Stderr, "       yaver-relay serve")
+		fmt.Fprintln(os.Stderr, "     or:")
+		fmt.Fprintln(os.Stderr, "       yaver-relay serve --password=<your-secret>")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  2. Configure per-user password validation via Convex:")
+		fmt.Fprintln(os.Stderr, "       yaver-relay serve --convex-url=https://<deployment>.convex.site")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "  3. If you really want an open relay (NOT recommended for any")
+		fmt.Fprintln(os.Stderr, "     internet-reachable host), pass --allow-open explicitly.")
+		fmt.Fprintln(os.Stderr, "")
+		os.Exit(2)
+	}
+
 	log.Printf("yaver-relay %s starting...", version)
 	log.Printf("  QUIC tunnel port: %d", *quicPort)
 	log.Printf("  HTTP proxy port:  %d", *httpPort)
@@ -157,7 +189,10 @@ func runServe(args []string) {
 	} else if cURL != "" {
 		log.Printf("  Password auth:    enabled (per-user via Convex)")
 	} else {
-		log.Printf("  Password auth:    disabled (open)")
+		// We only get here when --allow-open was set explicitly (see C-9
+		// guard above). Log a loud warning so it shows up in operator
+		// logs and dashboards.
+		log.Printf("  Password auth:    DISABLED (open mode — --allow-open was set; do NOT expose this relay to the public internet)")
 	}
 	if cURL != "" {
 		log.Printf("  Convex backend:   %s", cURL)
@@ -201,12 +236,17 @@ func runStatus(args []string) {
 	port := fs.Int("port", 8443, "HTTP port to query")
 	fs.Parse(args)
 
-	url := fmt.Sprintf("http://localhost:%d/health", *port)
+	// H-14 (audit 2026-05-02): /health is now slim — only {ok, version}.
+	// Detail comes from the auth-gated /admin/status. The CLI auths
+	// against the local relay via RELAY_ADMIN_TOKEN or RELAY_PASSWORD
+	// env (operator-only context, since this command is meant for the
+	// machine running the relay).
+	healthURL := fmt.Sprintf("http://localhost:%d/health", *port)
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
+	resp, err := client.Get(healthURL)
 	if err != nil {
 		fmt.Println("Relay is DOWN")
-		fmt.Printf("  Could not reach %s\n", url)
+		fmt.Printf("  Could not reach %s\n", healthURL)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
@@ -221,11 +261,31 @@ func runStatus(args []string) {
 	if v, ok := data["version"]; ok {
 		fmt.Printf("  Version:  %v\n", v)
 	}
-	if t, ok := data["tunnels"]; ok {
-		fmt.Printf("  Tunnels:  %v active\n", t)
+
+	// Try the auth-gated admin endpoint for the rich data. Best-effort:
+	// if no admin token / password is in the env, just skip the detail.
+	statusURL := fmt.Sprintf("http://localhost:%d/admin/status", *port)
+	req, _ := http.NewRequest("GET", statusURL, nil)
+	if tok := strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	} else if pw := strings.TrimSpace(os.Getenv("RELAY_PASSWORD")); pw != "" {
+		req.Header.Set("X-Relay-Password", pw)
 	}
-	if u, ok := data["uptime"]; ok {
-		fmt.Printf("  Uptime:   %v\n", u)
+	if resp2, err := client.Do(req); err == nil {
+		defer resp2.Body.Close()
+		if resp2.StatusCode == 200 {
+			var detail map[string]interface{}
+			if err := json.NewDecoder(resp2.Body).Decode(&detail); err == nil {
+				if t, ok := detail["tunnels"]; ok {
+					fmt.Printf("  Tunnels:  %v active\n", t)
+				}
+				if u, ok := detail["uptime"]; ok {
+					fmt.Printf("  Uptime:   %v\n", u)
+				}
+			}
+		} else if resp2.StatusCode == 401 {
+			fmt.Println("  (set RELAY_ADMIN_TOKEN or RELAY_PASSWORD for tunnel/uptime detail)")
+		}
 	}
 }
 
@@ -340,12 +400,25 @@ func runTunnels(args []string) {
 
 	url := fmt.Sprintf("http://localhost:%d/tunnels", *port)
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(url)
+	// H-14 (audit 2026-05-02): /tunnels now requires admin auth. Read
+	// credentials from env so the operator can run `yaver-relay tunnels`
+	// from the same shell where they run `yaver-relay serve`.
+	req, _ := http.NewRequest("GET", url, nil)
+	if tok := strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	} else if pw := strings.TrimSpace(os.Getenv("RELAY_PASSWORD")); pw != "" {
+		req.Header.Set("X-Relay-Password", pw)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: could not reach relay at %s\n", url)
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == 401 {
+		fmt.Fprintln(os.Stderr, "Error: /tunnels is admin-only — set RELAY_ADMIN_TOKEN or RELAY_PASSWORD in env")
+		os.Exit(1)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

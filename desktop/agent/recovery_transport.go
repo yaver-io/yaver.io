@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	urlpkg "net/url"
@@ -103,12 +104,51 @@ func hasSecureCloudflareTunnel(cfg *Config) bool {
 	return false
 }
 
+// recoveryRelayPasswordMatches checks the X-Relay-Password header value
+// against the agent's configured relay password (or its cached copy
+// from a prior Convex sync) in constant time. Returns false if cfg is
+// nil, both stored values are empty, or the input doesn't match either.
+//
+// We accept a match against either RelayPassword or CachedRelayPassword
+// because the live value can be unset on a freshly-installed agent that
+// only has the cached one (re-pair scenarios, where the agent has not
+// yet refreshed userSettings from Convex).
+func recoveryRelayPasswordMatches(cfg *Config, got string) bool {
+	if cfg == nil {
+		return false
+	}
+	gotBytes := []byte(got)
+	candidates := []string{cfg.RelayPassword, cfg.CachedRelayPassword}
+	matched := false
+	for _, want := range candidates {
+		want = strings.TrimSpace(want)
+		if want == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare(gotBytes, []byte(want)) == 1 {
+			matched = true
+		}
+	}
+	return matched
+}
+
 func classifyRecoveryIngress(r *http.Request, cfg *Config) recoveryIngressVerdict {
 	if r == nil {
 		return recoveryIngressVerdict{Allowed: false, Reason: "missing request context"}
 	}
-	if strings.TrimSpace(r.Header.Get("X-Relay-Password")) != "" {
-		return recoveryIngressVerdict{Allowed: true, Transport: "relay", Reason: "private relay"}
+	// Validate the X-Relay-Password header VALUE, not just its presence.
+	// The previous "header non-empty == private relay" check was a public
+	// bypass (C-5): any unauthenticated caller could send any non-empty
+	// value to skip the private-transport gate. Compare against the
+	// configured relay password (or its cached counterpart from a prior
+	// Convex sync) using subtle.ConstantTimeCompare.
+	if got := strings.TrimSpace(r.Header.Get("X-Relay-Password")); got != "" {
+		if recoveryRelayPasswordMatches(cfg, got) {
+			return recoveryIngressVerdict{Allowed: true, Transport: "relay", Reason: "private relay"}
+		}
+		// Non-empty but wrong: deliberately fall through to the IP-based
+		// classification below (rather than 403) so a misconfigured
+		// header doesn't reveal whether the secret guess was close.
 	}
 	ip := net.ParseIP(clientIP(r))
 	if ip == nil {

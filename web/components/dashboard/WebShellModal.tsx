@@ -20,23 +20,27 @@ import type { Device } from "@/lib/use-devices";
 
 export default function WebShellModal({
   device,
+  isCurrentDeviceSelected,
   isCurrentDeviceConnected,
   onClose,
   onConnect,
   onOpenRescue,
 }: {
   device: Device;
+  isCurrentDeviceSelected: boolean;
   isCurrentDeviceConnected: boolean;
   onClose: () => void;
   onConnect: () => void;
   onOpenRescue?: () => void;
 }) {
   const reauthRequired = Boolean(device.needsAuth) && !device.isGuest;
-  const state: "needs-reauth" | "not-connected" | "ready" = reauthRequired
+  const state: "needs-reauth" | "not-connected" | "connecting" | "ready" = reauthRequired
     ? "needs-reauth"
     : isCurrentDeviceConnected
       ? "ready"
-      : "not-connected";
+      : isCurrentDeviceSelected
+        ? "connecting"
+        : "not-connected";
 
   return (
     <div
@@ -49,7 +53,7 @@ export default function WebShellModal({
       >
         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50/95 px-4 py-2.5 dark:border-surface-800 dark:bg-surface-900/80">
           <div className="flex items-center gap-2 min-w-0">
-            <span className={`inline-flex h-2 w-2 rounded-full ${state === "ready" ? "bg-emerald-400" : state === "needs-reauth" ? "bg-amber-400" : "bg-slate-400 dark:bg-surface-500"}`} />
+            <span className={`inline-flex h-2 w-2 rounded-full ${state === "ready" ? "bg-emerald-400" : state === "needs-reauth" ? "bg-amber-400" : state === "connecting" ? "bg-cyan-400" : "bg-slate-400 dark:bg-surface-500"}`} />
             <span className="truncate text-[13px] font-semibold text-slate-900 dark:text-surface-100">
               Shell · {device.alias ? `@${device.alias}` : device.name}
             </span>
@@ -59,7 +63,7 @@ export default function WebShellModal({
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden sm:inline rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-slate-500 dark:border-surface-700 dark:bg-surface-950/60 dark:text-surface-400">
-              {state === "needs-reauth" ? "agent auth required" : "via relay · PTY"}
+              {state === "needs-reauth" ? "agent auth required" : state === "connecting" ? "connecting…" : "via relay · PTY"}
             </span>
             <button
               onClick={onClose}
@@ -130,6 +134,19 @@ export default function WebShellModal({
                   </p>
                 </div>
               </div>
+            </div>
+          ) : state === "connecting" ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-700 dark:text-surface-300">
+              <p className="text-[13px]">
+                Connecting to{" "}
+                <span className="font-mono text-cyan-700 dark:text-cyan-300">
+                  {device.alias ? `@${device.alias}` : device.name}
+                </span>{" "}
+                before opening the PTY.
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-surface-500">
+                Remote machines such as relay-only boxes need the dashboard connection to finish first.
+              </p>
             </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-slate-700 dark:text-surface-300">

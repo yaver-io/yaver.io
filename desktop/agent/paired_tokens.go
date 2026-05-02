@@ -185,7 +185,10 @@ func ListPairedTokens() []PairedToken {
 
 // IsPairedToken reports whether a bearer token is in the
 // paired ledger. Used by the HTTP auth middleware to allow
-// additional users without touching cfg.AuthToken.
+// additional users without touching cfg.AuthToken. The fingerprint
+// compare is constant-time (defense in depth — fp is a SHA prefix
+// so a timing oracle leaks at most "this hash starts with these
+// bytes", but we close it anyway).
 func IsPairedToken(token string) bool {
 	if token == "" {
 		return false
@@ -194,7 +197,7 @@ func IsPairedToken(token string) bool {
 	pairedTokensMu.RLock()
 	defer pairedTokensMu.RUnlock()
 	for _, t := range loadPairedTokens() {
-		if t.TokenHash == fp {
+		if secretEqual(t.TokenHash, fp) {
 			return true
 		}
 	}
@@ -216,7 +219,7 @@ func TouchPairedToken(token string) {
 		fp := pairedTokenFingerprint(token)
 		changed := false
 		for i, t := range tokens {
-			if t.TokenHash == fp {
+			if secretEqual(t.TokenHash, fp) {
 				tokens[i].LastUsedAt = time.Now().UTC().Format(time.RFC3339)
 				changed = true
 				break

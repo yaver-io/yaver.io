@@ -146,7 +146,7 @@ func (s *HTTPServer) phoneDataOwnerAuthorized(r *http.Request) bool {
 	if token == "" {
 		return false
 	}
-	if token == s.token {
+	if secretEqual(token, s.token) {
 		return true
 	}
 	if strings.HasPrefix(token, "yv_supp_") && supportTokenValidFor(token, r.URL.Path) {

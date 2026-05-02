@@ -184,7 +184,7 @@ func (s *HTTPServer) multiUserAuth(next http.HandlerFunc) http.HandlerFunc {
 		var email, fullName, provider string
 
 		// Fast path: exact match with admin token
-		if token == s.token {
+		if secretEqual(token, s.token) {
 			uid = s.ownerUserID
 		} else if cachedUID, ok := s.tokenCache.Load(token); ok {
 			uid = cachedUID.(string)

@@ -48,6 +48,7 @@ import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEEC
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
+import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   deriveMobileDeviceLifecycleState,
@@ -149,6 +150,32 @@ function preferredDefaultModelForRunner(
   }
   if (normalized === "claude") return "claude-opus-4-7";
   if (normalized === "codex") return "gpt-5.4";
+  return null;
+}
+
+function displayRunnerLabel(runnerId?: string | null): string {
+  const normalized = String(runnerId || "").trim().toLowerCase();
+  if (normalized === "claude") return "Claude Code";
+  if (normalized === "codex") return "Codex";
+  if (normalized === "opencode") return "OpenCode";
+  return normalized || "Selected agent";
+}
+
+function runnerAuthIssue(
+  runner: Pick<RunnerInfo, "id" | "installed" | "ready" | "warning" | "error"> | null | undefined,
+): string | null {
+  if (!runner || !runner.installed || runner.ready !== false) return null;
+  const detail = String(runner.error || runner.warning || "").trim();
+  const lower = detail.toLowerCase();
+  if (
+    lower.includes("auth") ||
+    lower.includes("login") ||
+    lower.includes("sign in") ||
+    lower.includes("oauth") ||
+    lower.includes("not authenticated")
+  ) {
+    return detail || `${displayRunnerLabel(runner.id)} is installed but not authenticated on this machine.`;
+  }
   return null;
 }
 
@@ -767,6 +794,7 @@ export default function TasksScreen() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [customCommand, setCustomCommand] = useState("");
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  const [runnerAuthModalRunner, setRunnerAuthModalRunner] = useState<string | null>(null);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
@@ -970,6 +998,38 @@ export default function TasksScreen() {
       return preferredModel || current;
     });
   }, [availableRunners, activeDevice, primaryModelByDevice, selectedRunner, user?.email]);
+
+  const selectedRunnerRow = useMemo(
+    () => availableRunners.find((runner) => runner.id === selectedRunner) || null,
+    [availableRunners, selectedRunner],
+  );
+  const selectedRunnerAuthIssue = useMemo(
+    () => runnerAuthIssue(selectedRunnerRow),
+    [selectedRunnerRow],
+  );
+
+  const refreshRunnerState = useCallback(async () => {
+    if (connectionStatus !== "connected") return;
+    try {
+      const [runners, status] = await Promise.all([
+        quicClient.getRunners(),
+        quicClient.getAgentStatus(),
+      ]);
+      setAvailableRunners(runners);
+      if (status) setAgentStatus(status);
+    } catch {
+      // best-effort
+    }
+  }, [connectionStatus]);
+
+  const openRunnerAuthModal = useCallback((runnerId: string) => {
+    const normalized = String(runnerId || "").trim().toLowerCase();
+    if (normalized !== "claude" && normalized !== "codex") {
+      Alert.alert("Sign-in unavailable", `${displayRunnerLabel(runnerId)} does not support browser sign-in from mobile yet.`);
+      return;
+    }
+    setRunnerAuthModalRunner(normalized);
+  }, []);
 
   useEffect(() => {
     if (didApplyRouteSeedRef.current) return;
@@ -1411,6 +1471,19 @@ export default function TasksScreen() {
 
   const handleCreateTask = async () => {
     if (!newTaskText.trim() && attachedImages.length === 0) return;
+    if (selectedRunnerRow?.ready === false) {
+      const detail =
+        selectedRunnerAuthIssue ||
+        selectedRunnerRow.error ||
+        selectedRunnerRow.warning ||
+        `${selectedRunnerRow.name} is installed but not ready on this machine.`;
+      if (selectedRunnerAuthIssue && selectedRunnerRow.supportsBrowserAuth) {
+        openRunnerAuthModal(selectedRunnerRow.id);
+      } else {
+        Alert.alert("Agent not ready", detail);
+      }
+      return;
+    }
     // Stop any active recording before sending
     if (isRecording) {
       try { await stopRecordingAndTranscribe(); } catch {}
@@ -2536,6 +2609,9 @@ export default function TasksScreen() {
                           if (activeDevice?.id) {
                             void setPrimaryRunnerForDevice(activeDevice.id, r.id, null).catch(() => {});
                           }
+                          if (runnerAuthIssue(r) && r.supportsBrowserAuth) {
+                            openRunnerAuthModal(r.id);
+                          }
                         }}
                       >
                         <Text style={[s.modelChipText, { color: selectedRunner === r.id ? "#f59e0b" : c.textMuted }]}>
@@ -2566,6 +2642,51 @@ export default function TasksScreen() {
                       autoCapitalize="none"
                       autoCorrect={false}
                     />
+                  )}
+                  {selectedRunnerRow?.ready === false && selectedRunner !== "custom" && (
+                    <View
+                      style={{
+                        marginHorizontal: 16,
+                        marginBottom: 12,
+                        borderRadius: 12,
+                        borderWidth: 1,
+                        borderColor: selectedRunnerAuthIssue ? "rgba(56,189,248,0.28)" : "rgba(251,191,36,0.24)",
+                        backgroundColor: selectedRunnerAuthIssue ? "rgba(14,165,233,0.10)" : "rgba(251,191,36,0.10)",
+                        padding: 12,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          color: selectedRunnerAuthIssue ? "#dbeafe" : "#fde68a",
+                          fontSize: 12,
+                          lineHeight: 18,
+                        }}
+                      >
+                        {selectedRunnerAuthIssue ||
+                          selectedRunnerRow.error ||
+                          selectedRunnerRow.warning ||
+                          `${selectedRunnerRow.name} is installed but not ready on this machine.`}
+                      </Text>
+                      {selectedRunnerAuthIssue && selectedRunnerRow.supportsBrowserAuth ? (
+                        <Pressable
+                          onPress={() => openRunnerAuthModal(selectedRunnerRow.id)}
+                          style={{
+                            alignSelf: "flex-start",
+                            marginTop: 10,
+                            borderRadius: 999,
+                            borderWidth: 1,
+                            borderColor: "rgba(125,211,252,0.35)",
+                            backgroundColor: "rgba(125,211,252,0.12)",
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                          }}
+                        >
+                          <Text style={{ color: "#e0f2fe", fontSize: 12, fontWeight: "700" }}>
+                            Sign in to {selectedRunnerRow.name}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
                   )}
                 </>
               );
@@ -2634,6 +2755,16 @@ export default function TasksScreen() {
             )}
           </View>
         </Modal>
+        <RunnerAuthModal
+          visible={!!runnerAuthModalRunner}
+          runner={runnerAuthModalRunner || "claude"}
+          deviceName={activeDevice?.name || "this machine"}
+          onClose={() => setRunnerAuthModalRunner(null)}
+          onCompleted={() => {
+            setRunnerAuthModalRunner(null);
+            void refreshRunnerState();
+          }}
+        />
         {/* ── Chat Detail Modal ───────────────────────────────────── */}
         <Modal visible={!!selectedTask} animationType="slide" transparent onRequestClose={() => setSelectedTask(null)}>
           <KeyboardAvoidingView

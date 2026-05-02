@@ -40,6 +40,37 @@ function mergeManagedPatch(
   return Object.keys(merged).length === 0 ? undefined : merged;
 }
 
+// normalizePrimaryDeviceId enforces the backend invariant for the
+// user's primary machine selection:
+//   - exactly zero or one primary device per user
+//   - any non-empty primaryDeviceId must point at a device row owned by
+//     that same user
+//
+// The "only one primary" part is structural because userSettings stores
+// a single scalar field, not a per-device flag. This helper exists so
+// every mutation path validates ownership the same way before writing.
+async function normalizePrimaryDeviceId(
+  ctx: any,
+  userId: string,
+  primaryDeviceId: string | null | undefined,
+): Promise<string | undefined> {
+  if (primaryDeviceId === undefined) {
+    return undefined;
+  }
+  const next = primaryDeviceId ?? undefined;
+  if (!next) {
+    return undefined;
+  }
+  const device = await ctx.db
+    .query("devices")
+    .withIndex("by_deviceId", (q: any) => q.eq("deviceId", next))
+    .first();
+  if (!device || device.userId !== userId) {
+    throw new Error("primaryDeviceId must refer to one of the caller's devices");
+  }
+  return next;
+}
+
 export const get = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
@@ -99,6 +130,11 @@ export const set = mutation({
     managed: v.optional(managedPatchValidator),
   },
   handler: async (ctx, args) => {
+    const normalizedPrimaryDeviceId = await normalizePrimaryDeviceId(
+      ctx,
+      args.userId,
+      args.primaryDeviceId,
+    );
     const existing = await ctx.db
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", args.userId))
@@ -118,7 +154,7 @@ export const set = mutation({
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
-      patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+      patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
       const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;
@@ -195,6 +231,11 @@ export const setByToken = mutation({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
     const userId = session.user._id;
+    const normalizedPrimaryDeviceId = await normalizePrimaryDeviceId(
+      ctx,
+      userId,
+      args.primaryDeviceId,
+    );
     const existing = await ctx.db
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -214,7 +255,7 @@ export const setByToken = mutation({
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
-      patch.primaryDeviceId = args.primaryDeviceId ?? undefined;
+      patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
       const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;

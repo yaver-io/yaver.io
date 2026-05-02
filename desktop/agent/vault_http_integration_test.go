@@ -88,7 +88,7 @@ func TestVaultHTTPCRUD(t *testing.T) {
 
 	// 8. An active support bearer MUST still be blocked.
 	resetSupport(t)
-	sess := StartSupportSession("test", 0)
+	sess := StartSupportSession(SupportStartOptions{Label: "test"})
 	defer StopSupportSession()
 	status, _ = doRequest(t, "GET", baseURL+"/vault/list", sess.Token, "")
 	if status == 200 {

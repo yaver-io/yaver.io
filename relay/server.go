@@ -17,12 +17,38 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 )
+
+// reservedSubdomains is consulted on every path that can claim a
+// public.<exposeDomain> subdomain — the agent-driven /expose/register
+// flow AND the auto-provisioned <deviceId>.<exposeDomain> route fired
+// at registration time. Pre-fix only the former checked it, so an
+// attacker registering deviceId="admin" got https://admin.<domain>
+// for free (M-6).
+//
+// Keep in sync with the inline list in handleExposeRegister.
+var reservedSubdomains = map[string]bool{
+	"www":    true,
+	"api":    true,
+	"relay":  true,
+	"public": true,
+	"admin":  true,
+	"mail":   true,
+	"app":    true,
+}
+
+// deviceIDShapePattern enforces a sane, URL-safe shape for incoming
+// deviceIds. Matches the Convex-side validator we want (M-12) and
+// blocks pathological inputs like empty strings, /-separated paths,
+// shell metacharacters, and absurdly long ids that would blow up
+// downstream URL building. M-6 + M-12.
+var deviceIDShapePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]{8,128}$`)
 
 // RelayServer accepts QUIC tunnels from agents and proxies HTTP requests
 // from mobile clients through those tunnels.
@@ -63,6 +89,12 @@ type RelayServer struct {
 	pwUserIDMu  sync.RWMutex
 	pwUserIDs   map[string]string // password -> userId (short cache)
 	pwUserIDExp map[string]time.Time
+
+	// adminToken gates /admin/* and the auth-required diagnostic
+	// endpoints (/tunnels, /presence, /admin/bandwidth, /admin/status).
+	// Read from RELAY_ADMIN_TOKEN at process start. Empty disables the
+	// admin-token path; password / Convex auth still applies. C-9 + H-14.
+	adminToken string
 }
 
 type exposeRoute struct {
@@ -92,6 +124,10 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		busHub:       newBusHub(),
 		pwUserIDs:    make(map[string]string),
 		pwUserIDExp:  make(map[string]time.Time),
+		// RELAY_ADMIN_TOKEN gates /admin/* + diagnostic endpoints
+		// regardless of relay password. Empty = no admin-token path
+		// available (callers must use the relay password instead).
+		adminToken: strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")),
 	}
 	// Initialize bandwidth manager
 	dataDir := os.Getenv("RELAY_DATA_DIR")
@@ -123,10 +159,86 @@ func (s *RelayServer) getPassword() string {
 }
 
 // setPassword updates the relay password in memory (thread-safe).
+//
+// M-9 (audit 2026-05-02): on rotation, invalidate the per-password
+// cache (validatedPw + pwUserIDs) and force-disconnect every existing
+// tunnel. Without this, any peer holding the OLD password retains
+// validated-cache hits for up to 5 minutes after rotation, and any
+// already-registered agent keeps its tunnel forever — defeating the
+// point of "rotate the relay password to evict a compromised peer".
 func (s *RelayServer) setPassword(pw string) {
 	s.pwMu.Lock()
-	defer s.pwMu.Unlock()
 	s.password = pw
+	s.pwMu.Unlock()
+
+	// Drop every cached "yes, this password is OK" entry. Some of those
+	// were validated against a Convex per-user record and are still
+	// good (Convex does its own per-user rotation), but we'd rather
+	// pay one extra round-trip per active client than risk leaving a
+	// stale shared-password hit.
+	s.validatedPwMu.Lock()
+	s.validatedPw = make(map[string]time.Time)
+	s.validatedPwMu.Unlock()
+
+	s.pwUserIDMu.Lock()
+	s.pwUserIDs = make(map[string]string)
+	s.pwUserIDExp = make(map[string]time.Time)
+	s.pwUserIDMu.Unlock()
+
+	// Snapshot and close all tunnels under the lock — an agent
+	// holding the old password will reconnect via the normal backoff
+	// path in relay/tunnel.go and re-handshake against the new
+	// password. Tunnel cleanup happens in handleAgentConnection's
+	// <-conn.Context().Done() path.
+	s.mu.Lock()
+	conns := make([]quic.Connection, 0, len(s.tunnels))
+	for _, t := range s.tunnels {
+		conns = append(conns, t.conn)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		c.CloseWithError(0, "password rotated")
+	}
+}
+
+// authorizeAdmin enforces auth for the diagnostic + admin endpoints
+// (/tunnels, /presence, /admin/*). Accepts either:
+//
+//   - Authorization: Bearer <RELAY_ADMIN_TOKEN>  (preferred)
+//   - X-Relay-Password: <relay password>          (compat with existing dashboards)
+//
+// On success returns true; on failure writes a 401 and returns false.
+//
+// H-14 / C-9 (audit 2026-05-02): pre-fix, every one of these endpoints
+// returned without auth, allowing the public to enumerate connected
+// devices, peer IPs, expose routes, bandwidth-per-device, and
+// "is a password configured?" reconnaissance.
+func (s *RelayServer) authorizeAdmin(w http.ResponseWriter, r *http.Request) bool {
+	// 1. Admin token via Authorization: Bearer header.
+	if s.adminToken != "" {
+		hdr := r.Header.Get("Authorization")
+		if strings.HasPrefix(hdr, "Bearer ") {
+			tok := strings.TrimPrefix(hdr, "Bearer ")
+			if tok == s.adminToken {
+				return true
+			}
+		}
+	}
+
+	// 2. Relay password via X-Relay-Password header (or per-user via Convex).
+	//    We DON'T accept the ?__rp= query fallback here on purpose —
+	//    these are admin-tier endpoints, not iframe-served content.
+	relayPw := r.Header.Get("X-Relay-Password")
+	if relayPw != "" && s.validatePassword(relayPw) {
+		return true
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": "unauthorized: provide Authorization: Bearer <RELAY_ADMIN_TOKEN> or X-Relay-Password",
+	})
+	return false
 }
 
 // validatePassword checks a password against the shared password or Convex backend.
@@ -309,49 +421,108 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 		return
 	}
 
-	var reg RegisterMsg
-	if err := json.Unmarshal(data, &reg); err != nil || reg.Type != "register" {
-		resp, _ := json.Marshal(RegisterResp{Type: "error", OK: false, Message: "invalid registration"})
+	// rejectRegistration writes the error response, closes the stream,
+	// and tears the connection down on a short delay so the response
+	// has time to flush. Synchronous CloseWithError races with the
+	// client's read on loopback (and on slow links) and surfaces as
+	// an empty response on the agent side — the C-1 fix learned this
+	// the hard way; same pattern applies to every register-time
+	// rejection. M-6 / C-1.
+	rejectRegistration := func(message, closeReason string) {
+		resp, _ := json.Marshal(RegisterResp{Type: "error", OK: false, Message: message})
 		stream.Write(resp)
 		stream.Close()
-		conn.CloseWithError(1, "bad registration")
+		time.AfterFunc(100*time.Millisecond, func() {
+			conn.CloseWithError(1, closeReason)
+		})
+	}
+
+	var reg RegisterMsg
+	if err := json.Unmarshal(data, &reg); err != nil || reg.Type != "register" {
+		rejectRegistration("invalid registration", "bad registration")
 		return
 	}
 
 	if reg.DeviceID == "" || reg.Token == "" {
-		resp, _ := json.Marshal(RegisterResp{Type: "error", OK: false, Message: "deviceId and token required"})
-		stream.Write(resp)
-		stream.Close()
-		conn.CloseWithError(1, "missing fields")
+		rejectRegistration("deviceId and token required", "missing fields")
 		return
+	}
+
+	// M-6 (audit 2026-05-02): enforce a strict shape on deviceId.
+	// Pre-fix the relay accepted any non-empty string, which blew the
+	// door open for path-traversal-style ids (`../foo`), shell-metachar
+	// ids that would later become URL parts, and zero-padded short ids
+	// that collided easily under the 8-char prefix-match in handleProxy.
+	if !deviceIDShapePattern.MatchString(reg.DeviceID) {
+		rejectRegistration("invalid deviceId shape", "invalid deviceId shape")
+		return
+	}
+
+	// M-6: refuse deviceIds that would auto-claim a reserved subdomain
+	// (admin/api/www/...). Without this, the auto-provision code below
+	// happily wired admin.<exposeDomain> to whoever connected first.
+	// Skip the check when no expose-domain is configured (self-hosted
+	// relay without wildcard DNS); in that mode no auto-subdomain is
+	// ever provisioned, so the reservation is moot.
+	if s.exposeDomain != "" {
+		if reservedSubdomains[strings.ToLower(reg.DeviceID)] {
+			rejectRegistration("deviceId reserved", "deviceId reserved")
+			return
+		}
 	}
 
 	// Validate relay password (shared or per-user via Convex)
 	if !s.validatePassword(reg.Password) {
-		resp, _ := json.Marshal(RegisterResp{Type: "error", OK: false, Message: "invalid relay password"})
-		stream.Write(resp)
-		stream.Close()
-		conn.CloseWithError(1, "invalid relay password")
+		rejectRegistration("invalid relay password", "invalid relay password")
 		return
 	}
 
-	// Register the tunnel
+	// C-1 (audit 2026-05-02): refuse-on-collision instead of replace-on-collision.
+	//
+	// The previous behavior unconditionally swapped the tunnel for any
+	// connecting client that presented a valid relay password. Since the
+	// shared-password model treats every authenticated peer as
+	// indistinguishable, that gave anyone holding the password the ability
+	// to take over any other device's tunnel just by sending its DeviceID
+	// — full mobile-client traffic redirection (auth headers, /vault, etc.).
+	//
+	// The legitimate "agent reconnects after a process restart" path is
+	// preserved by QUIC keepalive: MaxIdleTimeout=120s drops the dead
+	// tunnel, after which the new registration succeeds. Crashed agents
+	// just retry with their normal exponential backoff (relay/tunnel.go),
+	// so this change costs at most ~2 minutes of reconnect latency for an
+	// uncleanly-killed agent — and in exchange closes the hijack vector.
+	//
+	// Reject with Type:"error" — relay/tunnel.go::register() already
+	// surfaces RegisterResp.OK==false as "registration rejected" and the
+	// client retries on backoff.
+	s.mu.Lock()
+	if existing, exists := s.tunnels[reg.DeviceID]; exists {
+		// Check if the existing tunnel's QUIC connection is actually
+		// still alive. A dead conn whose <-Done() goroutine just hasn't
+		// finished cleanup yet should not block a legitimate reconnect.
+		select {
+		case <-existing.conn.Context().Done():
+			// Previous tunnel is dead but cleanup hasn't run yet —
+			// remove it now so this registration can take its place.
+			delete(s.tunnels, reg.DeviceID)
+		default:
+			s.mu.Unlock()
+			log.Printf("[RELAY] Refusing duplicate registration for device %s (existing tunnel from %s, new from %s)",
+				reg.DeviceID[:min(8, len(reg.DeviceID))], existing.peerAddr, remoteAddr)
+			rejectRegistration("deviceId already registered", "deviceId already registered")
+			return
+		}
+	}
+
 	tunnel := &agentTunnel{
 		deviceID: reg.DeviceID,
 		conn:     conn,
 		peerAddr: remoteAddr,
 		connAt:   time.Now(),
 	}
-
-	s.mu.Lock()
-	old, exists := s.tunnels[reg.DeviceID]
 	s.tunnels[reg.DeviceID] = tunnel
 	s.mu.Unlock()
-
-	if exists {
-		log.Printf("[RELAY] Replacing existing tunnel for device %s (was %s)", reg.DeviceID[:8], old.peerAddr)
-		old.conn.CloseWithError(0, "replaced")
-	}
 
 	// Auto-provision a `<deviceId>.<exposeDomain>` subdomain for
 	// every connected tunnel. This gives every device a clean
@@ -487,30 +658,27 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 	return err
 }
 
+// handleHealth returns a slim, public liveness probe.
+//
+// H-14 (audit 2026-05-02): pre-fix, /health returned tunnel count,
+// activeDevices, load percent, and bandwidth stats — usable for
+// public reconnaissance ("is the relay loaded? are there many users?").
+// All counts are now behind admin auth; /health stays public so load
+// balancers and uptime monitors can reach it without credentials.
 func (s *RelayServer) handleHealth(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	count := len(s.tunnels)
-	s.mu.RUnlock()
-
-	s.exposeMu.RLock()
-	exposeCount := len(s.exposeRoutes)
-	s.exposeMu.RUnlock()
-
-	bwStats := s.bandwidth.GetStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":                  true,
-		"tunnels":             count,
-		"exposeRoutes":        exposeCount,
-		"version":             version,
-		"activeDevices":       bwStats.ActiveDevices,
-		"loadPercent":         bwStats.LoadPercent,
-		"limitsRelaxed":       bwStats.LimitsRelaxed,
-		"bandwidthMultiplier": bwStats.CurrentMultiplier,
+		"ok":      true,
+		"version": version,
 	})
 }
 
 func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) {
+	// H-14: enumerating connected devices + peer addresses is a
+	// reconnaissance vector; gate behind admin auth.
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
 	s.mu.RLock()
 	list := make([]map[string]interface{}, 0, len(s.tunnels))
 	for _, t := range s.tunnels {
@@ -567,9 +735,23 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 // offline"), so an adversary can't enumerate our tunnel table.
 // Response bodies are small; no auth required because no sensitive data
 // leaves the relay — only the caller's own deviceId yields a real signal.
+// handlePresence returns the tunnel-online state for one or more deviceIds.
+//
+// H-14 (audit 2026-05-02): now requires admin auth. Pre-fix it ran
+// unauth, allowing arbitrary callers to enumerate "is this deviceId
+// currently connected?" against the public relay — useful for traffic-
+// analysis correlation and for confirming a guess at a target
+// deviceId before pivoting via C-1's hijack.
+//
+// Also caps the comma-separated `ids` list at 50 entries to bound the
+// per-request work and prevent /presence from being abused as a tunnel-
+// table dump via massively-batched queries.
 func (s *RelayServer) handlePresence(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorizeAdmin(w, r) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -580,10 +762,10 @@ func (s *RelayServer) handlePresence(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		if t, ok := s.tunnels[id]; ok {
 			return map[string]interface{}{
-				"deviceId":   id,
-				"online":     true,
-				"since":      t.connAt.UTC().Format(time.RFC3339),
-				"uptimeSec":  int(now.Sub(t.connAt).Seconds()),
+				"deviceId":  id,
+				"online":    true,
+				"since":     t.connAt.UTC().Format(time.RFC3339),
+				"uptimeSec": int(now.Sub(t.connAt).Seconds()),
 			}
 		}
 		return map[string]interface{}{
@@ -593,8 +775,19 @@ func (s *RelayServer) handlePresence(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if ids := r.URL.Query().Get("ids"); ids != "" {
+		raws := strings.Split(ids, ",")
+		// H-14: cap the batch size. Returning 400 (not just truncating)
+		// makes the limit visible to clients so they batch correctly
+		// instead of silently dropping queries.
+		if len(raws) > 50 {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "ids list capped at 50 entries per request",
+			})
+			return
+		}
 		out := map[string]interface{}{}
-		for _, raw := range strings.Split(ids, ",") {
+		for _, raw := range raws {
 			id := strings.TrimSpace(raw)
 			if id == "" {
 				continue
@@ -620,10 +813,31 @@ func (s *RelayServer) handlePresence(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleSetPassword allows runtime password changes via POST /admin/set-password.
+//
+// C-9 (audit 2026-05-02): when RELAY_ADMIN_TOKEN is set, every call must
+// carry that token regardless of whether a password is currently
+// configured. Pre-fix, a relay launched without an initial password
+// allowed any internet caller to do "first write wins" and seize
+// permanent admin control.
 func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
 		return
+	}
+
+	// If an admin token is configured, it MUST be present. The admin
+	// token gate is unconditional: it doesn't matter whether a password
+	// is currently set.
+	if s.adminToken != "" {
+		hdr := r.Header.Get("Authorization")
+		if !strings.HasPrefix(hdr, "Bearer ") || strings.TrimPrefix(hdr, "Bearer ") != s.adminToken {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "unauthorized: Authorization: Bearer <RELAY_ADMIN_TOKEN> required",
+			})
+			return
+		}
 	}
 
 	var req struct {
@@ -648,7 +862,9 @@ func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// If a password is currently set, require current_password to match
+	// If a password is currently set, require current_password to match.
+	// (When admin token also gates this endpoint, this is belt-and-
+	// suspenders; we keep it for the path where adminToken is empty.)
 	if currentPw := s.getPassword(); currentPw != "" {
 		if req.CurrentPassword != currentPw {
 			w.Header().Set("Content-Type", "application/json")
@@ -658,6 +874,18 @@ func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
+	} else if s.adminToken == "" {
+		// No password set AND no admin token — refuse rather than allow
+		// "first write wins". An operator who legitimately needs to set
+		// the very first password should configure RELAY_ADMIN_TOKEN
+		// before exposing the relay, or set the password via the env
+		// var before startup.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "no password is set; configure RELAY_ADMIN_TOKEN to allow setting the initial password via API, or set RELAY_PASSWORD before startup",
+		})
+		return
 	}
 
 	// Update password in memory
@@ -678,7 +906,15 @@ func (s *RelayServer) handleSetPassword(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleAdminStatus returns relay status info via GET /admin/status.
+//
+// H-14 (audit 2026-05-02): "is a password set?" + tunnel count + uptime
+// is reconnaissance for an attacker probing whether the relay is
+// reachable in open mode (C-9). Auth-gated.
 func (s *RelayServer) handleAdminStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
+
 	s.mu.RLock()
 	tunnelCount := len(s.tunnels)
 	s.mu.RUnlock()
@@ -1097,9 +1333,9 @@ func (s *RelayServer) handleExposeRegister(stream quic.Stream, msg ExposeRegiste
 		return
 	}
 
-	// Block reserved subdomains
-	reserved := map[string]bool{"www": true, "api": true, "relay": true, "public": true, "admin": true, "mail": true, "app": true}
-	if reserved[subdomain] {
+	// Block reserved subdomains. Single source of truth shared with
+	// the auto-provision path at registration time (M-6).
+	if reservedSubdomains[subdomain] {
 		resp, _ := json.Marshal(ExposeRegisterResp{Type: "error", Message: "subdomain is reserved"})
 		stream.Write(resp)
 		return
@@ -1343,6 +1579,11 @@ func (s *RelayServer) logTunnels(ctx context.Context) {
 }
 
 func (s *RelayServer) handleBandwidthStats(w http.ResponseWriter, r *http.Request) {
+	// H-14 (audit 2026-05-02): per-device bandwidth breakdowns are
+	// per-tenant and must not be public.
+	if !s.authorizeAdmin(w, r) {
+		return
+	}
 	stats := s.bandwidth.GetStats()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

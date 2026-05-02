@@ -31,6 +31,7 @@ func (s *HTTPServer) handleSupportStart(w http.ResponseWriter, r *http.Request) 
 	var body struct {
 		TTL   string `json:"ttl"`
 		Label string `json:"label"`
+		Shell bool   `json:"shell"` // opt-in for /exec /ws/terminal /browser/* — the "TeamViewer remote help" UX
 	}
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
@@ -41,7 +42,11 @@ func (s *HTTPServer) handleSupportStart(w http.ResponseWriter, r *http.Request) 
 			ttl = d
 		}
 	}
-	sess := StartSupportSession(body.Label, ttl)
+	sess := StartSupportSession(SupportStartOptions{
+		Label: body.Label,
+		TTL:   ttl,
+		Shell: body.Shell,
+	})
 	jsonReply(w, http.StatusOK, supportSessionPayload(sess, s.deviceID, true))
 }
 
@@ -138,6 +143,7 @@ func supportSessionPayload(sess *supportSession, deviceID string, includeSecrets
 		"expiresAt":  sess.ExpiresAt.UTC().Format(time.RFC3339),
 		"ttlSeconds": int(time.Until(sess.ExpiresAt).Seconds()),
 		"allowed":    sess.AllowedPrefixes,
+		"shell":      sess.Shell,
 	}
 	if includeSecrets {
 		out["code"] = sess.Code
