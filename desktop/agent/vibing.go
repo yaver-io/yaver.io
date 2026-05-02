@@ -935,7 +935,28 @@ func (s *HTTPServer) resolveVibingProjectForRequest(projectPath, projectName, bu
 		}
 	}
 
-	if s != nil && s.taskMgr != nil && strings.TrimSpace(s.taskMgr.workDir) != "" {
+	// Last-pushed-bundle fallback. When a guest bundle was Hermes-
+	// pushed via /dev/build-native (e.g. `yaver insert sfmg`), the
+	// agent records {workDir, projectName} on success. A subsequent
+	// /vibing/execute from inside that loaded guest — which in 1.18.34
+	// only sends `prompt` (no projectName/bundleId) — gets routed
+	// to the right project here instead of falling through to the
+	// agent's global cwd. Set in handleBuildNativeBundle's success
+	// path; protected by a small mutex.
+	if s != nil {
+		s.lastNativeBundleMu.Lock()
+		lastPath := s.lastNativeBundleProjectPath
+		lastName := s.lastNativeBundleProjectName
+		s.lastNativeBundleMu.Unlock()
+		if projectPath == "" && lastPath != "" {
+			projectPath = lastPath
+			if projectName == "" {
+				projectName = lastName
+			}
+		}
+	}
+
+	if s != nil && s.taskMgr != nil && strings.TrimSpace(s.taskMgr.workDir) != "" && projectPath == "" {
 		projectPath = strings.TrimSpace(s.taskMgr.workDir)
 	}
 	if projectPath == "" && s != nil && s.devServerMgr != nil {

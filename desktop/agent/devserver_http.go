@@ -3171,6 +3171,19 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ConsumerLabel: nativeBuildConsumerLabel(consumer),
 	})
 
+	// Capture the just-built project so subsequent /vibing/execute calls
+	// from inside the loaded guest (which only know `prompt` in 1.18.34
+	// — projectName/bundleId aren't passed) can fall back to "the
+	// project we just pushed to your phone." See
+	// resolveVibingProjectForRequest's last-resort branch.
+	s.lastNativeBundleMu.Lock()
+	s.lastNativeBundleProjectPath = workDir
+	s.lastNativeBundleProjectName = strings.TrimSpace(req.ProjectName)
+	if s.lastNativeBundleProjectName == "" {
+		s.lastNativeBundleProjectName = DetectProjectInfo(workDir).Name
+	}
+	s.lastNativeBundleMu.Unlock()
+
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"status":                        "ok",
 		"bundleUrl":                     bundleURL,

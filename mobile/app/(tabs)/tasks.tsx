@@ -833,7 +833,11 @@ export default function TasksScreen() {
   // Video summary toggle for the new task. When on, the agent records
   // a short MP4 demo after the task finishes (vibe-preview pipeline);
   // the task row gets a "▶ Watch demo" button when ready.
-  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
+  // Default ON: most users want a video summary clip of their task
+  // running. Recording is auto-detected per workdir (sim-ios for RN
+  // mobile projects, browser for web, etc.). Users who don't want it
+  // uncheck the box once and the agent task ignores videoEnabled.
+  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(true);
   // codeMode toggle = "yaver code mode" (a.k.a. wrap mode). When ON,
   // the task is sent with source="mobile-code" so the agent applies
   // the same prompt wrapping the `yaver code` CLI uses (terminal-style,
@@ -2473,8 +2477,26 @@ export default function TasksScreen() {
               <View style={s.modalHeader}>
                 <Text style={[s.modalTitle, { color: c.textPrimary }]}>New Task</Text>
                 <Pressable
-                  style={[s.agentBadge, { backgroundColor: c.bgCardElevated, borderColor: c.border }]}
-                  onPress={() => setShowAgentPicker(true)}
+                  // Generous hit area — the visible badge is tight on a
+                  // tall iPhone, and inside a Modal+KeyboardAvoidingView
+                  // the press target was easy to miss. Surfaces a 12px
+                  // halo on every side without changing the visual.
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={({ pressed }) => [
+                    s.agentBadge,
+                    { backgroundColor: c.bgCardElevated, borderColor: c.border },
+                    pressed && { opacity: 0.55 },
+                  ]}
+                  onPress={() => {
+                    // The picker has its own loading state when
+                    // availableRunners is empty; open it unconditionally
+                    // so the user always gets visible feedback that
+                    // their tap registered, instead of "I tapped Sonnet
+                    // but nothing happened" silence.
+                    setShowAgentPicker(true);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change coding agent and model"
                 >
                   <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
                     {(() => {

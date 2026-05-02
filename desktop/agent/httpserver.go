@@ -100,6 +100,19 @@ type HTTPServer struct {
 	tlsServer          *http.Server
 	onShutdown         func() // called when mobile requests agent shutdown
 
+	// lastNativeBundleProject{Path,Name} captures the most recent
+	// successful /dev/build-native compile so a follow-up
+	// /vibing/execute call from the loaded guest (which doesn't know
+	// its own project name when only a `prompt` is sent — see
+	// FeedbackOverlay.handleSend in 1.18.34) can fall back to "the
+	// project we just pushed to your phone."
+	// Without this, the resolver would fall through to taskMgr.workDir
+	// (typically /root or the agent's cwd), and the autodev fix would
+	// run in the wrong directory.
+	lastNativeBundleProjectPath string
+	lastNativeBundleProjectName string
+	lastNativeBundleMu          sync.Mutex
+
 	iosInstallMethod string // "auto", "native", "bundle" — resolved at startup
 
 	// Test app sessions
