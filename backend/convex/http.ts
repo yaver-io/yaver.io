@@ -1316,7 +1316,12 @@ http.route({
       tokenHash,
       deviceId: body.deviceId,
       runners: body.runners,
-      quicHost: body.quicHost || undefined,
+      // Pass quicHost as-is (including ""). The mutation now treats "" as
+      // a deliberate clear (e.g. an upgraded agent retracting a stale
+      // Docker-bridge address). Pre-fix `body.quicHost || undefined`
+      // collapsed empty-string to undefined, leaving the stale value in
+      // the DB forever.
+      quicHost: typeof body.quicHost === "string" ? body.quicHost : undefined,
       // Multi-IP rollout: the agent advertises every reachable IPv4 it has
       // (Wi-Fi LAN, Tailscale 100.x, Ethernet, VPNs) so the mobile connect
       // path can race them in parallel. Older agents don't send the field
