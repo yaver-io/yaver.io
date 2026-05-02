@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -197,6 +198,32 @@ func displayProjectName(repoRoot, monorepoApp, appName, framework string, mobile
 		return fmt.Sprintf("%s (%s) / %s", repoName, subproject, kind)
 	}
 	return fmt.Sprintf("%s / %s", repoName, kind)
+}
+
+// demoShowcaseProject identifies projects living in the well-known
+// `<repo>/demo/{mobile,web}/<app>/...` showcase layout. These apps
+// exist purely to demo the Yaver Feedback SDK and shouldn't carry
+// the host repo name in the Hot Reload list — `Bento / mobile` and
+// `Todo RN / mobile` read as discoverable showcases, while
+// `yaver (todo-rn) / mobile` reads like a yaver internal subproject
+// the user might break by tapping. Returns ("", "") for non-demo
+// paths so the caller falls through to the standard repo+monorepo
+// naming. The check matches anywhere in the path, not only at the
+// repo root, so a vendored demo at `<repo>/vendor/yaver/demo/mobile/x`
+// still gets the friendly name.
+func demoShowcaseProject(dir string) (surface, leaf string) {
+	parts := strings.Split(filepath.Clean(dir), string(filepath.Separator))
+	for i := 0; i < len(parts)-2; i++ {
+		if parts[i] != "demo" {
+			continue
+		}
+		next := parts[i+1]
+		if next != "mobile" && next != "web" {
+			continue
+		}
+		return next, parts[i+2]
+	}
+	return "", ""
 }
 
 func repoRootForProject(dir string) string {
@@ -441,6 +468,21 @@ func scanMobileProjects() []MobileProject {
 				proj.Name = displayProjectName(root, app, appName, framework, mobileCapable, webCapable)
 			} else if repoRoot != "" {
 				proj.Name = displayProjectName(repoRoot, "", appName, framework, mobileCapable, webCapable)
+			}
+
+			// Demo-showcase override. Apps under `demo/{mobile,web}/<app>/`
+			// are video-demo showcases (Todo RN, Bento, etc.) — always
+			// display them as `<app or app.json name> / <surface>`,
+			// dropping the host repo prefix. Without this, every demo
+			// inside yaver.io renders as `yaver (todo-rn) / mobile`,
+			// which makes them look like yaver internals rather than
+			// safe demo targets.
+			if surf, leaf := demoShowcaseProject(dir); surf != "" {
+				display := strings.TrimSpace(appName)
+				if display == "" || strings.EqualFold(display, leaf) || strings.EqualFold(display, repoDisplayName(repoRoot)) {
+					display = leaf
+				}
+				proj.Name = fmt.Sprintf("%s / %s", display, surf)
 			}
 
 			// Get git info (fast — just reads local files)
@@ -825,9 +867,17 @@ func prebuildExpoProject(p MobileProject) {
 // ── App name parsing ──────────────────────────────────────────────────
 
 // parseAppName reads the real app name from framework config files.
-// - Expo/RN: app.json → expo.name or name; app.config.js not parsed (JS)
-// - Flutter: pubspec.yaml → name: field
-// - Unity: ProjectSettings/ProjectSettings.asset productName
+// Priority order matches each platform's display surface — what the
+// home-screen launcher renders, not the package id — so the Hot
+// Reload list shows "Todo Kt" instead of "yaver-fixture-native-android".
+//   - Expo/RN: app.json → expo.name → top-level name → package.json
+//   - Flutter: AndroidManifest android:label (literal) → iOS Info.plist
+//             CFBundleDisplayName → pubspec.yaml `name:`
+//   - Unity:   ProjectSettings/ProjectSettings.asset productName
+//   - Kotlin:  res/values/strings.xml `app_name` → settings.gradle
+//             rootProject.name
+//   - Swift:   <App>/Info.plist CFBundleDisplayName → CFBundleName →
+//             project.yml INFOPLIST_KEY_CFBundleDisplayName → project.yml `name:`
 func parseAppName(dir, framework string) string {
 	switch framework {
 	case "expo", "react-native":
@@ -836,6 +886,10 @@ func parseAppName(dir, framework string) string {
 		return parseFlutterAppName(dir)
 	case "unity":
 		return parseUnityAppName(dir)
+	case "kotlin":
+		return parseKotlinAppName(dir)
+	case "swift":
+		return parseSwiftAppName(dir)
 	}
 	return ""
 }
@@ -886,11 +940,30 @@ func parseExpoAppName(dir string) string {
 }
 
 func parseFlutterAppName(dir string) string {
+	// 1. AndroidManifest android:label="..." (literal). Skip @string
+	//    refs — they require a strings.xml round-trip and the pubspec
+	//    name is a fine fallback if the developer hasn't set a literal.
+	manifest := filepath.Join(dir, "android", "app", "src", "main", "AndroidManifest.xml")
+	if name := readAndroidLabel(manifest); name != "" {
+		return name
+	}
+	// 2. iOS Info.plist CFBundleDisplayName, then CFBundleName.
+	for _, plist := range []string{
+		filepath.Join(dir, "ios", "Runner", "Info.plist"),
+		filepath.Join(dir, "ios", "Info.plist"),
+	} {
+		if name := readPlistString(plist, "CFBundleDisplayName"); name != "" {
+			return name
+		}
+		if name := readPlistString(plist, "CFBundleName"); name != "" {
+			return name
+		}
+	}
+	// 3. pubspec.yaml `name:` (snake_case package id, ugly but valid).
 	data, err := os.ReadFile(filepath.Join(dir, "pubspec.yaml"))
 	if err != nil {
 		return ""
 	}
-	// Simple YAML parsing — just find "name: X" at the top level (no indentation)
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "name:") {
@@ -902,6 +975,150 @@ func parseFlutterAppName(dir string) string {
 		}
 	}
 	return ""
+}
+
+// parseKotlinAppName resolves the Android launcher label. Priority:
+//
+//  1. `app/src/main/res/values/strings.xml` `<string name="app_name">…`.
+//     This is what the launcher renders, so it's the highest-quality
+//     display name for a real Android app.
+//  2. `settings.gradle(.kts)` `rootProject.name = "…"`. Usually a
+//     package id like "todo-kt" — workable but uglier.
+//
+// Returns "" when neither is present so the caller falls back to the
+// directory leaf.
+func parseKotlinAppName(dir string) string {
+	if name := readStringsXMLAppName(filepath.Join(dir, "app", "src", "main", "res", "values", "strings.xml")); name != "" {
+		return name
+	}
+	for _, settings := range []string{"settings.gradle.kts", "settings.gradle"} {
+		data, err := os.ReadFile(filepath.Join(dir, settings))
+		if err != nil {
+			continue
+		}
+		// Match both `rootProject.name = "x"` (KTS) and `rootProject.name = 'x'`
+		// (Groovy single-quote). One regex over both keeps the parser
+		// honest — substring matching would mis-fire on
+		// `rootProject.name.toLowerCase()` or comments.
+		re := regexp.MustCompile(`(?m)^\s*rootProject\.name\s*=\s*["']([^"']+)["']`)
+		if m := re.FindSubmatch(data); m != nil {
+			return string(m[1])
+		}
+	}
+	return ""
+}
+
+// parseSwiftAppName resolves the iOS launcher label. Priority:
+//
+//  1. `<App>/Info.plist` `CFBundleDisplayName` (preferred — what
+//     SpringBoard renders), falling back to `CFBundleName`.
+//  2. `project.yml` (xcodegen) settings.base.INFOPLIST_KEY_CFBundleDisplayName
+//     when GENERATE_INFOPLIST_FILE: YES is in use and there's no
+//     literal Info.plist on disk.
+//  3. `project.yml` top-level `name:` — the xcodegen project name,
+//     workable as a final fallback.
+func parseSwiftAppName(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			plist := filepath.Join(dir, e.Name(), "Info.plist")
+			if name := readPlistString(plist, "CFBundleDisplayName"); name != "" {
+				return name
+			}
+			if name := readPlistString(plist, "CFBundleName"); name != "" {
+				return name
+			}
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, "project.yml")); err == nil {
+		// xcodegen settings overrides — match exact key, not a
+		// substring, so a comment like `# CFBundleDisplayName: …`
+		// doesn't poison the result.
+		re := regexp.MustCompile(`(?m)^\s*INFOPLIST_KEY_CFBundleDisplayName\s*:\s*["']?([^"'\n]+?)["']?\s*$`)
+		if m := re.FindSubmatch(data); m != nil {
+			return strings.TrimSpace(string(m[1]))
+		}
+		nameRe := regexp.MustCompile(`(?m)^name\s*:\s*["']?([^"'\n]+?)["']?\s*$`)
+		if m := nameRe.FindSubmatch(data); m != nil {
+			return strings.TrimSpace(string(m[1]))
+		}
+	}
+	return ""
+}
+
+// readStringsXMLAppName reads `<string name="app_name">VALUE</string>`
+// from an Android values resources file. Returns "" when the value is
+// itself a `@string/...` reference (no point chasing the ref — the
+// ref target is in another file and we'd recurse).
+func readStringsXMLAppName(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	re := regexp.MustCompile(`<string\s+name="app_name"\s*>\s*([^<]+?)\s*</string>`)
+	m := re.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	val := strings.TrimSpace(string(m[1]))
+	if strings.HasPrefix(val, "@") {
+		return ""
+	}
+	return val
+}
+
+// readAndroidLabel reads `android:label="LITERAL"` from the
+// `<application>` element of an AndroidManifest.xml. Returns "" when
+// the value is a `@string/foo` reference — the caller can resolve the
+// ref via res/values/strings.xml on its own if needed.
+func readAndroidLabel(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	re := regexp.MustCompile(`<application\b[^>]*\bandroid:label\s*=\s*"([^"]+)"`)
+	m := re.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	val := strings.TrimSpace(string(m[1]))
+	if strings.HasPrefix(val, "@") {
+		// @string/app_name — resolve via strings.xml.
+		base := filepath.Dir(path)
+		if name := readStringsXMLAppName(filepath.Join(base, "res", "values", "strings.xml")); name != "" {
+			return name
+		}
+		return ""
+	}
+	return val
+}
+
+// readPlistString reads a top-level `<key>NAME</key><string>VALUE</string>`
+// pair out of an Info.plist (XML format). Returns "" when the key is
+// absent, the value is empty, or the value starts with `$(` (a build
+// setting placeholder like `$(PRODUCT_NAME)` — those resolve only at
+// build time and aren't useful as a display name).
+func readPlistString(path, key string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	// `<key>NAME</key>\s*<string>VALUE</string>` — be tolerant of
+	// arbitrary whitespace/newlines between the two tags. We do NOT
+	// support the binary plist format here (Xcode writes XML by default).
+	re := regexp.MustCompile(`<key>` + regexp.QuoteMeta(key) + `</key>\s*<string>([^<]*)</string>`)
+	m := re.FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	val := strings.TrimSpace(string(m[1]))
+	if val == "" || strings.HasPrefix(val, "$(") {
+		return ""
+	}
+	return val
 }
 
 func parseUnityAppName(dir string) string {
@@ -990,9 +1207,30 @@ func (s *HTTPServer) handleProjectsByCapability(w http.ResponseWriter, r *http.R
 	})
 }
 
-// handleMobileProjects returns all mobile projects found on the machine.
-// GET /projects/mobile — scans home directory for Flutter, Expo, React Native projects.
-// Results are cached for 10 minutes; POST forces a re-scan.
+// mobileCapableProjects filters the shared discovery cache down to
+// projects that actually run on a phone. The scanner caches every
+// detected project (web + mobile) so /projects/all and /projects/web
+// can reuse the same walk, but /projects/mobile must drop pure-web
+// frameworks (Next, Vite) before they reach the Hot Reload tab —
+// otherwise tapping a Next.js project tries to start a Hermes bundle
+// for a folder with no React Native runtime. Returns a non-nil slice
+// even when nothing matches so jsonReply emits `[]` instead of `null`.
+func mobileCapableProjects(in []MobileProject) []MobileProject {
+	out := make([]MobileProject, 0, len(in))
+	for _, p := range in {
+		if p.MobileCapable {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// handleMobileProjects returns mobile-capable projects found on the
+// machine. GET /projects/mobile — scans home directory for Flutter,
+// Expo, React Native, native iOS (Swift) and native Android (Kotlin)
+// projects. Results are filtered to MobileCapable=true; pure-web
+// frameworks (Next, Vite) live in /projects/web instead. Cached for
+// 10 minutes; POST forces a re-scan.
 func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		// Force re-scan
@@ -1049,7 +1287,7 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 	if projects != nil && len(projects) > 0 && time.Since(scannedAt) < 10*time.Minute {
 		jsonReply(w, http.StatusOK, map[string]interface{}{
 			"ok":        true,
-			"projects":  projects,
+			"projects":  mobileCapableProjects(projects),
 			"scannedAt": scannedAt.UTC().Format(time.RFC3339),
 			"scanning":  scanning,
 		})
@@ -1094,13 +1332,9 @@ func (s *HTTPServer) handleMobileProjects(w http.ResponseWriter, r *http.Request
 		}()
 	}
 
-	if projects == nil {
-		projects = []MobileProject{}
-	}
-
 	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":        true,
-		"projects":  projects,
+		"projects":  mobileCapableProjects(projects),
 		"scannedAt": scannedAt.UTC().Format(time.RFC3339),
 		"scanning":  scanning,
 	})

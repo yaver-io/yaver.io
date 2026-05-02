@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "yaver-fixture-native-android"
+rootProject.name = "todo-kt"
 include(":app")

@@ -1,5 +1,5 @@
-name: yaver_native_flutter_app
-description: Minimal Flutter fixture for testing yaver flutter build/push pipeline.
+name: todo_flutter
+description: Minimal Flutter Todo app showcasing the Yaver Feedback SDK.
 publish_to: none
 version: 0.1.0
 
