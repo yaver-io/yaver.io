@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { useColors } from "../context/ThemeContext";
 import { quicClient } from "../lib/quic";
+import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import {
   classifyTransport,
   fetchRelayHealth,
@@ -438,6 +439,118 @@ function OwnerClaimAuthRow({ device }: { device: Device }) {
   );
 }
 
+// PingRow is the mobile counterpart to the CLI's `yaver primary ping`:
+// one-shot HTTP /info probe via the same transport stack the connect
+// flow uses (relay first, then direct), rendered as one short summary
+// line. Answers two questions in one tap: (1) is the box reachable
+// at all, (2) is its Yaver auth valid and owned by the same user.
+function PingRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { token, user } = useDevice() as any;
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<null | {
+    ok: boolean;
+    line: string;
+    detail?: string;
+    elapsedMs?: number;
+  }>(null);
+
+  const onPress = async () => {
+    setBusy(true);
+    setResult(null);
+    const t0 = Date.now();
+    try {
+      const probe = await probeMobileDeviceStatus(
+        { id: device.id, host: device.host, port: device.port, lanIps: device.lanIps },
+        token,
+        8000,
+      );
+      const elapsedMs = Date.now() - t0;
+      if (!probe.reachable) {
+        setResult({
+          ok: false,
+          line: "unreachable",
+          detail: "every transport candidate failed — try `yaver primary auth`",
+          elapsedMs,
+        });
+        return;
+      }
+      const info = (probe.info || {}) as Record<string, any>;
+      const version = info.version || "?";
+      const lifecycle = probe.lifecycleState || info.lifecycleState || "unknown";
+      const ownerId =
+        info.ownerUserId ||
+        info.ownerUserID ||
+        info.ownerId ||
+        "";
+      const myId = user?.id || user?.userId || "";
+      const ownerEmail = info.ownerEmail || "";
+      let ownerLabel = "";
+      if (ownerId && myId && ownerId === myId) {
+        ownerLabel = `owner ${ownerEmail || "you"} (you)`;
+      } else if (ownerId && myId && ownerId !== myId) {
+        ownerLabel = `owner ${ownerEmail || ownerId} (NOT you)`;
+      }
+      const transport = probe.path === "relay" ? "relay" : "direct";
+      const head = `via ${transport} · ${elapsedMs}ms`;
+      const body = [
+        `agent ${version}`,
+        `lifecycle ${lifecycle}`,
+        ownerLabel,
+      ].filter(Boolean).join(" · ");
+      setResult({ ok: true, line: head, detail: body, elapsedMs });
+    } catch (e: any) {
+      setResult({
+        ok: false,
+        line: "ping failed",
+        detail: e?.message || String(e),
+        elapsedMs: Date.now() - t0,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={busy}
+        style={{
+          alignSelf: "flex-start",
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: "rgba(99,102,241,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(99,102,241,0.45)",
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        <Text style={{ color: "#c7d2fe", fontSize: 12, fontWeight: "700" }}>
+          {busy ? "Pinging..." : "Ping"}
+        </Text>
+      </Pressable>
+      {result ? (
+        <View style={{ marginTop: 8 }}>
+          <Text style={{
+            fontSize: 12,
+            fontWeight: "600",
+            color: result.ok ? "#a7f3d0" : "#fecdd3",
+          }}>
+            {result.ok ? "✓ " : "✗ "}{result.line}
+          </Text>
+          {result.detail ? (
+            <Text style={{ marginTop: 2, fontSize: 11, color: c.textMuted }}>
+              {result.detail}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
   const c = useColors();
   const t = device ? transportFor(device) : null;
@@ -619,6 +732,15 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
                 RECOVERY
               </Text>
+              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+                Ping
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+                One-shot reachability + auth check (mirrors `yaver ping {device.alias || device.name}` and `yaver primary ping`). Confirms the box responds to /info and that its Yaver auth is valid for your account.
+              </Text>
+              <PingRow device={device} />
+              <View style={{ height: 14 }} />
+
               {device.needsAuth ? (
                 <>
                   <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
