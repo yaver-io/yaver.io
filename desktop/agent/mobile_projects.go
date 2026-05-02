@@ -401,16 +401,59 @@ func scanMobileProjects() []MobileProject {
 			case "Package.swift":
 				framework = "swift"
 				mobileCapable = true
+			case "project.yml":
+				// xcodegen project descriptor. Treat as Swift only when
+				// it explicitly declares an iOS platform — otherwise
+				// project.yml could be a Linux Swift package or any
+				// other xcodegen target type.
+				if isXcodegenIOSProject(dir) {
+					framework = "swift"
+					mobileCapable = true
+				}
 			case "build.gradle.kts", "build.gradle", "settings.gradle.kts", "settings.gradle":
 				if isKotlinAndroidProject(dir) {
 					framework = "kotlin"
 					mobileCapable = true
+					// Walk visits children alphabetically, so
+					// `todo-kt/app/build.gradle.kts` fires before
+					// `todo-kt/settings.gradle.kts`. Peek at the
+					// parent now: if it carries a Gradle root that
+					// includes the current dir as a sub-module, the
+					// real project is the parent — return nil here
+					// and let the parent's settings file register
+					// when the walker reaches it.
+					if isKotlinSubmoduleOfParent(dir) {
+						return nil
+					}
 				}
 			default:
 				return nil
 			}
 
 			if framework == "" {
+				return nil
+			}
+
+			// Suppress modules nested inside an already-detected project
+			// of the same framework — most often Android Gradle modules
+			// (`<root>/app/build.gradle.kts`) showing up after the
+			// project root (`<root>/settings.gradle.kts`) was already
+			// added. The :app sub-module is not a separate Hot Reload
+			// target; the user wants the project root.
+			nestedDup := false
+			for _, existing := range projects {
+				if existing.Framework != framework {
+					continue
+				}
+				if dir == existing.Path {
+					continue
+				}
+				if strings.HasPrefix(dir+string(filepath.Separator), existing.Path+string(filepath.Separator)) {
+					nestedDup = true
+					break
+				}
+			}
+			if nestedDup {
 				return nil
 			}
 
@@ -476,10 +519,13 @@ func scanMobileProjects() []MobileProject {
 			// dropping the host repo prefix. Without this, every demo
 			// inside yaver.io renders as `yaver (todo-rn) / mobile`,
 			// which makes them look like yaver internals rather than
-			// safe demo targets.
+			// safe demo targets. Always prefer appName when present
+			// (preserves the user's casing — `app.json name:"Bento"`
+			// must render as `Bento`, not `bento` from the dir leaf
+			// even though the two match case-insensitively).
 			if surf, leaf := demoShowcaseProject(dir); surf != "" {
 				display := strings.TrimSpace(appName)
-				if display == "" || strings.EqualFold(display, leaf) || strings.EqualFold(display, repoDisplayName(repoRoot)) {
+				if display == "" {
 					display = leaf
 				}
 				proj.Name = fmt.Sprintf("%s / %s", display, surf)
@@ -1047,6 +1093,55 @@ func parseSwiftAppName(dir string) string {
 		}
 	}
 	return ""
+}
+
+// isKotlinSubmoduleOfParent returns true when `dir` is a child Gradle
+// sub-module included from a parent project root — the canonical case
+// being `<root>/app/build.gradle.kts` referenced by `<root>/settings.
+// gradle.kts` `include(":app")`. Without this check, the Hot Reload
+// list double-counts every Android Gradle project: once as the root,
+// once as the `:app` sub-module that holds the actual AndroidManifest.
+func isKotlinSubmoduleOfParent(dir string) bool {
+	parent := filepath.Dir(dir)
+	leaf := filepath.Base(dir)
+	if parent == "" || parent == dir || leaf == "" || leaf == "." {
+		return false
+	}
+	include := `":` + leaf + `"`
+	includeAlt := `':` + leaf + `'`
+	for _, settings := range []string{"settings.gradle.kts", "settings.gradle"} {
+		data, err := os.ReadFile(filepath.Join(parent, settings))
+		if err != nil {
+			continue
+		}
+		s := string(data)
+		if strings.Contains(s, include) || strings.Contains(s, includeAlt) {
+			return true
+		}
+	}
+	return false
+}
+
+// isXcodegenIOSProject returns true when `dir/project.yml` declares
+// an iOS app target. Without this check, xcodegen-driven Swift apps
+// (no `Package.swift` on disk) wouldn't appear in the Hot Reload
+// list at all — `demo/mobile/todo-swift/` is the canonical example.
+// We accept any of the common xcodegen iOS markers because the schema
+// is loose: top-level `bundleIdPrefix:`, a `platform: iOS` line under
+// any target, or a `deploymentTarget.iOS:` block.
+func isXcodegenIOSProject(dir string) bool {
+	data, err := os.ReadFile(filepath.Join(dir, "project.yml"))
+	if err != nil {
+		return false
+	}
+	s := string(data)
+	if strings.Contains(s, "platform: iOS") || strings.Contains(s, "platform: ios") {
+		return true
+	}
+	if strings.Contains(s, "iOS:") && strings.Contains(s, "deploymentTarget") {
+		return true
+	}
+	return false
 }
 
 // readStringsXMLAppName reads `<string name="app_name">VALUE</string>`

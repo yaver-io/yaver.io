@@ -582,6 +582,78 @@ targets:
 	})
 }
 
+// TestScanMobileProjects_DemoShowcaseEdgeCases pins three bugs that
+// surfaced live on yaver-test-ephemeral after the first showcase
+// rollout:
+//
+//  1. Bento rendered lowercase ("bento / mobile") because the demo-
+//     showcase override case-folded appName against the dir leaf.
+//     app.json `name:"Bento"` must win over `bento` from the path.
+//  2. todo-kt/app/ registered as its own Kotlin project alongside
+//     todo-kt/, doubling the entry. Android Gradle :app sub-modules
+//     must be suppressed when their parent root was already detected.
+//  3. todo-swift never appeared because the xcodegen project has no
+//     `Package.swift` — only `project.yml`. The scanner now treats
+//     `project.yml` with `platform: iOS` as a Swift entry.
+func TestScanMobileProjects_DemoShowcaseEdgeCases(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+
+	repo := filepath.Join(tmp, "Workspace", "yaver.io")
+	mustMkdirAllMobileScan(t, filepath.Join(repo, ".git"))
+
+	// 1. Bento (lowercase dir, capitalised app.json name).
+	bento := filepath.Join(repo, "demo", "mobile", "bento")
+	writeManifestFile(t, filepath.Join(bento, "package.json"), `{"name":"bento","dependencies":{"expo":"~54.0.0"}}`)
+	writeManifestFile(t, filepath.Join(bento, "app.json"), `{"expo":{"name":"Bento"}}`)
+
+	// 2. todo-kt with both a settings.gradle.kts (root) and
+	//    app/build.gradle.kts (Android sub-module). Only the root
+	//    should appear.
+	todoKt := filepath.Join(repo, "demo", "mobile", "todo-kt")
+	writeManifestFile(t, filepath.Join(todoKt, "settings.gradle.kts"), `rootProject.name = "todo-kt"
+include(":app")`)
+	writeManifestFile(t, filepath.Join(todoKt, "build.gradle.kts"), `plugins { id("com.android.application") apply false }`)
+	writeManifestFile(t, filepath.Join(todoKt, "app", "build.gradle.kts"), `plugins { id("com.android.application") }`)
+	writeManifestFile(t, filepath.Join(todoKt, "app", "src", "main", "AndroidManifest.xml"), `<manifest><application android:label="Todo Kt"/></manifest>`)
+	writeManifestFile(t, filepath.Join(todoKt, "app", "src", "main", "res", "values", "strings.xml"), `<resources><string name="app_name">Todo Kt</string></resources>`)
+
+	// 3. todo-swift xcodegen project (no Package.swift).
+	todoSwift := filepath.Join(repo, "demo", "mobile", "todo-swift")
+	writeManifestFile(t, filepath.Join(todoSwift, "project.yml"), `
+name: TodoSwift
+targets:
+  TodoSwift:
+    platform: iOS
+    settings:
+      base:
+        INFOPLIST_KEY_CFBundleDisplayName: "Todo Swift"
+`)
+
+	projects := scanMobileProjects()
+	got := map[string]string{}
+	for _, p := range projects {
+		got[filepath.Clean(p.Path)] = p.Name
+	}
+
+	wantNameForPath := map[string]string{
+		bento:     "Bento / mobile",
+		todoKt:    "Todo Kt / mobile",
+		todoSwift: "Todo Swift / mobile",
+	}
+	for path, want := range wantNameForPath {
+		if name := got[filepath.Clean(path)]; name != want {
+			t.Errorf("project %s name = %q, want %q (all paths: %v)", path, name, want, got)
+		}
+	}
+
+	// Negative assertion — the :app sub-module must NOT have its own row.
+	appPath := filepath.Join(todoKt, "app")
+	if _, leaked := got[filepath.Clean(appPath)]; leaked {
+		t.Errorf("kotlin :app sub-module leaked into projects: %v", got)
+	}
+}
+
 func TestDemoShowcaseProject(t *testing.T) {
 	cases := map[string]struct {
 		dir          string
