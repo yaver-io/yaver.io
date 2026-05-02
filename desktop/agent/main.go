@@ -788,8 +788,11 @@ func runAuth(args []string) {
 			// before the human finished signing in). Exit 0 with a
 			// structured hint so the caller re-invokes this same
 			// command — pending-auth is still on disk so we'll keep
-			// polling the same URL.
+			// polling the same URL. NOW we spawn the background
+			// waiter (was eagerly spawned earlier, which raced the
+			// foreground for the token).
 			if errors.Is(err, errResumable) {
+				ensurePendingAuthBackgroundWaiter(*convexURL)
 				fmt.Println()
 				fmt.Println("Sign-in still pending — same URL is valid.")
 				fmt.Println("  Re-run: yaver auth")

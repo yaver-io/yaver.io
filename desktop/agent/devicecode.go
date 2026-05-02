@@ -169,7 +169,14 @@ func runDeviceCodeAuth(convexURL string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ensurePendingAuthBackgroundWaiter(convexURL)
+	// IMPORTANT: do NOT spawn the background waiter here. The foreground
+	// pollUntilAuthorized below polls the same device code, and Convex's
+	// pollDeviceCode mutation clears `pendingToken` on the FIRST authorized
+	// retrieval — whichever poller wins gets the token, the other sees
+	// `{status:"expired"}` and surfaces "device code expired or already
+	// used" as a user-facing error. We instead defer the background
+	// waiter to the errResumable path (round-timeout), where the
+	// foreground gives up and a background poller is genuinely needed.
 
 	authURL := deviceCodeAuthURL(dcResp.UserCode, convexURL)
 	meta := buildDeviceCodeRequest()
@@ -319,7 +326,16 @@ func pollUntilAuthorized(convexURL, deviceCode string, absoluteDeadline time.Tim
 		token, done, err := pollDeviceCode(convexURL, deviceCode)
 		if err == nil && done {
 			if token == "" {
+				// Convex says "expired/already-used". This can also mean a
+				// concurrent poller (e.g. a leftover background waiter from
+				// a previous CLI invocation) already retrieved the token
+				// and wrote it to config.json. Check before erroring.
 				clearPendingAuth()
+				if cfg, _ := LoadConfig(); cfg != nil && strings.TrimSpace(cfg.AuthToken) != "" {
+					// A fresh-enough token is already on disk. Return it
+					// so finalizeAuthConfig can re-validate / re-save.
+					return cfg.AuthToken, nil
+				}
 				return "", fmt.Errorf("device code expired or already used")
 			}
 			clearPendingAuth()
