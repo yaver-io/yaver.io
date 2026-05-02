@@ -596,6 +596,19 @@ export class YaverFeedback {
     await p2pClient.cancelRunnerBrowserAuth(sessionId);
   }
 
+  /** Submit the Claude paste-back verifier so the agent can finalise the
+   *  OAuth handshake. RunnerAuthModal calls this after the user copies
+   *  the code from platform.claude.com's callback page. */
+  static async submitRunnerBrowserAuthCode(
+    sessionId: string,
+    code: string,
+  ): Promise<import('./types').RunnerBrowserAuthSession> {
+    if (!p2pClient) {
+      throw new Error('Not connected to any agent.');
+    }
+    return p2pClient.submitRunnerBrowserAuthCode(sessionId, code);
+  }
+
   /**
    * Sign out: clear cached token + device, tear down the P2P client. The
    * SDK stays enabled; the next feedback trigger will re-prompt for login.

@@ -1251,7 +1251,15 @@ const RunnerAuthNativeModal: React.FC<{
   const [session, setSession] = useState<import('./types').RunnerBrowserAuthSession | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [pasteCode, setPasteCode] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const startedRef = useRef(false);
+  // Claude is the only runner that needs the user to paste a verifier
+  // code back from platform.claude.com's callback page; Codex device-
+  // auth and OpenCode (no OAuth at all) bypass this. Mirrors the
+  // requiresPasteBack check in iOS YaverRunnerAuthFlowPane.swift.
+  const needsPasteBack = runner === 'claude' || runner === 'claude-code';
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -1380,9 +1388,92 @@ const RunnerAuthNativeModal: React.FC<{
                   </Pressable>
                 </View>
               ) : null}
+              {needsPasteBack ? (
+                <View style={{ marginTop: 14 }}>
+                  <Text style={runnerAuthModalStyles.codeLabel}>
+                    PASTE CODE FROM CLAUDE.COM
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+                    <View
+                      style={{
+                        flex: 1,
+                        backgroundColor: 'rgba(148,163,184,0.10)',
+                        borderRadius: 10,
+                        paddingHorizontal: 10,
+                      }}
+                    >
+                      {/* Lazy-import TextInput so the SDK doesn't pull
+                          extra surface from react-native at module load. */}
+                      {(() => {
+                        const { TextInput } = require('react-native');
+                        return (
+                          <TextInput
+                            value={pasteCode}
+                            onChangeText={(t: string) => {
+                              setPasteCode(t);
+                              setSubmitError(null);
+                            }}
+                            placeholder="paste code here"
+                            placeholderTextColor="#64748b"
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            spellCheck={false}
+                            style={{ color: '#f1f5f9', fontSize: 14, paddingVertical: 10 }}
+                          />
+                        );
+                      })()}
+                    </View>
+                    <Pressable
+                      disabled={!pasteCode.trim() || submitting}
+                      onPress={async () => {
+                        if (!session || !pasteCode.trim()) return;
+                        setSubmitting(true);
+                        setSubmitError(null);
+                        try {
+                          const next = await YaverFeedback.submitRunnerBrowserAuthCode(
+                            session.id,
+                            pasteCode.trim(),
+                          );
+                          setSession(next);
+                          setPasteCode('');
+                        } catch (err) {
+                          setSubmitError(err instanceof Error ? err.message : String(err));
+                        } finally {
+                          setSubmitting(false);
+                        }
+                      }}
+                      style={{
+                        paddingHorizontal: 14,
+                        justifyContent: 'center',
+                        backgroundColor:
+                          !pasteCode.trim() || submitting
+                            ? 'rgba(124,58,237,0.4)'
+                            : '#7c3aed',
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Text style={{ color: 'white', fontWeight: '600' }}>
+                        {submitting ? '…' : 'Submit'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                  {submitError ? (
+                    <Text
+                      style={{
+                        marginTop: 6,
+                        color: '#fca5a5',
+                        fontSize: 12,
+                      }}
+                    >
+                      {submitError}
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
               <Text style={runnerAuthModalStyles.phishingHint}>
-                Device codes are a common phishing target. Never share this code. This dialog
-                turns green automatically once sign-in completes.
+                {needsPasteBack
+                  ? 'After authorising on platform.claude.com, copy the code from the callback page and paste it above. Never share this code.'
+                  : 'Device codes are a common phishing target. Never share this code. This dialog turns green automatically once sign-in completes.'}
               </Text>
             </View>
           )}

@@ -199,6 +199,29 @@ export class P2PClient {
     try { await fetch(url, { method: 'POST', headers: this.authHeaders() }); } catch { /* best-effort */ }
   }
 
+  /** Submit the verifier code Anthropic shows on the callback page so
+   *  the agent can finalise claude CLI's OAuth handshake. Codex doesn't
+   *  use this — its device-auth flow auto-resolves via polling — but
+   *  the SDK still exposes it for symmetry with mobile/src/components/
+   *  RunnerAuthModal.tsx and the Swift YaverRunnerAuthFlowPane. */
+  async submitRunnerBrowserAuthCode(
+    sessionId: string,
+    code: string,
+  ): Promise<RunnerBrowserAuthSession> {
+    const url = `${this.baseUrl}/runner-auth/browser/submit-code`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: sessionId, code }),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`submitRunnerBrowserAuthCode HTTP ${resp.status}: ${text}`);
+    }
+    const data = await resp.json();
+    return data.session as RunnerBrowserAuthSession;
+  }
+
   async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
     try {
       const resp = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders() });
