@@ -151,22 +151,70 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		desired["expo"] = wantExpo
 	}
 
-	changed := false
+	// ── 1. Patch overrides ──
+	// Overrides handle TRANSITIVE deps that pull a different React/RN/Expo
+	// (e.g. some plugin that peer-deps on a newer React). They do NOT
+	// downgrade a top-level direct dep — npm refuses to override what the
+	// project already lists in `dependencies` unless we use the `$pkg`
+	// reference form, which doesn't help us pin to a specific version.
+	// So this block alone is not sufficient; the dependencies-block patch
+	// below is the load-bearing change for the React 19.2.5 → 19.1.0 case.
 	merged := cloneStringMap(currentOverrides)
+	overridesChanged := false
 	for k, v := range desired {
 		if existing, ok := merged[k]; ok && existing == v {
 			continue
 		}
 		merged[k] = v
-		changed = true
+		overridesChanged = true
 	}
 
-	if !changed {
-		report.SkippedReason = "package.json overrides already pin host family — only npm install needed"
-		report.OverridesAfter = merged
-	} else {
-		// Write merged back — preserve other JSON fields, sorted output for
-		// reproducibility.
+	// ── 2. Patch dependencies (and devDependencies) ──
+	// Only rewrite keys that ALREADY exist in the project so we don't add
+	// react-dom / expo to projects that genuinely don't depend on them.
+	// This is what npm actually honours when resolving the install plan
+	// for a top-level package.
+	depsRewrites := map[string]string{}
+	depKindsTouched := map[string]map[string]string{}
+	for _, kind := range []string{"dependencies", "devDependencies"} {
+		raw, ok := pkgObj[kind]
+		if !ok {
+			continue
+		}
+		var existing map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			continue
+		}
+		writes := map[string]string{}
+		for name, want := range desired {
+			rawCur, present := existing[name]
+			if !present {
+				continue
+			}
+			var cur string
+			_ = json.Unmarshal(rawCur, &cur)
+			if strings.TrimSpace(cur) == want {
+				continue
+			}
+			b, _ := json.Marshal(want)
+			existing[name] = b
+			writes[name] = want
+			depsRewrites[name] = want
+		}
+		if len(writes) > 0 {
+			ordered := orderedRawMap(existing)
+			out, err := json.MarshalIndent(ordered, "  ", "  ")
+			if err != nil {
+				report.Error = fmt.Sprintf("marshal %s: %v", kind, err)
+				return report
+			}
+			pkgObj[kind] = out
+			depKindsTouched[kind] = writes
+		}
+	}
+
+	pkgChanged := overridesChanged || len(depsRewrites) > 0
+	if overridesChanged {
 		var ovValue map[string]json.RawMessage
 		if rawOv, ok := pkgObj["overrides"]; ok {
 			_ = json.Unmarshal(rawOv, &ovValue)
@@ -184,6 +232,10 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 			return report
 		}
 		pkgObj["overrides"] = ovBytes
+	}
+	report.OverridesAfter = merged
+
+	if pkgChanged {
 		out, err := marshalOrderedJSON(pkgObj)
 		if err != nil {
 			report.Error = fmt.Sprintf("marshal package.json: %v", err)
@@ -193,16 +245,33 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 			report.Error = fmt.Sprintf("write package.json: %v", err)
 			return report
 		}
-		report.OverridesAfter = merged
-		report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to align with host family "+family.ID)
+		if overridesChanged {
+			report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to align with host family "+family.ID)
+		}
+		for kind, writes := range depKindsTouched {
+			report.Notes = append(report.Notes, fmt.Sprintf("Pinned %s for %s to host family %s", kind, strings.Join(sortedKeys(writes), ", "), family.ID))
+		}
+	} else {
+		report.SkippedReason = "package.json already pins host family — only npm install needed"
 	}
 
-	// Run npm install regardless of changed, because:
-	//   1. another tool (Claude Code, the user) may have edited overrides
-	//      out from under us
-	//   2. node_modules may have been pruned
-	// npm is fast when nothing's changed.
-	npmCmd := exec.CommandContext(ctx, "npm", "install", "--legacy-peer-deps")
+	// ── 3. Run npm install ──
+	// Build explicit `<pkg>@<version>` specs for every package we just pinned
+	// in dependencies, and pass --save-exact so the lockfile + node_modules
+	// match the new pin in one pass. Plain `npm install --legacy-peer-deps`
+	// without specs sometimes leaves a stale node_modules/<pkg> at the old
+	// version when the lockfile was already pointing there — this is what
+	// caused the "auto-align ran, package.json says react 19.1.0, but
+	// node_modules/react/package.json still reads 19.2.5" failure mode and
+	// the consequent RUNTIME_FAMILY_MISMATCH at the post-align re-probe.
+	args := []string{"install", "--legacy-peer-deps"}
+	if len(depsRewrites) > 0 {
+		args = append(args, "--save-exact")
+		for _, name := range sortedKeys(depsRewrites) {
+			args = append(args, fmt.Sprintf("%s@%s", name, depsRewrites[name]))
+		}
+	}
+	npmCmd := exec.CommandContext(ctx, "npm", args...)
 	npmCmd.Dir = workDir
 	start := time.Now()
 	out, err := npmCmd.CombinedOutput()
@@ -212,6 +281,27 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		report.Error = fmt.Sprintf("npm install failed: %v: %s", err, tailBytes(out, 1200))
 		return report
 	}
+
+	// ── 4. Verify the install actually downgraded what we asked for ──
+	// If `node_modules/<pkg>/package.json` still doesn't match after the
+	// install, the alignment effectively failed. Surface that in the report
+	// so devserver_http's RUNTIME_FAMILY_MISMATCH is explained instead of
+	// silently re-firing.
+	var verifyDrift []string
+	for name, want := range desired {
+		installed, rerr := readInstalledPackageVersion(workDir, name)
+		if rerr != nil {
+			continue
+		}
+		if !runtimeVersionEquals(installed, want) {
+			verifyDrift = append(verifyDrift, fmt.Sprintf("%s installed=%s want=%s", name, installed, want))
+		}
+	}
+	if len(verifyDrift) > 0 {
+		report.Error = "post-install version drift: " + strings.Join(verifyDrift, ", ")
+		return report
+	}
+
 	report.Applied = true
 	report.Notes = append(report.Notes, fmt.Sprintf("npm install completed in %dms", report.NPMInstallMs))
 	return report
