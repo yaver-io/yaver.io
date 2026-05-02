@@ -395,12 +395,10 @@ final class YaverAgentsPane: NSObject {
         }
         // Agent wraps the session in {ok, session: {...}} — see
         // desktop/agent/runner_auth_browser_http.go::handleRunnerBrowserAuthStart.
-        // First commit of this pane unwrapped the wrong layer and
-        // never got an id/openUrl, so the SFSafariViewController never
-        // opened. Read session.id / session.openUrl now.
         let session = (json["session"] as? [String: Any]) ?? [:]
         let sessionId = (session["id"] as? String) ?? ""
         let openUrl = (session["openUrl"] as? String) ?? ""
+        let userCode = (session["code"] as? String) ?? ""
         if sessionId.isEmpty || openUrl.isEmpty {
           let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
           let body = String(data: data, encoding: .utf8)?.prefix(180) ?? ""
@@ -409,41 +407,35 @@ final class YaverAgentsPane: NSObject {
           return
         }
         self.pendingSession = (runner: runner, sessionId: sessionId)
-        self.openInSafariView(urlString: openUrl)
         self.setRowStatus(runner: runner, text: "complete sign-in in browser…", tone: .warning)
-        self.startPollingStatus(sessionId: sessionId, runner: runner)
+        // Push the auth flow sub-pane. Claude needs paste-back, Codex
+        // doesn't — the sub-pane shows the right UI per runner. The
+        // sub-pane owns polling + cancel + paste-back submission, and
+        // calls back to refresh auth-status when it terminates.
+        guard let win = self.window else { return }
+        YaverRunnerAuthFlowPane.shared.present(
+          in: win,
+          runner: runner,
+          sessionId: sessionId,
+          openUrl: openUrl,
+          userCode: userCode,
+          authToken: self.bestAuthToken(),
+          agentBase: agentBase,
+          onTerminal: { [weak self] outcome in
+            guard let self = self else { return }
+            switch outcome {
+            case .success:
+              self.finishBrowserAuth(runner: runner, ok: true, msg: "✓ signed in")
+              self.refreshAuthStatus()
+            case .failed(let msg):
+              self.finishBrowserAuth(runner: runner, ok: false, msg: "sign-in failed: \(msg)")
+            case .cancelled:
+              self.finishBrowserAuth(runner: runner, ok: false, msg: "sign-in cancelled")
+            }
+          }
+        )
       }
     }.resume()
-  }
-
-  private func startPollingStatus(sessionId: String, runner: String) {
-    pollTimer?.invalidate()
-    pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
-      guard let self = self else { return }
-      let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-      let auth = self.bestAuthToken()
-      guard let url = URL(string: "\(agentBase)/runner-auth/browser/status?id=\(sessionId)") else { return }
-      var req = URLRequest(url: url)
-      req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
-      URLSession.shared.dataTask(with: req) { data, _, _ in
-        DispatchQueue.main.async {
-          guard let data = data,
-                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-          else { return }
-          let session = (json["session"] as? [String: Any]) ?? [:]
-          let status = (session["status"] as? String) ?? (json["status"] as? String) ?? ""
-          if status == "completed" {
-            self.pollTimer?.invalidate(); self.pollTimer = nil
-            self.finishBrowserAuth(runner: runner, ok: true, msg: "✓ signed in")
-            self.refreshAuthStatus()
-          } else if status == "failed" || status == "cancelled" {
-            self.pollTimer?.invalidate(); self.pollTimer = nil
-            let detail = (session["error"] as? String) ?? (json["error"] as? String) ?? status
-            self.finishBrowserAuth(runner: runner, ok: false, msg: "sign-in \(status): \(detail)")
-          }
-        }
-      }.resume()
-    }
   }
 
   private func finishBrowserAuth(runner: String, ok: Bool, msg: String) {
@@ -451,14 +443,6 @@ final class YaverAgentsPane: NSObject {
     rowsByRunner[runner]?.spinner.stopAnimating()
     setRowStatus(runner: runner, text: msg, tone: ok ? .ok : .error)
     if ok { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-  }
-
-  private func openInSafariView(urlString: String) {
-    guard let url = URL(string: urlString),
-          let host = self.window?.rootViewController else { return }
-    let safari = SFSafariViewController(url: url)
-    safari.preferredControlTintColor = UIColor(red: 0.62, green: 0.66, blue: 0.99, alpha: 1)
-    host.present(safari, animated: true)
   }
 
   // MARK: - OpenCode sub-pane
@@ -698,5 +682,404 @@ final class YaverOpenCodeConfigPane: NSObject {
     statusLabel?.textColor = ok
       ? UIColor(red: 0.34, green: 0.85, blue: 0.55, alpha: 1)
       : UIColor(red: 1.00, green: 0.45, blue: 0.45, alpha: 1)
+  }
+}
+
+// MARK: - Runner browser-auth flow sub-pane
+
+/// Shown after YaverAgentsPane successfully starts a /runner-auth/browser/
+/// session for Claude or Codex. Owns the user-facing auth flow:
+///
+///   - Always: a button that opens the OAuth URL in SFSafariViewController.
+///   - Codex: shows the user-code (e.g. "ABCD-EFGH") for the device-auth
+///     page; user enters it on auth.openai.com and authorizes; agent
+///     polls OpenAI internally and the status flips to completed without
+///     anything else from the user.
+///   - Claude (claude / claude-code): paste-back input + Submit. After
+///     authorising on platform.claude.com, Anthropic's callback page
+///     hands the user a verifier code they must paste here, which we
+///     POST to /runner-auth/browser/submit-code. Agent then forwards
+///     the code to claude CLI to finalise the OAuth handshake.
+///
+/// Polls /runner-auth/browser/status every 1.5s. On terminal status
+/// (completed / failed / cancelled) calls onTerminal and dismisses.
+final class YaverRunnerAuthFlowPane: NSObject {
+
+  static let shared = YaverRunnerAuthFlowPane()
+
+  enum Outcome {
+    case success
+    case failed(String)
+    case cancelled
+  }
+
+  private weak var window: UIWindow?
+  private weak var cardView: UIView?
+  private weak var statusLabel: UILabel?
+  private weak var openButton: UIButton?
+  private weak var pasteField: UITextField?
+  private weak var submitButton: UIButton?
+  private var runner: String = ""
+  private var sessionId: String = ""
+  private var openUrl: String = ""
+  private var userCode: String = ""
+  private var authToken: String = ""
+  private var agentBase: String = ""
+  private var pollTimer: Timer?
+  private var onTerminal: ((Outcome) -> Void)?
+  private var didSettle = false
+
+  private var requiresPasteBack: Bool {
+    let r = runner.lowercased()
+    return r == "claude" || r == "claude-code"
+  }
+
+  func present(in window: UIWindow,
+               runner: String,
+               sessionId: String,
+               openUrl: String,
+               userCode: String,
+               authToken: String,
+               agentBase: String,
+               onTerminal: @escaping (Outcome) -> Void) {
+    self.runner = runner
+    self.sessionId = sessionId
+    self.openUrl = openUrl
+    self.userCode = userCode
+    self.authToken = authToken
+    self.agentBase = agentBase
+    self.onTerminal = onTerminal
+    self.didSettle = false
+
+    let pane = buildCard()
+    window.addSubview(pane)
+    NSLayoutConstraint.activate([
+      pane.leadingAnchor.constraint(equalTo: window.leadingAnchor),
+      pane.trailingAnchor.constraint(equalTo: window.trailingAnchor),
+      pane.bottomAnchor.constraint(equalTo: window.bottomAnchor),
+    ])
+    self.window = window
+    self.cardView = pane
+    pane.transform = CGAffineTransform(translationX: 0, y: 600)
+    UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.9,
+                   initialSpringVelocity: 0.4) {
+      pane.transform = .identity
+    }
+
+    // Start polling immediately. For Codex this carries the whole flow
+    // home; for Claude it'll be redundant once the paste-back submit
+    // returns the final state, but harmless.
+    startPolling()
+    // Open the authorize page automatically — saves the user a tap.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+      self?.openAuthorizePage()
+    }
+  }
+
+  private func runnerLabel() -> String {
+    switch runner.lowercased() {
+    case "claude", "claude-code": return "Claude Code"
+    case "codex": return "Codex"
+    default: return runner
+    }
+  }
+
+  private func buildCard() -> UIView {
+    let bg = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+    bg.translatesAutoresizingMaskIntoConstraints = false
+    bg.layer.cornerRadius = 22
+    bg.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+    bg.clipsToBounds = true
+    bg.contentView.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.110, alpha: 0.62)
+
+    let title = UILabel()
+    title.translatesAutoresizingMaskIntoConstraints = false
+    title.text = "Sign in to \(runnerLabel())"
+    title.textColor = .white
+    title.font = .systemFont(ofSize: 17, weight: .semibold)
+
+    let subtitle = UILabel()
+    subtitle.translatesAutoresizingMaskIntoConstraints = false
+    subtitle.text = requiresPasteBack
+      ? "Authorize on platform.claude.com, then paste the code below."
+      : "Authorize on the device-auth page; this dialog turns green automatically."
+    subtitle.textColor = UIColor(white: 1, alpha: 0.6)
+    subtitle.font = .systemFont(ofSize: 12)
+    subtitle.numberOfLines = 0
+
+    let close = UIButton(type: .system)
+    close.translatesAutoresizingMaskIntoConstraints = false
+    close.setImage(UIImage(systemName: "xmark", withConfiguration:
+                            UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)), for: .normal)
+    close.tintColor = UIColor(white: 1, alpha: 0.6)
+    close.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+
+    let openBtn = UIButton(type: .system)
+    openBtn.translatesAutoresizingMaskIntoConstraints = false
+    openBtn.setTitle("↗ Open authorize page", for: .normal)
+    openBtn.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+    openBtn.setTitleColor(.white, for: .normal)
+    openBtn.backgroundColor = UIColor(red: 0.46, green: 0.51, blue: 0.96, alpha: 1)
+    openBtn.layer.cornerRadius = 12
+    openBtn.heightAnchor.constraint(equalToConstant: 48).isActive = true
+    openBtn.addTarget(self, action: #selector(openTapped), for: .touchUpInside)
+    openButton = openBtn
+
+    // Codex: show the user code prominently; that's what the user types
+    // on the OpenAI device-auth page. For Claude, agent rarely returns
+    // a code in the start payload (it comes back from the user via
+    // paste-back) so this card stays hidden.
+    let codeCard = UIView()
+    codeCard.translatesAutoresizingMaskIntoConstraints = false
+    codeCard.backgroundColor = UIColor(white: 1, alpha: 0.06)
+    codeCard.layer.cornerRadius = 12
+    codeCard.heightAnchor.constraint(equalToConstant: 64).isActive = true
+    let codeTitle = UILabel()
+    codeTitle.translatesAutoresizingMaskIntoConstraints = false
+    codeTitle.text = "Enter this code"
+    codeTitle.textColor = UIColor(white: 1, alpha: 0.55)
+    codeTitle.font = .systemFont(ofSize: 11, weight: .semibold)
+    let codeValue = UILabel()
+    codeValue.translatesAutoresizingMaskIntoConstraints = false
+    codeValue.text = userCode
+    codeValue.textColor = .white
+    codeValue.font = .monospacedSystemFont(ofSize: 20, weight: .bold)
+    codeCard.addSubview(codeTitle)
+    codeCard.addSubview(codeValue)
+    NSLayoutConstraint.activate([
+      codeTitle.leadingAnchor.constraint(equalTo: codeCard.leadingAnchor, constant: 14),
+      codeTitle.topAnchor.constraint(equalTo: codeCard.topAnchor, constant: 10),
+      codeValue.leadingAnchor.constraint(equalTo: codeTitle.leadingAnchor),
+      codeValue.topAnchor.constraint(equalTo: codeTitle.bottomAnchor, constant: 2),
+    ])
+    codeCard.isHidden = userCode.isEmpty || requiresPasteBack
+
+    // Paste-back row (Claude only).
+    let pasteRow = UIView()
+    pasteRow.translatesAutoresizingMaskIntoConstraints = false
+    let pasteField = UITextField()
+    pasteField.translatesAutoresizingMaskIntoConstraints = false
+    pasteField.backgroundColor = UIColor(white: 1, alpha: 0.08)
+    pasteField.layer.cornerRadius = 10
+    pasteField.textColor = .white
+    pasteField.font = .systemFont(ofSize: 14)
+    pasteField.placeholder = "Paste code from claude.com"
+    pasteField.attributedPlaceholder = NSAttributedString(
+      string: "Paste code from claude.com",
+      attributes: [.foregroundColor: UIColor(white: 1, alpha: 0.35)]
+    )
+    pasteField.autocapitalizationType = .none
+    pasteField.autocorrectionType = .no
+    pasteField.spellCheckingType = .no
+    pasteField.heightAnchor.constraint(equalToConstant: 42).isActive = true
+    pasteField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 42))
+    pasteField.leftViewMode = .always
+    self.pasteField = pasteField
+
+    let submitBtn = UIButton(type: .system)
+    submitBtn.translatesAutoresizingMaskIntoConstraints = false
+    submitBtn.setTitle("Submit", for: .normal)
+    submitBtn.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+    submitBtn.setTitleColor(.white, for: .normal)
+    submitBtn.backgroundColor = UIColor(red: 0.46, green: 0.51, blue: 0.96, alpha: 1)
+    submitBtn.layer.cornerRadius = 10
+    submitBtn.widthAnchor.constraint(equalToConstant: 92).isActive = true
+    submitBtn.heightAnchor.constraint(equalToConstant: 42).isActive = true
+    submitBtn.addTarget(self, action: #selector(submitTapped), for: .touchUpInside)
+    submitButton = submitBtn
+
+    let pasteHStack = UIStackView(arrangedSubviews: [pasteField, submitBtn])
+    pasteHStack.translatesAutoresizingMaskIntoConstraints = false
+    pasteHStack.axis = .horizontal
+    pasteHStack.spacing = 10
+    pasteRow.addSubview(pasteHStack)
+    NSLayoutConstraint.activate([
+      pasteHStack.leadingAnchor.constraint(equalTo: pasteRow.leadingAnchor),
+      pasteHStack.trailingAnchor.constraint(equalTo: pasteRow.trailingAnchor),
+      pasteHStack.topAnchor.constraint(equalTo: pasteRow.topAnchor),
+      pasteHStack.bottomAnchor.constraint(equalTo: pasteRow.bottomAnchor),
+    ])
+    pasteRow.isHidden = !requiresPasteBack
+
+    let status = UILabel()
+    status.translatesAutoresizingMaskIntoConstraints = false
+    status.font = .systemFont(ofSize: 12, weight: .medium)
+    status.textColor = UIColor(white: 1, alpha: 0.65)
+    status.numberOfLines = 0
+    status.textAlignment = .center
+    status.text = "waiting for sign-in…"
+    statusLabel = status
+
+    let stack = UIStackView(arrangedSubviews: [openBtn, codeCard, pasteRow, status])
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    stack.axis = .vertical
+    stack.spacing = 14
+
+    bg.contentView.addSubview(title)
+    bg.contentView.addSubview(subtitle)
+    bg.contentView.addSubview(close)
+    bg.contentView.addSubview(stack)
+
+    NSLayoutConstraint.activate([
+      bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 320),
+      title.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 18),
+      title.topAnchor.constraint(equalTo: bg.contentView.topAnchor, constant: 22),
+      subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+      subtitle.trailingAnchor.constraint(equalTo: bg.contentView.trailingAnchor, constant: -56),
+      subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 4),
+      close.trailingAnchor.constraint(equalTo: bg.contentView.trailingAnchor, constant: -16),
+      close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+      close.widthAnchor.constraint(equalToConstant: 32),
+      close.heightAnchor.constraint(equalToConstant: 32),
+      stack.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 18),
+      stack.trailingAnchor.constraint(equalTo: bg.contentView.trailingAnchor, constant: -18),
+      stack.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 18),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: bg.contentView.bottomAnchor, constant: -28),
+    ])
+
+    return bg
+  }
+
+  // MARK: - Actions
+
+  @objc private func openTapped() { openAuthorizePage() }
+
+  private func openAuthorizePage() {
+    guard let url = URL(string: openUrl),
+          let host = self.window?.rootViewController?.presentedViewController ?? self.window?.rootViewController
+    else { return }
+    let safari = SFSafariViewController(url: url)
+    safari.preferredControlTintColor = UIColor(red: 0.62, green: 0.66, blue: 0.99, alpha: 1)
+    host.present(safari, animated: true)
+  }
+
+  @objc private func submitTapped() {
+    let raw = (pasteField?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if raw.isEmpty { setStatus("Paste the code from the callback page", tone: .error); return }
+    setStatus("verifying…", tone: .progress)
+    submitButton?.isEnabled = false
+
+    guard let url = URL(string: "\(agentBase)/runner-auth/browser/submit-code") else { return }
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    let body: [String: Any] = ["id": sessionId, "code": raw]
+    req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+    URLSession.shared.dataTask(with: req) { data, resp, err in
+      DispatchQueue.main.async {
+        self.submitButton?.isEnabled = true
+        if let err = err {
+          self.setStatus("submit failed: \(err.localizedDescription)", tone: .error); return
+        }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+          var detail = "HTTP \(code)"
+          if let d = data, let body = String(data: d, encoding: .utf8) {
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { detail = "HTTP \(code): \(trimmed.prefix(200))" }
+          }
+          self.setStatus("submit failed — \(detail)", tone: .error); return
+        }
+        // Submit accepted; the polling loop will see status=completed
+        // shortly when claude CLI finalises and mark the row green.
+        self.setStatus("code accepted, finalising…", tone: .progress)
+      }
+    }.resume()
+  }
+
+  @objc private func cancelTapped() {
+    if didSettle { dismiss(); return }
+    didSettle = true
+    pollTimer?.invalidate(); pollTimer = nil
+
+    // Best-effort cancel on the agent side so the runner CLI exits.
+    if !agentBase.isEmpty, let url = URL(string: "\(agentBase)/runner-auth/browser/cancel?id=\(sessionId)") {
+      var req = URLRequest(url: url)
+      req.httpMethod = "POST"
+      req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+      URLSession.shared.dataTask(with: req).resume()
+    }
+    let cb = onTerminal
+    onTerminal = nil
+    cb?(.cancelled)
+    dismiss()
+  }
+
+  // MARK: - Polling
+
+  private func startPolling() {
+    pollTimer?.invalidate()
+    pollTimer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+      self?.pollOnce()
+    }
+  }
+
+  private func pollOnce() {
+    guard !didSettle else { return }
+    guard let url = URL(string: "\(agentBase)/runner-auth/browser/status?id=\(sessionId)") else { return }
+    var req = URLRequest(url: url)
+    req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+    URLSession.shared.dataTask(with: req) { data, _, _ in
+      DispatchQueue.main.async {
+        guard !self.didSettle else { return }
+        guard let data = data,
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return }
+        let session = (json["session"] as? [String: Any]) ?? [:]
+        let status = (session["status"] as? String) ?? (json["status"] as? String) ?? ""
+        switch status {
+        case "completed":
+          self.didSettle = true
+          self.pollTimer?.invalidate(); self.pollTimer = nil
+          self.setStatus("✓ signed in", tone: .ok)
+          UINotificationFeedbackGenerator().notificationOccurred(.success)
+          let cb = self.onTerminal
+          self.onTerminal = nil
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            cb?(.success)
+            self.dismiss()
+          }
+        case "failed", "cancelled":
+          self.didSettle = true
+          self.pollTimer?.invalidate(); self.pollTimer = nil
+          let detail = (session["error"] as? String) ?? (json["error"] as? String) ?? status
+          self.setStatus("\(status): \(detail)", tone: .error)
+          let cb = self.onTerminal
+          self.onTerminal = nil
+          DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if status == "cancelled" { cb?(.cancelled) } else { cb?(.failed(detail)) }
+            self.dismiss()
+          }
+        default:
+          break
+        }
+      }
+    }.resume()
+  }
+
+  // MARK: - Helpers
+
+  private enum Tone { case progress, ok, error }
+  private func setStatus(_ msg: String, tone: Tone) {
+    statusLabel?.text = msg
+    switch tone {
+    case .progress: statusLabel?.textColor = UIColor(white: 1, alpha: 0.7)
+    case .ok:       statusLabel?.textColor = UIColor(red: 0.34, green: 0.85, blue: 0.55, alpha: 1)
+    case .error:    statusLabel?.textColor = UIColor(red: 1.00, green: 0.45, blue: 0.45, alpha: 1)
+    }
+  }
+
+  private func dismiss() {
+    pollTimer?.invalidate(); pollTimer = nil
+    pasteField?.resignFirstResponder()
+    guard let card = cardView else { return }
+    UIView.animate(withDuration: 0.22, animations: {
+      card.transform = CGAffineTransform(translationX: 0, y: 600)
+      card.alpha = 0
+    }, completion: { _ in
+      card.removeFromSuperview()
+      self.cardView = nil
+    })
   }
 }
