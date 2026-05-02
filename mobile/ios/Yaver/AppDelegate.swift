@@ -468,9 +468,8 @@ public class AppDelegate: ExpoAppDelegate {
     // (UserDefaults flag + YaverBundleLoaderRestore notification) was
     // wrong for this model — Yaver is the runtime, sfmg / talos / etc.
     // own their own feedback flow.
-    if let rootView = window?.rootViewController?.view as? RCTRootView,
-       let bridge = rootView.bridge {
-      bridge.eventDispatcher().sendDeviceEvent(withName: "yaverFeedback:startReport", body: nil)
+    if let rootView = window?.rootViewController?.view as? RCTRootView {
+      rootView.bridge.eventDispatcher().sendDeviceEvent(withName: "yaverFeedback:startReport", body: nil)
     } else {
       NSLog("[AppDelegate] Feedback: no guest bridge available — overlay just dismisses")
     }
