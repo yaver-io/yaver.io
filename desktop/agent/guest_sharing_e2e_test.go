@@ -260,7 +260,7 @@ func TestGuestShareLinuxStack_DevEndpointAuthAllowsGuestReload(t *testing.T) {
 	guestStartReq.Header.Set("Authorization", "Bearer "+fx.guestToken)
 	guestStartReq.Header.Set("Content-Type", "application/json")
 	guestStartRec := httptest.NewRecorder()
-	fx.server.authOrLocalhost(func(w http.ResponseWriter, r *http.Request) {
+	fx.server.auth(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})(guestStartRec, guestStartReq)
 	if guestStartRec.Code != http.StatusNoContent {

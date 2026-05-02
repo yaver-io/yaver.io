@@ -435,7 +435,7 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 	defer cancel()
 
 	// Initialize
-	status, body := doRequest(t, "POST", baseURL+"/mcp", "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	status, body := doRequest(t, "POST", baseURL+"/mcp", "tok", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if status != 200 {
 		t.Fatalf("MCP initialize failed: %d", status)
 	}
@@ -446,7 +446,7 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 	}
 
 	// Tools list
-	status, body = doRequest(t, "POST", baseURL+"/mcp", "", `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	status, body = doRequest(t, "POST", baseURL+"/mcp", "tok", `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	if status != 200 {
 		t.Fatalf("MCP tools/list failed: %d", status)
 	}
@@ -466,5 +466,19 @@ func TestMCPInitializeAndToolsList(t *testing.T) {
 		if !toolNames[expected] {
 			t.Fatalf("expected MCP tool %q not found", expected)
 		}
+	}
+}
+
+func TestMCPRequiresAuth(t *testing.T) {
+	tm := NewTaskManager(t.TempDir(), nil, defaultRunner)
+	baseURL, cancel := startTestServer(t, "tok", tm)
+	defer cancel()
+
+	status, body := doRequest(t, "POST", baseURL+"/mcp", "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("expected unauthenticated /mcp to return 401, got %d", status)
+	}
+	if body["error"] != "missing or invalid Authorization header" {
+		t.Fatalf("expected unauthorized error body, got %#v", body)
 	}
 }

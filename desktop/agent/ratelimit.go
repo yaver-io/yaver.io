@@ -34,9 +34,9 @@ import (
 
 // RateLimitConfig is the persisted config shape.
 type RateLimitConfig struct {
-	// Enabled is the master switch. When false the middleware
-	// is a no-op and imposes zero overhead.
-	Enabled bool `json:"enabled,omitempty"`
+	// Enabled is the master switch. Nil means "use the secure
+	// default" (enabled); explicit false disables the limiter.
+	Enabled *bool `json:"enabled,omitempty"`
 	// RequestsPerMinute is the steady-state allowance per
 	// (route-prefix, token) pair. Default 120.
 	RequestsPerMinute int `json:"requests_per_minute,omitempty"`
@@ -86,6 +86,10 @@ var (
 	rateLimitMgr  *rateLimitManager
 )
 
+func (c *RateLimitConfig) enabledOrDefault() bool {
+	return c == nil || c.Enabled == nil || *c.Enabled
+}
+
 // globalRateLimiter returns the process-wide limiter, lazily
 // constructed from Config.RateLimit on first access.
 func globalRateLimiter() *rateLimitManager {
@@ -93,6 +97,10 @@ func globalRateLimiter() *rateLimitManager {
 		cfg := RateLimitConfig{}
 		if c, err := LoadConfig(); err == nil && c != nil && c.RateLimit != nil {
 			cfg = *c.RateLimit
+		}
+		if cfg.Enabled == nil {
+			enabled := true
+			cfg.Enabled = &enabled
 		}
 		if cfg.RequestsPerMinute <= 0 {
 			cfg.RequestsPerMinute = 120
@@ -191,7 +199,7 @@ func (m *rateLimitManager) exempt(path string) bool {
 func (s *HTTPServer) rateLimit(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		mgr := globalRateLimiter()
-		if !mgr.cfg.Enabled || mgr.exempt(r.URL.Path) {
+		if !mgr.cfg.enabledOrDefault() || mgr.exempt(r.URL.Path) {
 			next(w, r)
 			return
 		}

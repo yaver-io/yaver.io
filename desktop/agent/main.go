@@ -6100,7 +6100,7 @@ func runDoctor() {
 	}
 
 	// Rate limiter status
-	if cfg != nil && cfg.RateLimit != nil && cfg.RateLimit.Enabled {
+	if cfg != nil && cfg.RateLimit != nil && cfg.RateLimit.enabledOrDefault() {
 		fmt.Println("\n── Rate limiter ──")
 		check("Rate limit")
 		pass(fmt.Sprintf("%d req/min, burst %d", cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.BurstSize))

@@ -523,11 +523,11 @@ func TestMCPTmuxToolsInToolsList(t *testing.T) {
 
 	// Call MCP initialize
 	mcpReq := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`
-	doRequest(t, "POST", baseURL+"/mcp", "", mcpReq)
+	doRequest(t, "POST", baseURL+"/mcp", token, mcpReq)
 
 	// Call tools/list
 	toolsReq := `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`
-	status, body := doRequest(t, "POST", baseURL+"/mcp", "", toolsReq)
+	status, body := doRequest(t, "POST", baseURL+"/mcp", token, toolsReq)
 	if status != 200 {
 		t.Fatalf("expected 200, got %d", status)
 	}
@@ -542,10 +542,10 @@ func TestMCPTmuxToolsInToolsList(t *testing.T) {
 	}
 
 	tmuxTools := map[string]bool{
-		"tmux_list_sessions": false,
-		"tmux_adopt_session": false,
+		"tmux_list_sessions":  false,
+		"tmux_adopt_session":  false,
 		"tmux_detach_session": false,
-		"tmux_send_input":    false,
+		"tmux_send_input":     false,
 	}
 
 	for _, tool := range tools {
@@ -577,11 +577,11 @@ func TestMCPTmuxListSessions(t *testing.T) {
 	defer cancel()
 
 	// Initialize MCP
-	doRequest(t, "POST", baseURL+"/mcp", "", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`)
+	doRequest(t, "POST", baseURL+"/mcp", token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`)
 
 	// Call tmux_list_sessions
 	callReq := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tmux_list_sessions","arguments":{}}}`
-	status, body := doRequest(t, "POST", baseURL+"/mcp", "", callReq)
+	status, body := doRequest(t, "POST", baseURL+"/mcp", token, callReq)
 	if status != 200 {
 		t.Fatalf("expected 200, got %d", status)
 	}
@@ -866,10 +866,10 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 	}
 
 	// ── Step 10: MCP tmux_list_sessions ──
-	doRequest(t, "POST", baseURL+"/mcp", "",
+	doRequest(t, "POST", baseURL+"/mcp", token,
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}`)
 
-	status, body = doRequest(t, "POST", baseURL+"/mcp", "",
+	status, body = doRequest(t, "POST", baseURL+"/mcp", token,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tmux_list_sessions","arguments":{}}}`)
 	if status != 200 {
 		t.Fatalf("MCP tmux_list: expected 200, got %d", status)
@@ -883,7 +883,7 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 
 	// ── Step 11: MCP tmux_adopt + tmux_send_input (re-adopt session1) ──
 	// Session1 was detached, re-adopt via MCP
-	status, body = doRequest(t, "POST", baseURL+"/mcp", "",
+	status, body = doRequest(t, "POST", baseURL+"/mcp", token,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"tmux_adopt_session","arguments":{"session_name":"yaver-e2e-session1"}}}`)
 	if status != 200 {
 		t.Fatalf("MCP adopt: expected 200, got %d", status)
@@ -896,7 +896,7 @@ func TestTmuxE2EFullFlow(t *testing.T) {
 	}
 
 	// Send input via MCP
-	status, body = doRequest(t, "POST", baseURL+"/mcp", "",
+	status, body = doRequest(t, "POST", baseURL+"/mcp", token,
 		fmt.Sprintf(`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"tmux_send_input","arguments":{"task_id":%q,"input":"echo mcp-input-test"}}}`, taskID2))
 	if status != 200 {
 		t.Fatalf("MCP send_input: expected 200, got %d", status)

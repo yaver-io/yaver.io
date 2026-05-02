@@ -429,19 +429,20 @@ func TestMCPCreateTask(t *testing.T) {
 	defer cancel()
 
 	// Initialize
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
 	// Create task
-	resp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	resp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"create_task","arguments":{"prompt":"MCP test task"}
 	}}`)
-	result := resp["result"].(map[string]interface{})
-	content := result["content"].([]interface{})
-	text := content[0].(map[string]interface{})["text"].(string)
-	if !strings.Contains(text, "Task created") {
-		t.Fatalf("expected 'Task created' in result, got: %s", text)
+	task := mcpResultJSON(t, resp)["task"].(map[string]interface{})
+	if got := task["title"]; got != "MCP test task" {
+		t.Fatalf("expected created task title, got %v", got)
+	}
+	if got := task["source"]; got != "mcp" {
+		t.Fatalf("expected source=mcp, got %v", got)
 	}
 }
 
@@ -452,18 +453,16 @@ func TestMCPCreateTaskWithVerbosity(t *testing.T) {
 	baseURL, cancel := startTestServer(t, token, tm)
 	defer cancel()
 
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
-	resp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	resp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"create_task","arguments":{"prompt":"Verbosity test","verbosity":2}
 	}}`)
-	result := resp["result"].(map[string]interface{})
-	content := result["content"].([]interface{})
-	text := content[0].(map[string]interface{})["text"].(string)
-	if !strings.Contains(text, "Task created") {
-		t.Fatalf("expected 'Task created', got: %s", text)
+	task := mcpResultJSON(t, resp)["task"].(map[string]interface{})
+	if got := task["title"]; got != "Verbosity test" {
+		t.Fatalf("expected created task title, got %v", got)
 	}
 }
 
@@ -474,17 +473,17 @@ func TestMCPListTasks(t *testing.T) {
 	baseURL, cancel := startTestServer(t, token, tm)
 	defer cancel()
 
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
 	// Create a task first
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"create_task","arguments":{"prompt":"List test"}
 	}}`)
 
 	// List
-	resp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+	resp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
 		"name":"list_tasks","arguments":{}
 	}}`)
 	result := resp["result"].(map[string]interface{})
@@ -502,29 +501,21 @@ func TestMCPGetTask(t *testing.T) {
 	baseURL, cancel := startTestServer(t, token, tm)
 	defer cancel()
 
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
 	// Create
-	createResp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	createResp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"create_task","arguments":{"prompt":"Get test"}
 	}}`)
-	createText := createResp["result"].(map[string]interface{})["content"].([]interface{})[0].(map[string]interface{})["text"].(string)
-	// Extract task ID from "Task ID: abc123"
-	taskID := ""
-	for _, line := range strings.Split(createText, "\n") {
-		if strings.HasPrefix(line, "Task ID: ") {
-			taskID = strings.TrimPrefix(line, "Task ID: ")
-			break
-		}
-	}
+	taskID, _ := mcpResultJSON(t, createResp)["task"].(map[string]interface{})["id"].(string)
 	if taskID == "" {
-		t.Fatalf("could not extract task ID from: %s", createText)
+		t.Fatalf("could not extract task ID from create_task response: %#v", createResp)
 	}
 
 	// Get task
-	resp := doMCPRequest(t, baseURL, fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+	resp := doMCPRequest(t, baseURL, token, fmt.Sprintf(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
 		"name":"get_task","arguments":{"task_id":"%s"}
 	}}`, taskID))
 	result := resp["result"].(map[string]interface{})
@@ -541,11 +532,11 @@ func TestMCPToolNotFound(t *testing.T) {
 	baseURL, cancel := startTestServer(t, token, tm)
 	defer cancel()
 
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
-	resp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	resp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"nonexistent_tool","arguments":{}
 	}}`)
 	// Should have error in result
@@ -563,11 +554,11 @@ func TestMCPAgentGraphStartAndList(t *testing.T) {
 	baseURL, cancel := startTestServer(t, token, tm)
 	defer cancel()
 
-	doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+	doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
 		"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}
 	}}`)
 
-	startResp := doMCPRequest(t, baseURL, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	startResp := doMCPRequest(t, baseURL, token, fmt.Sprintf(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"agent_graph_start","arguments":{
 			"work_dir":%q,
 			"prompt":"Ship onboarding and keep mobile releases green",
@@ -585,7 +576,7 @@ func TestMCPAgentGraphStartAndList(t *testing.T) {
 		t.Fatalf("expected machine pool in result, got: %s", startText)
 	}
 
-	listResp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+	listResp := doMCPRequest(t, baseURL, token, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
 		"name":"agent_graph_list","arguments":{}
 	}}`)
 	listResult := listResp["result"].(map[string]interface{})
@@ -803,14 +794,17 @@ func waitForTask(t *testing.T, baseURL, token, taskID string, timeout time.Durat
 	return ""
 }
 
-func doMCPRequest(t *testing.T, baseURL, body string) map[string]interface{} {
+func doMCPRequest(t *testing.T, baseURL, token, body string) map[string]interface{} {
 	t.Helper()
 	req, err := http.NewRequest("POST", baseURL+"/mcp", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("create MCP request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 10 * time.Second}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("MCP request failed: %v", err)
@@ -821,4 +815,22 @@ func doMCPRequest(t *testing.T, baseURL, body string) map[string]interface{} {
 		t.Fatalf("decode MCP response: %v", err)
 	}
 	return result
+}
+
+func mcpResultJSON(t *testing.T, resp map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	result, _ := resp["result"].(map[string]interface{})
+	content, _ := result["content"].([]interface{})
+	if len(content) == 0 {
+		t.Fatalf("expected MCP content in response: %#v", resp)
+	}
+	text, _ := content[0].(map[string]interface{})["text"].(string)
+	if text == "" {
+		t.Fatalf("expected MCP text payload in response: %#v", resp)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("expected JSON text payload, got %q: %v", text, err)
+	}
+	return parsed
 }

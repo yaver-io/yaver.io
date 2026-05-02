@@ -640,8 +640,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
 	mux.HandleFunc("/dev/status", s.authSDKOrGuest(s.handleDevServerStatus))
 	mux.HandleFunc("/dev/target", s.authSDKOrGuest(s.handleDevServerTarget))
-	mux.HandleFunc("/dev/start", s.authOrLocalhost(s.handleDevServerStart))
-	mux.HandleFunc("/dev/stop", s.authOrLocalhost(s.handleDevServerStop))
+	mux.HandleFunc("/dev/start", s.auth(s.handleDevServerStart))
+	mux.HandleFunc("/dev/stop", s.auth(s.handleDevServerStop))
 	mux.HandleFunc("/dev/reload", s.authSDKOrGuest(s.handleDevServerReload))
 	mux.HandleFunc("/dev/reload-app", s.authSDKOrGuest(s.handleReloadApp))
 	mux.HandleFunc("/dev/native-fingerprint", s.authSDKOrGuest(s.handleNativeFingerprintGet))
@@ -664,8 +664,8 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Parallel Expo Web: sibling preview process so the Web Reload tab
 	// can render RN apps in a browser iframe without killing Metro's
 	// dev-client (which serves Hermes bundles to the phone via /dev/*).
-	mux.HandleFunc("/dev/web-preview/start", s.authOrLocalhost(s.handleDevWebPreviewStart))
-	mux.HandleFunc("/dev/web-preview/stop", s.authOrLocalhost(s.handleDevWebPreviewStop))
+	mux.HandleFunc("/dev/web-preview/start", s.auth(s.handleDevWebPreviewStart))
+	mux.HandleFunc("/dev/web-preview/stop", s.auth(s.handleDevWebPreviewStop))
 	mux.HandleFunc("/dev-web/", s.handleDevWebProxy) // No auth — matches /dev/ convention for browser iframe previews
 	// Monorepo workspace manifest (declarative yaver.workspace.yaml)
 	mux.HandleFunc("/workspace", s.auth(s.handleWorkspace))
@@ -1106,7 +1106,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vault/push", s.rateLimit(s.auth(s.handleVaultPush)))
 
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
-	mux.HandleFunc("/mcp", s.handleMCP)
+	mux.HandleFunc("/mcp", s.auth(s.handleMCP))
 
 	handler := s.ipAllowlist(withCORS(mux))
 

@@ -67,7 +67,7 @@ func TestRoutineMCPLifecycle(t *testing.T) {
 			"payload":{"cmd":"echo hi"},
 			"run_at":"2099-01-01T00:00:00Z"
 		}}}`
-	resp := doMCPRequest(t, baseURL, createBody)
+	resp := doMCPRequest(t, baseURL, "owner-tok", createBody)
 	id := mcpExtractField(t, resp, "id")
 	if id == "" {
 		t.Fatalf("create: no id in response: %v", resp)
@@ -78,7 +78,7 @@ func TestRoutineMCPLifecycle(t *testing.T) {
 
 	// 2. routine_list returns this routine and excludes any non-routine
 	//    schedule the test fixture might have created.
-	listResp := doMCPRequest(t, baseURL, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+	listResp := doMCPRequest(t, baseURL, "owner-tok", `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
 		"name":"routine_list","arguments":{}}}`)
 	listText := mcpFirstText(t, listResp)
 	if !strings.Contains(listText, id) {
@@ -90,7 +90,7 @@ func TestRoutineMCPLifecycle(t *testing.T) {
 
 	// 3. routine_run_now fires synchronously through the scheduler's
 	//    goroutine. Wait briefly for the dispatcher to be hit.
-	doMCPRequest(t, baseURL, mcpToolCallBody(3, "routine_run_now", map[string]interface{}{"id": id}))
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(3, "routine_run_now", map[string]interface{}{"id": id}))
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && atomic.LoadInt32(&rec.count) == 0 {
 		time.Sleep(20 * time.Millisecond)
@@ -110,25 +110,25 @@ func TestRoutineMCPLifecycle(t *testing.T) {
 	}
 
 	// 4. routine_get reflects the run in history.
-	getText := mcpFirstText(t, doMCPRequest(t, baseURL,
+	getText := mcpFirstText(t, doMCPRequest(t, baseURL, "owner-tok",
 		mcpToolCallBody(4, "routine_get", map[string]interface{}{"id": id})))
 	if !strings.Contains(getText, `"verb": "run"`) || !strings.Contains(getText, `"status": "ok"`) {
 		t.Fatalf("get: history missing successful run: %s", getText)
 	}
 
 	// 5. pause + resume.
-	doMCPRequest(t, baseURL, mcpToolCallBody(5, "routine_pause", map[string]interface{}{"id": id}))
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(5, "routine_pause", map[string]interface{}{"id": id}))
 	if st, _ := currentTestHTTPServer.scheduler.GetSchedule(id); st.Status != "paused" {
 		t.Fatalf("pause: status=%q, want paused", st.Status)
 	}
-	doMCPRequest(t, baseURL, mcpToolCallBody(6, "routine_resume", map[string]interface{}{"id": id}))
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(6, "routine_resume", map[string]interface{}{"id": id}))
 	if st, _ := currentTestHTTPServer.scheduler.GetSchedule(id); st.Status == "paused" {
 		t.Fatalf("resume: status still paused")
 	}
 
 	// 6. routine_update: change the schedule mode from one-shot to a
 	//    cron and the machine from primary → local. Confirm both stuck.
-	doMCPRequest(t, baseURL, mcpToolCallBody(7, "routine_update", map[string]interface{}{
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(7, "routine_update", map[string]interface{}{
 		"id":      id,
 		"machine": "local",
 		"cron":    "0 9 * * 1-5",
@@ -148,7 +148,7 @@ func TestRoutineMCPLifecycle(t *testing.T) {
 	}
 
 	// 7. delete leaves nothing behind.
-	doMCPRequest(t, baseURL, mcpToolCallBody(8, "routine_delete", map[string]interface{}{"id": id}))
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(8, "routine_delete", map[string]interface{}{"id": id}))
 	if _, ok := currentTestHTTPServer.scheduler.GetSchedule(id); ok {
 		t.Fatalf("delete: routine still present")
 	}
@@ -184,7 +184,7 @@ func TestRoutineCreateValidation(t *testing.T) {
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			resp := doMCPRequest(t, baseURL, mcpToolCallBody(int64(100+i), "routine_create", c.args))
+			resp := doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(int64(100+i), "routine_create", c.args))
 			text := mcpFirstText(t, resp)
 			if !strings.Contains(text, c.errSubstr) {
 				t.Fatalf("expected error to contain %q, got: %s", c.errSubstr, text)
@@ -208,18 +208,18 @@ func TestRoutineFireFailureRecorded(t *testing.T) {
 	}}
 	currentTestHTTPServer.scheduler.SetOpsDispatcher(rec.dispatch)
 
-	resp := doMCPRequest(t, baseURL, mcpToolCallBody(1, "routine_create", map[string]interface{}{
+	resp := doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(1, "routine_create", map[string]interface{}{
 		"verb": "run", "machine": "some-peer", "run_at": "2099-01-01T00:00:00Z",
 	}))
 	id := mcpExtractField(t, resp, "id")
 
-	doMCPRequest(t, baseURL, mcpToolCallBody(2, "routine_run_now", map[string]interface{}{"id": id}))
+	doMCPRequest(t, baseURL, "owner-tok", mcpToolCallBody(2, "routine_run_now", map[string]interface{}{"id": id}))
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && atomic.LoadInt32(&rec.count) == 0 {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	getText := mcpFirstText(t, doMCPRequest(t, baseURL,
+	getText := mcpFirstText(t, doMCPRequest(t, baseURL, "owner-tok",
 		mcpToolCallBody(3, "routine_get", map[string]interface{}{"id": id})))
 	if !strings.Contains(getText, `"opsCode": "remote_failed"`) {
 		t.Fatalf("expected opsCode=remote_failed in history, got: %s", getText)
