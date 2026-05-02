@@ -28,10 +28,13 @@ import {
 // (mobile/ios/Yaver/YaverInfo.{swift,m} + Android counterpart); a
 // standalone app bundled by its own developer has no such module.
 // When the SDK is loaded through Yaver's Hermes-push guest runtime we
-// deliberately no-op every public entry point — Yaver owns the shake
-// gesture ("Reload / Back to Yaver" overlay), the feedback capture
-// flow, and the BlackBox streaming; running a second copy from inside
-// the guest just produces duplicate UIs and double P2P sessions.
+// run in HOST MODE: dormant by default (no shake detector, no auto
+// BlackBox, no QuickActionIcon — Yaver's host shell owns those), but
+// we DO register a DeviceEventEmitter listener so Yaver's overlay can
+// flip the SDK live at runtime. When the user shakes inside the guest
+// app and taps "Feedback" on the Yaver overlay, AppDelegate dispatches
+// `yaverFeedback:startReport` into this bridge; the listener wakes the
+// SDK and opens the modal in-place over the running guest UI.
 function isRunningInsideYaverHost(): boolean {
   try {
     return !!(NativeModules as any)?.YaverInfo;
@@ -40,11 +43,67 @@ function isRunningInsideYaverHost(): boolean {
   }
 }
 
-// Suppresses SDK activation when inside Yaver super-host. Callers of
-// YaverFeedback.init / startReport / startBatchRecording / … early-out
-// by checking this first so the SDK's side effects (accelerometer,
-// BlackBox HTTP, SSE command channel, FeedbackModal mount) never start.
-const YAVER_HOST_SUPPRESS = isRunningInsideYaverHost();
+// Two distinct compile-time modes for a guest app like sfmg / talos:
+//
+//   YAVER_HOST_MODE  — bundled by Yaver's agent (/dev/build-native) for
+//                      loading inside Yaver mobile. SDK code is in the
+//                      bundle but boots PASSIVE: no shake detector, no
+//                      auto-BlackBox, no container UI. Yaver's host
+//                      overlay owns the shake gesture; when the user
+//                      taps "Feedback" on Yaver's overlay, AppDelegate
+//                      dispatches yaverFeedback:hostActivate into this
+//                      bridge and the SDK runtime-flips active for a
+//                      single feedback session.
+//
+//   YAVER_SDK_MODE   — sfmg's own standalone TestFlight / Play Store
+//                      build, with the Yaver SDK embedded. SDK boots
+//                      active: shake → modal directly, no Yaver host
+//                      involved. Default for normal `expo build`.
+//
+// Both can be forced at build time via process.env. When neither is
+// set, fall back to runtime detection: if the YaverInfo native module
+// exists (we're inside Yaver), assume HOST_MODE; else SDK_MODE. This
+// keeps older bundles (built before the agent learned to set the env)
+// working unchanged.
+const YAVER_HOST_MODE_BUILD = (() => {
+  try {
+    const v = (process.env as any)?.YAVER_HOST_MODE;
+    return v === 'true' || v === '1' || v === true || v === 1;
+  } catch { return false; }
+})();
+const YAVER_SDK_MODE_BUILD = (() => {
+  try {
+    const v = (process.env as any)?.YAVER_SDK_MODE;
+    return v === 'true' || v === '1' || v === true || v === 1;
+  } catch { return false; }
+})();
+
+// Effective mode after considering build flags AND runtime detection.
+const IS_HOST_MODE =
+  YAVER_HOST_MODE_BUILD ||
+  (!YAVER_SDK_MODE_BUILD && isRunningInsideYaverHost());
+
+// Tracks whether we've been runtime-activated by the host (sfmg-in-Yaver
+// case). Independent of `enabled` so we can tell "host turned us on for
+// one shot" apart from "developer toggled enabled programmatically".
+let hostActivated = false;
+
+// Host-activation listener. Always registered when in HOST mode so a
+// Yaver overlay tap can wake the SDK even before the guest's
+// YaverFeedback.init() runs. AppDelegate (mobile/ios/Yaver/AppDelegate.
+// swift::handleFeedbackTap) sends `yaverFeedback:startReport` into the
+// guest bridge when the user picks Feedback on the shake overlay; the
+// listener flips `enabled` and triggers the modal flow.
+if (IS_HOST_MODE) {
+  try {
+    const { DeviceEventEmitter } = require('react-native');
+    DeviceEventEmitter.addListener('yaverFeedback:startReport', () => {
+      hostActivated = true;
+      enabled = true;
+      void YaverFeedback.startReport();
+    });
+  } catch { /* react-native unavailable in jsdom unit tests */ }
+}
 
 let config: FeedbackConfig | null = null;
 let enabled = false;
@@ -126,17 +185,34 @@ export class YaverFeedback {
    * via `YaverDiscovery` on the first `startReport()` call.
    */
   static init(cfg: FeedbackConfig): void {
-    if (YAVER_HOST_SUPPRESS) {
-      // Running inside Yaver's super-host — yield to Yaver's native UX.
-      enabled = false;
-      return;
-    }
     config = {
       trigger: 'shake',
       maxRecordingDuration: 120,
       autoLogin: true,
       ...cfg,
     };
+    if (IS_HOST_MODE) {
+      // sfmg / talos / etc. running inside Yaver mobile (compile-time
+      // YAVER_HOST_MODE or runtime-detected). Store config so a later
+      // host activation (yaverFeedback:startReport from AppDelegate)
+      // can open the modal — but skip the side effects Yaver's host
+      // shell owns: shake detector, auto-BlackBox, QuickActionIcon.
+      enabled = false;
+      // Configure auth endpoints + strict-native-auth even in passive
+      // mode so a host-activated session uses the same login routing
+      // the standalone path would.
+      configureAuthEndpoints({
+        convexSiteUrl: cfg.authConvexSiteUrl,
+        webBaseUrl: cfg.authWebBaseUrl,
+      });
+      setStrictNativeAuth(cfg.strictNativeAuth === true);
+      if (!config.convexUrl) {
+        config.convexUrl = cfg.authConvexSiteUrl ?? DEFAULT_CONVEX_SITE_URL;
+      }
+      maxErrors = cfg.maxCapturedErrors ?? 5;
+      errorBuffer = [];
+      return;
+    }
     if (config.disableShakeGesture && (!config.quickIcon || config.quickIcon === 'auto')) {
       config.quickIcon = 'always';
     }
