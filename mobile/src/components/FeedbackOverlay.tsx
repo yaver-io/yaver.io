@@ -41,6 +41,11 @@ export function FeedbackOverlay() {
   const [fullSize, setFullSize] = useState(false);
   const isDragging = useRef(false);
   const buttonPosX = useRef(0);
+  // Source of the latest subscribeFeedbackLaunch event. When this is
+  // "native-guest-shake" we route handleSend to /vibing/execute (with
+  // bundleId + projectName from the loaded guest) instead of the
+  // generic /tasks path. Reset on chat close.
+  const lastLaunchSource = useRef<string | null>(null);
 
   const { width: screenWidth } = Dimensions.get("window");
   const startX = screenWidth - BUTTON_SIZE - 10;
@@ -109,6 +114,10 @@ export function FeedbackOverlay() {
       if (!enabled && !isImplicitOptIn) return;
       setChatOpen(true);
       setFullSize(false);
+      // Remember the source so handleSend can route to /vibing/execute
+      // (with project context) instead of the generic /tasks path. Reset
+      // on close.
+      lastLaunchSource.current = source;
       addOutput("> feedback opened" + (isImplicitOptIn ? ` (${source})` : ""));
     });
   }, [enabled, addOutput]);
@@ -121,7 +130,14 @@ export function FeedbackOverlay() {
     setChatOpen((prev) => !prev);
   }, []);
 
-  // Send message → create task → poll for output
+  // Send message → create task → poll for output. When the chat was
+  // launched from `native-guest-shake` (user shook while a guest
+  // bundle was loaded inside Yaver host), route to /vibing/execute
+  // directly with bundleId / projectName context. /vibing/execute
+  // wraps the prompt with project info, picks a ready runner, and
+  // OnTaskDone auto-fires reload_bundle when the fix commits — none
+  // of which the generic /tasks path does without the new
+  // feedback_to_vibe.go reshape (agent ≥ 1.99.129).
   const handleSend = useCallback(async () => {
     if (!message.trim() || !agentUrl || !token) return;
     const msg = message.trim();
@@ -130,11 +146,17 @@ export function FeedbackOverlay() {
     Keyboard.dismiss();
     addOutput(`> ${msg}`);
 
+    const isGuestShake = lastLaunchSource.current === "native-guest-shake";
+    const url = isGuestShake ? `${agentUrl}/vibing/execute` : `${agentUrl}/tasks`;
+    const payload = isGuestShake
+      ? { prompt: msg }
+      : { title: msg, source: "feedback-console" };
+
     try {
-      const resp = await fetch(`${agentUrl}/tasks`, {
+      const resp = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ title: msg, source: "feedback-console" }),
+        body: JSON.stringify(payload),
       });
       if (!resp.ok) {
         addOutput(`err: ${resp.status}`);
@@ -150,12 +172,15 @@ export function FeedbackOverlay() {
       }
       addOutput(`task ${taskId} started...`);
 
-      // Poll task output for up to 30s
+      // Poll task output for up to 30s. Vibing tasks live under
+      // /vibing/task/{id} (SDK-token-accessible), generic tasks under
+      // /tasks/{id} (owner-only).
+      const pollPath = isGuestShake ? `${agentUrl}/vibing/task/${taskId}` : `${agentUrl}/tasks/${taskId}`;
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts++;
         try {
-          const statusResp = await fetch(`${agentUrl}/tasks/${taskId}`, {
+          const statusResp = await fetch(pollPath, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (!statusResp.ok) {
@@ -247,21 +272,25 @@ export function FeedbackOverlay() {
 
   const isDevBuild = __DEV__;
 
-  const handleReload = useCallback(() => {
-    if (isDevBuild) {
-      // Dev build: trigger metro hot reload
-      runAgentAction("hot-reload", "Hot reload the app. Send the reload signal to the dev server to trigger a fast refresh on the connected device.");
-    } else {
-      // Release/TestFlight build: rebuild and redeploy
-      runAgentAction(
-        "rebuild",
-        "This is a release build — hot reload is not available. " +
-        "Rebuild the app and upload to TestFlight (iOS) and/or Play Store internal testing (Android). " +
-        "Use xcodebuild for iOS and gradle for Android — no Expo, use native build tools. " +
-        "Auto-increment the build number. Report progress.",
-      );
+  // Hot Reload: directly call /dev/reload-app on the agent (which
+  // recompiles a fresh Hermes bundle + broadcasts reload_bundle to the
+  // loaded guest via BlackBox SSE). One round trip, no Claude in the
+  // loop. Replaces the previous behaviour of POSTing /tasks with a
+  // "please hot reload" prompt that asked an LLM to do something a
+  // single HTTP call already does.
+  const handleReload = useCallback(async () => {
+    if (!isConnected) return;
+    addOutput("> hot reload");
+    setReloading(true);
+    try {
+      const ok = await quicClient.reloadDevServer({ mode: "bundle" });
+      addOutput(ok ? "reload sent. waiting for bundle..." : "reload failed");
+    } catch (e) {
+      addOutput(`reload err: ${String(e).slice(0, 40)}`);
+    } finally {
+      setReloading(false);
     }
-  }, [runAgentAction, isDevBuild]);
+  }, [isConnected, addOutput]);
 
   const handleBuild = useCallback(() => {
     runAgentAction(
@@ -312,7 +341,12 @@ export function FeedbackOverlay() {
     setChatOpen(false);
   }, [user?.id]);
 
-  if (!enabled) return null;
+  // Render the overlay any time the chat is open, even if `enabled` is
+  // false. The Settings toggle gates the floating draggable button (see
+  // below where the button is conditional on `enabled`); when feedback
+  // is launched implicitly via a guest-shake event, we open the chat
+  // panel directly without showing the persistent button.
+  if (!enabled && !chatOpen) return null;
 
   // Panel alignment: if button is in right half, panel opens to the left
   const panelOnLeft = buttonPosX.current > screenWidth / 2;
@@ -455,13 +489,19 @@ export function FeedbackOverlay() {
       )}
 
       {/* Button — separate Pressable to avoid PanResponder stealing taps */}
-      <Pressable
-        style={[styles.button, { backgroundColor: btnBg }]}
-        onPress={handleTap}
-      >
-        <Text style={styles.buttonIcon}>{chatOpen ? "\u2715" : "y"}</Text>
-        <View style={[styles.statusDot, isConnected ? styles.green : styles.red]} />
-      </Pressable>
+      {/* Floating draggable button \u2014 only when feedback is toggled on
+          in Settings. When chat was opened via a guest-shake (implicit
+          opt-in), we skip the persistent button so we don't surprise
+          the user with a permanent UI element they didn't ask for. */}
+      {enabled ? (
+        <Pressable
+          style={[styles.button, { backgroundColor: btnBg }]}
+          onPress={handleTap}
+        >
+          <Text style={styles.buttonIcon}>{chatOpen ? "\u2715" : "y"}</Text>
+          <View style={[styles.statusDot, isConnected ? styles.green : styles.red]} />
+        </Pressable>
+      ) : null}
     </Animated.View>
   );
 }

@@ -135,6 +135,24 @@ export interface FeedbackConfig {
    */
   disableShakeGesture?: boolean;
   /**
+   * Auto-open the BlackBox SSE command channel after init() returns.
+   *
+   * Default: `true` (0.8.8+). Listens for `reload`, `reload_bundle`,
+   * and `status` commands the agent broadcasts after a vibe-coding
+   * task commits a fix — drives the auto-reload loop without the host
+   * app needing to call `BlackBox.start()` manually.
+   *
+   * The auto-start is deferred 500ms after init() and gated on having
+   * BOTH `agentUrl` and `authToken` resolved, to avoid the iOS 18.3.1
+   * rope-string SIGSEGV that the early auto-start in 0.7.6 hit when
+   * the agent was in needs-auth mode (tight 401-retry loop in SSE).
+   *
+   * Set `false` if your host app wants to gate BlackBox start on its
+   * own state machine (e.g. only after the user opts into telemetry).
+   * Calling `BlackBox.start()` manually is still safe — it's idempotent.
+   */
+  autoStartBlackBox?: boolean;
+  /**
    * Small tap-to-open icon that floats above the app so the user
    * doesn't have to shake every time they want to open feedback.
    * Single tap → open the feedback modal; long-press → menu with

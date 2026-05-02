@@ -3101,7 +3101,8 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		Mode          string             `json:"mode,omitempty"` // runner-specific subcommand: opencode "build" / "plan" / custom agent
 		CustomCommand string             `json:"customCommand"`  // arbitrary command — runs via sh -c
 		ProjectName   string             `json:"projectName,omitempty"`
-		Source        string             `json:"source"` // client type: "mobile", "desktop-app", "web", "cli"
+		BundleID      string             `json:"bundleId,omitempty"` // mobile-app bundle id (e.g. io.example.sfmg) — used to resolve project for feedback-source tasks
+		Source        string             `json:"source"`             // client type: "mobile", "desktop-app", "web", "cli"
 		Verbosity     *int               `json:"verbosity,omitempty"`
 		Images        []ImageAttachment  `json:"images,omitempty"`
 		WorkDir       string             `json:"workDir,omitempty"`
@@ -3194,6 +3195,24 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 			promptWorkDir = guestWorkDir
 		}
 		title = guestPromptPrefix(promptWorkDir, guestCfg) + title
+	}
+
+	// Feedback-source tasks (FeedbackOverlay typed message after a guest
+	// shake, SDK modal "Fix" button, etc.) get reshaped into the same
+	// vibing pipeline /vibing/execute uses: project resolved from
+	// projectName/bundleId/last-loaded-guest, vibing context prefixed,
+	// runner picked by readiness. Without this, those tasks ran as
+	// generic one-shot prompts with no project context, no commit, no
+	// reload — the user shook, typed "fix this bug", saw "done", and
+	// the loaded sfmg guest bundle still showed the broken version.
+	// See feedback_to_vibe.go.
+	bodyWorkDir := body.WorkDir
+	if guestUID != "" {
+		bodyWorkDir = guestWorkDir
+	}
+	s.vibingifyFeedbackTaskBody(r, source, &title, &body.ProjectName, &bodyWorkDir, &body.Runner, body.BundleID)
+	if guestUID == "" {
+		body.WorkDir = bodyWorkDir
 	}
 
 	// Guests must not be able to redirect the task cwd or inject their own

@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.128"
+const version = "1.99.129"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2759,6 +2759,15 @@ func runServe(args []string) {
 				})
 			}
 		}
+
+		// Auto Hermes-bundle reload: when a vibing-or-feedback-source task
+		// finishes successfully, recompile the native bundle and broadcast
+		// `reload_bundle` so the loaded guest app on a paired phone swaps
+		// to the fresh HBC. Closes the shake → AI fix → bundle reloaded
+		// loop without a manual tap. No-op when no preview worker is
+		// listening (CLI-driven `yaver vibing` with no phone in the loop).
+		// See feedback_to_vibe.go.
+		httpServer.autoReloadAfterFeedbackVibingTask(task)
 
 		// Record guest usage
 		if task.GuestUserID != "" && dur > 0 && httpServer.guestConfigMgr != nil {

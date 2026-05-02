@@ -158,11 +158,17 @@ export class YaverFeedback {
       config.convexUrl = cfg.authConvexSiteUrl ?? DEFAULT_CONVEX_SITE_URL;
     }
 
-    // Default: enabled only in dev mode
+    // Default: enabled. Pre-0.8.8 the SDK only enabled shake in dev
+    // builds (`__DEV__`), but apps that bundle the SDK explicitly *want*
+    // shake to work in TestFlight / Play Store builds — that's the
+    // primary use case (a tester finds a bug in a release build and
+    // shakes to report it). Dev builds get shake too. Apps that want
+    // to disable shake pass `enabled: false` (or
+    // `disableShakeGesture: true` for finer-grained control).
     if (cfg.enabled !== undefined) {
       enabled = cfg.enabled;
     } else {
-      enabled = typeof __DEV__ !== 'undefined' ? __DEV__ : false;
+      enabled = !cfg.disableShakeGesture;
     }
 
     // Hydrate cached auth token + preferred device from AsyncStorage so the
@@ -256,18 +262,39 @@ export class YaverFeedback {
           });
         }
       });
-      // NOTE: BlackBox.start() is intentionally NOT auto-called here.
-      // An earlier version (0.7.6) did auto-start it, and when the
-      // agent was in bootstrap / needs-auth mode — which can happen
-      // any time after `yaver serve` restarts before the user pairs —
-      // the SSE channel retried with exponential backoff on 401s,
-      // producing a tight loop of string concatenation + JSON parse
-      // that tripped a Hermes rope-string SIGSEGV on iOS 18.3.1
-      // during any other JS-thread regex work (e.g. react-native-
-      // view-shot's internal string handling during Screenshot &
-      // Fix). Host apps call BlackBox.start() explicitly once they
-      // know the agent URL + token are valid (SFMG does this inside
-      // its YaverFeedbackWidget after auth).
+      // BlackBox auto-start (0.8.8+).
+      //
+      // 0.7.6 auto-started BlackBox immediately, which produced a
+      // Hermes rope-string SIGSEGV on iOS 18.3.1 when the agent was in
+      // bootstrap / needs-auth mode: the SSE channel retried with
+      // exponential backoff on 401s, generating a tight string-concat
+      // + JSON-parse loop that collided with react-native-view-shot's
+      // internal string handling during Screenshot & Fix. We rolled it
+      // back to manual-start (host calls BlackBox.start() after auth).
+      //
+      // The fix that lets us auto-start safely now:
+      //   1. Defer the start by 500ms so init() returns, the JS bridge
+      //      settles, and any first-launch auth-token round trip on
+      //      another thread completes before SSE opens.
+      //   2. Only start when we have BOTH an agentUrl AND an authToken
+      //      — without the token, the connect() call would 401 and we'd
+      //      reproduce the original loop.
+      //   3. Caller can opt out with cfg.autoStartBlackBox = false.
+      //
+      // SFMG used to call BlackBox.start() inside YaverFeedbackWidget
+      // after auth — that path still works (start() is idempotent), so
+      // upgrading SDK without removing the manual call is safe.
+      if (cfg.autoStartBlackBox !== false) {
+        setTimeout(() => {
+          if (config?.agentUrl && (config?.authToken || p2pAuthToken)) {
+            try {
+              BlackBox.start();
+            } catch (err) {
+              console.warn('[YaverFeedback] BlackBox auto-start failed:', err);
+            }
+          }
+        }, 500);
+      }
     }
 
     // NOTE: We intentionally do NOT hook ErrorUtils.setGlobalHandler().
