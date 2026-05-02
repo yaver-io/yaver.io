@@ -234,6 +234,7 @@ async function authenticateRequest(
   fullName: string;
   provider: string;
   avatarUrl?: string;
+  surveyCompleted: boolean;
 } | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -250,6 +251,12 @@ async function authenticateRequest(
     fullName: result.fullName,
     provider: result.provider,
     avatarUrl: result.avatarUrl,
+    // Forward survey state so /auth/validate's response includes it.
+    // Without this, mobile's AuthContext sees surveyCompleted=false on
+    // every cold start and falls back to /survey — and any hiccup on
+    // that fallback (5s timeout, transient 5xx) silently shows the
+    // onboarding form to a returning user.
+    surveyCompleted: !!result.surveyCompleted,
   };
 }
 
