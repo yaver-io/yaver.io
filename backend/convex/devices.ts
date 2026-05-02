@@ -463,6 +463,45 @@ export const ownerByHardwareId = query({
 });
 
 /**
+ * Caller-aware variant of ownerByHardwareId. The plain query returns
+ * `.first()` on a non-unique index — when multiple device rows share
+ * the same hardwareId (test-fixture registrations, prior owners,
+ * re-claims), the wrong row gets returned and the agent's
+ * verifyHostToken (called by /auth/recover) reports `isOwner: false`
+ * for the legit owner. This variant `.collect()`s and prefers a row
+ * owned by the caller, falling back to first when none match.
+ *
+ * Wired into POST /devices/owner-by-hardware so the existing agent
+ * code path (auth_recover.go::verifyHostToken) starts succeeding for
+ * users whose hardwareId is shared with stale rows owned by other
+ * userIds.
+ */
+export const ownerByHardwareIdForCaller = query({
+  args: {
+    hardwareId: v.string(),
+    callerUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const devices = await ctx.db
+      .query("devices")
+      .withIndex("by_hardwareId", (q) => q.eq("hardwareId", args.hardwareId))
+      .collect();
+    if (devices.length === 0) return null;
+    const ownByCaller = devices.find((d) => String(d.userId) === args.callerUserId);
+    const picked = ownByCaller || devices[0];
+    return {
+      deviceId: picked.deviceId,
+      ownerUserId: picked.userId,
+      name: picked.name,
+      // Diagnostic: how many duplicate rows exist for this hardwareId.
+      // Lets the dashboard surface a "we found N rows with the same
+      // hardware fingerprint" warning so the user can clean them up.
+      duplicateCount: devices.length,
+    };
+  },
+});
+
+/**
  * Report the agent version for a device the caller owns. Used by the
  * dashboard to seed `agentVersion` on currently-running machines that
  * haven't yet been upgraded to a build that sends the field in its own

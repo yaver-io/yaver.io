@@ -1177,8 +1177,18 @@ http.route({
     if (!body.hardwareId || typeof body.hardwareId !== "string") {
       return errorResponse("hardwareId required", 400);
     }
-    const owner = await ctx.runQuery(api.devices.ownerByHardwareId, {
+    // Use caller-aware lookup so duplicate device rows with the same
+    // hardwareId (test fixtures, prior owners, re-claims) don't shadow
+    // the row the caller actually owns. The agent's verifyHostToken
+    // (auth_recover.go) requires isOwner=true; with .first() on a
+    // non-unique index this was deterministically returning whichever
+    // row the index encountered first — frequently NOT the caller's,
+    // breaking remote re-auth for users whose hardwareId is shared.
+    // Guests still correctly fail isOwner here (they don't own any row
+    // with this hwid) so security is unchanged.
+    const owner = await ctx.runQuery(api.devices.ownerByHardwareIdForCaller, {
       hardwareId: body.hardwareId,
+      callerUserId: caller.userDocId,
     });
     if (!owner) {
       return jsonResponse({ ok: true, isOwner: false, deviceFound: false });
@@ -1189,6 +1199,7 @@ http.route({
       deviceFound: true,
       deviceId: owner.deviceId,
       name: owner.name,
+      duplicateCount: owner.duplicateCount,
     });
   }),
 });
