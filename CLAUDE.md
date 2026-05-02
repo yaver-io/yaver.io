@@ -1764,6 +1764,7 @@ Operational note:
 - In Hetzner / CI / infra docs, refer to this box as `yaver-test-ephemeral`.
 - In Yaver device lists / Convex rows / `yaver ssh`, the same box may appear under the Linux host-style name `ubuntu-4gb-hel1-1` instead. Treat that as the same test device, not a second box.
 - When you need a stable human-facing handle in Yaver, prefer setting a per-user alias such as `test` and using `yaver ssh test`.
+- `yaver ssh <alias>` resolves the target via Tailscale → device row → `~/.ssh/config`. The device row's `publicEndpoints` may carry HTTP-relay gateways like `<deviceId>.yaver.io` / `<deviceId>.dev.yaver.io` — those are Cloudflare-tunneled HTTPS, *not* SSH hosts. The resolver in `desktop/agent/main.go::resolveSSHHost` skips them via `isYaverHTTPRelayHost` so the fallback can hand `ssh` the device name (which usually matches a `Host` entry in the user's `~/.ssh/config`). If the resolver ever picks one of those URLs again, `yaver ssh` will hang on a TCP handshake to a host that does not listen on port 22.
 
 Rules:
 - **It is disposable.** The whole install is reproducible from `ci/remote/bootstrap.sh`. Any state worth keeping must already live in this repo or in a snapshot — not on the box.

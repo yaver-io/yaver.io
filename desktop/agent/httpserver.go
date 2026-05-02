@@ -649,6 +649,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
 	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))
 
+	// Mobile-app session enumeration + remote-trigger control plane.
+	// Owner-only — guests must not be able to push apps onto a phone.
+	mux.HandleFunc("/mobile/sessions", s.auth(s.handleMobileSessions))
+	mux.HandleFunc("/mobile/insert", s.auth(s.handleMobileInsert))
+
 	// Dev server (reverse proxy to local Metro/Vite/Flutter dev server)
 	mux.HandleFunc("/dev/status", s.authSDKOrGuest(s.handleDevServerStatus))
 	mux.HandleFunc("/dev/target", s.authSDKOrGuest(s.handleDevServerTarget))

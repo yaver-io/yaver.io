@@ -6,6 +6,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { openAppBus } from "../../src/lib/openAppBus";
 import { AppBackButton } from "../../src/components/AppBackButton";
 
 // (DeviceAttentionBanner / HeaderWithBanner removed — see commit
@@ -144,6 +145,25 @@ export default function TabLayout() {
             metadata: { bundleUrl: bundlePath, moduleName },
           }]);
         }
+        return;
+      }
+
+      if (command === "open_app") {
+        const app = typeof data.app === "string" ? data.app.trim() : "";
+        if (!app) return;
+        try {
+          router.push("/(tabs)/apps");
+        } catch {
+          // older expo-router/no-navigator fallback — ignore.
+        }
+        openAppBus.publish(app);
+        await quicClient.pushBlackBoxEvents(resolved.id, [{
+          type: "state",
+          level: "info",
+          message: "preview_worker_open_app_received",
+          timestamp: Date.now(),
+          metadata: { app },
+        }]);
         return;
       }
 

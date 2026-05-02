@@ -35,3 +35,26 @@ func TestIsLikelyDockerBridgeIP(t *testing.T) {
 		}
 	}
 }
+
+func TestIsYaverHTTPRelayHost(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{host: "000ca94b-158d-42ab-a02e-edab5a6d9d06.yaver.io", want: true},
+		{host: "4a6a5095-8e4e-4b77-bc66-e62668f4d9fd.dev.yaver.io", want: true},
+		{host: "https://000ca94b-158d-42ab-a02e-edab5a6d9d06.yaver.io", want: false}, // caller strips scheme first
+		{host: "yaver.io", want: false},
+		{host: "relay.yaver.io", want: false},
+		{host: "test.yaver.io", want: false},                 // not a UUID label
+		{host: "12345678-1234-1234-1234-12345678abcd.example.com", want: false},
+		{host: "yaver-test-ephemeral", want: false},
+		{host: "157.180.114.179", want: false},
+		{host: "", want: false},
+	}
+	for _, tc := range tests {
+		if got := isYaverHTTPRelayHost(tc.host); got != tc.want {
+			t.Fatalf("isYaverHTTPRelayHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}

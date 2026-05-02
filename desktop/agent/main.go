@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.120"
+const version = "1.99.123"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -438,6 +438,12 @@ func main() {
 		runUI(os.Args[2:])
 	case "phone":
 		runPhone(os.Args[2:])
+	case "wire":
+		runWire(os.Args[2:])
+	case "remote":
+		runRemote(os.Args[2:])
+	case "insert":
+		runRemoteInsert(os.Args[2:])
 	case "monorepo":
 		runMonorepo(os.Args[2:])
 	case "help", "--help", "-h":
@@ -943,7 +949,7 @@ func runSignout() {
 	// + relay with a stable identity. The mobile app and web UI show
 	// the device in the list with a "NEEDS AUTH" badge and auto-pair
 	// using encrypted token push.
-	if err := SaveConfig(cfg); err != nil {
+	if err := SaveConfigClearingAuth(cfg); err != nil {
 		log.Fatalf("save config: %v", err)
 	}
 	fmt.Println("Signed out.")
@@ -6660,12 +6666,19 @@ func resolveSSHHost(target string) string {
 	if ip := lookupTailscaleIP(tsPath, dev.Alias, dev.Name, strings.TrimSuffix(dev.Name, ".local")); ip != "" {
 		return ip
 	}
-	if len(dev.PublicEndpoints) > 0 {
-		// Strip scheme if present — ssh wants a host, not a URL.
-		ep := dev.PublicEndpoints[0]
-		ep = strings.TrimPrefix(ep, "https://")
+	for _, raw := range dev.PublicEndpoints {
+		ep := strings.TrimPrefix(raw, "https://")
 		ep = strings.TrimPrefix(ep, "http://")
 		ep = strings.TrimSuffix(ep, "/")
+		// Yaver's HTTP relay publishes <uuid>.yaver.io and
+		// <uuid>.dev.yaver.io. Those are Cloudflare-tunneled HTTP
+		// gateways, not SSH hosts — picking one here would hand ssh a
+		// hostname where port 22 is not published, producing a hang.
+		// Skip them so the caller falls through to the device name
+		// (which usually matches a Host entry in ~/.ssh/config).
+		if isYaverHTTPRelayHost(ep) {
+			continue
+		}
 		return ep
 	}
 	for _, ip := range dev.LocalIps {
@@ -6727,6 +6740,35 @@ func firstPreferredTailscaleIP(out string) string {
 		}
 	}
 	return fallback
+}
+
+// isYaverHTTPRelayHost reports whether host looks like one of Yaver's
+// HTTP relay gateways (<uuid>.yaver.io or <uuid>.dev.yaver.io). Those
+// endpoints terminate HTTPS only — SSH never works against them. Used
+// by resolveSSHHost to skip them when picking an SSH target.
+func isYaverHTTPRelayHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	if !strings.HasSuffix(host, ".yaver.io") {
+		return false
+	}
+	label := strings.TrimSuffix(host, ".yaver.io")
+	label = strings.TrimSuffix(label, ".dev")
+	if len(label) != 36 || strings.Count(label, "-") != 4 {
+		return false
+	}
+	for _, r := range label {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		case r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func isLikelyDockerBridgeIP(host string) bool {

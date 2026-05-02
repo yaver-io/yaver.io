@@ -301,3 +301,27 @@ func TestHasProjectGitContext_WalksDeepFixtureAncestors(t *testing.T) {
 		t.Fatalf("expected fixture path to inherit git context from repo root")
 	}
 }
+
+func TestHasProjectGitContext_AcceptsWorkspaceChildWithoutGit(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	project := filepath.Join(tmp, "Workspace", "sfmg")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !hasProjectGitContext(project) {
+		t.Fatalf("expected ~/Workspace/<proj> to be trusted without .git")
+	}
+}
+
+func TestHasProjectGitContext_RejectsRandomPathWithoutGit(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	stray := filepath.Join(tmp, "tmp", "scratch", "lib-fixture")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if hasProjectGitContext(stray) {
+		t.Fatalf("expected stray path with no git and no workspace parent to be rejected")
+	}
+}

@@ -22,6 +22,7 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
+import { openAppBus } from "../../src/lib/openAppBus";
 import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
@@ -571,6 +572,18 @@ export default function AppsScreen() {
       setLoadingActions(false);
     }
   }, [devStatus, isDirectConnection, connectionStatus, router]);
+
+  // `yaver insert <app>` from the dev machine ends up here:
+  // _layout.tsx receives the open_app command, navigates to this
+  // tab, and publishes the app name on openAppBus. We replay the
+  // exact same handleTapProject() flow a manual tap would run.
+  useEffect(() => {
+    return openAppBus.subscribe((app) => {
+      handleTapProject(app).catch(() => {
+        // handleTapProject already surfaces its own errors via Alert.
+      });
+    });
+  }, [handleTapProject]);
 
   // Execute a specific action from the action sheet
   const handleExecuteAction = useCallback(async (action: { label: string; target: string; type: string; framework?: string; platform?: string; command?: string; supported?: boolean; reason?: string }) => {

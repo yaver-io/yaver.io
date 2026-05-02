@@ -83,6 +83,17 @@ func hasProjectGitContext(dir string) bool {
 		}
 		cur = parent
 	}
+	// Trust projects placed directly in a known workspace root
+	// (~/Workspace/<proj>, ~/Projects/<proj>, ...) even without .git —
+	// rsync'd test boxes and remote slaves often arrive without a
+	// .git tree. SDK packages live under node_modules, which is
+	// already excluded upstream by the walker's skipDirs.
+	parent := filepath.Dir(dir)
+	for _, root := range projectDiscoveryRoots() {
+		if parent == root {
+			return true
+		}
+	}
 	return false
 }
 

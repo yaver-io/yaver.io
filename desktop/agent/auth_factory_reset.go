@@ -46,7 +46,7 @@ func runAuthFactoryReset(args []string) {
 		preserved.CachedRelayPassword = cfg.CachedRelayPassword
 		preserved.CachedRelayServers = cfg.CachedRelayServers
 	}
-	if saveErr := SaveConfig(preserved); saveErr != nil {
+	if saveErr := SaveConfigClearingAuth(preserved); saveErr != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not write reset config: %v\n", saveErr)
 		// Fall through — try the brute-force remove path too so
 		// the next start at least sees no stale auth.

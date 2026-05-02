@@ -410,7 +410,7 @@ func authLogout() (AuthLogoutResult, error) {
 		return AuthLogoutResult{LoggedOut: false, Message: "no token on disk — already logged out"}, nil
 	}
 	cfg.AuthToken = ""
-	if err := SaveConfig(cfg); err != nil {
+	if err := SaveConfigClearingAuth(cfg); err != nil {
 		return AuthLogoutResult{}, fmt.Errorf("save config: %w", err)
 	}
 	return AuthLogoutResult{LoggedOut: true, Message: "token cleared from ~/.yaver/config.json (daemon not stopped — call agent_shutdown if desired)"}, nil

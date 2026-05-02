@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const configDirName = ".yaver"
@@ -301,7 +303,35 @@ func LoadConfig() (*Config, error) {
 // If anything below step 4 fails, the original file is untouched;
 // if step 4 succeeds, the new file is on disk. Either way, the
 // config is never in a half-written state.
+//
+// Defensive auth-token guard (May 2026): if the in-memory cfg has an
+// empty AuthToken but the existing on-disk file has a non-empty one,
+// we restore the on-disk token before writing instead of silently
+// wiping it. This prevents accidental sign-out from `cfg = &Config{}`
+// fallbacks after a transient LoadConfig failure (e.g. the user lost
+// auth after a `yaver primary status` round-trip — root cause was a
+// SaveConfig elsewhere that started from an empty cfg). Explicit
+// sign-out paths (`runSignout`, `runAuthFactoryReset`, MCP
+// `authLogout`) call SaveConfigClearingAuth instead, which bypasses
+// the guard.
 func SaveConfig(cfg *Config) error {
+	if cfg != nil && strings.TrimSpace(cfg.AuthToken) == "" {
+		if onDisk, lerr := LoadConfig(); lerr == nil && onDisk != nil && strings.TrimSpace(onDisk.AuthToken) != "" {
+			log.Printf("[config] WARNING: SaveConfig called with empty AuthToken but on-disk file has one — preserving the existing token. Use SaveConfigClearingAuth to wipe deliberately.")
+			cfg.AuthToken = onDisk.AuthToken
+		}
+	}
+	return saveConfigUnchecked(cfg)
+}
+
+// SaveConfigClearingAuth bypasses the auth-token preservation guard
+// in SaveConfig. Used only by sign-out / factory-reset / MCP logout
+// paths that genuinely intend to leave AuthToken empty on disk.
+func SaveConfigClearingAuth(cfg *Config) error {
+	return saveConfigUnchecked(cfg)
+}
+
+func saveConfigUnchecked(cfg *Config) error {
 	p, err := ConfigPath()
 	if err != nil {
 		return err
