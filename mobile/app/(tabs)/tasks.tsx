@@ -3042,6 +3042,43 @@ export default function TasksScreen() {
                   <View style={[s.modalContent, { backgroundColor: c.bgCard, borderTopWidth: 1, borderTopColor: c.border }]}>
                     <View style={s.modalHeader}>
                       <Text style={[s.modalTitle, { color: c.textPrimary }]}>Follow Up</Text>
+                      {/* Runtime agent switch — tap to open the same picker
+                          that's on the New Task screen, but here a different
+                          selection forks the chat to a child task with the
+                          new runner instead of continuing in place. See
+                          handleFollowUp's `switching` branch + task_fork.go. */}
+                      <Pressable
+                        hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                        style={({ pressed }) => [
+                          s.agentBadge,
+                          { backgroundColor: c.bgCardElevated, borderColor: c.border, marginLeft: "auto", marginRight: 10 },
+                          pressed && { opacity: 0.55 },
+                        ]}
+                        onPress={() => setShowAgentPicker(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Change coding agent and model for this chat"
+                      >
+                        <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
+                          {(() => {
+                            // Show the parent task's runner by default, but
+                            // reflect a pending picker change if the user
+                            // already tapped a different chip — handleFollowUp
+                            // forks when these differ from selectedTask.runnerId.
+                            const parentRunner = selectedTask?.runnerId || "";
+                            const desiredRunner = (selectedRunner || parentRunner).trim();
+                            const runner = availableRunners.find(r => r.id === desiredRunner);
+                            const model = availableModels.find(m => m.id === selectedModel);
+                            const runnerLabel = runner?.name || (desiredRunner ? desiredRunner : "Claude");
+                            const modelLabel = model?.name || selectedModel || "";
+                            const labelText = modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
+                            // Hint when the picker is set to a different runner
+                            // than the parent task's — the next Send forks.
+                            const isPendingFork = parentRunner && desiredRunner && desiredRunner !== parentRunner;
+                            return isPendingFork ? `→ ${labelText}` : labelText;
+                          })()}
+                        </Text>
+                        <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                      </Pressable>
                       {isRunning && <ActivityIndicator size="small" color={c.accent} />}
                     </View>
                     <TextInput
@@ -3123,14 +3160,40 @@ export default function TasksScreen() {
                     </View>
                   </View>
                 ) : (
-                  <Pressable
-                    style={[s.chatInputBar, { borderTopColor: c.border, backgroundColor: c.bgCard }]}
-                    onPress={() => setFollowUpExpanded(true)}
-                  >
-                    <View style={[s.chatInput, { backgroundColor: c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44 }]}>
-                      <Text style={{ color: c.textMuted, fontSize: 15 }}>{isRunning ? "Send a command..." : "Follow up..."}</Text>
-                    </View>
-                  </Pressable>
+                  <View style={[s.chatInputBar, { borderTopColor: c.border, backgroundColor: c.bgCard, flexDirection: "row", alignItems: "center", gap: 8 }]}>
+                    <Pressable
+                      style={{ flex: 1 }}
+                      onPress={() => setFollowUpExpanded(true)}
+                    >
+                      <View style={[s.chatInput, { backgroundColor: c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44 }]}>
+                        <Text style={{ color: c.textMuted, fontSize: 15 }}>{isRunning ? "Send a command..." : "Follow up..."}</Text>
+                      </View>
+                    </Pressable>
+                    {/* Agent picker shortcut on the collapsed bar — one tap
+                        to switch coding agent without expanding the composer
+                        first. Shows the parent task's runner; tapping opens
+                        the same shared agent picker. handleFollowUp does
+                        the fork when selectedRunner differs from parent. */}
+                    <Pressable
+                      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+                      style={({ pressed }) => [
+                        { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: 1, backgroundColor: c.bgCardElevated, borderColor: c.border },
+                        pressed && { opacity: 0.55 },
+                      ]}
+                      onPress={() => setShowAgentPicker(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Change coding agent and model"
+                    >
+                      <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: "600" }}>
+                        {(() => {
+                          const parentRunner = selectedTask?.runnerId || "";
+                          const desired = (selectedRunner || parentRunner).trim();
+                          const runner = availableRunners.find(r => r.id === desired);
+                          return runner?.name || (desired ? desired : "Claude");
+                        })()} ▾
+                      </Text>
+                    </Pressable>
+                  </View>
                 )}
               </View>
             )}
