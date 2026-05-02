@@ -49,15 +49,20 @@ interface RemoteAgentInfo {
 
 const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite", "react-native", "react"];
 
+// Use codepoints with full-color emoji presentation on every platform.
+// Private-use glyphs (\uF8FF Apple-logo, \u25C8 white-diamond) render as
+// monochrome system-font glyphs which look small + dim against the dark
+// card background \u2014 Swift and Kotlin rows became visually inconsistent
+// with the other framework rows. Pick branded emoji where possible.
 const FRAMEWORK_ICONS: Record<string, string> = {
-  expo: "\uD83D\uDCF1",
-  "react-native": "\u269B",
-  react: "\u269B",
-  flutter: "\uD83D\uDC26",
-  nextjs: "\u25B2",
-  vite: "\u26A1",
-  swift: "\uF8FF",
-  kotlin: "\u25C8",
+  expo: "\uD83D\uDCF1",                      // \uD83D\uDCF1
+  "react-native": "\u269B\uFE0F",            // \u269B\uFE0F \u2014 VS16 forces emoji presentation
+  react: "\u269B\uFE0F",                     // \u269B\uFE0F
+  flutter: "\uD83D\uDC26",                   // \uD83D\uDC26
+  nextjs: "\u25B2\uFE0F",                    // \u25B2 + VS16
+  vite: "\u26A1\uFE0F",                      // \u26A1 + VS16
+  swift: "\uD83C\uDF4E",                     // \uD83C\uDF4E  Apple-platform marker
+  kotlin: "\uD83D\uDFEA",                    // \uD83D\uDFEA  Kotlin's brand purple
 };
 
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
@@ -890,7 +895,7 @@ export default function HotReloadScreen() {
                     </Text>
                     {isNativeRemoteRuntimeProject(item) ? (
                       <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
-                        Opens Remote Runtime. Hermes stays first for React Native projects.
+                        Opens via Remote Runtime — drives the simulator on the dev box; phone stays paired.
                       </Text>
                     ) : null}
                   </View>

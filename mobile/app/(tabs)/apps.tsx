@@ -40,15 +40,18 @@ interface ProjectItem {
   tags?: string[];
 }
 
+// Branded emoji with full-color presentation on every platform \u2014 keep
+// in sync with mobile/app/(tabs)/hotreload.tsx::FRAMEWORK_ICONS so the
+// two surfaces show identical glyphs for the same framework.
 const FRAMEWORK_ICONS: Record<string, string> = {
   expo: "\uD83D\uDCF1",
-  "react-native": "\u269B",
-  react: "\u269B",
+  "react-native": "\u269B\uFE0F",
+  react: "\u269B\uFE0F",
   flutter: "\uD83D\uDC26",
   swift: "\uD83C\uDF4E",
-  kotlin: "\uD83E\uDD16",
-  nextjs: "\u25B2",
-  vite: "\u26A1",
+  kotlin: "\uD83D\uDFEA",
+  nextjs: "\u25B2\uFE0F",
+  vite: "\u26A1\uFE0F",
 };
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
