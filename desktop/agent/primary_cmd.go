@@ -36,6 +36,21 @@ func runPrimary(args []string) {
 		runPrimaryShow(ctx)
 		return
 	}
+	// Reserved verbs come first so a future runner whose name collides
+	// with a verb (e.g. "auth") never silently re-routes to the runner
+	// quick flow.
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "status":
+		runPrimaryStatus(ctx, primaryHasFlag(args[1:], "--json"))
+		return
+	case "auth":
+		runPrimaryAuth(ctx, args[1:])
+		return
+	}
+	if runner := normalizePrimaryRunnerQuickArg(args[0]); runner != "" {
+		runPrimaryRunnerQuickFlow(ctx, runner, args[1:])
+		return
+	}
 	switch args[0] {
 	case "show", "get", "list", "ls":
 		runPrimaryShow(ctx)
@@ -52,18 +67,87 @@ func runPrimary(args []string) {
 	}
 }
 
+func primaryHasFlag(args []string, name string) bool {
+	for _, a := range args {
+		if a == name {
+			return true
+		}
+	}
+	return false
+}
+
+// runPrimaryAuth implements `yaver primary auth` (Yaver-level headless
+// auth on the primary device) and `yaver primary auth <runner>` (the
+// runner-auth setup flow on the primary device — same path as
+// `yaver primary <runner>`, just spelled out).
+func runPrimaryAuth(ctx context.Context, args []string) {
+	token, convex, err := primaryLoadAuth()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	current, err := primaryGetCurrent(ctx, token, convex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read userSettings: %v\n", err)
+		os.Exit(1)
+	}
+	current = strings.TrimSpace(current)
+	if current == "" {
+		fmt.Fprintln(os.Stderr, "No primary device set. Run `yaver primary set <deviceId>` first.")
+		os.Exit(1)
+	}
+	if len(args) == 0 {
+		// Pure Yaver-level headless auth. Reuses the same SSH-piped
+		// `yaver auth --headless` path as the runner quick flow's
+		// reauth recovery branch.
+		if err := runRemoteHeadlessYaverAuthOverSSH(current); err != nil {
+			fmt.Fprintf(os.Stderr, "primary auth: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	runner := normalizeRunnerAuthName(args[0])
+	if runner != "claude" && runner != "codex" {
+		fmt.Fprintf(os.Stderr, "primary auth: unsupported runner %q. Use claude / claude-code / codex.\n", args[0])
+		os.Exit(1)
+	}
+	runRunnerQuickFlow(current, runner, args[1:])
+}
+
 func primaryUsage() {
-	fmt.Print(`yaver primary — manage the auto-connect preferred device
+	fmt.Print(`yaver primary — manage + inspect the auto-connect preferred device
 
 Usage:
   yaver primary                   Show current primary + all devices
-  yaver primary set <deviceId|name>
+  yaver primary status [--json]   Live status of the primary device
+                                  (agent version, lifecycle, runners,
+                                  dev-server) over the existing direct/
+                                  relay transport stack
+  yaver primary auth              Run remote 'yaver auth --headless' on
+                                  the primary device (Yaver-level auth)
+  yaver primary auth <claude|claude-code|codex>
+                                  Run the runner sanity/auth flow on the
+                                  primary device for the named coding agent
+  yaver primary <claude|claude-code|codex>
+                                  Same as 'auth <runner>' — kept as a
+                                  shortcut so existing scripts still work
+  yaver primary set <deviceId|name|alias>
                                   Mark a device as primary (partial deviceId OK)
   yaver primary clear             Unset the preference (multi-device users
                                   will have to pick manually again)
 
 Single-device users auto-connect regardless of this setting.
 `)
+}
+
+func normalizePrimaryRunnerQuickArg(arg string) string {
+	runner := normalizeRunnerAuthName(arg)
+	switch runner {
+	case "claude", "codex":
+		return runner
+	default:
+		return ""
+	}
 }
 
 type primaryDevice struct {
@@ -284,4 +368,27 @@ func runPrimaryClear(ctx context.Context) {
 		os.Exit(1)
 	}
 	fmt.Println("Primary device cleared. Multi-device users will be asked to pick on next login.")
+}
+
+func runPrimaryRunnerQuickFlow(ctx context.Context, runner string, extra []string) {
+	if len(extra) > 0 {
+		fmt.Fprintf(os.Stderr, "primary: unexpected extra arguments after %s: %s\n", runner, strings.Join(extra, " "))
+		os.Exit(1)
+	}
+	token, convex, err := primaryLoadAuth()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	current, err := primaryGetCurrent(ctx, token, convex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to read settings: %v\n", err)
+		os.Exit(1)
+	}
+	current = strings.TrimSpace(current)
+	if current == "" {
+		fmt.Fprintln(os.Stderr, "No primary device set. Run `yaver primary set <deviceId>` first.")
+		os.Exit(1)
+	}
+	runRunnerQuickFlow(current, runner, nil)
 }

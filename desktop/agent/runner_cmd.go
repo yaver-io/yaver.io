@@ -34,6 +34,18 @@ func runRunner(args []string) {
 		runnerUsage()
 		return
 	}
+	if target, runner, extra, ok := parseRunnerAuthQuickFlow(args); ok {
+		runRunnerQuickFlow(target, runner, extra)
+		return
+	}
+	// `yaver runner <hint> status [--json]` — same dispatch shape as
+	// the runner-auth quick flow but `status` instead of a runner name.
+	// Must come BEFORE the switch below so the `<hint>` token isn't
+	// mistaken for a top-level runner subcommand.
+	if hint, sub, extra, ok := parseRunnerStatusFlow(args); ok && sub == "status" {
+		runRemoteAgentStatusByHint(hint, runnerHasFlag(extra, "--json"))
+		return
+	}
 	switch args[0] {
 	case "help", "-h", "--help":
 		runnerUsage()
@@ -69,6 +81,11 @@ func runnerUsage() {
 	fmt.Print(`yaver runner — unified self-hosted runner (RUNNER_DEV.md)
 
 Usage:
+  yaver runner <deviceId|name|alias> <claude|claude-code|codex>
+  yaver runner <deviceId|name|alias> status [--json]
+                                          Show that device's live agent
+                                          status (version, lifecycle,
+                                          runners, dev-server)
   yaver runner list [--pool=<p>]
   yaver runner pools
   yaver runner show <name>
@@ -92,6 +109,15 @@ Usage:
   yaver runner agent message <id> --text='...'
   yaver runner agent cancel <id>
   yaver runner agent delete <id>
+
+Remote coding-agent shortcut:
+  yaver runner test codex
+  yaver runner test claude-code
+
+  Resolves the target machine alias/device, checks local Yaver auth,
+  checks the target machine's Yaver auth, runs remote 'yaver auth
+  --headless' over 'yaver ssh' when needed, starts the remote Codex /
+  Claude auth flow, and switches that machine's active coding runner.
 
 Phase 1 ships shell jobs; Phase 2 adds sandboxes + agent sessions on
 top of container_runner.go and the existing TaskManager runners.
@@ -377,6 +403,26 @@ func runnerFlagAll(args []string, name string) []string {
 		}
 	}
 	return out
+}
+
+// parseRunnerStatusFlow recognizes `yaver runner <hint> status [flags]`
+// — the alias-targeted status pull. Returns ok=false when args[1] isn't
+// the literal token "status", so the runner-auth quick flow keeps
+// `yaver runner <hint> claude-code` and friends.
+func parseRunnerStatusFlow(args []string) (target string, sub string, extra []string, ok bool) {
+	if len(args) < 2 {
+		return "", "", nil, false
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "status", "ls", "list", "set", "setup", "help", "-h", "--help",
+		"add", "create", "remove", "rm", "delete", "trigger", "run", "fire",
+		"pause", "resume", "runs", "history", "logs", "log", "sandbox", "agent":
+		return "", "", nil, false
+	}
+	if strings.ToLower(strings.TrimSpace(args[1])) != "status" {
+		return "", "", nil, false
+	}
+	return strings.TrimSpace(args[0]), "status", args[2:], true
 }
 
 func runnerHasFlag(args []string, name string) bool {

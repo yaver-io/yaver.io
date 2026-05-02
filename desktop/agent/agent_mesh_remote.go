@@ -411,13 +411,34 @@ func publicAgentBaseCandidates(target *DeviceInfo) []string {
 	}
 	seen := make(map[string]bool)
 	out := make([]string, 0, len(target.PublicEndpoints))
-	for _, endpoint := range target.PublicEndpoints {
-		base := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	add := func(base string) {
+		base = strings.TrimRight(strings.TrimSpace(base), "/")
 		if base == "" || seen[base] {
-			continue
+			return
 		}
 		seen[base] = true
 		out = append(out, base)
+	}
+	port := target.QuicPort
+	if port <= 0 {
+		port = 18080
+	}
+	for _, endpoint := range target.PublicEndpoints {
+		base := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+		if base == "" {
+			continue
+		}
+		// Already a fully-qualified URL — pass through.
+		if strings.HasPrefix(base, "http://") || strings.HasPrefix(base, "https://") {
+			add(base)
+			continue
+		}
+		// Bare host (e.g. "157.180.114.179" set via config.public_endpoints
+		// for SSH discovery). Synthesize the agent's default HTTP URL so
+		// remote callers actually have something to dial. The web UI's
+		// SSH copy still works against the same bare-host string because
+		// it does its own URL stripping on the device-list payload.
+		add(fmt.Sprintf("http://%s:%d", base, port))
 	}
 	return out
 }
