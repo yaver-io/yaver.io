@@ -31,6 +31,10 @@ final class YaverFeedbackPane: NSObject {
     // taps + double-shakes used to stack multiple feedback cards
     // simultaneously and the user had to dismiss them one by one.
     if cardView != nil { return }
+    // Hide the floating Y bubble while the pane is up — it sits in
+    // its own overlay window above this pane and steals taps in
+    // the area behind it (text input area in particular).
+    YaverFloatingTrigger.shared.hideTemporarily()
     snapshot = captureSnapshot(of: window)
     let pane = buildCard()
     window.addSubview(pane)
@@ -280,7 +284,14 @@ final class YaverFeedbackPane: NSObject {
       handle.widthAnchor.constraint(equalToConstant: 38),
       handle.heightAnchor.constraint(equalToConstant: 5),
 
-      title.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 18),
+      // Menu sits at the leading edge so it can't be misclicked into
+      // close (X). Title slides 4pt right of the menu button.
+      menuBtn.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 14),
+      menuBtn.topAnchor.constraint(equalTo: handle.bottomAnchor, constant: 8),
+      menuBtn.widthAnchor.constraint(equalToConstant: 32),
+      menuBtn.heightAnchor.constraint(equalToConstant: 32),
+
+      title.leadingAnchor.constraint(equalTo: menuBtn.trailingAnchor, constant: 4),
       title.topAnchor.constraint(equalTo: handle.bottomAnchor, constant: 14),
       subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
       subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 2),
@@ -289,11 +300,6 @@ final class YaverFeedbackPane: NSObject {
       close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
       close.widthAnchor.constraint(equalToConstant: 32),
       close.heightAnchor.constraint(equalToConstant: 32),
-
-      menuBtn.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -4),
-      menuBtn.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-      menuBtn.widthAnchor.constraint(equalToConstant: 32),
-      menuBtn.heightAnchor.constraint(equalToConstant: 32),
 
       content.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 18),
       content.trailingAnchor.constraint(equalTo: bg.contentView.trailingAnchor, constant: -18),
@@ -457,6 +463,9 @@ final class YaverFeedbackPane: NSObject {
       card.removeFromSuperview()
       self.cardView = nil
       self.snapshot = nil
+      // Bring the floating Y back so the user can re-open feedback
+      // (or whatever surface they want via long-press).
+      YaverFloatingTrigger.shared.showAgain()
     })
   }
 
