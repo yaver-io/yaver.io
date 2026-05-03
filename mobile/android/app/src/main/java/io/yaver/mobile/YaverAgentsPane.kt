@@ -54,7 +54,7 @@ internal fun humanizeRunnerAuthFailure(code: Int, body: String?): String {
   }
 
   if (normalized.contains("relay password") || normalized.contains("invalid relay")) {
-    return "Relay password mismatch · re-authenticate Yaver on this device"
+    return "Relay password mismatch · re-auth Yaver"
   }
   if (normalized.contains("expired")) {
     return "Session expired · sign in again"
@@ -62,17 +62,17 @@ internal fun humanizeRunnerAuthFailure(code: Int, body: String?): String {
   if (normalized.contains("not authenticated") ||
       normalized.contains("missing or invalid auth") ||
       normalized.contains("invalid token")) {
-    return "Not authenticated · tap to sign in"
+    return "Not signed in · tap to sign in"
   }
 
   return when (code) {
-    401, 403 -> "Not authenticated · tap to sign in"
-    404 -> "Agent endpoint missing · update the host's Yaver"
+    401, 403 -> "Not signed in · tap to sign in"
+    404 -> "Endpoint missing · update host Yaver"
     408, 504 -> "Agent timed out · try again"
-    429 -> "Rate limited · wait a moment"
+    429 -> "Rate limited · try again later"
     in 500..599 -> "Agent error · try again"
-    0 -> "Agent unreachable · check the device is online"
-    else -> "Couldn't reach agent (HTTP $code) · tap to retry"
+    0 -> "Agent offline · check device"
+    else -> "Agent HTTP $code · tap to retry"
   }
 }
 
@@ -187,6 +187,11 @@ object YaverAgentsPane {
     }
     val status = TextView(ctx).apply {
       text = "checking…"; setTextColor(Color.argb(140, 255, 255, 255)); textSize = 12f
+      // Allow status text to wrap to 2 lines so longer humanized error
+      // strings ("Relay password mismatch · re-auth Yaver", etc.) aren't
+      // clipped to a single line that runs off the right edge.
+      maxLines = 2
+      ellipsize = android.text.TextUtils.TruncateAt.END
       val lp = LinearLayout.LayoutParams(
           LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
       lp.topMargin = dp(ctx, 2f).toInt(); layoutParams = lp

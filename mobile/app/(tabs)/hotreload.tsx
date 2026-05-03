@@ -23,7 +23,10 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
-import { formatGuestCrashReport, shouldShowGuestCrashReport, type GuestCrashReport } from "../../src/lib/guestCrash";
+// Guest-crash helpers used to render an inline orange banner in the
+// hot-reload card. Banner removed (see jsx below) but the data path is
+// kept so a future DeviceDetailsModal section can surface it on tap.
+// Once that lands, re-import shouldShowGuestCrashReport / formatGuestCrashReport.
 import { shouldShowCurrentReloadIncident, visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 
@@ -98,12 +101,10 @@ function currentYaverConsumerContract() {
   };
 }
 
-function currentYaverGuestCrashReport(): GuestCrashReport | null {
-  const info = (NativeModules as any)?.YaverInfo ?? {};
-  const report = info?.lastGuestCrashReport;
-  if (!report || typeof report !== "object") return null;
-  return report as GuestCrashReport;
-}
+// currentYaverGuestCrashReport: removed alongside the inline crash card
+// in this view. Native still exposes lastGuestCrashReport via YaverInfo;
+// re-add this reader (and the GuestCrashReport import) when surfacing
+// the data inside DeviceDetailsModal's tap-to-expand section.
 
 function displayProjectTitle(project: ProjectItem): string {
   return project.name;
@@ -536,11 +537,8 @@ export default function HotReloadScreen() {
   const currentIncident = visibleIncidents[0] || null;
   const runtimeFamilyLine = describeRuntimeFamilySelection(currentOperation?.metadata);
   const showCurrentIncident = shouldShowCurrentReloadIncident(currentIncident, currentOperation);
-  const lastGuestCrash = currentYaverGuestCrashReport();
-  const showGuestCrashCard =
-    shouldShowGuestCrashReport(lastGuestCrash) &&
-    (!currentOperation || currentOperation.status !== "running") &&
-    !showCurrentIncident;
+  // lastGuestCrash / showGuestCrashCard: removed with the inline banner.
+  // Will return when the data is folded into DeviceDetailsModal.
   // Match running workDir to project list to get the real app name (not directory name)
   const runningProject = (() => {
     if (!devStatus?.workDir) return devStatus?.framework ?? "App";
@@ -725,18 +723,13 @@ export default function HotReloadScreen() {
                 ) : null}
               </View>
             ) : null}
-            {showGuestCrashCard ? (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#1a1208", borderWidth: 1, borderColor: "#f59e0b66" }}>
-                <Text style={{ color: "#fbbf24", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
-                  last guest crash
-                </Text>
-                {formatGuestCrashReport(lastGuestCrash).map((line, index) => (
-                  <Text key={`${index}-${line}`} style={{ color: "#fde68a", fontSize: 11, marginTop: index === 0 ? 0 : 4 }}>
-                    {line}
-                  </Text>
-                ))}
-              </View>
-            ) : null}
+            {/* "last guest crash" card removed from the main hot-reload
+                view — kept the data fetching + parsing intact (see the
+                lastGuestCrash hook above) so DeviceDetailsModal can
+                surface it on tap-to-expand later. The inline orange
+                banner was visually loud and cluttered the active
+                project card while the user was typically focused on
+                running/reloading rather than reading old crash dumps. */}
             {/* Failure banner: shows the server-captured reason (stderr tail, missing tool, etc.) */}
             {devStatus.error ? (
               <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>

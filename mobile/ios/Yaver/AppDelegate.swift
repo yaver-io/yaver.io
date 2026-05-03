@@ -287,6 +287,11 @@ public class AppDelegate: ExpoAppDelegate {
 
     // Guest app is running. Shake phone to reveal "Back to Yaver" overlay.
     isGuestAppRunning = true
+
+    // If the user opted into the floating-Y trigger, mount it now over
+    // the freshly loaded guest UI. dismounted automatically when we
+    // route back to the Yaver shell (isGuestAppRunning = false).
+    refreshFeedbackTriggerMount()
   }
 
   private var isGuestAppRunning = false
@@ -355,7 +360,7 @@ public class AppDelegate: ExpoAppDelegate {
     overlayDismissTimer?.invalidate()
 
     let accentColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
-    let greenColor = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1.0)
+    _ = UIColor(red: 0.13, green: 0.77, blue: 0.37, alpha: 1.0) // greenColor unused after removing Reload
 
     // Container card
     let card = UIView()
@@ -368,6 +373,17 @@ public class AppDelegate: ExpoAppDelegate {
     card.layer.shadowRadius = 16
     card.layer.shadowOpacity = 0.6
     card.translatesAutoresizingMaskIntoConstraints = false
+
+    // Close X — sits in the card's top-right so the user can dismiss the
+    // shake overlay without picking any of the four actions. Also tapping
+    // outside the card area auto-dismisses (see overlayDismissTimer auto-
+    // hide), but an explicit X is what users expect.
+    let closeBtn = UIButton(type: .system)
+    closeBtn.translatesAutoresizingMaskIntoConstraints = false
+    let xCfg = UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+    closeBtn.setImage(UIImage(systemName: "xmark", withConfiguration: xCfg), for: .normal)
+    closeBtn.tintColor = UIColor(white: 1, alpha: 0.55)
+    closeBtn.addTarget(self, action: #selector(handleOverlayCloseTap), for: .touchUpInside)
 
     // Button helper
     func makeButton(title: String, icon: String, color: UIColor, action: Selector) -> UIButton {
@@ -387,28 +403,39 @@ public class AppDelegate: ExpoAppDelegate {
       return btn
     }
 
-    // Three options: in-place feedback (vibe + reload + screenshot),
+    // Four options: in-place feedback (vibe + reload + screenshot),
     // coding-agent setup (claude/codex/opencode auth + opencode config),
-    // and exit back to the Yaver shell.
+    // settings (trigger mode: shake vs floating Y button — same trigger
+    // values as the standalone feedback SDK's `trigger?: 'shake' |
+    // 'floating-button' | 'manual'`), and exit back to the Yaver shell.
     let feedbackBtn = makeButton(title: "Feedback", icon: "bubble.left.and.bubble.right", color: accentColor,
                                  action: #selector(handleFeedbackTap))
     let agentsBtn = makeButton(title: "Agents", icon: "person.crop.circle.badge.checkmark", color: accentColor,
                                action: #selector(handleAgentsTap))
+    let settingsBtn = makeButton(title: "Settings", icon: "gearshape", color: accentColor,
+                                 action: #selector(handleSettingsTap))
     let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
                              action: #selector(handleBackTap))
 
-    let stack = UIStackView(arrangedSubviews: [feedbackBtn, agentsBtn, backBtn])
+    let stack = UIStackView(arrangedSubviews: [feedbackBtn, agentsBtn, settingsBtn, backBtn])
     stack.axis = .vertical
     stack.spacing = 10
     stack.distribution = .fillEqually
     stack.translatesAutoresizingMaskIntoConstraints = false
 
     card.addSubview(stack)
+    card.addSubview(closeBtn)
     NSLayoutConstraint.activate([
-      stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 12),
+      // Reserve a strip at the top of the card for the close button so
+      // it doesn't sit on top of the first action button.
+      stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 36),
       stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
       stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
       stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+      closeBtn.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
+      closeBtn.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -8),
+      closeBtn.widthAnchor.constraint(equalToConstant: 32),
+      closeBtn.heightAnchor.constraint(equalToConstant: 28),
     ])
 
     window.addSubview(card)
@@ -477,6 +504,44 @@ public class AppDelegate: ExpoAppDelegate {
     dismissOverlay()
     guard let win = self.window else { return }
     YaverAgentsPane.shared.present(in: win)
+  }
+
+  @objc private func handleSettingsTap() {
+    NSLog("[AppDelegate] Settings tapped — presenting trigger-mode pane")
+    dismissOverlay()
+    guard let win = self.window else { return }
+    // Pane lets the user pick how the shake overlay is triggered: shake
+    // gesture (default) or a draggable floating Y button. Same value
+    // space as the standalone feedback SDK's `trigger?:` field, persisted
+    // under UserDefaults("yaverFeedbackTrigger") so anything else in the
+    // host that wants to read the user's preference (e.g. an SDK module
+    // bridged via YaverInfo) gets a single source of truth.
+    YaverSettingsPane.shared.present(in: win) { [weak self] in
+      self?.refreshFeedbackTriggerMount()
+    }
+  }
+
+  @objc private func handleOverlayCloseTap() {
+    // Explicit X on the shake overlay — same effect as the auto-hide
+    // timer firing. Users want a tap target rather than waiting 5s.
+    dismissOverlay()
+  }
+
+  /// Reads the persisted trigger mode and mounts/dismounts the floating
+  /// Y button overlay accordingly. Called after Settings save AND once
+  /// at app activation when a guest bundle is running. Shake detection
+  /// is left in place either way — the floating button is additive, not
+  /// a replacement, so power users get both.
+  func refreshFeedbackTriggerMount() {
+    let mode = UserDefaults.standard.string(forKey: "yaverFeedbackTrigger") ?? "shake"
+    guard let win = self.window else { return }
+    if mode == "floating-button" {
+      YaverFloatingTrigger.shared.mount(in: win) { [weak self] in
+        self?.handleShakeGesture()
+      }
+    } else {
+      YaverFloatingTrigger.shared.dismount()
+    }
   }
 
   /// POST /dev/build-native to the agent (Metro bundles + hermesc compiles),
@@ -679,6 +744,9 @@ public class AppDelegate: ExpoAppDelegate {
     NSLog("[AppDelegate] Back to Yaver tapped")
     dismissOverlay()
     isGuestAppRunning = false
+    // Floating-Y trigger only makes sense over a guest app; pull it
+    // back when we route to the Yaver shell.
+    YaverFloatingTrigger.shared.dismount()
     // Kill the dev server so next "Open App" starts from a clean initial state
     stopDevServerOnAgent()
     NotificationCenter.default.post(name: Notification.Name("YaverBundleLoaderRestore"), object: nil)

@@ -29,30 +29,30 @@ func humanizeRunnerAuthFailure(code: Int, body: String?, networkErr: Error?) -> 
   }
 
   if normalizedBody.contains("relay password") || normalizedBody.contains("invalid relay") {
-    return "Relay password mismatch · re-authenticate Yaver on this device"
+    return "Relay password mismatch · re-auth Yaver"
   }
   if normalizedBody.contains("expired") {
     return "Session expired · sign in again"
   }
   if normalizedBody.contains("not authenticated") || normalizedBody.contains("missing or invalid auth") || normalizedBody.contains("invalid token") {
-    return "Not authenticated · tap to sign in"
+    return "Not signed in · tap to sign in"
   }
 
   switch code {
   case 401, 403:
-    return "Not authenticated · tap to sign in"
+    return "Not signed in · tap to sign in"
   case 404:
-    return "Agent endpoint missing · update the host's Yaver"
+    return "Endpoint missing · update host Yaver"
   case 408, 504:
     return "Agent timed out · try again"
   case 429:
-    return "Rate limited · wait a moment"
+    return "Rate limited · try again later"
   case 500...599:
     return "Agent error · try again"
   case 0:
-    return "Agent unreachable · check the device is online"
+    return "Agent offline · check device"
   default:
-    return "Couldn't reach agent (HTTP \(code)) · tap to retry"
+    return "Agent HTTP \(code) · tap to retry"
   }
 }
 
@@ -245,6 +245,11 @@ final class YaverAgentsPane: NSObject {
     status.text = "checking…"
     status.textColor = UIColor(white: 1, alpha: 0.55)
     status.font = .systemFont(ofSize: 12)
+    // Allow status text to wrap to 2 lines so longer humanized error
+    // strings ("Relay password mismatch · re-auth Yaver", etc.) aren't
+    // clipped to a single line that runs off the right edge.
+    status.numberOfLines = 2
+    status.lineBreakMode = .byWordWrapping
 
     let chevron = UIImageView(image: UIImage(systemName: "chevron.right"))
     chevron.translatesAutoresizingMaskIntoConstraints = false
