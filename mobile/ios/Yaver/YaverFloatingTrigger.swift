@@ -138,7 +138,7 @@ final class YaverFloatingTrigger: NSObject {
   // MARK: - Gesture handlers
 
   @objc private func handlePan(_ gr: UIPanGestureRecognizer) {
-    guard let b = bubble, let win = window else { return }
+    guard let b = bubble, let win = overlayWindow else { return }
     let translation = gr.translation(in: win)
     var newCenter = CGPoint(x: b.center.x + translation.x, y: b.center.y + translation.y)
     // Clamp so the bubble stays fully on-screen
