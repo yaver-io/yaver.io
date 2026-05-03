@@ -204,7 +204,7 @@ async function resolveSpawnSpec(args, options) {
 function spawnAndWait(spawnSpec, args) {
   const child = spawn(spawnSpec.command, spawnSpec.args, {
     stdio: 'inherit',
-    env: process.env,
+    env: spawnSpec.env || process.env,
     cwd: spawnSpec.cwd || process.cwd(),
   });
 
@@ -416,10 +416,17 @@ function resolveLocalAgentCommand(agentArgs) {
   const agentDir = path.join(repoRoot(), 'desktop', 'agent');
   const goMod = path.join(agentDir, 'go.mod');
   if (fs.existsSync(goMod)) {
+    // `go run` requires the module dir as cwd, so we chdir into agentDir
+    // for the Go toolchain itself. The compiled agent inherits that cwd
+    // and would lose the user's actual working directory — clobbering
+    // every command that resolves a project from os.Getwd() (wire push,
+    // wireless push, code, etc.). Pass it through as YAVER_USER_CWD so
+    // the agent can chdir back to it before any cwd-sensitive logic.
     return {
       command: 'go',
       args: ['run', '.', ...agentArgs],
       cwd: agentDir,
+      env: { ...process.env, YAVER_USER_CWD: process.cwd() },
     };
   }
 

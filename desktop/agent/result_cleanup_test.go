@@ -268,6 +268,52 @@ func TestStripPromptEcho_CodexEchoes_RealCapture(t *testing.T) {
 	mustNotContain(t, got, "succeeded in")
 }
 
+// Production capture (yaver-test-ephemeral, codex-cli 0.123.0, "Run ls"
+// completed task). The `tokens used\n9,147` footer is wedged BETWEEN
+// the two duplicated answer blocks — earlier the footer-stripper
+// only fired at end-of-string (`$`), so the footer survived in the
+// middle, the two answer blocks weren't adjacent, and dedupeCodexEchoes
+// rule (4) couldn't collapse them. Net effect on mobile: the listing
+// rendered twice.
+func TestStripPromptEcho_TokensUsedBetweenDuplicates(t *testing.T) {
+	raw := linesOf(
+		"[35m[3mcodex[0m[0m",
+		"Running `ls` in `/root` now.",
+		"[35m[3mexec[0m[0m",
+		"[1m/bin/bash -lc ls[0m in /root",
+		"[32m succeeded in 0ms:[0m",
+		"Workspace",
+		"bootstrap.sh",
+		"yaver-scope2",
+		"",
+		"[35m[3mcodex[0m[0m",
+		"Here is the `ls` output for `/root`:",
+		"",
+		"```text",
+		"Workspace",
+		"bootstrap.sh",
+		"yaver-scope2",
+		"```",
+		"[2mtokens used[0m",
+		"9,147",
+		"Here is the `ls` output for `/root`:",
+		"",
+		"```text",
+		"Workspace",
+		"bootstrap.sh",
+		"yaver-scope2",
+		"```",
+	)
+	got := stripPromptEcho(raw)
+	if c := strings.Count(got, "yaver-scope2"); c != 1 {
+		t.Fatalf("expected `yaver-scope2` exactly once, got %d times.\nfull output:\n%s", c, got)
+	}
+	if c := strings.Count(got, "Here is the `ls` output"); c != 1 {
+		t.Fatalf("expected the lead-in line exactly once, got %d times.\nfull output:\n%s", c, got)
+	}
+	mustNotContain(t, got, "tokens used")
+}
+
 func linesOf(lines ...string) string {
 	return strings.Join(lines, "\n")
 }

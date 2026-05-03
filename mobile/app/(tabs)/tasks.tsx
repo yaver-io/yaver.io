@@ -382,8 +382,14 @@ function stripPromptEcho(content: string): string {
   out = out.replace(/^[\s\S]*?OpenAI Codex v[^\n]*\n(?:[\s\S]*?\n)?\s*\n/, "");
   out = out.replace(/^Reading additional input from stdin[.…]*\s*\n?/, "");
 
-  // Strip trailing "tokens used N" footer.
-  out = out.replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*$/i, "");
+  // Strip every "tokens used\n<number>" footer codex emits, not just
+  // the trailing one. Codex 0.123.0 frequently prints its final answer
+  // TWICE with this footer wedged between the two copies — leaving the
+  // mid-stream footer in place breaks dedupeCodexEchoes (the two
+  // identical blocks aren't adjacent), so the listing renders twice
+  // on the phone. Drop them all; users don't read token counts on
+  // mobile anyway.
+  out = out.replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*/gi, "\n\n");
 
   out = dedupeCodexEchoes(out);
 
@@ -619,13 +625,22 @@ const RUNNER_BANNER_TONES: Record<RunnerBannerKind, string> = {
 function deriveRunnerBannerState(
   runners: RunnerInfo[],
   agentStatus: AgentStatus | null,
+  // Per-device primary runner id from Convex (primaryRunnerByDevice).
+  // Wins over agentStatus.runner — that field reflects the agent's
+  // hardcoded defaultRunner ("claude"), not the user's per-machine
+  // pick. Without this, Codex-primary devices kept saying "Claude Code
+  // ready" in the banner even after the user had explicitly switched.
+  primaryRunnerId?: string,
 ): { text: string; tone: string; kind: RunnerBannerKind } | null {
   if (runners.length === 0 && !agentStatus) return null;
 
   const installed = runners.filter((runner) => runner.installed);
   const runnable = installed.filter((runner) => !runner.error);
   const authed = installed.filter((runner) => runner.authConfigured);
-  const current = agentStatus?.runner;
+  const primaryRow = primaryRunnerId
+    ? runners.find((r) => r.id === primaryRunnerId)
+    : null;
+  const current = primaryRow ?? agentStatus?.runner;
   const make = (kind: RunnerBannerKind, text: string) => ({
     text,
     tone: RUNNER_BANNER_TONES[kind],
@@ -1019,6 +1034,19 @@ export default function TasksScreen() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [customCommand, setCustomCommand] = useState("");
   const [showAgentPicker, setShowAgentPicker] = useState(false);
+  // Tracks whether the user has explicitly picked a runner / model in this
+  // session. Until they do, the Convex-stored per-device primary
+  // (primaryRunnerByDevice / primaryModelByDevice) is the source of truth
+  // and overrides any heuristic-seeded value. Without this, the runner-
+  // seeding effect locks in "claude" before Convex finishes loading, then
+  // the "preserve current" short-circuit refuses to switch to the user's
+  // actual primary (Codex on yaver-test-ephemeral, etc.).
+  const userPickedRunnerRef = useRef(false);
+  const userPickedModelRef = useRef(false);
+  useEffect(() => {
+    userPickedRunnerRef.current = false;
+    userPickedModelRef.current = false;
+  }, [activeDevice?.id]);
   const [runnerAuthModalRunner, setRunnerAuthModalRunner] = useState<string | null>(null);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
@@ -1185,13 +1213,23 @@ export default function TasksScreen() {
     const ready = installed.filter((runner) => runner.ready !== false);
     const explicitRunner = activeDevice ? primaryRunnerByDevice[activeDevice.id] : "";
     setSelectedRunner((current) => {
+      // Convex per-device primary is authoritative until the user picks
+      // a chip in this session. Without this branch, the heuristic
+      // fallback (which always returns "claude" when claude is
+      // installed) gets seeded before Convex's userSettings load, then
+      // the "preserve current" rule below refuses to switch to the
+      // actual primary (e.g. Codex on yaver-test-ephemeral).
+      if (
+        !userPickedRunnerRef.current &&
+        explicitRunner &&
+        (RUNNER_WL.has(explicitRunner) || installed.some((r) => r.id === explicitRunner))
+      ) {
+        return explicitRunner;
+      }
       // Preserve any explicit user pick — including the three first-class
       // agents that may not be installed YET on this box (codex/opencode
       // commonly need `yaver install` first). Reverting to claude here
-      // silently swallowed chip taps on a fresh test box. The composer's
-      // ready-check banner (line ~2760) already surfaces "needs install"
-      // separately, and the auth modal handles sign-in, so keeping the
-      // selection stable across the seeding effect is the right call.
+      // silently swallowed chip taps on a fresh test box.
       if (current && (RUNNER_WL.has(current) || current === "custom")) return current;
       if (current && installed.some((r) => r.id === current)) return current;
       if (explicitRunner && (RUNNER_WL.has(explicitRunner) || installed.some((r) => r.id === explicitRunner))) return explicitRunner;
@@ -1224,6 +1262,17 @@ export default function TasksScreen() {
     setAvailableModels(runner.models);
     const explicitModel = activeDevice ? primaryModelByDevice[activeDevice.id] : "";
     setSelectedModel((current) => {
+      // Convex per-device primary model wins until the user explicitly
+      // picks a chip in this session — same reasoning as the runner
+      // seeding effect above. Otherwise the heuristic default beats the
+      // stored primary on first render.
+      if (
+        !userPickedModelRef.current &&
+        explicitModel &&
+        runner.models!.some((m) => m.id === explicitModel)
+      ) {
+        return explicitModel;
+      }
       // Preserve any explicit user pick — same fight-the-user concern as
       // the runner seeding above. Even if the model isn't in the current
       // runner.models list (e.g. fresh /agent/runners response dropped a
@@ -2199,8 +2248,13 @@ export default function TasksScreen() {
     return sections.filter(Boolean).join("\n\n");
   }, [logs, selectedTask, taskLogLines]);
   const runnerBannerState = useMemo(
-    () => deriveRunnerBannerState(availableRunners, agentStatus),
-    [availableRunners, agentStatus]
+    () =>
+      deriveRunnerBannerState(
+        availableRunners,
+        agentStatus,
+        activeDevice ? primaryRunnerByDevice[activeDevice.id] : undefined,
+      ),
+    [availableRunners, agentStatus, activeDevice, primaryRunnerByDevice]
   );
 
   return (
@@ -2798,6 +2852,12 @@ export default function TasksScreen() {
                     // so the user always gets visible feedback that
                     // their tap registered, instead of "I tapped Sonnet
                     // but nothing happened" silence.
+                    // Dismiss the keyboard first so the bottom sheet
+                    // isn't covered by the keyboard — autoFocus on the
+                    // task TextInput pops the keyboard the moment the
+                    // composer opens, and the agent picker slides up
+                    // behind it otherwise.
+                    Keyboard.dismiss();
                     setShowAgentPicker(true);
                   }}
                   accessibilityRole="button"
@@ -2807,9 +2867,20 @@ export default function TasksScreen() {
                     {(() => {
                       const runner = availableRunners.find(r => r.id === selectedRunner);
                       const model = availableModels.find(m => m.id === selectedModel);
+                      // Fallback chain when the runner row hasn't loaded
+                      // yet: 1) Convex per-device primary, 2) the
+                      // selectedRunner id itself, 3) "Claude" as last
+                      // resort. Keeps the pill honest while
+                      // /agent/runners is still in flight.
+                      const fallbackRunner = activeDevice
+                        ? primaryRunnerByDevice[activeDevice.id]
+                        : "";
                       const runnerLabel = selectedRunner === "custom"
                         ? "Custom"
-                        : (runner?.name || (selectedRunner ? selectedRunner : "Claude"));
+                        : (runner?.name
+                          || (selectedRunner ? displayRunnerLabel(selectedRunner) : "")
+                          || (fallbackRunner ? displayRunnerLabel(fallbackRunner) : "")
+                          || "Claude");
                       const modelLabel = model?.name || selectedModel || "";
                       return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
                     })()}
@@ -2819,7 +2890,14 @@ export default function TasksScreen() {
               </View>
               <TextInput
                 style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
-                placeholder={`What would you like ${selectedRunner === "codex" ? "Codex" : selectedRunner === "opencode" ? "opencode" : "Claude"} to do?`}
+                placeholder={(() => {
+                  const effective = selectedRunner
+                    || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
+                    || "claude";
+                  if (effective === "codex") return "What would you like Codex to do?";
+                  if (effective === "opencode") return "What would you like opencode to do?";
+                  return "What would you like Claude to do?";
+                })()}
                 placeholderTextColor={c.textMuted}
                 value={newTaskText}
                 onChangeText={(t) => { setNewTaskText(t); setInputFromSpeech(false); }}
@@ -3018,6 +3096,13 @@ export default function TasksScreen() {
                         ]}
                         onPress={() => {
                           setSelectedRunner(r.id);
+                          // Lock the seeding effect to the user's pick
+                          // for the rest of this session — without this
+                          // the next render of the seeding effect would
+                          // overwrite r.id with explicitRunner from
+                          // Convex (or a heuristic default).
+                          userPickedRunnerRef.current = true;
+                          userPickedModelRef.current = false;
                           // Persist per-device so the seeding effect on
                           // re-render reads the user's choice instead of
                           // reverting to the previously-pinned default.
@@ -3124,6 +3209,7 @@ export default function TasksScreen() {
                       ]}
                       onPress={() => {
                         setSelectedModel(m.id);
+                        userPickedModelRef.current = true;
                         // Persist alongside the runner so the seeding effect
                         // on re-render reads the user's pick instead of
                         // overwriting it from primaryModelByDevice.

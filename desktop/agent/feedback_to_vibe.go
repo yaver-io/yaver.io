@@ -154,9 +154,28 @@ func (s *HTTPServer) vibingifyFeedbackTaskBody(
 	// the configured primary wins when ready, otherwise the first
 	// builtin that passes CheckRunnerReady. Avoids the "task hangs
 	// forever because codex isn't auth'd on this box" footgun.
-	if runner != nil && strings.TrimSpace(*runner) == "" {
-		if picked := pickReadyVibingRunner(s); picked != "" {
-			*runner = picked
+	//
+	// Also re-pick when the inbound runner is set BUT not actually
+	// runnable on this machine (binary missing / auth missing / root
+	// refusal for claude --dangerously-skip-permissions). Older
+	// mobile builds wrote a stale `yaverPreferredRunner=claude`
+	// UserDefaults that survived even after the user picked codex
+	// in DeviceDetailsModal — without this branch the feedback flow
+	// would happily forward that stale value, and the task would
+	// fail (or hang for users who didn't notice the failure).
+	if runner != nil {
+		current := strings.TrimSpace(*runner)
+		needsRepick := current == ""
+		if !needsRepick {
+			if err := CheckRunnerReady(GetRunnerConfig(current), strDeref(workDir)); err != nil {
+				log.Printf("[feedback→vibe] inbound runner %q not ready (%v) — re-picking", current, err)
+				needsRepick = true
+			}
+		}
+		if needsRepick {
+			if picked := pickReadyVibingRunner(s); picked != "" {
+				*runner = picked
+			}
 		}
 	}
 

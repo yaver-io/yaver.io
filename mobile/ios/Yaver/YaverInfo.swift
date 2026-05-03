@@ -122,6 +122,32 @@ final class YaverInfo: NSObject {
     }
   }
 
+  // Mirror the active device's per-machine primary coding agent + model
+  // (DeviceContext.primaryRunnerByDevice / primaryModelByDevice, ground
+  // truth lives on Convex via userSettings.primaryRunnerForDevice).
+  // Native panes (YaverFeedbackPane in particular) read these so the
+  // mobile-feedback /tasks POST routes the same runner the Tasks tab
+  // would have picked. Without this the feedback flow always ran with
+  // whatever stale `yaverPreferredRunner` had been set — typically
+  // "claude" — and the user's explicit Codex pick from DeviceDetailsModal
+  // got ignored. Empty strings clear the cached values so the next
+  // feedback send falls back to the agent's pickReadyVibingRunner.
+  @objc func setInheritedPrimaryRunner(_ runner: String, model: String) {
+    let defaults = UserDefaults.standard
+    let trimmedRunner = runner.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmedRunner.isEmpty {
+      defaults.removeObject(forKey: "yaverPreferredRunner")
+    } else {
+      defaults.set(trimmedRunner, forKey: "yaverPreferredRunner")
+    }
+    if trimmedModel.isEmpty {
+      defaults.removeObject(forKey: "yaverPreferredModel")
+    } else {
+      defaults.set(trimmedModel, forKey: "yaverPreferredModel")
+    }
+  }
+
   // Pushed from JS when the user picks a project in the Hot Reload tab
   // (handleStartProject in mobile/app/(tabs)/hotreload.tsx). Native
   // YaverFeedbackPane reads these to:

@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.145"
+const version = "1.99.146"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -198,9 +198,27 @@ func relayHTTPURLsMatch(a, b string) bool {
 	return a != "" && b != "" && a == b
 }
 
+// restoreUserCwdFromNpmWrapper undoes the cwd-clobbering done by the npm
+// wrapper's `go run .` dev fallback (cli/src/agent-runtime.js sets cwd to
+// desktop/agent so the Go toolchain can find the module). The wrapper
+// passes the user's real cwd via YAVER_USER_CWD; we chdir back to it
+// before any cwd-sensitive command (wire push, wireless push, code, …)
+// runs, otherwise every project-resolution defaults to desktop/agent.
+func restoreUserCwdFromNpmWrapper() {
+	cwd := strings.TrimSpace(os.Getenv("YAVER_USER_CWD"))
+	if cwd == "" {
+		return
+	}
+	if err := os.Chdir(cwd); err != nil {
+		fmt.Fprintf(os.Stderr, "yaver: warning — could not restore user cwd %q: %v\n", cwd, err)
+	}
+	os.Unsetenv("YAVER_USER_CWD")
+}
+
 func main() {
 	augmentAgentPATH()
 	logYaverBinaryDriftWarnings()
+	restoreUserCwdFromNpmWrapper()
 
 	if len(os.Args) < 2 {
 		printUsage()

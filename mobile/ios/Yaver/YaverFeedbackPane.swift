@@ -16,7 +16,7 @@ import UIKit
 /// Auth + agent URL are read from UserDefaults — the same keys the
 /// YaverBundleLoader already populates when loading a guest bundle. No
 /// JS bridge interaction; works fully native.
-final class YaverFeedbackPane: NSObject {
+final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
 
   // MARK: - Public entry point
 
@@ -31,6 +31,20 @@ final class YaverFeedbackPane: NSObject {
     // taps + double-shakes used to stack multiple feedback cards
     // simultaneously and the user had to dismiss them one by one.
     if cardView != nil { return }
+    // Reset the in-flight latch + cancel any orphan request from a
+    // prior session. YaverFeedbackPane is a static singleton — without
+    // this, dismissing while a Send/Reload was mid-flight (slow remote /
+    // relay timeout) leaves inFlight=true on the shared instance, and
+    // the FIRST Send/Reload tap on the next open is silently no-opped
+    // by the `if inFlight { return }` guard until the prior URLSession
+    // callback eventually fires. Symptom: "first send doesn't trigger".
+    pendingTask?.cancel()
+    pendingTask = nil
+    inFlight = false
+    // Same for any leftover transcript stream from a prior session
+    // (rare — dismiss() already tears it down — but cheap insurance).
+    transcriptView?.teardown()
+    transcriptView = nil
     // Hide the floating Y bubble while the pane is up — it sits in
     // its own overlay window above this pane and steals taps in
     // the area behind it (text input area in particular).
@@ -110,11 +124,21 @@ final class YaverFeedbackPane: NSObject {
   private let cardHeightMin: CGFloat = 360
   private var snapshot: UIImage?
   private var inFlight = false
+  // Tracks the most recent Send/Reload URLSession dataTask so dismiss()
+  // can cancel it. Without this, a dismissed pane still has its callback
+  // pending; when it fires it sets inFlight=false but also tries to
+  // setStatus on a now-detached label, and worse — it leaves the
+  // singleton's inFlight latch unpredictable across the dismiss boundary.
+  private var pendingTask: URLSessionDataTask?
   // Holds the SSE subscription to /dev/events while a Reload is
   // streaming. Cancelled in dismiss + when a terminal event lands so a
   // backgrounded pane doesn't keep a long-lived connection open.
   private var reloadStream: YaverSSEReader?
   private var reloadStreamTimeout: DispatchWorkItem?
+  // Live transcript subview. Created on Send-success, replaces the
+  // composer form, owns its own SSE subscription to /tasks/{id}/output
+  // + its own follow-up composer. Torn down in dismiss().
+  private weak var transcriptView: YaverFeedbackTranscript?
 
   // MARK: - UI
 
@@ -269,9 +293,14 @@ final class YaverFeedbackPane: NSObject {
     // Tap anywhere on the card chrome (the blur background, but NOT the
     // input field itself) to dismiss the keyboard. cancelsTouchesInView=
     // false so this doesn't swallow taps on buttons / toggles inside
-    // the card.
+    // the card. The delegate also rejects touches that land on a
+    // UIControl (Send / Reload / screenshotToggle) — without that,
+    // tapping Send would fire the bgTap, dismiss the keyboard, reflow
+    // the card, and pull Send out from under the user's finger before
+    // touchUpInside fired. Net effect: Send needed two taps to submit.
     let bgTap = UITapGestureRecognizer(target: self, action: #selector(handleBackgroundTap))
     bgTap.cancelsTouchesInView = false
+    bgTap.delegate = self
     bg.addGestureRecognizer(bgTap)
 
     let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: cardHeightMin)
@@ -370,7 +399,18 @@ final class YaverFeedbackPane: NSObject {
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let runners = json["runners"] as? [[String: Any]]
         else { return }
-        let anyAuthed = runners.contains { ($0["authConfigured"] as? Bool) == true }
+        // /runner-auth/status emits Go-default PascalCase keys
+        // ("AuthConfigured", "Installed", "ID"). Reading the camelCase
+        // mirror returns nil for every row, which made the preflight
+        // mark devices as "no coding agent signed in" even when codex /
+        // claude / ollama were authed. Read both spellings so this
+        // doesn't regress if the agent ever switches to lowercase
+        // marshaling later.
+        let anyAuthed = runners.contains { row in
+          if let v = row["AuthConfigured"] as? Bool, v { return true }
+          if let v = row["authConfigured"] as? Bool, v { return true }
+          return false
+        }
         if !anyAuthed {
           self.markSubtitleNoAgent(label, msg: "⚠ no coding agent signed in")
         }
@@ -461,6 +501,16 @@ final class YaverFeedbackPane: NSObject {
     // dismisses mid-build. Tear it down so we don't keep an idle
     // long-lived connection on the relay.
     stopReloadEventStream()
+    // Same for the live transcript stream + its spinner timer.
+    transcriptView?.teardown()
+    transcriptView = nil
+    // Cancel any in-flight Send/Reload request so its callback won't
+    // fire after the pane is gone — the cancellation also releases
+    // the inFlight latch on this singleton (the next present() resets
+    // it explicitly too, but we belt-and-suspenders here).
+    pendingTask?.cancel()
+    pendingTask = nil
+    inFlight = false
     promptField?.resignFirstResponder()
     guard let card = cardView else { return }
     UIView.animate(withDuration: 0.22, animations: {
@@ -498,10 +548,16 @@ final class YaverFeedbackPane: NSObject {
     // mode:"dev" is a Metro-only refresh and skips the rebuild we
     // need for whatever the AI just committed to land on the device.
     req.httpBody = #"{"mode":"bundle"}"#.data(using: .utf8)
-    URLSession.shared.dataTask(with: req) { _, resp, err in
+    let task = URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
       DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.pendingTask = nil
         self.inFlight = false
         if let err = err {
+          // Cancellation isn't a user-visible error — it just means
+          // dismiss() pulled the rug. Suppress so the next pane shows a
+          // clean status pill.
+          if (err as NSError).code == NSURLErrorCancelled { return }
           self.setStatus("Reload failed: \(err.localizedDescription)", tone: .error)
           self.stopReloadEventStream()
         } else if let http = resp as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
@@ -515,7 +571,9 @@ final class YaverFeedbackPane: NSObject {
           self.stopReloadEventStream()
         }
       }
-    }.resume()
+    }
+    pendingTask = task
+    task.resume()
   }
 
   // MARK: - Reload event stream
@@ -666,25 +724,55 @@ final class YaverFeedbackPane: NSObject {
     if !projectName.isEmpty {
       payload["projectName"] = projectName
     }
+    // Mirror DeviceContext.primaryRunnerByDevice[activeDevice.id] +
+    // primaryModelByDevice[activeDevice.id] (ground truth on Convex).
+    // YaverInfo.setInheritedPrimaryRunner pushes both values whenever
+    // the user changes them in the mobile UI, so this stays in sync
+    // with the Tasks tab. Skipping the runner field here (legacy
+    // behavior) made the agent's vibingify pipeline fall back to
+    // pickReadyVibingRunner — which silently picked Claude even when
+    // the user had explicitly set Codex as the device primary.
     let preferredRunner = UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? ""
     if !preferredRunner.isEmpty {
       payload["runner"] = preferredRunner
+    }
+    let preferredModel = UserDefaults.standard.string(forKey: "yaverPreferredModel") ?? ""
+    if !preferredModel.isEmpty {
+      payload["model"] = preferredModel
     }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-    URLSession.shared.dataTask(with: req) { data, resp, err in
+    let task = URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
       DispatchQueue.main.async {
+        guard let self = self else { return }
+        self.pendingTask = nil
         self.inFlight = false
         if let err = err {
+          // Cancellation isn't a real error — dismiss() yanked the task.
+          if (err as NSError).code == NSURLErrorCancelled { return }
           self.setStatus(humanizeRunnerAuthFailure(code: 0, body: nil, networkErr: err),
                          tone: .error)
         } else if let http = resp as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
-          self.setStatus("Sent ✓", tone: .success)
           UINotificationFeedbackGenerator().notificationOccurred(.success)
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
+          // Pull the freshly-created taskId out of the response so we
+          // can subscribe to its /tasks/{id}/output SSE stream and
+          // render the live vibing run in-pane (same UX as the Tasks
+          // tab). Falling back to the legacy auto-dismiss path only if
+          // the response shape is unexpected — keeps the user from
+          // staring at a frozen "Sent ✓" if the agent ever changes
+          // the create-task contract.
+          let taskId = data
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            .flatMap { $0["taskId"] as? String }
+          if let taskId = taskId, !taskId.isEmpty {
+            self.enterTranscriptMode(taskId: taskId, userPrompt: userPrompt)
+          } else {
+            self.setStatus("Sent ✓", tone: .success)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
+          }
         } else {
           // Reuse the same humanizer the Coding Agents pane uses, so
           // "invalid relay password" / 401 / 503 / etc. all surface as
@@ -695,7 +783,69 @@ final class YaverFeedbackPane: NSObject {
                          tone: .error)
         }
       }
-    }.resume()
+    }
+    pendingTask = task
+    task.resume()
+  }
+
+  // MARK: - Transcript mode
+
+  /// Swaps the prompt + screenshot-toggle + Send/Reload action row for
+  /// a live transcript that streams the just-spawned task's output.
+  /// Mirrors the Tasks tab's PhaseStatusLine + AssistantFrameRenderer
+  /// so the user sees the same searching/compiling/working chip + the
+  /// same purple inline-code styling without the React-Native subview.
+  private func enterTranscriptMode(taskId: String, userPrompt: String) {
+    guard let card = cardView else { return }
+    // Resolve the agent base URL from the same /tasks URL we just
+    // POSTed to, by stripping the trailing path component. This keeps
+    // the relay/peer routing logic in one place (yaverResolveAgentURL).
+    guard let tasksURL = yaverResolveAgentURL("/tasks") else { return }
+    let baseURL = tasksURL.deletingLastPathComponent()
+
+    // Tear down the form. We keep the title/menu row + close X so the
+    // user can dismiss; everything from the prompt down gets replaced.
+    promptField?.resignFirstResponder()
+    if let prompt = promptField?.superview {
+      // promptField is inside a promptCard wrapper — remove the wrapper
+      // and the toggle row + action row, all of which sit in the same
+      // bg.contentView.
+      prompt.removeFromSuperview()
+    }
+    screenshotToggle?.superview?.removeFromSuperview()
+    sendButton?.superview?.removeFromSuperview()
+
+    // Rebuild a transcript inside the card. The card already has its
+    // header at the top; we hang the transcript below that, pinned
+    // bottom to the card so the composer keyboard-avoids correctly.
+    let transcript = YaverFeedbackTranscript()
+    transcript.translatesAutoresizingMaskIntoConstraints = false
+    transcript.onCloseTap = { [weak self] in self?.dismiss() }
+    card.addSubview(transcript)
+
+    // Pin below the title row (~64pt down from the top) and to the
+    // card's bottom — handleKeyboardChange already moves the card
+    // bottom to sit above the keyboard, so the composer follows.
+    NSLayoutConstraint.activate([
+      transcript.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+      transcript.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+      transcript.topAnchor.constraint(equalTo: card.topAnchor, constant: 64),
+      transcript.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+    ])
+
+    transcript.attach(taskId: taskId,
+                      baseURL: baseURL,
+                      headers: yaverRelayHeaders(),
+                      userPrompt: userPrompt)
+    transcriptView = transcript
+
+    // Update the subtitle to reflect the new mode — the preflight CTA
+    // is no longer relevant once a task is live.
+    if let subtitle = subtitleLabel {
+      subtitle.text = "live · vibing on remote"
+      subtitle.textColor = UIColor(white: 1, alpha: 0.55)
+      subtitle.tag = 0
+    }
   }
 
   // MARK: - Helpers

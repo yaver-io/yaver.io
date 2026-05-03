@@ -1220,6 +1220,29 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(iv);
   }, [activeDevice?.id]);
 
+  // Mirror the active device's per-machine primary coding agent + model
+  // (Convex source of truth: userSettings.primaryRunnerByDevice) into
+  // iOS UserDefaults so the native YaverFeedbackPane reads the same
+  // values the Tasks tab does. Without this, the shake-feedback flow
+  // ignored the user's per-device pick and always defaulted to Claude
+  // — which on root-running agents (Hetzner test box) immediately
+  // failed because Claude Code refuses --dangerously-skip-permissions
+  // under uid 0. The mirror is best-effort: if YaverInfo isn't bound
+  // (Android, simulator without the native module loaded, …) we skip
+  // silently; the agent's pickReadyVibingRunner is the second line of
+  // defense.
+  useEffect(() => {
+    try {
+      const id = activeDevice?.id;
+      const runner = id ? (primaryRunnerByDevice[id] ?? "") : "";
+      const model = id ? (primaryModelByDevice[id] ?? "") : "";
+      NativeModules.YaverInfo?.setInheritedPrimaryRunner?.(runner, model);
+    } catch {
+      // Native module unavailable — non-iOS / unit-test path. Same
+      // pattern as the relay-password mirror at line ~317.
+    }
+  }, [activeDevice?.id, primaryRunnerByDevice, primaryModelByDevice]);
+
   // Auto-clear the "needs manual auth" block when the device list shows
   // the machine is no longer in bootstrap mode — i.e. the user ran
   // `yaver auth` on it directly. Without this the block would stick for

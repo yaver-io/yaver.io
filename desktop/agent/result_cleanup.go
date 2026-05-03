@@ -66,8 +66,9 @@ func stripPromptEcho(content string) string {
 		out = out[loc[1]:]
 	}
 
-	// Strip trailing "tokens used N" footer.
-	out = tokensUsedFooterRE.ReplaceAllString(out, "")
+	// Strip every "tokens used N" footer (mid-stream too — see
+	// tokensUsedFooterRE comment).
+	out = tokensUsedFooterRE.ReplaceAllString(out, "\n\n")
 
 	out = dedupeCodexEchoes(out)
 
@@ -235,11 +236,15 @@ var codexBannerBlockRE = regexp.MustCompile(`(?m)^[^\n]*?OpenAI Codex v[^\n]*\n(
 
 var readingStdinPrefixRE = regexp.MustCompile(`(?m)^\s*Reading additional input from stdin[.…]*\s*\n?`)
 
-// tokensUsedFooterRE strips the "tokens used N" or "tokens used\nN"
-// footer Codex prints after the answer. Case-insensitive; tolerates
-// the surrounding whitespace and the optional newline between label
-// and number.
-var tokensUsedFooterRE = regexp.MustCompile(`(?i)\n*\s*tokens used\s*\n?\s*[\d,]+\s*$`)
+// tokensUsedFooterRE strips every "tokens used N" / "tokens used\nN"
+// footer Codex emits — not just the trailing one. Codex 0.123.0
+// frequently prints its final answer twice with this footer wedged
+// between the two copies. If the mid-stream footer survives, the two
+// answer blocks aren't adjacent and dedupeCodexEchoes can't collapse
+// them, so the listing renders twice on the phone. Case-insensitive;
+// tolerates surrounding whitespace and the optional newline between
+// label and number.
+var tokensUsedFooterRE = regexp.MustCompile(`(?i)\n*\s*tokens used\s*\n?\s*[\d,]+\s*`)
 
 // stripANSI removes the most common ANSI/CSI/OSC escape sequences a
 // CLI runner can leak into its stdout when it thinks it's writing to
