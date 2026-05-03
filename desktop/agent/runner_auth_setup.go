@@ -192,7 +192,7 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 	if strings.TrimSpace(cmd) == "" {
 		return fmt.Errorf("unsupported runner %q", runner)
 	}
-	if _, err := exec.LookPath(cmd); err == nil {
+	if resolveRunnerBinary(cmd) != "" {
 		return nil
 	}
 	switch normalizeRunnerAuthName(runner) {
@@ -248,14 +248,15 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	}
 
 	installIfMissing := boolOrDefault(req.InstallIfMissing, true)
+	cmdName := GetRunnerConfig(req.Runner).Command
 	if installIfMissing {
-		if _, err := exec.LookPath(GetRunnerConfig(req.Runner).Command); err != nil {
+		if resolveRunnerBinary(cmdName) == "" {
 			if err := ensureRunnerInstalled(ctx, req.Runner); err != nil {
 				return result, err
 			}
 			result.InstallAttempt = true
 		}
-	} else if _, err := exec.LookPath(GetRunnerConfig(req.Runner).Command); err != nil {
+	} else if resolveRunnerBinary(cmdName) == "" {
 		return result, fmt.Errorf("%s is not installed and --no-install was set", req.Runner)
 	}
 

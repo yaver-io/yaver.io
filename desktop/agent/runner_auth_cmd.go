@@ -196,14 +196,14 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 	}
 	rows := make([]runnerAuthStatusRow, 0, len(runners))
 	for _, runner := range runners {
-		path, err := osexec.LookPath(runner.Cmd)
+		path := resolveRunnerBinary(runner.Cmd)
 		row := runnerAuthStatusRow{
 			ID:        runner.ID,
 			Name:      runner.Name,
-			Installed: err == nil,
+			Installed: path != "",
 			Path:      path,
 		}
-		if err != nil {
+		if path == "" {
 			row.Warning = "Not installed"
 			row.Detail = "Not installed"
 			rows = append(rows, row)
@@ -217,7 +217,10 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		row.Warning = status.Warning
 		row.Error = status.Error
 		version := ""
-		if out, verr := osexec.Command(runner.Cmd, "--version").CombinedOutput(); verr == nil {
+		// Use the absolute path we just resolved so `--version` doesn't
+		// fall back to the agent's restricted systemd PATH and miss the
+		// binary we already located.
+		if out, verr := osexec.Command(path, "--version").CombinedOutput(); verr == nil {
 			version = strings.TrimSpace(strings.Split(string(out), "\n")[0])
 			if len(version) > 60 {
 				version = version[:60]
@@ -385,6 +388,53 @@ func runRemoteHeadlessYaverAuthOverSSH(targetHint string) error {
 	return cmd.Run()
 }
 
+// runRemoteHeadlessRunnerAuthOverSSH is the SSH-based fallback for
+// `yaver primary codex` / `yaver primary claude` when the remote agent's
+// HTTP /runner-auth/browser/start path won't work — usually because the
+// agent's PATH (under systemd / launchd) doesn't include where the user's
+// `claude` or `codex` actually lives.
+//
+// We `yaver ssh` into the target, ask bash to load the user's login
+// environment (`bash -lc`), and run the runner CLI directly. stdio is
+// piped straight through to the local terminal — the runner itself
+// prints the OAuth URL or the device-code, waits for the user, and (for
+// claude) prompts for the pasted-back token. No URL/code parsing on our
+// side; we are just a transparent pipe over SSH.
+//
+// This intentionally bypasses the agent: it's the recovery path when the
+// agent can't see the binary AT ALL. The HTTP-based flow is still the
+// preferred path when the resolver succeeds (mobile uses it, desktop
+// dashboards use it, and it works without a TTY).
+func runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner string) error {
+	runner = normalizeRunnerAuthName(runner)
+	var remoteCmd string
+	switch runner {
+	case "claude":
+		remoteCmd = "claude auth login --console"
+	case "codex":
+		remoteCmd = "codex login --device-auth"
+	default:
+		return fmt.Errorf("ssh-based runner auth: unsupported runner %q (want claude or codex)", runner)
+	}
+
+	fmt.Printf("Falling back to SSH: spawning `%s` on %s under your login shell.\n", remoteCmd, targetHint)
+	fmt.Println("(The runner will print its OAuth URL/code below — open it in any browser to finish sign-in.)")
+	fmt.Println()
+
+	yaverPath := findYaverBinary()
+	// `bash -lc` loads .bash_profile / .profile / .bashrc so PATH picks up
+	// ~/.npm-global/bin, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin, etc.
+	// — wherever the user actually installed claude/codex. CI=1+NO_COLOR=1
+	// keeps the runner from emitting cursor controls that confuse a
+	// non-interactive ssh stream.
+	wrapped := "CI=1 NO_COLOR=1 TERM=dumb " + remoteCmd
+	cmd := osexec.Command(yaverPath, "ssh", targetHint, "--", "bash", "-lc", wrapped)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 func waitForRemoteYaverAuth(cfg *Config, target *DeviceInfo, timeout time.Duration) (deviceReauthProbe, error) {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -451,13 +501,30 @@ func runRunnerAuthQuickFlow(targetHint, runner string, extra []string) {
 	}
 	fmt.Printf("%s:  %s\n\n", runner, summarizeRunnerAuthRow(row))
 	if !row.Installed {
-		fmt.Fprintf(os.Stderr, "runner-auth: %s is not installed on %s. Run `yaver runner-auth setup %s --target %s` first.\n", runner, target.Name, runner, target.DeviceID)
-		os.Exit(1)
+		// Same false-negative fallback as runRunnerQuickFlow — agent's
+		// PATH may not include ~/.npm-global/bin so claude/codex appear
+		// missing even when the user has them. Try the SSH path before
+		// giving up.
+		fmt.Fprintf(os.Stderr, "runner-auth: agent reports %s as not installed on %s. Trying SSH fallback under your login shell.\n", runner, target.Name)
+		if err := runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner); err != nil {
+			fmt.Fprintf(os.Stderr, "runner-auth: SSH fallback failed: %v\n", err)
+			os.Exit(1)
+		}
+		rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+		if err == nil {
+			row, _ = findRunnerAuthStatusRow(rows, runner)
+			fmt.Printf("%s:  %s\n", runner, summarizeRunnerAuthRow(row))
+		}
+		return
 	}
 
 	if err := runCodeBrowserAuthFlow(target.DeviceID, runner); err != nil {
-		fmt.Fprintf(os.Stderr, "runner-auth: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "runner-auth: HTTP browser-auth failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, "runner-auth: trying SSH fallback under your login shell.")
+		if sshErr := runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner); sshErr != nil {
+			fmt.Fprintf(os.Stderr, "runner-auth: SSH fallback also failed: %v\n", sshErr)
+			os.Exit(1)
+		}
 	}
 
 	rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
@@ -520,13 +587,32 @@ func runRunnerQuickFlow(targetHint, runner string, extra []string) {
 	}
 	fmt.Printf("%s:  %s\n\n", runner, summarizeRunnerAuthRow(row))
 	if !row.Installed {
-		fmt.Fprintf(os.Stderr, "runner: %s is not installed on %s. Run `yaver runner-auth setup %s --target %s` first.\n", runner, target.Name, runner, target.DeviceID)
-		os.Exit(1)
-	}
-	if !row.AuthConfigured {
-		if err := runCodeBrowserAuthFlow(target.DeviceID, runner); err != nil {
-			fmt.Fprintf(os.Stderr, "runner: %v\n", err)
+		// Agent says "not installed" but it's commonly a false negative: the
+		// systemd/launchd PATH the agent inherits doesn't include
+		// ~/.npm-global/bin etc. where the user actually has claude/codex.
+		// Fall back to running the runner CLI over SSH under the user's
+		// login shell — that picks up the right PATH.
+		fmt.Fprintf(os.Stderr, "runner: agent reports %s as not installed on %s. Trying SSH fallback under your login shell.\n", runner, target.Name)
+		if err := runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner); err != nil {
+			fmt.Fprintf(os.Stderr, "runner: SSH fallback failed: %v\n", err)
+			fmt.Fprintf(os.Stderr, "runner: install the CLI on %s (e.g. `npm i -g @anthropic-ai/claude-code` / `@openai/codex`) and try again.\n", target.Name)
 			os.Exit(1)
+		}
+		// SSH path doesn't go through the agent so the row won't update;
+		// re-fetch and trust whatever the next status snapshot says.
+		rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
+		if err == nil {
+			row, _ = findRunnerAuthStatusRow(rows, runner)
+			fmt.Printf("%s:  %s\n", runner, summarizeRunnerAuthRow(row))
+		}
+	} else if !row.AuthConfigured {
+		if err := runCodeBrowserAuthFlow(target.DeviceID, runner); err != nil {
+			fmt.Fprintf(os.Stderr, "runner: HTTP browser-auth failed: %v\n", err)
+			fmt.Fprintln(os.Stderr, "runner: trying SSH fallback under your login shell.")
+			if sshErr := runRemoteHeadlessRunnerAuthOverSSH(targetHint, runner); sshErr != nil {
+				fmt.Fprintf(os.Stderr, "runner: SSH fallback also failed: %v\n", sshErr)
+				os.Exit(1)
+			}
 		}
 		rows, err = fetchRunnerAuthStatusRowsRemote(target.DeviceID)
 		if err != nil {

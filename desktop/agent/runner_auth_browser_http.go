@@ -6,13 +6,28 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 )
+
+// runnerAuthDebugEnabled returns true when YAVER_RUNNER_AUTH_DEBUG is
+// set to a truthy value. Gates verbose per-line logging of subprocess
+// stdout/stderr — useful while debugging URL parser regressions, noisy
+// in steady-state production. Always log the high-level transitions
+// (spawn, terminal, errors) regardless of this flag.
+func runnerAuthDebugEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_RUNNER_AUTH_DEBUG"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
 
 type runnerBrowserAuthStartRequest struct {
 	Runner string `json:"runner"`
@@ -118,11 +133,19 @@ func (s *runnerBrowserAuthSessionState) update(fn func(*runnerBrowserAuthSession
 func runnerBrowserAuthCommand(runner string) (method string, cmd *exec.Cmd, err error) {
 	switch normalizeRunnerAuthName(runner) {
 	case "codex":
-		cmd = exec.Command("codex", "login", "--device-auth")
+		bin := resolveRunnerBinary("codex")
+		if bin == "" {
+			return "", nil, fmt.Errorf("codex CLI not found on this machine (looked in PATH, ~/.npm-global/bin, ~/.local/bin, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin, and the user login shell). Run `npm i -g @openai/codex` and try again.")
+		}
+		cmd = exec.Command(bin, "login", "--device-auth")
 		cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
 		return "device-auth", cmd, nil
 	case "claude":
-		cmd = exec.Command("claude", "auth", "login", "--console")
+		bin := resolveRunnerBinary("claude")
+		if bin == "" {
+			return "", nil, fmt.Errorf("claude CLI not found on this machine (looked in PATH, ~/.npm-global/bin, ~/.local/bin, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin, and the user login shell). Run `npm i -g @anthropic-ai/claude-code` and try again.")
+		}
+		cmd = exec.Command(bin, "auth", "login", "--console")
 		cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
 		return "oauth", cmd, nil
 	default:
@@ -134,8 +157,13 @@ func scanRunnerBrowserAuthOutput(sess *runnerBrowserAuthSessionState, reader io.
 	scanner := bufio.NewScanner(reader)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 512*1024)
+	debug := runnerAuthDebugEnabled()
 	for scanner.Scan() {
-		line := normalizeBrowserAuthLine(scanner.Text())
+		raw := scanner.Text()
+		line := normalizeBrowserAuthLine(raw)
+		if debug {
+			log.Printf("[runner-auth-browser] %s line=%q raw=%q", sess.Runner, line, raw)
+		}
 		if line == "" {
 			continue
 		}
@@ -147,15 +175,24 @@ func scanRunnerBrowserAuthOutput(sess *runnerBrowserAuthSessionState, reader io.
 					if state.Status == "starting" {
 						state.Status = "awaiting_browser"
 					}
+					// Always log URL capture — it's the moment the mobile
+					// pane stops spinning, worth a single line in journalctl.
+					log.Printf("[runner-auth-browser] %s captured openUrl=%s", state.Runner, state.OpenURL)
 				}
 			}
 			if state.Runner == "codex" && state.Code == "" {
 				if code := codexCodePattern.FindString(line); code != "" {
 					state.Code = code
 					state.Status = "awaiting_browser"
+					log.Printf("[runner-auth-browser] codex captured code=%s", code)
 				}
 			}
 		})
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[runner-auth-browser] %s scanner error: %v", sess.Runner, err)
+	} else if debug {
+		log.Printf("[runner-auth-browser] %s reader closed (EOF)", sess.Runner)
 	}
 }
 
@@ -194,6 +231,7 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 		return nil, fmt.Errorf("start %s auth: %w", runner, err)
 	}
 
+	log.Printf("[runner-auth-browser] %s spawned: %s %v (id=%s)", runner, cmd.Path, cmd.Args[1:], sess.ID)
 	go scanRunnerBrowserAuthOutput(sess, stdout)
 	go scanRunnerBrowserAuthOutput(sess, stderr)
 	recordRunnerBrowserAuthOperation(sess.snapshot())
