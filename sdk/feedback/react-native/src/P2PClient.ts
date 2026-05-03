@@ -346,11 +346,12 @@ export class P2PClient {
       } as any);
     }
 
+    // Use authHeaders() so a relay-routed baseUrl carries
+    // X-Relay-Password — without it the relay rejects with 401
+    // "invalid relay password" before the agent ever sees the form.
     const response = await fetch(`${this.baseUrl}/feedback`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-      },
+      headers: this.authHeaders(),
       body: formData,
     });
 
@@ -371,10 +372,7 @@ export class P2PClient {
     for await (const event of events) {
       const response = await fetch(`${this.baseUrl}/feedback/stream`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(event),
       });
 
@@ -398,10 +396,7 @@ export class P2PClient {
   async startBuild(platform: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/builds`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ platform }),
     });
 
@@ -446,9 +441,7 @@ export class P2PClient {
 
     const response = await fetch(`${this.baseUrl}/voice/transcribe`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-      },
+      headers: this.authHeaders(),
       body: formData,
     });
 
@@ -494,7 +487,7 @@ export class P2PClient {
     if (mode === 'dev') {
       const primary = await fetch(`${this.baseUrl}/dev/reload`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${this.authToken}` },
+        headers: this.authHeaders(),
       });
       if (primary.ok) {
         const payload = await primary.json().catch(() => ({} as Record<string, unknown>));
@@ -528,10 +521,7 @@ export class P2PClient {
 
     const res = await fetch(`${this.baseUrl}/dev/reload-app`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         mode: 'bundle',
         ...identity,
@@ -581,10 +571,7 @@ export class P2PClient {
     const identity = resolveAppIdentity(opts);
     const response = await fetch(`${this.baseUrl}/vibing/execute`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         prompt,
         projectPath: identity.projectPath ?? opts?.projectPath ?? '',
@@ -623,7 +610,7 @@ export class P2PClient {
     }
     const response = await fetch(`${this.baseUrl}/vibing/eligibility?${params.toString()}`, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders(),
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -641,7 +628,7 @@ export class P2PClient {
   async triggerFix(feedbackId: string): Promise<{ taskId: string; prompt: string }> {
     const response = await fetch(`${this.baseUrl}/feedback/${encodeURIComponent(feedbackId)}/fix`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders(),
     });
     if (!response.ok) {
       const text = await response.text().catch(() => '');
@@ -664,10 +651,7 @@ export class P2PClient {
   async startTestSession(): Promise<{ sessionId: string }> {
     const response = await fetch(`${this.baseUrl}/test-app/start`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ source: 'feedback-sdk' }),
     });
 
@@ -683,7 +667,7 @@ export class P2PClient {
   async stopTestSession(): Promise<void> {
     await fetch(`${this.baseUrl}/test-app/stop`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders(),
     });
   }
 
@@ -701,10 +685,7 @@ export class P2PClient {
   async rotateToken(): Promise<{ token: string; expiresAt: number }> {
     const response = await fetch(`${this.baseUrl}/sdk/token/rotate`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.authToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers: this.authHeaders({ "Content-Type": "application/json" }),
     });
 
     if (!response.ok) {
@@ -729,7 +710,7 @@ export class P2PClient {
   async flagsEvaluate(userId: string = 'anonymous'): Promise<Record<string, unknown>> {
     const res = await fetch(
       `${this.baseUrl}/flags/eval?userId=${encodeURIComponent(userId)}`,
-      { headers: { Authorization: `Bearer ${this.authToken}` } },
+      { headers: this.authHeaders() },
     );
     if (!res.ok) return {};
     const data = await res.json();
@@ -743,7 +724,7 @@ export class P2PClient {
   ): Promise<T | undefined> {
     const res = await fetch(
       `${this.baseUrl}/flags/eval?userId=${encodeURIComponent(userId)}&flag=${encodeURIComponent(key)}`,
-      { headers: { Authorization: `Bearer ${this.authToken}` } },
+      { headers: this.authHeaders() },
     );
     if (!res.ok) return undefined;
     const data = await res.json();
@@ -776,7 +757,7 @@ export class P2PClient {
     const params = new URLSearchParams({ channel });
     if (deviceId) params.set('device', deviceId);
     const res = await fetch(`${this.baseUrl}/releases/latest?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders(),
     });
     if (!res.ok) return null;
     return res.json();
@@ -789,7 +770,7 @@ export class P2PClient {
   ): Promise<ArrayBuffer | null> {
     const params = new URLSearchParams({ channel, semver });
     const res = await fetch(`${this.baseUrl}/releases/bundle?${params.toString()}`, {
-      headers: { Authorization: `Bearer ${this.authToken}` },
+      headers: this.authHeaders(),
     });
     if (!res.ok) return null;
     return res.arrayBuffer();
@@ -810,10 +791,7 @@ export class P2PClient {
     try {
       const res = await fetch(`${this.baseUrl}/analytics/ingest`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json',
-        },
+        headers: this.authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           name,
           props,

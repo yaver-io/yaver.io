@@ -283,7 +283,12 @@ export class YaverDiscovery {
     deviceId: string,
   ): Promise<DiscoveryResult | null> {
     try {
-      const settingsRes = await fetch(`${convexUrl}/auth/validate`, {
+      // /settings returns {ok, settings: {relayUrl, relayPassword, ...}}
+      // — `/auth/validate` only returns the user record. Using the
+      // wrong endpoint historically meant relayPassword stayed
+      // undefined and every relay-routed probe rejected with 401
+      // "invalid relay password" (relay/server.go:957).
+      const settingsRes = await fetch(`${convexUrl}/settings`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       let relayUrl: string | undefined;
@@ -291,8 +296,9 @@ export class YaverDiscovery {
 
       if (settingsRes.ok) {
         const settingsData = await settingsRes.json();
-        relayUrl = settingsData.relayUrl;
-        relayPassword = settingsData.relayPassword;
+        const inner = settingsData?.settings;
+        relayUrl = inner?.relayUrl ?? settingsData?.relayUrl;
+        relayPassword = inner?.relayPassword ?? settingsData?.relayPassword;
       }
 
       if (!relayUrl) {

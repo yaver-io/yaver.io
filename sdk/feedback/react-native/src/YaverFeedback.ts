@@ -148,7 +148,50 @@ let enabled = false;
 let p2pClient: P2PClient | null = null;
 let shakeDetector: ShakeDetector | null = null;
 let p2pAuthToken: string | null = null;
+let p2pRelayPassword: string = '';
 let reportLaunchInFlight = false;
+
+/** Resolve the user's relay password by validating their auth token
+ *  against Convex. Used whenever we (re)build the P2PClient so a
+ *  relay-routed agentUrl carries a valid X-Relay-Password — without
+ *  this, every relay-tunneled request rejects with HTTP 401
+ *  "invalid relay password" (relay/server.go:957).
+ *
+ *  Cached on `p2pRelayPassword` so we only round-trip Convex when the
+ *  user's auth token actually changes. Returns "" on any failure so
+ *  direct LAN agentUrls (which need no password) keep working.
+ */
+async function resolveRelayPassword(authToken: string, convexUrl?: string): Promise<string> {
+  const trimmed = (authToken || '').trim();
+  if (!trimmed) {
+    p2pRelayPassword = '';
+    return '';
+  }
+  const url = (convexUrl || config?.convexUrl || DEFAULT_CONVEX_SITE_URL).replace(/\/+$/, '');
+  try {
+    // /settings returns {ok, settings: {relayPassword, relayUrl, ...}}
+    // Older accounts may flatten relayPassword to the top — match the
+    // tolerance the web shell already uses (route.ts:77).
+    const res = await fetch(`${url}/settings`, {
+      headers: { Authorization: `Bearer ${trimmed}` },
+    });
+    if (!res.ok) return p2pRelayPassword;
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    const settings = (data as { settings?: { relayPassword?: string } })?.settings;
+    const pw =
+      (typeof settings?.relayPassword === 'string' && settings.relayPassword) ||
+      (typeof (data as { relayPassword?: string })?.relayPassword === 'string'
+        ? (data as { relayPassword?: string }).relayPassword
+        : '') ||
+      '';
+    p2pRelayPassword = pw;
+    return pw;
+  } catch {
+    // Network failure on a passive Convex round-trip shouldn't break
+    // direct-LAN flows. Fall through with whatever we already cached.
+    return p2pRelayPassword;
+  }
+}
 
 /** Ring buffer of captured errors. */
 let errorBuffer: CapturedError[] = [];
@@ -212,7 +255,8 @@ export class YaverFeedback {
       return;
     }
     p2pAuthToken = token;
-    p2pClient = new P2PClient(effectiveUrl, token);
+    const rp = await resolveRelayPassword(token);
+    p2pClient = new P2PClient(effectiveUrl, token, rp);
   }
 
   /**
@@ -295,7 +339,12 @@ export class YaverFeedback {
     // Create P2P client if we have a URL
     if (config.agentUrl) {
       p2pAuthToken = config.authToken ?? null;
-      p2pClient = new P2PClient(config.agentUrl, config.authToken ?? '');
+      // Initial construction uses the cached p2pRelayPassword (empty on
+      // first init). rebuildP2PClient below resolves the real password
+      // from Convex and replaces this client — but only when authToken
+      // is set, so set a placeholder header here that won't 401 a
+      // direct-LAN url and will be overwritten before any relay hop.
+      p2pClient = new P2PClient(config.agentUrl, config.authToken ?? '', p2pRelayPassword);
       if (config.authToken) {
         void YaverFeedback.rebuildP2PClient(config.agentUrl);
       }
@@ -949,7 +998,8 @@ export class YaverFeedback {
         });
         if (result) {
           config.agentUrl = result.url;
-          p2pClient = new P2PClient(result.url, config.authToken ?? '');
+          const rp = await resolveRelayPassword(config.authToken ?? '');
+          p2pClient = new P2PClient(result.url, config.authToken ?? '', rp);
         }
       } catch {}
     }
