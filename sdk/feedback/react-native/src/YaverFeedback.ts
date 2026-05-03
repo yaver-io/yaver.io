@@ -815,6 +815,16 @@ export class YaverFeedback {
     return config;
   }
 
+  /** Returns the resolved relay password the SDK is currently using.
+   *  Empty string when no relay routing is in play (direct LAN agent
+   *  URLs need no password). Callers attaching it to relay-routed
+   *  HTTP requests must check for empty before setting the header,
+   *  since "X-Relay-Password: " is treated as invalid by the relay
+   *  and would 401 the request. */
+  static getRelayPassword(): string {
+    return p2pRelayPassword;
+  }
+
   /**
    * Manually attach an error with optional metadata.
    * Use this in catch blocks to give the agent extra context.
@@ -1040,7 +1050,7 @@ export class YaverFeedback {
         errors: errorBuffer.length > 0 ? [...errorBuffer] : undefined,
       };
 
-      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle);
+      await uploadFeedback(config.agentUrl, config.authToken ?? '', bundle, p2pRelayPassword);
       console.log('[YaverFeedback] Auto-report sent');
     } catch (err) {
       console.warn('[YaverFeedback] Auto-report failed:', err);

@@ -18,6 +18,7 @@ export async function uploadFeedback(
   agentUrl: string,
   authToken: string,
   bundle: FeedbackBundle,
+  relayPassword: string = '',
 ): Promise<{ id?: string; reportId?: string; [k: string]: unknown }> {
   const formData = new FormData();
 
@@ -54,11 +55,15 @@ export async function uploadFeedback(
 
   const url = agentUrl.replace(/\/$/, '') + '/feedback';
 
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${authToken}`,
+  };
+  if (relayPassword) {
+    headers['X-Relay-Password'] = relayPassword;
+  }
   const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${authToken}`,
-    },
+    headers,
     body: formData,
   });
 

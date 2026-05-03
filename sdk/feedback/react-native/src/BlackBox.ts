@@ -69,6 +69,12 @@ export type CommandHandler = (cmd: BlackBoxCommand) => void;
 export class BlackBox {
   private static baseUrl: string | null = null;
   private static authToken: string | null = null;
+  // Mirror of the user's relay password — required for EVERY request that
+  // crosses the relay (`https://public.yaver.io/d/<id>/...`). Without it
+  // the relay rejects with HTTP 401 "invalid relay password" and the
+  // event stream silently fails. Set on start() from YaverFeedback's
+  // resolved relay password (same source the P2PClient uses).
+  private static relayPassword: string = '';
   private static deviceId: string = '';
   private static appName: string = '';
   private static buffer: BlackBoxEvent[] = [];
@@ -103,6 +109,7 @@ export class BlackBox {
 
     BlackBox.baseUrl = feedbackConfig.agentUrl.replace(/\/$/, '');
     BlackBox.authToken = feedbackConfig.authToken ?? null;
+    BlackBox.relayPassword = (feedbackConfig as { relayPassword?: string }).relayPassword ?? '';
     BlackBox.deviceId = config?.deviceId ?? BlackBox.generateDeviceId();
     BlackBox.appName = config?.appName ?? '';
     BlackBox.flushInterval = config?.flushInterval ?? 2000;
@@ -375,15 +382,19 @@ export class BlackBox {
     const url = `${BlackBox.baseUrl}/blackbox/command-stream?device=${encodeURIComponent(BlackBox.deviceId)}`;
 
     try {
+      const sseHeaders: Record<string, string> = {
+        Authorization: `Bearer ${BlackBox.authToken}`,
+        'X-Device-ID': BlackBox.deviceId,
+        'X-Platform': Platform.OS,
+        'X-App-Name': BlackBox.appName,
+        Accept: 'text/event-stream',
+      };
+      if (BlackBox.relayPassword) {
+        sseHeaders['X-Relay-Password'] = BlackBox.relayPassword;
+      }
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          Authorization: `Bearer ${BlackBox.authToken}`,
-          'X-Device-ID': BlackBox.deviceId,
-          'X-Platform': Platform.OS,
-          'X-App-Name': BlackBox.appName,
-          Accept: 'text/event-stream',
-        },
+        headers: sseHeaders,
         // @ts-ignore — React Native supports signal on fetch
         signal: controller.signal,
       });
@@ -479,15 +490,19 @@ export class BlackBox {
     BlackBox.buffer = [];
 
     try {
+      const flushHeaders: Record<string, string> = {
+        Authorization: `Bearer ${BlackBox.authToken}`,
+        'Content-Type': 'application/json',
+        'X-Device-ID': BlackBox.deviceId,
+        'X-Platform': Platform.OS,
+        'X-App-Name': BlackBox.appName,
+      };
+      if (BlackBox.relayPassword) {
+        flushHeaders['X-Relay-Password'] = BlackBox.relayPassword;
+      }
       await fetch(`${BlackBox.baseUrl}/blackbox/events`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${BlackBox.authToken}`,
-          'Content-Type': 'application/json',
-          'X-Device-ID': BlackBox.deviceId,
-          'X-Platform': Platform.OS,
-          'X-App-Name': BlackBox.appName,
-        },
+        headers: flushHeaders,
         body: JSON.stringify(events),
       });
     } catch {

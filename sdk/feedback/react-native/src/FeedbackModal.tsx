@@ -415,6 +415,7 @@ export const FeedbackModal: React.FC = () => {
         config.agentUrl,
         config.authToken ?? '',
         bundle,
+        YaverFeedback.getRelayPassword(),
       );
       // The agent returns the new report id as `id` (see
       // feedback_http.go::ReceiveFeedback). Trigger the fix loop if we got
