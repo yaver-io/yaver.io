@@ -23,6 +23,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
+import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
 // kept so a future DeviceDetailsModal section can surface it on tap.
@@ -52,21 +53,11 @@ interface RemoteAgentInfo {
 
 const DEV_FRAMEWORKS = ["expo", "flutter", "nextjs", "vite", "react-native", "react"];
 
-// Use codepoints with full-color emoji presentation on every platform.
-// Private-use glyphs (\uF8FF Apple-logo, \u25C8 white-diamond) render as
-// monochrome system-font glyphs which look small + dim against the dark
-// card background \u2014 Swift and Kotlin rows became visually inconsistent
-// with the other framework rows. Pick branded emoji where possible.
-const FRAMEWORK_ICONS: Record<string, string> = {
-  expo: "\uD83D\uDCF1",                      // \uD83D\uDCF1
-  "react-native": "\u269B\uFE0F",            // \u269B\uFE0F \u2014 VS16 forces emoji presentation
-  react: "\u269B\uFE0F",                     // \u269B\uFE0F
-  flutter: "\uD83D\uDC26",                   // \uD83D\uDC26
-  nextjs: "\u25B2\uFE0F",                    // \u25B2 + VS16
-  vite: "\u26A1\uFE0F",                      // \u26A1 + VS16
-  swift: "\uD83C\uDF4E",                     // \uD83C\uDF4E  Apple-platform marker
-  kotlin: "\uD83D\uDFEA",                    // \uD83D\uDFEA  Kotlin's brand purple
-};
+// Branded vector icons replace the prior emoji glyph map. Emoji read OK
+// for "an apple" but didn't say "Swift on Apple platforms" at a glance,
+// and \uD83D\uDFEA looked like a generic purple square instead of Kotlin. The
+// FrameworkIcon component renders MaterialCommunityIcons with proper
+// brand colors \u2014 see mobile/src/components/FrameworkIcon.tsx.
 
 const PREVIEW_TARGET_KEY = "@yaver/hotreload_preview_target";
 
@@ -864,7 +855,6 @@ export default function HotReloadScreen() {
           contentContainerStyle={s.listContent}
           renderItem={({ item }) => {
             const isStarting = startingProject === item.name;
-            const fwIcon = FRAMEWORK_ICONS[item.framework || ""] || "\u25B6";
 
             return (
               <Pressable
@@ -873,7 +863,9 @@ export default function HotReloadScreen() {
                 disabled={isStarting}
               >
                 <View style={s.cardHeader}>
-                    <Text style={s.frameworkIcon}>{fwIcon}</Text>
+                  <View style={s.frameworkIcon}>
+                    <FrameworkIcon framework={item.framework} size={22} />
+                  </View>
                   <View style={s.cardTitleContainer}>
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{displayProjectTitle(item)}</Text>
                     <View style={s.tagRow}>

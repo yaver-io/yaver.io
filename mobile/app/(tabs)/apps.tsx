@@ -18,6 +18,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter } from "expo-router";
 import { Platform } from "react-native";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
+import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
@@ -40,19 +41,10 @@ interface ProjectItem {
   tags?: string[];
 }
 
-// Branded emoji with full-color presentation on every platform \u2014 keep
-// in sync with mobile/app/(tabs)/hotreload.tsx::FRAMEWORK_ICONS so the
-// two surfaces show identical glyphs for the same framework.
-const FRAMEWORK_ICONS: Record<string, string> = {
-  expo: "\uD83D\uDCF1",
-  "react-native": "\u269B\uFE0F",
-  react: "\u269B\uFE0F",
-  flutter: "\uD83D\uDC26",
-  swift: "\uD83C\uDF4E",
-  kotlin: "\uD83D\uDFEA",
-  nextjs: "\u25B2\uFE0F",
-  vite: "\u26A1\uFE0F",
-};
+// Branded vector icons via mobile/src/components/FrameworkIcon.tsx \u2014 see
+// that file for the per-framework MaterialCommunityIcon + brand-color
+// mapping. Kept in sync with hotreload.tsx so the two surfaces render
+// identical icons for the same framework.
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter"];
 const SECOND_CLASS_MOBILE_FRAMEWORKS = ["flutter", "swift", "kotlin"];
@@ -1694,8 +1686,6 @@ export default function AppsScreen() {
           renderItem={({ item }) => {
             const isRunning = devStatus?.workDir === item.path;
             const isStarting = startingProject === item.name;
-            const category = getProjectCategory(item.framework);
-            const fwIcon = FRAMEWORK_ICONS[item.framework || ""] || (category === "mobile" ? "\uD83D\uDCF1" : category === "web" ? "\u{1F310}" : "\u{1F4C2}");
 
             return (
               <Pressable
@@ -1705,7 +1695,9 @@ export default function AppsScreen() {
                 disabled={isStarting || loadingActions}
               >
                 <View style={s.cardHeader}>
-                  <Text style={s.frameworkIcon}>{fwIcon}</Text>
+                  <View style={s.frameworkIcon}>
+                    <FrameworkIcon framework={item.framework} size={22} />
+                  </View>
                   <View style={s.cardTitleContainer}>
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
                     {item.framework && (
