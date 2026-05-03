@@ -27,6 +27,7 @@ import { uploadFeedback } from './upload';
 import { DeviceInfo, FeedbackBundle } from './types';
 import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
+import { VibeChatScreen } from './VibeChatScreen';
 import { listReachableDevices, RemoteDevice } from './auth';
 import {
   QUICK_ICON_COLOR_PRESETS,
@@ -535,6 +536,17 @@ export const FeedbackModal: React.FC = () => {
     }
   }, [showVibeInput, vibePrompt]);
 
+  // Hold the active vibe-chat session — set when handleVibingSubmit
+  // returns a fresh taskId. Renders <VibeChatScreen> which streams the
+  // SSE transcript, supports multi-turn follow-ups via /tasks/{id}/
+  // resume, and exposes a Reload button. Mirrors the in-Yaver native
+  // pane's transcript-mode behaviour, just rendered in RN here.
+  const [activeVibe, setActiveVibe] = useState<{
+    taskId: string;
+    initialPrompt: string;
+  } | null>(null);
+  const [includeScreenshot, setIncludeScreenshot] = useState<boolean>(true);
+
   const handleVibingSubmit = useCallback(async () => {
     const client = YaverFeedback.getP2PClient();
     if (!client) {
@@ -554,13 +566,47 @@ export const FeedbackModal: React.FC = () => {
               .join('\n')
           : '';
       const userPrompt = vibePrompt.trim();
-      const prompt = userPrompt
+      const promptText = userPrompt
         ? userPrompt + errNote
         : 'Pick the next small improvement or fix for this app based on recent activity and the current screen.' +
           errNote;
-      const result = await client.vibing(prompt);
+
+      // Optional screenshot — captured from the host app's window.
+      // captureScreenshotBase64 returns null when react-native-view-
+      // shot isn't installed; we skip the screenshot rather than
+      // abort the whole feedback in that case.
+      let screenshotBase64: string | undefined;
+      if (includeScreenshot) {
+        const cap = await import('./capture');
+        const captured = await cap.captureScreenshotBase64();
+        if (captured?.base64) {
+          screenshotBase64 = captured.base64;
+        }
+      }
+
+      // Resolve project context the same way reloadApp / vibing did.
+      const { resolveAppIdentity } = await import('./P2PClient');
+      const identity = resolveAppIdentity();
+
+      // Pull the user's preferred runner / model from local prefs.
+      // Both are optional — the agent falls back to whatever runner
+      // is signed in if neither is provided.
+      const prefs = await import('./preferences');
+      const preferredRunner = (await prefs.getPreferredRunner?.()) ?? null;
+      const preferredModel = (await prefs.getPreferredModel?.()) ?? null;
+
+      const result = await client.createFeedbackTask({
+        userPrompt: promptText,
+        projectName: identity.projectName,
+        projectPath: identity.projectPath,
+        runner: preferredRunner ?? undefined,
+        model: preferredModel ?? undefined,
+        screenshotBase64,
+      });
       setLastVibeTaskId(result.taskId);
-      setToast(`Vibing task ${result.taskId.slice(0, 8)} created`);
+      // Hand off to VibeChatScreen — it streams the SSE transcript,
+      // accepts follow-ups, and surfaces a Reload button.
+      setActiveVibe({ taskId: result.taskId, initialPrompt: promptText });
       setVibePrompt('');
       setShowVibeInput(false);
     } catch (err: unknown) {
@@ -568,7 +614,7 @@ export const FeedbackModal: React.FC = () => {
     } finally {
       if (mountedRef.current) setAction('idle');
     }
-  }, [vibePrompt]);
+  }, [vibePrompt, includeScreenshot]);
 
   /*
   const handleScreenRecording = useCallback(async () => {
@@ -577,6 +623,40 @@ export const FeedbackModal: React.FC = () => {
   */
 
   const busy = action !== 'idle';
+
+  // Once the user fires off a vibe task, swap the entire modal body
+  // for the live chat screen. The chat manages its own SSE
+  // subscription, multi-turn follow-ups, and Reload button. Closing
+  // the chat returns to idle and clears the active vibe.
+  if (visible && activeVibe) {
+    const client = YaverFeedback.getP2PClient();
+    return (
+      <>
+        <AuthOverlay />
+        <QuickActionIcon />
+        <Modal
+          visible={visible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setActiveVibe(null)}
+        >
+          {client ? (
+            <VibeChatScreen
+              client={client}
+              initialTaskId={activeVibe.taskId}
+              initialUserPrompt={activeVibe.initialPrompt}
+              onClose={() => setActiveVibe(null)}
+              onReload={async () => {
+                const c = YaverFeedback.getP2PClient();
+                if (!c) throw new Error('Not connected');
+                await c.reloadApp();
+              }}
+            />
+          ) : null}
+        </Modal>
+      </>
+    );
+  }
 
   return (
     <>

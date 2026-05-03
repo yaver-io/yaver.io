@@ -31,7 +31,7 @@ export interface ReloadAck {
  * NativeModules. None of the lookups throw — missing data just means
  * the agent will fall back to its own dev-server resolution.
  */
-function resolveAppIdentity(opts?: {
+export function resolveAppIdentity(opts?: {
   projectName?: string;
   bundleId?: string;
   projectPath?: string;
@@ -807,6 +807,202 @@ export class P2PClient {
   }
 
   /** Internal helper for authenticated GET/POST requests. */
+  /**
+   * Convergence point for ALL feedback surfaces — Tasks tab, in-Yaver
+   * native pane, and this standalone SDK all POST the same shape to
+   * `/tasks`. Wraps the user's text with the shared prompt builder
+   * (see `_core/buildFeedbackPrompt`) so every surface conditions
+   * the AI the same way.
+   *
+   * Returns the agent's response payload (`taskId`, etc.) so callers
+   * can wire `streamTaskOutput()` next for live transcript.
+   *
+   * Inputs:
+   *   - userPrompt          what the user typed
+   *   - projectName / path  optional Hot-Reload project context
+   *   - runner / model      optional preferred coding agent + model
+   *   - screenshotBase64    optional JPEG base64 (no `data:` prefix)
+   *   - imageMimeType       defaults to "image/jpeg"
+   */
+  async createFeedbackTask(input: {
+    userPrompt: string;
+    projectName?: string;
+    projectPath?: string;
+    runner?: string;
+    model?: string;
+    screenshotBase64?: string;
+    imageMimeType?: string;
+  }): Promise<{ taskId: string; raw?: unknown }> {
+    const { buildFeedbackPrompt } = await import('./_core/buildFeedbackPrompt');
+    const hasScreenshot = !!(input.screenshotBase64 && input.screenshotBase64.length > 0);
+    const description = buildFeedbackPrompt({
+      userPrompt: input.userPrompt,
+      projectName: input.projectName,
+      projectPath: input.projectPath,
+      hasScreenshot,
+    });
+    const images: Array<{ base64: string; mimeType: string; filename: string }> = [];
+    if (hasScreenshot && input.screenshotBase64) {
+      images.push({
+        base64: input.screenshotBase64,
+        mimeType: input.imageMimeType ?? 'image/jpeg',
+        filename: `yaver-feedback-${Math.floor(Date.now() / 1000)}.jpg`,
+      });
+    }
+    const body: Record<string, unknown> = {
+      title: input.userPrompt.slice(0, 80),
+      description,
+      userPrompt: input.userPrompt,
+      source: 'mobile-feedback',
+      images,
+    };
+    if (input.projectPath && input.projectPath.trim()) body.workDir = input.projectPath.trim();
+    if (input.projectName && input.projectName.trim()) body.projectName = input.projectName.trim();
+    if (input.runner && input.runner.trim()) body.runner = input.runner.trim();
+    if (input.model && input.model.trim()) body.model = input.model.trim();
+
+    const resp = await fetch(`${this.baseUrl}/tasks`, {
+      method: 'POST',
+      headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`createFeedbackTask HTTP ${resp.status}: ${text}`);
+    }
+    const json = (await resp.json().catch(() => ({}))) as { taskId?: string };
+    if (!json.taskId) {
+      throw new Error('createFeedbackTask: agent did not return taskId');
+    }
+    return { taskId: json.taskId, raw: json };
+  }
+
+  /**
+   * Subscribe to a task's live stdout/stderr stream. Returns an abort
+   * function — call it to detach. The agent emits NDJSON lines on
+   * `/tasks/{id}/output`; we surface each line via `onLine`.
+   *
+   * `onComplete` fires when the agent reports the task entered a
+   * terminal status (completed / failed / stopped). After that the
+   * caller should stop calling abort().
+   *
+   * Robust to fetch streaming on Hermes (streams Body via Response.
+   * body.getReader on platforms that support it; falls back to
+   * polling `/tasks/{id}` every 750 ms if streaming isn't available).
+   */
+  streamTaskOutput(
+    taskId: string,
+    onLine: (line: string) => void,
+    onComplete: (status: string) => void,
+  ): () => void {
+    const ctrl = new AbortController();
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      try { ctrl.abort(); } catch { /* ignore */ }
+    };
+
+    (async () => {
+      try {
+        const resp = await fetch(`${this.baseUrl}/tasks/${encodeURIComponent(taskId)}/output`, {
+          method: 'GET',
+          headers: this.authHeaders({ Accept: 'text/event-stream' }),
+          signal: ctrl.signal,
+        });
+        if (!resp.ok) {
+          throw new Error(`streamTaskOutput HTTP ${resp.status}`);
+        }
+        // RN Hermes: Response.body may be undefined. Fall back to
+        // polling final state.
+        const body = (resp as unknown as { body?: ReadableStream<Uint8Array> }).body;
+        if (!body || typeof body.getReader !== 'function') {
+          await pollTaskUntilDone(this, taskId, onLine, onComplete, () => closed);
+          return;
+        }
+        const reader = body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (!closed) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          // SSE frames are separated by \n\n; payloads are `data: <json>\n`.
+          let idx = buf.indexOf('\n\n');
+          while (idx >= 0) {
+            const frame = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            for (const line of frame.split('\n')) {
+              if (line.startsWith('data:')) {
+                const payload = line.slice(5).trim();
+                if (payload) onLine(payload);
+              }
+            }
+            idx = buf.indexOf('\n\n');
+          }
+        }
+        // Stream closed cleanly — query final status.
+        try {
+          const final = await fetch(
+            `${this.baseUrl}/tasks/${encodeURIComponent(taskId)}`,
+            { headers: this.authHeaders() },
+          );
+          const j = (await final.json().catch(() => ({}))) as { status?: string };
+          onComplete(j.status ?? 'completed');
+        } catch {
+          onComplete('completed');
+        }
+      } catch (e) {
+        if (!closed) {
+          // Surface the error via onLine so the UI shows it inline,
+          // then mark complete so the caller stops waiting.
+          onLine(`__error__: ${e instanceof Error ? e.message : String(e)}`);
+          onComplete('failed');
+        }
+      }
+    })();
+    return close;
+  }
+
+  /**
+   * Send a follow-up message into an existing task — multi-turn vibe
+   * chat. The agent's `/tasks/{id}/resume` accepts the same shape as
+   * `/tasks` (description / userPrompt / images), and the existing
+   * task picks back up with the same runner + project context.
+   */
+  async resumeTask(input: {
+    taskId: string;
+    userPrompt: string;
+    screenshotBase64?: string;
+    imageMimeType?: string;
+  }): Promise<void> {
+    const images: Array<{ base64: string; mimeType: string; filename: string }> = [];
+    if (input.screenshotBase64 && input.screenshotBase64.length > 0) {
+      images.push({
+        base64: input.screenshotBase64,
+        mimeType: input.imageMimeType ?? 'image/jpeg',
+        filename: `yaver-feedback-followup-${Math.floor(Date.now() / 1000)}.jpg`,
+      });
+    }
+    const resp = await fetch(
+      `${this.baseUrl}/tasks/${encodeURIComponent(input.taskId)}/resume`,
+      {
+        method: 'POST',
+        headers: this.authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          description: input.userPrompt,
+          userPrompt: input.userPrompt,
+          source: 'mobile-feedback',
+          images,
+        }),
+      },
+    );
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`resumeTask HTTP ${resp.status}: ${text}`);
+    }
+  }
+
   private async request(method: string, path: string): Promise<Response> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method,
@@ -821,5 +1017,55 @@ export class P2PClient {
     }
 
     return response;
+  }
+}
+
+/**
+ * Fallback path used by streamTaskOutput when the platform's fetch
+ * returns a Response with no streaming body (older Hermes builds).
+ * Polls `/tasks/{id}` every 750 ms; surfaces newly-appended output
+ * lines via `onLine`, fires `onComplete` when status is terminal.
+ */
+async function pollTaskUntilDone(
+  client: P2PClient,
+  taskId: string,
+  onLine: (line: string) => void,
+  onComplete: (status: string) => void,
+  isClosed: () => boolean,
+): Promise<void> {
+  // Use bracket access to read the private baseUrl/authHeaders without
+  // making them public — confined to this file's scope.
+  const c = client as unknown as {
+    baseUrl: string;
+    authHeaders: (extra?: Record<string, string>) => Record<string, string>;
+  };
+  let lastLen = 0;
+  for (;;) {
+    if (isClosed()) return;
+    try {
+      const r = await fetch(`${c.baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+        headers: c.authHeaders(),
+      });
+      const j = (await r.json().catch(() => ({}))) as {
+        status?: string;
+        output?: string[] | string;
+      };
+      const all = Array.isArray(j.output) ? j.output : (j.output ? [j.output] : []);
+      const flat = all.join('\n');
+      if (flat.length > lastLen) {
+        const fresh = flat.slice(lastLen);
+        lastLen = flat.length;
+        for (const ln of fresh.split('\n')) {
+          if (ln.length > 0) onLine(ln);
+        }
+      }
+      if (j.status && ['completed', 'failed', 'stopped'].includes(j.status)) {
+        onComplete(j.status);
+        return;
+      }
+    } catch {
+      // Transient — keep polling.
+    }
+    await new Promise((res) => setTimeout(res, 750));
   }
 }

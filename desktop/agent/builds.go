@@ -669,23 +669,69 @@ func (bm *BuildManager) WatchDir(dir string, patterns []string, platform BuildPl
 // Uses the embedded hermesc (matching Yaver app's exact Hermes version).
 // Falls back to project-local hermesc if embedded is unavailable.
 // Returns nil if hermesc is not available (plain JS bundle still works).
+//
+// As of the secondary-reload optimisation work, this function consults
+// the HBC content cache (hbc_cache.go) BEFORE running hermesc. Cache
+// hit → skip hermesc and write the cached bytecode in place. Cache
+// miss → run hermesc as today and store the result for next time.
+//
+// The cache is purely OPTIMISATIONAL — any cache failure (lookup,
+// validation, write, panic) silently falls through to the original
+// hermesc path. See docs/hermes-secondary-reload-optimization.md §13.
 func compileHermesBundle(bundlePath string) error {
+	return compileHermesBundleWithOpts(bundlePath, HBCCacheCompileOpts{
+		OptLevel: "O", // current behaviour: -O always
+	})
+}
+
+// compileHermesBundleWithOpts is the cache-aware variant. Today's only
+// caller of compileHermesBundle uses default opts; future callers (the
+// dev-iteration path with -O0) will pass opts explicitly.
+//
+// Named return `err` is referenced from the deferred cache-store hook
+// so we only persist after a successful compile.
+func compileHermesBundleWithOpts(bundlePath string, opts HBCCacheCompileOpts) (err error) {
 	hermescPath, err := resolveHermesc(filepath.Dir(filepath.Dir(bundlePath)))
 	if err != nil {
 		return fmt.Errorf("hermesc not available: %w", err)
 	}
 
+	// Layer 0 — content-hash cache hit. The wrapper is failure-tolerant:
+	// if anything goes sideways inside the cache path, hit==false and
+	// we fall through to the existing hermesc invocation untouched.
+	hit, key := tryServeFromHBCCache(bundlePath, hermescPath, opts)
+	if hit {
+		return nil
+	}
+	// Miss — key still carries the inputs we'd want to file the post-
+	// compile output under. Defer the store; runs only when the
+	// outer function returns nil (compile succeeded).
+	defer func() {
+		if err == nil {
+			storeHBCCacheAfterCompile(bundlePath, key, opts)
+		}
+	}()
+
 	tmpPath := bundlePath + ".tmp"
-	if err := os.Rename(bundlePath, tmpPath); err != nil {
-		return fmt.Errorf("rename for hermesc: %w", err)
+	if rerr := os.Rename(bundlePath, tmpPath); rerr != nil {
+		return fmt.Errorf("rename for hermesc: %w", rerr)
 	}
 
-	cmd := exec.Command(hermescPath, "-emit-binary", "-out", bundlePath, "-O", tmpPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// Restore original JS bundle
+	hermescOpt := opts.OptLevel
+	if hermescOpt == "" {
+		hermescOpt = "O"
+	}
+	args := []string{"-emit-binary", "-out", bundlePath, "-" + hermescOpt, tmpPath}
+	if opts.EmitSourceMap {
+		args = append(args, "-output-source-map")
+	}
+	cmd := exec.Command(hermescPath, args...)
+	out, cerr := cmd.CombinedOutput()
+	if cerr != nil {
+		// Restore original JS bundle so the caller doesn't end up with
+		// an empty bundlePath when hermesc fails.
 		os.Rename(tmpPath, bundlePath)
-		return fmt.Errorf("hermesc failed: %v\n%s", err, string(out))
+		return fmt.Errorf("hermesc failed: %v\n%s", cerr, string(out))
 	}
 
 	os.Remove(tmpPath)

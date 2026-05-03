@@ -149,3 +149,59 @@ export async function setQuickIconColorPreset(
 export async function clearQuickIconColorPreset(): Promise<void> {
   await setQuickIconColorPreset(null);
 }
+
+// ── Preferred coding agent + model (used by the standalone feedback
+// SDK's vibe chat to mirror what Yaver mobile's Tasks tab would send.
+// The agent on the remote DOES read userSettings.primaryRunnerByDevice
+// from Convex, but the standalone SDK has no DeviceContext to push the
+// per-device pick. We persist the user's last choice locally; first
+// run picks whatever's signed-in via getRunnerStatus().)
+
+const PREFERRED_RUNNER_KEY = 'yaver_feedback_preferred_runner';
+const PREFERRED_MODEL_KEY = 'yaver_feedback_preferred_model';
+
+export async function getPreferredRunner(): Promise<string | null> {
+  if (!AsyncStorage) return null;
+  try {
+    const v = await AsyncStorage.getItem(PREFERRED_RUNNER_KEY);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setPreferredRunner(runner: string | null): Promise<void> {
+  if (!AsyncStorage) return;
+  try {
+    if (!runner || !runner.trim()) {
+      await AsyncStorage.removeItem(PREFERRED_RUNNER_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(PREFERRED_RUNNER_KEY, runner.trim());
+  } catch {
+    /* best-effort */
+  }
+}
+
+export async function getPreferredModel(): Promise<string | null> {
+  if (!AsyncStorage) return null;
+  try {
+    const v = await AsyncStorage.getItem(PREFERRED_MODEL_KEY);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setPreferredModel(model: string | null): Promise<void> {
+  if (!AsyncStorage) return;
+  try {
+    if (!model || !model.trim()) {
+      await AsyncStorage.removeItem(PREFERRED_MODEL_KEY);
+      return;
+    }
+    await AsyncStorage.setItem(PREFERRED_MODEL_KEY, model.trim());
+  } catch {
+    /* best-effort */
+  }
+}

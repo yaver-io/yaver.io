@@ -82,6 +82,12 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     // hitting Send will fail with a relay/auth error and gets a
     // direct route to fix it.
     runRunnerAuthPreflight()
+
+    // Sync the agent+model chip's label with the latest UserDefaults
+    // values pushed by DeviceContext. Doing this AFTER the pane is
+    // attached + buildCard returned guarantees agentChipButton is
+    // already wired up.
+    refreshAgentChipLabel()
   }
 
   // MARK: - State
@@ -107,6 +113,14 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
   // the user can route to Agents / Settings / Back-to-Yaver from
   // inside the Feedback pane (instead of dismissing + shaking again).
   private weak var menuButton: UIButton?
+  // Tappable runner+model chip — mirrors the Tasks tab's `OpenAI Codex
+  // · gpt-5.4 ▾` pill so the user sees at a glance which coding agent
+  // and model their feedback will route to. Reads from
+  // `yaverPreferredRunner` / `yaverPreferredModel` UserDefaults pushed
+  // by DeviceContext (Convex source of truth: userSettings.
+  // primaryRunnerByDevice). Tap → opens YaverAgentsPane (same surface
+  // the menu ellipsis already opens).
+  private weak var agentChipButton: UIButton?
   private weak var bottomConstraint: NSLayoutConstraint?
   // Card's bottom-anchor constraint. handleKeyboardChange adjusts its
   // constant: 0 when keyboard down, -keyboardHeight when up. The card's
@@ -265,6 +279,29 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     actionRow.distribution = .fillEqually
     actionRow.spacing = 10
 
+    // Agent + model chip — `OpenAI Codex · gpt-5.4 ▾` style, mirroring
+    // the Tasks tab's runner pill. Sits on its own row right above the
+    // Send/Reload action row so the user sees what their feedback will
+    // route to before tapping Send. Empty when no preferred runner is
+    // pushed (host has never set one) — in that state we hide the row
+    // to keep the drawer tidy.
+    let agentChip = UIButton(type: .system)
+    agentChip.translatesAutoresizingMaskIntoConstraints = false
+    agentChip.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+    agentChip.backgroundColor = UIColor(white: 1, alpha: 0.06)
+    agentChip.layer.cornerRadius = 10
+    agentChip.layer.borderWidth = 1
+    agentChip.layer.borderColor = UIColor(white: 1, alpha: 0.10).cgColor
+    agentChip.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+    agentChip.setTitleColor(UIColor(white: 1, alpha: 0.78), for: .normal)
+    agentChip.addTarget(self, action: #selector(agentChipTapped), for: .touchUpInside)
+    agentChipButton = agentChip
+    let agentChipRow = UIStackView(arrangedSubviews: [UIView(), agentChip])
+    agentChipRow.translatesAutoresizingMaskIntoConstraints = false
+    agentChipRow.axis = .horizontal
+    agentChipRow.alignment = .center
+    agentChipRow.distribution = .fill
+
     // Status label (inline progress / errors)
     let status = UILabel()
     status.translatesAutoresizingMaskIntoConstraints = false
@@ -275,13 +312,16 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     status.text = " "
     statusLabel = status
 
-    // Layout
-    let content = UIStackView(arrangedSubviews: [promptCard, toggleRow, actionRow, status])
+    // Layout — agentChipRow sits between the screenshot toggle and the
+    // Send/Reload buttons. Hidden when there's no preferred runner
+    // pushed yet; refreshAgentChipLabel() decides on present().
+    let content = UIStackView(arrangedSubviews: [promptCard, toggleRow, agentChipRow, actionRow, status])
     content.translatesAutoresizingMaskIntoConstraints = false
     content.axis = .vertical
     content.spacing = 12
     content.setCustomSpacing(16, after: promptCard)
-    content.setCustomSpacing(14, after: toggleRow)
+    content.setCustomSpacing(10, after: toggleRow)
+    content.setCustomSpacing(10, after: agentChipRow)
 
     bg.contentView.addSubview(handle)
     bg.contentView.addSubview(title)
@@ -459,6 +499,89 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
       self.cardView = nil
       YaverAgentsPane.shared.present(in: win)
     })
+  }
+
+  /// Build the `description` field POSTed to /tasks. Wraps the user's
+  /// raw feedback with enough context for the remote AI to act
+  /// without guessing.
+  ///
+  /// Inputs may all be empty: when neither projectName nor projectPath
+  /// is set we still emit a useful preface ("user is providing
+  /// feedback while testing an app inside Yaver mobile, screenshot
+  /// included if attached, please act on this") instead of an empty
+  /// string, because feedback without project context still benefits
+  /// from the "screenshot is the current screen" hint.
+  private func buildFeedbackPrompt(userPrompt: String,
+                                   projectName: String,
+                                   projectPath: String,
+                                   hasScreenshot: Bool) -> String {
+    var sb = "[Mobile feedback from inside Yaver]\n"
+    sb += "The user is providing this feedback while running a mobile app inside the Yaver mobile container "
+    sb += "and is currently looking at a specific screen of that app.\n\n"
+    if !projectName.isEmpty || !projectPath.isEmpty {
+      sb += "App being tested:\n"
+      if !projectName.isEmpty { sb += "  name: \(projectName)\n" }
+      if !projectPath.isEmpty { sb += "  path: \(projectPath)\n" }
+      sb += "\n"
+    }
+    if hasScreenshot {
+      sb += "A screenshot of the current screen is attached as the first image. "
+      sb += "Open it before deciding what to change — the user is pointing at what they SEE, "
+      sb += "not necessarily what is named most prominently in the source.\n\n"
+    } else {
+      sb += "(The user chose not to attach a screenshot for this round.)\n\n"
+    }
+    if !projectName.isEmpty || !projectPath.isEmpty {
+      sb += "Apply the requested change to the source of that app. Save the affected files. "
+      sb += "The user will trigger a Hermes reload from the drawer to see the result.\n\n"
+    } else {
+      sb += "If you can identify the project from the prompt or the screenshot, apply the change there. "
+      sb += "Otherwise ask the user briefly which project to target.\n\n"
+    }
+    sb += "User feedback:\n\(userPrompt)"
+    return sb
+  }
+
+  /// Refresh the agent+model chip's label from the same UserDefaults
+  /// keys sendTapped reads, so what the user sees IS what the request
+  /// will use. Hides the chip row when neither value is present.
+  /// Called from present() (every time the pane appears) so a runner
+  /// switch in the host's Tasks tab is reflected the next time the
+  /// user opens feedback in the guest.
+  private func refreshAgentChipLabel() {
+    guard let chip = agentChipButton else { return }
+    let runner = (UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    let model = (UserDefaults.standard.string(forKey: "yaverPreferredModel") ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    if runner.isEmpty && model.isEmpty {
+      // No preference pushed yet — hide the row entirely so the user
+      // doesn't see a confusing empty pill.
+      chip.superview?.isHidden = true
+      return
+    }
+    chip.superview?.isHidden = false
+    let runnerLabel: String = {
+      switch runner.lowercased() {
+      case "claude": return "Claude"
+      case "codex":  return "OpenAI Codex"
+      case "opencode": return "opencode"
+      default: return runner.isEmpty ? "Claude" : runner
+      }
+    }()
+    let combined = model.isEmpty ? runnerLabel : "\(runnerLabel) · \(model)"
+    chip.setTitle("\(combined)  ▾", for: .normal)
+  }
+
+  /// Tap handler for the agent chip — opens the same Coding Agents
+  /// pane the ellipsis menu opens, which is where the user actually
+  /// changes their primary runner / model. Reusing the existing pane
+  /// means: one source of truth for runner pick, no parallel UI to
+  /// keep in sync.
+  @objc private func agentChipTapped() {
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    guard let win = window else { return }
+    YaverAgentsPane.shared.present(in: win)
   }
 
   @objc private func handleBackgroundTap() {
@@ -660,92 +783,88 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
   }
 
   @objc private func sendTapped() {
-    if inFlight { return }
+    NSLog("[YaverFeedback] sendTapped fired")
+    if inFlight {
+      NSLog("[YaverFeedback] sendTapped: inFlight=true, bailing")
+      return
+    }
     let userPrompt = (promptField?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    NSLog("[YaverFeedback] userPrompt len=%d", userPrompt.count)
     if userPrompt.isEmpty {
       setStatus("Type something to send", tone: .error); return
     }
     inFlight = true
     setStatus("Sending…", tone: .progress)
+    NSLog("[YaverFeedback] resolving agent URL…")
     guard let url = yaverResolveAgentURL("/tasks") else {
+      NSLog("[YaverFeedback] yaverResolveAgentURL returned nil — aborting")
       setStatus("Missing agent URL", tone: .error); inFlight = false; return
     }
+    NSLog("[YaverFeedback] resolved /tasks → %{public}@", url.absoluteString)
 
-    var images: [[String: String]] = []
-    if screenshotToggle?.isOn == true, let img = snapshot,
-       let jpeg = img.jpegData(compressionQuality: 0.7) {
-      images.append([
-        "base64": jpeg.base64EncodedString(),
-        "mimeType": "image/jpeg",
-        "filename": "yaver-feedback-\(Int(Date().timeIntervalSince1970)).jpg",
-      ])
-    }
-
-    // Pin the project context the user is looking at. handleStartProject
-    // in mobile/app/(tabs)/hotreload.tsx pushes this when the user taps
-    // a Hot Reload app. yaverPendingDevServerWorkDir is the legacy
-    // fallback (older code paths populated it from /dev/start). Either
-    // way the agent's vibingify pipeline reads workDir → resolves the
-    // project on the host. Skipping these is safe — the agent's
-    // autoSwitchProject heuristic still tries to figure it out from
-    // the prompt alone.
+    // Capture every input on the main thread, then move ALL heavy work
+    // (JPEG encode → base64 → JSON serialize) to a background queue.
+    // Doing this on main blocked the runloop long enough on iPhone for
+    // iOS's watchdog (typical budget ~5 s, less in guest contexts) to
+    // kill the host with no surfaced crash log: a full-screen retina
+    // screenshot is ~600 KB JPEG → ~800 KB base64 string, and
+    // JSONSerialization over that string + the rest of the payload
+    // pushed the host past the watchdog while showing "Sending…".
+    let includeScreenshot = (screenshotToggle?.isOn == true)
+    let snapshotForUpload = self.snapshot
     let projectName = UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectName") ?? ""
     var projectPath = UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectPath") ?? ""
     if projectPath.isEmpty {
       projectPath = UserDefaults.standard.string(forKey: "yaverPendingDevServerWorkDir") ?? ""
     }
-
-    // Prepend a project banner to the prompt so the AI on the remote
-    // doesn't have to guess which app the user is talking about.
-    // Skipped when we have neither name nor path (no Hot Reload app
-    // selected) — the agent's autoSwitchProject heuristic still tries.
-    var description = userPrompt
-    if !projectName.isEmpty || !projectPath.isEmpty {
-      var banner = "Project context — apply this feedback to:\n"
-      if !projectName.isEmpty { banner += "  name: \(projectName)\n" }
-      if !projectPath.isEmpty { banner += "  path: \(projectPath)\n" }
-      banner += "\nUser feedback:\n"
-      description = banner + userPrompt
-    }
-
-    // Don't hardcode runner: "claude". User may have picked codex /
-    // opencode as the device's primary runner in DeviceDetailsModal,
-    // and forcing claude here makes the agent ignore that pick.
-    var payload: [String: Any] = [
-      "title": String(userPrompt.prefix(80)),
-      "description": description,
-      "userPrompt": userPrompt,
-      "source": "mobile-feedback",
-      "images": images,
-    ]
-    if !projectPath.isEmpty {
-      payload["workDir"] = projectPath
-    }
-    if !projectName.isEmpty {
-      payload["projectName"] = projectName
-    }
-    // Mirror DeviceContext.primaryRunnerByDevice[activeDevice.id] +
-    // primaryModelByDevice[activeDevice.id] (ground truth on Convex).
-    // YaverInfo.setInheritedPrimaryRunner pushes both values whenever
-    // the user changes them in the mobile UI, so this stays in sync
-    // with the Tasks tab. Skipping the runner field here (legacy
-    // behavior) made the agent's vibingify pipeline fall back to
-    // pickReadyVibingRunner — which silently picked Claude even when
-    // the user had explicitly set Codex as the device primary.
     let preferredRunner = UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? ""
-    if !preferredRunner.isEmpty {
-      payload["runner"] = preferredRunner
-    }
     let preferredModel = UserDefaults.standard.string(forKey: "yaverPreferredModel") ?? ""
-    if !preferredModel.isEmpty {
-      payload["model"] = preferredModel
-    }
-    var req = URLRequest(url: url)
-    req.httpMethod = "POST"
-    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
-    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-    let task = URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
+    let relayHeaders = yaverRelayHeaders()
+    let resolvedURL = url
+
+    NSLog("[YaverFeedback] dispatching to bg queue (includeScreenshot=%d, snapshot=%@)",
+          includeScreenshot ? 1 : 0,
+          snapshotForUpload == nil ? "nil" : "present")
+    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+      NSLog("[YaverFeedback] bg: building images")
+      var images: [[String: String]] = []
+      if includeScreenshot, let img = snapshotForUpload,
+         let jpeg = img.jpegData(compressionQuality: 0.7) {
+        NSLog("[YaverFeedback] bg: jpeg encoded %d bytes", jpeg.count)
+        images.append([
+          "base64": jpeg.base64EncodedString(),
+          "mimeType": "image/jpeg",
+          "filename": "yaver-feedback-\(Int(Date().timeIntervalSince1970)).jpg",
+        ])
+        NSLog("[YaverFeedback] bg: image base64 ready")
+      } else {
+        NSLog("[YaverFeedback] bg: no image attached")
+      }
+      let hasScreenshot = !images.isEmpty
+      let description = (self?.buildFeedbackPrompt(userPrompt: userPrompt,
+                                                   projectName: projectName,
+                                                   projectPath: projectPath,
+                                                   hasScreenshot: hasScreenshot)) ?? userPrompt
+
+      var payload: [String: Any] = [
+        "title": String(userPrompt.prefix(80)),
+        "description": description,
+        "userPrompt": userPrompt,
+        "source": "mobile-feedback",
+        "images": images,
+      ]
+      if !projectPath.isEmpty { payload["workDir"] = projectPath }
+      if !projectName.isEmpty { payload["projectName"] = projectName }
+      if !preferredRunner.isEmpty { payload["runner"] = preferredRunner }
+      if !preferredModel.isEmpty { payload["model"] = preferredModel }
+
+      var req = URLRequest(url: resolvedURL)
+      req.httpMethod = "POST"
+      for (k, v) in relayHeaders { req.setValue(v, forHTTPHeaderField: k) }
+      req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+
+      let task = URLSession.shared.dataTask(with: req) { [weak self] data, resp, err in
       DispatchQueue.main.async {
         guard let self = self else { return }
         self.pendingTask = nil
@@ -768,7 +887,17 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             .flatMap { $0["taskId"] as? String }
           if let taskId = taskId, !taskId.isEmpty {
-            self.enterTranscriptMode(taskId: taskId, userPrompt: userPrompt)
+            // KILL SWITCH 1.18.65: enterTranscriptMode is suspected of
+            // crashing the host on the response callback (even with the
+            // defer + performWithoutAnimation guards). Until we have
+            // a Console-log-confirmed root cause, fall through to the
+            // legacy "Sent ✓ → dismiss" path and let the user open the
+            // task from the Tasks tab to see the transcript. No data
+            // loss — the task IS created on the agent.
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            self.setStatus("Sent ✓ — open Tasks tab to follow", tone: .success)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.dismiss() }
+            _ = taskId // silence unused warning — caller may consult lastTaskId later
           } else {
             self.setStatus("Sent ✓", tone: .success)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
@@ -784,8 +913,16 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
         }
       }
     }
-    pendingTask = task
-    task.resume()
+    // Hop back to main only for the property write + task.resume.
+    // task.resume() itself doesn't strictly need to be on main, but
+    // pendingTask is read from dismiss() (main) so writing it here
+    // serialises against that. Resuming on main is fine — URLSession
+    // schedules its own background work for the actual transfer.
+      DispatchQueue.main.async { [weak self] in
+        self?.pendingTask = task
+        task.resume()
+      }
+    }
   }
 
   // MARK: - Transcript mode
@@ -796,24 +933,31 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
   /// so the user sees the same searching/compiling/working chip + the
   /// same purple inline-code styling without the React-Native subview.
   private func enterTranscriptMode(taskId: String, userPrompt: String) {
-    guard let card = cardView else { return }
+    // Already-transitioned guard. Re-entering this path while
+    // transcriptView is non-nil would re-add a second transcript on
+    // top of the first and is the most likely path to a dangling-view
+    // crash if a delayed network callback fires after the user has
+    // already dismissed and re-presented the pane.
+    if transcriptView != nil { return }
+    guard let card = cardView, card.window != nil else { return }
     // Resolve the agent base URL from the same /tasks URL we just
     // POSTed to, by stripping the trailing path component. This keeps
     // the relay/peer routing logic in one place (yaverResolveAgentURL).
     guard let tasksURL = yaverResolveAgentURL("/tasks") else { return }
     let baseURL = tasksURL.deletingLastPathComponent()
 
-    // Tear down the form. We keep the title/menu row + close X so the
-    // user can dismiss; everything from the prompt down gets replaced.
+    // Tear down the form INSIDE a single layout-frozen block so the
+    // keyboard-driven UIView.animate that runs in handleKeyboardChange
+    // doesn't pick up a half-rebuilt view tree. Each removeFromSuperview
+    // also nil-checks first — a simultaneous dismiss() on the same
+    // pane has been seen to nil these out before we get here.
     promptField?.resignFirstResponder()
-    if let prompt = promptField?.superview {
-      // promptField is inside a promptCard wrapper — remove the wrapper
-      // and the toggle row + action row, all of which sit in the same
-      // bg.contentView.
-      prompt.removeFromSuperview()
+    UIView.performWithoutAnimation {
+      promptField?.superview?.removeFromSuperview()
+      screenshotToggle?.superview?.removeFromSuperview()
+      agentChipButton?.superview?.removeFromSuperview()
+      sendButton?.superview?.removeFromSuperview()
     }
-    screenshotToggle?.superview?.removeFromSuperview()
-    sendButton?.superview?.removeFromSuperview()
 
     // Rebuild a transcript inside the card. The card already has its
     // header at the top; we hang the transcript below that, pinned
@@ -900,6 +1044,32 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     UIView.animate(withDuration: duration) {
       card.superview?.layoutIfNeeded()
     }
+  }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+//
+// Without this, the bg tap recognizer (added at init time to dismiss
+// the keyboard when the user taps outside the prompt) eats taps on
+// Send / Reload / the screenshot toggle / the agent chip — first tap
+// on Send dismisses the keyboard, the card reflows, the button moves
+// out from under the user's finger, and `touchUpInside` never fires.
+// User-visible symptom: "first Send click does nothing" / Send needs
+// two taps.
+//
+// The delegate filter returns false whenever the touch lands on a
+// UIControl (or its UIControl ancestor — UIButton's title label is
+// itself a UILabel inside the button), so the gesture never recognises
+// and the button receives the touch normally.
+extension YaverFeedbackPane {
+  func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                         shouldReceive touch: UITouch) -> Bool {
+    var v: UIView? = touch.view
+    while v != nil {
+      if v is UIControl { return false }
+      v = v?.superview
+    }
+    return true
   }
 }
 

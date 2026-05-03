@@ -38,6 +38,37 @@ export async function captureScreenshot(): Promise<string> {
   }
 }
 
+/**
+ * Capture a screenshot AND return it as base64 + mime type, ready to
+ * embed in a `/tasks` payload's `images` array. Used by the converged
+ * vibe-feedback flow (FeedbackModal → P2PClient.createFeedbackTask).
+ *
+ * Returns null when capture isn't possible (peer dep missing / user
+ * permission denied / running in a context where view-shot can't
+ * grab the screen). Caller should treat null as "send without
+ * screenshot" rather than aborting the whole feedback.
+ */
+export async function captureScreenshotBase64(): Promise<{
+  base64: string;
+  mimeType: string;
+} | null> {
+  try {
+    const ViewShot = require('react-native-view-shot');
+    const result = await ViewShot.captureScreen({
+      format: 'jpg',
+      quality: 0.7,
+      result: 'base64',
+    });
+    if (typeof result === 'string' && result.length > 0) {
+      // ViewShot returns a bare base64 string (no `data:` prefix).
+      return { base64: result, mimeType: 'image/jpeg' };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export interface PickedFeedbackFile {
   path: string;
   name: string;
