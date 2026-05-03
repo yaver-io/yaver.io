@@ -10,7 +10,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { WebView } from "react-native-webview";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -33,16 +32,6 @@ import {
 import { useAuth } from "../../src/context/AuthContext";
 import { fetchPairInfo, submitPair, parsePairUrl } from "../../src/lib/pairDevice";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
-
-const TUTORIALS = [
-  { label: "Always-on Setup", icon: "\u2197", desc: "Auto-boot, systemd, run forever", url: "https://yaver.io/manuals/auto-boot" },
-  { label: "Self-host Relay", icon: "\u2295", desc: "Your own relay server with Docker", url: "https://yaver.io/manuals/relay-setup" },
-  { label: "Local LLM", icon: "\u25C7", desc: "Ollama, Qwen, zero API keys", url: "https://yaver.io/manuals/local-llm" },
-  { label: "Voice AI", icon: "\u2022", desc: "PersonaPlex, Whisper, speech-to-code", url: "https://yaver.io/manuals/voice-ai" },
-  { label: "Feedback SDK", icon: "\u25CB", desc: "Visual bug reports from your app", url: "https://yaver.io/manuals/feedback-loop" },
-  { label: "CLI Setup", icon: "\u2699", desc: "Install, auth, configure agents", url: "https://yaver.io/manuals/cli-setup" },
-  { label: "Integrations", icon: "\u2190", desc: "MCP, Claude Desktop, Cursor", url: "https://yaver.io/manuals/integrations" },
-];
 
 // ── Quality Gates types ────────────────────────────────────────────
 
@@ -2407,8 +2396,10 @@ export default function MoreScreen() {
   const { token, user } = useAuth();
   const connected = connectionStatus === "connected";
 
-  const [showTutorials, setShowTutorials] = useState(false);
-  const [tutorialUrl, setTutorialUrl] = useState<string | null>(null);
+  // Tutorials lives in its own pushed screen now (mobile/app/(tabs)/tutorials.tsx)
+  // so the open animation matches Quality Gates and every other More-tab
+  // destination instead of sliding up as a bottom sheet. See `handleTutorials`
+  // below — was setShowTutorials(true) into a Modal block, now it's a route push.
 
   // Pair device modal state
   const [showPair, setShowPair] = useState(false);
@@ -2425,7 +2416,7 @@ export default function MoreScreen() {
   const insets = useSafeAreaInsets();
   const handleTodos = useCallback(() => router.navigate("/(tabs)/todos" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
-  const handleTutorials = useCallback(() => setShowTutorials(true), []);
+  const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
   // Read ?pair=<url> on mount/route-change so a deep-linked pair URL
   // (handled at the root in _layout.tsx) opens this tab pre-filled.
@@ -2547,12 +2538,12 @@ export default function MoreScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <ScrollView contentContainerStyle={s.list}>
-        <View style={s.heroHeader}>
-          <Text style={[s.pageTitle, { color: c.textPrimary }]}>More</Text>
-          <Text style={[s.pageSubtitle, { color: c.textMuted }]}>
-            Tools, pairing, sandbox, and contributor workflows.
-          </Text>
-        </View>
+        {/* No big page-title block here on purpose — every other tab
+            (Tasks, Devices, Projects, Hot Reload) relies solely on the
+            navigator header at the top of the screen for its title.
+            The previous duplicate "More" + subtitle was inconsistent
+            with that pattern. Keep the screen content starting with
+            the hero card. */}
 
         <Pressable
           style={[
@@ -3134,47 +3125,10 @@ export default function MoreScreen() {
         </View>
       </Modal>
 
-      {/* Tutorials list modal */}
-      <Modal visible={showTutorials && !tutorialUrl} animationType="slide">
-        <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <AppScreenHeader title="Tutorials" onBack={() => setShowTutorials(false)} style={{ paddingTop: insets.top + 12 }} />
-          <ScrollView contentContainerStyle={s.list}>
-            {TUTORIALS.map((t) => (
-              <Pressable
-                key={t.label}
-                style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                onPress={() => setTutorialUrl(t.url)}
-              >
-                <Text style={[s.icon, { color: c.textMuted }]}>{t.icon}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.label, { color: c.textPrimary }]}>{t.label}</Text>
-                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>{t.desc}</Text>
-                </View>
-                <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      </Modal>
-
-      {/* Tutorial content WebView */}
-      <Modal visible={!!tutorialUrl} animationType="slide">
-        <View style={[s.safe, { backgroundColor: c.bg }]}>
-          <AppScreenHeader
-            title={TUTORIALS.find(t => t.url === tutorialUrl)?.label ?? "Tutorial"}
-            onBack={() => setTutorialUrl(null)}
-            style={{ paddingTop: insets.top + 12 }}
-          />
-          {tutorialUrl && (
-            <WebView
-              source={{ uri: tutorialUrl }}
-              style={{ flex: 1, backgroundColor: c.bg }}
-              javaScriptEnabled
-              domStorageEnabled
-            />
-          )}
-        </View>
-      </Modal>
+      {/* Tutorials list + WebView were here as Modals; moved to a
+          dedicated tab route at app/(tabs)/tutorials.tsx so the open
+          animation matches Quality Gates and the rest of the More-tab
+          destinations. */}
     </SafeAreaView>
   );
 }

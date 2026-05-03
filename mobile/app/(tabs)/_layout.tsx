@@ -247,6 +247,7 @@ export default function TabLayout() {
       <Tabs.Screen name="mail" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="studio" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="qualitygates" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="tutorials" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="settings" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="ops" options={{ href: null, headerShown: false }} />
       <Tabs.Screen name="infra" options={{ href: null, headerShown: false }} />
