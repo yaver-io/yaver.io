@@ -212,11 +212,18 @@ export default function RunnerAuthModal({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const next = await callRunnerAuth("submit-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: session.id, code: pasteCode.trim() }),
-      });
+      // Agent expects `id` in the URL query string and `code` in the body.
+      // Pass session.id as the third arg so callRunnerAuth's direct-fetch
+      // branch sets ?id=…; the body only carries the code.
+      const next = await callRunnerAuth(
+        "submit-code",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: pasteCode.trim() }),
+        },
+        session.id,
+      );
       setSession(next);
       setPasteCode("");
     } catch (err) {

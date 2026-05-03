@@ -2809,13 +2809,22 @@ export class QuicClient {
     target?: string,
   ): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
+    if (!sessionId) {
+      throw new Error("submitRunnerBrowserAuthCode requires sessionId");
+    }
     const base = target
       ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/submit-code`
       : `${this.baseUrl}/runner-auth/browser/submit-code`;
-    const res = await fetch(base, {
+    // Agent's handleRunnerBrowserAuthSubmitCode reads `id` from the URL
+    // query string — only `code` comes from the JSON body. Putting id in
+    // the body alone made the agent answer 400 "missing id" on every
+    // Claude paste-back attempt.
+    const url = new URL(base);
+    url.searchParams.set("id", sessionId);
+    const res = await fetch(url.toString(), {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify({ id: sessionId, code }),
+      body: JSON.stringify({ code }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
