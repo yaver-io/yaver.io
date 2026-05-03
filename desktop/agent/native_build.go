@@ -11,6 +11,7 @@ package main
 // MCP all hit one orchestration. React Native + Hermes paths are untouched.
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -18,7 +19,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Friendly native platform names accepted by the CLI and /builds POST.
@@ -260,15 +263,269 @@ func runNativeIOS(args []string)     { runNativeBuild(NativeIOS, args) }
 func runNativeAndroid(args []string) { runNativeBuild(NativeAndroid, args) }
 func runNativeFlutter(args []string) { runNativeBuild(NativeFlutter, args) }
 
+type nativeProjectCandidate struct {
+	Path  string `json:"path"`
+	Stack string `json:"stack"`
+}
+
+type ambiguousNativeProjectError struct {
+	Native     string
+	StartDir   string
+	Candidates []nativeProjectCandidate
+}
+
+func (e *ambiguousNativeProjectError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "multiple %s mobile projects found under %s", nativeLabel(e.Native), e.StartDir)
+	for _, c := range e.Candidates {
+		fmt.Fprintf(&b, "\n  - %s (%s)", c.Path, c.Stack)
+	}
+	return b.String()
+}
+
+func nativeLabel(native string) string {
+	switch native {
+	case NativeIOS, "ios-native", "ios":
+		return "iOS"
+	case NativeAndroid, "android-native", "android":
+		return "Android"
+	case NativeFlutter:
+		return "Flutter"
+	default:
+		return native
+	}
+}
+
+func nativeBuildTargetForCommand(native string) string {
+	switch native {
+	case NativeIOS, "ios-native", "ios":
+		return "testflight"
+	case NativeAndroid, "android-native", "android":
+		return "playstore"
+	default:
+		return "local"
+	}
+}
+
+func nativePushTargetForCommand(native string) string {
+	return nativeBuildTargetForCommand(native)
+}
+
+func releasePlatformForCandidate(native, stack string) (BuildPlatform, error) {
+	switch native {
+	case NativeIOS, "ios-native", "ios":
+		switch stack {
+		case "flutter":
+			return PlatformFlutterIPA, nil
+		case "expo", "react-native", "native-ios":
+			return PlatformXcodeIPA, nil
+		}
+	case NativeAndroid, "android-native", "android":
+		switch stack {
+		case "flutter":
+			return PlatformFlutterAAB, nil
+		case "expo", "react-native", "native-android":
+			return PlatformGradleAAB, nil
+		}
+	}
+	return "", fmt.Errorf("no release builder for %s project stack %s", nativeLabel(native), stack)
+}
+
+func nativeProjectMatches(native, stack string) bool {
+	switch native {
+	case NativeIOS, "ios-native", "ios":
+		return stack == "expo" || stack == "react-native" || stack == "flutter" || stack == "native-ios"
+	case NativeAndroid, "android-native", "android":
+		return stack == "expo" || stack == "react-native" || stack == "flutter" || stack == "native-android"
+	case NativeFlutter:
+		return stack == "flutter"
+	default:
+		return false
+	}
+}
+
+func discoverNativeProjectCandidates(start, native string) []nativeProjectCandidate {
+	start = strings.TrimSpace(start)
+	if start == "" {
+		start = "."
+	}
+	candidates := []string{start}
+	if detectMobileStack(start) == "" {
+		candidates = append(candidates,
+			filepath.Join(start, "mobile"),
+			filepath.Join(start, "app"),
+		)
+		for _, parent := range []string{"apps", "packages"} {
+			entries, err := os.ReadDir(filepath.Join(start, parent))
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() {
+					candidates = append(candidates, filepath.Join(start, parent, e.Name()))
+				}
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var hits []nativeProjectCandidate
+	for _, c := range candidates {
+		if !wireExists(c) {
+			continue
+		}
+		abs, err := filepath.Abs(c)
+		if err != nil {
+			continue
+		}
+		if seen[abs] {
+			continue
+		}
+		seen[abs] = true
+		stack := detectMobileStack(abs)
+		if stack == "" || !nativeProjectMatches(native, stack) {
+			continue
+		}
+		hits = append(hits, nativeProjectCandidate{Path: abs, Stack: stack})
+	}
+	return hits
+}
+
+func canPromptNativeSelection() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func promptNativeProjectSelection(native string, hits []nativeProjectCandidate) (nativeProjectCandidate, error) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Fprintf(os.Stderr, "Multiple %s projects found. Select one:\n", nativeLabel(native))
+	for i, hit := range hits {
+		fmt.Fprintf(os.Stderr, "  %d. %s (%s)\n", i+1, hit.Path, hit.Stack)
+	}
+	fmt.Fprintf(os.Stderr, "Enter 1-%d: ", len(hits))
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return nativeProjectCandidate{}, err
+	}
+	choice, err := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || choice < 1 || choice > len(hits) {
+		return nativeProjectCandidate{}, fmt.Errorf("invalid selection %q", strings.TrimSpace(line))
+	}
+	return hits[choice-1], nil
+}
+
+func resolveNativeProject(start, native string, allowPrompt bool) (nativeProjectCandidate, error) {
+	hits := discoverNativeProjectCandidates(start, native)
+	if len(hits) == 0 {
+		return nativeProjectCandidate{}, fmt.Errorf("no %s mobile project detected under %s", nativeLabel(native), start)
+	}
+	if len(hits) == 1 {
+		return hits[0], nil
+	}
+	if allowPrompt && canPromptNativeSelection() {
+		return promptNativeProjectSelection(native, hits)
+	}
+	return nativeProjectCandidate{}, &ambiguousNativeProjectError{
+		Native:     native,
+		StartDir:   start,
+		Candidates: hits,
+	}
+}
+
+func startNativeBuildFromDir(native, target, startDir string, extra []string, install bool, allowPrompt bool) (*Build, nativeProjectCandidate, error) {
+	candidate, err := resolveNativeProject(startDir, native, allowPrompt)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, err
+	}
+	platform, err := resolveNativePlatform(native, target)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, err
+	}
+	body := map[string]interface{}{
+		"platform":        string(platform),
+		"workDir":         candidate.Path,
+		"args":            extra,
+		"installOnDevice": install,
+	}
+	resp, err := localAgentRequest("POST", "/builds", body)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, fmt.Errorf("start build: %w", err)
+	}
+	var build Build
+	if err := remarshal(resp, &build); err != nil {
+		return nil, nativeProjectCandidate{}, fmt.Errorf("parse build response: %w", err)
+	}
+	return &build, candidate, nil
+}
+
+func startNativeReleaseBuildFromDir(native, startDir string, extra []string, allowPrompt bool) (*Build, nativeProjectCandidate, error) {
+	candidate, err := resolveNativeProject(startDir, native, allowPrompt)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, err
+	}
+	platform, err := releasePlatformForCandidate(native, candidate.Stack)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, err
+	}
+	body := map[string]interface{}{
+		"platform": platform,
+		"workDir":  candidate.Path,
+		"args":     extra,
+	}
+	resp, err := localAgentRequest("POST", "/builds", body)
+	if err != nil {
+		return nil, nativeProjectCandidate{}, fmt.Errorf("start release build: %w", err)
+	}
+	var build Build
+	if err := remarshal(resp, &build); err != nil {
+		return nil, nativeProjectCandidate{}, fmt.Errorf("parse build response: %w", err)
+	}
+	return &build, candidate, nil
+}
+
+func waitForBuildCompletion(buildID string) (*Build, error) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	lastLine := ""
+	for {
+		resp, err := localAgentRequest("GET", "/builds/"+buildID, nil)
+		if err != nil {
+			return nil, err
+		}
+		var build Build
+		if err := remarshal(resp, &build); err != nil {
+			return nil, err
+		}
+		line := fmt.Sprintf("status=%s", build.Status)
+		if build.ArtifactName != "" {
+			line += fmt.Sprintf(" artifact=%s", build.ArtifactName)
+		}
+		if build.InstallStatus != "" {
+			line += fmt.Sprintf(" install=%s", build.InstallStatus)
+		}
+		if line != lastLine {
+			fmt.Println(line)
+			lastLine = line
+		}
+		switch build.Status {
+		case BuildStatusCompleted, BuildStatusFailed, BuildStatusCancelled:
+			return &build, nil
+		}
+		<-ticker.C
+	}
+}
+
 func runNativeBuild(native string, args []string) {
 	fs := flag.NewFlagSet("native "+native, flag.ExitOnError)
 	target := fs.String("target", "device", "Build target: device | simulator | testflight | playstore | local")
-	dir := fs.String("dir", "", "Project directory (defaults to cwd or first positional arg)")
+	dir := fs.String("dir", "", "Repo or project directory to scan (defaults to cwd or first positional arg)")
 	scheme := fs.String("scheme", "", "Xcode scheme override (iosNative only)")
 	flavor := fs.String("flavor", "", "Gradle task / product flavor override (androidNative only)")
 	install := fs.Bool("install", true, "Install on connected device when --target=device")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage:\n  yaver %s [project-dir] [--target=<device|simulator|testflight|playstore|local>]\n\nFlags:\n", native)
+		fmt.Fprintf(os.Stderr, "Usage:\n  yaver %s [repo-or-project-dir] [--target=<device|simulator|testflight|playstore|local>]\n\nFlags:\n", native)
 		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
@@ -280,12 +537,6 @@ func runNativeBuild(native string, args []string) {
 	if workDir == "" {
 		cwd, _ := os.Getwd()
 		workDir = cwd
-	}
-
-	platform, err := resolveNativePlatform(native, *target)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
-		os.Exit(2)
 	}
 
 	extra := []string{}
@@ -302,29 +553,16 @@ func runNativeBuild(native string, args []string) {
 	if fs.NArg() > 1 {
 		extra = append(extra, fs.Args()[1:]...)
 	}
-
-	body := map[string]interface{}{
-		"platform":        string(platform),
-		"workDir":         workDir,
-		"args":            extra,
-		"installOnDevice": *install && (*target == "device" || *target == "simulator" || *target == "emulator"),
-	}
-	resp, err := localAgentRequest("POST", "/builds", body)
+	build, candidate, err := startNativeBuildFromDir(native, *target, workDir, extra, *install && (*target == "device" || *target == "simulator" || *target == "emulator"), true)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\nIs the agent running? Start with 'yaver serve'.\n", err)
-		os.Exit(1)
-	}
-
-	var build Build
-	if err := remarshal(resp, &build); err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing response: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("Native build started: %s --target=%s\n", native, *target)
 	fmt.Printf("  Build ID: %s\n", build.ID)
 	fmt.Printf("  Platform: %s\n", build.Platform)
-	fmt.Printf("  Work dir: %s\n", build.WorkDir)
+	fmt.Printf("  Project:  %s (%s)\n", candidate.Path, candidate.Stack)
 	fmt.Printf("  Command:  %s\n", build.Command)
 	fmt.Println()
 	fmt.Printf("  yaver build status %s    Check status\n", build.ID)
@@ -335,4 +573,110 @@ func runNativeBuild(native string, args []string) {
 	case "playstore":
 		fmt.Printf("  yaver build push playstore %s    Upload AAB after build completes\n", build.ID)
 	}
+}
+
+func runNativeReleasePush(native string, args []string) {
+	fs := flag.NewFlagSet("push "+native, flag.ExitOnError)
+	dir := fs.String("dir", "", "Repo or project directory to scan (defaults to cwd or first positional arg)")
+	scheme := fs.String("scheme", "", "Xcode scheme override (ios only)")
+	flavor := fs.String("flavor", "", "Gradle task / product flavor override (android only)")
+	_ = fs.Parse(args)
+
+	startDir := *dir
+	if startDir == "" && fs.NArg() > 0 {
+		startDir = fs.Arg(0)
+	}
+	if startDir == "" {
+		cwd, _ := os.Getwd()
+		startDir = cwd
+	}
+
+	extra := []string{}
+	if native == NativeIOS && *scheme != "" {
+		extra = append(extra, *scheme)
+	}
+	if native == NativeAndroid && *flavor != "" {
+		extra = append(extra, *flavor)
+	}
+	if fs.NArg() > 1 {
+		extra = append(extra, fs.Args()[1:]...)
+	}
+
+	build, candidate, err := startNativeReleaseBuildFromDir(native, startDir, extra, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "push %s: %v\n", native, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Started %s release build %s for %s (%s)\n", nativeLabel(native), build.ID, candidate.Path, candidate.Stack)
+	finalBuild, err := waitForBuildCompletion(build.ID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wait for build %s: %v\n", build.ID, err)
+		os.Exit(1)
+	}
+	if finalBuild.Status != BuildStatusCompleted || strings.TrimSpace(finalBuild.ArtifactPath) == "" {
+		fmt.Fprintf(os.Stderr, "%s build failed: %s\n", nativeLabel(native), firstNonEmpty(finalBuild.Error, string(finalBuild.Status)))
+		os.Exit(1)
+	}
+
+	switch native {
+	case NativeIOS:
+		fmt.Printf("Uploading %s to TestFlight...\n", finalBuild.ArtifactPath)
+		if err := uploadToTestFlight(finalBuild.ArtifactPath); err != nil {
+			fmt.Fprintf(os.Stderr, "TestFlight upload failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("TestFlight upload complete.")
+	case NativeAndroid:
+		fmt.Printf("Uploading %s to Google Play internal testing...\n", finalBuild.ArtifactPath)
+		if err := uploadToPlayStore(finalBuild.ArtifactPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Play upload failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Google Play internal testing upload complete.")
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported push target: %s\n", native)
+		os.Exit(1)
+	}
+}
+
+func runNativeReleaseBuild(native string, args []string) {
+	fs := flag.NewFlagSet("build "+native, flag.ExitOnError)
+	dir := fs.String("dir", "", "Repo or project directory to scan (defaults to cwd or first positional arg)")
+	scheme := fs.String("scheme", "", "Xcode scheme override (iOS only)")
+	flavor := fs.String("flavor", "", "Gradle flavor/task override (Android only)")
+	_ = fs.Parse(args)
+
+	startDir := *dir
+	if startDir == "" && fs.NArg() > 0 {
+		startDir = fs.Arg(0)
+	}
+	if startDir == "" {
+		cwd, _ := os.Getwd()
+		startDir = cwd
+	}
+
+	extra := []string{}
+	if native == NativeIOS && *scheme != "" {
+		extra = append(extra, *scheme)
+	}
+	if native == NativeAndroid && *flavor != "" {
+		extra = append(extra, *flavor)
+	}
+	if fs.NArg() > 1 {
+		extra = append(extra, fs.Args()[1:]...)
+	}
+
+	build, candidate, err := startNativeReleaseBuildFromDir(native, startDir, extra, true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "build %s: %v\n", native, err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s release build started: %s\n", nativeLabel(native), build.ID)
+	fmt.Printf("  Platform: %s\n", build.Platform)
+	fmt.Printf("  Project:  %s (%s)\n", candidate.Path, candidate.Stack)
+	fmt.Printf("  Command:  %s\n", build.Command)
+	fmt.Println()
+	fmt.Printf("  yaver build status %s    Check status\n", build.ID)
+	fmt.Printf("  yaver logs                 View build output\n")
 }

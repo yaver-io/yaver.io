@@ -112,6 +112,28 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 		extra = " " + extra
 	}
 
+	gradleRoot := func(root string) string {
+		if _, err := os.Stat(filepath.Join(root, "gradlew")); err == nil {
+			return root
+		}
+		if _, err := os.Stat(filepath.Join(root, "android", "gradlew")); err == nil {
+			return filepath.Join(root, "android")
+		}
+		return root
+	}
+	iosRoot := func(root string) string {
+		if hasXcodeproj(filepath.Join(root, "ios")) {
+			return filepath.Join(root, "ios")
+		}
+		return root
+	}
+	patternIn := func(base, dir, tail string) string {
+		if rel, err := filepath.Rel(base, dir); err == nil && rel != "." {
+			return filepath.ToSlash(filepath.Join(rel, tail))
+		}
+		return filepath.ToSlash(tail)
+	}
+
 	switch platform {
 	case PlatformFlutterAPK:
 		return "flutter build apk" + extra, []string{
@@ -127,8 +149,9 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			"build/ios/ipa/*.ipa",
 		}
 	case PlatformGradleAPK:
+		projectDir := gradleRoot(workDir)
 		gradlew := "./gradlew"
-		if _, err := os.Stat(filepath.Join(workDir, "gradlew")); err != nil {
+		if _, err := os.Stat(filepath.Join(projectDir, "gradlew")); err != nil {
 			gradlew = "gradle"
 		}
 		task := "assembleRelease"
@@ -136,26 +159,54 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("JAVA_HOME=%s %s %s", findJavaHome(), gradlew, task), []string{
-			"app/build/outputs/apk/release/*.apk",
-			"app/build/outputs/apk/debug/*.apk",
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s %s %s", shellQuote(projectDir), findJavaHome(), gradlew, task), []string{
+			patternIn(workDir, projectDir, "app/build/outputs/apk/release/*.apk"),
+			patternIn(workDir, projectDir, "app/build/outputs/apk/debug/*.apk"),
 		}
 	case PlatformGradleAAB:
+		projectDir := gradleRoot(workDir)
 		gradlew := "./gradlew"
-		if _, err := os.Stat(filepath.Join(workDir, "gradlew")); err != nil {
+		if _, err := os.Stat(filepath.Join(projectDir, "gradlew")); err != nil {
 			gradlew = "gradle"
 		}
-		return fmt.Sprintf("JAVA_HOME=%s %s bundleRelease", findJavaHome(), gradlew), []string{
-			"app/build/outputs/bundle/release/*.aab",
-		}
-	case PlatformXcodeIPA:
-		scheme := "App"
-		if extra != "" {
-			scheme = strings.TrimSpace(extra)
+		task := "bundleRelease"
+		if strings.TrimSpace(extra) != "" {
+			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("xcodebuild -scheme %s -archivePath build/App.xcarchive archive && xcodebuild -exportArchive -archivePath build/App.xcarchive -exportPath build/ipa", scheme), []string{
-			"build/ipa/*.ipa",
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s %s %s", shellQuote(projectDir), findJavaHome(), gradlew, task), []string{
+			patternIn(workDir, projectDir, "app/build/outputs/bundle/release/*.aab"),
+		}
+	case PlatformXcodeIPA:
+		projectDir := iosRoot(workDir)
+		schemeOverride := ""
+		if extra != "" {
+			schemeOverride = strings.TrimSpace(extra)
+			extra = ""
+		}
+		script := `set -e; ` +
+			`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
+			`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+			`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
+			`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
+			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; `
+		if schemeOverride != "" {
+			script += fmt.Sprintf("SCHEME=%q; ", schemeOverride)
+		}
+		script += `mkdir -p build/ipa; ` +
+			`cat > build/ExportOptions.plist <<'EOF'` + "\n" +
+			`<?xml version="1.0" encoding="UTF-8"?>` + "\n" +
+			`<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">` + "\n" +
+			`<plist version="1.0"><dict>` + "\n" +
+			`  <key>destination</key><string>export</string>` + "\n" +
+			`  <key>method</key><string>app-store-connect</string>` + "\n" +
+			`  <key>signingStyle</key><string>automatic</string>` + "\n" +
+			`</dict></plist>` + "\n" +
+			`EOF` + "\n" +
+			`xcodebuild archive $FLAG -scheme "$SCHEME" -configuration Release -archivePath build/App.xcarchive -allowProvisioningUpdates && ` +
+			`xcodebuild -exportArchive -archivePath build/App.xcarchive -exportPath build/ipa -exportOptionsPlist build/ExportOptions.plist -allowProvisioningUpdates`
+		return fmt.Sprintf("cd %s && %s", shellQuote(projectDir), script), []string{
+			patternIn(workDir, projectDir, "build/ipa/*.ipa"),
 		}
 	case PlatformXcodeBuild:
 		scheme := "App"

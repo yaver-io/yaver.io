@@ -25,6 +25,10 @@ func runBuild(args []string) {
 	}
 
 	switch args[0] {
+	case "ios":
+		runNativeReleaseBuild(NativeIOS, args[1:])
+	case "android":
+		runNativeReleaseBuild(NativeAndroid, args[1:])
 	case "flutter":
 		// `yaver build flutter <apk|aab|ipa>` is the legacy form; bare
 		// `yaver build flutter [--target=...]` falls through to the new
@@ -70,6 +74,8 @@ func printBuildUsage() {
   yaver build flutter apk [--dir <path>]     Build Flutter APK
   yaver build flutter aab [--dir <path>]     Build Flutter App Bundle
   yaver build flutter ipa [--dir <path>]     Build Flutter IPA (iOS)
+  yaver build ios [repo-or-project-dir]      Discover iOS project and build IPA
+  yaver build android [repo-or-project-dir]  Discover Android project and build AAB
   yaver build gradle apk [--dir <path>]      Build Android APK via Gradle
   yaver build gradle aab [--dir <path>]      Build Android App Bundle via Gradle
   yaver build xcode ipa [--scheme <name>] [--dir <path>]  Build iOS IPA via Xcode

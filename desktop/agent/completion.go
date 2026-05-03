@@ -75,7 +75,7 @@ _yaver_completions() {
             return 0
             ;;
         build)
-            COMPREPLY=($(compgen -W "flutter gradle xcode rn custom list status register push" -- "$cur"))
+            COMPREPLY=($(compgen -W "ios android flutter gradle xcode rn custom list status register push" -- "$cur"))
             return 0
             ;;
         debug)
@@ -230,7 +230,7 @@ _yaver() {
             _describe 'subcommand' subcommands
             ;;
         build)
-            subcommands=('flutter:Flutter build' 'gradle:Gradle build' 'xcode:Xcode build' 'rn:React Native build' 'custom:Custom command' 'list:List builds' 'status:Build details' 'register:Register artifact' 'push:Push to store')
+            subcommands=('ios:Discover project and build IPA' 'android:Discover project and build AAB' 'flutter:Flutter build' 'gradle:Gradle build' 'xcode:Xcode build' 'rn:React Native build' 'custom:Custom command' 'list:List builds' 'status:Build details' 'register:Register artifact' 'push:Push to store')
             _describe 'subcommand' subcommands
             ;;
         debug)

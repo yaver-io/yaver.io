@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.143"
+const version = "1.99.144"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -478,6 +478,8 @@ func printUsage() {
 
 Usage:
   yaver push        Push-to-device helper for existing RN/Expo projects
+  yaver push ios    Discover iOS app in this repo, build IPA, upload to TestFlight
+  yaver push android  Discover Android app in this repo, build AAB, upload to Play internal testing
   yaver auth        Sign in and start agent (opens browser)
   yaver signout     Sign out and clear credentials
   yaver connect     Connect to your dev machine
@@ -510,7 +512,7 @@ Usage:
   yaver tmux adopt <session>  Adopt an existing tmux session as a Yaver task
   yaver tmux detach <task-id>  Stop monitoring an adopted session (session keeps running)
   yaver mcp         Start MCP server (local stdio or network HTTP)
-  yaver mcp setup <editor>  Auto-configure MCP for Codex/Claude/Cursor/VS Code/Windsurf/Zed
+  yaver mcp setup <client>  Auto-configure MCP for Claude Code, Codex, or opencode
   yaver email       Email connector setup and management (Office 365 / Gmail)
   yaver acl         Agent Communication Layer — connect to other MCP servers
   yaver status      Show auth, relay, and connection status
@@ -526,6 +528,8 @@ Usage:
   yaver vault export  Export vault as plaintext JSON
   yaver vault import <file>  Import entries from JSON
   yaver build flutter apk [--dir <path>]  Build Flutter APK
+  yaver build ios [repo-or-project-dir]   Discover iOS app in repo and build IPA
+  yaver build android [repo-or-project-dir]  Discover Android app in repo and build AAB
   yaver build gradle apk [--dir <path>]   Build Android APK via Gradle
   yaver build xcode ipa [--scheme <name>]  Build iOS IPA via Xcode
   yaver build rn android [--dir <path>]   Build React Native Android
@@ -669,6 +673,17 @@ Run 'yaver <command> -h' for command-specific options.
 }
 
 func runPushBridge(args []string) {
+	if len(args) > 0 {
+		switch args[0] {
+		case "ios":
+			runNativeReleasePush(NativeIOS, args[1:])
+			return
+		case "android":
+			runNativeReleasePush(NativeAndroid, args[1:])
+			return
+		}
+	}
+
 	npmPath, err := osexec.LookPath("npm")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "yaver push requires npm because it bundles an existing React Native / Expo project.")
@@ -8659,6 +8674,9 @@ func runMCP(args []string) {
 			return
 		case "setup":
 			runMCPSetup(args[1:])
+			return
+		case "unregister":
+			runMCPUnregister(args[1:])
 			return
 		}
 	}

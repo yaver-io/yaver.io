@@ -13,6 +13,8 @@ const PUSH_HELP = `
 yaver push — Push existing React Native projects to the Yaver mobile host
 
 Commands:
+  push ios [repo-or-project-dir]          Discover iOS app, build IPA, upload to TestFlight
+  push android [repo-or-project-dir]      Discover Android app, build AAB, upload to Play internal testing
   init                              Analyze project, show compatibility, create yaver.json
   push [--device <ip>] [--watch]    Bundle + validate + push to device
   push --ignore-missing             Push even with missing native modules
@@ -42,6 +44,8 @@ Agent commands:
 
 Push-to-device commands:
   yaver push                        Bundle + validate + push current RN/Expo project
+  yaver push ios                    Discover iOS app in the repo, build IPA, upload to TestFlight
+  yaver push android                Discover Android app in the repo, build AAB, upload to Play internal testing
   yaver push init                   Analyze current project and create yaver.json
   yaver push doctor                 Deep compatibility report for current project
   yaver push modules                List native modules compiled into the mobile host
@@ -131,6 +135,10 @@ async function runUnified(args) {
 
   if (command === 'push') {
     const next = args[1];
+    if (next === 'ios' || next === 'android') {
+      await runAgentCommand(args);
+      return;
+    }
     if (!next || next.startsWith('-')) {
       await runPushCli(['push', ...args.slice(1)]);
       return;
