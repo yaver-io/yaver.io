@@ -26,24 +26,23 @@ export const PREDEFINED_MODELS = [
   },
   // Codex models. ChatGPT-account auth (the common path) does NOT
   // support `o3-mini` — Codex CLI 400s with "The 'o3-mini' model is
-  // not supported when using Codex with a ChatGPT account." The
-  // gpt-5 family is what works on ChatGPT-account auth and stays
-  // valid on API-key auth too. `gpt-5-codex` is the coding-tuned
-  // default; the rest are alternatives the user can pick from the
-  // model dropdown in the device-details modal.
+  // not supported when using Codex with a ChatGPT account." gpt-5.4
+  // is the default the web's DEFAULT_MODEL_BY_RUNNER also uses
+  // (web/components/dashboard/DevicesView.tsx) so the surfaces stay
+  // in sync.
   {
-    modelId: "gpt-5-codex",
+    modelId: "gpt-5.4",
     runnerId: "codex",
-    name: "GPT-5 Codex",
-    description: "Coding-tuned default — works on ChatGPT-account auth",
+    name: "GPT-5.4",
+    description: "Default — coding + general purpose",
     isDefault: true,
     sortOrder: 1,
   },
   {
-    modelId: "gpt-5",
+    modelId: "gpt-5-codex",
     runnerId: "codex",
-    name: "GPT-5",
-    description: "General-purpose — broader knowledge",
+    name: "GPT-5 Codex",
+    description: "Coding-tuned alternative",
     sortOrder: 2,
   },
   {

@@ -156,12 +156,13 @@ var builtinRunners = map[string]RunnerConfig{
 		// for users on a ChatGPT-account login with:
 		//   "The 'o3-mini' model is not supported when using Codex with
 		//   a ChatGPT account."
-		// `gpt-5-codex` is the documented Codex CLI model for ChatGPT-
-		// account auth and works on API-key auth too. The injection logic
-		// in startTask falls back to runner.Model when task.Model is
-		// empty, so this becomes the effective default for any /tasks
-		// request that didn't pin a specific model.
-		Model:      "gpt-5-codex",
+		// gpt-5.4 matches the web's DEFAULT_MODEL_BY_RUNNER for codex
+		// (web/components/dashboard/DevicesView.tsx), so a /tasks
+		// request without a per-task model picks the same default
+		// the web user already sees in their device card. The
+		// injection logic in startTask falls back to runner.Model
+		// when task.Model is empty.
+		Model:      "gpt-5.4",
 		OutputMode: "raw",
 	},
 	"opencode": {
