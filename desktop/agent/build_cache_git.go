@@ -24,11 +24,15 @@ import (
 	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // gitBuildCacheDecision captures the result of comparing the recorded
@@ -343,6 +347,201 @@ func isBundleRelevant(path string) bool {
 	//   - assets / images / fonts                     (referenced from JS)
 	//   - ios/* and android/* native overlays         (codegen affects bundle)
 	return true
+}
+
+// Bundle metadata sidecar — saves the full /dev/build-native success
+// response as JSON next to the bundle so a cache hit can re-emit the
+// same payload (md5, runtimeFamilySelection, host {sdk,expo,react}
+// versions, etc.) without re-running hermesc. Cache hit only has to
+// rotate buildId/bundleUrl/assetsUrl and override cacheHit fields.
+//
+// Stored at <buildDir>/cache-meta.json — lives and dies with the bundle.
+type nativeBuildMetaSidecar struct {
+	// Response is the exact map[string]interface{} that
+	// handleBuildNativeBundle returned to the phone, minus per-request
+	// fields that change on every cache hit (buildId, bundleUrl,
+	// assetsUrl, cacheValid, cacheMessage). Stored as `json.RawMessage`
+	// so we keep the original JSON ordering and don't have to mirror
+	// every field type as it grows.
+	Response json.RawMessage `json:"response"`
+	// MetadataJSON is the raw NativeBundleMetadata blob the dev server
+	// stores via SetBundleMetadata; needed to re-prime SetBundleMetadata
+	// on cache hit so /dev/native-bundle's metadata header still works.
+	MetadataJSON string `json:"metadataJson,omitempty"`
+	// BundlePath / ModuleName / Platform / HasAssets are duplicated out
+	// of Response for the SetNativeBundleInfo call on cache hit (cleaner
+	// than fishing them back out of Response on every hit).
+	BundlePath string `json:"bundlePath"`
+	ModuleName string `json:"moduleName"`
+	Platform   string `json:"platform"`
+	HasAssets  bool   `json:"hasAssets"`
+	BundleSize int64  `json:"bundleSize"`
+	MD5        string `json:"md5"`
+	BuiltAt    string `json:"builtAt"`
+}
+
+func nativeBuildMetaSidecarPath(buildDir string) string {
+	return filepath.Join(buildDir, "cache-meta.json")
+}
+
+func writeNativeBuildMetaSidecar(buildDir string, meta nativeBuildMetaSidecar) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(nativeBuildMetaSidecarPath(buildDir), data, 0o644)
+}
+
+func readNativeBuildMetaSidecar(buildDir string) (nativeBuildMetaSidecar, error) {
+	var meta nativeBuildMetaSidecar
+	data, err := os.ReadFile(nativeBuildMetaSidecarPath(buildDir))
+	if err != nil {
+		return meta, err
+	}
+	return meta, json.Unmarshal(data, &meta)
+}
+
+// tryServeCachedNativeBundle is the cache short-circuit for
+// POST /dev/build-native. Returns true when the response was served
+// from cache (caller should immediately return from its handler).
+// Returns false when the caller should continue with the normal
+// Metro + hermesc pipeline.
+//
+// All four conditions must hold for a cache hit:
+//   1. YAVER_BUILD_CACHE=1 (intentional opt-in until we burn it in)
+//   2. consumer cache matches (mobile app version / SDK / HBC unchanged)
+//   3. git-state cache matches (no bundle-relevant source changes)
+//   4. cached bundle file + meta sidecar both exist on disk
+//
+// Any failure falls through to a normal rebuild — never block the user
+// because the cache subsystem hit a snag.
+func tryServeCachedNativeBundle(
+	s *HTTPServer,
+	w http.ResponseWriter,
+	workDir, buildDir, bundlePath string,
+	consumer nativeBuildConsumerContract,
+	platform string,
+	target DevServerTarget,
+	buildOp OperationState,
+) bool {
+	if !buildCacheEnabled() {
+		return false
+	}
+
+	priorStatus := readNativeBuildStatus(workDir)
+	if priorStatus.State != "ready" {
+		return false
+	}
+
+	consumerOK := nativeBuildCacheDecisionForConsumer(priorStatus, consumer)
+	if !consumerOK.Valid {
+		log.Printf("[build-cache] miss: consumer changed (%s)", consumerOK.Message)
+		return false
+	}
+
+	gitDecision := checkGitStateBuildCache(workDir, priorStatus)
+	if !gitDecision.Valid {
+		log.Printf("[build-cache] miss: %s", gitDecision.Reason)
+		return false
+	}
+
+	// Bundle file must still be on disk — `go run . wireless push` blows
+	// away buildDir between sessions, and the user can manually delete
+	// .yaver-build to force a rebuild.
+	bundleInfo, err := os.Stat(bundlePath)
+	if err != nil || bundleInfo.Size() == 0 {
+		log.Printf("[build-cache] miss: cached bundle file missing or empty (%v)", err)
+		return false
+	}
+
+	meta, err := readNativeBuildMetaSidecar(buildDir)
+	if err != nil {
+		log.Printf("[build-cache] miss: cache-meta.json missing (%v) — first build with caching enabled", err)
+		return false
+	}
+
+	// All checks pass — serve the cached bundle.
+	hitMsg := fmt.Sprintf("Cache hit (%s) — reusing %d KB bundle from %s",
+		gitDecision.Reason, meta.BundleSize/1024, priorStatus.LastBuiltAt)
+	log.Printf("[build-cache] HIT: %s", hitMsg)
+	s.emitBuildProgress(hitMsg, "ready")
+	s.upsertDevOperation("build_native", "completed", "ready", hitMsg, workDir, target.DeviceID, phaseProgress("done"), map[string]interface{}{
+		"platform":    platform,
+		"cacheValid":  true,
+		"cacheHit":    true,
+		"cacheReason": gitDecision.Reason,
+		"moduleName":  meta.ModuleName,
+		"size":        meta.BundleSize,
+		"bcVersion":   priorStatus.HermesVersion,
+		"hasAssets":   meta.HasAssets,
+	})
+
+	// New buildID per request so the signed URL rotates — captured URLs
+	// for the prior buildID stop working as soon as we ship build N+1
+	// (or the next cache hit). Same security model as a fresh build.
+	buildID := fmt.Sprintf("%s-cached-%d", meta.MD5, time.Now().UTC().UnixNano())
+	bundleSig, sigErr := signDevBundleURL(buildID, "native", 30*time.Minute)
+	if sigErr != nil {
+		log.Printf("[build-cache] sign bundle url failed: %v", sigErr)
+		return false
+	}
+	assetsSig, _ := signDevBundleURL(buildID, "assets", 30*time.Minute)
+	bundleURL := "/dev/native-bundle?" + bundleSig
+	assetsURL := "/dev/native-assets?" + assetsSig
+
+	// Re-register so the bundle-fetch endpoints find the cached file.
+	if s.devServerMgr != nil {
+		s.devServerMgr.SetNativeBundleInfo(NativeBundleInfo{
+			BuildID:      buildID,
+			WorkDir:      workDir,
+			BuildDir:     buildDir,
+			BundlePath:   bundlePath,
+			AssetsDir:    filepath.Join(buildDir, "assets"),
+			Platform:     meta.Platform,
+			ModuleName:   meta.ModuleName,
+			BuiltAt:      priorStatus.LastBuiltAt,
+			MetadataJSON: meta.MetadataJSON,
+		})
+		if meta.MetadataJSON != "" {
+			s.devServerMgr.SetBundleMetadata(meta.MetadataJSON)
+		}
+	}
+
+	// Decode the saved response, override the per-request fields, and
+	// send. Using the original response JSON guarantees the phone sees
+	// the exact same shape a fresh build produced — no field drift as
+	// the response payload grows over time.
+	var resp map[string]interface{}
+	if err := json.Unmarshal(meta.Response, &resp); err != nil {
+		log.Printf("[build-cache] cache-meta.json corrupt (%v) — falling back to rebuild", err)
+		return false
+	}
+	resp["bundleUrl"] = bundleURL
+	resp["assetsUrl"] = assetsURL
+	resp["buildId"] = buildID
+	resp["cacheValid"] = true
+	resp["cacheHit"] = true
+	resp["cacheReason"] = gitDecision.Reason
+	resp["cacheMessage"] = hitMsg
+	resp["cachedAt"] = priorStatus.LastBuiltAt
+	jsonReply(w, http.StatusOK, resp)
+
+	_ = buildOp // operation already updated above; kept in sig for future use
+	return true
+}
+
+// buildCacheEnabled is the env-flag gate. Default off until we burn in
+// the predicate against real projects in the wild. Flip on by exporting
+// YAVER_BUILD_CACHE=1 in the agent's environment.
+func buildCacheEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("YAVER_BUILD_CACHE"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // shortSHA already exists in morning_cmd.go.

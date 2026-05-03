@@ -2431,6 +2431,20 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		SDKVersion:      req.ConsumerSDKVersion,
 		HermesBCVersion: req.ConsumerHermesBCVersion,
 	}
+
+	// Git-state cache short-circuit (gated on YAVER_BUILD_CACHE=1 so we
+	// can disable in seconds if it ever serves a stale bundle). Skipped
+	// when buildDir doesn't yet have a prior bundle, when the consumer
+	// contract differs from the cached build (mobile updated), or when
+	// git-relevant source files have changed since the last build.
+	//
+	// Must run BEFORE writeNativeBuildStatus(state="building") below,
+	// which would clobber LastBuiltGitSHA / LastBuiltSourceTreeSHA on
+	// the first call after agent restart.
+	if cached := tryServeCachedNativeBundle(s, w, workDir, buildDir, bundlePath, consumer, req.Platform, target, buildOp); cached {
+		return
+	}
+
 	s.emitBuildProgress("Checking cache validity for this Yaver build...", "prepare")
 	s.upsertDevOperation("build_native", "running", "prepare", "Checking cache validity for this Yaver build…", workDir, target.DeviceID, phaseProgress("prepare"), map[string]interface{}{"platform": req.Platform})
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
@@ -3185,16 +3199,31 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"expoSDK":     info.ExpoSDKVersion,
 		"hermesRef":   info.HermesRef,
 	})
+	// Snapshot git state at build time so the next request can decide
+	// whether the cache is reusable. checkGitStateBuildCache (gated on
+	// YAVER_BUILD_CACHE=1) reads these back to skip Metro+hermesc when
+	// nothing the bundle would pick up has changed.
+	gitSHA, _ := runGit(workDir, "rev-parse", "HEAD")
+	porcelain, _ := runGit(workDir, "status", "--porcelain")
+	gitDirty := strings.TrimSpace(porcelain) != ""
+	dirtySHA := ""
+	if gitDirty {
+		dirtySHA = hashDirtyBundleFiles(workDir, porcelain)
+	}
+
 	writeNativeBuildStatus(workDir, nativeBuildStatus{
-		State:         "ready",
-		Platform:      req.Platform,
-		LastBuiltAt:   time.Now().UTC().Format(time.RFC3339),
-		BundleSize:    meta.Size,
-		BundlePath:    bundlePath,
-		ModuleName:    moduleName,
-		HermesVersion: meta.HermesBCVersion,
-		ConsumerKey:   nativeBuildConsumerKey(consumer),
-		ConsumerLabel: nativeBuildConsumerLabel(consumer),
+		State:                  "ready",
+		Platform:               req.Platform,
+		LastBuiltAt:            time.Now().UTC().Format(time.RFC3339),
+		BundleSize:             meta.Size,
+		BundlePath:             bundlePath,
+		ModuleName:             moduleName,
+		HermesVersion:          meta.HermesBCVersion,
+		ConsumerKey:            nativeBuildConsumerKey(consumer),
+		ConsumerLabel:          nativeBuildConsumerLabel(consumer),
+		LastBuiltGitSHA:        gitSHA,
+		LastBuiltSourceTreeSHA: dirtySHA,
+		LastBuiltGitHasDirty:   gitDirty,
 	})
 
 	// Capture the just-built project so subsequent /vibing/execute calls
@@ -3210,7 +3239,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	}
 	s.lastNativeBundleMu.Unlock()
 
-	jsonReply(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"status":                        "ok",
 		"bundleUrl":                     bundleURL,
 		"assetsUrl":                     assetsURL,
@@ -3239,7 +3268,30 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		"reactNativeVersionMismatch":    compatRNVersionMismatch,
 		"reactVersionMismatch":          compatReactVersionMismatch,
 		"allowUnsafeNativeModules":      req.AllowUnsafeNativeModules,
-	})
+	}
+	jsonReply(w, http.StatusOK, resp)
+
+	// Persist the response next to the bundle so a future cache hit
+	// can re-emit the same payload (md5, runtime family, host versions,
+	// etc.) without re-running hermesc. Best-effort — failure here
+	// only means the next build won't hit the cache, which we'd recover
+	// from on the build after that.
+	respJSON, jerr := json.Marshal(resp)
+	if jerr != nil {
+		log.Printf("[build-cache] marshal response for sidecar failed: %v", jerr)
+	} else if err := writeNativeBuildMetaSidecar(buildDir, nativeBuildMetaSidecar{
+		Response:     respJSON,
+		MetadataJSON: meta.JSON(),
+		BundlePath:   bundlePath,
+		ModuleName:   moduleName,
+		Platform:     req.Platform,
+		HasAssets:    hasAssets,
+		BundleSize:   meta.Size,
+		MD5:          meta.MD5,
+		BuiltAt:      time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		log.Printf("[build-cache] writeNativeBuildMetaSidecar failed (cache hits will miss until next build): %v", err)
+	}
 }
 
 func hermescErrString(err error) string {
