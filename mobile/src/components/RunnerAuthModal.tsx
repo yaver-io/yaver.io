@@ -23,6 +23,7 @@ import {
   ScrollView,
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
+import * as Clipboard from "expo-clipboard";
 
 import {
   quicClient,
@@ -68,6 +69,9 @@ export default function RunnerAuthModal({
   const [pasteCode, setPasteCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Transient "Copied" feedback per copy target. Cleared after 1.6s so the
+  // button reverts to its default label without a stale tick lingering.
+  const [copied, setCopied] = useState<"url" | "code" | null>(null);
   const startedRef = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const normalizedRunner = (runner || "").toLowerCase();
@@ -193,6 +197,22 @@ export default function RunnerAuthModal({
 
   const terminal = session && ["completed", "failed", "cancelled"].includes(session.status);
 
+  const copyToClipboard = async (target: "url" | "code", value: string) => {
+    if (!value) return;
+    try {
+      await Clipboard.setStringAsync(value);
+      setCopied(target);
+      // Reset after the user has had time to register the confirmation.
+      // 1.6s is the same window the dashboard "Copied!" pill uses.
+      setTimeout(() => {
+        setCopied((c) => (c === target ? null : c));
+      }, 1600);
+    } catch {
+      // expo-clipboard rejects on web; fall through silently. Long-press
+      // → Copy on the selectable Text still works as a backup.
+    }
+  };
+
   const openAuthUrl = async () => {
     if (!session?.openUrl) return;
     try {
@@ -204,6 +224,19 @@ export default function RunnerAuthModal({
       });
     } catch {
       // Fallback: copy via clipboard message; user pastes manually.
+    }
+    // openBrowserAsync resolves when the user dismisses the sheet (iOS
+    // suspends our JS while the sheet is fullscreen). Once we're back,
+    // immediately re-poll status so a "completed" flip we missed during
+    // suspension surfaces in the next tick instead of the user staring
+    // at the URL+code box on a session the agent already closed.
+    if (session?.id) {
+      try {
+        const next = await callRunnerAuth("status", undefined, session.id);
+        setSession(next);
+      } catch {
+        // The interval poll will catch up — non-fatal.
+      }
     }
   };
 
@@ -300,16 +333,25 @@ export default function RunnerAuthModal({
                     : `Yaver started the remote ${runnerLabel(runner)} device-auth flow on this machine. Tap the link below, enter the code if prompted, and this dialog will turn green automatically.`}
                 </Text>
                 {session.openUrl ? (
-                  <TouchableOpacity onPress={openAuthUrl} style={styles.urlButton}>
-                    <Text style={styles.urlLabel}>↗ Open authorize page</Text>
-                    {/* selectable so a long-press surfaces iOS's Copy menu —
-                        the user is doing the OAuth flow manually, so they
-                        may want to forward the URL to another device or
-                        retry if the in-app browser fails. */}
+                  <View style={styles.urlButton}>
+                    <TouchableOpacity onPress={openAuthUrl} style={styles.urlOpenRow}>
+                      <Text style={styles.urlLabel}>↗ Open authorize page</Text>
+                    </TouchableOpacity>
+                    {/* selectable + an explicit Copy chip — selectable
+                        alone hides the action behind a long-press
+                        gesture most users never discover. */}
                     <Text style={styles.urlValue} numberOfLines={1} selectable>
                       {session.openUrl}
                     </Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => copyToClipboard("url", session.openUrl ?? "")}
+                      style={styles.copyChip}
+                    >
+                      <Text style={styles.copyChipText}>
+                        {copied === "url" ? "✓ Copied" : "Copy URL"}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 ) : (
                   <View style={styles.urlPending}>
                     <ActivityIndicator size="small" color="#94a3b8" />
@@ -319,7 +361,17 @@ export default function RunnerAuthModal({
 
                 {session.code ? (
                   <View style={styles.codeBox}>
-                    <Text style={styles.codeLabel}>Enter this code</Text>
+                    <View style={styles.codeHeaderRow}>
+                      <Text style={styles.codeLabel}>Enter this code</Text>
+                      <TouchableOpacity
+                        onPress={() => copyToClipboard("code", session.code ?? "")}
+                        style={styles.copyChip}
+                      >
+                        <Text style={styles.copyChipText}>
+                          {copied === "code" ? "✓ Copied" : "Copy"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
                     <Text style={styles.codeValue} selectable>
                       {session.code}
                     </Text>
@@ -438,8 +490,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 12,
   },
+  urlOpenRow: { paddingVertical: 0 },
   urlLabel: { color: "#a5b4fc", fontWeight: "600", fontSize: 13 },
   urlValue: { color: "#818cf8", fontSize: 11, marginTop: 4, fontFamily: "Menlo" },
+  copyChip: {
+    alignSelf: "flex-start",
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: "rgba(167,139,250,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(167,139,250,0.45)",
+  },
+  copyChipText: { color: "#c4b5fd", fontSize: 11, fontWeight: "600" },
   urlPending: {
     backgroundColor: "rgba(30,41,59,0.4)",
     borderColor: "#1e293b",
@@ -461,7 +525,8 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 12,
   },
-  codeLabel: { color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5, marginBottom: 6 },
+  codeHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+  codeLabel: { color: "#94a3b8", fontSize: 10, textTransform: "uppercase", letterSpacing: 1.5 },
   codeValue: { color: "#f1f5f9", fontSize: 22, letterSpacing: 4, fontFamily: "Menlo", fontWeight: "600" },
 
   pasteBox: {

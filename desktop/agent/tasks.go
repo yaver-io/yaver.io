@@ -338,6 +338,49 @@ type ConversationTurn struct {
 
 const maxProcessRetries = 4 // Max auto-restart attempts when Claude crashes (2s, 4s, 8s, 16s)
 
+// isSoftRunnerFailure decides whether a non-zero exit from a coding-agent
+// runner should be classified as completed-with-warning rather than a
+// hard FAILED. The signal we trust most: the runner printed its own
+// startup banner — that means the binary launched cleanly, it spawned
+// inside our env, it could read its prompt, it streamed at least
+// something back. A non-zero exit afterwards is almost always a "soft"
+// stop in codex CLI 0.123.0 (research preview) — stdin EOF after the
+// response is already complete, mid-stream rate-limit, etc.
+//
+// We require BOTH the banner AND a non-trivial output length so a
+// run that crashed halfway through printing the banner is still flagged
+// FAILED. We also explicitly exclude signal-kills (segfault, OOM,
+// kill -9) — those are real crashes, never soft.
+func isSoftRunnerFailure(runnerID, output string, runErr error) bool {
+	if runErr == nil {
+		return false
+	}
+	// exec.ExitError exposes the wait status; signal-killed runs (OOM,
+	// crash, kill -9) have ExitCode() == -1 on Unix, which is never a
+	// valid soft outcome.
+	if exitErr, ok := runErr.(*exec.ExitError); ok {
+		if exitErr.ExitCode() < 0 {
+			return false
+		}
+	}
+	if len(output) < 200 {
+		return false
+	}
+	switch normalizeRunnerID(runnerID) {
+	case "codex":
+		return strings.Contains(output, "OpenAI Codex")
+	case "claude":
+		// Claude Code's `--print` mode is well-behaved on success but
+		// occasionally exits 1 after a successful response. Banner
+		// looks like "Claude Code" or "Anthropic Claude" depending on
+		// version; cover both.
+		return strings.Contains(output, "Claude Code") || strings.Contains(output, "Anthropic Claude")
+	case "opencode":
+		return strings.Contains(output, "opencode")
+	}
+	return false
+}
+
 // RunnerProcess describes a running process found via ps/tasklist.
 type RunnerProcess struct {
 	PID     int    `json:"pid"`
@@ -1955,17 +1998,32 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					return
 				}
 
-				// All retries exhausted — mark runner as down in Convex
-				go func() {
-					if tm.ConvexURL != "" {
-						detail := fmt.Sprintf("all %d retries exhausted, exit: %v", maxProcessRetries, err)
-						_ = ReportDeviceEvent(tm.ConvexURL, tm.AuthToken, tm.DeviceID, "crash", detail)
-						_ = SetRunnerDown(tm.ConvexURL, tm.AuthToken, tm.DeviceID, true)
-					}
-				}()
+				// Soft-failure heuristic: codex CLI 0.123.0 (research preview)
+				// frequently exits non-zero on perfectly-functional runs —
+				// EOF on stdin after streaming the response, model rate limits
+				// at the tail end, etc. — but still produces a useful answer
+				// and prints its banner. If the runner's banner is in the
+				// output AND we have substantial content AND the process
+				// wasn't killed by a signal, treat the task as completed
+				// rather than red-flag FAILED. This matches the user's
+				// expectation: "the run worked, the answer is there, why is
+				// the row screaming red".
+				if isSoftRunnerFailure(task.runner.RunnerID, task.Output, err) {
+					task.Status = TaskStatusFinished
+					log.Printf("[task %s] %s soft failure (exit: %v, output_len=%d) — marking finished", task.ID, task.runner.Name, err, outputLen)
+				} else {
+					// Real failure — mark runner as down in Convex
+					go func() {
+						if tm.ConvexURL != "" {
+							detail := fmt.Sprintf("all %d retries exhausted, exit: %v", maxProcessRetries, err)
+							_ = ReportDeviceEvent(tm.ConvexURL, tm.AuthToken, tm.DeviceID, "crash", detail)
+							_ = SetRunnerDown(tm.ConvexURL, tm.AuthToken, tm.DeviceID, true)
+						}
+					}()
 
-				task.Status = TaskStatusFailed
-				log.Printf("[task %s] %s process failed: %v", task.ID, task.runner.Name, err)
+					task.Status = TaskStatusFailed
+					log.Printf("[task %s] %s process failed: %v", task.ID, task.runner.Name, err)
+				}
 			} else {
 				task.Status = TaskStatusFinished
 				log.Printf("[task %s] %s process finished successfully (output_len=%d)", task.ID, task.runner.Name, len(task.Output))

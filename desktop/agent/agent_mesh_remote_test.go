@@ -175,6 +175,68 @@ func TestDoRemoteAgentRequestFallsBackToSecondCandidate(t *testing.T) {
 	}
 }
 
+// TestDoRemoteAgentRequestFallsThroughOnNonJSON404 covers the
+// dead-public-endpoint case: the per-device <id>.yaver.io URL is
+// listed before the relay candidate, but Cloudflare answers 404 with
+// stock HTML when the wildcard worker is misconfigured. Without the
+// "non-JSON 404 == transport failure" check, doRemoteAgentRequest
+// pinned to the dead URL on the first hop and downstream features
+// (`yaver primary status`, runner-auth lookup) silently lost data.
+func TestDoRemoteAgentRequestFallsThroughOnNonJSON404(t *testing.T) {
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`<!DOCTYPE html><html><body>Not found</body></html>`))
+	}))
+	defer dead.Close()
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"runners":[]}`))
+	}))
+	defer live.Close()
+
+	candidates := []RemoteAgentCandidate{
+		{DeviceID: "dev-fallthrough", BaseURL: dead.URL, Kind: "public"},
+		{DeviceID: "dev-fallthrough", BaseURL: live.URL, Kind: "relay"},
+	}
+	chosen, status, raw, err := doRemoteAgentRequest(context.Background(), candidates, "token-x", http.MethodGet, "/agent/runners", nil, 4*time.Second)
+	if err != nil {
+		t.Fatalf("doRemoteAgentRequest() error = %v", err)
+	}
+	if chosen.BaseURL != live.URL {
+		t.Fatalf("chosen = %q, want fallthrough to %q", chosen.BaseURL, live.URL)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", status)
+	}
+	if !strings.Contains(string(raw), `"runners"`) {
+		t.Fatalf("raw body = %q, want fallback agent response", string(raw))
+	}
+}
+
+// TestDoRemoteAgentRequestPreservesYaverJSON404 — when the agent IS
+// actually answering with a JSON 404 (e.g. unknown route), don't
+// fall through; the caller wants to see that genuine 404.
+func TestDoRemoteAgentRequestPreservesYaverJSON404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	}))
+	defer srv.Close()
+	candidates := []RemoteAgentCandidate{{DeviceID: "dev-json404", BaseURL: srv.URL, Kind: "relay"}}
+	_, status, raw, err := doRemoteAgentRequest(context.Background(), candidates, "token-x", http.MethodGet, "/agent/runners", nil, 4*time.Second)
+	if err != nil {
+		t.Fatalf("doRemoteAgentRequest() error = %v", err)
+	}
+	if status != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 surfaced", status)
+	}
+	if !strings.Contains(string(raw), `"error"`) {
+		t.Fatalf("raw body = %q, want JSON 404 forwarded", string(raw))
+	}
+}
+
 func TestTransportHeadersForBaseIncludesCloudflareAccessHeaders(t *testing.T) {
 	cfg := &Config{
 		CloudflareTunnels: []CloudflareTunnelConfig{

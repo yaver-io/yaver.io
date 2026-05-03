@@ -687,6 +687,24 @@ func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate
 			errs = append(errs, fmt.Sprintf("%s: HTTP %d: %s", candidate.BaseURL, resp.StatusCode, msg))
 			continue
 		}
+		// Treat 404 with a non-JSON body as a transport failure — the
+		// Yaver agent always answers JSON, so an HTML / text response
+		// means the request never reached the agent. Most common cause:
+		// the per-device public-endpoint URL (`<id>.yaver.io`) routing
+		// terminates at Cloudflare with a stock 404 HTML page when the
+		// wildcard worker is mis-configured. Without this, the caller
+		// pins to the dead URL on the first hop and never falls back to
+		// relay; downstream features (`yaver primary status`, runner
+		// lookup) silently lose data even though relay is fine.
+		if resp.StatusCode == http.StatusNotFound && !looksLikeJSON(raw, resp.Header.Get("Content-Type")) {
+			recordRemoteAgentFailure(candidate.DeviceID, candidate.BaseURL, time.Now())
+			snippet := strings.TrimSpace(string(raw))
+			if len(snippet) > 120 {
+				snippet = snippet[:120] + "…"
+			}
+			errs = append(errs, fmt.Sprintf("%s: HTTP 404 with non-JSON body (likely not a Yaver agent): %s", candidate.BaseURL, snippet))
+			continue
+		}
 		if strings.TrimSpace(candidate.DeviceID) != "" {
 			remoteAgentLastGood.Store(candidate.DeviceID, candidate.BaseURL)
 		}
@@ -694,6 +712,24 @@ func doRemoteAgentRequest(ctx context.Context, candidates []RemoteAgentCandidate
 		return candidate, resp.StatusCode, raw, nil
 	}
 	return RemoteAgentCandidate{}, 0, nil, fmt.Errorf("remote %s %s failed across %d candidate(s): %s", method, path, len(candidates), strings.Join(errs, " | "))
+}
+
+// looksLikeJSON heuristically decides whether a 404 body came from a
+// Yaver agent (which always answers JSON, even on errors) or from an
+// upstream HTTP layer (Cloudflare's stock 404 page, Vercel's
+// DEPLOYMENT_NOT_FOUND, etc.). Used by doRemoteAgentRequest to detect
+// dead public-endpoint URLs and fall through to the next candidate.
+func looksLikeJSON(raw []byte, contentType string) bool {
+	if strings.Contains(strings.ToLower(contentType), "application/json") {
+		return true
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		// Empty body — not an HTML error page; let the caller see the 404.
+		return true
+	}
+	first := trimmed[0]
+	return first == '{' || first == '['
 }
 
 func remoteAgentJSON(ctx context.Context, baseURL, token, method, path string, body any, out any) error {

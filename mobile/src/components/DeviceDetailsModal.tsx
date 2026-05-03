@@ -698,10 +698,19 @@ function CodingAgentsSection({ device }: { device: Device }) {
         runner={authModalRunner || ""}
         deviceName={device.name}
         target={target}
-        onClose={() => setAuthModalRunner(null)}
+        onClose={() => {
+          setAuthModalRunner(null);
+          // Always re-poll on close — not just on onCompleted. The agent
+          // may have written the new auth file (codex device-auth, claude
+          // paste-back) without the modal observing the "completed"
+          // status flip (iOS suspends JS while the in-app browser sheet
+          // covers the screen, so the polling interval can miss it). The
+          // user closes the modal manually, and without this refresh the
+          // CODING AGENTS section sticks on the stale "not signed in".
+          void refresh();
+        }}
         onCompleted={() => {
           setAuthModalRunner(null);
-          // Re-poll status so the row flips to ✓ signed in immediately.
           void refresh();
         }}
       />
