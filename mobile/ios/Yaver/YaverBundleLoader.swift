@@ -221,6 +221,27 @@ class YaverBundleLoader: RCTEventEmitter {
             // Defensive: don't end up with a trailing slash.
             while trimmed.hasSuffix("/") { trimmed.removeLast() }
             if !trimmed.isEmpty { baseURL += trimmed }
+
+            // Also extract the deviceId from a /d/<deviceId> prefix
+            // and persist it. yaverResolveAgentURL needs it to
+            // recover when the persisted yaverAgentBaseURL turns out
+            // to be a bare relay host (e.g. some upstream rewrote it,
+            // or a non-relay direct URL was cached and we later
+            // started routing via relay). Without this, deviceId
+            // stayed empty in UserDefaults and the helper printed
+            // requests to "https://public.yaver.io/<path>" instead of
+            // "https://public.yaver.io/d/<deviceId>/<path>" — exactly
+            // the case the user keeps hitting "subdomain 'public'
+            // not registered" on.
+            let trimmedNoLeading = trimmed.hasPrefix("/") ? String(trimmed.dropFirst()) : trimmed
+            let segments = trimmedNoLeading.split(separator: "/", omittingEmptySubsequences: true)
+            if segments.count >= 2 && segments[0] == "d" {
+              let deviceId = String(segments[1])
+              if !deviceId.isEmpty {
+                UserDefaults.standard.set(deviceId, forKey: "yaverInheritedDeviceId")
+                NSLog("[YaverBundleLoader] yaverInheritedDeviceId = \(deviceId)")
+              }
+            }
           }
           UserDefaults.standard.set(baseURL, forKey: "yaverAgentBaseURL")
           NSLog("[YaverBundleLoader] yaverAgentBaseURL = \(baseURL)")
