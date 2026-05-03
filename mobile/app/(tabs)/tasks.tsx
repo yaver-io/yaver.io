@@ -480,6 +480,88 @@ function PhaseChip({ task }: { task: Task }) {
   );
 }
 
+// Braille-spinner cycle. Same set Claude Code / Codex CLIs use for
+// "in progress" indicators — feels native to anyone who's watched
+// either CLI work, and stays visually quiet at small sizes (no big
+// spinning circle to dominate the line).
+const PHASE_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Single-line streaming status: morphing braille spinner + the
+/// current derived phase ("searching", "compiling", …). Replaces
+/// the prior two-block pattern (big TypingIndicator → "Working…"
+/// label → activity-spinner → "Working…" label) at the bottom of
+/// the task detail view, and the inline PhaseChip at the top.
+/// Designed to overwrite ITSELF as the runner moves through phases
+/// rather than stack a new line for each — the user's mental model
+/// is "what is it doing right now", not "what did it do already".
+function PhaseStatusLine({ task }: { task: Task }) {
+  const c = useColors();
+  const phases = useMemo(
+    () => deriveTaskPhases(task),
+    [task.id, task.title, task.output, task.resultText, task.status]
+  );
+  const isRunning = task.status === "running" || task.status === "queued";
+  const [phaseIdx, setPhaseIdx] = useState(0);
+  const [spinIdx, setSpinIdx] = useState(0);
+  const fade = useRef(new Animated.Value(1)).current;
+
+  // Spinner: ~10 fps, cheap to keep alive — only mounts while the
+  // task is running.
+  useEffect(() => {
+    if (!isRunning) return;
+    const t = setInterval(() => {
+      setSpinIdx((v) => (v + 1) % PHASE_SPINNER_FRAMES.length);
+    }, 90);
+    return () => clearInterval(t);
+  }, [isRunning]);
+
+  // Phase rotation: same 1.8s cadence + fade-flip the inline pill
+  // already used.
+  useEffect(() => {
+    if (!isRunning || phases.length <= 1) return;
+    const t = setInterval(() => {
+      Animated.sequence([
+        Animated.timing(fade, { toValue: 0.35, duration: 180, useNativeDriver: true }),
+        Animated.timing(fade, { toValue: 1, duration: 220, useNativeDriver: true }),
+      ]).start();
+      setPhaseIdx((v) => (v + 1) % phases.length);
+    }, 1800);
+    return () => clearInterval(t);
+  }, [fade, isRunning, phases.length]);
+
+  if (!isRunning) return null;
+  const current = phases[phaseIdx] || phases[0];
+  const tint =
+    current?.tone === "success"
+      ? "#4ade80"
+      : current?.tone === "warm"
+        ? "#fb923c"
+        : current?.tone === "neutral"
+          ? c.textMuted
+          : "#818cf8";
+  return (
+    <Animated.View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6, opacity: fade }}>
+      <Text style={{
+        color: tint,
+        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+        fontSize: 14,
+        width: 20,
+        textAlign: "center",
+      }}>
+        {PHASE_SPINNER_FRAMES[spinIdx]}
+      </Text>
+      <Text style={{
+        color: tint,
+        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+        fontSize: 13,
+        marginLeft: 4,
+      }}>
+        {current?.label || "working"}…
+      </Text>
+    </Animated.View>
+  );
+}
+
 type RunnerBannerKind =
   | "ok"
   | "authNeeded"
@@ -546,9 +628,14 @@ function deriveRunnerBannerState(
 function ChatBubble({
   turn,
   c,
+  tokens,
 }: {
   turn: { role: string; content: string };
   c: ReturnType<typeof useColors>;
+  /** When set, render a small "tokens used N" header above the assistant
+   *  prose. Only meaningful for assistant bubbles, and only the LAST one
+   *  (the runner reports usage as a single total on task completion). */
+  tokens?: { input: number; output: number } | null;
 }) {
   const isUser = turn.role === "user";
 
@@ -562,56 +649,42 @@ function ChatBubble({
     );
   }
 
-  const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
-  const [expanded, setExpanded] = useState(false);
+  // Assistant: render the cleaned markdown directly so the bubble looks
+  // like real claude-code / codex output (prose with inline-code highlights
+  // and bordered code blocks). The previous "Update / Show details" gate
+  // hid the polished frame behind a tap; users want to see it inline.
+  const cleaned = useMemo(() => stripPromptEcho(turn.content), [turn.content]);
+  // Long-press anywhere on the assistant frame to toggle the raw
+  // stream view. Hidden by default — the cleaned MD render is the
+  // canonical surface and the prior "Show raw stream" link gave the
+  // assistant frame a redundant second body that read identical to
+  // the rendered MD on most successful runs. Power users / debugging
+  // can still get to it via long-press; CLAUDE.md's "Logs" link
+  // remains the structured fallback.
   const [showRaw, setShowRaw] = useState(false);
+  const totalTokens = tokens ? tokens.input + tokens.output : 0;
 
   return (
     <View style={s.assistantRow}>
-      <View style={[s.assistantBubble, { backgroundColor: c.bgCardElevated || "#1a1a2e" }]}>
-        <View style={s.assistantHeaderRow}>
-          <Text style={[s.assistantLabel, { color: c.textMuted }]}>Update</Text>
-          {preview.shouldCollapse ? (
-            <Pressable onPress={() => setExpanded((value) => !value)}>
-              <Text style={[s.assistantToggle, { color: c.accent || "#6366f1" }]}>
-                {expanded ? "Hide details" : "Show details"}
-              </Text>
-            </Pressable>
-          ) : null}
-        </View>
-        <Text style={[s.assistantSummary, { color: c.textPrimary }]}>{preview.summary}</Text>
-        {expanded && preview.activity.length > 0 ? (
-          <View style={s.assistantActivityList}>
-            {preview.activity.map((item, index) => (
-              <View key={`${item}-${index}`} style={[s.assistantActivityRow, { borderColor: c.border, backgroundColor: c.bg + "55" }]}>
-                <Text
-                  style={[
-                    s.assistantActivityText,
-                    { color: item.startsWith("$ ") ? c.accent || "#6366f1" : c.textSecondary },
-                  ]}
-                  numberOfLines={2}
-                >
-                  {item}
-                </Text>
-              </View>
-            ))}
-          </View>
+      <Pressable
+        style={[s.assistantFrame, { borderColor: c.border }]}
+        onLongPress={() => setShowRaw((v) => !v)}
+        delayLongPress={500}
+      >
+        {totalTokens > 0 ? (
+          <Text style={[s.assistantTokens, { color: c.textMuted }]}>
+            tokens used {totalTokens.toLocaleString()}
+          </Text>
         ) : null}
-        {expanded ? (
-          <View style={[s.assistantRawWrap, { borderTopColor: c.border }]}>
-            <Markdown style={markdownStyles(c)}>
-              {(showRaw ? turn.content : preview.cleaned) || " "}
-            </Markdown>
-            {preview.hasHiddenNoise ? (
-              <Pressable onPress={() => setShowRaw((value) => !value)}>
-                <Text style={[s.assistantToggle, { color: c.textMuted, marginTop: 8 }]}>
-                  {showRaw ? "Hide raw stream" : "Show raw stream"}
-                </Text>
-              </Pressable>
-            ) : null}
-          </View>
+        <Markdown style={markdownStyles(c)}>
+          {(showRaw ? turn.content : cleaned) || " "}
+        </Markdown>
+        {showRaw ? (
+          <Text style={[s.assistantToggle, { color: c.textMuted, marginTop: 4, fontSize: 10 }]}>
+            (raw stream — long-press to hide)
+          </Text>
         ) : null}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -3107,7 +3180,12 @@ export default function TasksScreen() {
                       <Text style={[s.chatHeaderStatus, { color: STATUS_COLORS[selectedTask.status] }]}>
                         {selectedTask.status}
                       </Text>
-                      {isRunning ? <PhaseChip task={selectedTask} /> : null}
+                      {/* PhaseChip used to live here — moved to a dedicated
+                          PhaseStatusLine at the bottom of the streaming
+                          ScrollView so the header stays minimal (back +
+                          status + Logs/Stop) and the live phase is right
+                          next to the latest output rather than competing
+                          with the title for attention. */}
                       <Pressable
                         onPress={() => setShowLogs(true)}
                         style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#64748b22" }}
@@ -3208,22 +3286,39 @@ export default function TasksScreen() {
                   contentContainerStyle={s.chatScrollContent}
                   keyboardShouldPersistTaps="handled"
                 >
-                  {chatMessages.map((msg, i) => (
-                    <ChatBubble key={`${i}-${msg.role}`} turn={msg} c={c} />
-                  ))}
-                  {isRunning && chatMessages[chatMessages.length - 1]?.role !== "assistant" && (
-                    <View>
-                      <TypingIndicator color={c.accent || "#6366f1"} />
-                      <Text style={[s.startingHint, { color: c.textMuted }]}>
-                        {(selectedTask?.turns?.length ?? 0) > 2 ? "Thinking..." : "Starting..."}
-                      </Text>
-                    </View>
-                  )}
-                  {isRunning && chatMessages[chatMessages.length - 1]?.role === "assistant" && (
-                    <View style={s.streamingIndicator}>
-                      <ActivityIndicator size="small" color={c.accent} />
-                      <Text style={[s.streamingText, { color: c.textMuted }]}>Working...</Text>
-                    </View>
+                  {(() => {
+                    // The runner reports a single total token count when the
+                    // task finishes — attach it only to the LAST assistant
+                    // bubble so the user sees "tokens used N" right above the
+                    // final answer (matches the design mockup).
+                    let lastAssistantIdx = -1;
+                    for (let k = chatMessages.length - 1; k >= 0; k--) {
+                      if (chatMessages[k].role === "assistant") { lastAssistantIdx = k; break; }
+                    }
+                    const inT = selectedTask.inputTokens ?? 0;
+                    const outT = selectedTask.outputTokens ?? 0;
+                    const showTokens = inT + outT > 0;
+                    return chatMessages.map((msg, i) => (
+                      <ChatBubble
+                        key={`${i}-${msg.role}`}
+                        turn={msg}
+                        c={c}
+                        tokens={showTokens && i === lastAssistantIdx ? { input: inT, output: outT } : null}
+                      />
+                    ));
+                  })()}
+                  {/* Single-line streaming phase indicator. Replaces the
+                      prior split — TypingIndicator + "Starting…" /
+                      "Thinking…" before any assistant turn lands, and a
+                      separate ActivityIndicator + "Working…" once one
+                      does — with one PhaseStatusLine that morphs through
+                      detected phases as the runner produces output.
+                      Visually quieter (braille spinner instead of the
+                      animated dots / spinner-circle pair) and matches
+                      the Claude Code / Codex CLI mental model: one line
+                      that overwrites itself. */}
+                  {isRunning && (
+                    <PhaseStatusLine task={selectedTask} />
                   )}
 
                   {/* Debug info (foldable) */}
@@ -3789,15 +3884,12 @@ const s = StyleSheet.create({
   userBubbleText: { color: "#fff", fontSize: 15, lineHeight: 21 },
 
   assistantRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
-  assistantBubble: { maxWidth: "92%", borderRadius: 22, borderBottomLeftRadius: 8, paddingHorizontal: 14, paddingVertical: 13, borderWidth: 1, borderColor: "rgba(255,255,255,0.04)" },
-  assistantHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
-  assistantLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6 },
+  // assistantFrame is the polished container around the markdown — a
+  // hairline border with no fill so the inner fenced code-block stands
+  // out (matches the bordered "ls output" card in the design mockup).
+  assistantFrame: { flex: 1, paddingHorizontal: 2, paddingVertical: 2 },
+  assistantTokens: { fontSize: 12, marginBottom: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
   assistantToggle: { fontSize: 12, fontWeight: "600" },
-  assistantSummary: { fontSize: 14, lineHeight: 20 },
-  assistantActivityList: { gap: 8, marginTop: 10 },
-  assistantActivityRow: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 },
-  assistantActivityText: { fontSize: 12, lineHeight: 17, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" },
-  assistantRawWrap: { marginTop: 12, paddingTop: 12, borderTopWidth: 1 },
 
   // Typing indicator
   typingRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
@@ -3850,9 +3942,10 @@ function markdownStyles(c: ReturnType<typeof useColors>) {
     bullet_list: { marginBottom: 6 },
     ordered_list: { marginBottom: 6 },
     list_item: { flexDirection: "row" as const, marginBottom: 3 },
-    code_inline: { backgroundColor: c.bgCardElevated || "#1e1e2e", color: "#e879f9", fontFamily: "monospace", fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-    fence: { backgroundColor: c.bgCardElevated || "#0a0a14", borderRadius: 8, padding: 10, marginVertical: 6 },
-    code_block: { color: "#a5f3fc", fontFamily: "monospace", fontSize: 11, lineHeight: 17 },
+    code_inline: { backgroundColor: c.bgCardElevated || "#1e1e2e", color: "#e879f9", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+    // Bordered code block — matches the "ls output" frame in the mockup.
+    fence: { backgroundColor: c.bg || "#0a0a14", borderColor: c.border || "#2a2a3a", borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginVertical: 8 },
+    code_block: { color: c.textPrimary || "#e6e6f0", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, lineHeight: 18 },
     blockquote: { borderLeftWidth: 3, borderLeftColor: c.accent || "#6366f1", paddingLeft: 12, marginVertical: 6, opacity: 0.85 },
     link: { color: c.accent || "#6366f1" },
     hr: { backgroundColor: c.border || "#1e1e2e", height: 1, marginVertical: 10 },
