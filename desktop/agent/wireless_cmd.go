@@ -122,6 +122,14 @@ func runWirelessDetect(args []string) {
 // transport-agnostic — devicectl uses whichever transport the device is
 // currently reachable over. So we just shell into runWirePush after
 // injecting the right device list.
+//
+// IMPORTANT: this uses the SAME native-build pipeline as `yaver wire
+// push` — xcodebuild + xcrun devicectl install (or gradle + adb on
+// Android). There is no WebView fallback. JS gets baked into the .app
+// at build time so the running app is a real native iOS app, not a
+// Safari-View-Controller wrapper. The Hermes-bundle native load path
+// (per CLAUDE.md "Never WebView for third-party RN apps") is the only
+// path through this command.
 func runWirelessPush(args []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
