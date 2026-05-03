@@ -738,12 +738,34 @@ export interface RunnerAuthStatusRow {
 export interface RunnerBrowserAuthSession {
   id: string;
   runner: string;
-  status: "pending" | "running" | "awaiting-code" | "completed" | "failed" | "cancelled";
+  /** Mirrors the states emitted by the agent in
+   *  desktop/agent/runner_auth_browser_http.go (starting →
+   *  awaiting_browser → verifying → completed | cancelled | failed). */
+  status: "starting" | "awaiting_browser" | "verifying" | "completed" | "failed" | "cancelled";
+  method?: string;
   openUrl?: string;
   code?: string;
   detail?: string;
   error?: string;
   authConfigured?: boolean;
+  authSource?: string;
+  startedAt?: number;
+  updatedAt?: number;
+  completedAt?: number;
+}
+
+/** Unwrap the `{ok:true, session: {...}}` envelope the agent returns from
+ *  /runner-auth/browser/{start,status,submit-code}. The mobile RunnerAuthModal
+ *  expects a flat session shape — without this unwrap, `session.status` and
+ *  `session.id` come back undefined, the modal stays stuck on "Waiting for
+ *  the verification URL…" and polling URLs lose their `id` query param so
+ *  the agent answers 400 forever. Tolerates older agents that returned the
+ *  flat shape directly so a stale daemon still works. */
+export function unwrapRunnerBrowserAuthEnvelope(raw: any): RunnerBrowserAuthSession {
+  if (raw && typeof raw === "object" && raw.session && typeof raw.session === "object") {
+    return raw.session as RunnerBrowserAuthSession;
+  }
+  return raw as RunnerBrowserAuthSession;
 }
 
 export interface RunnerAuthSetParams {
@@ -2748,7 +2770,7 @@ export class QuicClient {
     if (!res.ok) {
       throw new Error(data?.error || `startRunnerBrowserAuth ${res.status}`);
     }
-    return data as RunnerBrowserAuthSession;
+    return unwrapRunnerBrowserAuthEnvelope(data);
   }
 
   async getRunnerBrowserAuthStatus(
@@ -2768,7 +2790,7 @@ export class QuicClient {
     if (!res.ok) {
       throw new Error(data?.error || `getRunnerBrowserAuthStatus ${res.status}`);
     }
-    return data as RunnerBrowserAuthSession;
+    return unwrapRunnerBrowserAuthEnvelope(data);
   }
 
   async cancelRunnerBrowserAuth(sessionId: string, target?: string): Promise<void> {
@@ -2799,7 +2821,7 @@ export class QuicClient {
     if (!res.ok) {
       throw new Error(data?.error || `submitRunnerBrowserAuthCode ${res.status}`);
     }
-    return data as RunnerBrowserAuthSession;
+    return unwrapRunnerBrowserAuthEnvelope(data);
   }
 
   async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {

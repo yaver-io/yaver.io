@@ -24,7 +24,11 @@ import {
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 
-import { quicClient, type RunnerBrowserAuthSession } from "../lib/quic";
+import {
+  quicClient,
+  unwrapRunnerBrowserAuthEnvelope,
+  type RunnerBrowserAuthSession,
+} from "../lib/quic";
 
 interface Props {
   visible: boolean;
@@ -88,7 +92,10 @@ export default function RunnerAuthModal({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || `runner auth ${path} ${res.status}`);
-      return data;
+      // Cancel returns nothing useful; everything else is the standard
+      // {ok, session} envelope and the modal expects the flat session.
+      if (path === "cancel") return data;
+      return unwrapRunnerBrowserAuthEnvelope(data);
     }
     if (path === "start") return quicClient.startRunnerBrowserAuth(runner, target);
     if (path === "status") return quicClient.getRunnerBrowserAuthStatus(sessionId || "", target);
@@ -136,7 +143,11 @@ export default function RunnerAuthModal({
     })();
   }, [visible, runner, target, baseUrl, JSON.stringify(headers || {})]);
 
-  // Poll for completion. Mirrors the web modal's 1.5s cadence.
+  // Poll for completion. Mirrors the web modal's 1.5s cadence. Surface
+  // polling failures after a few consecutive misses so a wedged session
+  // (agent restarted, transport flapped) doesn't spin forever — silent
+  // catch is exactly how this modal stayed stuck on "Waiting for the
+  // verification URL…" before.
   useEffect(() => {
     if (!session) return;
     if (
@@ -147,16 +158,29 @@ export default function RunnerAuthModal({
       if (session.status === "completed") onCompleted?.();
       return;
     }
+    let consecutiveFailures = 0;
     pollRef.current = setInterval(async () => {
       try {
         const next = await callRunnerAuth("status", undefined, session.id);
+        consecutiveFailures = 0;
         setSession(next);
         if (next?.status === "completed") {
           onCompleted?.();
           onClose();
         }
-      } catch {
-        // best-effort
+      } catch (err) {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 4) {
+          setStartError(
+            err instanceof Error
+              ? `Lost contact with the remote machine: ${err.message}`
+              : "Lost contact with the remote machine.",
+          );
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+        }
       }
     }, 1500);
     return () => {
