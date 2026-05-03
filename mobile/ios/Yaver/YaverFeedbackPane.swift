@@ -53,6 +53,13 @@ final class YaverFeedbackPane: NSObject {
     NotificationCenter.default.addObserver(self, selector: #selector(handleKeyboardChange(_:)),
                                            name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+    // Preflight: ask the agent which runners are signed in. If
+    // nothing is authed, repurpose the subtitle as a "no coding
+    // agent signed in · tap to open Agents" CTA so the user knows
+    // hitting Send will fail with a relay/auth error and gets a
+    // direct route to fix it.
+    runRunnerAuthPreflight()
   }
 
   // MARK: - State
@@ -65,6 +72,11 @@ final class YaverFeedbackPane: NSObject {
   private weak var sendButton: UIButton?
   private weak var reloadButton: UIButton?
   private weak var statusLabel: UILabel?
+  // subtitleLabel doubles as a "no coding agent signed in · tap to
+  // open Agents" CTA when the preflight check finds no authed runner
+  // on the host. Lights up orange + adds a tap recognizer in that
+  // state; otherwise stays the muted descriptive text it always was.
+  private weak var subtitleLabel: UILabel?
   private weak var bottomConstraint: NSLayoutConstraint?
   // Card's bottom-anchor constraint. handleKeyboardChange adjusts its
   // constant: 0 when keyboard down, -keyboardHeight when up. The card's
@@ -115,6 +127,10 @@ final class YaverFeedbackPane: NSObject {
     subtitle.text = "send a message · reload · screenshot"
     subtitle.textColor = UIColor(white: 1, alpha: 0.55)
     subtitle.font = .systemFont(ofSize: 12, weight: .regular)
+    subtitle.isUserInteractionEnabled = true
+    subtitleLabel = subtitle
+    let subtitleTap = UITapGestureRecognizer(target: self, action: #selector(handleSubtitleTap))
+    subtitle.addGestureRecognizer(subtitleTap)
 
     let close = UIButton(type: .system)
     close.translatesAutoresizingMaskIntoConstraints = false
@@ -284,6 +300,63 @@ final class YaverFeedbackPane: NSObject {
   }
 
 
+  // runRunnerAuthPreflight hits /runner-auth/status to decide whether
+  // ANY coding runner on the host is actually signed in. If not, we
+  // repurpose the subtitle as a tappable CTA that opens YaverAgentsPane
+  // — gives the user a one-tap route to fix their setup instead of
+  // hitting Send and watching it fail with "invalid relay password" /
+  // "no runner ready" / similar.
+  private func runRunnerAuthPreflight() {
+    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
+    guard !agentBase.isEmpty,
+          let url = URL(string: "\(agentBase)/runner-auth/status") else { return }
+    var req = URLRequest(url: url)
+    req.setValue("Bearer \(bestAuthToken())", forHTTPHeaderField: "Authorization")
+    URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+      DispatchQueue.main.async {
+        guard let self = self, let label = self.subtitleLabel else { return }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        if code < 200 || code >= 300 {
+          // 401 / 403 → likely the same relay-password / session
+          // issue Send would hit. Show the actionable CTA so user
+          // can fix it before composing.
+          self.markSubtitleNoAgent(label, msg: "⚠ can't reach agent · tap to set up Agents")
+          return
+        }
+        guard
+          let data = data,
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let runners = json["runners"] as? [[String: Any]]
+        else { return }
+        let anyAuthed = runners.contains { ($0["authConfigured"] as? Bool) == true }
+        if !anyAuthed {
+          self.markSubtitleNoAgent(label, msg: "⚠ no coding agent signed in · tap to open Agents")
+        }
+      }
+    }.resume()
+  }
+
+  private func markSubtitleNoAgent(_ label: UILabel, msg: String) {
+    label.text = msg
+    label.textColor = UIColor(red: 1.0, green: 0.78, blue: 0.4, alpha: 1.0)
+    label.tag = 9001 // sentinel for handleSubtitleTap to know "this is the CTA state"
+  }
+
+  @objc private func handleSubtitleTap() {
+    guard subtitleLabel?.tag == 9001, let win = self.window else { return }
+    // Dismiss the feedback pane first so the agents pane doesn't stack
+    // a second bottom-sheet on top.
+    let pane = self.cardView
+    UIView.animate(withDuration: 0.18, animations: {
+      pane?.transform = CGAffineTransform(translationX: 0, y: 600)
+      pane?.alpha = 0
+    }, completion: { _ in
+      pane?.removeFromSuperview()
+      self.cardView = nil
+      YaverAgentsPane.shared.present(in: win)
+    })
+  }
+
   @objc private func handleBackgroundTap() {
     // Tap outside the prompt's text input area to dismiss the keyboard.
     // The toolbar's Done button is the explicit dismiss; this is the
@@ -403,24 +476,20 @@ final class YaverFeedbackPane: NSObject {
       DispatchQueue.main.async {
         self.inFlight = false
         if let err = err {
-          self.setStatus("Send failed: \(err.localizedDescription)", tone: .error)
+          self.setStatus(humanizeRunnerAuthFailure(code: 0, body: nil, networkErr: err),
+                         tone: .error)
         } else if let http = resp as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
           self.setStatus("Sent ✓", tone: .success)
           UINotificationFeedbackGenerator().notificationOccurred(.success)
           DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
         } else {
+          // Reuse the same humanizer the Coding Agents pane uses, so
+          // "invalid relay password" / 401 / 503 / etc. all surface as
+          // a single readable line instead of raw JSON.
           let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-          // Surface the agent's error body so failures aren't opaque
-          // (auth failure, missing runner, no workDir, etc. all return
-          // structured JSON {error: "..."} the user needs to see).
-          var detail = "HTTP \(code)"
-          if let data = data, let body = String(data: data, encoding: .utf8) {
-            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-              detail = "HTTP \(code): \(trimmed.prefix(220))"
-            }
-          }
-          self.setStatus("Send failed — \(detail)", tone: .error)
+          let body = data.flatMap { String(data: $0, encoding: .utf8) }
+          self.setStatus(humanizeRunnerAuthFailure(code: code, body: body, networkErr: nil),
+                         tone: .error)
         }
       }
     }.resume()
