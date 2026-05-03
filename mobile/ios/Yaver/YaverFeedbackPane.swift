@@ -58,6 +58,17 @@ final class YaverFeedbackPane: NSObject {
   private weak var reloadButton: UIButton?
   private weak var statusLabel: UILabel?
   private weak var bottomConstraint: NSLayoutConstraint?
+  // Prompt + card height constraints — captured so handleKeyboardChange
+  // can shrink them when the keyboard appears, keeping the on-screen
+  // Reload + Send buttons visible above the keyboard. Without this, the
+  // 560pt card overflows past the keyboard top and the (pretty, branded)
+  // Send button is hidden — user can type but can't submit.
+  private weak var promptHeightConstraint: NSLayoutConstraint?
+  private weak var cardHeightConstraint: NSLayoutConstraint?
+  private let promptHeightExpanded: CGFloat = 220
+  private let promptHeightCollapsed: CGFloat = 96
+  private let cardHeightExpanded: CGFloat = 560
+  private let cardHeightCollapsed: CGFloat = 380
   private var snapshot: UIImage?
   private var inFlight = false
 
@@ -116,13 +127,11 @@ final class YaverFeedbackPane: NSObject {
     prompt.delegate = self
     prompt.autocorrectionType = .yes
     prompt.autocapitalizationType = .sentences
-    // Keyboard accessory toolbar — gives the user Done / Reload / Send
-    // while typing. Without this, the on-screen Reload + Send buttons
-    // sit at the bottom of the card and disappear behind the keyboard
-    // — user can type but can't submit, and there's no way to dismiss
-    // the keyboard short of swiping down (which iOS doesn't auto-bind
-    // for UITextView).
-    prompt.inputAccessoryView = makeKeyboardToolbar()
+    // No inputAccessoryView toolbar — instead, the card itself shrinks
+    // when the keyboard appears (handleKeyboardChange animates the
+    // promptHeightConstraint + cardHeightConstraint constants), so the
+    // existing on-screen Reload + Send buttons sit right above the
+    // keyboard. Same pattern as the Yaver Tasks "New Task" composer.
     promptField = prompt
 
     let placeholder = UILabel()
@@ -203,11 +212,16 @@ final class YaverFeedbackPane: NSObject {
     bgTap.cancelsTouchesInView = false
     bg.addGestureRecognizer(bgTap)
 
-    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 560)
+    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: cardHeightExpanded)
     bottomConstraint = bottomCon
+    cardHeightConstraint = bottomCon
+
+    let promptH = promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: promptHeightExpanded)
+    promptHeightConstraint = promptH
 
     NSLayoutConstraint.activate([
       bottomCon,
+      promptH,
       handle.centerXAnchor.constraint(equalTo: bg.contentView.centerXAnchor),
       handle.topAnchor.constraint(equalTo: bg.contentView.topAnchor, constant: 8),
       handle.widthAnchor.constraint(equalToConstant: 38),
@@ -228,9 +242,10 @@ final class YaverFeedbackPane: NSObject {
       content.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 16),
       content.bottomAnchor.constraint(lessThanOrEqualTo: bg.contentView.bottomAnchor, constant: -28),
 
-      // Prompt card sizing — generous height so the user can see several
-      // lines of their feedback at a glance without scrolling.
-      promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
+      // (Prompt min-height constraint is created above as `promptH` and
+      //  activated via the array — captured into promptHeightConstraint
+      //  so handleKeyboardChange can shrink it when the keyboard
+      //  appears, keeping Reload + Send visible.)
       prompt.leadingAnchor.constraint(equalTo: promptCard.leadingAnchor, constant: 12),
       prompt.trailingAnchor.constraint(equalTo: promptCard.trailingAnchor, constant: -12),
       prompt.topAnchor.constraint(equalTo: promptCard.topAnchor, constant: 10),
@@ -257,51 +272,6 @@ final class YaverFeedbackPane: NSObject {
     return bg
   }
 
-
-  // makeKeyboardToolbar builds the input-accessory bar pinned above
-  // the keyboard while the prompt has focus. Three controls:
-  //   - Done    → dismisses the keyboard
-  //   - Reload  → same as the on-screen Reload button
-  //   - Send    → same as the on-screen Send button
-  // The on-screen Reload+Send buttons are still rendered inside the
-  // card; the toolbar just makes them reachable while the keyboard is
-  // up (otherwise they sit at the bottom of the card, hidden under
-  // the keyboard, with no way for the user to submit without first
-  // dismissing the keyboard manually — and we don't bind a swipe-down
-  // for UITextView on this card).
-  private func makeKeyboardToolbar() -> UIToolbar {
-    let bar = UIToolbar()
-    bar.barStyle = .black
-    bar.isTranslucent = true
-    bar.tintColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1)
-    bar.sizeToFit()
-
-    let done = UIBarButtonItem(title: "Done", style: .plain,
-                               target: self, action: #selector(toolbarDoneTapped))
-    let reload = UIBarButtonItem(title: "Reload", style: .plain,
-                                 target: self, action: #selector(toolbarReloadTapped))
-    let send = UIBarButtonItem(title: "Send", style: .done,
-                               target: self, action: #selector(toolbarSendTapped))
-    let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
-    let gap = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
-    gap.width = 16
-    bar.setItems([done, flex, reload, gap, send], animated: false)
-    return bar
-  }
-
-  @objc private func toolbarDoneTapped() {
-    promptField?.resignFirstResponder()
-  }
-
-  @objc private func toolbarReloadTapped() {
-    promptField?.resignFirstResponder()
-    reloadTapped()
-  }
-
-  @objc private func toolbarSendTapped() {
-    promptField?.resignFirstResponder()
-    sendTapped()
-  }
 
   @objc private func handleBackgroundTap() {
     // Tap outside the prompt's text input area to dismiss the keyboard.
@@ -476,38 +446,28 @@ final class YaverFeedbackPane: NSObject {
     }
   }
 
-  // handleKeyboardChange used to translate the card up by the full
-  // keyboard height. That worked when the card was 280pt tall, but after
-  // the 2x bump (now ≥560pt) the card was getting pushed above the
-  // status bar — the title and close X disappeared off the top of the
-  // screen and the user could not dismiss the modal. Mirroring the
-  // KeyboardAvoidingView behaviour from the Yaver Tasks composer:
-  // clamp the upward translation so the card top stays at or below the
-  // safe-area top with a small breathing margin. The internal UITextView
-  // already scrolls, so any vertical shortage is absorbed by the input
-  // area shrinking visually rather than the whole card disappearing.
+  // Tasks-composer pattern: when the keyboard appears, SHRINK the card
+  // (reduce both prompt and card height constraints) so the existing
+  // on-screen Reload + Send buttons sit just above the keyboard. We
+  // don't translate the card up — that pushed the title above the
+  // safe area on tall layouts. Constraint-based shrink keeps the
+  // title pinned at the top of the (smaller) card and the action row
+  // pinned at the bottom (which is now just above the keyboard).
   @objc private func handleKeyboardChange(_ note: Notification) {
-    guard let window = self.window,
-          let card = cardView,
+    guard let card = cardView,
           let info = note.userInfo,
           let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
     else { return }
-    let intersection = window.bounds.intersection(window.convert(endFrame, from: nil))
-    let keyboardInset = max(0, intersection.height)
+    let keyboardVisible = endFrame.origin.y < UIScreen.main.bounds.height - 1
 
-    // How far up could we move the card before its top hits the safe
-    // area top? The card is constrained to the window's bottomAnchor,
-    // so its untransformed top is window.height - card.height. Use that
-    // (NOT card.frame.minY which returns the post-transform position
-    // and would compound across repeat keyboard events).
-    let safeTop = window.safeAreaInsets.top + 12
-    let untransformedMinY = window.bounds.height - card.bounds.height
-    let maxRise = max(0, untransformedMinY - safeTop)
-    let rise = min(keyboardInset, maxRise)
+    let promptH = keyboardVisible ? promptHeightCollapsed : promptHeightExpanded
+    let cardH = keyboardVisible ? cardHeightCollapsed : cardHeightExpanded
+    promptHeightConstraint?.constant = promptH
+    cardHeightConstraint?.constant = cardH
 
     let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
     UIView.animate(withDuration: duration) {
-      card.transform = CGAffineTransform(translationX: 0, y: -rise)
+      card.superview?.layoutIfNeeded()
     }
   }
 }

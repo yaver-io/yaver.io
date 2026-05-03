@@ -84,6 +84,24 @@ type MachineSummary = {
 const MACHINE_SUMMARY_TTL_MS = 30_000;
 const machineSummaryCache = new Map<string, MachineSummary>();
 
+// labelForRunnerId humanizes a stored runner id ("claude" / "codex" /
+// "opencode" / "claude-code" legacy alias) for the device card badge.
+// Defaults to the raw id if we don't recognize it — better to show
+// something than nothing.
+function labelForRunnerId(id: string): string {
+  switch (id) {
+    case "claude":
+    case "claude-code":
+      return "Claude";
+    case "codex":
+      return "Codex";
+    case "opencode":
+      return "OpenCode";
+    default:
+      return id;
+  }
+}
+
 function isLikelyWSLDevice(device: Pick<Device, "name" | "os" | "host">): boolean {
   const os = String(device.os || "").trim().toLowerCase();
   if (os !== "linux") return false;
@@ -207,6 +225,7 @@ function DeviceCard({
   authExpired,
   isStale,
   isPrimary,
+  defaultRunner,
   onSelect,
   onLongPress,
   onRecoverAuth,
@@ -222,6 +241,11 @@ function DeviceCard({
   // button instead of the old green/red flicker.
   isStale: boolean;
   isPrimary: boolean;
+  // Runner the user picked as the default for this device in
+  // DeviceDetailsModal. Empty string means none picked. Surfaced as a
+  // small badge on the card so the user can see which agent runs
+  // without having to open the details modal.
+  defaultRunner: string;
   onSelect: () => Promise<void> | void;
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
@@ -528,6 +552,16 @@ function DeviceCard({
                 <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
               </View>
             ) : null}
+            {defaultRunner ? (
+              <View style={{
+                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: "#a78bfa22", borderWidth: 1, borderColor: "#a78bfa66",
+              }}>
+                <Text style={{ color: "#c4b5fd", fontSize: 10, fontWeight: "700" }}>
+                  ★ {labelForRunnerId(defaultRunner)}
+                </Text>
+              </View>
+            ) : null}
             {recovering ? (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
@@ -817,6 +851,7 @@ export default function DevicesScreen() {
     unreachableDeviceIds,
     primaryDeviceId,
     setPrimaryDevice,
+    primaryRunnerByDevice,
     pendingClaims,
     refreshPendingClaims,
     claimPendingDevice,
@@ -1142,6 +1177,7 @@ export default function DevicesScreen() {
               connectionStatus={connectionStatus}
               isStale={unreachableDeviceIds.includes(item.id)}
               isPrimary={primaryDeviceId === item.id}
+              defaultRunner={primaryRunnerByDevice[item.id] || ""}
               onSelect={() => selectDevice(item)}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               forceDetailsOpen={openDetailsId === item.id}
