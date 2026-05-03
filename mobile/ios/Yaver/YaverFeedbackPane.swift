@@ -116,6 +116,13 @@ final class YaverFeedbackPane: NSObject {
     prompt.delegate = self
     prompt.autocorrectionType = .yes
     prompt.autocapitalizationType = .sentences
+    // Keyboard accessory toolbar — gives the user Done / Reload / Send
+    // while typing. Without this, the on-screen Reload + Send buttons
+    // sit at the bottom of the card and disappear behind the keyboard
+    // — user can type but can't submit, and there's no way to dismiss
+    // the keyboard short of swiping down (which iOS doesn't auto-bind
+    // for UITextView).
+    prompt.inputAccessoryView = makeKeyboardToolbar()
     promptField = prompt
 
     let placeholder = UILabel()
@@ -188,6 +195,14 @@ final class YaverFeedbackPane: NSObject {
     bg.contentView.addSubview(close)
     bg.contentView.addSubview(content)
 
+    // Tap anywhere on the card chrome (the blur background, but NOT the
+    // input field itself) to dismiss the keyboard. cancelsTouchesInView=
+    // false so this doesn't swallow taps on buttons / toggles inside
+    // the card.
+    let bgTap = UITapGestureRecognizer(target: self, action: #selector(handleBackgroundTap))
+    bgTap.cancelsTouchesInView = false
+    bg.addGestureRecognizer(bgTap)
+
     let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 560)
     bottomConstraint = bottomCon
 
@@ -242,6 +257,59 @@ final class YaverFeedbackPane: NSObject {
     return bg
   }
 
+
+  // makeKeyboardToolbar builds the input-accessory bar pinned above
+  // the keyboard while the prompt has focus. Three controls:
+  //   - Done    → dismisses the keyboard
+  //   - Reload  → same as the on-screen Reload button
+  //   - Send    → same as the on-screen Send button
+  // The on-screen Reload+Send buttons are still rendered inside the
+  // card; the toolbar just makes them reachable while the keyboard is
+  // up (otherwise they sit at the bottom of the card, hidden under
+  // the keyboard, with no way for the user to submit without first
+  // dismissing the keyboard manually — and we don't bind a swipe-down
+  // for UITextView on this card).
+  private func makeKeyboardToolbar() -> UIToolbar {
+    let bar = UIToolbar()
+    bar.barStyle = .black
+    bar.isTranslucent = true
+    bar.tintColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1)
+    bar.sizeToFit()
+
+    let done = UIBarButtonItem(title: "Done", style: .plain,
+                               target: self, action: #selector(toolbarDoneTapped))
+    let reload = UIBarButtonItem(title: "Reload", style: .plain,
+                                 target: self, action: #selector(toolbarReloadTapped))
+    let send = UIBarButtonItem(title: "Send", style: .done,
+                               target: self, action: #selector(toolbarSendTapped))
+    let flex = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
+    let gap = UIBarButtonItem(barButtonSystemItem: .fixedSpace, target: nil, action: nil)
+    gap.width = 16
+    bar.setItems([done, flex, reload, gap, send], animated: false)
+    return bar
+  }
+
+  @objc private func toolbarDoneTapped() {
+    promptField?.resignFirstResponder()
+  }
+
+  @objc private func toolbarReloadTapped() {
+    promptField?.resignFirstResponder()
+    reloadTapped()
+  }
+
+  @objc private func toolbarSendTapped() {
+    promptField?.resignFirstResponder()
+    sendTapped()
+  }
+
+  @objc private func handleBackgroundTap() {
+    // Tap outside the prompt's text input area to dismiss the keyboard.
+    // The toolbar's Done button is the explicit dismiss; this is the
+    // ergonomic path for users who instinctively tap "elsewhere" to
+    // close a keyboard.
+    promptField?.resignFirstResponder()
+  }
 
   private func makeButton(title: String, icon: String, primary: Bool, action: Selector) -> UIButton {
     let btn = UIButton(type: .system)

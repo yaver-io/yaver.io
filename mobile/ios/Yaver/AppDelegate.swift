@@ -534,8 +534,15 @@ public class AppDelegate: ExpoAppDelegate {
   /// a replacement, so power users get both.
   func refreshFeedbackTriggerMount() {
     let mode = UserDefaults.standard.string(forKey: "yaverFeedbackTrigger") ?? "shake"
-    guard let win = self.window else { return }
+    NSLog("[AppDelegate] refreshFeedbackTriggerMount mode=%@ window=%@", mode,
+          self.window != nil ? "present" : "nil")
+    guard let win = self.window else {
+      NSLog("[AppDelegate] refreshFeedbackTriggerMount: no window — skipping")
+      return
+    }
     if mode == "floating-button" {
+      NSLog("[AppDelegate] mounting floating Y trigger over window bounds=%@",
+            NSCoder.string(for: win.bounds))
       YaverFloatingTrigger.shared.mount(in: win) { [weak self] in
         self?.handleShakeGesture()
       }

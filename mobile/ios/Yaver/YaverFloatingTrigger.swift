@@ -33,6 +33,9 @@ final class YaverFloatingTrigger: NSObject {
   private let edgeMargin: CGFloat = 8
 
   func mount(in window: UIWindow, onTap: @escaping () -> Void) {
+    NSLog("[FloatingY] mount called window.bounds=%@ safeAreaTop=%.1f bottom=%.1f",
+          NSCoder.string(for: window.bounds),
+          window.safeAreaInsets.top, window.safeAreaInsets.bottom)
     // Cancel any in-flight dismount animation: rapid Settings flips
     // (Shake → Floating Y → Shake → Floating Y) used to no-op on the
     // remount because the prior bubble was still alpha-fading out and
@@ -74,7 +77,12 @@ final class YaverFloatingTrigger: NSObject {
     let initial = restorePosition(in: window)
     bg.frame = CGRect(x: initial.x, y: initial.y, width: bubbleSize, height: bubbleSize)
     window.addSubview(bg)
+    // bringSubviewToFront is paranoia: in case the host added the
+    // settings pane / shake overlay later in the same runloop tick,
+    // make sure the bubble sits above them.
+    window.bringSubviewToFront(bg)
     bubble = bg
+    NSLog("[FloatingY] bubble added at %@", NSCoder.string(for: bg.frame))
 
     let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
     let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
