@@ -63,7 +63,7 @@ export default function CLISetupManual() {
           </p>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            Native package-manager installs
+            Install from npm
           </h3>
           <div className="terminal mb-4">
             <div className="terminal-header">
@@ -76,19 +76,13 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew install kivanccakmak/yaver/yaver
+                  npm install -g yaver-cli
                 </span>
               </div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  {`echo "deb [arch=$(dpkg --print-architecture) trusted=yes] https://cdn.jsdelivr.net/gh/kivanccakmak/apt-yaver@main stable main" | sudo tee /etc/apt/sources.list.d/yaver.list`}
-                </span>
-              </div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">
-                  sudo apt update && sudo apt install yaver
+                  npm install -g yaver-cli@latest
                 </span>
               </div>
               <div>
@@ -100,40 +94,40 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  yaver serve
+                  yaver auth --headless
                 </span>
               </div>
             </div>
           </div>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            Other package managers
+            What happens next
           </h3>
           <div className="terminal mb-4">
             <div className="terminal-header">
               <div className="terminal-dot bg-[#ff5f57]" />
               <div className="terminal-dot bg-[#febc2e]" />
               <div className="terminal-dot bg-[#28c840]" />
-              <span className="ml-3 text-xs text-surface-500">powershell</span>
+              <span className="ml-3 text-xs text-surface-500">terminal</span>
             </div>
             <div className="terminal-body space-y-2 text-[13px]">
               <div>
-                <span className="text-surface-400">&gt;</span>{" "}
+                <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver
+                  yaver auth
                 </span>
               </div>
               <div>
-                <span className="text-surface-400">&gt;</span>{" "}
+                <span className="text-surface-400">#</span>{" "}
                 <span className="text-surface-200 select-all">
-                  scoop install yaver
+                  starts the agent if needed and auto-registers Yaver MCP
                 </span>
               </div>
             </div>
           </div>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            Quick install script (macOS &amp; Linux)
+            Notes
           </h3>
           <div className="terminal mb-4">
             <div className="terminal-header">
@@ -144,55 +138,37 @@ export default function CLISetupManual() {
             </div>
             <div className="terminal-body text-[13px]">
               <div>
-                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-400">#</span>{" "}
                 <span className="text-surface-200 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
+                  npm install -g yaver-cli is the supported install path on macOS, Linux, and WSL.
+                </span>
+              </div>
+              <div>
+                <span className="text-surface-400">#</span>{" "}
+                <span className="text-surface-200 select-all">
+                  Use the same command with @latest to upgrade an existing machine.
                 </span>
               </div>
             </div>
           </div>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
-            More methods
+            Supported method
           </h3>
           <div className="overflow-x-auto mb-4">
             <table className="w-full text-sm">
               <tbody className="text-surface-400">
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-2 pr-4 font-medium text-surface-300">Winget</td>
-                  <td className="py-2 font-mono text-xs">winget install Yaver.Yaver</td>
-                </tr>
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-2 pr-4 font-medium text-surface-300">Chocolatey</td>
-                  <td className="py-2 font-mono text-xs">choco install yaver</td>
-                </tr>
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-2 pr-4 font-medium text-surface-300">AUR</td>
-                  <td className="py-2 font-mono text-xs">git clone https://github.com/kivanccakmak/aur-yaver.git &amp;&amp; cd aur-yaver &amp;&amp; makepkg -si</td>
-                </tr>
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-2 pr-4 font-medium text-surface-300">Nix</td>
-                  <td className="py-2 font-mono text-xs">nix run github:kivanccakmak/yaver.io</td>
-                </tr>
-                <tr className="border-b border-surface-800/60">
-                  <td className="py-2 pr-4 font-medium text-surface-300">Docker</td>
-                  <td className="py-2 font-mono text-xs">docker run --rm kivanccakmak/yaver-cli version</td>
-                </tr>
                 <tr>
-                  <td className="py-2 pr-4 font-medium text-surface-300">apt/deb/rpm</td>
-                  <td className="py-2 font-mono text-xs">See <a href="/download" className="text-surface-300 underline">download page</a></td>
+                  <td className="py-2 pr-4 font-medium text-surface-300">npm</td>
+                  <td className="py-2 font-mono text-xs">npm install -g yaver-cli</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
           <p className="text-xs text-surface-500">
-            All install paths give you a <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver</code> command. Native installs handle
-            agent commands directly and bridge <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver push</code> through npm when Node is available.
-            Download binaries directly from the{" "}
-            <Link href="/download" className="text-surface-300 underline underline-offset-2 hover:text-surface-100">
-              download page
-            </Link>. Desktop GUI app (DMG/EXE/DEB) also available there.
+            The npm package provides the <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">yaver</code> command for both agent and
+            push/dev flows, and it is the install path Yaver keeps current.
           </p>
         </section>
 
@@ -236,10 +212,10 @@ export default function CLISetupManual() {
         {/* MCP setup */}
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">
-            MCP &mdash; connect to AI editors
+            MCP &mdash; connect to coding runners
           </h2>
           <p className="mb-4 text-sm text-surface-400">
-            Yaver exposes 473 tools via the Model Context Protocol. One command to configure your editor:
+            Yaver exposes 473 tools via the Model Context Protocol. One command configures each first-class runner CLI:
           </p>
           <div className="terminal mb-4">
             <div className="terminal-header">
@@ -251,28 +227,18 @@ export default function CLISetupManual() {
             <div className="terminal-body space-y-2 text-[13px]">
               <div>
                 <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver mcp setup claude</span>
-                <span className="ml-2 text-surface-500"># Claude Desktop</span>
+                <span className="text-surface-200">yaver mcp setup claude-code</span>
+                <span className="ml-2 text-surface-500"># Claude Code</span>
               </div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver mcp setup cursor</span>
-                <span className="ml-2 text-surface-500"># Cursor</span>
+                <span className="text-surface-200">yaver mcp setup codex</span>
+                <span className="ml-2 text-surface-500"># Codex CLI</span>
               </div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver mcp setup vscode</span>
-                <span className="ml-2 text-surface-500"># VS Code</span>
-              </div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver mcp setup windsurf</span>
-                <span className="ml-2 text-surface-500"># Windsurf</span>
-              </div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">yaver mcp setup zed</span>
-                <span className="ml-2 text-surface-500"># Zed</span>
+                <span className="text-surface-200">yaver mcp setup opencode</span>
+                <span className="ml-2 text-surface-500"># opencode</span>
               </div>
             </div>
           </div>
@@ -488,39 +454,31 @@ export default function CLISetupManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
+                  npm install -g yaver-cli
+                </span>
+              </div>
+              <div className="h-px bg-surface-800/60" />
+              <div className="text-surface-500"># Upgrade later</div>
+              <div>
+                <span className="text-surface-400">$</span>{" "}
+                <span className="text-surface-200 select-all">
                   npm install -g yaver-cli@latest
                 </span>
               </div>
               <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Homebrew (macOS &amp; Linux)</div>
+              <div className="text-surface-500"># Authenticate and auto-start the agent</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew update &amp;&amp; brew upgrade yaver
+                  yaver auth
                 </span>
               </div>
               <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># apt (Debian / Ubuntu)</div>
+              <div className="text-surface-500"># Headless boxes</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  sudo apt update &amp;&amp; sudo apt install --only-upgrade yaver
-                </span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Scoop (Windows)</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">
-                  scoop update yaver
-                </span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># One-liner installer (re-run to refresh)</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">
-                  curl -fsSL https://yaver.io/install.sh | sh
+                  yaver auth --headless
                 </span>
               </div>
               <div className="h-px bg-surface-800/60" />

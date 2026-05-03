@@ -47,6 +47,45 @@ func runMCPSetup(args []string) {
 	}
 }
 
+func runMCPUnregister(args []string) {
+	if len(args) == 0 {
+		args = []string{"claude-code", "codex", "opencode"}
+	}
+	for _, target := range args {
+		switch target {
+		case "claude", "claude-code":
+			changed, err := removeClaudeCodeMCPConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Claude Code MCP unregister failed: %v\n", err)
+				continue
+			}
+			if changed {
+				fmt.Println("  MCP: Removed Yaver from Claude Code user MCP config")
+			}
+		case "codex":
+			changed, err := removeCodexMCPConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Codex MCP unregister failed: %v\n", err)
+				continue
+			}
+			if changed {
+				fmt.Println("  MCP: Removed Yaver from Codex CLI MCP config")
+			}
+		case "opencode":
+			changed, err := removeOpenCodeMCPConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "opencode MCP unregister failed: %v\n", err)
+				continue
+			}
+			if changed {
+				fmt.Println("  MCP: Removed Yaver from opencode MCP config")
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown MCP client: %s (use claude-code, codex, or opencode)\n", target)
+		}
+	}
+}
+
 func setupClaudeCode(yaverPath string, quiet bool) {
 	changed, err := ensureClaudeCodeMCPConfig(yaverPath)
 	if err != nil {
@@ -83,6 +122,22 @@ func ensureClaudeCodeMCPConfig(yaverPath string) (bool, error) {
 	return true, nil
 }
 
+func removeClaudeCodeMCPConfig() (bool, error) {
+	if _, err := exec.LookPath("claude"); err != nil {
+		return false, nil
+	}
+	getCmd := exec.Command("claude", "mcp", "get", "yaver")
+	if err := getCmd.Run(); err != nil {
+		return false, nil
+	}
+	removeCmd := exec.Command("claude", "mcp", "remove", "--scope", "user", "yaver")
+	out, err := removeCmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%v: %s", err, string(out))
+	}
+	return true, nil
+}
+
 func setupCodex(yaverPath string, quiet bool) {
 	changed, err := ensureCodexMCPConfig(yaverPath)
 	if err != nil {
@@ -113,6 +168,22 @@ func ensureCodexMCPConfig(yaverPath string) (bool, error) {
 
 	addCmd := exec.Command("codex", "mcp", "add", "yaver", "--", yaverPath, "mcp")
 	out, err := addCmd.CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%v: %s", err, string(out))
+	}
+	return true, nil
+}
+
+func removeCodexMCPConfig() (bool, error) {
+	if _, err := exec.LookPath("codex"); err != nil {
+		return false, nil
+	}
+	getCmd := exec.Command("codex", "mcp", "get", "yaver")
+	if err := getCmd.Run(); err != nil {
+		return false, nil
+	}
+	removeCmd := exec.Command("codex", "mcp", "remove", "yaver")
+	out, err := removeCmd.CombinedOutput()
 	if err != nil {
 		return false, fmt.Errorf("%v: %s", err, string(out))
 	}
@@ -171,6 +242,48 @@ func ensureOpenCodeMCPConfig(yaverPath string) (bool, error) {
 		"enabled": true,
 	}
 	cfg["mcp"] = mcp
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(configPath, out, 0644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func removeOpenCodeMCPConfig() (bool, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false, err
+	}
+	configPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	cfg := make(map[string]interface{})
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false, err
+	}
+	mcp, _ := cfg["mcp"].(map[string]interface{})
+	if mcp == nil {
+		return false, nil
+	}
+	if _, exists := mcp["yaver"]; !exists {
+		return false, nil
+	}
+	delete(mcp, "yaver")
+	if len(mcp) == 0 {
+		delete(cfg, "mcp")
+	} else {
+		cfg["mcp"] = mcp
+	}
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

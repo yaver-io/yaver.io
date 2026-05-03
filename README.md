@@ -27,7 +27,7 @@ What is real in the repo today:
 - remote dev-box flows where the box is mostly web UI + backend, runs Claude Code / Codex / other coding agents, and streams run/test output back to mobile
 - MCP and CLI surfaces for phone project export, import, and push
 - local-first runtime API for third-party apps using per-project tokens
-- Linux install surfaces including `apt`, AppImage, tarballs, `.deb`, `.rpm`, and Homebrew CLI
+- npm-based install and upgrade via `npm install -g yaver-cli` across macOS, Linux, and WSL
 - Unity feedback/build/test/relaunch groundwork for mobile and desktop projects
 
 What is still incomplete:
@@ -374,12 +374,11 @@ No code, task data, or AI output ever touches our servers. The relay is a pass-t
 ## Quick Start
 
 ```bash
-# Install (pick one)
-brew install kivanccakmak/yaver/yaver          # macOS / Linux
-scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver && scoop install yaver  # Windows
-winget install Yaver.Yaver                      # Windows (Winget)
-curl -fsSL https://yaver.io/install.sh | sh     # Quick install (macOS / Linux)
-irm https://yaver.io/install.ps1 | iex          # Quick install (Windows PowerShell)
+# Install
+npm install -g yaver-cli
+
+# Upgrade later
+npm install -g yaver-cli@latest
 
 # Sign in — GUI machine opens a browser, headless (Pi / VPS / SSH-only / Docker) uses --headless
 yaver auth                 # opens browser automatically
@@ -449,23 +448,9 @@ For the default security/functionality posture behind fresh installs, see [docs/
 
 | Method | Command |
 |--------|---------|
-| **Homebrew** | `brew install kivanccakmak/yaver/yaver` |
-| **Scoop** | `scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver && scoop install yaver` |
-| **Winget** | `winget install Yaver.Yaver` |
-| **Chocolatey** | `choco install yaver` |
-| **AUR** | `git clone https://github.com/kivanccakmak/aur-yaver.git && cd aur-yaver && makepkg -si` |
-| **apt** (Debian/Ubuntu) | `echo "deb [arch=$(dpkg --print-architecture) trusted=yes] https://cdn.jsdelivr.net/gh/kivanccakmak/apt-yaver@main stable main" \| sudo tee /etc/apt/sources.list.d/yaver.list && sudo apt update && sudo apt install yaver` |
-| **dnf/rpm** (Fedora/RHEL) | Download `yaver_<version>_x86_64.rpm` from [releases](https://github.com/kivanccakmak/yaver.io/releases) and `sudo rpm -i yaver_*.rpm` (or `sudo dnf install ./yaver_*.rpm`) |
-| **AppImage** | Download from [download page](https://yaver.io/download), `chmod +x Yaver-*.AppImage && ./Yaver-*.AppImage` |
-| **Tarball** | `curl -fsSL https://yaver.io/install.sh \| sh` — auto-detects arch, downloads the right tarball, installs to `~/.local/bin/yaver` |
-| **npm bootstrap** | `npm install -g yaver-cli` — fastest start; installs a `yaver` command and covers both `yaver serve` and `yaver push` |
-| **Nix** | `nix run github:kivanccakmak/yaver.io` |
-| **Docker** (multi-arch: amd64, arm64) | `docker pull kivanccakmak/yaver-cli:latest` · also on `ghcr.io/kivanccakmak/yaver.io/cli:latest` |
-| **Raspberry Pi / ARM64 SBC** | `curl -fsSL https://yaver.io/install.sh \| sh` — then `yaver install pi-dev-node && yaver auth && yaver serve --install-systemd`. Pi 4 (4+ GB) runs `yaver serve` 24/7; hermesc arm64 compiles RN bundles natively. See [download page](https://yaver.io/download#raspi). |
-| **Raspberry Pi 5 Image** | Download `yaver-pi5-devnode-arm64.img.xz` from the [download page](https://yaver.io/download#raspi), flash it to a Pi 5, boot, pair from Yaver mobile, and finish first-boot provisioning there. |
-| **curl** | `curl -fsSL https://yaver.io/install.sh \| sh` |
-| **PowerShell** | `irm https://yaver.io/install.ps1 \| iex` |
-| **Binary** | Download from [releases](https://github.com/kivanccakmak/yaver.io/releases) |
+| **npm** | `npm install -g yaver-cli` |
+| **Upgrade** | `npm install -g yaver-cli@latest` |
+| **What it installs** | `yaver` plus the bundled push/dev bootstrap from the `yaver-cli` npm package |
 
 ### Default Protection / Functionality Balance
 
@@ -725,23 +710,20 @@ No TestFlight queues. No Play Store reviews. Real-device testing in seconds. Wor
 
 ## MCP Integration
 
-Yaver implements the Model Context Protocol (MCP) with 473 tools. Connect from Claude Desktop, Cursor, VS Code, Windsurf, Zed, or any MCP-compatible client.
+Yaver implements the Model Context Protocol (MCP) with 473 tools. Its one-command setup path currently auto-registers with Claude Code, Codex, and opencode; other MCP clients can use the manual JSON config below.
 
 ### One-Command Setup
 
 ```bash
-yaver mcp setup claude       # Claude Desktop
 yaver mcp setup claude-code  # Claude Code user MCP config
-yaver mcp setup cursor       # Cursor
-yaver mcp setup vscode       # VS Code
-yaver mcp setup windsurf     # Windsurf
-yaver mcp setup zed          # Zed
+yaver mcp setup codex        # Codex CLI MCP config
+yaver mcp setup opencode     # opencode MCP config
 yaver mcp setup show         # Show config JSON (copy/paste manually)
 ```
 
 The repo also ships registry metadata in [`server.json`](server.json) and [`glama.json`](glama.json) so Yaver can be indexed by the official MCP Registry and Glama.
 
-### Manual Setup — Claude Desktop
+### Manual Setup — Any MCP Client
 
 Add to your `claude_desktop_config.json`:
 
@@ -1543,7 +1525,7 @@ The important rule is:
 Command-first version:
 
 ```bash
-brew install kivanccakmak/yaver/yaver
+npm install -g yaver-cli
 yaver auth
 yaver serve
 ```

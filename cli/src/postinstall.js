@@ -49,6 +49,21 @@ function commandExists(name) {
   }
 }
 
+function npmGlobalBinDir() {
+  const prefix = (process.env.npm_config_prefix || "").trim();
+  if (!prefix) return "";
+  return path.join(prefix, "bin");
+}
+
+function addNpmGlobalBinToProcessPath() {
+  const binDir = npmGlobalBinDir();
+  if (!binDir) return;
+  const current = (process.env.PATH || "").split(path.delimiter);
+  if (!current.includes(binDir)) {
+    process.env.PATH = `${binDir}${path.delimiter}${process.env.PATH || ""}`;
+  }
+}
+
 function installMissingCodingRunners() {
   const missing = CODING_RUNNER_BOOTSTRAP.filter((entry) => !commandExists(entry.command));
   if (missing.length === 0) {
@@ -64,9 +79,31 @@ function installMissingCodingRunners() {
       `"${npmCmd}" install -g --no-fund --no-audit ${packages.join(" ")}`,
       { stdio: "inherit" },
     );
+    addNpmGlobalBinToProcessPath();
     log(`Installed missing coding runners: ${labels}.`);
   } catch (error) {
     log(`Skipping coding runner bootstrap: ${error.message}`);
+  }
+}
+
+async function setupMCPForInstalledRunners() {
+  const targets = [
+    { command: "claude", client: "claude-code", label: "Claude Code" },
+    { command: "codex", client: "codex", label: "Codex" },
+    { command: "opencode", client: "opencode", label: "OpenCode" },
+  ];
+  const configured = [];
+  for (const target of targets) {
+    if (!commandExists(target.command)) continue;
+    try {
+      await runAgentCommand(["mcp", "setup", target.client], { quiet: true });
+      configured.push(target.label);
+    } catch (error) {
+      log(`Skipping MCP setup for ${target.label}: ${error.message}`);
+    }
+  }
+  if (configured.length > 0) {
+    log(`Registered Yaver MCP in: ${configured.join(", ")}.`);
   }
 }
 
@@ -281,6 +318,7 @@ async function main() {
   }
 
   ensurePathOnUnix();
+  addNpmGlobalBinToProcessPath();
   ensureLinuxRunnerSandboxPackages();
   ensureLinuxRunnerSandboxSupport();
   reportLinuxRunnerSandboxStatus();
@@ -291,6 +329,7 @@ async function main() {
   if (envEnabled("YAVER_SKIP_POSTINSTALL_MOBILE")) {
     if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
       installMissingCodingRunners();
+      await setupMCPForInstalledRunners();
     }
     return;
   }
@@ -317,6 +356,7 @@ async function main() {
 
   if (!envEnabled("YAVER_SKIP_POSTINSTALL_RUNNERS")) {
     installMissingCodingRunners();
+    await setupMCPForInstalledRunners();
   }
 
   // Vibe Preview tool stack — best-effort provisioning so a fresh

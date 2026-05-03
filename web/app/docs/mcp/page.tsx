@@ -136,7 +136,7 @@ export default function McpPage() {
             {[
               ["what-is-mcp", "What is MCP?"],
               ["installation", "Installation"],
-              ["local-mcp", "Local MCP (stdio) \u2014 Claude Desktop, Cursor, VS Code & more"],
+              ["local-mcp", "Local MCP (stdio) \u2014 Claude Code, Codex, opencode"],
               ["network-mcp", "Network MCP (HTTP) \u2014 Remote Access"],
               ["available-tools", "Available Tools (111)"],
               ["email-setup", "Email Setup"],
@@ -185,22 +185,18 @@ export default function McpPage() {
         <section className="mb-20">
           <SectionHeading id="installation">Installation</SectionHeading>
           <Prose>
-            Install the Yaver CLI via Homebrew (macOS and Linux) or Scoop
-            (Windows).
+            Install the Yaver CLI from npm, then sign in once so the agent can
+            auto-start and register itself with the local runner CLIs.
           </Prose>
 
           <div className="mb-6 space-y-4">
             <div className="mb-8">
               <Terminal title="install">
-                <Comment># macOS / Linux</Comment>
-                <Cmd>brew install kivanccakmak/yaver/yaver</Cmd>
+                <Comment># macOS / Linux / WSL</Comment>
+                <Cmd>npm install -g yaver-cli</Cmd>
                 <Divider />
-                <Comment># Windows</Comment>
-                <Cmd>
-                  scoop bucket add yaver
-                  https://github.com/kivanccakmak/scoop-yaver
-                </Cmd>
-                <Cmd>scoop install yaver</Cmd>
+                <Comment># Upgrade later</Comment>
+                <Cmd>npm install -g yaver-cli@latest</Cmd>
                 <Divider />
                 <Comment># Verify installation</Comment>
                 <Cmd>yaver --version</Cmd>
