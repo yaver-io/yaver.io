@@ -110,6 +110,11 @@ final class YaverFeedbackPane: NSObject {
   private let cardHeightMin: CGFloat = 360
   private var snapshot: UIImage?
   private var inFlight = false
+  // Holds the SSE subscription to /dev/events while a Reload is
+  // streaming. Cancelled in dismiss + when a terminal event lands so a
+  // backgrounded pane doesn't keep a long-lived connection open.
+  private var reloadStream: YaverSSEReader?
+  private var reloadStreamTimeout: DispatchWorkItem?
 
   // MARK: - UI
 
@@ -452,6 +457,10 @@ final class YaverFeedbackPane: NSObject {
   private func dismiss() {
     NotificationCenter.default.removeObserver(self,
       name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+    // A reload SSE stream can outlive the pane itself if the user
+    // dismisses mid-build. Tear it down so we don't keep an idle
+    // long-lived connection on the relay.
+    stopReloadEventStream()
     promptField?.resignFirstResponder()
     guard let card = cardView else { return }
     UIView.animate(withDuration: 0.22, animations: {
@@ -471,28 +480,125 @@ final class YaverFeedbackPane: NSObject {
     if inFlight { return }
     inFlight = true
     setStatus("Reloading…", tone: .progress)
-    guard let url = yaverResolveAgentURL("/dev/reload") else {
-      setStatus("Missing agent URL", tone: .error); inFlight = false; return
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+    // Open the SSE stream FIRST so we don't miss the early build
+    // events the agent emits between /dev/reload-app POST and the
+    // first compile pass.
+    startReloadEventStream()
+
+    guard let url = yaverResolveAgentURL("/dev/reload-app") else {
+      setStatus("Missing agent URL", tone: .error); inFlight = false; stopReloadEventStream(); return
     }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.httpBody = "{}".data(using: .utf8)
+    // mode:"bundle" → full Hermes recompile + reload broadcast.
+    // mode:"dev" is a Metro-only refresh and skips the rebuild we
+    // need for whatever the AI just committed to land on the device.
+    req.httpBody = #"{"mode":"bundle"}"#.data(using: .utf8)
     URLSession.shared.dataTask(with: req) { _, resp, err in
       DispatchQueue.main.async {
         self.inFlight = false
         if let err = err {
           self.setStatus("Reload failed: \(err.localizedDescription)", tone: .error)
+          self.stopReloadEventStream()
         } else if let http = resp as? HTTPURLResponse, http.statusCode >= 200, http.statusCode < 300 {
-          self.setStatus("Reload requested ✓", tone: .success)
-          UIImpactFeedbackGenerator(style: .light).impactOccurred()
+          // Don't override the streaming status here — events will
+          // overwrite it as the build progresses. Just leave the
+          // last SSE message visible.
+          UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         } else {
           let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
           self.setStatus("Reload failed (HTTP \(code))", tone: .error)
+          self.stopReloadEventStream()
         }
       }
     }.resume()
+  }
+
+  // MARK: - Reload event stream
+
+  /// Subscribe to /dev/events for ~60 seconds and surface each
+  /// "data: {…}" frame inline as a status line. Events come from the
+  /// agent's DevServerManager — same source the Hot Reload tab's
+  /// streaming UI uses.
+  private func startReloadEventStream() {
+    stopReloadEventStream()
+    guard let url = yaverResolveAgentURL("/dev/events") else { return }
+    let reader = YaverSSEReader(
+      onEvent: { [weak self] payload in
+        self?.handleReloadEvent(payload)
+      },
+      onComplete: { [weak self] in
+        // Not necessarily an error — the agent closes the SSE when
+        // its event buffer drains. Don't recolor the status pill.
+        self?.reloadStream = nil
+      }
+    )
+    reader.start(url: url, headers: yaverRelayHeaders())
+    reloadStream = reader
+
+    // Hard timeout — Hermes rebuilds typically land in < 30s on the
+    // dev box, but we cap at 60s so a stuck build doesn't peg the
+    // connection forever. The stream itself will continue past the
+    // pane being dismissed (stopped in dismiss()).
+    let timeout = DispatchWorkItem { [weak self] in
+      self?.stopReloadEventStream()
+    }
+    reloadStreamTimeout = timeout
+    DispatchQueue.main.asyncAfter(deadline: .now() + 60, execute: timeout)
+  }
+
+  private func stopReloadEventStream() {
+    reloadStream?.stop()
+    reloadStream = nil
+    reloadStreamTimeout?.cancel()
+    reloadStreamTimeout = nil
+  }
+
+  private func handleReloadEvent(_ payload: String) {
+    // /dev/events emits JSON objects of varying shapes — log lines,
+    // operation status, build phase events. Pull whatever human-
+    // readable string we can find and use it as the current status.
+    guard let data = payload.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      // Non-JSON payload (rare — agent always emits JSON, but be
+      // tolerant). Surface as-is.
+      let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty { setStatus(trimmed, tone: .progress) }
+      return
+    }
+    // Common shapes the agent emits:
+    //   {kind:"log",  line:"Bundling Hermes bytecode…"}
+    //   {kind:"status", phase:"compile", message:"Compiling…"}
+    //   {kind:"build", message:"…", success:true}
+    //   {type:"reload_complete"}    ← terminal
+    //   {type:"build_failed", error:"…"}
+    let kind = (json["kind"] as? String) ?? (json["type"] as? String) ?? ""
+    let message =
+      (json["message"] as? String) ??
+      (json["line"] as? String) ??
+      (json["phase"] as? String) ??
+      ""
+
+    let lower = kind.lowercased()
+    if lower.contains("complete") || lower.contains("reload_done") || lower == "reload_complete" {
+      setStatus("Reloaded ✓", tone: .success)
+      UINotificationFeedbackGenerator().notificationOccurred(.success)
+      stopReloadEventStream()
+      return
+    }
+    if lower.contains("fail") || lower.contains("error") {
+      let detail = message.isEmpty ? (json["error"] as? String ?? "build failed") : message
+      setStatus("Reload failed: \(detail)", tone: .error)
+      stopReloadEventStream()
+      return
+    }
+    if !message.isEmpty {
+      setStatus(message, tone: .progress)
+    }
   }
 
   @objc private func sendTapped() {
