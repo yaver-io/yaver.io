@@ -35,6 +35,8 @@ final class YaverSettingsPane: NSObject {
   /// pane is still open, instead of waiting half a second of animation
   /// for anything to visibly change.
   func present(in window: UIWindow, applyTrigger: @escaping () -> Void) {
+    // Same stateful guard as the other panes.
+    if cardView != nil { return }
     self.window = window
     self.applyTrigger = applyTrigger
     let pane = buildCard()

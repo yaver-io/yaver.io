@@ -356,7 +356,11 @@ public class AppDelegate: ExpoAppDelegate {
   }
 
   private func showShakeOverlay(in window: UIWindow) {
-    backOverlay?.removeFromSuperview()
+    // Stateful guard: if the overlay is already up (e.g. user
+    // tapped the Y bubble twice in a row), bail. Otherwise we'd
+    // stack a second card on top and the user has to dismiss
+    // both, layered, before they can interact with anything.
+    if backOverlay != nil { return }
     overlayDismissTimer?.invalidate()
 
     let accentColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
@@ -544,7 +548,12 @@ public class AppDelegate: ExpoAppDelegate {
       NSLog("[AppDelegate] mounting floating Y trigger over window bounds=%@",
             NSCoder.string(for: win.bounds))
       YaverFloatingTrigger.shared.mount(in: win) { [weak self] in
-        self?.handleShakeGesture()
+        // Tap on Y bubble goes STRAIGHT to the Feedback pane —
+        // that's the action the user does ~95% of the time. The
+        // shake-overlay menu (Feedback / Agents / Settings / Back)
+        // is still reachable from inside the Feedback pane via the
+        // small links at the top, and via long-press on the Y bubble.
+        self?.handleFeedbackTap()
       }
     } else {
       YaverFloatingTrigger.shared.dismount()

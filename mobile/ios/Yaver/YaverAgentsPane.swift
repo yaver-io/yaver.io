@@ -103,6 +103,9 @@ final class YaverAgentsPane: NSObject {
   // MARK: - Public entry
 
   func present(in window: UIWindow) {
+    // Stateful guard against double-presentation stacking — same fix
+    // as YaverFeedbackPane / showShakeOverlay.
+    if cardView != nil { return }
     let pane = buildCard()
     window.addSubview(pane)
     NSLayoutConstraint.activate([

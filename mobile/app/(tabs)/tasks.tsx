@@ -865,7 +865,10 @@ export default function TasksScreen() {
   // running. Recording is auto-detected per workdir (sim-ios for RN
   // mobile projects, browser for web, etc.). Users who don't want it
   // uncheck the box once and the agent task ignores videoEnabled.
-  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(true);
+  // Default OFF: most tasks don't need a recorded demo video, and
+  // turning it on by default eats device storage + CPU on every run.
+  // User can flip it on per-task when they actually want a demo clip.
+  const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
   // codeMode toggle = "yaver code mode" (a.k.a. wrap mode). When ON,
   // the task is sent with source="mobile-code" so the agent applies
   // the same prompt wrapping the `yaver code` CLI uses (terminal-style,

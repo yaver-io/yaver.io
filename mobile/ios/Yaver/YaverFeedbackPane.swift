@@ -27,6 +27,10 @@ final class YaverFeedbackPane: NSObject {
   /// shows the guest's UI, not the pane's own card.
 
   func present(in window: UIWindow) {
+    // Stateful guard: if the pane is already on screen, bail. Y-bubble
+    // taps + double-shakes used to stack multiple feedback cards
+    // simultaneously and the user had to dismiss them one by one.
+    if cardView != nil { return }
     snapshot = captureSnapshot(of: window)
     let pane = buildCard()
     window.addSubview(pane)
@@ -77,6 +81,14 @@ final class YaverFeedbackPane: NSObject {
   // on the host. Lights up orange + adds a tap recognizer in that
   // state; otherwise stays the muted descriptive text it always was.
   private weak var subtitleLabel: UILabel?
+  // Pill button rendered next to the subtitle ONLY when the preflight
+  // detects a missing/broken runner setup. Hidden in the default
+  // (everything-fine) state so the card chrome stays minimal.
+  private weak var subtitleActionButton: UIButton?
+  // ⓘ "..." in the title row that opens the shake-overlay menu so
+  // the user can route to Agents / Settings / Back-to-Yaver from
+  // inside the Feedback pane (instead of dismissing + shaking again).
+  private weak var menuButton: UIButton?
   private weak var bottomConstraint: NSLayoutConstraint?
   // Card's bottom-anchor constraint. handleKeyboardChange adjusts its
   // constant: 0 when keyboard down, -keyboardHeight when up. The card's
@@ -131,6 +143,19 @@ final class YaverFeedbackPane: NSObject {
     subtitleLabel = subtitle
     let subtitleTap = UITapGestureRecognizer(target: self, action: #selector(handleSubtitleTap))
     subtitle.addGestureRecognizer(subtitleTap)
+
+    // Menu button — sits to the LEFT of the close X. Opens the
+    // shake-overlay (Feedback / Agents / Settings / Back-to-Yaver)
+    // so the user can switch surfaces without having to dismiss
+    // this pane and shake / tap-Y again. Tapping dismisses self
+    // first to avoid two bottom-sheets stacked.
+    let menuBtn = UIButton(type: .system)
+    menuBtn.translatesAutoresizingMaskIntoConstraints = false
+    menuBtn.setImage(UIImage(systemName: "ellipsis.circle", withConfiguration:
+                              UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
+    menuBtn.tintColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1)
+    menuBtn.addTarget(self, action: #selector(handleMenuTap), for: .touchUpInside)
+    self.menuButton = menuBtn
 
     let close = UIButton(type: .system)
     close.translatesAutoresizingMaskIntoConstraints = false
@@ -228,6 +253,7 @@ final class YaverFeedbackPane: NSObject {
     bg.contentView.addSubview(handle)
     bg.contentView.addSubview(title)
     bg.contentView.addSubview(subtitle)
+    bg.contentView.addSubview(menuBtn)
     bg.contentView.addSubview(close)
     bg.contentView.addSubview(content)
 
@@ -263,6 +289,11 @@ final class YaverFeedbackPane: NSObject {
       close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
       close.widthAnchor.constraint(equalToConstant: 32),
       close.heightAnchor.constraint(equalToConstant: 32),
+
+      menuBtn.trailingAnchor.constraint(equalTo: close.leadingAnchor, constant: -4),
+      menuBtn.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+      menuBtn.widthAnchor.constraint(equalToConstant: 32),
+      menuBtn.heightAnchor.constraint(equalToConstant: 32),
 
       content.leadingAnchor.constraint(equalTo: bg.contentView.leadingAnchor, constant: 18),
       content.trailingAnchor.constraint(equalTo: bg.contentView.trailingAnchor, constant: -18),
@@ -317,10 +348,12 @@ final class YaverFeedbackPane: NSObject {
         guard let self = self, let label = self.subtitleLabel else { return }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code < 200 || code >= 300 {
-          // 401 / 403 → likely the same relay-password / session
-          // issue Send would hit. Show the actionable CTA so user
-          // can fix it before composing.
-          self.markSubtitleNoAgent(label, msg: "⚠ can't reach agent · tap to set up Agents")
+          // Preflight failed (likely stale relay password / mobile
+          // session out of sync — `yaver primary status` from the
+          // host probably still shows the runner authed). Stay silent
+          // here to avoid false-positive "no agent" warnings; the
+          // actual Send error (humanized via humanizeRunnerAuthFailure)
+          // is the right place for that signal.
           return
         }
         guard
@@ -330,7 +363,7 @@ final class YaverFeedbackPane: NSObject {
         else { return }
         let anyAuthed = runners.contains { ($0["authConfigured"] as? Bool) == true }
         if !anyAuthed {
-          self.markSubtitleNoAgent(label, msg: "⚠ no coding agent signed in · tap to open Agents")
+          self.markSubtitleNoAgent(label, msg: "⚠ no coding agent signed in")
         }
       }
     }.resume()
@@ -340,6 +373,28 @@ final class YaverFeedbackPane: NSObject {
     label.text = msg
     label.textColor = UIColor(red: 1.0, green: 0.78, blue: 0.4, alpha: 1.0)
     label.tag = 9001 // sentinel for handleSubtitleTap to know "this is the CTA state"
+  }
+
+  @objc private func handleMenuTap() {
+    // Dismiss self + ask AppDelegate to show the shake-overlay so
+    // the user can switch surfaces (Agents / Settings / Back-to-Yaver)
+    // without dropping out and shaking again.
+    guard let win = self.window else { return }
+    let pane = self.cardView
+    UIView.animate(withDuration: 0.18, animations: {
+      pane?.transform = CGAffineTransform(translationX: 0, y: 600)
+      pane?.alpha = 0
+    }, completion: { _ in
+      pane?.removeFromSuperview()
+      self.cardView = nil
+      // Reach back to AppDelegate via UIApplication.shared.delegate.
+      if let app = UIApplication.shared.delegate as? AppDelegate {
+        // handleShakeGesture re-uses the existing showShakeOverlay
+        // path, which is now stateful (no double-stack risk).
+        _ = win // keep referenced
+        app.handleShakeGesture()
+      }
+    })
   }
 
   @objc private func handleSubtitleTap() {
@@ -459,14 +514,24 @@ final class YaverFeedbackPane: NSObject {
       ])
     }
 
-    let payload: [String: Any] = [
+    // Don't hardcode runner: "claude". User may have picked codex /
+    // opencode as the device's primary runner in DeviceDetailsModal,
+    // and forcing claude here makes the agent ignore that pick. Read
+    // the cached preferred runner from UserDefaults (populated by the
+    // mobile JS side when the user picks one) and only include the
+    // field when we have a value — otherwise let the agent fall back
+    // to its own configured default for the device.
+    var payload: [String: Any] = [
       "title": String(prompt.prefix(80)),
       "description": prompt,
       "userPrompt": prompt,
-      "runner": "claude",
       "source": "mobile-feedback",
       "images": images,
     ]
+    let preferredRunner = UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? ""
+    if !preferredRunner.isEmpty {
+      payload["runner"] = preferredRunner
+    }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")

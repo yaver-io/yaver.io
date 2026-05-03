@@ -105,10 +105,14 @@ final class YaverFloatingTrigger: NSObject {
 
     let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
     let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
+    let press = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+    press.minimumPressDuration = 0.5
     pan.delegate = self
     tap.delegate = self
+    press.delegate = self
     bg.addGestureRecognizer(pan)
     bg.addGestureRecognizer(tap)
+    bg.addGestureRecognizer(press)
 
     // Subtle entrance animation
     bg.alpha = 0
@@ -166,6 +170,32 @@ final class YaverFloatingTrigger: NSObject {
   @objc private func handleTap() {
     UIImpactFeedbackGenerator(style: .light).impactOccurred()
     onTap?()
+  }
+
+  // Long-press surfaces an action sheet to remove the bubble — sets
+  // UserDefaults("yaverFeedbackTrigger") back to "shake" and dismounts
+  // so the user can opt out of the floating trigger without diving
+  // into Settings → Floating Y → Shake to open.
+  @objc private func handleLongPress(_ gr: UILongPressGestureRecognizer) {
+    guard gr.state == .began else { return }
+    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+    guard let win = overlayWindow,
+          let root = win.rootViewController else { return }
+    let alert = UIAlertController(
+      title: "Floating Y button",
+      message: "Switch back to shake-to-open and remove the bubble?",
+      preferredStyle: .actionSheet)
+    alert.addAction(UIAlertAction(title: "Switch to shake mode", style: .destructive) { _ in
+      UserDefaults.standard.set("shake", forKey: "yaverFeedbackTrigger")
+      self.dismount()
+    })
+    alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+    // iPad action-sheet anchor: present from the bubble itself.
+    if let pop = alert.popoverPresentationController, let b = bubble {
+      pop.sourceView = b
+      pop.sourceRect = b.bounds
+    }
+    root.present(alert, animated: true)
   }
 
   // MARK: - Persistence
