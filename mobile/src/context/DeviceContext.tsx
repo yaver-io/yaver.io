@@ -287,6 +287,39 @@ function dedupeRelayServers(servers: RelayServer[]): RelayServer[] {
   return out.sort((a, b) => a.priority - b.priority);
 }
 
+/// Mirror the relay password the JS client just learned about into the
+/// iOS UserDefaults that native swift panes (YaverFeedbackPane,
+/// YaverAgentsPane) read via `yaverRelayHeaders()`. The native code
+/// has no way to talk to /config or /settings on its own, so without
+/// this push their /tasks + /runner-auth requests would land at the
+/// relay without an X-Relay-Password header and 401 with
+/// "Relay password mismatch".
+///
+/// Picks the first non-empty password in priority order:
+///   1. quicClient.activeRelayPasswordValue (the in-flight value the
+///      JS task path is actively using — most authoritative)
+///   2. any per-server password attached to the resolved server list
+///   3. account-level password from /settings (only the "user
+///      customised relay" branch passes this)
+function mirrorRelayPasswordToNative(
+  servers: RelayServer[],
+  accountRelayPassword?: string,
+): void {
+  try {
+    const { NativeModules } = require("react-native");
+    const fromQuic = quicClient.activeRelayPasswordValue;
+    const fromServer = servers.find((r) => r.password)?.password;
+    const relayPw =
+      (fromQuic && fromQuic.trim()) ||
+      (fromServer && fromServer.trim()) ||
+      (accountRelayPassword && accountRelayPassword.trim()) ||
+      "";
+    NativeModules.YaverInfo?.setInheritedRelayPassword?.(relayPw);
+  } catch {
+    // Native module unavailable — non-iOS / unit-test path.
+  }
+}
+
 function resolveRelayServers(
   platformServers: RelayServer[],
   accountRelayUrl?: string,
@@ -1235,6 +1268,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const customRelays: RelayServer[] = JSON.parse(customRaw);
         if (customRelays.length > 0) {
           quicClient.setRelayServers(customRelays);
+          mirrorRelayPasswordToNative(customRelays);
           console.log("[DeviceContext] Using", customRelays.length, "custom relay server(s)");
           return customRelays.length;
         }
@@ -1261,34 +1295,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             // Persist the resolved fallback set so the app can reconnect offline too.
             await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
-            // Mirror the relay password into UserDefaults so native swift
-            // panes (YaverFeedbackPane, YaverAgentsPane) can attach
-            // X-Relay-Password to relay-routed requests. Without this,
-            // native /tasks + /runner-auth POSTs hit the relay without
-            // the password and either 401 ("invalid relay password")
-            // or 404 ("subdomain 'public' not registered") when the
-            // bundle URL also lost its /d/<deviceId> prefix.
-            //
-            // Use the ACTIVE relay's password (the same value the JS
-            // task path's authHeaders already ships with), not
-            // settings.relayPassword — that field is empty for
-            // accounts that haven't customised the relay, and the
-            // server-side default password lives on the per-relay
-            // entry in resolved (or platform-config). Falling back to
-            // settings.relayPassword preserves the prior behaviour for
-            // accounts that DO have a customised value.
-            try {
-              const { NativeModules } = require("react-native");
-              const activeRelay = resolved.find((r) => r.password);
-              const relayPw =
-                quicClient.activeRelayPasswordValue ||
-                activeRelay?.password ||
-                settings.relayPassword ||
-                "";
-              NativeModules.YaverInfo?.setInheritedRelayPassword?.(relayPw);
-            } catch {
-              // Native module unavailable — non-iOS / unit test path.
-            }
+            mirrorRelayPasswordToNative(resolved, settings.relayPassword);
             console.log("[DeviceContext] Loaded", resolved.length, "relay server(s) from Convex user settings");
             return resolved.length;
           }
@@ -1297,8 +1304,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 3. No account-level relay — fall back to Convex platform config
+      // 3. No account-level relay — fall back to Convex platform config.
+      // mirrorRelayPasswordToNative runs here too so accounts that use
+      // the platform default relay (the common case — settings.relayUrl
+      // is empty) still get an X-Relay-Password value into native
+      // UserDefaults. Without this, every native pane request 401'd
+      // with "invalid relay password" / "Relay password mismatch"
+      // because the password lived only on the per-server entry
+      // platformServers carries from /config.
       quicClient.setRelayServers(platformServers);
+      mirrorRelayPasswordToNative(platformServers);
       console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
       return platformServers.length;
     } catch {

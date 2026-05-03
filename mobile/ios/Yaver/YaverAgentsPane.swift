@@ -29,7 +29,14 @@ func humanizeRunnerAuthFailure(code: Int, body: String?, networkErr: Error?) -> 
   }
 
   if normalizedBody.contains("relay password") || normalizedBody.contains("invalid relay") {
-    return "Relay password mismatch · re-auth Yaver"
+    // Don't suggest "re-auth Yaver" — the user's Yaver session is
+    // almost always fine when this fires (the JS task path is using
+    // the same relay successfully). The real cause is the native
+    // pane not having the in-flight relay password mirrored into
+    // UserDefaults yet. Tell them to reload the app instead, which
+    // re-runs DeviceContext.fetchRelayServers and pushes the
+    // password the JS task path is already using.
+    return "Relay password syncing · reload the app"
   }
   if normalizedBody.contains("expired") {
     return "Session expired · sign in again"
