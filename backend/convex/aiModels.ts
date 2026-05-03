@@ -82,6 +82,7 @@ export const list = query({
 export const seed = mutation({
   args: {},
   handler: async (ctx) => {
+    // Upsert every model in the predefined list.
     for (const model of PREDEFINED_MODELS) {
       const existing = await ctx.db
         .query("aiModels")
@@ -93,6 +94,19 @@ export const seed = mutation({
         await ctx.db.patch(existing._id, model);
       } else {
         await ctx.db.insert("aiModels", model);
+      }
+    }
+    // Drop any rows that the predefined list no longer contains —
+    // otherwise renaming or replacing a model (e.g. codex's o3-mini →
+    // gpt-5-codex) leaves the obsolete row in the table forever and
+    // /agent/runners keeps offering the broken pick.
+    const keep = new Set(
+      PREDEFINED_MODELS.map((m) => `${m.runnerId}::${m.modelId}`)
+    );
+    const all = await ctx.db.query("aiModels").collect();
+    for (const row of all) {
+      if (!keep.has(`${row.runnerId}::${row.modelId}`)) {
+        await ctx.db.delete(row._id);
       }
     }
   },
