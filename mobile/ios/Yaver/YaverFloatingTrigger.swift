@@ -124,26 +124,21 @@ final class YaverFloatingTrigger: NSObject {
     }
   }
 
-  // hideTemporarily: keep the overlay window mounted but make the
-  // bubble invisible and non-interactive while another pane (Feedback /
-  // Agents / Settings) is on screen. Without this the bubble sits on
-  // top of the pane and steals taps in the area behind it.
+  // hideTemporarily: hide the entire overlay window while another
+  // pane (Feedback / Agents / Settings) is on screen. The previous
+  // alpha-only fade left the bubble's view in the hit-test path
+  // (its frame still contained the touch + alpha > 0.01 during the
+  // fade), so even with isUserInteractionEnabled = false the
+  // overlay window swallowed taps in the area behind the bubble.
+  // UIWindow.isHidden = true takes the whole window out of UIKit's
+  // hit-test entirely — guaranteed pass-through to the host window.
   func hideTemporarily() {
-    guard let b = bubble else { return }
-    UIView.animate(withDuration: 0.15) {
-      b.alpha = 0
-    }
-    b.isUserInteractionEnabled = false
+    overlayWindow?.isHidden = true
   }
 
-  // showAgain: restore visibility + interactivity after the temporary
-  // hide. Called by the pane's dismiss-completion.
+  // showAgain: bring the overlay window back when the pane closes.
   func showAgain() {
-    guard let b = bubble else { return }
-    b.isUserInteractionEnabled = true
-    UIView.animate(withDuration: 0.18) {
-      b.alpha = 1.0
-    }
+    overlayWindow?.isHidden = false
   }
 
   func dismount() {
