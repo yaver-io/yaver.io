@@ -188,7 +188,7 @@ final class YaverFeedbackPane: NSObject {
     bg.contentView.addSubview(close)
     bg.contentView.addSubview(content)
 
-    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 280)
+    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: 560)
     bottomConstraint = bottomCon
 
     NSLayoutConstraint.activate([
@@ -213,8 +213,9 @@ final class YaverFeedbackPane: NSObject {
       content.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 16),
       content.bottomAnchor.constraint(lessThanOrEqualTo: bg.contentView.bottomAnchor, constant: -28),
 
-      // Prompt card sizing
-      promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 96),
+      // Prompt card sizing — generous height so the user can see several
+      // lines of their feedback at a glance without scrolling.
+      promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
       prompt.leadingAnchor.constraint(equalTo: promptCard.leadingAnchor, constant: 12),
       prompt.trailingAnchor.constraint(equalTo: promptCard.trailingAnchor, constant: -12),
       prompt.topAnchor.constraint(equalTo: promptCard.topAnchor, constant: 10),

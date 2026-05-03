@@ -124,7 +124,7 @@ object YaverFeedbackPane {
                  dp(ctx, 12f).toInt(), dp(ctx, 10f).toInt())
       val lp = LinearLayout.LayoutParams(
           LinearLayout.LayoutParams.MATCH_PARENT,
-          dp(ctx, 110f).toInt()
+          dp(ctx, 220f).toInt()
       )
       layoutParams = lp
     }
