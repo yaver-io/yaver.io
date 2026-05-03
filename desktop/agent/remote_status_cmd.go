@@ -437,11 +437,31 @@ func renderAuthSummary(report *remoteAgentStatusReport) {
 	// flows (`yaver primary auth claude` / `yaver primary auth codex`).
 	// Other runners (aider / opencode / ollama) are visible in the
 	// detailed "runners:" table below.
-	for _, ridLabel := range [][2]string{{"claude-code", "claude"}, {"codex", "codex"}} {
-		runner := runnersByID[ridLabel[0]]
-		label := ridLabel[1]
+	//
+	// Agents can return the Claude Code row under either id "claude"
+	// (current shape; collectRunnerAuthStatusRows + /agent/runners both
+	// emit this) or "claude-code" (older agent versions). Look up both
+	// so a stale agent still renders correctly — without this, the
+	// auth: block printed "claude: ✗ not installed" against a remote
+	// that DID have claude installed because the lookup pinned to
+	// claude-code only.
+	type lookup struct {
+		ids   []string
+		label string
+	}
+	for _, l := range []lookup{
+		{ids: []string{"claude", "claude-code"}, label: "claude"},
+		{ids: []string{"codex"}, label: "codex"},
+	} {
+		var runner *remoteRunnerSummary
+		for _, id := range l.ids {
+			if r, ok := runnersByID[id]; ok && r != nil {
+				runner = r
+				break
+			}
+		}
 		state := authStateStringForRunner(runner, report)
-		fmt.Printf("    %-13s %s\n", label+":", state)
+		fmt.Printf("    %-13s %s\n", l.label+":", state)
 	}
 }
 
