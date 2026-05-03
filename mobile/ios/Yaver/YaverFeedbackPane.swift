@@ -408,6 +408,16 @@ final class YaverFeedbackPane: NSObject {
     }
   }
 
+  // handleKeyboardChange used to translate the card up by the full
+  // keyboard height. That worked when the card was 280pt tall, but after
+  // the 2x bump (now ≥560pt) the card was getting pushed above the
+  // status bar — the title and close X disappeared off the top of the
+  // screen and the user could not dismiss the modal. Mirroring the
+  // KeyboardAvoidingView behaviour from the Yaver Tasks composer:
+  // clamp the upward translation so the card top stays at or below the
+  // safe-area top with a small breathing margin. The internal UITextView
+  // already scrolls, so any vertical shortage is absorbed by the input
+  // area shrinking visually rather than the whole card disappearing.
   @objc private func handleKeyboardChange(_ note: Notification) {
     guard let window = self.window,
           let card = cardView,
@@ -415,9 +425,21 @@ final class YaverFeedbackPane: NSObject {
           let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
     else { return }
     let intersection = window.bounds.intersection(window.convert(endFrame, from: nil))
-    let inset = max(0, intersection.height)
-    UIView.animate(withDuration: 0.25) {
-      card.transform = CGAffineTransform(translationX: 0, y: -inset)
+    let keyboardInset = max(0, intersection.height)
+
+    // How far up could we move the card before its top hits the safe
+    // area top? The card is constrained to the window's bottomAnchor,
+    // so its untransformed top is window.height - card.height. Use that
+    // (NOT card.frame.minY which returns the post-transform position
+    // and would compound across repeat keyboard events).
+    let safeTop = window.safeAreaInsets.top + 12
+    let untransformedMinY = window.bounds.height - card.bounds.height
+    let maxRise = max(0, untransformedMinY - safeTop)
+    let rise = min(keyboardInset, maxRise)
+
+    let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+    UIView.animate(withDuration: duration) {
+      card.transform = CGAffineTransform(translationX: 0, y: -rise)
     }
   }
 }

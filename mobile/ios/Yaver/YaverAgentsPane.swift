@@ -2,6 +2,60 @@ import Foundation
 import UIKit
 import SafariServices
 
+// humanizeRunnerAuthFailure converts an /runner-auth/status request error
+// into a single short user-facing line. Avoid leaking raw JSON bodies
+// (`{"error":"invalid relay password"}`), HTTP status codes by themselves,
+// or NSURLError prefixes — none of them tell the user what they should
+// actually do next. The mapping is deliberately small: one phrase per
+// failure class with a hint on the recovery action.
+func humanizeRunnerAuthFailure(code: Int, body: String?, networkErr: Error?) -> String {
+  // Pull a normalized error message out of the body so we can spot
+  // common server-side reasons (relay password mismatch, missing token,
+  // etc.) without showing the raw JSON to the user.
+  let normalizedBody: String = {
+    guard let body = body?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else {
+      return ""
+    }
+    if let data = body.data(using: .utf8),
+       let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+      if let s = parsed["error"] as? String { return s.lowercased() }
+      if let s = parsed["message"] as? String { return s.lowercased() }
+    }
+    return body.lowercased()
+  }()
+
+  if networkErr != nil {
+    return "Agent unreachable · check the device is online"
+  }
+
+  if normalizedBody.contains("relay password") || normalizedBody.contains("invalid relay") {
+    return "Relay password mismatch · re-authenticate Yaver on this device"
+  }
+  if normalizedBody.contains("expired") {
+    return "Session expired · sign in again"
+  }
+  if normalizedBody.contains("not authenticated") || normalizedBody.contains("missing or invalid auth") || normalizedBody.contains("invalid token") {
+    return "Not authenticated · tap to sign in"
+  }
+
+  switch code {
+  case 401, 403:
+    return "Not authenticated · tap to sign in"
+  case 404:
+    return "Agent endpoint missing · update the host's Yaver"
+  case 408, 504:
+    return "Agent timed out · try again"
+  case 429:
+    return "Rate limited · wait a moment"
+  case 500...599:
+    return "Agent error · try again"
+  case 0:
+    return "Agent unreachable · check the device is online"
+  default:
+    return "Couldn't reach agent (HTTP \(code)) · tap to retry"
+  }
+}
+
 /// Native coding-agents pane — second shake-overlay action ("Agents").
 /// Shows the three first-class runners (Claude Code / Codex / OpenCode)
 /// with auth status read from /runner-auth/status, and routes taps to:
@@ -263,10 +317,12 @@ final class YaverAgentsPane: NSObject {
     req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
     URLSession.shared.dataTask(with: req) { data, resp, err in
       DispatchQueue.main.async {
-        // Surface the actual failure so we can debug — was just "status
-        // check failed" before, which hid auth/URL/parse issues.
+        // Show humanized status text instead of raw JSON / NSURLError
+        // prefixes — `HTTP 401: {"error":"invalid relay password"}` is
+        // unhelpful UI; "Not authenticated · tap to sign in" is what the
+        // user actually needs to see.
         if let err = err {
-          let msg = "status: \(err.localizedDescription)"
+          let msg = humanizeRunnerAuthFailure(code: 0, body: nil, networkErr: err)
           self.setRowStatus(runner: "claude", text: msg, tone: .error)
           self.setRowStatus(runner: "codex", text: msg, tone: .error)
           self.setRowStatus(runner: "opencode", text: msg, tone: .error)
@@ -274,14 +330,11 @@ final class YaverAgentsPane: NSObject {
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
         if code < 200 || code >= 300 {
-          var detail = "HTTP \(code)"
-          if let data = data, let body = String(data: data, encoding: .utf8) {
-            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { detail = "HTTP \(code): \(trimmed.prefix(160))" }
-          }
-          self.setRowStatus(runner: "claude", text: detail, tone: .error)
-          self.setRowStatus(runner: "codex", text: detail, tone: .error)
-          self.setRowStatus(runner: "opencode", text: detail, tone: .error)
+          let body = data.flatMap { String(data: $0, encoding: .utf8) }
+          let msg = humanizeRunnerAuthFailure(code: code, body: body, networkErr: nil)
+          self.setRowStatus(runner: "claude", text: msg, tone: .error)
+          self.setRowStatus(runner: "codex", text: msg, tone: .error)
+          self.setRowStatus(runner: "opencode", text: msg, tone: .error)
           return
         }
         guard
@@ -289,9 +342,10 @@ final class YaverAgentsPane: NSObject {
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let runners = json["runners"] as? [[String: Any]]
         else {
-          self.setRowStatus(runner: "claude", text: "could not parse status response", tone: .error)
-          self.setRowStatus(runner: "codex", text: "could not parse status response", tone: .error)
-          self.setRowStatus(runner: "opencode", text: "could not parse status response", tone: .error)
+          let msg = "Agent returned unexpected data · tap to retry"
+          self.setRowStatus(runner: "claude", text: msg, tone: .error)
+          self.setRowStatus(runner: "codex", text: msg, tone: .error)
+          self.setRowStatus(runner: "opencode", text: msg, tone: .error)
           return
         }
         // Initialize all rows to "not installed" then apply observed runners,

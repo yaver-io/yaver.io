@@ -36,6 +36,46 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.Executors as Exec2
 import java.util.concurrent.TimeUnit
 
+// humanizeRunnerAuthFailure mirrors iOS YaverAgentsPane.swift's helper.
+// Maps an /runner-auth/status HTTP failure (status code + raw body) into
+// a single user-facing line — never leaks `{"error":"…"}` JSON or naked
+// HTTP codes. Same phrase set as iOS so cross-platform users see the
+// same vocabulary.
+internal fun humanizeRunnerAuthFailure(code: Int, body: String?): String {
+  val normalized = run {
+    val raw = body?.trim().orEmpty()
+    if (raw.isEmpty()) return@run ""
+    val parsed = try { JSONObject(raw) } catch (_: Exception) { null }
+    if (parsed != null) {
+      val msg = parsed.optString("error", parsed.optString("message", ""))
+      if (msg.isNotEmpty()) return@run msg.lowercase()
+    }
+    raw.lowercase()
+  }
+
+  if (normalized.contains("relay password") || normalized.contains("invalid relay")) {
+    return "Relay password mismatch · re-authenticate Yaver on this device"
+  }
+  if (normalized.contains("expired")) {
+    return "Session expired · sign in again"
+  }
+  if (normalized.contains("not authenticated") ||
+      normalized.contains("missing or invalid auth") ||
+      normalized.contains("invalid token")) {
+    return "Not authenticated · tap to sign in"
+  }
+
+  return when (code) {
+    401, 403 -> "Not authenticated · tap to sign in"
+    404 -> "Agent endpoint missing · update the host's Yaver"
+    408, 504 -> "Agent timed out · try again"
+    429 -> "Rate limited · wait a moment"
+    in 500..599 -> "Agent error · try again"
+    0 -> "Agent unreachable · check the device is online"
+    else -> "Couldn't reach agent (HTTP $code) · tap to retry"
+  }
+}
+
 object YaverAgentsPane {
 
   private val main = Handler(Looper.getMainLooper())
@@ -185,11 +225,13 @@ object YaverAgentsPane {
       val resp = httpGet("$base/runner-auth/status", auth)
       main.post {
         if (!resp.ok) {
-          setRowAll("HTTP ${resp.code}: ${resp.bodyTrim(160)}", Tone.Error); return@post
+          // Show a humanized status line instead of the raw JSON body —
+          // `HTTP 401: {"error":"invalid relay password"}` is unhelpful UI.
+          setRowAll(humanizeRunnerAuthFailure(resp.code, resp.body), Tone.Error); return@post
         }
         val obj = try { JSONObject(resp.body) } catch (e: Exception) { null }
         val arr = obj?.optJSONArray("runners")
-        if (arr == null) { setRowAll("could not parse status response", Tone.Error); return@post }
+        if (arr == null) { setRowAll("Agent returned unexpected data · tap to retry", Tone.Error); return@post }
         // Initialize all to "not installed", then overlay observed.
         listOf("claude", "codex", "opencode").forEach {
           setRow(it, "not installed on agent", Tone.Warning)
