@@ -217,6 +217,32 @@ func (s *HTTPServer) maybePullBeforeHotReloadBuild(workDir string) {
 	if s == nil || strings.TrimSpace(workDir) == "" {
 		return
 	}
+
+	// Fast path: synchronous decision tree (~50 ms) covers the common
+	// cases without spawning a coding-agent task. See devserver_pull_fast.go
+	// for the rules table. Falls through to the agent-delegated flow
+	// only when the working state is genuinely ambiguous (merge in
+	// progress, ahead/behind compare failed).
+	hasAgent := hasActiveCodingAgent(s, workDir)
+	autoPublish := pullAutoPublishEnabled()
+	decision := decidePullBeforeBuild(workDir, hasAgent, autoPublish)
+	log.Printf("[pre-build-pull] decision=%s reason=%s hasAgent=%v autoPublish=%v",
+		decision.Action, decision.Reason, hasAgent, autoPublish)
+
+	if decision.Action != pullActionDelegate {
+		summary, err := executePullDecision(workDir, decision)
+		if err != nil {
+			log.Printf("[pre-build-pull] %s (continuing build with current state)", summary)
+		} else {
+			log.Printf("[pre-build-pull] %s", summary)
+		}
+		if s.devServerMgr != nil && summary != "" {
+			s.devServerMgr.EmitLog("[pre-build-pull] " + summary)
+		}
+		return
+	}
+
+	// Delegate path: ambiguous state — let the coding agent decide.
 	attempt := s.maybePullWithCodingAgentBeforeBuild(workDir)
 	log.Printf("[dev] %s", attempt.Summary)
 	if s.devServerMgr != nil && strings.TrimSpace(attempt.Summary) != "" {
