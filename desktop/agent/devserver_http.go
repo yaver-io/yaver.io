@@ -94,6 +94,26 @@ type nativeBuildStatus struct {
 	HermesVersion int    `json:"hermesVersion,omitempty"`
 	ConsumerKey   string `json:"consumerKey,omitempty"`
 	ConsumerLabel string `json:"consumerLabel,omitempty"`
+
+	// Git fingerprint captured AFTER the last successful Hermes bundle
+	// build. Used by build_cache_git.go::checkGitStateBuildCache to
+	// short-circuit POST /dev/build-native when nothing the bundle
+	// would actually pick up has changed since the cached build.
+	//
+	// LastBuiltGitSHA: HEAD SHA at build time. Empty if not in a git
+	// repo or git was unreachable. Empty disables git-state caching.
+	//
+	// LastBuiltSourceTreeSHA: sha256 over the dirty bundle-relevant
+	// files at build time, "" when the working tree was clean. We
+	// re-derive the same hash on the next request and compare; mismatch
+	// means uncommitted changes touched something we'd ship.
+	//
+	// LastBuiltGitHasDirty: convenience flag so we can tell "tree was
+	// clean then" apart from "tree had no bundle-relevant dirt". Without
+	// it we'd treat "" as ambiguous on the read side.
+	LastBuiltGitSHA        string `json:"lastBuiltGitSha,omitempty"`
+	LastBuiltSourceTreeSHA string `json:"lastBuiltSourceTreeSha,omitempty"`
+	LastBuiltGitHasDirty   bool   `json:"lastBuiltGitHasDirty,omitempty"`
 }
 
 type nativeBuildConsumerContract struct {
