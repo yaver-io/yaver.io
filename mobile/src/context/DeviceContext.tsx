@@ -2020,16 +2020,76 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         appLog("warn", `WebBrowser open failed for ${device.name}, falling back to Linking: ${err instanceof Error ? err.message : String(err)}`);
         Linking.openURL(deviceCode.deviceCodeUrl).catch(() => {});
       }
-      // The agent is polling Convex for the new token. By the time the
-      // user dismisses the sheet they may already be authed, or the
-      // agent may need a few more seconds. Two refreshes catch both.
-      setTimeout(() => refreshDevices(), 1000);
-      setTimeout(() => refreshDevices(), 5000);
+      // Background-poll /auth/recover/session until the agent reports
+      // recovered / expired / failed so the UI can flip the banner the
+      // moment Convex confirms the new token, instead of relying on two
+      // blind 1s/5s refreshes that often miss the heartbeat round-trip.
+      // The endpoint is rate-limit-free (the GET handler doesn't hit
+      // recoveryLimiter), so a 2s cadence is fine.
+      if (deviceCode.recoveryId && deviceCode.waitToken) {
+        const recoveryId = deviceCode.recoveryId;
+        const waitToken = deviceCode.waitToken;
+        const pollDeadline = Date.now() + 12 * 60 * 1000; // 12 min — device codes expire ≤10m
+        let consecutiveFailures = 0;
+        const tick = async () => {
+          if (Date.now() > pollDeadline) {
+            appLog("warn", `Device-code poll for ${device.name} timed out — falling back to refresh`);
+            refreshDevices().catch(() => {});
+            return;
+          }
+          const status = await quicClient.recoverSessionStatus(recoveryId, waitToken);
+          if (!status) {
+            // No transport available right now (agent may be flapping
+            // mid-recovery). Back off and try again.
+            consecutiveFailures += 1;
+            if (consecutiveFailures > 6) {
+              appLog("warn", `Device-code poll for ${device.name}: 6 transport failures, giving up`);
+              refreshDevices().catch(() => {});
+              return;
+            }
+            setTimeout(tick, 4000);
+            return;
+          }
+          if (!status.ok) {
+            // Agent answered but didn't recognize the session (404 etc.)
+            // — no point retrying, the session is gone.
+            appLog("warn", `Device-code poll for ${device.name}: ${status.error || "session lookup failed"}`);
+            refreshDevices().catch(() => {});
+            return;
+          }
+          consecutiveFailures = 0;
+          switch (status.state) {
+            case "recovered":
+              appLog("info", `${device.name}: device-code recovery succeeded`);
+              quicClient.agentAuthExpired = false;
+              setAgentAuthExpired(false);
+              clearDeviceUnreachable(device.id);
+              refreshDevices().catch(() => {});
+              setTimeout(() => refreshDevices().catch(() => {}), 3000);
+              return;
+            case "expired":
+            case "failed":
+              appLog("warn", `${device.name}: device-code recovery ended in ${status.state}${status.error ? ` (${status.error})` : ""}`);
+              refreshDevices().catch(() => {});
+              return;
+            default:
+              setTimeout(tick, 2000);
+          }
+        };
+        // First tick fires fast — the user may have completed sign-in
+        // on the same phone, race the WebBrowser dismissal.
+        setTimeout(tick, 1500);
+      } else {
+        // Older agent that didn't return recoveryId/waitToken — fall
+        // back to the legacy double-refresh.
+        setTimeout(() => refreshDevices().catch(() => {}), 1000);
+        setTimeout(() => refreshDevices().catch(() => {}), 5000);
+      }
     } else {
       appLog("warn", `Device-code recovery did not start for ${device.name}: ${deviceCode?.error || "unknown error"}`);
     }
     return deviceCode;
-  }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable, recoverBootstrapDevice]);
+  }, [token, user?.id, activeDevice, selectDevice, refreshDevices, clearDeviceUnreachable, recoverBootstrapDevice, setAgentAuthExpired]);
 
   // Auth-expired recovery: the agent is still reachable, but its own
   // Convex session is stale. Use the PHONE'S valid bearer token to

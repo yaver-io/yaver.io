@@ -2032,6 +2032,24 @@ export default function TasksScreen() {
                 <Text style={{ fontSize: 12, color: "#818cf8", fontWeight: "600" }}>Retry</Text>
               </Pressable>
             )}
+            {/* Re-auth shortcut for the "agent gone silent / bootstrap"
+                case. Tap → recoverDeviceAuth → /auth/recover device-code →
+                in-app Safari sheet. Only shown when Retry alone won't fix
+                it: Convex says offline OR the agent already told us
+                needsAuth. Skipped while a reconnect attempt is in flight
+                so a single tap doesn't queue both flows. */}
+            {!showReconnectProgress && showRetryButton && activeDevice
+              && (activeDevice.needsAuth || !activeDevice.online) && (
+              <Pressable
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#a78bfa33" }}
+                onPress={() => {
+                  if (!activeDevice) return;
+                  recoverDeviceAuth(activeDevice).catch(() => {});
+                }}
+              >
+                <Text style={{ fontSize: 12, color: "#c4b5fd", fontWeight: "600" }}>Re-auth</Text>
+              </Pressable>
+            )}
             {(showReconnectProgress || showRetryButton) && (
               <Pressable
                 style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#64748b33" }}

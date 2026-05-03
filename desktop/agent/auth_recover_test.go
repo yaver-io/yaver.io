@@ -596,3 +596,128 @@ func TestAuthRecoverPairRotatesWhenActiveExpired(t *testing.T) {
 		t.Fatalf("rotation produced identical code — generatePairCode collision or no rotation")
 	}
 }
+
+// TestAuthRecoverDeviceCodeSessionRoundTrip walks the full
+// device-code recovery exchange that the mobile app uses:
+//
+//   1. POST /auth/recover {mode:"device-code"} → returns recovery_id +
+//      wait_token alongside the deviceCodeUrl.
+//   2. GET /auth/recover/session?id=&wait_token= → mobile polls this
+//      while the user signs in to surface awaiting / authorized /
+//      expired. Must accept the credentials issued in step 1 and
+//      return the session payload.
+//   3. updateRecoverySession flips state to "recovered" (simulates
+//      completeDeviceCodeInBackground) → poll surfaces the new state.
+//   4. Wrong wait_token → 404, confirms the wait_token is the gate.
+func TestAuthRecoverDeviceCodeSessionRoundTrip(t *testing.T) {
+	recoveryLimiter.reset()
+	oldVerify := verifyHostTokenFn
+	oldRequest := requestDeviceCodeFn
+	verifyHostTokenFn = func(bearer string) (bool, error) {
+		return bearer == "owner-token", nil
+	}
+	requestDeviceCodeFn = func(convexURL string) (*deviceCodeResponse, error) {
+		return &deviceCodeResponse{
+			DeviceCode: "dev-code",
+			UserCode:   "USER-CODE-1234",
+			ExpiresAt:  time.Now().Add(10 * time.Minute).UnixMilli(),
+		}, nil
+	}
+	defer func() {
+		verifyHostTokenFn = oldVerify
+		requestDeviceCodeFn = oldRequest
+	}()
+
+	startReq := httptest.NewRequest(http.MethodPost, "/auth/recover",
+		bytes.NewReader([]byte(`{"mode":"device-code"}`)))
+	startReq.RemoteAddr = "192.168.1.55:40000"
+	startReq.Header.Set("Authorization", "Bearer owner-token")
+	startRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecover(startRec, startReq)
+	if startRec.Code != http.StatusOK {
+		t.Fatalf("device-code POST expected 200, got %d: %s", startRec.Code, startRec.Body.String())
+	}
+
+	var startResp struct {
+		OK         bool   `json:"ok"`
+		Mode       string `json:"mode"`
+		RecoveryID string `json:"recovery_id"`
+		WaitToken  string `json:"wait_token"`
+		UserCode   string `json:"userCode"`
+	}
+	if err := json.Unmarshal(startRec.Body.Bytes(), &startResp); err != nil {
+		t.Fatalf("decode device-code response: %v", err)
+	}
+	if !startResp.OK || startResp.Mode != "device-code" || startResp.RecoveryID == "" || startResp.WaitToken == "" {
+		t.Fatalf("unexpected device-code response: %+v", startResp)
+	}
+
+	pollURL := "/auth/recover/session?id=" + startResp.RecoveryID +
+		"&wait_token=" + startResp.WaitToken
+	pollReq := httptest.NewRequest(http.MethodGet, pollURL, nil)
+	pollRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecoverSession(pollRec, pollReq)
+	if pollRec.Code != http.StatusOK {
+		t.Fatalf("session GET expected 200, got %d: %s", pollRec.Code, pollRec.Body.String())
+	}
+	var pollResp struct {
+		OK         bool   `json:"ok"`
+		Mode       string `json:"mode"`
+		State      string `json:"state"`
+		NextAction string `json:"next_action"`
+		BrowserURL string `json:"browser_url"`
+		UserCode   string `json:"user_code"`
+	}
+	if err := json.Unmarshal(pollRec.Body.Bytes(), &pollResp); err != nil {
+		t.Fatalf("decode session payload: %v", err)
+	}
+	if !pollResp.OK || pollResp.Mode != "device-code" {
+		t.Fatalf("unexpected session payload: %+v", pollResp)
+	}
+	if pollResp.State != "awaiting_browser_oauth" {
+		t.Fatalf("expected initial state awaiting_browser_oauth, got %q", pollResp.State)
+	}
+	if pollResp.NextAction != "open-browser" {
+		t.Fatalf("expected next_action open-browser, got %q", pollResp.NextAction)
+	}
+	if pollResp.UserCode != "USER-CODE-1234" {
+		t.Fatalf("expected user_code propagated, got %q", pollResp.UserCode)
+	}
+	if !strings.Contains(pollResp.BrowserURL, "USER-CODE-1234") {
+		t.Fatalf("expected browser_url to embed user code, got %q", pollResp.BrowserURL)
+	}
+
+	// Drive the state to "recovered" the same way
+	// completeDeviceCodeInBackground does on success and confirm the
+	// poll endpoint surfaces it.
+	updateRecoverySession(startResp.RecoveryID, func(rs *recoverySession) {
+		rs.State = "recovered"
+		rs.NextAction = ""
+		rs.LastError = ""
+	})
+	pollRec2 := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecoverSession(pollRec2, httptest.NewRequest(http.MethodGet, pollURL, nil))
+	if pollRec2.Code != http.StatusOK {
+		t.Fatalf("re-poll expected 200, got %d", pollRec2.Code)
+	}
+	var pollResp2 struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(pollRec2.Body.Bytes(), &pollResp2); err != nil {
+		t.Fatalf("decode re-poll: %v", err)
+	}
+	if pollResp2.State != "recovered" {
+		t.Fatalf("expected state recovered, got %q", pollResp2.State)
+	}
+
+	// A bogus wait_token must be rejected even with a valid id —
+	// otherwise anyone who learned the recovery_id (e.g. via a log
+	// leak) could read the session payload.
+	badURL := "/auth/recover/session?id=" + startResp.RecoveryID + "&wait_token=not-the-token"
+	badReq := httptest.NewRequest(http.MethodGet, badURL, nil)
+	badRec := httptest.NewRecorder()
+	(&HTTPServer{}).handleAuthRecoverSession(badRec, badReq)
+	if badRec.Code != http.StatusNotFound {
+		t.Fatalf("wrong wait_token expected 404, got %d", badRec.Code)
+	}
+}

@@ -264,14 +264,14 @@ func resolveRemoteAgentCandidates(deviceHint string) ([]RemoteAgentCandidate, st
 	if target == nil {
 		return nil, "", fmt.Errorf("device %q not found", deviceHint)
 	}
-	if !target.IsOnline {
-		return nil, "", fmt.Errorf("device %q is offline", target.Name)
-	}
 	candidates, err := buildRemoteAgentCandidates(cfg, target)
 	if err != nil {
 		return nil, "", err
 	}
 	if len(candidates) == 0 {
+		if !target.IsOnline {
+			return nil, "", fmt.Errorf("device %q is offline", target.Name)
+		}
 		return nil, "", fmt.Errorf("device %q has no reachable host", target.Name)
 	}
 	return candidates, cfg.AuthToken, nil

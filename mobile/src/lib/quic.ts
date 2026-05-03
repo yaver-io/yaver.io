@@ -6690,13 +6690,94 @@ export class QuicClient {
           lastError = message;
           continue;
         }
-        const data = (await res.json()) as RecoveryResult;
+        const raw = (await res.json()) as RecoveryResult & {
+          recovery_id?: string;
+          wait_token?: string;
+        };
+        // The Go side mixes camelCase (pairCode, deviceCodeUrl, …) and
+        // snake_case (recovery_id, wait_token, next_action) in the same
+        // /auth/recover response. Normalize the snake_case ones we actually
+        // consume so callers don't have to know.
+        const data: RecoveryResult = {
+          ...raw,
+          recoveryId: raw.recoveryId ?? raw.recovery_id,
+          waitToken: raw.waitToken ?? raw.wait_token,
+        };
         return { ...data, targetUrl: target.baseUrl };
       } catch (e: any) {
         lastError = e?.message ?? "network error";
       }
     }
     return { ok: false, error: lastError } as RecoveryResult;
+  }
+
+  /** Poll a recovery session started by recoverAgent. Mirrors
+   *  GET /auth/recover/session?id=&wait_token=. Safe to call repeatedly —
+   *  this endpoint is NOT subject to the 5s rate limit on /auth/recover.
+   *  Returns null when no recovery target was reachable; returns
+   *  {ok:false, error} when the agent answered with an error code. */
+  async recoverSessionStatus(
+    recoveryId: string,
+    waitToken: string,
+  ): Promise<RecoverySessionStatus | null> {
+    if (!recoveryId || !waitToken) {
+      return { ok: false, error: "recoveryId and waitToken are required" };
+    }
+    const qs = `?id=${encodeURIComponent(recoveryId)}&wait_token=${encodeURIComponent(waitToken)}`;
+    let lastError = "network error";
+    for (const target of this.recoveryTargets()) {
+      try {
+        const res = await this.fetchWithTimeout(
+          `${target.baseUrl}/auth/recover/session${qs}`,
+          { method: "GET", headers: target.headers },
+          6000,
+        );
+        if (!res.ok) {
+          let message = `HTTP ${res.status}`;
+          try {
+            const data = await res.json();
+            if (typeof data?.error === "string" && data.error.trim()) {
+              message = data.error.trim();
+            }
+          } catch {}
+          // 404 = session unknown on this agent. Don't fan out across
+          // every transport — the session is bound to the agent that
+          // issued it, and another transport hits the same daemon.
+          if (res.status === 404) {
+            return { ok: false, error: message };
+          }
+          lastError = message;
+          continue;
+        }
+        const raw = (await res.json()) as {
+          ok?: boolean;
+          state?: string;
+          next_action?: string;
+          browser_url?: string;
+          user_code?: string;
+          pair_code?: string;
+          mode?: string;
+          expires_at?: string;
+          updated_at?: string;
+          error?: string;
+        };
+        return {
+          ok: raw.ok !== false,
+          state: raw.state,
+          nextAction: raw.next_action,
+          browserUrl: raw.browser_url,
+          userCode: raw.user_code,
+          pairCode: raw.pair_code,
+          mode: raw.mode,
+          expiresAt: raw.expires_at,
+          updatedAt: raw.updated_at,
+          error: raw.error || undefined,
+        };
+      } catch (e: any) {
+        lastError = e?.message ?? "network error";
+      }
+    }
+    return { ok: false, error: lastError };
   }
 
   // ---- Log aggregation (E cross-device) ---------------------------------
@@ -7201,6 +7282,11 @@ export interface RecoveryResult {
   expiresAt?: string;
   error?: string;
   targetUrl?: string;
+  /** Returned by mode=device-code (and pair). Identifier the caller can
+   *  use to poll /auth/recover/session for completion without re-hitting
+   *  the rate-limited POST endpoint. */
+  recoveryId?: string;
+  waitToken?: string;
   /** Set when /auth/recover returned 429. Outer recoverDeviceAuth uses
    *  this to bail out instead of falling back to pair / bootstrap-secret /
    *  device-code modes (which all hit the SAME endpoint and would just
@@ -7210,6 +7296,23 @@ export interface RecoveryResult {
   /** Set when /auth/recover returned 409 (agent-auth healthy). Caller
    *  should treat this as success — no recovery needed. */
   alreadyHealthy?: boolean;
+}
+
+/** GET /auth/recover/session?id=&wait_token= response shape. Mirrors
+ *  recoverySessionPayload in desktop/agent/auth_recover_session.go. */
+export interface RecoverySessionStatus {
+  ok: boolean;
+  /** started | awaiting_browser_oauth | applying_token | recovered |
+   *  expired | failed */
+  state?: string;
+  nextAction?: string;
+  browserUrl?: string;
+  userCode?: string;
+  pairCode?: string;
+  mode?: string;
+  expiresAt?: string;
+  updatedAt?: string;
+  error?: string;
 }
 
 /** Feature flag — one entry in the ledger. */
