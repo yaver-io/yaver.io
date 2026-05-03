@@ -410,9 +410,15 @@ func validateHBCBytes(data []byte) (uint32, error) {
 	if len(data) < hbcHeaderMinLen {
 		return 0, fmt.Errorf("hbc too short (%d bytes; need ≥%d)", len(data), hbcHeaderMinLen)
 	}
-	// Magic (big-endian per Hermes header layout in
-	// YaverBundleValidator.swift).
-	gotMagic := binary.BigEndian.Uint32(data[hbcMagicOffset : hbcMagicOffset+4])
+	// Magic at bytes 4..7 of an HBC file. Confirmed empirically with a
+	// real bundle from yaver-test-ephemeral: on-disk layout is
+	// `C1 03 19 1F`, so reading as little-endian yields the constant
+	// 0x1F1903C1. The earlier comment claiming big-endian was wrong —
+	// it caused every cache Store to fail with "magic mismatch: want
+	// 0x1F1903C1 got 0xC103191F" (the byte-reversed value). Mobile's
+	// YaverBundleValidator works because it interprets the same bytes
+	// the same way; we mirror that.
+	gotMagic := binary.LittleEndian.Uint32(data[hbcMagicOffset : hbcMagicOffset+4])
 	if gotMagic != HBCFileMagic {
 		return 0, fmt.Errorf("hbc magic mismatch: want 0x%08X, got 0x%08X", HBCFileMagic, gotMagic)
 	}

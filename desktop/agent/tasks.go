@@ -272,7 +272,7 @@ func GetCachedModels() []BackendModel {
 //	{"type":"stream_event","event":{...}} — incremental streaming (text_delta, tool_use, etc.)
 //	{"type":"assistant","message":{...}}  — complete assistant message (text or tool_use)
 //	{"type":"user","message":{...},"tool_use_result":{...}} — tool execution results (stdout/stderr)
-//	{"type":"result","result":"...", "total_cost_usd":0.01,...}
+//	{"type":"result","result":"...", "total_cost_usd":0.01, "usage":{...}}
 type ClaudeEvent struct {
 	Type      string          `json:"type"`
 	Subtype   string          `json:"subtype,omitempty"`
@@ -281,9 +281,20 @@ type ClaudeEvent struct {
 	Event     json.RawMessage `json:"event,omitempty"` // For stream_event wrapper
 	RawResult json.RawMessage `json:"result,omitempty"`
 	TotalCost float64         `json:"total_cost_usd,omitempty"`
+	Usage     *claudeUsage    `json:"usage,omitempty"`  // present on result events
 	Errors    []string        `json:"errors,omitempty"` // e.g. ["No conversation found with session ID: ..."]
 	// Tool result (for "user" type events with tool output)
 	ToolUseResult *ToolUseResult `json:"tool_use_result,omitempty"`
+}
+
+// claudeUsage is the token-usage block emitted on the final result event.
+// claude-code uses snake_case (input_tokens, output_tokens, cache_*); newer
+// codex CLIs (>=0.124) emit the same shape, so this struct works for both.
+type claudeUsage struct {
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // ToolUseResult contains stdout/stderr from a tool execution.
@@ -676,22 +687,24 @@ type TaskResumeOptions struct {
 }
 
 type Task struct {
-	ID          string             `json:"id"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	Status      TaskStatus         `json:"status"`
-	Source      string             `json:"source,omitempty"`      // "mobile", "mcp", "cli"
-	GuestUserID string             `json:"guestUserId,omitempty"` // set when task created by a guest
-	Model       string             `json:"model,omitempty"`
-	RunnerID    string             `json:"runnerId,omitempty"` // which runner is executing this task
-	SessionID   string             `json:"session_id,omitempty"`
-	Output      string             `json:"output"`
-	ResultText  string             // Extracted clean result text from Claude
-	CostUSD     float64            // Total API cost
-	Turns       []ConversationTurn // Full conversation history
-	CreatedAt   time.Time          `json:"created_at"`
-	StartedAt   *time.Time         `json:"started_at,omitempty"`
-	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
+	ID           string             `json:"id"`
+	Title        string             `json:"title"`
+	Description  string             `json:"description"`
+	Status       TaskStatus         `json:"status"`
+	Source       string             `json:"source,omitempty"`      // "mobile", "mcp", "cli"
+	GuestUserID  string             `json:"guestUserId,omitempty"` // set when task created by a guest
+	Model        string             `json:"model,omitempty"`
+	RunnerID     string             `json:"runnerId,omitempty"` // which runner is executing this task
+	SessionID    string             `json:"session_id,omitempty"`
+	Output       string             `json:"output"`
+	ResultText   string             // Extracted clean result text from Claude
+	CostUSD      float64            // Total API cost
+	InputTokens  int                // Tokens consumed (prompt + cache reads + cache creation)
+	OutputTokens int                // Tokens produced by the model
+	Turns        []ConversationTurn // Full conversation history
+	CreatedAt    time.Time          `json:"created_at"`
+	StartedAt    *time.Time         `json:"started_at,omitempty"`
+	FinishedAt   *time.Time         `json:"finished_at,omitempty"`
 
 	WorkDir     string `json:"workDir,omitempty"`     // per-task workDir (auto-detected from prompt)
 	TmuxSession string `json:"tmuxSession,omitempty"` // tmux session name (for adopted sessions)
@@ -798,6 +811,8 @@ type TaskInfo struct {
 	Output         string             `json:"output,omitempty"`
 	ResultText     string             `json:"resultText,omitempty"`
 	CostUSD        float64            `json:"costUsd,omitempty"`
+	InputTokens    int                `json:"inputTokens,omitempty"`
+	OutputTokens   int                `json:"outputTokens,omitempty"`
 	Turns          []ConversationTurn `json:"turns,omitempty"`
 	Source         string             `json:"source,omitempty"`
 	TmuxSession    string             `json:"tmuxSession,omitempty"`
@@ -1499,13 +1514,58 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 //	           --model as a separate flag), but it's kept so callers can
 //	           build custom RunnerConfigs without losing the substitution.
 func buildRunnerArgs(runner RunnerConfig, prompt string) []string {
+	return buildRunnerArgsWithWorkDir(runner, prompt, "")
+}
+
+// buildRunnerArgsWithWorkDir extends buildRunnerArgs with `{workDir}`
+// substitution. Required for codex 0.123.0+: passing `-C <DIR>` adds
+// the project path to the workspace-write sandbox's writable allowlist
+// so apply_patch / sed / inplace edits succeed. Without this, codex's
+// banner reports `workdir: /root/.codex/.tmp/plugins` and any write
+// to the actual project path is rejected as "outside the writable
+// sandbox" / "Read-only file system".
+func buildRunnerArgsWithWorkDir(runner RunnerConfig, prompt, workDir string) []string {
 	args := make([]string, len(runner.Args))
 	for i, a := range runner.Args {
 		a = strings.ReplaceAll(a, "{prompt}", prompt)
 		if runner.Model != "" {
 			a = strings.ReplaceAll(a, "{model}", runner.Model)
 		}
+		// {workDir} substitutes to the task-resolved project dir; if
+		// the caller didn't pass one, leave the placeholder empty so
+		// the runner gets a literal "" (codex tolerates -C "" by
+		// ignoring it).
+		a = strings.ReplaceAll(a, "{workDir}", workDir)
 		args[i] = a
+	}
+	// Codex-specific: splice `-C <workDir>` immediately after the `exec`
+	// subcommand so writes to the task's project path are added to
+	// codex's workspace-write sandbox allowlist. Without this, codex's
+	// banner reports `workdir: /root/.codex/.tmp/plugins`, the project
+	// path is treated as Read-only, and apply_patch / sed inplace edits
+	// fail with "writing outside of the project; rejected by user
+	// approval settings". Verified locally with codex 0.123.0:
+	//
+	//   $ codex exec --full-auto --skip-git-repo-check -C /tmp/X \
+	//       "Update /tmp/X/version.txt to 1.0.1"
+	//   → file rewritten 1.0.0 → 1.0.1, diff emitted, success.
+	if runner.RunnerID == "codex" && strings.TrimSpace(workDir) != "" {
+		out := make([]string, 0, len(args)+2)
+		injected := false
+		for _, a := range args {
+			out = append(out, a)
+			if !injected && a == "exec" {
+				out = append(out, "-C", strings.TrimSpace(workDir))
+				injected = true
+			}
+		}
+		if !injected {
+			// Defensive: if the runner's Args don't begin with `exec`
+			// (custom user override), still surface -C so the choice
+			// isn't silently dropped.
+			out = append([]string{"-C", strings.TrimSpace(workDir)}, out...)
+		}
+		args = out
 	}
 	// Opencode-specific: splice `--agent <mode>` immediately after the
 	// `run` subcommand when the user picked a build/plan/custom agent.
@@ -1692,7 +1752,15 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	if task.Model != "" {
 		runner.Model = task.Model
 	}
-	args := buildRunnerArgs(runner, prompt)
+	// Resolve the task's effective workDir for the runner's sandbox
+	// allowlist (codex uses -C <DIR> to add it). Without this, codex's
+	// workspace-write sandbox treats the project path as Read-only and
+	// rejects apply_patch / sed inplace edits.
+	taskDirForArgs := tm.workDir
+	if task.WorkDir != "" {
+		taskDirForArgs = task.WorkDir
+	}
+	args := buildRunnerArgsWithWorkDir(runner, prompt, taskDirForArgs)
 
 	// Use warm session if available (resume = same rate-limit bucket).
 	// Expire warm sessions after 1 hour — Claude Code purges them and resume
@@ -2325,8 +2393,15 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 					tm.mu.Lock()
 					task.ResultText = resultStr
 					task.CostUSD = event.TotalCost
+					if event.Usage != nil {
+						task.InputTokens = event.Usage.InputTokens +
+							event.Usage.CacheCreationInputTokens +
+							event.Usage.CacheReadInputTokens
+						task.OutputTokens = event.Usage.OutputTokens
+					}
+					inT, outT := task.InputTokens, task.OutputTokens
 					tm.mu.Unlock()
-					log.Printf("[task %s result] cost=$%.4f len=%d", task.ID, event.TotalCost, len(resultStr))
+					log.Printf("[task %s result] cost=$%.4f len=%d tokens=%d→%d", task.ID, event.TotalCost, len(resultStr), inT, outT)
 				}
 			}
 		}
@@ -2650,7 +2725,13 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 		runner = tm.runner
 	}
 
-	args := buildRunnerArgs(runner, prompt)
+	// Resume reuses the same workDir resolution as initial spawn so
+	// codex's -C sandbox allowlist stays consistent across follow-ups.
+	resumeWorkDir := tm.workDir
+	if task.WorkDir != "" {
+		resumeWorkDir = task.WorkDir
+	}
+	args := buildRunnerArgsWithWorkDir(runner, prompt, resumeWorkDir)
 
 	// Resume with session ID if available (follow-up conversation)
 	if task.SessionID != "" && runner.RunnerID == "claude" {
@@ -2830,6 +2911,8 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			Output:         output,
 			ResultText:     t.ResultText,
 			CostUSD:        t.CostUSD,
+			InputTokens:    t.InputTokens,
+			OutputTokens:   t.OutputTokens,
 			Turns:          t.Turns,
 			Source:         t.Source,
 			TmuxSession:    t.TmuxSession,
@@ -3052,16 +3135,18 @@ func (tm *TaskManager) GetChainStatus(chainID string) []TaskInfo {
 				output = output[len(output)-2000:]
 			}
 			chain = append(chain, TaskInfo{
-				ID:         t.ID,
-				Title:      t.Title,
-				Status:     t.Status,
-				ChainID:    t.ChainID,
-				ChainOrder: t.ChainOrder,
-				CreatedAt:  t.CreatedAt,
-				StartedAt:  t.StartedAt,
-				FinishedAt: t.FinishedAt,
-				ResultText: t.ResultText,
-				CostUSD:    t.CostUSD,
+				ID:           t.ID,
+				Title:        t.Title,
+				Status:       t.Status,
+				ChainID:      t.ChainID,
+				ChainOrder:   t.ChainOrder,
+				CreatedAt:    t.CreatedAt,
+				StartedAt:    t.StartedAt,
+				FinishedAt:   t.FinishedAt,
+				ResultText:   t.ResultText,
+				CostUSD:      t.CostUSD,
+				InputTokens:  t.InputTokens,
+				OutputTokens: t.OutputTokens,
 			})
 		}
 	}

@@ -1,6 +1,6 @@
 {
   "name": "yaver-mobile",
-  "version": "1.18.69",
+  "version": "1.18.74",
   "license": "SEE LICENSE IN LICENSE",
   "main": "expo-router/entry",
   "scripts": {

@@ -18,7 +18,11 @@ func makeValidHBC(t *testing.T, bcVersion uint32, payloadSize int) []byte {
 		payloadSize = hbcHeaderMinLen
 	}
 	buf := make([]byte, payloadSize)
-	binary.BigEndian.PutUint32(buf[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
+	// Magic at offset 4 is little-endian on disk (matches real HBC
+	// produced by hermesc — verified empirically against a 4 MB
+	// bundle from yaver-test-ephemeral). The test harness has to
+	// write the same shape the validator now reads.
+	binary.LittleEndian.PutUint32(buf[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
 	binary.LittleEndian.PutUint32(buf[hbcVersionOffset:hbcVersionOffset+4], bcVersion)
 	return buf
 }
@@ -135,7 +139,7 @@ func TestHBCCache_RejectsCorruptOnStore(t *testing.T) {
 
 	// BC version 0 (truncation marker).
 	zero := make([]byte, 64)
-	binary.BigEndian.PutUint32(zero[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
+	binary.LittleEndian.PutUint32(zero[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
 	if err := c.Store(key, zero); err == nil {
 		t.Fatal("Store accepted bc-version-0 payload")
 	}
@@ -385,7 +389,7 @@ func TestValidateHBCBytes_Cases(t *testing.T) {
 			"zero-bc-version",
 			func() []byte {
 				b := make([]byte, 64)
-				binary.BigEndian.PutUint32(b[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
+				binary.LittleEndian.PutUint32(b[hbcMagicOffset:hbcMagicOffset+4], HBCFileMagic)
 				return b
 			}(),
 			"bc version is 0", 0,

@@ -136,7 +136,10 @@ final class YaverFeedbackTranscript: UIView {
 
       composerRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
       composerRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-      composerRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+      // More room at the bottom for keyboard + chips row. Was -10,
+      // bumped to -16 per "give some area to text input and reload
+      // button… more healthy way".
+      composerRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
       composerRow.heightAnchor.constraint(equalToConstant: 44),
     ])
   }
@@ -154,18 +157,27 @@ final class YaverFeedbackTranscript: UIView {
   }
 
   private func makeComposer() -> UIView {
+    // Two rows stacked: composer (input + send) on top, agent chip
+    // pill on the bottom — mirrors the Tasks tab where the runner +
+    // model is shown right above (or beside) the composer. Reload
+    // chip sits to the LEFT of the agent chip so the user keeps the
+    // "fix → reload to verify" loop one tap away.
+    let outer = UIView()
+    outer.translatesAutoresizingMaskIntoConstraints = false
+
     let row = UIView()
     row.translatesAutoresizingMaskIntoConstraints = false
+    outer.addSubview(row)
 
     let field = UITextField()
     field.translatesAutoresizingMaskIntoConstraints = false
-    field.placeholder = "Follow up…"
+    field.placeholder = "Send a command…"
     field.font = .systemFont(ofSize: 15)
     field.textColor = .white
     field.backgroundColor = UIColor(white: 1, alpha: 0.08)
     field.layer.cornerRadius = 12
     field.attributedPlaceholder = NSAttributedString(
-      string: "Follow up…",
+      string: "Send a command…",
       attributes: [.foregroundColor: UIColor(white: 1, alpha: 0.35)])
     field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 1))
     field.leftViewMode = .always
@@ -185,19 +197,104 @@ final class YaverFeedbackTranscript: UIView {
 
     row.addSubview(field)
     row.addSubview(sendBtn)
-
     NSLayoutConstraint.activate([
       field.topAnchor.constraint(equalTo: row.topAnchor),
-      field.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+      field.heightAnchor.constraint(equalToConstant: 44),
       field.leadingAnchor.constraint(equalTo: row.leadingAnchor),
       field.trailingAnchor.constraint(equalTo: sendBtn.leadingAnchor, constant: -10),
-
       sendBtn.topAnchor.constraint(equalTo: row.topAnchor),
-      sendBtn.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+      sendBtn.heightAnchor.constraint(equalToConstant: 44),
       sendBtn.trailingAnchor.constraint(equalTo: row.trailingAnchor),
       sendBtn.widthAnchor.constraint(equalToConstant: 56),
+      row.bottomAnchor.constraint(equalTo: field.bottomAnchor),
     ])
-    return row
+
+    // Below the input row: reload chip + agent picker chip, right-
+    // aligned. Reload triggers the same /dev/reload-app the drawer's
+    // Reload button uses; agent chip surfaces the runner + model
+    // and opens YaverAgentsPane on tap.
+    let chipsRow = UIStackView()
+    chipsRow.translatesAutoresizingMaskIntoConstraints = false
+    chipsRow.axis = .horizontal
+    chipsRow.spacing = 8
+    chipsRow.alignment = .center
+    chipsRow.distribution = .fill
+
+    let spacer = UIView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let reloadChip = UIButton(type: .system)
+    reloadChip.translatesAutoresizingMaskIntoConstraints = false
+    let rCfg = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+    reloadChip.setImage(UIImage(systemName: "arrow.clockwise", withConfiguration: rCfg), for: .normal)
+    reloadChip.setTitle("  Reload", for: .normal)
+    reloadChip.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
+    reloadChip.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+    reloadChip.backgroundColor = UIColor(white: 1, alpha: 0.06)
+    reloadChip.tintColor = UIColor(white: 1, alpha: 0.78)
+    reloadChip.setTitleColor(UIColor(white: 1, alpha: 0.78), for: .normal)
+    reloadChip.layer.cornerRadius = 10
+    reloadChip.layer.borderWidth = 1
+    reloadChip.layer.borderColor = UIColor(white: 1, alpha: 0.10).cgColor
+    reloadChip.addTarget(self, action: #selector(handleTranscriptReloadTap), for: .touchUpInside)
+
+    // Display-only agent label (no tap target). Switching the runner
+    // mid-task would either re-spawn (slow, surprising) or be ignored
+    // (confusing); per the user's call we ship without that feature
+    // and just SHOW which runner is responding. Cleaner UI, smaller
+    // surface, no follow-on edge cases to handle.
+    let agentChip = UILabel()
+    agentChip.translatesAutoresizingMaskIntoConstraints = false
+    agentChip.font = .systemFont(ofSize: 12, weight: .medium)
+    agentChip.textColor = UIColor(white: 1, alpha: 0.62)
+    agentChip.text = transcriptAgentChipLabel()
+    agentChip.textAlignment = .right
+    transcriptAgentChip = agentChip
+
+    chipsRow.addArrangedSubview(spacer)
+    chipsRow.addArrangedSubview(reloadChip)
+    chipsRow.addArrangedSubview(agentChip)
+    outer.addSubview(chipsRow)
+
+    NSLayoutConstraint.activate([
+      row.topAnchor.constraint(equalTo: outer.topAnchor),
+      row.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
+      row.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
+
+      chipsRow.topAnchor.constraint(equalTo: row.bottomAnchor, constant: 8),
+      chipsRow.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
+      chipsRow.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
+      chipsRow.bottomAnchor.constraint(equalTo: outer.bottomAnchor),
+      chipsRow.heightAnchor.constraint(equalToConstant: 28),
+    ])
+    return outer
+  }
+
+  // Tappable runner+model chip ("OpenAI Codex · GPT-5.4 ▾"). Re-read
+  // every present() so a Tasks-tab runner switch reflects here.
+  private weak var transcriptAgentChip: UILabel?
+
+  private func transcriptAgentChipLabel() -> String {
+    let runner = (UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    let model = (UserDefaults.standard.string(forKey: "yaverPreferredModel") ?? "")
+      .trimmingCharacters(in: .whitespaces)
+    let r: String
+    switch runner.lowercased() {
+    case "claude": r = "Claude"
+    case "codex":  r = "OpenAI Codex"
+    case "opencode": r = "opencode"
+    default: r = runner.isEmpty ? "Claude" : runner
+    }
+    // Trailing chevron dropped — the label is now display-only, no
+    // tap target. Switching the runner mid-task is intentionally
+    // unsupported in this slice.
+    return model.isEmpty ? r : "\(r) · \(model)"
+  }
+
+  @objc private func handleTranscriptReloadTap() {
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    onReloadTap?()
   }
 
   // MARK: - User bubbles + assistant output
@@ -275,21 +372,55 @@ final class YaverFeedbackTranscript: UIView {
       let idx = outputBuffer.index(outputBuffer.startIndex, offsetBy: dropCount)
       outputBuffer = "…[earlier output trimmed]…\n" + outputBuffer[idx...]
     }
-    // Lazy-create the label without a render — the throttle below
-    // handles content. We only need the label to exist so the
-    // throttle's render target is live.
+    // Lazy-create the assistant CARD (matches Tasks tab's
+    // AssistantBubble: dark rounded container with subtle border
+    // and 12pt padding, label inside). The card replaces the bare
+    // UILabel so streamed output gets the same chrome as the chat
+    // bubbles in /tasks/<id> — visual parity per the user's
+    // "make UI same as Tasks" ask.
     if outputLabel == nil {
+      let card = UIView()
+      card.translatesAutoresizingMaskIntoConstraints = false
+      card.backgroundColor = UIColor(white: 1, alpha: 0.04)
+      card.layer.cornerRadius = 12
+      card.layer.borderWidth = 1
+      card.layer.borderColor = UIColor(white: 1, alpha: 0.10).cgColor
+
       let label = UILabel()
       label.translatesAutoresizingMaskIntoConstraints = false
       label.numberOfLines = 0
-      label.font = .systemFont(ofSize: 15, weight: .regular)
+      label.font = .systemFont(ofSize: 14.5, weight: .regular)
       label.textColor = .white
       label.lineBreakMode = .byWordWrapping
+      card.addSubview(label)
+      // Tighter padding (8/10) per the "make card shorter, give more
+      // breathing room to composer + reload" request. Font also drops
+      // a hair (14.5 → 14) so the same content fits in less vertical
+      // space — visual delta matches Tasks tab's chat detail.
+      NSLayoutConstraint.activate([
+        label.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+        label.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+        label.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+        label.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -8),
+      ])
+      label.font = .systemFont(ofSize: 14, weight: .regular)
       outputLabel = label
+      // Card sits left-aligned to ~92% of the column width — same
+      // as Tasks tab where assistant bubbles never reach the right
+      // edge (leaves room for visual grouping with user bubbles).
+      let row = UIView()
+      row.translatesAutoresizingMaskIntoConstraints = false
+      row.addSubview(card)
+      NSLayoutConstraint.activate([
+        card.topAnchor.constraint(equalTo: row.topAnchor, constant: 4),
+        card.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -4),
+        card.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+        card.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor, constant: -40),
+      ])
       if let phase = phaseLabel, let idx = stack.arrangedSubviews.firstIndex(of: phase) {
-        stack.insertArrangedSubview(label, at: idx)
+        stack.insertArrangedSubview(row, at: idx)
       } else {
-        stack.addArrangedSubview(label)
+        stack.addArrangedSubview(row)
       }
     }
     scheduleThrottledRender()
@@ -337,46 +468,270 @@ final class YaverFeedbackTranscript: UIView {
     }
   }
 
-  // MARK: - Markdown (just inline `code` spans + soft-wrap)
+  // MARK: - Markdown rendering + cleanup
 
-  /// Render a string with inline backtick-delimited code spans coloured
-  /// purple — same treatment the React-Native AssistantFrameRenderer
-  /// applies via react-native-markdown-display's code_inline style. We
-  /// don't try to handle fences (```block```) here — the tasks.tsx side
-  /// renders them as code blocks but for the feedback pane the inline
-  /// path covers the bulk of what users see during a vibing run.
+  // Last assistant-side rendered NSAttributedString cached by raw input
+  // so consecutive throttled flushes with the same buffer skip the
+  // (now-heavier) markdown pass.
+  private var lastRenderInputHash: Int = 0
+  private var lastRenderResult: NSAttributedString?
+
+  // ANSI / CSI escape stripper. Mirrors stripANSI in
+  // desktop/agent/result_cleanup.go — codex emits 35m/3m/0m/etc. and
+  // when the SSE stream ships raw outputCh chunks (vs cleaned
+  // ResultText) those land in our buffer as literal `[35m[3mcodex[0m`.
+  //
+  // Implemented as a manual byte-walk rather than NSRegularExpression
+  // because the previous regex pattern used Swift's `\u{001B}` syntax
+  // which ICU doesn't accept — `try!` on the constructor crashed the
+  // whole host (1.18.71). The walk is also strictly faster and can
+  // never raise.
+
+  // System-context end markers — last sentence of each agent-injected
+  // context block (yaverDevServerContext / yaverWrapperCapability /
+  // mobileTaskResponseContext / consoleTaskResponseContext). When
+  // codex echoes the prompt back into stdout, slicing AFTER the LAST
+  // marker gives us just the actual answer. Keep in sync with
+  // desktop/agent/result_cleanup.go::systemContextEndMarkers and the
+  // mobile SYSTEM_CONTEXT_END_MARKERS constant in tasks.tsx.
+  private static let systemContextEndMarkers: [String] = [
+    "Kill any stale expo/metro processes before retrying.",
+    "or related Yaver preview tools instead of asking them to guess.",
+    "pick up where you left off.",
+    "give correct results when using with locales other than en-US.",
+    "the user wants to read the output themselves.",
+    "[Attached images — use the Read tool to examine these files]",
+  ]
+
+  /// Render a string with bold, inline code, fenced code blocks, and
+  /// bullets — close to what react-native-markdown-display gives the
+  /// Tasks tab's AssistantBubble. Cheap (single pass, regex-light)
+  /// since renders are already throttled to 150 ms.
+  ///
+  /// Pre-pass:
+  ///   1. Strip ANSI escapes.
+  ///   2. Slice after the LAST system-context end marker if any are
+  ///      present — codex echoes our prompt block, we don't want to
+  ///      show that to the user.
   private func renderInlineMarkdown(_ raw: String) -> NSAttributedString {
-    let baseAttrs: [NSAttributedString.Key: Any] = [
-      .font: UIFont.systemFont(ofSize: 15, weight: .regular),
+    var clean = stripANSI(raw)
+    clean = sliceAfterSystemContext(clean)
+
+    // Build attribute presets.
+    let base: [NSAttributedString.Key: Any] = [
+      .font: UIFont.systemFont(ofSize: 14.5, weight: .regular),
+      .foregroundColor: UIColor(white: 1, alpha: 0.92),
+    ]
+    let bold: [NSAttributedString.Key: Any] = [
+      .font: UIFont.systemFont(ofSize: 14.5, weight: .semibold),
       .foregroundColor: UIColor.white,
     ]
-    let codeAttrs: [NSAttributedString.Key: Any] = [
+    let inlineCode: [NSAttributedString.Key: Any] = [
       .font: UIFont.monospacedSystemFont(ofSize: 13, weight: .regular),
-      .foregroundColor: UIColor(red: 0.91, green: 0.47, blue: 0.97, alpha: 1),
-      .backgroundColor: UIColor(white: 1, alpha: 0.08),
+      .foregroundColor: UIColor(red: 0.86, green: 0.55, blue: 1.0, alpha: 1),
+      .backgroundColor: UIColor(white: 1, alpha: 0.07),
     ]
+    let blockCode: [NSAttributedString.Key: Any] = [
+      .font: UIFont.monospacedSystemFont(ofSize: 12.5, weight: .regular),
+      .foregroundColor: UIColor(white: 1, alpha: 0.92),
+      .backgroundColor: UIColor(white: 1, alpha: 0.06),
+    ]
+    let header: [NSAttributedString.Key: Any] = [
+      .font: UIFont.systemFont(ofSize: 16, weight: .semibold),
+      .foregroundColor: UIColor.white,
+    ]
+
     let out = NSMutableAttributedString()
-    var inCode = false
-    var buf = ""
-    for ch in raw {
-      if ch == "`" {
-        if inCode {
-          out.append(NSAttributedString(string: " " + buf + " ", attributes: codeAttrs))
+    let lines = clean.components(separatedBy: "\n")
+    var inFence = false
+    var fenceBuf = ""
+
+    for (lineIdx, rawLine) in lines.enumerated() {
+      // Fenced code block boundaries — opening / closing ```.
+      if rawLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+        if inFence {
+          // Close fence: emit accumulated block.
+          if !fenceBuf.isEmpty {
+            // Trailing newline removed; pad with leading + trailing
+            // newlines for visual breathing room.
+            let body = fenceBuf.hasSuffix("\n") ? String(fenceBuf.dropLast()) : fenceBuf
+            let padded = "\n" + body + "\n"
+            out.append(NSAttributedString(string: padded, attributes: blockCode))
+          }
+          fenceBuf = ""
+          inFence = false
         } else {
-          out.append(NSAttributedString(string: buf, attributes: baseAttrs))
+          inFence = true
         }
-        buf.removeAll()
-        inCode.toggle()
-      } else {
-        buf.append(ch)
+        continue
+      }
+      if inFence {
+        fenceBuf += rawLine + "\n"
+        continue
+      }
+      // Headers (#, ##, ###).
+      if let hdr = rawLine.range(of: #"^#{1,6}\s+"#, options: .regularExpression) {
+        let body = String(rawLine[hdr.upperBound...])
+        out.append(NSAttributedString(string: body, attributes: header))
+        if lineIdx < lines.count - 1 {
+          out.append(NSAttributedString(string: "\n", attributes: base))
+        }
+        continue
+      }
+      // Bullet markers (- or *) — translate to a typographic bullet so
+      // the line gets a visual indent identical to Tasks tab's list
+      // rendering.
+      var line = rawLine
+      if let bul = line.range(of: #"^\s*[-*]\s+"#, options: .regularExpression) {
+        let body = String(line[bul.upperBound...])
+        line = "  •  " + body
+      }
+      // Inline pass — bold + code in one walk over the line.
+      appendInlineSpans(line, baseAttrs: base, boldAttrs: bold,
+                        codeAttrs: inlineCode, into: out)
+      if lineIdx < lines.count - 1 {
+        out.append(NSAttributedString(string: "\n", attributes: base))
       }
     }
-    if !buf.isEmpty {
-      // If we ended mid-code (unmatched backtick), render the trailing
-      // run as plain text rather than swallowing it.
-      out.append(NSAttributedString(string: buf, attributes: inCode ? baseAttrs : baseAttrs))
+    // Flush an unclosed fence so the user sees the in-flight block as
+    // it streams in (codex emits the contents before closing ```).
+    if inFence && !fenceBuf.isEmpty {
+      let body = fenceBuf.hasSuffix("\n") ? String(fenceBuf.dropLast()) : fenceBuf
+      out.append(NSAttributedString(string: "\n" + body + "\n", attributes: blockCode))
     }
     return out
+  }
+
+  /// Inline-pass: walk the line, emitting code spans (`...`) and
+  /// bold spans (**...**) with their respective attributes; everything
+  /// else gets the base attrs.
+  private func appendInlineSpans(_ line: String,
+                                 baseAttrs: [NSAttributedString.Key: Any],
+                                 boldAttrs: [NSAttributedString.Key: Any],
+                                 codeAttrs: [NSAttributedString.Key: Any],
+                                 into out: NSMutableAttributedString) {
+    var i = line.startIndex
+    var buf = ""
+    let end = line.endIndex
+    while i < end {
+      let c = line[i]
+      // Inline code: `…`
+      if c == "`" {
+        if !buf.isEmpty {
+          out.append(NSAttributedString(string: buf, attributes: baseAttrs)); buf.removeAll()
+        }
+        let after = line.index(after: i)
+        if let close = line.range(of: "`", options: [], range: after..<end) {
+          let inner = String(line[after..<close.lowerBound])
+          out.append(NSAttributedString(string: " " + inner + " ", attributes: codeAttrs))
+          i = line.index(after: close.lowerBound)
+          continue
+        }
+        // Unmatched backtick — render as literal.
+        buf.append(c)
+        i = after
+        continue
+      }
+      // Bold: **…**
+      if c == "*" {
+        let next = line.index(after: i)
+        if next < end && line[next] == "*" {
+          if !buf.isEmpty {
+            out.append(NSAttributedString(string: buf, attributes: baseAttrs)); buf.removeAll()
+          }
+          let after = line.index(after: next)
+          if after <= end,
+             let close = line.range(of: "**", options: [], range: after..<end) {
+            let inner = String(line[after..<close.lowerBound])
+            out.append(NSAttributedString(string: inner, attributes: boldAttrs))
+            i = line.index(after: line.index(after: close.lowerBound))
+            continue
+          }
+          // Unmatched `**` — render literally.
+          buf.append("**")
+          i = after
+          continue
+        }
+      }
+      buf.append(c)
+      i = line.index(after: i)
+    }
+    if !buf.isEmpty {
+      out.append(NSAttributedString(string: buf, attributes: baseAttrs))
+    }
+  }
+
+  /// Strip the most common ANSI / CSI runs without using a regex.
+  /// Two cases handled:
+  ///   1. `ESC[…final` — actual ESC byte (0x1B) followed by `[` then
+  ///       params then a final byte in the @-~ range.
+  ///   2. `[NNm` / `[NN;NN…m` — bare CSI run when ESC was already
+  ///       filtered upstream (codex's stdout often shows these as
+  ///       literal text after pty stripping).
+  /// Anything that doesn't match those drops through unmodified.
+  private func stripANSI(_ s: String) -> String {
+    if s.isEmpty { return s }
+    var out = ""
+    out.reserveCapacity(s.count)
+    let chars = Array(s)
+    var i = 0
+    while i < chars.count {
+      let c = chars[i]
+      // Case 1: ESC (0x1B) + '[' + params + final
+      if c == "\u{001B}" && i + 1 < chars.count && chars[i + 1] == "[" {
+        var j = i + 2
+        while j < chars.count {
+          let cj = chars[j]
+          if cj.asciiValue != nil &&
+             cj.asciiValue! >= 0x40 && cj.asciiValue! <= 0x7E {
+            j += 1
+            break
+          }
+          j += 1
+        }
+        i = j
+        continue
+      }
+      // Case 2: bare '[NN(;NN)*m' (no ESC prefix)
+      if c == "[" {
+        var j = i + 1
+        var sawDigit = false
+        while j < chars.count {
+          let cj = chars[j]
+          if cj.isNumber || cj == ";" {
+            if cj.isNumber { sawDigit = true }
+            j += 1
+            continue
+          }
+          break
+        }
+        if sawDigit && j < chars.count && chars[j] == "m" {
+          i = j + 1
+          continue
+        }
+      }
+      out.append(c)
+      i += 1
+    }
+    return out
+  }
+
+  private func sliceAfterSystemContext(_ s: String) -> String {
+    var bestEnd = -1
+    for marker in Self.systemContextEndMarkers {
+      if let r = s.range(of: marker, options: .backwards) {
+        let end = s.distance(from: s.startIndex, to: r.upperBound)
+        if end > bestEnd { bestEnd = end }
+      }
+    }
+    if bestEnd > 0 {
+      let idx = s.index(s.startIndex, offsetBy: bestEnd)
+      // Drop any leading whitespace/newlines so the cleaned content
+      // starts cleanly without a giant empty gap.
+      let tail = s[idx...].drop(while: { $0.isWhitespace || $0.isNewline })
+      return String(tail)
+    }
+    return s
   }
 
   // MARK: - Phase chip
