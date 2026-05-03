@@ -377,7 +377,11 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	}
 	if len(report.Runners) > 0 {
 		fmt.Println("  runners:")
-		fmt.Printf("    %-12s %-9s %-9s %-6s %s\n", "RUNNER", "INSTALLED", "READY", "AUTH", "NOTES")
+		// Widened RUNNER column from 10 → 20 chars so synthetic
+		// provider rows (`opencode/anthropic`, `opencode/openrouter`,
+		// …) and longer aliases stay readable instead of getting
+		// truncated to ambiguous prefixes like `opencode/a`.
+		fmt.Printf("    %-22s %-9s %-9s %-6s %s\n", "RUNNER", "INSTALLED", "READY", "AUTH", "NOTES")
 		for _, r := range report.Runners {
 			notes := ""
 			if r.Warning != "" {
@@ -389,9 +393,9 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 			if r.IsDefault {
 				star = "★"
 			}
-			fmt.Printf("    %s %-10s %-9s %-9s %-6s %s\n",
+			fmt.Printf("    %s %-20s %-9s %-9s %-6s %s\n",
 				star,
-				runnerTrunc(r.ID, 10),
+				runnerTrunc(r.ID, 20),
 				yesNo(r.Installed),
 				yesNo(r.Ready),
 				yesNo(r.AuthConfigured),

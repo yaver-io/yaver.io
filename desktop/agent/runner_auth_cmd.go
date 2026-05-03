@@ -194,7 +194,7 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		{ID: "codex", Name: "OpenAI Codex", Cmd: "codex"},
 		{ID: "opencode", Name: "OpenCode", Cmd: "opencode"},
 	}
-	rows := make([]runnerAuthStatusRow, 0, len(runners))
+	rows := make([]runnerAuthStatusRow, 0, len(runners)+8)
 	for _, runner := range runners {
 		path := resolveRunnerBinary(runner.Cmd)
 		row := runnerAuthStatusRow{
@@ -229,7 +229,148 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		_, row.Detail = runnerDoctorDetail(cfg, wd, path, version)
 		rows = append(rows, row)
 	}
+	rows = append(rows, ollamaRunnerStatusRow())
+	rows = append(rows, opencodeProviderStatusRows(rows)...)
 	return rows, nil
+}
+
+// ollamaRunnerStatusRow probes the local Ollama daemon. Ollama needs no
+// auth — "ready" means the daemon is up and listening on its default
+// port. We surface it as a peer runner because it's a first-class
+// option for any opencode build/plan target and the user wants
+// `yaver primary status` to reflect it alongside claude / codex.
+func ollamaRunnerStatusRow() runnerAuthStatusRow {
+	row := runnerAuthStatusRow{ID: "ollama", Name: "Ollama"}
+	row.Path = resolveRunnerBinary("ollama")
+	row.Installed = row.Path != ""
+
+	host := strings.TrimSpace(os.Getenv("OLLAMA_HOST"))
+	if host == "" {
+		host = "http://127.0.0.1:11434"
+	}
+	if !strings.Contains(host, "://") {
+		host = "http://" + host
+	}
+	url := strings.TrimRight(host, "/") + "/api/tags"
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	resp, err := client.Get(url)
+	daemonUp := err == nil && resp != nil && resp.StatusCode == http.StatusOK
+	if resp != nil {
+		resp.Body.Close()
+	}
+	switch {
+	case daemonUp:
+		row.Ready = true
+		row.AuthConfigured = true // Ollama needs no API key
+		row.AuthSource = host
+		row.Detail = "ready · " + host
+	case row.Installed:
+		row.Detail = "installed but daemon not reachable on " + host + " — run `ollama serve`"
+		row.Warning = "Ollama daemon not running"
+	default:
+		row.Detail = "Not installed"
+		row.Warning = "Not installed"
+	}
+	return row
+}
+
+// opencodeProviderStatusRows expands the user's opencode.json providers
+// into one synthetic row per provider so the user can see at a glance
+// which BYOK providers (anthropic / openai / glm / zai / openrouter /
+// ollama / …) are wired up. Skipped when opencode itself is not
+// installed — the existing OpenCode row already says "not installed"
+// in that case and we don't want to confuse with a tree of phantom
+// providers underneath it.
+func opencodeProviderStatusRows(existing []runnerAuthStatusRow) []runnerAuthStatusRow {
+	hasOpenCode := false
+	for _, r := range existing {
+		if r.ID == "opencode" && r.Installed {
+			hasOpenCode = true
+			break
+		}
+	}
+	if !hasOpenCode {
+		return nil
+	}
+	cfg, err := loadOpenCodeConfigSummary()
+	if err != nil || !cfg.Exists || len(cfg.Providers) == 0 {
+		return nil
+	}
+	out := make([]runnerAuthStatusRow, 0, len(cfg.Providers))
+	for _, p := range cfg.Providers {
+		row := runnerAuthStatusRow{
+			ID:        "opencode/" + p.ID,
+			Name:      "  ↳ " + firstNonEmpty(p.Name, p.ID),
+			Installed: true,
+			Path:      cfg.Path,
+		}
+		if envVar, hasKey := opencodeProviderEnvKey(p.ID); hasKey {
+			present := strings.TrimSpace(os.Getenv(envVar)) != ""
+			row.AuthConfigured = present
+			if present {
+				row.Ready = true
+				row.AuthSource = "$" + envVar
+			} else {
+				row.AuthSource = "$" + envVar + " (not set)"
+				row.Warning = "API key env var not set"
+			}
+		} else {
+			// Provider has no canonical Yaver-tracked env var —
+			// trust the opencode config (BYOK fields like baseUrl
+			// imply the user wired it themselves).
+			row.AuthConfigured = true
+			row.Ready = true
+			row.AuthSource = "opencode.json"
+		}
+		details := []string{}
+		if strings.TrimSpace(p.BaseURL) != "" {
+			details = append(details, p.BaseURL)
+		}
+		if len(p.Models) > 0 {
+			details = append(details, fmt.Sprintf("%d model%s", len(p.Models), pluralS(len(p.Models))))
+		}
+		row.Detail = strings.Join(details, " · ")
+		if row.Detail == "" {
+			row.Detail = row.AuthSource
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+func opencodeProviderEnvKey(providerID string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(providerID)) {
+	case "anthropic":
+		return "ANTHROPIC_API_KEY", true
+	case "openai":
+		return "OPENAI_API_KEY", true
+	case "glm", "z-ai", "zhipu":
+		return "GLM_API_KEY", true
+	case "zai":
+		return "ZAI_API_KEY", true
+	case "openrouter":
+		return "OPENROUTER_API_KEY", true
+	case "groq":
+		return "GROQ_API_KEY", true
+	case "mistral":
+		return "MISTRAL_API_KEY", true
+	case "deepseek":
+		return "DEEPSEEK_API_KEY", true
+	case "google", "gemini":
+		return "GEMINI_API_KEY", true
+	case "ollama":
+		// Ollama is daemon-based, no API key. Caller treats absence
+		// of an env-key mapping as "BYOK via opencode.json".
+		return "", false
+	}
+	return "", false
+}
+
+func pluralS(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 func fetchRunnerAuthStatusRowsRemote(target string) ([]runnerAuthStatusRow, error) {
