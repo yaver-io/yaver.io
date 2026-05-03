@@ -11,5 +11,7 @@ RCT_EXTERN_METHOD(setInheritedAuth:(NSString *)token
                   agentUrl:(NSString *)agentUrl
                   deviceId:(NSString *)deviceId)
 RCT_EXTERN_METHOD(setInheritedRelayPassword:(NSString *)password)
+RCT_EXTERN_METHOD(setInheritedGuestProject:(NSString *)name
+                  path:(NSString *)path)
 RCT_EXTERN_METHOD(clearInheritedAuth)
 @end

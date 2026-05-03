@@ -485,6 +485,21 @@ export default function HotReloadScreen() {
 
   // Tap project → start dev server directly using path + framework from scanner
   const handleStartProject = useCallback(async (project: ProjectItem) => {
+    // Push project context into native UserDefaults so YaverFeedbackPane
+    // can prepend "Project: <name> (<path>)" to feedback prompts and
+    // pin task.workDir on the agent. The runner-side vibingify pipeline
+    // resolves the project from workDir → projectName, so the agent
+    // can apply changes against the right working tree without the
+    // user repeating "this is for the Todo RN project" every time.
+    try {
+      NativeModules.YaverInfo?.setInheritedGuestProject?.(
+        project.name || "",
+        project.path || "",
+      );
+    } catch {
+      // Native module unavailable — non-iOS / unit-test path.
+    }
+
     if (isNativeRemoteRuntimeProject(project)) {
       router.navigate({
         pathname: "/remote-runtime",

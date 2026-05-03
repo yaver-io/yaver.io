@@ -497,8 +497,8 @@ final class YaverFeedbackPane: NSObject {
 
   @objc private func sendTapped() {
     if inFlight { return }
-    let prompt = (promptField?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    if prompt.isEmpty {
+    let userPrompt = (promptField?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if userPrompt.isEmpty {
       setStatus("Type something to send", tone: .error); return
     }
     inFlight = true
@@ -517,31 +517,48 @@ final class YaverFeedbackPane: NSObject {
       ])
     }
 
+    // Pin the project context the user is looking at. handleStartProject
+    // in mobile/app/(tabs)/hotreload.tsx pushes this when the user taps
+    // a Hot Reload app. yaverPendingDevServerWorkDir is the legacy
+    // fallback (older code paths populated it from /dev/start). Either
+    // way the agent's vibingify pipeline reads workDir → resolves the
+    // project on the host. Skipping these is safe — the agent's
+    // autoSwitchProject heuristic still tries to figure it out from
+    // the prompt alone.
+    let projectName = UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectName") ?? ""
+    var projectPath = UserDefaults.standard.string(forKey: "yaverInheritedGuestProjectPath") ?? ""
+    if projectPath.isEmpty {
+      projectPath = UserDefaults.standard.string(forKey: "yaverPendingDevServerWorkDir") ?? ""
+    }
+
+    // Prepend a project banner to the prompt so the AI on the remote
+    // doesn't have to guess which app the user is talking about.
+    // Skipped when we have neither name nor path (no Hot Reload app
+    // selected) — the agent's autoSwitchProject heuristic still tries.
+    var description = userPrompt
+    if !projectName.isEmpty || !projectPath.isEmpty {
+      var banner = "Project context — apply this feedback to:\n"
+      if !projectName.isEmpty { banner += "  name: \(projectName)\n" }
+      if !projectPath.isEmpty { banner += "  path: \(projectPath)\n" }
+      banner += "\nUser feedback:\n"
+      description = banner + userPrompt
+    }
+
     // Don't hardcode runner: "claude". User may have picked codex /
     // opencode as the device's primary runner in DeviceDetailsModal,
-    // and forcing claude here makes the agent ignore that pick. Read
-    // the cached preferred runner from UserDefaults (populated by the
-    // mobile JS side when the user picks one) and only include the
-    // field when we have a value — otherwise let the agent fall back
-    // to its own configured default for the device.
+    // and forcing claude here makes the agent ignore that pick.
     var payload: [String: Any] = [
-      "title": String(prompt.prefix(80)),
-      "description": prompt,
-      "userPrompt": prompt,
+      "title": String(userPrompt.prefix(80)),
+      "description": description,
+      "userPrompt": userPrompt,
       "source": "mobile-feedback",
       "images": images,
     ]
-    // Pin the task to the project the user is currently looking at.
-    // The user tapped feedback while the running dev server's bundle was
-    // on screen, so the agent's currently-running dev server's workDir
-    // is by far the strongest "which project is this feedback about"
-    // signal. yaverPendingDevServerWorkDir is mirrored by AppDelegate /
-    // bundle loader on every successful /dev/start ; if it's been
-    // cleared (no dev server running) we fall through and let the
-    // agent's autoSwitchProject heuristic take over.
-    let pinnedWorkDir = UserDefaults.standard.string(forKey: "yaverPendingDevServerWorkDir") ?? ""
-    if !pinnedWorkDir.isEmpty {
-      payload["workDir"] = pinnedWorkDir
+    if !projectPath.isEmpty {
+      payload["workDir"] = projectPath
+    }
+    if !projectName.isEmpty {
+      payload["projectName"] = projectName
     }
     let preferredRunner = UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? ""
     if !preferredRunner.isEmpty {

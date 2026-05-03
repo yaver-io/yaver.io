@@ -51,6 +51,48 @@ func isFeedbackOrVibingSource(source string) bool {
 	return ok
 }
 
+// feedbackPromptRequestsReload returns true when the user's feedback
+// prompt explicitly asked the runner to push the change to the running
+// guest bundle. The keyword set is intentionally tight — a casual
+// mention of "reload" inside a code reference shouldn't trigger a
+// rebuild. Matched substrings are evaluated against the task title
+// and description (lower-cased + trimmed); first hit wins.
+//
+// The AI agent on the remote can ALSO call /dev/reload directly via
+// the MCP runner when its judgement says so — that path is preferred
+// because the AI sees the diff. This helper is just the cheap fast
+// path so explicit user intent is honoured without a round-trip.
+func feedbackPromptRequestsReload(task *Task) bool {
+	if task == nil {
+		return false
+	}
+	combined := strings.ToLower(strings.TrimSpace(task.Title + "\n" + task.Description))
+	if combined == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"reload",
+		"hot reload",
+		"rebuild",
+		"refresh the app",
+		"refresh app",
+		"push to phone",
+		"push it",
+		"test it",
+		"try it",
+		"see it",
+		"show me",
+		"apply it",
+		"update the app",
+		"update app",
+	} {
+		if strings.Contains(combined, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 // shouldVibingifyFeedbackTask reports whether an incoming /tasks request
 // should be reshaped into a vibing-style task before CreateTaskWithOptions
 // runs. We only reshape sources that the SDK + mobile send for feedback —
@@ -128,6 +170,17 @@ func (s *HTTPServer) vibingifyFeedbackTaskBody(
 // guest bundle on the phone swaps to the new HBC. No-op when no preview
 // target is registered (i.e. nothing is loaded inside the Yaver host on
 // any paired phone).
+//
+// Gated by intent detection: a successful feedback task only triggers
+// auto-reload when the user's prompt explicitly requested it. If the
+// user only said "make the background green" we want them to be able
+// to review the diff before the bundle reloads on their device — the
+// running guest still works against the old bytecode and the user can
+// pull the change manually when ready. If the prompt explicitly says
+// "and reload" / "test it" / similar, the AI's response will land on
+// the new commit and we kick the reload as a courtesy. The AI on the
+// remote can also call /dev/reload itself via the MCP runner, which
+// is the authoritative path when the AI judges a reload is required.
 func (s *HTTPServer) autoReloadAfterFeedbackVibingTask(task *Task) {
 	if task == nil || task.Status != TaskStatusFinished {
 		return
@@ -142,6 +195,16 @@ func (s *HTTPServer) autoReloadAfterFeedbackVibingTask(task *Task) {
 	// quietly. (CLI-driven `yaver vibing` runs with no phone in the
 	// loop and would otherwise log noise on every commit.)
 	if len(s.blackboxMgr.ListSessions()) == 0 {
+		return
+	}
+	// Intent gate: skip auto-reload unless the user asked for it.
+	// Without this, every feedback task spawns a build + bundle push
+	// — even pure "explore the code" feedback ("show me how X works",
+	// "rename this variable") that doesn't need to land on device
+	// immediately. Side effect: build queue clogs on rapid back-to-
+	// back feedback, and the user loses the ability to review diffs.
+	if !feedbackPromptRequestsReload(task) {
+		log.Printf("[feedback→vibe] auto-reload skipped for task %s — prompt did not request a reload", task.ID)
 		return
 	}
 

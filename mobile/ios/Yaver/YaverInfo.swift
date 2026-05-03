@@ -122,6 +122,32 @@ final class YaverInfo: NSObject {
     }
   }
 
+  // Pushed from JS when the user picks a project in the Hot Reload tab
+  // (handleStartProject in mobile/app/(tabs)/hotreload.tsx). Native
+  // YaverFeedbackPane reads these to:
+  //   1. set workDir on the /tasks payload — agent's vibingify pipeline
+  //      uses it to pick the right project on the host.
+  //   2. prepend a "Project: <name> (<path>)" banner to the user's
+  //      feedback prompt so the AI knows up-front which project they
+  //      are talking about, without having to grep for it.
+  // Empty strings clear the cached values so the next feedback send
+  // doesn't pin against a project the user has since closed.
+  @objc func setInheritedGuestProject(_ name: String, path: String) {
+    let defaults = UserDefaults.standard
+    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmedName.isEmpty {
+      defaults.removeObject(forKey: "yaverInheritedGuestProjectName")
+    } else {
+      defaults.set(trimmedName, forKey: "yaverInheritedGuestProjectName")
+    }
+    if trimmedPath.isEmpty {
+      defaults.removeObject(forKey: "yaverInheritedGuestProjectPath")
+    } else {
+      defaults.set(trimmedPath, forKey: "yaverInheritedGuestProjectPath")
+    }
+  }
+
   @objc func clearInheritedAuth() {
     let defaults = UserDefaults.standard
     defaults.removeObject(forKey: "yaverInheritedAuthToken")
