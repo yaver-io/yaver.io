@@ -33,7 +33,15 @@ final class YaverFloatingTrigger: NSObject {
   private let edgeMargin: CGFloat = 8
 
   func mount(in window: UIWindow, onTap: @escaping () -> Void) {
-    if bubble != nil { return } // already mounted
+    // Cancel any in-flight dismount animation: rapid Settings flips
+    // (Shake → Floating Y → Shake → Floating Y) used to no-op on the
+    // remount because the prior bubble was still alpha-fading out and
+    // self.bubble hadn't reset yet. Snap it away first.
+    if let stale = bubble {
+      stale.layer.removeAllAnimations()
+      stale.removeFromSuperview()
+      bubble = nil
+    }
     self.window = window
     self.onTap = onTap
 
@@ -87,13 +95,16 @@ final class YaverFloatingTrigger: NSObject {
 
   func dismount() {
     guard let b = bubble else { return }
+    // Reset bubble + onTap immediately so a subsequent mount() during
+    // the fade-out doesn't see stale state. The view itself fades out
+    // on its own.
+    bubble = nil
+    onTap = nil
     UIView.animate(withDuration: 0.18, animations: {
       b.alpha = 0
       b.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
     }, completion: { _ in
       b.removeFromSuperview()
-      self.bubble = nil
-      self.onTap = nil
     })
   }
 
@@ -142,9 +153,14 @@ final class YaverFloatingTrigger: NSObject {
        y + bubbleSize <= window.bounds.height {
       return CGPoint(x: x, y: y)
     }
-    // Default: bottom-right corner above the safe area
+    // Default: top-right under the safe area top. Picked so that when
+    // the user toggles "Floating Y button" from the Settings bottom-
+    // sheet, the bubble appears above the still-open pane — they get
+    // immediate visual confirmation the setting took effect, instead
+    // of nothing changing until pane dismiss reveals a bubble that
+    // was hidden under the sheet the whole time.
     let x = window.bounds.width - bubbleSize - 16
-    let y = window.bounds.height - bubbleSize - window.safeAreaInsets.bottom - 80
+    let y = window.safeAreaInsets.top + 24
     return CGPoint(x: x, y: y)
   }
 

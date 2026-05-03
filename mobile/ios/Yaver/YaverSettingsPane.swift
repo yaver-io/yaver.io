@@ -25,17 +25,18 @@ final class YaverSettingsPane: NSObject {
 
   private weak var window: UIWindow?
   private weak var cardView: UIView?
-  private var onClose: (() -> Void)?
+  private var applyTrigger: (() -> Void)?
   private var shakeRow: UIView!
   private var buttonRow: UIView!
 
-  /// Slide the pane up over the given window. `onClose` fires after the
-  /// pane animates out so AppDelegate can remount/dismount the floating
-  /// trigger to reflect the new choice without waiting for the next
-  /// guest-app launch.
-  func present(in window: UIWindow, onClose: @escaping () -> Void) {
+  /// Slide the pane up over the given window. `applyTrigger` runs
+  /// IMMEDIATELY whenever the user taps an option — not on dismiss —
+  /// so picking "Floating Y button" shows the bubble live while the
+  /// pane is still open, instead of waiting half a second of animation
+  /// for anything to visibly change.
+  func present(in window: UIWindow, applyTrigger: @escaping () -> Void) {
     self.window = window
-    self.onClose = onClose
+    self.applyTrigger = applyTrigger
     let pane = buildCard()
     window.addSubview(pane)
     NSLayoutConstraint.activate([
@@ -209,10 +210,14 @@ final class YaverSettingsPane: NSObject {
     UserDefaults.standard.set(value, forKey: "yaverFeedbackTrigger")
     UISelectionFeedbackGenerator().selectionChanged()
     refreshSelectionIndicator()
-    // Apply the change immediately — caller (AppDelegate) will mount /
-    // dismount the floating trigger via the onClose callback when the
-    // pane animates out a tick later.
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+    // Apply the change LIVE so the floating Y bubble appears (or
+    // disappears) the instant the user taps an option, while the
+    // pane is still on screen. Previous version waited until dismiss
+    // animated out — user reverted choice before seeing any effect
+    // and concluded the setting did nothing.
+    applyTrigger?()
+    // Brief pause for visual checkmark feedback, then dismiss.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
       self?.dismiss()
     }
   }
@@ -245,9 +250,7 @@ final class YaverSettingsPane: NSObject {
     }, completion: { _ in
       card.removeFromSuperview()
       self.cardView = nil
-      let cb = self.onClose
-      self.onClose = nil
-      cb?()
+      self.applyTrigger = nil
     })
   }
 }

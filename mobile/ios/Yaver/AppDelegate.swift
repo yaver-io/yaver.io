@@ -516,9 +516,9 @@ public class AppDelegate: ExpoAppDelegate {
     // under UserDefaults("yaverFeedbackTrigger") so anything else in the
     // host that wants to read the user's preference (e.g. an SDK module
     // bridged via YaverInfo) gets a single source of truth.
-    YaverSettingsPane.shared.present(in: win) { [weak self] in
+    YaverSettingsPane.shared.present(in: win, applyTrigger: { [weak self] in
       self?.refreshFeedbackTriggerMount()
-    }
+    })
   }
 
   @objc private func handleOverlayCloseTap() {
