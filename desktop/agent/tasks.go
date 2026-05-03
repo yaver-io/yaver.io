@@ -148,10 +148,20 @@ var builtinRunners = map[string]RunnerConfig{
 		ExitCommand: "/exit",
 	},
 	"codex": {
-		RunnerID:   "codex",
-		Name:       "OpenAI Codex",
-		Command:    "codex",
-		Args:       []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
+		RunnerID: "codex",
+		Name:     "OpenAI Codex",
+		Command:  "codex",
+		Args:     []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
+		// Codex CLI's own default is `o3-mini`, which fails immediately
+		// for users on a ChatGPT-account login with:
+		//   "The 'o3-mini' model is not supported when using Codex with
+		//   a ChatGPT account."
+		// `gpt-5-codex` is the documented Codex CLI model for ChatGPT-
+		// account auth and works on API-key auth too. The injection logic
+		// in startTask falls back to runner.Model when task.Model is
+		// empty, so this becomes the effective default for any /tasks
+		// request that didn't pin a specific model.
+		Model:      "gpt-5-codex",
 		OutputMode: "raw",
 	},
 	"opencode": {
@@ -1666,18 +1676,25 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		log.Printf("[task %s] Resuming warm session %s (age=%v)", task.ID, warmSID, warmAge.Round(time.Second))
 	}
 
-	// Override model if specified on the task (e.g. "opus", "sonnet", "haiku").
-	if task.Model != "" {
+	// Override model if specified on the task (e.g. "opus", "sonnet",
+	// "haiku", "gpt-5-codex"). Falls back to runner.Model when the task
+	// didn't pin one — without this, codex would inherit Codex CLI's own
+	// default (`o3-mini`) which fails on ChatGPT-account auth.
+	effectiveModel := task.Model
+	if effectiveModel == "" {
+		effectiveModel = runner.Model
+	}
+	if effectiveModel != "" {
 		modelOverride := false
 		for i, a := range args {
 			if a == "--model" && i+1 < len(args) {
-				args[i+1] = task.Model
+				args[i+1] = effectiveModel
 				modelOverride = true
 				break
 			}
 		}
 		if !modelOverride {
-			args = append(args, "--model", task.Model)
+			args = append(args, "--model", effectiveModel)
 		}
 	}
 

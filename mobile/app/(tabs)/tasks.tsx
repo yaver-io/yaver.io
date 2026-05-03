@@ -228,8 +228,32 @@ function TypingIndicator({ color }: { color: string }) {
   );
 }
 
+// stripAnsi strips the most common ANSI / CSI / OSC escape sequences
+// from runner stdout. Codex's `--full-auto` output is heavy on these
+// — `[1mworkdir:[0m /root` etc. — and they leak into the rendered
+// text on mobile because we don't have a terminal emulator in the
+// chat view. Same regex shape as the agent's normalizeBrowserAuthLine
+// (see desktop/agent/runner_auth_browser_http.go) and mobile's shell
+// renderer (see mobile/app/shell.tsx) — kept here as a copy because
+// the chat view doesn't import either.
+const ANSI_PATTERN =
+  // eslint-disable-next-line no-control-regex
+  /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][0AB]|\x1b[=>NOM78cDEHM]|\x07/g;
+
+function stripAnsi(s: string): string {
+  if (!s) return s;
+  // Some agents emit the terminal-detection CSI without the leading ESC
+  // (raw `[1m...[0m` after the agent's own pre-processing strips ESC
+  // from JSON-escaped strings). Catch those bare CSI runs too — only
+  // when they look exactly like an SGR (digits + 'm') so we don't eat
+  // legitimate `[1ms ago]` style brackets.
+  return s
+    .replace(ANSI_PATTERN, "")
+    .replace(/\[\d+(?:;\d+)*m/g, "");
+}
+
 function stripMarkdownForPreview(text: string): string {
-  return text
+  return stripAnsi(text)
     .replace(/```[\s\S]*?```/g, " code block ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
@@ -719,9 +743,12 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
   }
 
   // If running and we have streaming output, replace the last assistant message
-  // with the live stream (which is more up-to-date than the polled turn data)
+  // with the live stream (which is more up-to-date than the polled turn data).
+  // stripAnsi here so codex's `--full-auto` ANSI-coloured config dump
+  // (`[1mworkdir:[0m /root` etc.) renders as plain text rather than
+  // leaking control codes into the chat bubble.
   if (task.status === "running" && task.output.length > 0) {
-    const streamText = task.output.join("\n");
+    const streamText = stripAnsi(task.output.join("\n"));
     if (streamText.trim()) {
       // Remove the last assistant message if present — streaming output supersedes it
       const lastIdx = messages.length - 1;
