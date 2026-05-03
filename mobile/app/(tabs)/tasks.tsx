@@ -312,18 +312,28 @@ function buildAssistantPreview(content: string): {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !line.startsWith("$ "));
-  const summary = summaryLines.slice(0, 4).join("\n").slice(0, 320).trim();
+  // Show only the first non-empty line as the summary, capped at ~140
+  // chars. Anything after that (additional lines, bullet activity, raw
+  // markdown) goes behind the "Show details" toggle. Reason: runners
+  // like Codex echo back chunks of the agent-injected system context
+  // ("[Yaver Agent Context]…", web-preview rules, etc.) into the
+  // streaming response — under the prior 4-line / 320-char cap that
+  // leaked our own prompt into the chat instead of the user's actual
+  // assistant turn.
+  const firstLine = summaryLines[0] ?? "";
+  const summary = firstLine.length > 140 ? firstLine.slice(0, 137) + "…" : firstLine;
   const activity = extractAssistantActivity(content);
-  const shouldCollapse =
-    content.length > Math.max(summary.length + 80, 320) ||
+  const hasMore =
+    summaryLines.length > 1 ||
     activity.length > 0 ||
+    content.length > summary.length + 40 ||
     content.includes("```") ||
     content.includes("|");
 
   return {
     summary: summary || "Working...",
     activity,
-    shouldCollapse,
+    shouldCollapse: hasMore,
   };
 }
 
@@ -509,13 +519,13 @@ function ChatBubble({
           {preview.shouldCollapse ? (
             <Pressable onPress={() => setExpanded((value) => !value)}>
               <Text style={[s.assistantToggle, { color: c.accent || "#6366f1" }]}>
-                {expanded ? "Hide raw" : "Show raw"}
+                {expanded ? "Hide details" : "Show details"}
               </Text>
             </Pressable>
           ) : null}
         </View>
         <Text style={[s.assistantSummary, { color: c.textPrimary }]}>{preview.summary}</Text>
-        {preview.activity.length > 0 ? (
+        {expanded && preview.activity.length > 0 ? (
           <View style={s.assistantActivityList}>
             {preview.activity.map((item, index) => (
               <View key={`${item}-${index}`} style={[s.assistantActivityRow, { borderColor: c.border, backgroundColor: c.bg + "55" }]}>
