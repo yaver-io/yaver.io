@@ -47,6 +47,32 @@ func TestAuthStateStringForRunnerForbidden(t *testing.T) {
 	}
 }
 
+func TestAuthStateStringForRunnerActiveWithVersion(t *testing.T) {
+	r := &remoteRunnerSummary{
+		ID: "claude-code", Installed: true, AuthConfigured: true,
+		AuthSource: "keychain", Version: "Claude Code 2.1.126",
+	}
+	got := authStateStringForRunner(r, &remoteAgentStatusReport{})
+	want := "✓ active (keychain) · Claude Code 2.1.126"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
+func TestAuthStateStringForRunnerNotConfiguredWithVersion(t *testing.T) {
+	// Codex is installed but not authed — version still surfaces so the
+	// user can sanity-check what build is on the box before triaging.
+	r := &remoteRunnerSummary{
+		ID: "codex", Installed: true, AuthConfigured: false,
+		Version: "codex-cli 0.122.0",
+	}
+	got := authStateStringForRunner(r, &remoteAgentStatusReport{})
+	want := "✗ not configured (run: yaver primary auth codex) · codex-cli 0.122.0"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+}
+
 func TestAuthStateStringForRunnerUnreachable(t *testing.T) {
 	// HTTPStatusRunner == 0 means the request never reached the box
 	// (DNS / TCP / TLS failure). Different signal than 401/403.

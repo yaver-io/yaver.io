@@ -195,10 +195,54 @@ object YaverFeedbackPane {
       layoutParams = lp
     }
 
+    // Agent + model chip — mirrors iOS YaverFeedbackPane.swift's
+    // agentChipButton. Reads PREFERRED_RUNNER / PREFERRED_MODEL prefs
+    // (pushed by DeviceContext from Convex source-of-truth) so the
+    // user can see what their feedback will route to before tapping
+    // Send. Tap → opens YaverAgentsPane. Hidden when no preference
+    // pushed yet.
+    val prefs = ctx.getSharedPreferences(YaverNativePrefs.NAME, Context.MODE_PRIVATE)
+    val preferredRunner = (prefs.getString(YaverNativePrefs.PREFERRED_RUNNER, "") ?: "").trim()
+    val preferredModel = (prefs.getString(YaverNativePrefs.PREFERRED_MODEL, "") ?: "").trim()
+    val agentChip = TextView(ctx).apply {
+      val runnerLabel = when (preferredRunner.lowercase()) {
+        "claude" -> "Claude"
+        "codex" -> "OpenAI Codex"
+        "opencode" -> "opencode"
+        "" -> ""
+        else -> preferredRunner
+      }
+      val combined = if (preferredModel.isEmpty()) runnerLabel
+                     else "$runnerLabel · $preferredModel"
+      text = "$combined  ▾"
+      setTextColor(Color.argb(200, 255, 255, 255))
+      textSize = 12f
+      isAllCaps = false
+      gravity = Gravity.CENTER
+      setPadding(dp(ctx, 12f).toInt(), dp(ctx, 6f).toInt(),
+                 dp(ctx, 12f).toInt(), dp(ctx, 6f).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = dp(ctx, 10f)
+        setColor(Color.argb(15, 255, 255, 255))
+        setStroke(dp(ctx, 1f).toInt(), Color.argb(26, 255, 255, 255))
+      }
+      val lp = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+      )
+      lp.gravity = Gravity.END
+      lp.topMargin = dp(ctx, 4f).toInt()
+      lp.bottomMargin = dp(ctx, 10f).toInt()
+      layoutParams = lp
+      visibility = if (preferredRunner.isEmpty() && preferredModel.isEmpty())
+                   View.GONE else View.VISIBLE
+      setOnClickListener { YaverAgentsPane.show(activity) }
+    }
+
     card.addView(titleRow)
     card.addView(sub)
     card.addView(prompt)
     card.addView(toggleRow)
+    card.addView(agentChip)
     card.addView(actionRow)
     card.addView(status)
 
@@ -253,10 +297,11 @@ object YaverFeedbackPane {
     val prefs = ctx.getSharedPreferences(YaverNativePrefs.NAME, Context.MODE_PRIVATE)
     val base = prefs.getString(YaverNativePrefs.AGENT_BASE_URL, "") ?: ""
     val auth = bestAuthToken(prefs)
+    val relayPassword = prefs.getString(YaverNativePrefs.RELAY_PASSWORD, "") ?: ""
     if (base.isEmpty()) { setStatus(status, "no agent URL", Tone.Error); return }
     setStatus(status, "Reloading…", Tone.Progress)
     net.execute {
-      val resp = post("$base/dev/reload", auth, "{}")
+      val resp = post("$base/dev/reload", auth, "{}", relayPassword)
       if (resp.ok) setStatus(status, "Reload requested ✓", Tone.Success)
       else setStatus(status, "Reload failed (HTTP ${resp.code}) ${resp.bodyTrim(160)}", Tone.Error)
     }
@@ -267,6 +312,7 @@ object YaverFeedbackPane {
     val prefs = ctx.getSharedPreferences(YaverNativePrefs.NAME, Context.MODE_PRIVATE)
     val base = prefs.getString(YaverNativePrefs.AGENT_BASE_URL, "") ?: ""
     val auth = bestAuthToken(prefs)
+    val relayPassword = prefs.getString(YaverNativePrefs.RELAY_PASSWORD, "") ?: ""
     if (base.isEmpty()) { setStatus(status, "no agent URL", Tone.Error); return }
     setStatus(status, "Sending…", Tone.Progress)
     val images = JSONArray()
@@ -280,16 +326,36 @@ object YaverFeedbackPane {
         put("filename", "yaver-feedback-${System.currentTimeMillis() / 1000}.jpg")
       })
     }
+    // Project context — pulled from prefs that DeviceContext +
+    // hotreload.tsx push via NativeModules.YaverInfo. Lets the remote
+    // AI know which Hot-Reload app this feedback targets.
+    val projectName = (prefs.getString(YaverNativePrefs.GUEST_PROJECT_NAME, "") ?: "").trim()
+    val projectPath = (prefs.getString(YaverNativePrefs.GUEST_PROJECT_PATH, "") ?: "").trim()
+    val hasScreenshot = images.length() > 0
+    // Mirror of buildFeedbackPrompt() in YaverFeedbackPane.swift —
+    // keep the wording in sync so iOS / Android feedback both produce
+    // the same shape of task on the remote.
+    val description = buildFeedbackPrompt(prompt, projectName, projectPath, hasScreenshot)
+    // Preferred runner / model — pushed by DeviceContext (Convex
+    // source of truth: userSettings.primaryRunnerByDevice). DROPS the
+    // legacy `runner: "claude"` hardcode that ignored the user's pick
+    // and silently routed every feedback to Claude regardless of what
+    // they had set as their device-primary runner.
+    val preferredRunner = (prefs.getString(YaverNativePrefs.PREFERRED_RUNNER, "") ?: "").trim()
+    val preferredModel = (prefs.getString(YaverNativePrefs.PREFERRED_MODEL, "") ?: "").trim()
     val body = JSONObject().apply {
       put("title", prompt.take(80))
-      put("description", prompt)
+      put("description", description)
       put("userPrompt", prompt)
-      put("runner", "claude")
       put("source", "mobile-feedback")
       put("images", images)
+      if (projectPath.isNotEmpty()) put("workDir", projectPath)
+      if (projectName.isNotEmpty()) put("projectName", projectName)
+      if (preferredRunner.isNotEmpty()) put("runner", preferredRunner)
+      if (preferredModel.isNotEmpty()) put("model", preferredModel)
     }.toString()
     net.execute {
-      val resp = post("$base/tasks", auth, body)
+      val resp = post("$base/tasks", auth, body, relayPassword)
       if (resp.ok) {
         setStatus(status, "Sent ✓", Tone.Success)
         main.postDelayed({ dismiss() }, 900)
@@ -299,11 +365,56 @@ object YaverFeedbackPane {
     }
   }
 
+  /**
+   * Build the `description` field POSTed to /tasks. Wraps the user's
+   * raw feedback with enough context for the remote AI to act
+   * without guessing. Mirror of buildFeedbackPrompt() in
+   * mobile/ios/Yaver/YaverFeedbackPane.swift — keep both in sync.
+   */
+  private fun buildFeedbackPrompt(userPrompt: String,
+                                  projectName: String,
+                                  projectPath: String,
+                                  hasScreenshot: Boolean): String {
+    val sb = StringBuilder()
+    sb.append("[Mobile feedback from inside Yaver]\n")
+    sb.append("The user is providing this feedback while running a mobile app inside the Yaver mobile container ")
+    sb.append("and is currently looking at a specific screen of that app.\n\n")
+    if (projectName.isNotEmpty() || projectPath.isNotEmpty()) {
+      sb.append("App being tested:\n")
+      if (projectName.isNotEmpty()) sb.append("  name: ").append(projectName).append('\n')
+      if (projectPath.isNotEmpty()) sb.append("  path: ").append(projectPath).append('\n')
+      sb.append('\n')
+    }
+    if (hasScreenshot) {
+      sb.append("A screenshot of the current screen is attached as the first image. ")
+      sb.append("Open it before deciding what to change — the user is pointing at what they SEE, ")
+      sb.append("not necessarily what is named most prominently in the source.\n\n")
+    } else {
+      sb.append("(The user chose not to attach a screenshot for this round.)\n\n")
+    }
+    if (projectName.isNotEmpty() || projectPath.isNotEmpty()) {
+      sb.append("Apply the requested change to the source of that app. Save the affected files. ")
+      sb.append("The user will trigger a Hermes reload from the drawer to see the result.\n\n")
+    } else {
+      sb.append("If you can identify the project from the prompt or the screenshot, apply the change there. ")
+      sb.append("Otherwise ask the user briefly which project to target.\n\n")
+    }
+    sb.append("User feedback:\n").append(userPrompt)
+    return sb.toString()
+  }
+
   private data class Resp(val code: Int, val ok: Boolean, val body: String) {
     fun bodyTrim(n: Int): String = body.trim().take(n)
   }
 
-  private fun post(urlStr: String, auth: String, jsonBody: String): Resp {
+  /**
+   * relayPassword (optional, may be empty) is attached as
+   * X-Relay-Password when non-empty. Required for relay-tunnelled
+   * agents — without it they reject with 401 "invalid relay
+   * password". Mirrors yaverRelayHeaders() on iOS.
+   */
+  private fun post(urlStr: String, auth: String, jsonBody: String,
+                   relayPassword: String = ""): Resp {
     return try {
       val url = URL(urlStr)
       val conn = url.openConnection() as HttpURLConnection
@@ -313,6 +424,9 @@ object YaverFeedbackPane {
       conn.doOutput = true
       conn.setRequestProperty("Authorization", "Bearer $auth")
       conn.setRequestProperty("Content-Type", "application/json")
+      if (relayPassword.isNotEmpty()) {
+        conn.setRequestProperty("X-Relay-Password", relayPassword)
+      }
       conn.outputStream.use { it.write(jsonBody.toByteArray()) }
       val code = conn.responseCode
       val stream = if (code in 200..299) conn.inputStream else conn.errorStream

@@ -730,6 +730,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/remote-runtime/capabilities", s.auth(s.handleRemoteRuntimeCapabilities))
 	mux.HandleFunc("/remote-runtime/sessions", s.auth(s.handleRemoteRuntimeSessions))
 	mux.HandleFunc("/remote-runtime/sessions/", s.auth(s.handleRemoteRuntimeSessionRoute))
+	mux.HandleFunc("/remote-runtime/turn-credentials", s.auth(s.handleRemoteRuntimeTURNCredentials))
 	// Monorepo detection — desktop/agent/monorepo_detect.go
 	mux.HandleFunc("/projects/monorepo", s.auth(s.handleMonorepoDetect))
 	mux.HandleFunc("/projects/switch", s.auth(s.handleProjectSwitch))
@@ -2201,6 +2202,12 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 			"name":  s.taskMgr.runner.Name,
 			"model": s.taskMgr.runner.Model,
 		},
+		// Builder role surface so `yaver builder ping` (and the
+		// `builder list` reachability column) can tell whether the
+		// remote box has been deliberately put into builder mode.
+		// Empty platforms = "not a builder", which is the default.
+		"isBuilder": len(builderPlatforms()) > 0,
+		"platforms": builderPlatforms(),
 	}
 
 	// Project metadata
@@ -2670,6 +2677,10 @@ type runnerInfoRow struct {
 	SupportsModelSelection bool              `json:"supportsModelSelection,omitempty"`
 	ModelSource            string            `json:"modelSource,omitempty"`
 	Models                 []runnerModelInfo `json:"models"`
+	// Version is the first line of `<bin> --version` (e.g. "Claude Code
+	// 2.1.126" / "codex-cli 0.122.0" / "1.4.0"). Surfaced in the CLI
+	// `yaver primary status` runners table and the mobile DeviceDetailsModal.
+	Version string `json:"version,omitempty"`
 }
 
 func fallbackRunnerModels(runnerID string) []runnerModelInfo {
@@ -2765,14 +2776,43 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 		if seenIDs[r.RunnerID] {
 			return
 		}
-		_, err := osexec.LookPath(r.Command)
+		// Use resolveRunnerBinary (same path collectRunnerAuthStatusRows
+		// uses) so /agent/runners and /runner-auth/status agree on what's
+		// installed. Bare LookPath misses npm-global / brew / cargo /
+		// shell-PATH installs when the agent runs under systemd, which
+		// caused the feedback panel to claim "no coding agent signed in"
+		// even when the picker said the runner was installed.
+		path := resolveRunnerBinary(r.Command)
+		installed := path != ""
+		signatureMismatchWarning := ""
+		version := ""
+		// Sanity-probe the binary to reject same-named shims (e.g. the
+		// `code` wrapper vs OpenAI Codex). Mirrors collectRunnerAuthStatusRows.
+		// The probe also returns the runner's --version banner which we
+		// surface to the CLI table + mobile UI for parity.
+		if installed {
+			if ok, ver := verifyRunnerBinarySignature(r.RunnerID, path); !ok {
+				installed = false
+				signatureMismatchWarning = "Binary at " + path + " does not match the expected " + r.Name + " signature."
+			} else {
+				version = ver
+			}
+		}
 		status := DetectRunnerRuntimeStatus(r, s.taskMgr.workDir)
+		// Foreign binary supersedes the runtime detector's softer
+		// warnings — nothing else matters until the user fixes PATH /
+		// uninstalls the shim.
+		if !installed && signatureMismatchWarning != "" {
+			status.Warning = signatureMismatchWarning
+			status.AuthConfigured = false
+			status.Ready = false
+		}
 		models := modelsByRunner[r.RunnerID]
 		runners = append(runners, runnerInfoRow{
 			ID:                     r.RunnerID,
 			Name:                   r.Name,
 			Command:                r.Command,
-			Installed:              err == nil,
+			Installed:              installed,
 			Ready:                  status.Ready,
 			AuthConfigured:         status.AuthConfigured,
 			AuthSource:             status.AuthSource,
@@ -2783,6 +2823,7 @@ func (s *HTTPServer) handleRunners(w http.ResponseWriter, r *http.Request) {
 			SupportsModelSelection: len(models) > 0,
 			ModelSource:            modelSourceByRunner[r.RunnerID],
 			Models:                 models,
+			Version:                version,
 		})
 		seenIDs[r.RunnerID] = true
 	}
@@ -3046,6 +3087,8 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		Output:         output,
 		ResultText:     task.ResultText,
 		CostUSD:        task.CostUSD,
+		InputTokens:    task.InputTokens,
+		OutputTokens:   task.OutputTokens,
 		Turns:          task.Turns,
 		Source:         task.Source,
 		TmuxSession:    task.TmuxSession,

@@ -34,6 +34,7 @@ type remoteRunnerSummary struct {
 	Warning        string `json:"warning,omitempty"`
 	Error          string `json:"error,omitempty"`
 	IsDefault      bool   `json:"isDefault"`
+	Version        string `json:"version,omitempty"`
 }
 
 // remoteAgentStatusReport is the merged shape we render at the CLI. We
@@ -381,7 +382,7 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 		// provider rows (`opencode/anthropic`, `opencode/openrouter`,
 		// …) and longer aliases stay readable instead of getting
 		// truncated to ambiguous prefixes like `opencode/a`.
-		fmt.Printf("    %-22s %-9s %-9s %-6s %s\n", "RUNNER", "INSTALLED", "READY", "AUTH", "NOTES")
+		fmt.Printf("    %-22s %-9s %-9s %-6s %-22s %s\n", "RUNNER", "INSTALLED", "READY", "AUTH", "VERSION", "NOTES")
 		for _, r := range report.Runners {
 			notes := ""
 			if r.Warning != "" {
@@ -393,12 +394,24 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 			if r.IsDefault {
 				star = "★"
 			}
-			fmt.Printf("    %s %-20s %-9s %-9s %-6s %s\n",
+			// Trim version display to keep the column tight even when
+			// some CLI prints a verbose banner (e.g. "Claude Code
+			// 2.1.126 (some-build-tag)"). Older agents (<1.99.147)
+			// don't populate Version — show "—" so the column is
+			// still visually aligned.
+			ver := strings.TrimSpace(r.Version)
+			if ver == "" {
+				ver = "—"
+			} else if len(ver) > 22 {
+				ver = ver[:21] + "…"
+			}
+			fmt.Printf("    %s %-20s %-9s %-9s %-6s %-22s %s\n",
 				star,
 				runnerTrunc(r.ID, 20),
 				yesNo(r.Installed),
 				yesNo(r.Ready),
 				yesNo(r.AuthConfigured),
+				ver,
 				notes,
 			)
 		}
@@ -484,21 +497,28 @@ func authStateStringForRunner(runner *remoteRunnerSummary, report *remoteAgentSt
 	if !runner.Installed {
 		return "✗ not installed"
 	}
+	// Compose "<base> · v<version>" when the agent gave us a version
+	// banner — keeps the auth: block scannable but still surfaces what
+	// you'd otherwise have to dig out of the runners table below.
+	suffix := ""
+	if v := strings.TrimSpace(runner.Version); v != "" {
+		suffix = " · " + v
+	}
 	if runner.AuthConfigured {
 		src := strings.TrimSpace(runner.AuthSource)
 		if src != "" {
-			return "✓ active (" + src + ")"
+			return "✓ active (" + src + ")" + suffix
 		}
-		return "✓ active"
+		return "✓ active" + suffix
 	}
-	suffix := ""
+	hint := ""
 	switch strings.ToLower(runner.ID) {
-	case "claude-code":
-		suffix = " (run: yaver primary auth claude)"
+	case "claude-code", "claude":
+		hint = " (run: yaver primary auth claude)"
 	case "codex":
-		suffix = " (run: yaver primary auth codex)"
+		hint = " (run: yaver primary auth codex)"
 	}
-	return "✗ not configured" + suffix
+	return "✗ not configured" + hint + suffix
 }
 
 func numFromAny(v interface{}) int {

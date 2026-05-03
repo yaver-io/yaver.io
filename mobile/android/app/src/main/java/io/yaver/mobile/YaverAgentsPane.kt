@@ -257,23 +257,31 @@ object YaverAgentsPane {
           val key = if (id == "claude-code") "claude" else id
           val installed = r.optBoolean("installed", false)
           val authed = r.optBoolean("authConfigured", false)
-          applyRowState(key, installed, authed)
+          // Version (`<bin> --version` first line, e.g. "Claude Code
+          // 2.1.126" / "codex-cli 0.122.0" / "1.4.0") populated by
+          // agent 1.99.147+. Older agents omit the field — fall back
+          // to empty so applyRowState behaves like before.
+          val version = r.optString("version", "") ?: ""
+          applyRowState(key, installed, authed, version)
         }
       }
     }
   }
 
-  private fun applyRowState(runner: String, installed: Boolean, authed: Boolean) {
+  private fun applyRowState(runner: String, installed: Boolean, authed: Boolean,
+                            version: String = "") {
     if (!installed) { setRow(runner, "not installed on agent", Tone.Warning); return }
+    // Compose "<version> · <auth-state>" so the user can confirm the
+    // host is running the build they think it is. Mirrors the iOS
+    // YaverAgentsPane rendering.
+    val prefix = if (version.isEmpty()) "" else "$version · "
     if (runner == "opencode") {
-      setRow(runner,
-             if (authed) "configured · tap to edit" else "tap to set API keys",
-             if (authed) Tone.Ok else Tone.Warning)
+      val auth = if (authed) "configured · tap to edit" else "tap to set API keys"
+      setRow(runner, prefix + auth, if (authed) Tone.Ok else Tone.Warning)
       return
     }
-    setRow(runner,
-           if (authed) "✓ signed in · tap to re-auth" else "✗ not signed in · tap to sign in",
-           if (authed) Tone.Ok else Tone.Warning)
+    val auth = if (authed) "✓ signed in · tap to re-auth" else "✗ not signed in · tap to sign in"
+    setRow(runner, prefix + auth, if (authed) Tone.Ok else Tone.Warning)
   }
 
   private enum class Tone { Ok, Warning, Error }
