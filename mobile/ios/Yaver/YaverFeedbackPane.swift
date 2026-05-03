@@ -531,6 +531,18 @@ final class YaverFeedbackPane: NSObject {
       "source": "mobile-feedback",
       "images": images,
     ]
+    // Pin the task to the project the user is currently looking at.
+    // The user tapped feedback while the running dev server's bundle was
+    // on screen, so the agent's currently-running dev server's workDir
+    // is by far the strongest "which project is this feedback about"
+    // signal. yaverPendingDevServerWorkDir is mirrored by AppDelegate /
+    // bundle loader on every successful /dev/start ; if it's been
+    // cleared (no dev server running) we fall through and let the
+    // agent's autoSwitchProject heuristic take over.
+    let pinnedWorkDir = UserDefaults.standard.string(forKey: "yaverPendingDevServerWorkDir") ?? ""
+    if !pinnedWorkDir.isEmpty {
+      payload["workDir"] = pinnedWorkDir
+    }
     let preferredRunner = UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? ""
     if !preferredRunner.isEmpty {
       payload["runner"] = preferredRunner

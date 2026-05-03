@@ -482,6 +482,18 @@ final class YaverAgentsPane: NSObject {
         // sub-pane owns polling + cancel + paste-back submission, and
         // calls back to refresh auth-status when it terminates.
         guard let win = self.window else { return }
+        // The flow pane builds its own poll/submit URLs against the same
+        // agent host, so hand it the resolved base (with /d/<deviceId>
+        // prefix when the resolver added one). Mirrors what
+        // yaverResolveAgentURL would build for an empty path.
+        let resolvedBase: String = {
+          if let u = yaverResolveAgentURL("/") {
+            var s = u.absoluteString
+            while s.hasSuffix("/") { s.removeLast() }
+            return s
+          }
+          return UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
+        }()
         YaverRunnerAuthFlowPane.shared.present(
           in: win,
           runner: runner,
@@ -489,7 +501,7 @@ final class YaverAgentsPane: NSObject {
           openUrl: openUrl,
           userCode: userCode,
           authToken: self.bestAuthToken(),
-          agentBase: agentBase,
+          agentBase: resolvedBase,
           onTerminal: { [weak self] outcome in
             guard let self = self else { return }
             switch outcome {

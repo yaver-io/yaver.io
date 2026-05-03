@@ -42,6 +42,7 @@ var feedbackSourceVariants = map[string]struct{}{
 	"feedback-console":   {}, // mobile FeedbackOverlay typed message
 	"feedback-sdk":       {}, // SDK's modal "Hot Reload" / "Fix" buttons
 	"native-guest-shake": {}, // shake-inside-Yaver-host that escalated to feedback
+	"mobile-feedback":    {}, // YaverFeedbackPane.swift native send (host-mode bottom sheet inside the Yaver mobile container)
 	"vibing":             {}, // /vibing/execute origin, included so OnTaskDone catches it
 }
 
@@ -56,7 +57,7 @@ func isFeedbackOrVibingSource(source string) bool {
 // /vibing/execute already does its own reshaping, so it is excluded.
 func shouldVibingifyFeedbackTask(source string) bool {
 	s := strings.TrimSpace(strings.ToLower(source))
-	return s == "feedback-console" || s == "feedback-sdk" || s == "native-guest-shake"
+	return s == "feedback-console" || s == "feedback-sdk" || s == "native-guest-shake" || s == "mobile-feedback"
 }
 
 // vibingifyFeedbackTaskBody applies the same project resolution + prompt

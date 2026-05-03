@@ -1261,6 +1261,21 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             // Persist the resolved fallback set so the app can reconnect offline too.
             await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
+            // Mirror the relay password into UserDefaults so native swift
+            // panes (YaverFeedbackPane, YaverAgentsPane) can attach
+            // X-Relay-Password to relay-routed requests. Without this,
+            // native /tasks + /runner-auth POSTs hit the relay without
+            // the password and either 401 ("invalid relay password")
+            // or 404 ("subdomain 'public' not registered") when the
+            // bundle URL also lost its /d/<deviceId> prefix.
+            try {
+              const { NativeModules } = require("react-native");
+              NativeModules.YaverInfo?.setInheritedRelayPassword?.(
+                settings.relayPassword || "",
+              );
+            } catch {
+              // Native module unavailable — non-iOS / unit test path.
+            }
             console.log("[DeviceContext] Loaded", resolved.length, "relay server(s) from Convex user settings");
             return resolved.length;
           }
