@@ -171,16 +171,21 @@ func setRunnerAuthEntriesRemote(target string, entries []runnerAuthEntry) error 
 }
 
 type runnerAuthStatusRow struct {
-	ID             string
-	Name           string
-	Installed      bool
-	Ready          bool
-	AuthConfigured bool
-	AuthSource     string
-	Warning        string
-	Error          string
-	Path           string
-	Detail         string
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Installed      bool   `json:"installed"`
+	Ready          bool   `json:"ready"`
+	AuthConfigured bool   `json:"authConfigured"`
+	AuthSource     string `json:"authSource,omitempty"`
+	Warning        string `json:"warning,omitempty"`
+	Error          string `json:"error,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+	// Version is the first line of `<bin> --version` output (capped at
+	// 80 chars). Surfaced in the mobile Coding Agents pane so the user
+	// can see "Claude Code 2.1.126" / "codex-cli 0.122" / "opencode 1.4.0"
+	// at a glance and tell whether their install is current.
+	Version string `json:"version,omitempty"`
 }
 
 func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
@@ -209,6 +214,22 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 			rows = append(rows, row)
 			continue
 		}
+		// Sanity-check the binary actually IS the runner we asked for.
+		// Without this, a same-named shim (e.g. user has a `~/code/`
+		// directory containing a `codex` binary unrelated to OpenAI's
+		// CLI, or a shell wrapper) would register Installed=true and
+		// the feedback SDK / tasks picker would falsely advertise it
+		// as a usable runner. The sigOK probe runs `<path> --version`
+		// with a 1.5s timeout (cached for 5 min so the poll loop stays
+		// cheap) and matches the banner against a per-runner signature.
+		sigOK, sigVersion := verifyRunnerBinarySignature(runner.ID, path)
+		if !sigOK {
+			row.Installed = false
+			row.Warning = "Binary at " + path + " does not match the expected " + runner.Name + " signature."
+			row.Detail = row.Warning
+			rows = append(rows, row)
+			continue
+		}
 		cfg := GetRunnerConfig(runner.ID)
 		status := DetectRunnerRuntimeStatus(cfg, wd)
 		row.Ready = status.Ready
@@ -216,16 +237,19 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 		row.AuthSource = status.AuthSource
 		row.Warning = status.Warning
 		row.Error = status.Error
-		version := ""
-		// Use the absolute path we just resolved so `--version` doesn't
-		// fall back to the agent's restricted systemd PATH and miss the
-		// binary we already located.
-		if out, verr := osexec.Command(path, "--version").CombinedOutput(); verr == nil {
-			version = strings.TrimSpace(strings.Split(string(out), "\n")[0])
-			if len(version) > 60 {
-				version = version[:60]
+		version := sigVersion
+		if version == "" {
+			// Fallback to the original probe in case sigVersion was empty
+			// (verifyRunnerBinarySignature returns version="" for
+			// unknown runners, even though it returns ok=true).
+			if out, verr := osexec.Command(path, "--version").CombinedOutput(); verr == nil {
+				version = strings.TrimSpace(strings.Split(string(out), "\n")[0])
+				if len(version) > 60 {
+					version = version[:60]
+				}
 			}
 		}
+		row.Version = version
 		_, row.Detail = runnerDoctorDetail(cfg, wd, path, version)
 		rows = append(rows, row)
 	}

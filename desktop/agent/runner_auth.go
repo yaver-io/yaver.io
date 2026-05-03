@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"time"
 )
 
 // RunnerRuntimeStatus describes whether a runner is usable on this machine,
@@ -197,9 +201,50 @@ func detectClaudeStatus() RunnerRuntimeStatus {
 			} else {
 				status.AuthSource = path
 			}
+		} else if runtime.GOOS == "darwin" && claudeMacKeychainHasCreds() {
+			// macOS subscription users have no env var and no
+			// ~/.claude/.credentials.json — Claude Code stores the
+			// OAuth token in the system Keychain under the service
+			// name "Claude Code-credentials". `security find-generic-
+			// password` exits 0 iff the entry exists, so we use it
+			// as a cheap presence check (cached for 60s to keep the
+			// /runner-auth/status poll loop free of fork overhead).
+			status.AuthConfigured = true
+			status.AuthSource = "macOS Keychain · Claude Code-credentials"
 		}
 	}
 	return status
+}
+
+var (
+	claudeMacKeychainCache   = struct {
+		sync.Mutex
+		ok bool
+		at time.Time
+	}{}
+	claudeMacKeychainTTL = 60 * time.Second
+)
+
+// claudeMacKeychainHasCreds returns true if the macOS Keychain has the
+// "Claude Code-credentials" generic password entry that Claude Code 2.x
+// uses for subscription OAuth. Result cached for 60s — the underlying
+// `security` invocation triggers a 1-time auth prompt the very first
+// time the calling process accesses the entry, but subsequent reads
+// from the same daemon are silent.
+func claudeMacKeychainHasCreds() bool {
+	claudeMacKeychainCache.Lock()
+	defer claudeMacKeychainCache.Unlock()
+	if !claudeMacKeychainCache.at.IsZero() && time.Since(claudeMacKeychainCache.at) < claudeMacKeychainTTL {
+		return claudeMacKeychainCache.ok
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, "security", "find-generic-password", "-s", "Claude Code-credentials")
+	err := cmd.Run()
+	ok := err == nil
+	claudeMacKeychainCache.ok = ok
+	claudeMacKeychainCache.at = time.Now()
+	return ok
 }
 
 func claudeCredentialsPath() (string, bool) {
@@ -250,9 +295,51 @@ func detectCodexStatus() RunnerRuntimeStatus {
 			return status
 		}
 	}
+	// Final fallback: ask the codex CLI itself. `codex login status`
+	// exits 0 with account info when authenticated, non-zero with a
+	// "run codex login" message otherwise. Only useful when the binary
+	// resolves on PATH — when it doesn't we leave the existing "no
+	// credentials" error in place. Cached so the poll loop doesn't
+	// fork codex every 1.5s.
+	if codexLoginStatusOK() {
+		status.AuthConfigured = true
+		status.AuthSource = "codex login status"
+		return status
+	}
 	status.Ready = false
 	status.Error = "Codex is installed but no credentials were found. Set `OPENAI_API_KEY` or run `codex login --device-auth` (and complete it in the browser). Checked: " + strings.Join(codexAuthCandidatePaths(), ", ") + "."
 	return status
+}
+
+var (
+	codexLoginStatusCache = struct {
+		sync.Mutex
+		ok bool
+		at time.Time
+	}{}
+	codexLoginStatusTTL = 60 * time.Second
+)
+
+func codexLoginStatusOK() bool {
+	codexLoginStatusCache.Lock()
+	defer codexLoginStatusCache.Unlock()
+	if !codexLoginStatusCache.at.IsZero() && time.Since(codexLoginStatusCache.at) < codexLoginStatusTTL {
+		return codexLoginStatusCache.ok
+	}
+	bin := resolveRunnerBinary("codex")
+	if bin == "" {
+		codexLoginStatusCache.ok = false
+		codexLoginStatusCache.at = time.Now()
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	cmd := osexec.CommandContext(ctx, bin, "login", "status")
+	err := cmd.Run()
+	ok := err == nil
+	codexLoginStatusCache.ok = ok
+	codexLoginStatusCache.at = time.Now()
+	return ok
 }
 
 func codexLinuxSandboxPrereqError() string {

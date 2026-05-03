@@ -370,6 +370,16 @@ export interface RemoteRuntimeSession {
   createdAt: string;
   updatedAt: string;
   note?: string;
+  // deviceDims is populated by the agent on Attach via
+  // ProbeDeviceDims (adb shell wm size / xcrun simctl screenshot).
+  // The viewer uses these to scale pointer coordinates back to
+  // device space so a 4K monitor and a laptop send identical taps.
+  deviceDims?: {
+    width: number;
+    height: number;
+    scale?: number;
+    rotation?: "portrait" | "landscape";
+  };
 }
 
 // Vault entries — mirrors VaultEntry / VaultEntrySummary in vault.go.
@@ -527,6 +537,9 @@ export interface RunnerAuthStatusRow {
   error?: string;
   path?: string;
   detail?: string;
+  /** First line of `<bin> --version` (e.g. "Claude Code 2.1.126",
+   *  "codex-cli 0.122.0", "1.4.0"). Populated by agent 1.99.147+. */
+  version?: string;
 }
 
 export interface RunnerBrowserAuthSession {
@@ -3429,6 +3442,25 @@ export class AgentClient {
     if (!res.ok) throw new Error(data?.error || `Failed to close remote runtime session: HTTP ${res.status}`);
   }
 
+  async fetchRemoteRuntimeTurnCredentials(): Promise<{ iceServers: RTCIceServer[]; ttlSeconds: number }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/remote-runtime/turn-credentials`, {
+      headers: this.authHeaders,
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data?.error || `Failed to fetch TURN credentials: HTTP ${res.status}`);
+    }
+    // The agent always returns at least a STUN entry; TURN is added
+    // when YAVER_TURN_URL + the relay's TURN secret are both set on
+    // the agent host.
+    return {
+      iceServers: Array.isArray(data?.iceServers) ? (data.iceServers as RTCIceServer[]) : [],
+      ttlSeconds: Number(data?.ttlSeconds) || 60,
+    };
+  }
+
   async createRemoteRuntimeWebRTCAnswer(sessionId: string, offer: { sdp?: string; type?: string }): Promise<{ session: RemoteRuntimeSession; answer: { sdp?: string; type?: string }; transport?: string; note?: string }> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/webrtc/offer`, {
@@ -3454,7 +3486,7 @@ export class AgentClient {
     return await res.blob();
   }
 
-  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "text" | "back" | "home"; x?: number; y?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
+  async sendRemoteRuntimeControl(sessionId: string, body: { action: "tap" | "swipe" | "text" | "back" | "home" | "key"; x?: number; y?: number; x2?: number; y2?: number; durationMs?: number; text?: string; key?: string }): Promise<RemoteRuntimeSession> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/remote-runtime/sessions/${encodeURIComponent(sessionId)}/control`, {
       method: "POST",

@@ -378,26 +378,41 @@ final class YaverAgentsPane: NSObject {
         self.setRowStatus(runner: "codex", text: "not installed on agent", tone: .warning)
         self.setRowStatus(runner: "opencode", text: "not installed on agent", tone: .warning)
         for r in runners {
-          guard let id = r["id"] as? String else { continue }
+          // The /runner-auth/status payload used to ship un-tagged Go
+          // structs (PascalCase keys: "ID", "Installed", …) — every
+          // lookup here returned nil and we silently fell back to the
+          // "not installed on agent" defaults above. Read both spellings
+          // so the pane stays correct across older agent builds.
+          let id = (r["id"] as? String) ?? (r["ID"] as? String) ?? ""
+          if id.isEmpty { continue }
           let normalized = id.lowercased() == "claude-code" ? "claude" : id.lowercased()
-          let authConfigured = (r["authConfigured"] as? Bool) ?? false
-          let installed = (r["installed"] as? Bool) ?? false
-          self.applyRow(runner: normalized, installed: installed, authed: authConfigured)
+          let authConfigured = (r["authConfigured"] as? Bool) ?? (r["AuthConfigured"] as? Bool) ?? false
+          let installed = (r["installed"] as? Bool) ?? (r["Installed"] as? Bool) ?? false
+          let version = (r["version"] as? String) ?? (r["Version"] as? String) ?? ""
+          self.applyRow(runner: normalized, installed: installed, authed: authConfigured, version: version)
         }
       }
     }.resume()
   }
 
-  private func applyRow(runner: String, installed: Bool, authed: Bool) {
+  private func applyRow(runner: String, installed: Bool, authed: Bool, version: String = "") {
     if !installed {
       setRowStatus(runner: runner, text: "not installed on agent", tone: .warning)
       return
     }
+    // Compose "<version> · <auth-state>" so the user can confirm the
+    // host is running the build they think it is. The version comes
+    // from the agent probing `<bin> --version` (Claude Code 2.1.126,
+    // codex-cli 0.122, opencode 1.4.0). When the probe was empty
+    // (offline / older agent), fall back to the original copy.
+    let prefix = version.isEmpty ? "" : "\(version) · "
     if runner == "opencode" {
-      setRowStatus(runner: runner, text: authed ? "configured · tap to edit" : "tap to set API keys", tone: authed ? .ok : .warning)
+      let auth = authed ? "configured · tap to edit" : "tap to set API keys"
+      setRowStatus(runner: runner, text: prefix + auth, tone: authed ? .ok : .warning)
       return
     }
-    setRowStatus(runner: runner, text: authed ? "✓ signed in · tap to re-auth" : "✗ not signed in · tap to sign in", tone: authed ? .ok : .warning)
+    let auth = authed ? "✓ signed in · tap to re-auth" : "✗ not signed in · tap to sign in"
+    setRowStatus(runner: runner, text: prefix + auth, tone: authed ? .ok : .warning)
   }
 
   enum Tone { case ok, warning, error }

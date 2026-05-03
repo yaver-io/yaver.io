@@ -632,10 +632,39 @@ function CodingAgentsSection({ device }: { device: Device }) {
         CODING AGENTS
       </Text>
 
-      {/* Auth status + sign-in. */}
+      {/* Install + auth status + sign-in.
+          Three-state subtitle:
+            • not installed → "not installed on agent" (warning, no Sign in)
+            • installed + not authed → "<version> · not signed in" (warning, Sign in)
+            • installed + authed → "<version> · ✓ signed in" (ok)
+          The agent (1.99.147+) reports `installed`, `authConfigured`, and
+          `version` in /runner-auth/status. Older agents that omit `version`
+          fall back to just the auth state — same UX as before. */}
       {CODING_AGENTS.map(({ id, label }) => {
         const row = findStatus(id);
+        const installed = row?.installed === true;
         const authed = row?.authConfigured === true;
+        const version = (row?.version || "").trim();
+        const versionPrefix = version ? `${version} · ` : "";
+        let subtitle: string;
+        let tone: string;
+        if (loading && !row) {
+          subtitle = "checking…";
+          tone = c.textMuted;
+        } else if (!installed) {
+          subtitle = "not installed on agent";
+          tone = "#f59e0b";
+        } else if (authed) {
+          subtitle = `${versionPrefix}✓ signed in`;
+          tone = "#22c55e";
+        } else {
+          subtitle = `${versionPrefix}not signed in`;
+          tone = "#f59e0b";
+        }
+        // Sign-in button only makes sense when the runner is actually on
+        // the host. If it's missing, "Sign in →" is misleading — the user
+        // needs to install the CLI first.
+        const showSignIn = installed && !authed;
         return (
           <View
             key={id}
@@ -651,14 +680,14 @@ function CodingAgentsSection({ device }: { device: Device }) {
             <View style={{ flex: 1 }}>
               <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>{label}</Text>
               <Text style={{
-                color: authed ? "#22c55e" : loading ? c.textMuted : "#f59e0b",
+                color: tone,
                 fontSize: 11,
                 marginTop: 2,
               }}>
-                {loading && !row ? "checking…" : authed ? "✓ signed in" : "not signed in"}
+                {subtitle}
               </Text>
             </View>
-            {authed ? null : (
+            {showSignIn ? (
               <Pressable
                 onPress={() => setAuthModalRunner(id)}
                 style={{
@@ -668,7 +697,7 @@ function CodingAgentsSection({ device }: { device: Device }) {
               >
                 <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>Sign in →</Text>
               </Pressable>
-            )}
+            ) : null}
           </View>
         );
       })}
