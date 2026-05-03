@@ -1268,11 +1268,24 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             // the password and either 401 ("invalid relay password")
             // or 404 ("subdomain 'public' not registered") when the
             // bundle URL also lost its /d/<deviceId> prefix.
+            //
+            // Use the ACTIVE relay's password (the same value the JS
+            // task path's authHeaders already ships with), not
+            // settings.relayPassword — that field is empty for
+            // accounts that haven't customised the relay, and the
+            // server-side default password lives on the per-relay
+            // entry in resolved (or platform-config). Falling back to
+            // settings.relayPassword preserves the prior behaviour for
+            // accounts that DO have a customised value.
             try {
               const { NativeModules } = require("react-native");
-              NativeModules.YaverInfo?.setInheritedRelayPassword?.(
-                settings.relayPassword || "",
-              );
+              const activeRelay = resolved.find((r) => r.password);
+              const relayPw =
+                quicClient.activeRelayPasswordValue ||
+                activeRelay?.password ||
+                settings.relayPassword ||
+                "";
+              NativeModules.YaverInfo?.setInheritedRelayPassword?.(relayPw);
             } catch {
               // Native module unavailable — non-iOS / unit test path.
             }

@@ -1079,6 +1079,15 @@ export class QuicClient {
    *  the bits the device-card UI needs. */
   get activeRelayBaseUrl(): string | null { return this.activeRelayUrl; }
   get activeTunnelBaseUrl(): string | null { return this._tunnelUrl; }
+  /** The relay password the JS quicClient is actively using for the
+   *  in-flight relay connection. Set per-server in setRelayServers /
+   *  during reconnect — NOT the `settings.relayPassword` Convex field
+   *  (which is empty for accounts that didn't customise the relay).
+   *  Native panes (YaverFeedbackPane / YaverAgentsPane) need to mirror
+   *  this exact value into UserDefaults so their /tasks + runner-auth
+   *  POSTs carry the same X-Relay-Password the JS task path already
+   *  ships with. */
+  get activeRelayPasswordValue(): string | null { return this.activeRelayPassword; }
 
   /** Reachability candidates for recovery. Keep the successful target URL so
    *  /auth/pair/submit can follow the same path instead of falling back to a
