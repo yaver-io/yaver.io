@@ -281,6 +281,17 @@ export default function RunnerAuthModal({
                   {session.error || session.detail || "The CLI exited before sign-in completed."}
                 </Text>
               </View>
+            ) : session.status === "verifying" ? (
+              // Set after the user submits the paste-back code (Claude
+              // Code) or after the codex CLI is confirming with OpenAI.
+              // Show a spinner — re-rendering the URL + paste box at this
+              // point is confusing because the URL has already been used.
+              <View style={styles.infoBox}>
+                <ActivityIndicator size="small" color="#a78bfa" />
+                <Text style={styles.infoText}>
+                  {session.detail || `Confirming sign-in on ${runnerLabel(runner)}…`}
+                </Text>
+              </View>
             ) : (
               <View>
                 <Text style={styles.help}>
@@ -291,7 +302,13 @@ export default function RunnerAuthModal({
                 {session.openUrl ? (
                   <TouchableOpacity onPress={openAuthUrl} style={styles.urlButton}>
                     <Text style={styles.urlLabel}>↗ Open authorize page</Text>
-                    <Text style={styles.urlValue} numberOfLines={1}>{session.openUrl}</Text>
+                    {/* selectable so a long-press surfaces iOS's Copy menu —
+                        the user is doing the OAuth flow manually, so they
+                        may want to forward the URL to another device or
+                        retry if the in-app browser fails. */}
+                    <Text style={styles.urlValue} numberOfLines={1} selectable>
+                      {session.openUrl}
+                    </Text>
                   </TouchableOpacity>
                 ) : (
                   <View style={styles.urlPending}>
@@ -303,7 +320,9 @@ export default function RunnerAuthModal({
                 {session.code ? (
                   <View style={styles.codeBox}>
                     <Text style={styles.codeLabel}>Enter this code</Text>
-                    <Text style={styles.codeValue}>{session.code}</Text>
+                    <Text style={styles.codeValue} selectable>
+                      {session.code}
+                    </Text>
                   </View>
                 ) : null}
 
