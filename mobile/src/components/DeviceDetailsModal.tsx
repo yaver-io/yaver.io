@@ -18,6 +18,24 @@ const CODING_AGENTS: ReadonlyArray<{ id: "claude" | "codex" | "opencode"; label:
   { id: "codex", label: "Codex" },
   { id: "opencode", label: "OpenCode" },
 ];
+
+// Static model list per runner — mirrors Convex backend/convex/aiModels.ts
+// PREDEFINED_MODELS so this surface stays in sync with the agent's
+// /agent/runners response without needing a network round-trip just to
+// render the picker. When the Convex list grows, update both places
+// in lockstep.
+const MODELS_BY_RUNNER: Record<string, ReadonlyArray<{ id: string; label: string }>> = {
+  claude: [
+    { id: "claude-opus-4-7", label: "Opus 4.7" },
+    { id: "sonnet", label: "Sonnet" },
+    { id: "haiku", label: "Haiku" },
+  ],
+  codex: [
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5-codex", label: "GPT-5 Codex" },
+    { id: "gpt-5-mini", label: "GPT-5 Mini" },
+  ],
+};
 import {
   classifyTransport,
   fetchRelayHealth,
@@ -565,17 +583,25 @@ function PingRow({ device }: { device: Device }) {
 // comes from /runner-auth/status (per-device, peered when not active).
 function CodingAgentsSection({ device }: { device: Device }) {
   const c = useColors();
-  const { activeDevice, connectionStatus, primaryRunnerByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const {
+    activeDevice,
+    connectionStatus,
+    primaryRunnerByDevice,
+    primaryModelByDevice,
+    setPrimaryRunnerForDevice,
+  } = useDevice();
   const [statusRows, setStatusRows] = useState<RunnerAuthStatusRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
   const [defaultBusy, setDefaultBusy] = useState<string | null>(null);
+  const [modelBusy, setModelBusy] = useState<string | null>(null);
 
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
   // /runner-auth/status routes via /peer/<id> when target is set; pass it
   // for non-active devices so the agent forwards the call to the right peer.
   const target = isActive ? undefined : device.id;
   const currentDefault = primaryRunnerByDevice[device.id] || "";
+  const currentModel = primaryModelByDevice[device.id] || "";
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -692,6 +718,67 @@ function CodingAgentsSection({ device }: { device: Device }) {
           );
         })}
       </View>
+
+      {/* Model picker for the currently-selected default runner. Only
+          renders when the runner has multiple selectable models in the
+          static list — keeps the modal clean for runners that don't
+          have a model concept (opencode, etc.). Tap writes through to
+          userSettings.primaryRunnerForDevice with both runnerId AND
+          model so the per-device pick persists across sessions. */}
+      {(() => {
+        const runnerForModels =
+          currentDefault === "claude-code" ? "claude" : currentDefault;
+        const models = MODELS_BY_RUNNER[runnerForModels] || [];
+        if (models.length < 2) return null;
+        const effectiveModel = currentModel || models[0]?.id;
+        return (
+          <>
+            <Text style={{
+              color: c.textMuted, fontSize: 11, fontWeight: "600",
+              marginTop: 14, marginBottom: 6,
+            }}>
+              Default model
+            </Text>
+            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
+              {models.map(({ id, label }) => {
+                const isPicked = effectiveModel === id;
+                const busy = modelBusy === id;
+                return (
+                  <Pressable
+                    key={`model-pill-${id}`}
+                    disabled={busy || isPicked}
+                    onPress={async () => {
+                      setModelBusy(id);
+                      try {
+                        // Re-pin the same runner with the new model.
+                        await setPrimaryRunnerForDevice(device.id, runnerForModels, id);
+                      } catch (err: any) {
+                        Alert.alert("Failed", err?.message || "Could not save model");
+                      } finally {
+                        setModelBusy(null);
+                      }
+                    }}
+                    style={{
+                      paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14,
+                      backgroundColor: isPicked ? c.accent + "22" : "transparent",
+                      borderWidth: 1, borderColor: isPicked ? c.accent + "88" : c.border,
+                      opacity: busy ? 0.5 : 1,
+                    }}
+                  >
+                    <Text style={{
+                      color: isPicked ? c.accent : c.textPrimary,
+                      fontSize: 12,
+                      fontWeight: isPicked ? "700" : "500",
+                    }}>
+                      {isPicked ? `★ ${label}` : label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        );
+      })()}
 
       <RunnerAuthModal
         visible={!!authModalRunner}
