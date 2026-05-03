@@ -392,18 +392,12 @@ func main() {
 		runChangePassword(os.Args[2:])
 	case "install":
 		runInstall(os.Args[2:])
-	case "swift":
-		// `yaver swift {doctor,logic}` — Linux Swift toolchain
-		// helpers. UI builds still need a Mac; this covers the
-		// Foundation-only Swift code path. See
-		// docs/native-webrtc-web-streaming.md §9.
-		runSwift(os.Args[2:])
-	case "builder":
-		// `yaver builder {add,list,use,forget,ping}` — manages
-		// paired remote-mac builders for iOS / Swift sessions on
-		// non-darwin hosts. See docs §9.3 (and Phase 5 status in
-		// §16).
-		runBuilder(os.Args[2:])
+	// `yaver swift` and `yaver builder` dispatchers temporarily disabled —
+	// the swift_cmd.go / remote_builder_cmd.go implementations are still
+	// in flight in a parallel session and aren't on main yet. The CLI
+	// release pipeline broke because main.go was referring to symbols
+	// that don't exist in the committed tree. Re-add these cases when
+	// swift_cmd.go + remote_builder_cmd.go land.
 	case "update", "self-update", "upgrade":
 		runManualUpdate()
 	case "self":
@@ -426,10 +420,8 @@ func main() {
 			runDoctorBuild(os.Args[3:])
 			return
 		}
-		if len(os.Args) > 2 && os.Args[2] == "webrtc" {
-			runDoctorWebRTC(os.Args[3:])
-			return
-		}
+		// `yaver doctor webrtc` lives in doctor_webrtc.go (parallel session,
+		// not yet committed). Restore this branch when that file lands.
 		runDoctor()
 	case "init", "setup":
 		runInit(os.Args[2:])
@@ -1811,8 +1803,11 @@ func runServe(args []string) {
 	}
 
 	// Builder role advertisement is process-local — set once here,
-	// read on every /info request. Empty list = not a builder.
-	SetBuilderPlatforms(splitCSV(*builderPlatformsArg))
+	// read on every /info request. SetBuilderPlatforms lives in
+	// remote_builder.go (parallel session, not yet on main). Re-enable
+	// the call once that file is committed. Until then we just consume
+	// the flag value to avoid an "unused variable" failure.
+	_ = builderPlatformsArg
 
 	if *workDir == "." {
 		wd, err := os.Getwd()
