@@ -30,13 +30,21 @@ final class YaverFeedbackPane: NSObject {
     snapshot = captureSnapshot(of: window)
     let pane = buildCard()
     window.addSubview(pane)
+    // Pin bottom via a constraint we keep a handle on, so
+    // handleKeyboardChange can slide the card up when the keyboard
+    // appears (constant = -keyboardHeight) and back down when it
+    // dismisses (constant = 0). This keeps the WHOLE card visible
+    // above the keyboard — same KeyboardAvoidingView behaviour the
+    // Yaver Tasks composer uses on the React-Native side.
+    let bottom = pane.bottomAnchor.constraint(equalTo: window.bottomAnchor)
     NSLayoutConstraint.activate([
       pane.leadingAnchor.constraint(equalTo: window.leadingAnchor),
       pane.trailingAnchor.constraint(equalTo: window.trailingAnchor),
-      pane.bottomAnchor.constraint(equalTo: window.bottomAnchor),
+      bottom,
     ])
     self.window = window
     self.cardView = pane
+    self.cardBottomConstraint = bottom
     pane.transform = CGAffineTransform(translationX: 0, y: 600)
     UIView.animate(withDuration: 0.32, delay: 0, usingSpringWithDamping: 0.9,
                    initialSpringVelocity: 0.4) {
@@ -58,17 +66,20 @@ final class YaverFeedbackPane: NSObject {
   private weak var reloadButton: UIButton?
   private weak var statusLabel: UILabel?
   private weak var bottomConstraint: NSLayoutConstraint?
-  // Prompt + card height constraints — captured so handleKeyboardChange
-  // can shrink them when the keyboard appears, keeping the on-screen
-  // Reload + Send buttons visible above the keyboard. Without this, the
-  // 560pt card overflows past the keyboard top and the (pretty, branded)
-  // Send button is hidden — user can type but can't submit.
+  // Card's bottom-anchor constraint. handleKeyboardChange adjusts its
+  // constant: 0 when keyboard down, -keyboardHeight when up. The card's
+  // INTRINSIC layout naturally fills the available vertical space
+  // (title + flexible-height prompt + toggle + action row) so the
+  // pretty branded Send + Reload buttons always sit just above the
+  // keyboard, with the prompt area absorbing whatever vertical room
+  // is left. No height constraints to fight with.
+  private weak var cardBottomConstraint: NSLayoutConstraint?
   private weak var promptHeightConstraint: NSLayoutConstraint?
   private weak var cardHeightConstraint: NSLayoutConstraint?
-  private let promptHeightExpanded: CGFloat = 220
-  private let promptHeightCollapsed: CGFloat = 96
-  private let cardHeightExpanded: CGFloat = 560
-  private let cardHeightCollapsed: CGFloat = 380
+  // Prompt min so it never collapses to a thin line. Card min so the
+  // resting (no-keyboard) layout is generous.
+  private let promptHeightMin: CGFloat = 96
+  private let cardHeightMin: CGFloat = 360
   private var snapshot: UIImage?
   private var inFlight = false
 
@@ -212,11 +223,11 @@ final class YaverFeedbackPane: NSObject {
     bgTap.cancelsTouchesInView = false
     bg.addGestureRecognizer(bgTap)
 
-    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: cardHeightExpanded)
+    let bottomCon = bg.heightAnchor.constraint(greaterThanOrEqualToConstant: cardHeightMin)
     bottomConstraint = bottomCon
     cardHeightConstraint = bottomCon
 
-    let promptH = promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: promptHeightExpanded)
+    let promptH = promptCard.heightAnchor.constraint(greaterThanOrEqualToConstant: promptHeightMin)
     promptHeightConstraint = promptH
 
     NSLayoutConstraint.activate([
@@ -446,24 +457,22 @@ final class YaverFeedbackPane: NSObject {
     }
   }
 
-  // Tasks-composer pattern: when the keyboard appears, SHRINK the card
-  // (reduce both prompt and card height constraints) so the existing
-  // on-screen Reload + Send buttons sit just above the keyboard. We
-  // don't translate the card up — that pushed the title above the
-  // safe area on tall layouts. Constraint-based shrink keeps the
-  // title pinned at the top of the (smaller) card and the action row
-  // pinned at the bottom (which is now just above the keyboard).
+  // Tasks-composer pattern: slide the card's BOTTOM up to sit on top
+  // of the keyboard. Card content (title / prompt / toggle / action
+  // row) flows naturally inside the new card height — Send + Reload
+  // stay pinned at the bottom of the card, which is now the top of
+  // the keyboard. No height shrink, no translation that could push
+  // the title above the safe area.
   @objc private func handleKeyboardChange(_ note: Notification) {
     guard let card = cardView,
+          let window = self.window,
           let info = note.userInfo,
           let endFrame = info[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect
     else { return }
-    let keyboardVisible = endFrame.origin.y < UIScreen.main.bounds.height - 1
+    let intersection = window.bounds.intersection(window.convert(endFrame, from: nil))
+    let keyboardOverlap = max(0, intersection.height)
 
-    let promptH = keyboardVisible ? promptHeightCollapsed : promptHeightExpanded
-    let cardH = keyboardVisible ? cardHeightCollapsed : cardHeightExpanded
-    promptHeightConstraint?.constant = promptH
-    cardHeightConstraint?.constant = cardH
+    cardBottomConstraint?.constant = -keyboardOverlap
 
     let duration = (info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
     UIView.animate(withDuration: duration) {

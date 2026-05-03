@@ -24,63 +24,82 @@ final class YaverFloatingTrigger: NSObject {
 
   static let shared = YaverFloatingTrigger()
 
-  private weak var window: UIWindow?
+  // Dedicated overlay window. Lives at UIWindow.Level.alert + 1 so it
+  // sits above ANY view the host is presenting — settings pane, shake
+  // overlay, RN-mounted modals, even the system status bar. The
+  // previous "add as subview of the AppDelegate's main window" path
+  // was racing with the shake overlay / Settings pane add order, and
+  // on some scenes self.window pointed at a different UIWindow than
+  // the one the user was actually looking at, so the bubble was
+  // mounted onto an invisible window and never seen.
+  private var overlayWindow: UIWindow?
   private var bubble: UIView?
   private var onTap: (() -> Void)?
   private let prefsKeyX = "yaverFloatingTriggerX"
   private let prefsKeyY = "yaverFloatingTriggerY"
-  private let bubbleSize: CGFloat = 56
+  private let bubbleSize: CGFloat = 64
   private let edgeMargin: CGFloat = 8
 
   func mount(in window: UIWindow, onTap: @escaping () -> Void) {
     NSLog("[FloatingY] mount called window.bounds=%@ safeAreaTop=%.1f bottom=%.1f",
           NSCoder.string(for: window.bounds),
           window.safeAreaInsets.top, window.safeAreaInsets.bottom)
-    // Cancel any in-flight dismount animation: rapid Settings flips
-    // (Shake → Floating Y → Shake → Floating Y) used to no-op on the
-    // remount because the prior bubble was still alpha-fading out and
-    // self.bubble hadn't reset yet. Snap it away first.
+
+    // Snap away any prior bubble so a rapid Settings flip
+    // (Shake → Floating → Shake → Floating) doesn't no-op on the
+    // remount because the prior bubble was mid-fade.
     if let stale = bubble {
       stale.layer.removeAllAnimations()
       stale.removeFromSuperview()
       bubble = nil
     }
-    self.window = window
+    overlayWindow?.isHidden = true
+    overlayWindow = nil
+
     self.onTap = onTap
 
-    let bg = UIView()
-    bg.translatesAutoresizingMaskIntoConstraints = false
-    bg.backgroundColor = UIColor(red: 0.06, green: 0.05, blue: 0.12, alpha: 0.92)
-    bg.layer.cornerRadius = bubbleSize / 2
-    bg.layer.borderWidth = 1.5
-    bg.layer.borderColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 0.85).cgColor
-    bg.layer.shadowColor = UIColor.black.cgColor
-    bg.layer.shadowOpacity = 0.45
-    bg.layer.shadowRadius = 8
-    bg.layer.shadowOffset = CGSize(width: 0, height: 3)
+    // Create a dedicated overlay window in the same scene as the
+    // passed window. This is the iOS-canonical way to put something
+    // above all other UI — the bubble lives at .alert + 1, so it
+    // floats above the system keyboard, the alert layer, and the
+    // host app's normal content.
+    let win: UIWindow
+    if let scene = window.windowScene {
+      win = UIWindow(windowScene: scene)
+    } else {
+      win = UIWindow(frame: window.bounds)
+    }
+    win.windowLevel = UIWindow.Level.alert + 1
+    win.backgroundColor = .clear
+    // Container VC required by UIKit for any non-system window.
+    let vc = YaverFloatingTriggerOverlayVC()
+    vc.view.backgroundColor = .clear
+    win.rootViewController = vc
+    win.isHidden = false
+    overlayWindow = win
+    NSLog("[FloatingY] overlay window installed bounds=%@ level=%.0f",
+          NSCoder.string(for: win.bounds), win.windowLevel.rawValue)
 
-    let label = UILabel()
+    let bg = UIView()
+    bg.backgroundColor = UIColor(red: 0.06, green: 0.05, blue: 0.12, alpha: 0.95)
+    bg.layer.cornerRadius = bubbleSize / 2
+    bg.layer.borderWidth = 2
+    bg.layer.borderColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0).cgColor
+    bg.layer.shadowColor = UIColor.black.cgColor
+    bg.layer.shadowOpacity = 0.55
+    bg.layer.shadowRadius = 10
+    bg.layer.shadowOffset = CGSize(width: 0, height: 4)
+
+    let label = UILabel(frame: CGRect(x: 0, y: 0, width: bubbleSize, height: bubbleSize))
     label.text = "Y"
-    label.textColor = UIColor(red: 0.78, green: 0.82, blue: 1.0, alpha: 1.0)
-    label.font = .systemFont(ofSize: 22, weight: .heavy)
+    label.textColor = UIColor(red: 0.85, green: 0.88, blue: 1.0, alpha: 1.0)
+    label.font = .systemFont(ofSize: 26, weight: .heavy)
     label.textAlignment = .center
-    label.translatesAutoresizingMaskIntoConstraints = false
     bg.addSubview(label)
 
-    NSLayoutConstraint.activate([
-      label.centerXAnchor.constraint(equalTo: bg.centerXAnchor),
-      label.centerYAnchor.constraint(equalTo: bg.centerYAnchor),
-    ])
-
-    // Use frame-based layout so the pan gesture can move the bubble
-    // freely without fighting with auto-layout constraints.
-    let initial = restorePosition(in: window)
+    let initial = restorePosition(in: win)
     bg.frame = CGRect(x: initial.x, y: initial.y, width: bubbleSize, height: bubbleSize)
-    window.addSubview(bg)
-    // bringSubviewToFront is paranoia: in case the host added the
-    // settings pane / shake overlay later in the same runloop tick,
-    // make sure the bubble sits above them.
-    window.bringSubviewToFront(bg)
+    vc.view.addSubview(bg)
     bubble = bg
     NSLog("[FloatingY] bubble added at %@", NSCoder.string(for: bg.frame))
 
@@ -187,4 +206,27 @@ extension YaverFloatingTrigger: UIGestureRecognizerDelegate {
                          shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
     return false
   }
+}
+
+// View that passes through every touch EXCEPT touches that land inside
+// one of its subviews. Without this, the floating-Y window would
+// swallow every tap on the screen — making the host app unusable while
+// the bubble is mounted.
+private final class YaverFloatingTriggerPassThroughView: UIView {
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    for sub in subviews where !sub.isHidden && sub.alpha > 0.01 &&
+      sub.frame.contains(point) {
+      return true
+    }
+    return false
+  }
+}
+
+private final class YaverFloatingTriggerOverlayVC: UIViewController {
+  override func loadView() {
+    self.view = YaverFloatingTriggerPassThroughView()
+    self.view.backgroundColor = .clear
+  }
+  // Don't rotate-restrict — match whatever the host's window is doing.
+  override var prefersStatusBarHidden: Bool { false }
 }
