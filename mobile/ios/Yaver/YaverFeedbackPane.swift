@@ -503,7 +503,9 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
 
   /// Build the `description` field POSTed to /tasks. Wraps the user's
   /// raw feedback with enough context for the remote AI to act
-  /// without guessing.
+  /// without guessing — and constrains its OUTPUT shape so the
+  /// streamed transcript reads like Claude Code / Codex CLI rather
+  /// than a tarball dump.
   ///
   /// Inputs may all be empty: when neither projectName nor projectPath
   /// is set we still emit a useful preface ("user is providing
@@ -531,14 +533,30 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     } else {
       sb += "(The user chose not to attach a screenshot for this round.)\n\n"
     }
-    if !projectName.isEmpty || !projectPath.isEmpty {
-      sb += "Apply the requested change to the source of that app. Save the affected files. "
-      sb += "The user will trigger a Hermes reload from the drawer to see the result.\n\n"
-    } else {
-      sb += "If you can identify the project from the prompt or the screenshot, apply the change there. "
-      sb += "Otherwise ask the user briefly which project to target.\n\n"
+
+    // Operation contract — what the agent SHOULD do and (importantly)
+    // SHOULDN'T spew. Without this, codex on the remote box cloned
+    // node_modules / dumped tarball logs into the SSE stream and
+    // froze the mobile transcript renderer with multi-MB chunks.
+    sb += "Operation contract:\n"
+    sb += "1. Locate the file(s) responsible for what the user described and EDIT them in place. "
+    sb += "Save the changes — that is the deliverable.\n"
+    sb += "2. Stream a CONCISE Claude-Code / Codex-style narration as you work: "
+    sb += "one short line per step (e.g. \"Reading app/index.tsx\", \"Editing safe.backgroundColor\", "
+    sb += "\"Saved app/index.tsx\"). Show small diffs only — never dump entire files, "
+    sb += "never paste node_modules contents, never echo build / install logs.\n"
+    sb += "3. Do NOT run npm install / yarn / pnpm / git clone / cargo build / docker pull or any other "
+    sb += "long-running install / fetch command. The repo is already prepared on this machine. "
+    sb += "If a dependency is genuinely missing, say so in one line and stop — the user will install it.\n"
+    sb += "4. Do NOT trigger a Hermes reload yourself. The user has a Reload button in the drawer "
+    sb += "and decides when to refresh.\n"
+    sb += "5. Keep total output under a few hundred lines. Heavy ripgrep / find / cat with no filter "
+    sb += "are usually the wrong tool — use targeted reads.\n"
+    if projectName.isEmpty && projectPath.isEmpty {
+      sb += "6. If you can identify the project from the prompt or the screenshot, work there. "
+      sb += "Otherwise ask the user briefly which project to target — one short line, no exhaustive list.\n"
     }
-    sb += "User feedback:\n\(userPrompt)"
+    sb += "\nUser feedback:\n\(userPrompt)"
     return sb
   }
 
@@ -887,17 +905,14 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             .flatMap { $0["taskId"] as? String }
           if let taskId = taskId, !taskId.isEmpty {
-            // KILL SWITCH 1.18.65: enterTranscriptMode is suspected of
-            // crashing the host on the response callback (even with the
-            // defer + performWithoutAnimation guards). Until we have
-            // a Console-log-confirmed root cause, fall through to the
-            // legacy "Sent ✓ → dismiss" path and let the user open the
-            // task from the Tasks tab to see the transcript. No data
-            // loss — the task IS created on the agent.
+            // 1.18.66 → 1.18.67: instead of mutating the drawer's view
+            // tree (which raced the keyboard animation and crashed),
+            // present the transcript as a SEPARATE overlay view added
+            // directly to the window at a higher Z-index. The drawer
+            // stays exactly where it is; the overlay slides up over it
+            // and owns its own dismiss. View-tree race: gone.
             UINotificationFeedbackGenerator().notificationOccurred(.success)
-            self.setStatus("Sent ✓ — open Tasks tab to follow", tone: .success)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { self.dismiss() }
-            _ = taskId // silence unused warning — caller may consult lastTaskId later
+            self.presentTranscriptOverlay(taskId: taskId, userPrompt: userPrompt)
           } else {
             self.setStatus("Sent ✓", tone: .success)
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { self.dismiss() }
@@ -923,6 +938,183 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
         task.resume()
       }
     }
+  }
+
+  // Live overlay holding the YaverFeedbackTranscript on a fresh
+  // top-level UIView. NOT a child of the drawer's card — that's the
+  // layout race we're avoiding.
+  private weak var transcriptOverlay: UIView?
+
+  /// Slide a transcript overlay UP over the entire window. The
+  /// existing drawer is left untouched; this is purely additive on
+  /// top, so AutoLayout can't race with the drawer's keyboard
+  /// animation. Tapping Close on the overlay dismisses both the
+  /// overlay AND the drawer.
+  ///
+  /// Why this is safe (vs. the old enterTranscriptMode):
+  ///  - No removeFromSuperview calls on drawer subviews
+  ///  - No NSLayoutConstraint.activate inside an in-flight
+  ///    UIView.animate from handleKeyboardChange
+  ///  - The new view's constraints are added to the WINDOW, not
+  ///    the drawer's card — independent layout pass
+  ///  - The drawer's keyboard handler can finish its animation
+  ///    without seeing any structural change underneath it
+  private func presentTranscriptOverlay(taskId: String, userPrompt: String) {
+    NSLog("[YaverFeedback] presentTranscriptOverlay taskId=%{public}@", taskId)
+    guard let win = self.window, win.window != nil || true else {
+      // Fallback if window is gone for any reason: just show the
+      // legacy success message and dismiss the drawer.
+      self.setStatus("Sent ✓ — open Tasks tab to follow", tone: .success)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { self.dismiss() }
+      return
+    }
+
+    // Hide keyboard first — happens BEFORE we add the overlay so the
+    // drawer's keyboard handler runs and settles. We add the overlay
+    // a tick later so its layout doesn't race the keyboard animation.
+    promptField?.resignFirstResponder()
+
+    // Resolve the agent base URL once; transcript needs it for the
+    // SSE subscribe call.
+    guard let tasksURL = yaverResolveAgentURL("/tasks") else {
+      self.setStatus("Missing agent URL", tone: .error); return
+    }
+    let baseURL = tasksURL.deletingLastPathComponent()
+    let relayHeaders = yaverRelayHeaders()
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [weak self] in
+      guard let self = self, let win = self.window else { return }
+
+      // Container: full-screen UIView added to the window, with a
+      // dim backdrop and a card hosting the transcript. Card slides
+      // up from the bottom on appear.
+      let overlay = UIView()
+      overlay.translatesAutoresizingMaskIntoConstraints = false
+      overlay.backgroundColor = UIColor.black.withAlphaComponent(0)
+      win.addSubview(overlay)
+      NSLayoutConstraint.activate([
+        overlay.leadingAnchor.constraint(equalTo: win.leadingAnchor),
+        overlay.trailingAnchor.constraint(equalTo: win.trailingAnchor),
+        overlay.topAnchor.constraint(equalTo: win.topAnchor),
+        overlay.bottomAnchor.constraint(equalTo: win.bottomAnchor),
+      ])
+      self.transcriptOverlay = overlay
+
+      let card = UIView()
+      card.translatesAutoresizingMaskIntoConstraints = false
+      card.backgroundColor = UIColor(red: 0.05, green: 0.05, blue: 0.07, alpha: 1)
+      card.layer.cornerRadius = 22
+      card.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
+      card.layer.borderWidth = 1
+      card.layer.borderColor = UIColor(white: 1, alpha: 0.10).cgColor
+      overlay.addSubview(card)
+
+      // Card pinned to the bottom and ~85% of the screen tall — same
+      // shape as the drawer but covers it entirely. Bottom sits flush
+      // so when the keyboard appears we'll just inset the card up
+      // (handleKeyboardChange already does this for the drawer; we
+      // intentionally don't subscribe again here — the overlay's
+      // composer manages its own keyboard avoidance).
+      NSLayoutConstraint.activate([
+        card.leadingAnchor.constraint(equalTo: overlay.leadingAnchor),
+        card.trailingAnchor.constraint(equalTo: overlay.trailingAnchor),
+        card.bottomAnchor.constraint(equalTo: overlay.bottomAnchor),
+        card.heightAnchor.constraint(equalTo: overlay.heightAnchor, multiplier: 0.92),
+      ])
+
+      // Tiny grab handle at the top of the card.
+      let handle = UIView()
+      handle.translatesAutoresizingMaskIntoConstraints = false
+      handle.backgroundColor = UIColor(white: 1, alpha: 0.18)
+      handle.layer.cornerRadius = 2.5
+      card.addSubview(handle)
+      NSLayoutConstraint.activate([
+        handle.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+        handle.topAnchor.constraint(equalTo: card.topAnchor, constant: 8),
+        handle.widthAnchor.constraint(equalToConstant: 38),
+        handle.heightAnchor.constraint(equalToConstant: 5),
+      ])
+
+      // Title row + close button.
+      let title = UILabel()
+      title.translatesAutoresizingMaskIntoConstraints = false
+      title.text = "Vibing"
+      title.font = .systemFont(ofSize: 17, weight: .semibold)
+      title.textColor = .white
+      card.addSubview(title)
+
+      let close = UIButton(type: .system)
+      close.translatesAutoresizingMaskIntoConstraints = false
+      close.setTitle("✕", for: .normal)
+      close.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
+      close.tintColor = UIColor(white: 1, alpha: 0.6)
+      close.setTitleColor(UIColor(white: 1, alpha: 0.6), for: .normal)
+      close.addTarget(self, action: #selector(self.closeTranscriptOverlayTapped), for: .touchUpInside)
+      card.addSubview(close)
+
+      NSLayoutConstraint.activate([
+        title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+        title.topAnchor.constraint(equalTo: handle.bottomAnchor, constant: 8),
+        close.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
+        close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+        close.widthAnchor.constraint(equalToConstant: 32),
+        close.heightAnchor.constraint(equalToConstant: 32),
+      ])
+
+      // Drop in the existing transcript view — it already handles
+      // SSE subscribe, phase chip, follow-up composer, reload chip.
+      let transcript = YaverFeedbackTranscript()
+      transcript.translatesAutoresizingMaskIntoConstraints = false
+      transcript.onCloseTap = { [weak self] in self?.closeTranscriptOverlay() }
+      card.addSubview(transcript)
+      NSLayoutConstraint.activate([
+        transcript.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+        transcript.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+        transcript.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 8),
+        transcript.bottomAnchor.constraint(equalTo: card.bottomAnchor),
+      ])
+      self.transcriptView = transcript
+      transcript.attach(taskId: taskId, baseURL: baseURL,
+                        headers: relayHeaders, userPrompt: userPrompt)
+
+      // Slide-up animation. Initial transform off-screen, then spring
+      // into place. Fade backdrop in over the same duration.
+      card.transform = CGAffineTransform(translationX: 0, y: win.bounds.height)
+      UIView.animate(withDuration: 0.32, delay: 0,
+                     usingSpringWithDamping: 0.9,
+                     initialSpringVelocity: 0.35,
+                     options: [.curveEaseOut]) {
+        overlay.backgroundColor = UIColor.black.withAlphaComponent(0.55)
+        card.transform = .identity
+      }
+
+      // Update the drawer's status label so if the user closes the
+      // overlay the drawer shows that the task was sent.
+      self.setStatus("Sent ✓", tone: .success)
+    }
+  }
+
+  @objc private func closeTranscriptOverlayTapped() { closeTranscriptOverlay() }
+
+  private func closeTranscriptOverlay() {
+    NSLog("[YaverFeedback] closeTranscriptOverlay")
+    transcriptView?.teardown()
+    transcriptView = nil
+    guard let overlay = transcriptOverlay else { return }
+    UIView.animate(withDuration: 0.22, animations: {
+      overlay.backgroundColor = UIColor.black.withAlphaComponent(0)
+      // Slide the inner card off-screen — find it by being the only
+      // subview that's a real card (the overlay only has one).
+      for sub in overlay.subviews {
+        sub.transform = CGAffineTransform(translationX: 0, y: overlay.bounds.height)
+      }
+    }, completion: { _ in
+      overlay.removeFromSuperview()
+      self.transcriptOverlay = nil
+      // Closing the transcript also dismisses the underlying drawer —
+      // user has finished the vibing round.
+      self.dismiss()
+    })
   }
 
   // MARK: - Transcript mode

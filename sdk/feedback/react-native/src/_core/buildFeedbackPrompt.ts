@@ -65,19 +65,37 @@ export function buildFeedbackPrompt(input: BuildFeedbackPromptInput): string {
     lines.push("(The user chose not to attach a screenshot for this round.)");
     lines.push("");
   }
-  if (projectName || projectPath) {
+  lines.push("Operation contract:");
+  lines.push(
+    "1. Locate the file(s) responsible for what the user described and EDIT them in place. " +
+      "Save the changes — that is the deliverable."
+  );
+  lines.push(
+    "2. Stream a CONCISE Claude-Code / Codex-style narration as you work: " +
+      "one short line per step (e.g. \"Reading app/index.tsx\", " +
+      "\"Editing safe.backgroundColor\", \"Saved app/index.tsx\"). Show small diffs only — " +
+      "never dump entire files, never paste node_modules contents, never echo build / install logs."
+  );
+  lines.push(
+    "3. Do NOT run npm install / yarn / pnpm / git clone / cargo build / docker pull or any other " +
+      "long-running install / fetch command. The repo is already prepared on this machine. " +
+      "If a dependency is genuinely missing, say so in one line and stop — the user will install it."
+  );
+  lines.push(
+    "4. Do NOT trigger a Hermes reload yourself. The user has a Reload button in the drawer " +
+      "and decides when to refresh."
+  );
+  lines.push(
+    "5. Keep total output under a few hundred lines. Heavy ripgrep / find / cat with no filter " +
+      "are usually the wrong tool — use targeted reads."
+  );
+  if (!projectName && !projectPath) {
     lines.push(
-      "Apply the requested change to the source of that app. Save the affected files. " +
-        "The user will trigger a Hermes reload from the drawer to see the result."
+      "6. If you can identify the project from the prompt or the screenshot, work there. " +
+        "Otherwise ask the user briefly which project to target — one short line, no exhaustive list."
     );
-    lines.push("");
-  } else {
-    lines.push(
-      "If you can identify the project from the prompt or the screenshot, apply the change there. " +
-        "Otherwise ask the user briefly which project to target."
-    );
-    lines.push("");
   }
+  lines.push("");
   lines.push("User feedback:");
   lines.push(userPrompt);
   return lines.join("\n");

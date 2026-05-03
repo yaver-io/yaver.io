@@ -3451,6 +3451,21 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 				flusher.Flush()
 				return
 			}
+			// Cap per-chunk size before shipping to mobile / web. A
+			// runaway codex stdout (npm install logs, bytecode dumps,
+			// 4 GB tarball pulls) used to ship verbatim and froze the
+			// mobile transcript view's main thread when it tried to
+			// render the accumulated buffer. We protect every consumer
+			// at the source: anything above maxStreamChunkBytes gets
+			// truncated with a readable marker. The full stream is
+			// still preserved in task.Output for the Logs view.
+			const maxStreamChunkBytes = 4096
+			if len(text) > maxStreamChunkBytes {
+				keep := maxStreamChunkBytes
+				text = text[:keep] + "\n…[chunk trimmed: " +
+					fmt.Sprintf("%d", len(text)-keep) +
+					" bytes more in Logs]…\n"
+			}
 			fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
 				"type": "output",
 				"text": text,
