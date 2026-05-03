@@ -2130,10 +2130,15 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	close(task.outputCh)
 
 	tm.mu.Lock()
-	task.ResultText = task.Output
+	// task.Output keeps the full raw stream for logs/debug; ResultText
+	// gets the cleaned answer so persisted reads (web/MCP/mobile) don't
+	// leak our own injected system context or Codex's banner+config dump.
+	// Mirrors mobile-side stripPromptEcho in mobile/app/(tabs)/tasks.tsx.
+	task.ResultText = stripPromptEcho(task.Output)
 	tm.mu.Unlock()
 
-	log.Printf("[task %s] Raw output reader finished (output_len=%d)", task.ID, output.Len())
+	log.Printf("[task %s] Raw output reader finished (output_len=%d, result_len=%d)",
+		task.ID, output.Len(), len(task.ResultText))
 }
 
 // emit pushes text to both the output buffer and the streaming channel.
