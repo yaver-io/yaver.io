@@ -1357,10 +1357,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (Array.isArray(rows)) {
           const runners: Record<string, string> = {};
           const models: Record<string, string> = {};
+          // Drop legacy / dead model identifiers when loading so a stale
+          // selection from a previous app version doesn't keep forcing
+          // the picker into a broken state. Codex CLI's old default
+          // `o3-mini` 400s on ChatGPT-account auth and `gpt-5-codex`
+          // was a transitional intermediate — both are now stripped so
+          // preferredDefaultModelForRunner substitutes the current
+          // default (`gpt-5.4`, OpenAI's latest GPT-5 release).
+          const obsoleteModels = new Set(["o3-mini", "gpt-5-codex"]);
           for (const row of rows as Array<{ deviceId?: string; runnerId?: string; model?: string }>) {
             if (!row?.deviceId || !row?.runnerId) continue;
             runners[String(row.deviceId)] = String(row.runnerId);
-            if (row.model) models[String(row.deviceId)] = String(row.model);
+            if (row.model && !obsoleteModels.has(String(row.model))) {
+              models[String(row.deviceId)] = String(row.model);
+            }
           }
           setPrimaryRunnerByDeviceState(runners);
           setPrimaryModelByDeviceState(models);

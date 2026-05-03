@@ -1302,7 +1302,9 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
 // Default model per runner when the user hasn't picked one yet.
 // Applied when the user selects a primary runner and has no prior
 // model choice, so `claude` seeds `opus-4-7` (user's explicit ask
-// for "latest opus"), `codex` seeds `gpt-5-codex`, etc.
+// for "latest opus"), `codex` seeds `gpt-5.4` (the current GPT-5
+// release; older intermediates `o3-mini` and `gpt-5-codex` are
+// migrated away in mobile DeviceContext.loadSettings).
 export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
   claude: "claude-opus-4-7",
   codex: "gpt-5.4",
@@ -1413,6 +1415,7 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
     keyEnv: "OPENAI_API_KEY",
     blurb: "GPT-5 family via your OpenAI key.",
     models: [
+      { id: "gpt-5.4", label: "GPT-5.4", hint: "current default" },
       { id: "gpt-5-codex", label: "GPT-5 Codex", hint: "agentic coding" },
       { id: "gpt-5", label: "GPT-5", hint: "general reasoning" },
       { id: "gpt-5-mini", label: "GPT-5 Mini", hint: "fast + cheap" },
