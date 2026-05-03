@@ -301,39 +301,93 @@ function extractAssistantActivity(text: string, maxItems = 4): string[] {
   return items.slice(-maxItems);
 }
 
+// Markers that end one of the agent-injected system-context blocks.
+// Keep in sync with desktop/agent/task_context.go: each entry is the
+// last sentence of a `yaver*Context()` Go raw string. Codex's stream
+// echoes those blocks back verbatim ahead of its actual answer; we
+// slice from the LAST marker's end to recover just the assistant's
+// real response. If task_context.go changes, update here.
+const SYSTEM_CONTEXT_END_MARKERS = [
+  "Kill any stale expo/metro processes before retrying.",
+  "or related Yaver preview tools instead of asking them to guess.",
+  "pick up where you left off.",
+];
+
+// stripPromptEcho removes the noisy preamble that wraps a runner's
+// actual answer when streaming. Two layers:
+//   1. Our own injected system-context blocks (Codex echoes them) —
+//      sliced off using SYSTEM_CONTEXT_END_MARKERS.
+//   2. The Codex CLI's own banner + config dump ("Reading additional
+//      input from stdin…", "OpenAI Codex v0.123.0", workdir/model/
+//      provider/approval/sandbox lines).
+// Plus the trailing "tokens used N" footer Codex prints after the
+// answer. Returns the bubble's MEANINGFUL content; the original raw
+// stays available for the "Show details" expanded view.
+function stripPromptEcho(content: string): string {
+  if (!content) return content;
+  let out = stripAnsi(content);
+
+  // Slice after the last system-context end marker if any are present.
+  let bestIdx = -1;
+  for (const marker of SYSTEM_CONTEXT_END_MARKERS) {
+    const idx = out.lastIndexOf(marker);
+    if (idx >= 0 && idx + marker.length > bestIdx) {
+      bestIdx = idx + marker.length;
+    }
+  }
+  if (bestIdx > 0) {
+    out = out.slice(bestIdx);
+  }
+
+  // Strip Codex CLI preamble (banner + config dump). Pattern: optional
+  // "Reading additional input from stdin…" then "OpenAI Codex vX.Y.Z"
+  // line then config keys until the first blank line.
+  out = out.replace(/^[\s\S]*?OpenAI Codex v[^\n]*\n(?:[\s\S]*?\n)?\s*\n/, "");
+  out = out.replace(/^Reading additional input from stdin[.…]*\s*\n?/, "");
+
+  // Strip trailing "tokens used N" footer.
+  out = out.replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*$/i, "");
+
+  return out.trim();
+}
+
 function buildAssistantPreview(content: string): {
   summary: string;
+  cleaned: string;
   activity: string[];
   shouldCollapse: boolean;
+  hasHiddenNoise: boolean;
 } {
-  const plain = stripMarkdownForPreview(content);
+  const cleaned = stripPromptEcho(content);
+  const plain = stripMarkdownForPreview(cleaned);
   const summaryLines = plain
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => !line.startsWith("$ "));
-  // Show only the first non-empty line as the summary, capped at ~140
-  // chars. Anything after that (additional lines, bullet activity, raw
-  // markdown) goes behind the "Show details" toggle. Reason: runners
-  // like Codex echo back chunks of the agent-injected system context
-  // ("[Yaver Agent Context]…", web-preview rules, etc.) into the
-  // streaming response — under the prior 4-line / 320-char cap that
-  // leaked our own prompt into the chat instead of the user's actual
-  // assistant turn.
+  // First non-empty line of the cleaned content as the summary, capped
+  // at ~140 chars. Everything else (additional cleaned lines, activity
+  // bullets, the raw uncleaned stream) goes behind "Show details".
   const firstLine = summaryLines[0] ?? "";
   const summary = firstLine.length > 140 ? firstLine.slice(0, 137) + "…" : firstLine;
-  const activity = extractAssistantActivity(content);
+  const activity = extractAssistantActivity(cleaned);
+  const hasHiddenNoise = content.length > cleaned.length + 40;
+  // shouldCollapse = there's more meaningful content beyond the summary,
+  // OR the bubble is hiding raw noise that the user can opt into seeing.
   const hasMore =
     summaryLines.length > 1 ||
     activity.length > 0 ||
-    content.length > summary.length + 40 ||
-    content.includes("```") ||
-    content.includes("|");
+    cleaned.length > summary.length + 40 ||
+    cleaned.includes("```") ||
+    cleaned.includes("|") ||
+    hasHiddenNoise;
 
   return {
     summary: summary || "Working...",
+    cleaned,
     activity,
     shouldCollapse: hasMore,
+    hasHiddenNoise,
   };
 }
 
@@ -510,6 +564,7 @@ function ChatBubble({
 
   const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
   const [expanded, setExpanded] = useState(false);
+  const [showRaw, setShowRaw] = useState(false);
 
   return (
     <View style={s.assistantRow}>
@@ -544,7 +599,16 @@ function ChatBubble({
         ) : null}
         {expanded ? (
           <View style={[s.assistantRawWrap, { borderTopColor: c.border }]}>
-            <Markdown style={markdownStyles(c)}>{turn.content || " "}</Markdown>
+            <Markdown style={markdownStyles(c)}>
+              {(showRaw ? turn.content : preview.cleaned) || " "}
+            </Markdown>
+            {preview.hasHiddenNoise ? (
+              <Pressable onPress={() => setShowRaw((value) => !value)}>
+                <Text style={[s.assistantToggle, { color: c.textMuted, marginTop: 8 }]}>
+                  {showRaw ? "Hide raw stream" : "Show raw stream"}
+                </Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </View>
