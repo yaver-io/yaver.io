@@ -37,6 +37,17 @@ func humanizeRunnerAuthFailure(code: Int, body: String?, networkErr: Error?) -> 
   if normalizedBody.contains("not authenticated") || normalizedBody.contains("missing or invalid auth") || normalizedBody.contains("invalid token") {
     return "Not signed in · tap to sign in"
   }
+  // Relay returns 404 + `{"error":"subdomain '<x>' not registered"}` when
+  // the bundle URL lost its `/d/<deviceId>` prefix and the request hit
+  // the relay root instead of routing to an agent. The host is fine; the
+  // bundle URL is the bug. Tell the user to re-load from the device card
+  // so YaverBundleLoader rebuilds yaverAgentBaseURL with the prefix.
+  if normalizedBody.contains("subdomain") && normalizedBody.contains("not registered") {
+    return "Reload this app from the device card"
+  }
+  if normalizedBody.contains("device not connected") {
+    return "Host agent offline · start Yaver on the device"
+  }
 
   switch code {
   case 401, 403:
@@ -312,9 +323,7 @@ final class YaverAgentsPane: NSObject {
   // MARK: - Auth status refresh
 
   private func refreshAuthStatus() {
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    let auth = bestAuthToken()
-    guard !agentBase.isEmpty, let url = URL(string: "\(agentBase)/runner-auth/status") else {
+    guard let url = yaverResolveAgentURL("/runner-auth/status") else {
       let msg = "no agent URL set — load a guest bundle first"
       setRowStatus(runner: "claude", text: msg, tone: .error)
       setRowStatus(runner: "codex", text: msg, tone: .error)
@@ -322,7 +331,7 @@ final class YaverAgentsPane: NSObject {
       return
     }
     var req = URLRequest(url: url)
-    req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     URLSession.shared.dataTask(with: req) { data, resp, err in
       DispatchQueue.main.async {
         // Show humanized status text instead of raw JSON / NSURLError
@@ -430,15 +439,13 @@ final class YaverAgentsPane: NSObject {
     setRowStatus(runner: runner, text: "starting sign-in…", tone: .warning)
     rowsByRunner[runner]?.spinner.startAnimating()
 
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    let auth = bestAuthToken()
-    guard let url = URL(string: "\(agentBase)/runner-auth/browser/start") else {
+    guard let url = yaverResolveAgentURL("/runner-auth/browser/start") else {
       finishBrowserAuth(runner: runner, ok: false, msg: "no agent URL")
       return
     }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
-    req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     let body: [String: Any] = ["runner": runner]
     req.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -687,10 +694,7 @@ final class YaverOpenCodeConfigPane: NSObject {
 
   @objc private func saveTapped() {
     if inFlight { return }
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    let inherited = UserDefaults.standard.string(forKey: "yaverInheritedAuthToken") ?? ""
-    let auth = !inherited.isEmpty ? inherited : (UserDefaults.standard.string(forKey: "yaverAgentAuth") ?? "")
-    guard let url = URL(string: "\(agentBase)/runner-auth/set") else {
+    guard let url = yaverResolveAgentURL("/runner-auth/set") else {
       setStatus("no agent URL", ok: false); return
     }
 
@@ -713,7 +717,7 @@ final class YaverOpenCodeConfigPane: NSObject {
     setStatus("saving…", ok: true)
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
-    req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.httpBody = try? JSONSerialization.data(withJSONObject: body)
     URLSession.shared.dataTask(with: req) { data, resp, err in

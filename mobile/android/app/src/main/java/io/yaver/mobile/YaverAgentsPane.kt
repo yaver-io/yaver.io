@@ -64,6 +64,16 @@ internal fun humanizeRunnerAuthFailure(code: Int, body: String?): String {
       normalized.contains("invalid token")) {
     return "Not signed in · tap to sign in"
   }
+  // Relay returns 404 + `{"error":"subdomain '<x>' not registered"}` when
+  // the bundle URL lost its `/d/<deviceId>` prefix and the request hit
+  // the relay root instead of routing to an agent — see iOS sibling for
+  // the full story.
+  if (normalized.contains("subdomain") && normalized.contains("not registered")) {
+    return "Reload this app from the device card"
+  }
+  if (normalized.contains("device not connected")) {
+    return "Host agent offline · start Yaver on the device"
+  }
 
   return when (code) {
     401, 403 -> "Not signed in · tap to sign in"

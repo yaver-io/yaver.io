@@ -106,9 +106,73 @@ final class YaverInfo: NSObject {
     if !deviceId.isEmpty { defaults.set(deviceId, forKey: "yaverInheritedDeviceId") }
   }
 
+  // Push the relay password independently. The user's relay password is
+  // fetched from /settings on sign-in and rotates rarely; it's tied to
+  // the user account rather than to any single bundle load, so we
+  // accept it as its own setter rather than overloading setInheritedAuth.
+  // Native panes (YaverFeedbackPane / YaverAgentsPane) read this via
+  // yaverRelayHeaders() to attach X-Relay-Password to every relay-routed
+  // request — without it, the relay rejects with HTTP 401 "invalid relay
+  // password" or HTTP 404 when the path isn't recognised at all.
+  @objc func setInheritedRelayPassword(_ password: String) {
+    if password.isEmpty {
+      UserDefaults.standard.removeObject(forKey: "yaverInheritedRelayPassword")
+    } else {
+      UserDefaults.standard.set(password, forKey: "yaverInheritedRelayPassword")
+    }
+  }
+
   @objc func clearInheritedAuth() {
     let defaults = UserDefaults.standard
     defaults.removeObject(forKey: "yaverInheritedAuthToken")
     defaults.removeObject(forKey: "yaverInheritedDeviceId")
+    defaults.removeObject(forKey: "yaverInheritedRelayPassword")
   }
+}
+
+/// yaverResolveAgentURL builds an agent URL from the cached
+/// yaverAgentBaseURL, defensively appending /d/<deviceId> when the
+/// base looks like a relay host (host ends with .yaver.io or matches
+/// the public.yaver.io we configure as the default relay) AND no /d/
+/// segment is already present. Without this, a stale base URL
+/// (e.g. "https://public.yaver.io" persisted from a prior session
+/// before the relay-routing prefix was preserved) sends every native
+/// request to the relay's expose-proxy, which 404s with
+/// "subdomain 'public' not registered".
+///
+/// `path` should start with "/" — no leading slash is added.
+func yaverResolveAgentURL(_ path: String) -> URL? {
+  let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
+  if agentBase.isEmpty { return nil }
+  guard let parsed = URL(string: agentBase) else { return nil }
+  let host = (parsed.host ?? "").lowercased()
+  let needsRelayPrefix =
+    (host.hasSuffix(".yaver.io") || host == "yaver.io") &&
+    !parsed.path.hasPrefix("/d/")
+  var resolved = agentBase
+  if needsRelayPrefix {
+    let deviceId = UserDefaults.standard.string(forKey: "yaverInheritedDeviceId") ?? ""
+    if !deviceId.isEmpty {
+      while resolved.hasSuffix("/") { resolved.removeLast() }
+      resolved += "/d/\(deviceId)"
+    }
+  }
+  while resolved.hasSuffix("/") { resolved.removeLast() }
+  return URL(string: resolved + path)
+}
+
+/// yaverRelayHeaders returns the headers a native pane should attach
+/// to every relay-routed request: bearer auth + (when present) the
+/// X-Relay-Password the user's relay configuration requires.
+func yaverRelayHeaders() -> [String: String] {
+  var headers: [String: String] = [:]
+  let token = UserDefaults.standard.string(forKey: "yaverInheritedAuthToken") ?? ""
+  if !token.isEmpty {
+    headers["Authorization"] = "Bearer \(token)"
+  }
+  let pw = UserDefaults.standard.string(forKey: "yaverInheritedRelayPassword") ?? ""
+  if !pw.isEmpty {
+    headers["X-Relay-Password"] = pw
+  }
+  return headers
 }

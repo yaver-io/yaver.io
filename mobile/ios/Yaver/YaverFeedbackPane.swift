@@ -344,11 +344,9 @@ final class YaverFeedbackPane: NSObject {
   // hitting Send and watching it fail with "invalid relay password" /
   // "no runner ready" / similar.
   private func runRunnerAuthPreflight() {
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    guard !agentBase.isEmpty,
-          let url = URL(string: "\(agentBase)/runner-auth/status") else { return }
+    guard let url = yaverResolveAgentURL("/runner-auth/status") else { return }
     var req = URLRequest(url: url)
-    req.setValue("Bearer \(bestAuthToken())", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
       DispatchQueue.main.async {
         guard let self = self, let label = self.subtitleLabel else { return }
@@ -473,14 +471,12 @@ final class YaverFeedbackPane: NSObject {
     if inFlight { return }
     inFlight = true
     setStatus("Reloading…", tone: .progress)
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    let auth = bestAuthToken()
-    guard let url = URL(string: "\(agentBase)/dev/reload") else {
+    guard let url = yaverResolveAgentURL("/dev/reload") else {
       setStatus("Missing agent URL", tone: .error); inFlight = false; return
     }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
-    req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.httpBody = "{}".data(using: .utf8)
     URLSession.shared.dataTask(with: req) { _, resp, err in
@@ -507,9 +503,7 @@ final class YaverFeedbackPane: NSObject {
     }
     inFlight = true
     setStatus("Sending…", tone: .progress)
-    let agentBase = UserDefaults.standard.string(forKey: "yaverAgentBaseURL") ?? ""
-    let auth = bestAuthToken()
-    guard let url = URL(string: "\(agentBase)/tasks") else {
+    guard let url = yaverResolveAgentURL("/tasks") else {
       setStatus("Missing agent URL", tone: .error); inFlight = false; return
     }
 
@@ -543,7 +537,7 @@ final class YaverFeedbackPane: NSObject {
     }
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
-    req.setValue("Bearer \(auth)", forHTTPHeaderField: "Authorization")
+    for (k, v) in yaverRelayHeaders() { req.setValue(v, forHTTPHeaderField: k) }
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
     req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
     URLSession.shared.dataTask(with: req) { data, resp, err in
