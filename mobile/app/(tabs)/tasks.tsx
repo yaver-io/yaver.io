@@ -313,13 +313,50 @@ const SYSTEM_CONTEXT_END_MARKERS = [
   "pick up where you left off.",
 ];
 
+// Collapse codex's repeated/redundant blocks. codex 0.123.0 prints the
+// same listing up to three times for a simple "Run ls":
+//   (1) the raw exec output (rows after `succeeded in Xms:`)
+//   (2) a final "Here is …" paragraph + ```text fenced block
+//   (3) the same paragraph + fence emitted a second time (codex bug)
+// We keep one structured copy. The exec announcement is reduced to a
+// `$ <cmd>` header (mirroring Claude's stream_json `**$ <cmd>**`
+// pattern) so users still see *what was run* without the raw output
+// duplicating the fenced block below it.
+function dedupeCodexEchoes(s: string): string {
+  // (1) Replace `exec\n<cmd>\n succeeded in Xms:\n<rows>` blocks with
+  // a `**$ <cmd>**` line, dropping the raw rows. The rows are almost
+  // always echoed inside a fenced block by codex's final answer, and
+  // when they aren't the Logs panel still has the full stream.
+  s = s.replace(
+    /\n?exec\n([^\n]+?)(?:\s+in\s+[^\n]+)?\n\s*succeeded in [\d.]+\s*m?s:\n[\s\S]*?(?=\n\n|\ncodex\n|$)/g,
+    (_match, cmd: string) => `\n**$ ${String(cmd).trim()}**\n`,
+  );
+  // (2) Strip the lone `codex` section markers — they're left over
+  // from ANSI-coloured `[codex]` headers and add no signal once the
+  // body text follows.
+  s = s.replace(/(^|\n)codex\n/g, "$1");
+  // (3) Collapse two consecutive identical fenced code blocks
+  // (codex's duplicate-message bug).
+  s = s.replace(/(```[^\n]*\n[\s\S]*?\n```)\s*\n+\1/g, "$1");
+  // (4) Collapse a "<lead-in>:\n\n```fenced```" pair that repeats
+  // verbatim — e.g. "Here is the ls output … ```…``` Here is the ls
+  // output … ```…```".
+  s = s.replace(
+    /([^\n]+:\s*\n+```[^\n]*\n[\s\S]*?\n```)\s*\n+\1/g,
+    "$1",
+  );
+  return s;
+}
+
 // stripPromptEcho removes the noisy preamble that wraps a runner's
-// actual answer when streaming. Two layers:
+// actual answer when streaming. Three layers:
 //   1. Our own injected system-context blocks (Codex echoes them) —
 //      sliced off using SYSTEM_CONTEXT_END_MARKERS.
 //   2. The Codex CLI's own banner + config dump ("Reading additional
 //      input from stdin…", "OpenAI Codex v0.123.0", workdir/model/
 //      provider/approval/sandbox lines).
+//   3. Codex's redundant exec-output + duplicated fenced-block echoes
+//      (see dedupeCodexEchoes above).
 // Plus the trailing "tokens used N" footer Codex prints after the
 // answer. Returns the bubble's MEANINGFUL content; the original raw
 // stays available for the "Show details" expanded view.
@@ -347,6 +384,8 @@ function stripPromptEcho(content: string): string {
 
   // Strip trailing "tokens used N" footer.
   out = out.replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*$/i, "");
+
+  out = dedupeCodexEchoes(out);
 
   return out.trim();
 }

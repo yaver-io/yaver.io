@@ -212,6 +212,62 @@ func TestStripPromptEcho_FullCodexFixture(t *testing.T) {
 	}
 }
 
+// TestStripPromptEcho_CodexEchoes_RealCapture exercises the codex
+// 0.123.0 "Run ls" capture from yaver-test-ephemeral. Codex emits the
+// listing three times: once as the raw exec output, then twice as
+// identical fenced markdown blocks (codex bug). The cleanup must keep
+// exactly one fenced copy and reduce the exec stanza to a `$ <cmd>`
+// header.
+func TestStripPromptEcho_CodexEchoes_RealCapture(t *testing.T) {
+	raw := linesOf(
+		"[35m[3mcodex[0m[0m",
+		"Running `ls` in `/root` now.",
+		"[35m[3mexec[0m[0m",
+		"[1m/bin/bash -lc ls[0m in /root",
+		"[32m succeeded in 0ms:[0m",
+		"Workspace",
+		"bootstrap.sh",
+		"carrotbet",
+		"go",
+		"snap",
+		"yaver-scope2",
+		"",
+		"[35m[3mcodex[0m[0m",
+		"Here is the `ls` output for `/root`:",
+		"",
+		"```text",
+		"Workspace",
+		"bootstrap.sh",
+		"carrotbet",
+		"go",
+		"snap",
+		"yaver-scope2",
+		"```",
+		"Here is the `ls` output for `/root`:",
+		"",
+		"```text",
+		"Workspace",
+		"bootstrap.sh",
+		"carrotbet",
+		"go",
+		"snap",
+		"yaver-scope2",
+		"```",
+		"[2mtokens used[0m",
+		"9,154",
+	)
+	got := stripPromptEcho(raw)
+	if c := strings.Count(got, "yaver-scope2"); c != 1 {
+		t.Fatalf("expected `yaver-scope2` exactly once, got %d times.\nfull output:\n%s", c, got)
+	}
+	if c := strings.Count(got, "Here is the `ls` output"); c != 1 {
+		t.Fatalf("expected the lead-in line exactly once, got %d times.\nfull output:\n%s", c, got)
+	}
+	mustContain(t, got, "**$ /bin/bash -lc ls**")
+	mustNotContain(t, got, "tokens used")
+	mustNotContain(t, got, "succeeded in")
+}
+
 func linesOf(lines ...string) string {
 	return strings.Join(lines, "\n")
 }
