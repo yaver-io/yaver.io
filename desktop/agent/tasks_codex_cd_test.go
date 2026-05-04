@@ -61,6 +61,15 @@ func TestBuildRunnerArgs_CodexCdInjection(t *testing.T) {
 		}
 	})
 
+	t.Run("claude includes git trust bypass for non-repo mobile tasks", func(t *testing.T) {
+		claude := builtinRunners["claude"]
+		args := buildRunnerArgs(claude, "run ls")
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--skip-git-repo-check") {
+			t.Fatalf("expected claude args to include --skip-git-repo-check, got: %v", args)
+		}
+	})
+
 	t.Run("workDir trimmed of whitespace", func(t *testing.T) {
 		args := buildRunnerArgsWithWorkDir(codex, "do thing", "  /a/b  ")
 		joined := strings.Join(args, " ")

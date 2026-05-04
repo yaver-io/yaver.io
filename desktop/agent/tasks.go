@@ -105,6 +105,15 @@ var defaultRunner = RunnerConfig{
 		"--include-partial-messages",
 		"--model", "sonnet",
 		"--tools", "Bash",
+		// Plain mobile tasks can legitimately start from the agent's
+		// global work-dir (often /root on ephemeral boxes) rather than a
+		// git repo. Without this, Claude aborts before running even a
+		// trivial command like `ls` with:
+		//   "Not inside a trusted directory and --skip-git-repo-check was not specified."
+		// Permission bypass is unrelated; it only controls edit
+		// approvals. We still want Claude to start in non-repo dirs for
+		// shell-like mobile flows.
+		"--skip-git-repo-check",
 		"--permission-mode", "bypassPermissions",
 	},
 	OutputMode:      "stream-json",
@@ -142,7 +151,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// chosen model wins. Hardcoding "sonnet" here would shadow
 		// --implementer claude:opus (sees --model twice, last one
 		// wins, depends on CLI parsing — flaky).
-		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--permission-mode", "bypassPermissions"},
+		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--skip-git-repo-check", "--permission-mode", "bypassPermissions"},
 		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
 		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
 		// lockstep so a feedback task arriving with task.Model="" lands on
