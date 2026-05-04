@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Video, ResizeMode } from "expo-av";
+import { Ionicons } from "@expo/vector-icons";
 import { clipUrl } from "../../src/lib/vibePreview";
 import {
   ActivityIndicator,
@@ -51,6 +52,8 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
+import { withAlpha } from "../../src/lib/themeUtils";
 import {
   deriveMobileDeviceLifecycleState,
   probeMobileDeviceStatus,
@@ -679,18 +682,37 @@ function deriveRunnerBannerState(
 
 // ── Chat bubble ──────────────────────────────────────────────────────
 
-function ChatBubble({
-  turn,
-  c,
-  tokens,
-}: {
+type ChatBubbleProps = {
   turn: { role: string; content: string };
   c: ReturnType<typeof useColors>;
   /** When set, render a small "tokens used N" header above the assistant
    *  prose. Only meaningful for assistant bubbles, and only the LAST one
    *  (the runner reports usage as a single total on task completion). */
   tokens?: { input: number; output: number } | null;
-}) {
+};
+
+// React.memo with a content-equality comparator. Without it, every streaming
+// token append rebuilt chatMessages from scratch (new turn objects every
+// time), which made the ScrollView .map() re-render every prior bubble on
+// every token — O(n) work per token, and the markdown renderer is heavy.
+// That stall on the JS thread is what made the keyboard feel dead while
+// the agent was streaming. Comparing turn.content (string identity) lets
+// only the bubble whose text actually changed re-render.
+const ChatBubble = React.memo(ChatBubbleImpl, (prev, next) => {
+  return (
+    prev.turn.role === next.turn.role &&
+    prev.turn.content === next.turn.content &&
+    prev.c === next.c &&
+    (prev.tokens?.input ?? 0) === (next.tokens?.input ?? 0) &&
+    (prev.tokens?.output ?? 0) === (next.tokens?.output ?? 0)
+  );
+});
+
+function ChatBubbleImpl({
+  turn,
+  c,
+  tokens,
+}: ChatBubbleProps) {
   const isUser = turn.role === "user";
 
   if (isUser) {
@@ -1052,7 +1074,7 @@ export default function TasksScreen() {
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
-  const chatScrollRef = useRef<ScrollView>(null);
+  const chatScrollRef = useRef<FlatList>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
   const didApplyRouteSeedRef = useRef(false);
 
@@ -1072,16 +1094,9 @@ export default function TasksScreen() {
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [verbosity, setVerbosity] = useState(10);
   const [inputFromSpeech, setInputFromSpeech] = useState(false);
-  // Video summary toggle for the new task. When on, the agent records
-  // a short MP4 demo after the task finishes (vibe-preview pipeline);
-  // the task row gets a "▶ Watch demo" button when ready.
-  // Default ON: most users want a video summary clip of their task
-  // running. Recording is auto-detected per workdir (sim-ios for RN
-  // mobile projects, browser for web, etc.). Users who don't want it
-  // uncheck the box once and the agent task ignores videoEnabled.
-  // Default OFF: most tasks don't need a recorded demo video, and
-  // turning it on by default eats device storage + CPU on every run.
-  // User can flip it on per-task when they actually want a demo clip.
+  // Persisted task preference from Settings. When enabled, the agent
+  // records a short MP4 demo after the task finishes and the task row
+  // gets a "▶ Watch demo" button when the clip is ready.
   const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
   // codeMode toggle = "yaver code mode" (a.k.a. wrap mode). When ON,
   // the task is sent with source="mobile-code" so the agent applies
@@ -1098,6 +1113,12 @@ export default function TasksScreen() {
   const [codeModeEnabled, setCodeModeEnabledState] = useState<boolean>(CODE_MODE_DEFAULT);
   useEffect(() => {
     let cancelled = false;
+    loadTaskVideoSummaryEnabled()
+      .then((enabled) => {
+        if (cancelled) return;
+        setVideoSummaryEnabled(enabled);
+      })
+      .catch(() => {});
     AsyncStorage.getItem(CODE_MODE_KEY)
       .then((raw) => {
         if (cancelled) return;
@@ -1738,23 +1759,52 @@ export default function TasksScreen() {
       allowsMultipleSelection: true,
       selectionLimit: 5 - currentImages.length,
       quality: 0.7,
+      // base64:true makes ImagePicker materialize the asset and return
+      // base64 directly. Without it, asset.uri can be a ph:// (iOS Photos
+      // framework) URI that expo-file-system's readAsStringAsync cannot
+      // resolve — it throws synchronously, and the bare catch below used
+      // to swallow it, leaving the user thinking the image attached.
+      base64: true,
     });
     if (result.canceled) return;
 
     const newImages: ImageAttachment[] = [];
+    const failures: { name: string; reason: string }[] = [];
     for (const asset of result.assets) {
       try {
-        const base64 = await FileSystem.readAsStringAsync(asset.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
+        let base64 = asset.base64;
+        if (!base64) {
+          base64 = await FileSystem.readAsStringAsync(asset.uri, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+        }
+        if (!base64) throw new Error("empty base64");
         newImages.push({
           base64,
           mimeType: asset.mimeType ?? "image/jpeg",
           filename: asset.fileName ?? `image_${Date.now()}.jpg`,
         });
-      } catch {}
+      } catch (err) {
+        failures.push({
+          name: asset.fileName || "image",
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
-    setImages((prev) => [...prev, ...newImages].slice(0, 5));
+    if (failures.length > 0) {
+      const detail = failures
+        .map((f) => `• ${f.name}: ${f.reason}`)
+        .join("\n");
+      Alert.alert(
+        failures.length === result.assets.length
+          ? "Couldn't attach image"
+          : `${failures.length} of ${result.assets.length} images failed`,
+        `${detail}\n\nIf you granted "Limited" Photos access, switch to "All Photos" in Settings.`,
+      );
+    }
+    if (newImages.length > 0) {
+      setImages((prev) => [...prev, ...newImages].slice(0, 5));
+    }
   };
 
   // ── TTS ────────────────────────────────────────────────────────────
@@ -2218,6 +2268,19 @@ export default function TasksScreen() {
   const displayedAttempt = Math.min(reconnectAttempt, quicClient.maxReconnectAttempts);
 
   const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
+  // Pre-compute the last-assistant index once per render (not per row) so
+  // FlatList's renderItem can do an O(1) lookup. Token attribution is
+  // "show on the LAST assistant bubble only" — recomputing inside
+  // renderItem would be O(n) per row, defeating the FlatList win.
+  const chatTokenInfo = useMemo(() => {
+    let lastAssistantIdx = -1;
+    for (let k = chatMessages.length - 1; k >= 0; k--) {
+      if (chatMessages[k].role === "assistant") { lastAssistantIdx = k; break; }
+    }
+    const input = selectedTask?.inputTokens ?? 0;
+    const output = selectedTask?.outputTokens ?? 0;
+    return { lastAssistantIdx, input, output, showTokens: input + output > 0 };
+  }, [chatMessages.length, selectedTask?.inputTokens, selectedTask?.outputTokens]);
   const isRunning = selectedTask?.status === "running" || selectedTask?.status === "queued";
   const taskLogLines = useMemo(() => {
     if (!selectedTask) return [] as string[];
@@ -2888,63 +2951,99 @@ export default function TasksScreen() {
                   <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
                 </Pressable>
               </View>
-              <TextInput
-                style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
-                placeholder={(() => {
-                  const effective = selectedRunner
-                    || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
-                    || "claude";
-                  if (effective === "codex") return "What would you like Codex to do?";
-                  if (effective === "opencode") return "What would you like opencode to do?";
-                  return "What would you like Claude to do?";
-                })()}
-                placeholderTextColor={c.textMuted}
-                value={newTaskText}
-                onChangeText={(t) => { setNewTaskText(t); setInputFromSpeech(false); }}
-                multiline numberOfLines={4} textAlignVertical="top" autoFocus
-              />
-              {isTranscribing && (
-                <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 6 }}>
-                  <ActivityIndicator size="small" color={c.accent} />
-                  <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 8 }}>Transcribing...</Text>
-                </View>
-              )}
-              {attachedImages.length > 0 && (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                  {attachedImages.map((img, i) => (
-                    <View key={i} style={{ marginRight: 8, position: "relative" }}>
-                      <Image source={{ uri: `data:${img.mimeType};base64,${img.base64}` }} style={{ width: 60, height: 60, borderRadius: 8 }} />
-                      <Pressable onPress={() => setAttachedImages((prev) => prev.filter((_, idx) => idx !== i))} style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: 10, backgroundColor: "#ef4444", alignItems: "center", justifyContent: "center" }}>
-                        <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>×</Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
-              <Pressable
-                onPress={() => setVideoSummaryEnabled((v) => !v)}
-                style={({ pressed }) => [
+              <View
+                style={[
+                  s.composerShell,
                   {
-                    flexDirection: "row", alignItems: "center", gap: 8,
-                    paddingVertical: 8, paddingHorizontal: 4,
-                    opacity: pressed ? 0.6 : 1,
+                    backgroundColor: c.bg,
+                    borderColor: c.border,
                   },
                 ]}
               >
-                <View
-                  style={{
-                    width: 18, height: 18, borderRadius: 4,
-                    borderWidth: 1.5, borderColor: videoSummaryEnabled ? c.accent : c.border,
-                    backgroundColor: videoSummaryEnabled ? c.accent : "transparent",
-                    alignItems: "center", justifyContent: "center",
-                  }}
-                >
-                  {videoSummaryEnabled ? <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>✓</Text> : null}
+                <TextInput
+                  style={[s.input, s.inputMultiline, s.composerInput, { color: c.textPrimary }]}
+                  placeholder={(() => {
+                    const effective = selectedRunner
+                      || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
+                      || "claude";
+                    if (effective === "codex") return "Chat with Codex";
+                    if (effective === "opencode") return "Chat with OpenCode";
+                    return "Chat with Claude";
+                  })()}
+                  placeholderTextColor={c.textMuted}
+                  value={newTaskText}
+                  onChangeText={(t) => { setNewTaskText(t); setInputFromSpeech(false); }}
+                  multiline numberOfLines={4} textAlignVertical="top" autoFocus
+                />
+                {isTranscribing && (
+                  <View style={s.transcribingRow}>
+                    <ActivityIndicator size="small" color={c.accent} />
+                    <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 8 }}>Transcribing...</Text>
+                  </View>
+                )}
+                {attachedImages.length > 0 && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.attachmentStrip}>
+                    {attachedImages.map((img, i) => (
+                      <View key={i} style={s.attachmentPreviewWrap}>
+                        <Image source={{ uri: `data:${img.mimeType};base64,${img.base64}` }} style={s.attachmentPreviewImage} />
+                        <Pressable onPress={() => setAttachedImages((prev) => prev.filter((_, idx) => idx !== i))} style={[s.attachmentRemove, { backgroundColor: c.error }]}>
+                          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>×</Text>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )}
+                <View style={[s.composerFooter, { borderTopColor: withAlpha(c.border, "cc") }]}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      s.composerActionButton,
+                      { backgroundColor: c.bgCard },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                    onPress={() => handlePickImage("task")}
+                    disabled={attachedImages.length >= 5}
+                  >
+                    <Ionicons name="add" size={26} color={c.textPrimary} />
+                  </Pressable>
+                  <View style={s.composerFooterRight}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        s.composerIconButton,
+                        {
+                          backgroundColor: isRecording ? c.error : c.bgCard,
+                          borderColor: isRecording ? c.error : c.border,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => {
+                        if (!speechProvider) {
+                          Alert.alert("Voice Not Configured", "Set up a speech-to-text provider in Settings → Voice to use voice input.");
+                          return;
+                        }
+                        if (isRecording) {
+                          stopRecordingAndTranscribe();
+                        } else {
+                          startRecording();
+                        }
+                      }}
+                      disabled={isTranscribing}
+                    >
+                      <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
+                    </Pressable>
+                    <Pressable
+                      style={[
+                        s.sendButtonLarge,
+                        { backgroundColor: c.accent },
+                        ((!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected) && s.submitButtonDisabled,
+                      ]}
+                      onPress={handleCreateTask}
+                      disabled={(!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected}
+                    >
+                      <Text style={s.submitButtonText}>{isSubmitting ? "Sending..." : "Send"}</Text>
+                    </Pressable>
+                  </View>
                 </View>
-                <Text style={{ color: c.textSecondary, fontSize: 13 }}>
-                  🎬 Record demo video when this task finishes
-                </Text>
-              </Pressable>
+              </View>
               {/*
                 yaver code mode toggle — flips the agent's prompt
                 wrapping. Both modes use the same /tasks endpoint and
@@ -2964,11 +3063,8 @@ export default function TasksScreen() {
               <Pressable
                 onPress={() => setCodeModeEnabled((v) => !v)}
                 style={({ pressed }) => [
-                  {
-                    flexDirection: "row", alignItems: "center", gap: 8,
-                    paddingVertical: 8, paddingHorizontal: 4,
-                    opacity: pressed ? 0.6 : 1,
-                  },
+                  s.optionRow,
+                  { backgroundColor: c.bgCardElevated, opacity: pressed ? 0.6 : 1 },
                 ]}
               >
                 <View
@@ -2986,56 +3082,10 @@ export default function TasksScreen() {
                 </Text>
               </Pressable>
               <View style={s.modalButtons}>
-                <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated }]} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }}>
+                <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated, flex: 0, minWidth: 144 }]} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }}>
                   <Text style={[s.cancelButtonText, { color: c.textSecondary }]}>Cancel</Text>
                 </Pressable>
-                <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      { width: 44, height: 44, borderRadius: 22, backgroundColor: c.bgCardElevated, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: c.border },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                    onPress={() => handlePickImage("task")}
-                    disabled={attachedImages.length >= 5}
-                  >
-                    <Text style={{ fontSize: 20, color: c.textSecondary }}>📷</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [
-                      {
-                        width: 44, height: 44, borderRadius: 22,
-                        backgroundColor: isRecording ? "#ef4444" : c.bgCardElevated,
-                        alignItems: "center", justifyContent: "center",
-                        borderWidth: 1, borderColor: isRecording ? "#ef4444" : c.border,
-                        opacity: 1,
-                      },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                    onPress={() => {
-                      if (!speechProvider) {
-                        Alert.alert("Voice Not Configured", "Set up a speech-to-text provider in Settings → Voice to use voice input.");
-                        return;
-                      }
-                      if (isRecording) {
-                        stopRecordingAndTranscribe();
-                      } else {
-                        startRecording();
-                      }
-                    }}
-                    disabled={isTranscribing}
-                  >
-                    <Text style={{ fontSize: 20, color: isRecording ? "#fff" : c.textSecondary }}>
-                      {isRecording ? "\u25A0" : "\uD83C\uDFA4"}
-                    </Text>
-                  </Pressable>
-                  <Pressable
-                    style={[s.submitButton, { backgroundColor: c.accent }, ((!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected) && s.submitButtonDisabled]}
-                    onPress={handleCreateTask}
-                    disabled={(!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected}
-                  >
-                    <Text style={s.submitButtonText}>{isSubmitting ? "Sending..." : "Send"}</Text>
-                  </Pressable>
-                </View>
+                <View style={{ flex: 1 }} />
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -3405,50 +3455,41 @@ export default function TasksScreen() {
                 {isEffectivelyConnected && <DevPreview />}
 
                 {/* Chat messages */}
-                <ScrollView
-                  ref={chatScrollRef}
-                  style={s.chatScroll}
-                  contentContainerStyle={s.chatScrollContent}
-                  keyboardShouldPersistTaps="handled"
-                >
-                  {(() => {
-                    // The runner reports a single total token count when the
-                    // task finishes — attach it only to the LAST assistant
-                    // bubble so the user sees "tokens used N" right above the
-                    // final answer (matches the design mockup).
-                    let lastAssistantIdx = -1;
-                    for (let k = chatMessages.length - 1; k >= 0; k--) {
-                      if (chatMessages[k].role === "assistant") { lastAssistantIdx = k; break; }
-                    }
-                    const inT = selectedTask.inputTokens ?? 0;
-                    const outT = selectedTask.outputTokens ?? 0;
-                    const showTokens = inT + outT > 0;
-                    return chatMessages.map((msg, i) => (
+                {/* FlatList (not ScrollView+.map) so streaming a 60-message
+                    chat doesn't re-render every prior bubble each token —
+                    that O(n) work per token was what saturated the JS
+                    thread and made the keyboard feel dead while the agent
+                    was running. ChatBubble is React.memo'd with content
+                    equality, so windowed rows skip re-render entirely.
+                    PhaseStatusLine + DebugSection ride along as
+                    ListFooterComponent. */}
+                  <FlatList
+                    ref={chatScrollRef as any}
+                    data={chatMessages}
+                    keyExtractor={(item, idx) => `${idx}-${item.role}`}
+                    renderItem={({ item, index }) => (
                       <ChatBubble
-                        key={`${i}-${msg.role}`}
-                        turn={msg}
+                        turn={item}
                         c={c}
-                        tokens={showTokens && i === lastAssistantIdx ? { input: inT, output: outT } : null}
+                        tokens={chatTokenInfo.showTokens && index === chatTokenInfo.lastAssistantIdx
+                          ? { input: chatTokenInfo.input, output: chatTokenInfo.output }
+                          : null}
                       />
-                    ));
-                  })()}
-                  {/* Single-line streaming phase indicator. Replaces the
-                      prior split — TypingIndicator + "Starting…" /
-                      "Thinking…" before any assistant turn lands, and a
-                      separate ActivityIndicator + "Working…" once one
-                      does — with one PhaseStatusLine that morphs through
-                      detected phases as the runner produces output.
-                      Visually quieter (braille spinner instead of the
-                      animated dots / spinner-circle pair) and matches
-                      the Claude Code / Codex CLI mental model: one line
-                      that overwrites itself. */}
-                  {isRunning && (
-                    <PhaseStatusLine task={selectedTask} />
-                  )}
-
-                  {/* Debug info (foldable) */}
-                  <DebugSection task={selectedTask} connMode={connMode} c={c} />
-                </ScrollView>
+                    )}
+                    style={s.chatScroll}
+                    contentContainerStyle={s.chatScrollContent}
+                    keyboardShouldPersistTaps="handled"
+                    initialNumToRender={20}
+                    maxToRenderPerBatch={10}
+                    windowSize={10}
+                    removeClippedSubviews
+                    ListFooterComponent={
+                      <>
+                        {isRunning && <PhaseStatusLine task={selectedTask} />}
+                        <DebugSection task={selectedTask} connMode={connMode} c={c} />
+                      </>
+                    }
+                  />
 
                 {/* Follow-up input: compact bar, expands to full card on tap */}
                 {followUpExpanded ? (
@@ -3533,7 +3574,7 @@ export default function TasksScreen() {
                           onPress={() => handlePickImage("followup")}
                           disabled={followUpImages.length >= 5}
                         >
-                          <Text style={{ fontSize: 20, color: c.textSecondary }}>📷</Text>
+                          <Ionicons name="add" size={24} color={c.textPrimary} />
                         </Pressable>
                         <Pressable
                           style={({ pressed }) => [
@@ -3558,9 +3599,7 @@ export default function TasksScreen() {
                           }}
                           disabled={isTranscribing}
                         >
-                          <Text style={{ fontSize: 20, color: isRecording ? "#fff" : c.textSecondary }}>
-                            {isRecording ? "\u25A0" : "\uD83C\uDFA4"}
-                          </Text>
+                          <Ionicons name={isRecording ? "stop" : "mic-outline"} size={20} color={isRecording ? "#fff" : c.textPrimary} />
                         </Pressable>
                         <Pressable
                           style={[s.submitButton, { backgroundColor: c.accent }, ((!followUpText.trim() && followUpImages.length === 0) || isSendingFollowUp || isTranscribing) && s.submitButtonDisabled]}
@@ -3959,10 +3998,10 @@ const s = StyleSheet.create({
   // New task modal
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   modalDismiss: { flex: 1 },
-  modalContent: { borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingTop: 28, paddingBottom: 40 },
+  modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, paddingTop: 28, paddingBottom: 40 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
   modalTitle: { fontSize: 20, fontWeight: "700" },
-  agentBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1 },
+  agentBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, borderWidth: 1 },
   agentBadgeText: { fontSize: 12, fontWeight: "500" },
   agentPickerSheet: { borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 40 },
   agentPickerHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 1 },
@@ -3970,8 +4009,76 @@ const s = StyleSheet.create({
   agentPickerSection: { fontSize: 11, fontWeight: "600", letterSpacing: 0.5, marginTop: 16, marginBottom: 8, marginLeft: 20 },
   agentPickerChips: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 16, marginBottom: 4 },
   input: { borderWidth: 1, borderRadius: 12, padding: 16, fontSize: 16, marginBottom: 12 },
-  inputMultiline: { minHeight: 200 },
-  modalButtons: { flexDirection: "row", gap: 12, marginTop: 16 },
+  inputMultiline: { minHeight: 160 },
+  composerShell: {
+    borderWidth: 1,
+    borderRadius: 28,
+    paddingTop: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+    marginBottom: 14,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.08,
+    shadowRadius: 22,
+    elevation: 3,
+  },
+  composerInput: {
+    borderWidth: 0,
+    borderRadius: 22,
+    backgroundColor: "transparent",
+    marginBottom: 0,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 10,
+    fontSize: 18,
+    lineHeight: 24,
+  },
+  transcribingRow: { flexDirection: "row", alignItems: "center", paddingHorizontal: 16, paddingBottom: 10 },
+  attachmentStrip: { marginTop: 6, marginBottom: 10, paddingLeft: 16 },
+  attachmentPreviewWrap: { marginRight: 10, position: "relative" },
+  attachmentPreviewImage: { width: 64, height: 64, borderRadius: 14 },
+  attachmentRemove: { position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: 11, alignItems: "center", justifyContent: "center" },
+  composerFooter: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderTopWidth: 1,
+    paddingTop: 12,
+    paddingHorizontal: 8,
+  },
+  composerFooterRight: { flexDirection: "row", alignItems: "center", gap: 10 },
+  composerActionButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  composerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+  },
+  sendButtonLarge: {
+    minWidth: 104,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 20,
+    alignItems: "center",
+  },
+  optionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  modalButtons: { flexDirection: "row", gap: 12, marginTop: 8 },
   cancelButton: { flex: 1, paddingVertical: 14, borderRadius: 10, alignItems: "center" },
   cancelButtonText: { fontWeight: "600", fontSize: 15 },
   submitButton: { flex: 1, paddingVertical: 14, borderRadius: 10, alignItems: "center" },

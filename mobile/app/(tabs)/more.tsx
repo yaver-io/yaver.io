@@ -2390,6 +2390,7 @@ export function GuestAccessSection({ c }: { c: ReturnType<typeof useColors> }) {
 }
 
 export default function MoreScreen() {
+  const LEAN_MORE_SURFACE = true;
   const c = useColors();
   const router = useRouter();
   const { connectionStatus, activeDevice } = useDevice();
@@ -2414,7 +2415,8 @@ export default function MoreScreen() {
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
 
   const insets = useSafeAreaInsets();
-  const handleTodos = useCallback(() => router.navigate("/(tabs)/todos" as any), [router]);
+  const handleHotReload = useCallback(() => router.navigate("/(tabs)/hotreload" as any), [router]);
+  const handleDevices = useCallback(() => router.navigate("/(tabs)/devices" as any), [router]);
   const handleSettings = useCallback(() => router.navigate("/(tabs)/settings" as any), [router]);
   const handleTutorials = useCallback(() => router.navigate("/(tabs)/tutorials" as any), [router]);
 
@@ -2572,11 +2574,11 @@ export default function MoreScreen() {
         <View style={s.quickGrid}>
           <Pressable
             style={[s.quickCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={handleTodos}
+            onPress={handleHotReload}
           >
-            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u2610"}</Text>
-            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Todos</Text>
-            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Task queue</Text>
+            <Text style={[s.quickIcon, { color: c.textMuted }]}>{"\u21BB"}</Text>
+            <Text style={[s.quickLabel, { color: c.textPrimary }]}>Hot Reload</Text>
+            <Text style={[s.quickDesc, { color: c.textMuted }]} numberOfLines={2}>Reload mobile projects</Text>
           </Pressable>
 
           <Pressable
@@ -2618,6 +2620,39 @@ export default function MoreScreen() {
           </View>
         ) : null}
 
+        {LEAN_MORE_SURFACE ? (
+          <>
+            {connected ? <Text style={[s.inlineSectionTitle, { color: c.textMuted }]}>Core</Text> : null}
+
+            {connected ? (
+              <Pressable
+                style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                onPress={handleDevices}
+              >
+                <Text style={[s.icon, { color: c.textMuted }]}>{"\u25CF"}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.label, { color: c.textPrimary }]}>Devices</Text>
+                  <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                    Manage your remote boxes and pairing
+                  </Text>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+              </Pressable>
+            ) : null}
+
+            <Pressable style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]} onPress={handleTutorials}>
+              <Text style={[s.icon, { color: c.textMuted }]}>{"\u2302"}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[s.label, { color: c.textPrimary }]}>Tutorials</Text>
+                <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>
+                  Setup and remote-box guides
+                </Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <>
         {connected ? <Text style={[s.inlineSectionTitle, { color: c.textMuted }]}>Developer Tools</Text> : null}
 
         {connected ? (
@@ -3012,6 +3047,8 @@ export default function MoreScreen() {
           </View>
           <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
         </Pressable>
+          </>
+        )}
       </ScrollView>
 
       {/* Pair device modal */}

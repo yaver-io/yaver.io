@@ -34,6 +34,7 @@ import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
+import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -103,6 +104,9 @@ function providerKeyStatusLabel(state?: ProviderKeyState): string {
 }
 
 export default function SettingsScreen() {
+  const LEAN_SETTINGS_SURFACE = true;
+  const KEEP_SANDBOX_SURFACE = true;
+  const SHOW_HOST_NOTIFICATION_CHANNELS = false;
   const { user, token, logout, refreshUser } = useAuth();
   const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices } = useDevice();
   const { isDark, toggleTheme } = useTheme();
@@ -188,6 +192,7 @@ export default function SettingsScreen() {
   const [selectedOnboardingTargetIds, setSelectedOnboardingTargetIds] = useState<string[]>([]);
   const [providerKeyStates, setProviderKeyStates] = useState<Record<string, ProviderKeyState>>({});
   const [showToolchainSync, setShowToolchainSync] = useState(false);
+  const [taskVideoSummaryEnabled, setTaskVideoSummaryEnabled] = useState(false);
   const [toolchainSourceId, setToolchainSourceId] = useState<string | null>(null);
   const [toolchainSyncGitCredentials, setToolchainSyncGitCredentials] = useState(true);
   const [toolchainSyncProviderKeys, setToolchainSyncProviderKeys] = useState(true);
@@ -218,6 +223,12 @@ export default function SettingsScreen() {
   const [testExecId, setTestExecId] = useState<string | null>(null);
   const [agentLogs, setAgentLogs] = useState<string[]>([]);
   const agentLogsRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    loadTaskVideoSummaryEnabled()
+      .then(setTaskVideoSummaryEnabled)
+      .catch(() => {});
+  }, []);
   const testAbortRef = useRef<AbortController | null>(null);
 
   // Container Sandbox
@@ -1987,7 +1998,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Overnight — match report for autodev runs */}
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Overnight</Text>
           <Pressable
             style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}
@@ -2000,7 +2011,7 @@ export default function SettingsScreen() {
               See what autodev shipped overnight: per-task video, diff stats, and a one-tap rollback.
             </Text>
           </Pressable>
-        </View>
+        </View>}
 
         {/* Connected device */}
         <View style={styles.section}>
@@ -2501,7 +2512,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Device Metrics */}
-        {activeDevice && connectionStatus === "connected" && (
+        {!LEAN_SETTINGS_SURFACE && activeDevice && connectionStatus === "connected" && (
           <View style={styles.section}>
             <Pressable onPress={() => setShowMetrics(!showMetrics)}>
               <Text style={[styles.sectionLabel, { color: c.textMuted }]}>
@@ -2594,7 +2605,7 @@ export default function SettingsScreen() {
         )}
 
         {/* Yaver Usage */}
-        {usageSummary && usageSummary.daily.length > 0 && (
+        {!LEAN_SETTINGS_SURFACE && usageSummary && usageSummary.daily.length > 0 && (
           <View style={styles.section}>
             <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Yaver Usage (30 days)</Text>
             <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -2710,6 +2721,29 @@ export default function SettingsScreen() {
           </View>
         </View>
 
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Tasks</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <View style={styles.themeRow}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Record Demo Video</Text>
+                <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 3 }}>
+                  Automatically record a short demo clip after new tasks finish.
+                </Text>
+              </View>
+              <Switch
+                value={taskVideoSummaryEnabled}
+                onValueChange={(value) => {
+                  setTaskVideoSummaryEnabled(value);
+                  void saveTaskVideoSummaryEnabled(value);
+                }}
+                trackColor={{ false: c.border, true: c.accent }}
+                thumbColor="#ffffff"
+              />
+            </View>
+          </View>
+        </View>
+
         {/* Data management */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Data</Text>
@@ -2745,7 +2779,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Test App */}
-        {connectionStatus === "connected" && (
+        {!LEAN_SETTINGS_SURFACE && connectionStatus === "connected" && (
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Test App</Text>
           {!testRunning && !testTarget ? (
@@ -2859,7 +2893,7 @@ export default function SettingsScreen() {
         )}
 
         {/* Container Sandbox */}
-        {connectionStatus === "connected" && sandboxStatus && (
+        {(KEEP_SANDBOX_SURFACE || !LEAN_SETTINGS_SURFACE) && connectionStatus === "connected" && sandboxStatus && (
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Container Sandbox</Text>
 
@@ -3758,7 +3792,7 @@ export default function SettingsScreen() {
         </View>
 
         {/* Key Storage */}
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Security</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -3814,19 +3848,19 @@ export default function SettingsScreen() {
               </View>
             </View>
           </View>
-        </View>
+        </View>}
 
         {/* About Relay Servers */}
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>About Relay Servers</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 16 }]}>
             <Text style={{ fontSize: 13, color: c.textSecondary, lineHeight: 19 }}>
               Yaver includes a free shared relay. If you need a dedicated relay or a managed box later, use the web app. Billing is intentionally web-only.
             </Text>
           </View>
-        </View>
+        </View>}
 
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Dogfood Yaver</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <Text style={[styles.aboutLabel, { color: c.textPrimary, marginBottom: 4 }]}>
@@ -3920,10 +3954,10 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           </View>
-        </View>
+        </View>}
 
         {/* About */}
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>About</Text>
           <View style={[styles.linksCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             {[
@@ -3947,7 +3981,7 @@ export default function SettingsScreen() {
               </React.Fragment>
             ))}
           </View>
-        </View>
+        </View>}
 
         {/* Integrations */}
         <View style={styles.section}>
@@ -4425,121 +4459,45 @@ export default function SettingsScreen() {
                 )}
               </View>
 
-              <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
-
-              {intgLoading ? (
-                <ActivityIndicator color={c.accent} />
-              ) : connectionStatus !== "connected" ? (
-                <Text style={{ color: c.textMuted, fontSize: 13 }}>Connect to a device to configure host-side notifications.</Text>
-              ) : (
+              {!LEAN_SETTINGS_SURFACE && SHOW_HOST_NOTIFICATION_CHANNELS ? (
                 <>
-                  <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 12 }}>
-                    Get notified when tasks complete. Configure channels below.
-                  </Text>
-
-                  {/* Discord */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 8 }}>Discord</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="Webhook URL"
-                    placeholderTextColor={c.textMuted}
-                    value={intgConfig.discord?.webhookUrl ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, discord: { ...p.discord, webhookUrl: t, enabled: true } }))}
-                  />
-
-                  {/* Slack */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>Slack</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="Webhook URL"
-                    placeholderTextColor={c.textMuted}
-                    value={intgConfig.slack?.webhookUrl ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, slack: { ...p.slack, webhookUrl: t, enabled: true } }))}
-                  />
-
-                  {/* Telegram */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>Telegram</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="Bot Token"
-                    placeholderTextColor={c.textMuted}
-                    secureTextEntry
-                    value={intgConfig.telegram?.botToken ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, telegram: { ...p.telegram, botToken: t, enabled: true } }))}
-                  />
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border, marginTop: 6 }]}
-                    placeholder="Chat ID"
-                    placeholderTextColor={c.textMuted}
-                    value={intgConfig.telegram?.chatId ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, telegram: { ...p.telegram, chatId: t, enabled: true } }))}
-                  />
-
-                  {/* Teams */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 12 }}>Teams</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="Webhook URL"
-                    placeholderTextColor={c.textMuted}
-                    value={intgConfig.teams?.webhookUrl ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, teams: { ...p.teams, webhookUrl: t, enabled: true } }))}
-                  />
-
-                  {/* Linear */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 16 }}>Linear</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="API Key"
-                    placeholderTextColor={c.textMuted}
-                    secureTextEntry
-                    value={intgConfig.linear?.apiKey ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, linear: { ...p.linear, apiKey: t, enabled: true } }))}
-                  />
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border, marginTop: 6 }]}
-                    placeholder="Team ID"
-                    placeholderTextColor={c.textMuted}
-                    value={intgConfig.linear?.teamId ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, linear: { ...p.linear, teamId: t } }))}
-                  />
-
-                  {/* PagerDuty */}
-                  <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 13, marginTop: 16 }}>PagerDuty</Text>
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgInput, color: c.textPrimary, borderColor: c.border }]}
-                    placeholder="Routing Key"
-                    placeholderTextColor={c.textMuted}
-                    secureTextEntry
-                    value={intgConfig.pagerduty?.routingKey ?? ""}
-                    onChangeText={(t) => setIntgConfig((p) => ({ ...p, pagerduty: { ...p.pagerduty, routingKey: t, enabled: true, onFailOnly: p.pagerduty?.onFailOnly ?? true } }))}
-                  />
-
-                  {/* Save button */}
-                  <Pressable
-                    onPress={async () => {
-                      setIntgSaving(true);
-                      const ok = await quicClient.saveNotificationsConfig(intgConfig);
-                      setIntgSaving(false);
-                      Alert.alert(ok ? "Saved" : "Error", ok ? "Integrations saved." : "Failed to save.");
-                    }}
-                    style={({ pressed }) => [
-                      { marginTop: 16, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: c.accent, alignItems: "center" as const },
-                      pressed && { opacity: 0.7 },
-                    ]}
-                  >
-                    {intgSaving ? (
-                      <ActivityIndicator color="#fff" size="small" />
-                    ) : (
-                      <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>Save Integrations</Text>
-                    )}
-                  </Pressable>
+                  <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
+                  {intgLoading ? (
+                    <ActivityIndicator color={c.accent} />
+                  ) : connectionStatus !== "connected" ? (
+                    <Text style={{ color: c.textMuted, fontSize: 13 }}>Connect to a device to configure host-side notifications.</Text>
+                  ) : (
+                    <>
+                      <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 12 }}>
+                        Get notified when tasks complete. Configure channels below.
+                      </Text>
+                      <Pressable
+                        onPress={async () => {
+                          setIntgSaving(true);
+                          const ok = await quicClient.saveNotificationsConfig(intgConfig);
+                          setIntgSaving(false);
+                          Alert.alert(ok ? "Saved" : "Error", ok ? "Integrations saved." : "Failed to save.");
+                        }}
+                        style={({ pressed }) => [
+                          { marginTop: 8, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, backgroundColor: c.accent, alignItems: "center" as const },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                      >
+                        {intgSaving ? (
+                          <ActivityIndicator color="#fff" size="small" />
+                        ) : (
+                          <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>Save Integrations</Text>
+                        )}
+                      </Pressable>
+                    </>
+                  )}
                 </>
-              )}
+              ) : null}
             </View>
           )}
         </View>
 
-        <View style={styles.section}>
+        {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Sign-in methods</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 15 }}>
@@ -4559,7 +4517,7 @@ export default function SettingsScreen() {
               <Text style={{ color: c.textPrimary, fontWeight: "600" }}>Manage on yaver.io</Text>
             </Pressable>
           </View>
-        </View>
+        </View>}
 
         {/* Change Password (email users only) */}
         {user?.provider === "email" && (
