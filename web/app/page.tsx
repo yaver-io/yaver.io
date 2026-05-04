@@ -41,16 +41,30 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
 
   // ── Push to Device (Section 6) ──────────────────────────────────────
   {
-    q: "Do I really push apps to my phone without a developer portal or upload limits?",
-    a: "Yes for React Native, and that Hermes path stays exactly the same. The Yaver mobile app is a self-hosted native container with 40+ pre-installed React Native modules. yaver-cli compiles your project's JavaScript to Hermes bytecode and pushes it directly to the container over WiFi, 4G, or your relay. No third-party developer-portal gate, no daily upload quotas, no cloud build minutes. Your binary stays on your machine. Flutter and fully native apps (Swift/Kotlin) are second-class compared to React Native, but on the same LAN Yaver can still trigger development builds and deliver them straight to your phone while you work from your laptop, even if the phone is elsewhere on your local network.",
+    q: "Can I preview my React Native app on my own phone during development?",
+    a: "Yes, that is the intended developer-tool workflow. The Yaver mobile app is a developer preview container — when you run yaver-cli on your own machine, it compiles YOUR project's JavaScript to Hermes bytecode and previews it on your paired phone. The pairing is bound to your authenticated developer account; the preview path is for the developer's own apps (the same apps they will eventually submit to TestFlight / App Store). This is a development-time iteration tool, not a distribution channel — apps your users install still come from the App Store, exactly as Apple requires.",
   },
   {
-    q: "Does push-to-device support the React Native New Architecture (TurboModules, Fabric)?",
-    a: "Yes. Bundles load through a real native bridge built with ExpoReactNativeFactory + RCTAppDependencyProvider, so TurboModules, Fabric, JSI, and TurboModuleRegistry.getEnforcing() all work. RN 0.81+ apps run the same way they would in a production Xcode build — never a WebView.",
+    q: "Does the developer preview support the React Native New Architecture (TurboModules, Fabric)?",
+    a: "Yes. Previews load through a real native bridge built with ExpoReactNativeFactory + RCTAppDependencyProvider, so TurboModules, Fabric, JSI, and TurboModuleRegistry.getEnforcing() behave identically to a production Xcode build. Never a WebView.",
   },
   {
     q: "Can I hot-reload my app on a real phone while editing on my laptop?",
-    a: "Yes. yaver dev start runs Metro on your machine; the mobile app proxies through the agent and reloads on save. Native code changes flow through Build + Deploy (one button to TestFlight / Play Store internal track). The Feedback SDK adds a floating feedback/debug button inside any embedding app, and the Yaver mobile app is the operator surface for triage when you are away from your desk.",
+    a: "Yes. yaver dev start runs Metro on your machine and the paired developer-preview container reloads on save — same loop as Expo Go, expo-dev-client, and the React Native Debug build, just with the build happening on your own machine. Native code changes flow through TestFlight / Play Store internal track when you are ready to ship. The Feedback SDK adds an opt-in feedback/debug button inside your own app for capturing repro context during development and beta testing.",
+  },
+
+  // ── App Store / Play Store compliance ───────────────────────────────
+  {
+    q: "Is the Yaver mobile preview container compliant with App Store policies?",
+    a: "Yaver is positioned and built as a developer tool — analogous to Expo Go, expo-dev-client, and the React Native Debug build — for previewing the developer's own React Native projects on real devices during development. The mobile preview container only loads bundles for the authenticated developer's own paired devices; it is not a marketplace, not a distribution channel, and provides no way to discover or run other developers' apps. End-user apps continue to ship through the App Store and Google Play in the normal way; the preview path is purely a development-time iteration shortcut. App Store Review Guideline 2.5.2 carves out an explicit exception for educational and developer-tool apps that download code, which is the category Yaver fits.",
+  },
+  {
+    q: "Does loading code into the mobile preview container violate Apple's no-remote-code rule?",
+    a: "Hermes bytecode is JavaScript bytecode, the same shape that React Native's CodePush, Expo Updates, and OTA tools have been shipping under App Store Guideline 2.5.2 for years. Yaver's preview container loads only the developer's own JavaScript bundles into a developer-paired session — it does not download new native binary code. Source code for any loaded bundle is available to the developer in their own repository, which satisfies the source-visibility expectation in 2.5.2's developer-tool exception.",
+  },
+  {
+    q: "Is Yaver like Replit or Vibecode that Apple recently restricted?",
+    a: "No. Apple's concern with those products was that end users — not developers — could generate apps via AI prompt and run them inside the host shell, turning the host into an unauthorized distribution channel for app-like content to non-developers. Yaver does not aim to redistribute apps. The mobile preview container is a developer's own machine pushing the developer's own bundles to their own paired phone for testing before App Store submission. The only sharing is `yaver guests invite` — an invite-only, time-limited, max-5-person scope intended for a developer's trusted collaborators (teammates, contractors) so they can co-iterate on the same project. There is no anonymous discovery, no community gallery, no public marketplace, no in-app generation surface for end users. End-user distribution remains exclusively via the App Store and Google Play.",
   },
 
   // ── Phone-first backend (Section 4) ─────────────────────────────────
@@ -1159,30 +1173,30 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Section 2: Hero video — the ONE viral artifact ── */}
+      {/* ── Section 2: Hero video — the ONE viral artifact ──
+          Mobile-only screen recording, 60s, sped from the raw 3.3-min
+          capture. Shows the developer-tool loop entirely on-device:
+          Projects tab → pick a project on your dev box → preview on
+          your phone → shake → vibe-code → reload. Deliberately omits
+          the laptop / terminal frame: the public-facing positioning
+          is the mobile preview surface, which is the unique wedge.
+          The terminal-side companion video lives in demo-videos/ for
+          deep-dive blog posts and is no longer the landing hero. */}
       <section id="demo" className="px-6 pb-16 pt-2">
-        <div className="mx-auto max-w-5xl">
+        <div className="mx-auto max-w-md">
           <video
             className="w-full rounded-2xl bg-black shadow-2xl shadow-black/50"
-            src="/yaver-hosting-demo.mp4"
+            src="/yaver-vibe-reload.mp4"
             autoPlay
             muted
             loop
             playsInline
             preload="metadata"
           />
-          {/* 3.3 MB local copy in web/public; Cloudflare serves it with the
-              right Content-Type (the GitHub release CDN returns
-              application/octet-stream + Content-Disposition: attachment,
-              which Safari refuses to play inline). Canonical source + raw
-              recordings + rebuild recipe live at GitHub Release
-              yaver-hosting-demo-v1 and in demo-videos/ at the repo root. */}
-          <p className="mx-auto mt-4 max-w-2xl text-center text-xs text-surface-500">
-            Show the product loop in this order: the feedback SDK inside the app,
-            then the Yaver mobile app as the triage surface, then the coding
-            agent fixing the issue. The landing video should center the SDK
-            first; the mobile app matters because it proves the mobile-first
-            workflow and remote control story.
+          <p className="mx-auto mt-4 max-w-md text-center text-sm text-surface-300">
+            Open Yaver, pick a project from your dev box, preview it on your
+            phone, shake to vibe-code on the bug — fresh bundle in seconds.
+            One screen, real device, no extra hardware.
           </p>
         </div>
       </section>
