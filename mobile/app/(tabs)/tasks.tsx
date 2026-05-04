@@ -488,6 +488,59 @@ function buildAssistantPreview(content: string): {
   };
 }
 
+function buildLiveAssistantMarkdown(content: string): string {
+  const preview = buildAssistantPreview(content);
+  const cleaned = preview.cleaned
+    .replace(/```[\s\S]*?```/g, "\n_Code/details hidden while work continues._\n");
+  const lines = cleaned
+    .split("\n")
+    .map((line) => line.trimEnd());
+
+  const visible: string[] = [];
+  let hidden = false;
+  let chars = 0;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (visible.length > 0 && visible[visible.length - 1] !== "") visible.push("");
+      continue;
+    }
+    if (/^\*\*\$\s+.+\*\*$/.test(line)) {
+      hidden = true;
+      continue;
+    }
+    if (/^(workdir|model|provider|approval|sandbox|reasoning effort|session id):/i.test(line)) {
+      hidden = true;
+      continue;
+    }
+    if (/^(diff --git|index [0-9a-f]+\.\.[0-9a-f]+|@@ |--- |\+\+\+ )/.test(line)) {
+      hidden = true;
+      continue;
+    }
+    if (/^[{}[\];(),.=><:+\-/*\\|'"`_]+$/.test(line)) {
+      hidden = true;
+      continue;
+    }
+    visible.push(rawLine);
+    chars += rawLine.length;
+    if (visible.length >= 12 || chars >= 1400) {
+      hidden = true;
+      break;
+    }
+  }
+
+  const body = visible.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (!body) {
+    return "_Working… implementation details hidden while the task runs._";
+  }
+  if (!hidden && !preview.activity.length) return body;
+  const activity = preview.activity.length > 0
+    ? `\n\n${preview.activity.map((item) => `- ${item}`).join("\n")}`
+    : "";
+  return `${body}${activity}\n\n_Working through implementation details…_`.trim();
+}
+
 function buildTaskPreviewText(task: Task): string | null {
   if (task.resultText) {
     return stripMarkdownForPreview(task.resultText).slice(0, 120);
@@ -778,7 +831,7 @@ function ChatBubbleImpl({
   // like real claude-code / codex output (prose with inline-code highlights
   // and bordered code blocks). The previous "Update / Show details" gate
   // hid the polished frame behind a tap; users want to see it inline.
-  const cleaned = useMemo(() => stripPromptEcho(turn.content), [turn.content]);
+  const preview = useMemo(() => buildAssistantPreview(turn.content), [turn.content]);
   // Long-press anywhere on the assistant frame to toggle the raw
   // stream view. Hidden by default — the cleaned MD render is the
   // canonical surface and the prior "Show raw stream" link gave the
@@ -787,7 +840,15 @@ function ChatBubbleImpl({
   // can still get to it via long-press; CLAUDE.md's "Logs" link
   // remains the structured fallback.
   const [showRaw, setShowRaw] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const totalTokens = tokens ? tokens.input + tokens.output : 0;
+  const collapsedMarkdown = useMemo(() => {
+    if (preview.activity.length === 0) return preview.summary;
+    return `${preview.summary}\n\n${preview.activity.map((item) => `- ${item}`).join("\n")}`;
+  }, [preview]);
+  const renderedMarkdown = showRaw
+    ? turn.content
+    : (expanded || !preview.shouldCollapse ? preview.cleaned : collapsedMarkdown);
 
   return (
     <View style={s.assistantRow}>
@@ -802,8 +863,15 @@ function ChatBubbleImpl({
           </Text>
         ) : null}
         <Markdown style={markdownStyles(c)}>
-          {(showRaw ? turn.content : cleaned) || " "}
+          {renderedMarkdown || " "}
         </Markdown>
+        {!showRaw && preview.shouldCollapse ? (
+          <Pressable onPress={() => setExpanded((value) => !value)} style={{ marginTop: 6 }}>
+            <Text style={[s.assistantToggle, { color: c.accent }]}>
+              {expanded ? "Hide details" : "Show details"}
+            </Text>
+          </Pressable>
+        ) : null}
         {showRaw ? (
           <Text style={[s.assistantToggle, { color: c.textMuted, marginTop: 4, fontSize: 10 }]}>
             (raw stream — long-press to hide)
@@ -1020,7 +1088,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
   // (`[1mworkdir:[0m /root` etc.) renders as plain text rather than
   // leaking control codes into the chat bubble.
   if (task.status === "running" && task.output.length > 0) {
-    const streamText = stripAnsi(task.output.join("\n"));
+    const streamText = buildLiveAssistantMarkdown(task.output.join("\n"));
     if (streamText.trim()) {
       // Remove the last assistant message if present — streaming output supersedes it
       const lastIdx = messages.length - 1;
@@ -2299,6 +2367,17 @@ export default function TasksScreen() {
     reconnectAttempt > 0 && !isEffectivelyConnected && !!activeDevice;
   const displayedAttempt = Math.min(reconnectAttempt, quicClient.maxReconnectAttempts);
 
+  // Disconnected-with-N-devices picker. Hoisted so we can both render the
+  // dedicated picker layout AND skip the task FlatList when this is on
+  // (otherwise both compete for vertical space inside the flex column,
+  // and the task FlatList's own ListEmptyComponent would render a
+  // duplicate "Not connected" frame).
+  const showDevicePicker =
+    !isEffectivelyConnected &&
+    !isLoadingDevices &&
+    devices.length >= 1 &&
+    !(devices.length === 1 && connectionStatus === "connecting");
+
   const chatMessages = selectedTask ? buildChatMessages(selectedTask) : [];
   // Pre-compute the last-assistant index once per render (not per row) so
   // FlatList's renderItem can do an O(1) lookup. Token attribution is
@@ -2638,7 +2717,126 @@ export default function TasksScreen() {
           </View>
         )}
 
-        {/* Task list */}
+        {/* Disconnected device picker. Pulled OUT of ListEmptyComponent so
+            the "Not connected · Pick one of your N devices" header stays
+            visible regardless of device count — with 5 devices the old
+            inline empty state pushed the title off-screen and the user
+            had to scroll up to see what they were picking. Now: fixed
+            header at top, cards scroll independently below. The task
+            FlatList below is suppressed when this picker is showing
+            (showDevicePicker gate) so they don't fight for vertical
+            space inside the container's flex column. */}
+        {showDevicePicker && (
+          <View style={{ flex: 1 }}>
+            <View style={[s.emptyPickerHeader, { borderBottomColor: c.border }]}>
+              <Text style={[s.emptyTitle, { color: c.textPrimary, textAlign: "center" }]}>Not connected</Text>
+              <Text style={[s.emptySubtitle, { color: c.textSecondary, textAlign: "center", marginTop: 4 }]}>
+                {devices.length === 1
+                  ? "Tap the device below to connect."
+                  : `Pick one of your ${devices.length} devices.`}
+              </Text>
+            </View>
+            <FlatList
+              data={devices}
+              keyExtractor={(d) => d.id}
+              contentContainerStyle={{ padding: 16, gap: 12 }}
+              initialNumToRender={8}
+              windowSize={5}
+              renderItem={({ item: d }) => {
+                  const unreachable = unreachableSet.has(d.id);
+                  const probe = deviceProbeMap[d.id];
+                  const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
+                    device: d,
+                    probe,
+                    unreachable,
+                  });
+                  const statusText =
+                    lifecycleState === "connected"
+                      ? "Connected"
+                      : lifecycleState === "bootstrap"
+                        ? "Bootstrap"
+                        : lifecycleState === "yaver-auth-expired"
+                          ? "Auth Expired"
+                          : lifecycleState === "ready-to-connect"
+                            ? "Ready"
+                            : "Offline";
+                  const statusColor =
+                    lifecycleState === "connected"
+                      ? "#22c55e"
+                      : lifecycleState === "bootstrap"
+                        ? "#8b5cf6"
+                        : lifecycleState === "yaver-auth-expired"
+                          ? "#f59e0b"
+                          : lifecycleState === "ready-to-connect"
+                            ? "#38bdf8"
+                            : "#a1a1aa";
+                  const isRetrying = reconnectingDeviceId === d.id;
+                  const isRecovering = recoveringDeviceId === d.id;
+                  return (
+                    <Pressable
+                      style={[s.devicePickerCard, {
+                        backgroundColor: c.bgCard,
+                        borderColor: unreachable && d.online ? "#eab30866" : c.border,
+                        paddingVertical: 14,
+                      }]}
+                      onPress={() => !(isRetrying || isRecovering) && handleReconnect(d)}
+                      disabled={isRetrying || isRecovering}
+                    >
+                      <View style={s.devicePickerRow}>
+                        <View style={{ flex: 1 }}>
+                          <View style={s.devicePickerNameRow}>
+                            <Text style={[s.devicePickerName, { color: c.textPrimary }]}>{d.name}</Text>
+                            {primaryDeviceId === d.id ? (
+                              <View style={[s.devicePickerPrimaryBadge, { borderColor: c.accent + "88", backgroundColor: c.accent + "22" }]}>
+                                <Text style={[s.devicePickerPrimaryText, { color: c.accent }]}>PRIMARY</Text>
+                              </View>
+                            ) : null}
+                          </View>
+                          <Text style={[s.devicePickerMeta, { color: c.textMuted }]}>
+                            {d.os} · {d.host}
+                            {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
+                          </Text>
+                          {lifecycleState === "bootstrap" ? (
+                            <Text style={[s.devicePickerMeta, { color: "#8b5cf6", marginTop: 2 }]}>
+                              Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
+                            </Text>
+                          ) : lifecycleState === "yaver-auth-expired" ? (
+                            <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
+                              Machine is up, but the agent session expired. Tap to re-auth and connect.
+                            </Text>
+                          ) : lifecycleState === "ready-to-connect" ? (
+                            <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
+                              Machine is reachable or has a recent live signal. Tap to connect.
+                            </Text>
+                          ) : null}
+                          {lifecycleState === "offline" && (
+                            <Text style={[s.devicePickerMeta, { color: c.textMuted, marginTop: 2 }]}>
+                              No recent heartbeat. Power on and run yaver serve.
+                            </Text>
+                          )}
+                        </View>
+                        <View style={{ alignItems: "flex-end" }}>
+                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusColor + "22" }]}>
+                            <View style={[s.reconnectStatusDot, { backgroundColor: statusColor }]} />
+                            <Text style={[s.reconnectStatusText, { color: statusColor }]}>{statusText}</Text>
+                          </View>
+                          {(isRetrying || isRecovering) ? (
+                            <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
+                          ) : null}
+                        </View>
+                      </View>
+                    </Pressable>
+                  );
+                }}
+            />
+          </View>
+        )}
+
+        {/* Task list (only when the dedicated disconnected device picker
+            isn't taking over — otherwise both fight for vertical flex
+            space and the empty FlatList would render its own duplicate
+            "Not connected" frame underneath the new picker). */}
+        {!showDevicePicker && (
         <FlatList
           data={displayTasks}
           keyExtractor={(item) => item.id}
@@ -2854,6 +3052,7 @@ export default function TasksScreen() {
             />
           )}
         />
+        )}
 
         {/* FAB. Rendered as a bare Pressable, not wrapped in a full-screen
             absoluteFillObject layer: that wrapper (even with
@@ -3887,6 +4086,10 @@ const s = StyleSheet.create({
   listContent: { paddingHorizontal: 14, paddingTop: 14, paddingBottom: 120 },
   listContentEmpty: { flex: 1 },
   emptyList: { flex: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 32 },
+  // Sticky header for the disconnected device picker. Doesn't scroll
+  // even when the user has 5+ devices, so "Not connected · Pick one of
+  // your N devices" is always visible without scrolling up.
+  emptyPickerHeader: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: "700", marginBottom: 8 },
   emptySubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
