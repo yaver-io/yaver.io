@@ -49,8 +49,13 @@ sysctl --system >/dev/null 2>&1 || true
 log "docker"
 if ! command -v docker >/dev/null 2>&1; then
   install -m 0755 -d /etc/apt/keyrings
+  # --no-tty + --batch so gpg doesn't try to open /dev/tty when this
+  # block runs over a non-interactive ssh pipe (e.g. `ssh box bash -s`
+  # or `tee` redirection). Newer gpg builds (>= 2.4) refuse to read
+  # without --no-tty when stdin isn't a tty, hard-failing the script
+  # under set -e.
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
-    gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    gpg --no-tty --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg
   chmod a+r /etc/apt/keyrings/docker.gpg
   arch="$(dpkg --print-architecture)"
   codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
