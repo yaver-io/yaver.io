@@ -2263,6 +2263,18 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	output.WriteString(task.Output)
 	tm.mu.RUnlock()
 
+	// Per-runner stream rewriting. opencode's TUI ships ANSI escapes
+	// and CLI-style `$ <cmd>` markers that the chat renderer in
+	// mobile + web doesn't recognize on its own — see
+	// opencodeStreamFilter for the full rationale. One filter
+	// instance is shared across stdout + stderr so a `$` line
+	// arriving on stderr (rare, but possible when the underlying
+	// shell is in pipe mode) still gets the same treatment.
+	var ocFilter *opencodeStreamFilter
+	if normalizeRunnerID(task.runner.RunnerID) == "opencode" {
+		ocFilter = &opencodeStreamFilter{}
+	}
+
 	var wg sync.WaitGroup
 	readStream := func(name string, r io.Reader) {
 		defer wg.Done()
@@ -2273,9 +2285,15 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 		for {
 			n, err := r.Read(buf)
 			if n > 0 {
-				outputMu.Lock()
-				tm.emit(task, &output, string(buf[:n]))
-				outputMu.Unlock()
+				payload := buf[:n]
+				if ocFilter != nil {
+					payload = ocFilter.process(payload)
+				}
+				if len(payload) > 0 {
+					outputMu.Lock()
+					tm.emit(task, &output, string(payload))
+					outputMu.Unlock()
+				}
 			}
 			if err != nil {
 				if err != io.EOF {
@@ -2293,6 +2311,16 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 		go readStream("stderr", stderr)
 	}
 	wg.Wait()
+	// Flush any partial line still buffered in the opencode filter —
+	// happens when the process closes stdout without a trailing
+	// newline (rare, but can drop a final log line otherwise).
+	if ocFilter != nil {
+		if rem := ocFilter.flush(); len(rem) > 0 {
+			outputMu.Lock()
+			tm.emit(task, &output, string(rem))
+			outputMu.Unlock()
+		}
+	}
 	close(task.outputCh)
 
 	tm.mu.Lock()
