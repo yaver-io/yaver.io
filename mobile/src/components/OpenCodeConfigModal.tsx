@@ -25,6 +25,7 @@ import {
 } from "react-native";
 import { quicClient, type OpenCodeConfigSummary, type OpenCodeProviderSummary } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
+import { useDevice } from "../context/DeviceContext";
 
 interface Props {
   visible: boolean;
@@ -34,7 +35,12 @@ interface Props {
 // Pre-fills for the most common providers. Same set the web
 // ToolsView uses; keep them in sync.
 const PRESETS: Array<{ label: string; id: string; name: string; baseUrl: string; hint: string }> = [
-  { label: "Z.ai (GLM-4)", id: "glm", name: "Z.ai (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", hint: "GLM-4 + GLM-4V family. Key from open.bigmodel.cn." },
+  // Two distinct z.ai surfaces — same vendor, different keys/SLA. Coding
+  // Plan keys (z.ai/coding) only authenticate against the coding endpoint;
+  // Zhipu OpenAPI keys only authenticate against bigmodel.cn. Picking the
+  // wrong preset surfaces as 401 mid-task — keep both visible.
+  { label: "Z.ai Coding (GLM-4.7)", id: "zai", name: "Z.ai Coding Plan", baseUrl: "https://api.z.ai/api/coding/paas/v4", hint: "GLM-4.7 / GLM-4.5-air. Key from z.ai (Coding Plan)." },
+  { label: "Zhipu OpenAPI (GLM-4)", id: "glm", name: "Zhipu (open.bigmodel.cn)", baseUrl: "https://open.bigmodel.cn/api/paas/v4", hint: "Legacy GLM-4 / GLM-4V via open.bigmodel.cn. Different key from Z.ai Coding Plan." },
   { label: "Groq", id: "groq", name: "Groq", baseUrl: "https://api.groq.com/openai/v1", hint: "Fast Llama / Mixtral / Qwen. Key from console.groq.com." },
   { label: "OpenRouter", id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", hint: "Aggregator across most models. openrouter.ai." },
   { label: "Together", id: "together", name: "Together AI", baseUrl: "https://api.together.xyz/v1", hint: "Open-weight models. api.together.xyz." },
@@ -45,6 +51,14 @@ const PRESETS: Array<{ label: string; id: string; name: string; baseUrl: string;
 
 export function OpenCodeConfigModal({ visible, onClose }: Props) {
   const c = useColors();
+  // Sync the device's primary runner choice to Convex once the user
+  // configures a working provider+key. Without this the user has to ALSO
+  // tap the runner picker in DeviceDetailsModal to flip the device's
+  // primary to opencode — surfaces like the Tasks composer placeholder
+  // ("Chat with Codex" vs "Chat with OpenCode") still read the old
+  // userSettings.primaryRunnerByDevice value until then. The saved key
+  // is the explicit "this is now my coding agent" signal — pin it.
+  const { activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice } = useDevice();
   const [config, setConfig] = useState<OpenCodeConfigSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [defaultAgent, setDefaultAgent] = useState("");
@@ -103,13 +117,14 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
 
   const saveProviderEdit = useCallback(async () => {
     if (!editingProvider) return;
+    const apiKeyTrimmed = editApiKey.trim();
     setBusy(true);
     const res = await quicClient.saveOpenCodeConfig({
       providers: [
         {
           id: editingProvider.id,
           baseUrl: editBaseUrl.trim() || undefined,
-          apiKey: editApiKey.trim() || undefined,
+          apiKey: apiKeyTrimmed || undefined,
         },
       ],
     });
@@ -119,23 +134,27 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       return;
     }
     if (res.config) setConfig(res.config);
+    if (apiKeyTrimmed && activeDevice && primaryRunnerByDevice[activeDevice.id] !== "opencode") {
+      void setPrimaryRunnerForDevice(activeDevice.id, "opencode").catch(() => {});
+    }
     setEditingProvider(null);
     setEditBaseUrl("");
     setEditApiKey("");
-  }, [editingProvider, editBaseUrl, editApiKey]);
+  }, [editingProvider, editBaseUrl, editApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
 
   const addProvider = useCallback(async () => {
     if (!addId.trim()) {
       Alert.alert("Provider id required", "Use a short id like 'glm', 'groq', or 'ollama-tailscale'.");
       return;
     }
+    const apiKeyTrimmed = addApiKey.trim();
     setBusy(true);
     const res = await quicClient.saveOpenCodeConfig({
       providers: [
         {
           id: addId.trim(),
           baseUrl: addBaseUrl.trim() || undefined,
-          apiKey: addApiKey.trim() || undefined,
+          apiKey: apiKeyTrimmed || undefined,
         },
       ],
     });
@@ -145,12 +164,15 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       return;
     }
     if (res.config) setConfig(res.config);
+    if (apiKeyTrimmed && activeDevice && primaryRunnerByDevice[activeDevice.id] !== "opencode") {
+      void setPrimaryRunnerForDevice(activeDevice.id, "opencode").catch(() => {});
+    }
     setShowAdd(false);
     setAddId("");
     setAddBaseUrl("");
     setAddApiKey("");
     setPresetHint("");
-  }, [addId, addBaseUrl, addApiKey]);
+  }, [addId, addBaseUrl, addApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
 
   const deleteProvider = useCallback(
     (provider: OpenCodeProviderSummary) => {

@@ -1437,14 +1437,22 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
     ],
   },
   {
-    id: "glm",
-    label: "GLM (Z.ai)",
+    // Provider id matches the mobile OpenCodeConfigModal preset so the
+    // same opencode.json provider entry gets edited from either surface
+    // (mobile writes provider.zai.options.{baseURL,apiKey}; web does
+    // the same here). Earlier this was id="glm" + url="api.z.ai" — that
+    // wrote a `glm` provider with the Coding Plan URL while the mobile
+    // preset's `glm` provider held bigmodel.cn (different vendor, same
+    // id). Different keys + same id = mid-task 401s when surfaces drift.
+    id: "zai",
+    label: "Z.ai Coding Plan (GLM-4.7)",
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
     requiresKey: true,
-    keyEnv: "ZHIPU_API_KEY",
-    blurb: "Zhipu coding plan — cheap GLM-4.6 with a large context window.",
+    keyEnv: "ZAI_API_KEY",
+    blurb: "z.ai Coding Plan — GLM-4.7 + GLM-4.5 Air. Key from z.ai (separate from Zhipu OpenAPI keys).",
     models: [
-      { id: "glm-4.6", label: "GLM-4.6", hint: "coding-tuned, 128k ctx" },
+      { id: "glm-4.7", label: "GLM-4.7", hint: "newest, coding-tuned" },
+      { id: "glm-4.6", label: "GLM-4.6", hint: "previous coding model" },
       { id: "glm-4.5-air", label: "GLM-4.5 Air", hint: "lighter, faster" },
     ],
   },
