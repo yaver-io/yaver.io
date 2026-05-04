@@ -242,6 +242,10 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          # `expo prebuild --clean` regenerates gradle.properties with
+          # Expo's default 2 GiB heap, which OOMs on this RN tree.
+          # Override at the env level so the daemon picks it up.
+          GRADLE_OPTS: -Xmx8g -XX:MaxMetaspaceSize=1g -Dorg.gradle.jvmargs="-Xmx8g -XX:MaxMetaspaceSize=1g"
         run: |
           cd mobile/android
 
