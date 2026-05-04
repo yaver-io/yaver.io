@@ -88,11 +88,22 @@ func findAndroidToolPath(name string) string {
 }
 
 func androidSystemImagePackage() string {
+	// Match the system image to the host's architecture — DO NOT pull
+	// x86_64 system images on an ARM64 Linux box. Cross-arch QEMU
+	// translation makes the emulator boot in 5+ minutes and run too
+	// slowly for Flutter/Kotlin reload cycles. Hetzner cax (Ampere
+	// Altra) hosts run ARM64-target ATD images natively at acceptable
+	// speed even under TCG (no /dev/kvm exposed on Hetzner cloud).
 	arch := "x86_64"
-	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+	if runtime.GOARCH == "arm64" {
 		arch = "arm64-v8a"
 	}
-	return fmt.Sprintf("system-images;android-%s;google_apis;%s", androidRemoteRuntimeAPILevel, arch)
+	// google_atd (Android Test Driver) is ~40% smaller than
+	// google_apis_playstore and headless-optimized — the right call for
+	// a Yaver remote runtime that doesn't need Play Store / sign-in
+	// surfaces. The dev's app still installs via adb, just like a
+	// playstore image.
+	return fmt.Sprintf("system-images;android-%s;google_atd;%s", androidRemoteRuntimeAPILevel, arch)
 }
 
 func installAndroidSDKRuntime(ctx context.Context, progress func(string)) error {

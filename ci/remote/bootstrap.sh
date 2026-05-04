@@ -78,6 +78,135 @@ log "ollama"
 if ! command -v ollama >/dev/null 2>&1; then
   curl -fsSL https://ollama.com/install.sh | sh
 fi
+
+# ─────────────────────────────────────────────────────────────────
+# Remote-runtime toolchains: Java 17 + Android SDK + Flutter +
+# WebRTC capture stack (ffmpeg/GStreamer) + qemu/binfmt + zram swap.
+# Required for Yaver to boot a Flutter or Kotlin app on this box and
+# stream the emulator screen back to the user's phone over WebRTC.
+# ─────────────────────────────────────────────────────────────────
+
+log "java 17 (for android sdkmanager + gradle)"
+if ! command -v java >/dev/null 2>&1 || ! java -version 2>&1 | grep -q '"17'; then
+  apt-get install -y openjdk-17-jdk-headless
+fi
+install -m 0644 /dev/stdin /etc/profile.d/java.sh <<'EOF'
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-arm64
+EOF
+
+log "android sdk + emulator + ARM64-v8a system image"
+ANDROID_SDK_ROOT=/opt/android-sdk
+export ANDROID_SDK_ROOT ANDROID_HOME=$ANDROID_SDK_ROOT
+mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
+  CMDTOOLS_URL=https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+  curl -fsSL "$CMDTOOLS_URL" -o /tmp/cmdtools.zip
+  unzip -q -o /tmp/cmdtools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools/"
+  # archive extracts to ./cmdline-tools — the modern layout wants ./latest
+  mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+  rm -f /tmp/cmdtools.zip
+fi
+SDKMGR="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH"
+yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+# google_atd is the headless-optimized Test Driver image — ~40% smaller
+# than google_apis_playstore, no Play surface to fight, and ships ARM64-v8a
+# variants that run native on Hetzner cax (Ampere Altra).
+"$SDKMGR" "platform-tools" "emulator" "platforms;android-35" \
+  "system-images;android-35;google_atd;arm64-v8a" || true
+
+# Default AVD. avdmanager-from-cmdline-tools/latest. -d 33 = Pixel 7
+# device profile — sane defaults (1080x2400, 6.3", densities). Skip if
+# already created.
+AVDMGR="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/avdmanager"
+if [ -x "$AVDMGR" ] && ! "$AVDMGR" list avd 2>&1 | grep -q "Yaver_API_35"; then
+  echo "no" | "$AVDMGR" create avd \
+    -n Yaver_API_35 \
+    -k "system-images;android-35;google_atd;arm64-v8a" \
+    -d "pixel_7" || true
+fi
+install -m 0644 /dev/stdin /etc/profile.d/android.sh <<EOF
+export ANDROID_HOME=$ANDROID_SDK_ROOT
+export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
+export PATH=\$PATH:\$ANDROID_HOME/cmdline-tools/latest/bin:\$ANDROID_HOME/platform-tools:\$ANDROID_HOME/emulator
+EOF
+
+log "flutter sdk (linux arm64 stable)"
+FLUTTER_ROOT=/opt/flutter
+if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
+  # Pin to a known-good stable tag with arm64 prebuilt. flutter.dev
+  # publishes per-arch tarballs at storage.googleapis.com.
+  FLUTTER_VER=3.27.4
+  FLUTTER_ARCHIVE=flutter_linux_arm64_${FLUTTER_VER}-stable.tar.xz
+  FLUTTER_URL=https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${FLUTTER_ARCHIVE}
+  curl -fsSL "$FLUTTER_URL" -o /tmp/flutter.tar.xz
+  tar -C /opt -xJf /tmp/flutter.tar.xz
+  rm -f /tmp/flutter.tar.xz
+fi
+install -m 0644 /dev/stdin /etc/profile.d/flutter.sh <<EOF
+export FLUTTER_ROOT=$FLUTTER_ROOT
+export PATH=\$PATH:\$FLUTTER_ROOT/bin
+EOF
+# git safe.directory so flutter's own .git pulls don't error in CI
+"$FLUTTER_ROOT/bin/flutter" --version >/dev/null 2>&1 || true
+
+log "webrtc capture stack: ffmpeg + gstreamer + xvfb"
+# ffmpeg with libx264 + x11grab is enough for the v1 capture pipeline
+# (read framebuffer → encode H.264 → pipe stdout into Pion's NAL
+# extractor). gstreamer is staged so the v2 pipeline (zero-copy
+# kmssink → vaapih264enc) is one config flip away once we benchmark.
+# xvfb is the headless X11 display — Swift+GTK Phase 2 needs it; the
+# emulator path goes through adb screenrecord and doesn't, but we
+# install it now since it's tiny and used by the doctor's
+# remote-runtime preflight.
+apt-get install -y \
+  ffmpeg \
+  gstreamer1.0-tools gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad gstreamer1.0-libav \
+  xvfb x11-utils dbus-x11
+
+log "qemu (TCG fallback for android emulator on no-KVM hosts)"
+# Hetzner cloud doesn't expose /dev/kvm; the emulator uses TCG (pure
+# software). qemu-system-arm provides the runtime; binfmt-support
+# would let us cross-run x86_64 system images via translation if we
+# ever needed to (we don't — Phase 1 sticks to ARM64 native).
+apt-get install -y qemu-system-arm qemu-utils
+
+log "zram swap (4 GB compressed) — survives Gradle daemon spikes on cax21 8GB"
+# Until Hetzner has cax31 capacity we keep limping along on 8 GB. zram
+# gives ~2-3 GB of compressed working RAM at the cost of CPU; under a
+# Gradle/Flutter build OOM scenario this is what keeps the agent alive.
+# Idempotent: only writes the unit if not already present.
+apt-get install -y zram-tools
+if [ ! -f /etc/default/zramswap ] || ! grep -q '^PERCENT=' /etc/default/zramswap; then
+  install -m 0644 /dev/stdin /etc/default/zramswap <<'EOF'
+ALGO=zstd
+PERCENT=50
+PRIORITY=100
+EOF
+  systemctl enable --now zramswap.service || true
+fi
+
+log "linger + sandbox — yaver user can run user-mode systemd units"
+# Required for `yaver serve` running as a non-root user when the
+# agent later orchestrates per-session emulator lifecycles via
+# systemd-run --user.
+if id yaver >/dev/null 2>&1; then
+  loginctl enable-linger yaver || true
+fi
+
+log "remote-runtime preflight check"
+# Surface what's installed + what's still missing so the
+# yaver-doctor surface (and CI) can grep for it.
+{
+  echo "java=$(java -version 2>&1 | head -1)"
+  echo "android_sdk=$ANDROID_SDK_ROOT"
+  echo "android_avds=$($AVDMGR list avd 2>&1 | awk '/Name:/ {print $2}' | xargs)"
+  echo "flutter=$($FLUTTER_ROOT/bin/flutter --version 2>&1 | head -1)"
+  echo "ffmpeg=$(ffmpeg -version 2>&1 | head -1)"
+  echo "kvm=$([ -e /dev/kvm ] && echo present || echo absent_TCG_fallback)"
+  echo "zram=$(swapon --show 2>&1 | head -3 | tr '\n' ' ')"
+} > /var/lib/yaver-remote-runtime.preflight 2>&1 || true
 systemctl enable --now ollama || true
 
 log "pull qwen2.5-coder:1.5b"

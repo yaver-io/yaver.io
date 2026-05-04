@@ -55,7 +55,20 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 	}
 
 	// Spawn the emulator in the background and wait for adb to see it.
-	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath("emulator"), "-avd", d.AVD, "-no-snapshot-save", "-no-window")
+	// On Hetzner cloud (and most VPS providers) /dev/kvm is not
+	// exposed to guests — the emulator falls back to QEMU TCG (pure
+	// software emulation) automatically when KVM is unavailable, BUT
+	// only when we tell it explicitly with `-accel tcg` plus a
+	// modest `-cores 2` cap (TCG eats CPU and starves the agent +
+	// ffmpeg encoder otherwise). When KVM IS available (devs running
+	// on bare metal or kvm-passthrough enabled hosts) we let the
+	// emulator's default acceleration win — it auto-picks KVM and
+	// boots in ~10s instead of ~90s.
+	args := []string{"-avd", d.AVD, "-no-snapshot-save", "-no-window", "-no-boot-anim", "-noaudio"}
+	if !kvmAvailable() {
+		args = append(args, "-accel", "tcg", "-cores", "2")
+	}
+	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath("emulator"), args...)
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("emulator start: %w", err)
 	}
@@ -70,6 +83,21 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 		return deviceID, err
 	}
 	return deviceID, nil
+}
+
+// kvmAvailable reports whether /dev/kvm is exposed to this process.
+// Hetzner cloud doesn't expose nested KVM, so the emulator on
+// yaver-test-ephemeral runs under TCG software emulation; that's
+// slower (~90s cold boot vs ~10s with KVM) but correct on aarch64
+// host running aarch64 target. Bare-metal Linux hosts and macOS
+// (which uses HVF, not KVM-named) take the default-acceleration
+// path. Stat is cheap; we don't memo since this is called once
+// per emulator boot.
+func kvmAvailable() bool {
+	if _, err := os.Stat("/dev/kvm"); err == nil {
+		return true
+	}
+	return false
 }
 
 func firstOnlineEmulator(ctx context.Context) string {
