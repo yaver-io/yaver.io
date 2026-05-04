@@ -1986,7 +1986,15 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		// Ensure common tool paths are in PATH for background processes.
 		cmd.Env = taskEnv(task)
 
-		log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:2], taskDir)
+		// Log the first two argv tokens for context (subcommand + first
+		// flag). Some runners' Args templates collapse to a single token
+		// after substitution — guard so a debug log line can't crash the
+		// whole HTTP server.
+		previewN := 2
+		if len(args) < previewN {
+			previewN = len(args)
+		}
+		log.Printf("[task %s] Launching: %s %v (dir=%s)", task.ID, runner.Command, args[:previewN], taskDir)
 
 		// Dev log: task launch
 		go SendDevLog(tm.ConvexURL, tm.AuthToken, tm.OwnerEmail, "task-launch",

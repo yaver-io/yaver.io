@@ -157,20 +157,6 @@ func normalizeRunnerID(id string) string {
 
 func detectClaudeStatus() RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
-	// Claude Code 2.x refuses --dangerously-skip-permissions when
-	// running as root/uid 0 ("--dangerously-skip-permissions cannot be
-	// used with root/sudo privileges for security reasons"). The agent
-	// always passes that flag (see builtinRunners["claude"] in tasks.go),
-	// so on a root-running agent every claude spawn exits 1 with zero
-	// stdout. Without this branch the readiness probe says ready=true
-	// (binary present, credentials may even exist), pickReadyVibingRunner
-	// happily picks claude, and the task hangs. Block it up-front so
-	// the feedback→vibe pipeline picks codex/opencode instead.
-	if runtime.GOOS != "windows" && os.Geteuid() == 0 {
-		status.Ready = false
-		status.Error = "Claude Code refuses --dangerously-skip-permissions under root/uid 0. Run the Yaver agent as a non-root user (recommended) or pick a different runner (codex / opencode) for this machine."
-		return status
-	}
 	switch {
 	case func() bool {
 		value, _ := hostSecretValue("ANTHROPIC_API_KEY")

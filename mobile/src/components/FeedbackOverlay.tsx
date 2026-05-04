@@ -12,6 +12,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import Markdown from "react-native-markdown-display";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 import { useDevice } from "../context/DeviceContext";
@@ -20,6 +21,114 @@ import { subscribeFeedbackLaunch } from "../lib/feedbackTrigger";
 
 const BUTTON_SIZE = 46;
 const PANEL_WIDTH = 300;
+
+const ANSI_PATTERN =
+  // eslint-disable-next-line no-control-regex
+  /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][0AB]|\x1b[=>NOM78cDEHM]|\x07/g;
+
+function stripAnsi(text: string): string {
+  return String(text || "")
+    .replace(ANSI_PATTERN, "")
+    .replace(/\[\d+(?:;\d+)*m/g, "");
+}
+
+function stripPromptEcho(content: string): string {
+  return stripAnsi(content)
+    .replace(/^[\s\S]*?OpenAI Codex v[^\n]*\n(?:[\s\S]*?\n)?\s*\n/, "")
+    .replace(/^Reading additional input from stdin[.…]*\s*\n?/, "")
+    .replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*/gi, "\n\n")
+    .trim();
+}
+
+function extractAssistantActivity(text: string, maxItems = 3): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const rawLine of text.split("\n").map((line) => line.trim()).filter(Boolean)) {
+    const command = rawLine.match(/^\*\*\$\s+(.+?)\*\*$/);
+    const normalized = command?.[1]
+      ? `$ ${command[1].trim()}`
+      : (/^[-*]\s+/.test(rawLine) || /^\d+\.\s+/.test(rawLine)
+        ? rawLine.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, "").trim()
+        : "");
+    if (!normalized || normalized.length < 4 || seen.has(normalized)) continue;
+    seen.add(normalized);
+    items.push(normalized);
+  }
+  return items.slice(-maxItems);
+}
+
+function buildLiveAssistantMarkdown(content: string): string {
+  const cleaned = stripPromptEcho(content).replace(/```[\s\S]*?```/g, "\n_Code/details hidden while work continues._\n");
+  const visible: string[] = [];
+  let hidden = false;
+  let chars = 0;
+  for (const rawLine of cleaned.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) {
+      if (visible.length > 0 && visible[visible.length - 1] !== "") visible.push("");
+      continue;
+    }
+    if (/^\*\*\$\s+.+\*\*$/.test(line) || /^(workdir|model|provider|approval|sandbox|reasoning effort):/i.test(line)) {
+      hidden = true;
+      continue;
+    }
+    if (/^(diff --git|index [0-9a-f]+\.\.[0-9a-f]+|@@ |--- |\+\+\+ )/.test(line)) {
+      hidden = true;
+      continue;
+    }
+    if (/^[{}[\];(),.=><:+\-/*\\|'"`_]+$/.test(line)) {
+      hidden = true;
+      continue;
+    }
+    visible.push(rawLine);
+    chars += rawLine.length;
+    if (visible.length >= 10 || chars >= 1200) {
+      hidden = true;
+      break;
+    }
+  }
+  const body = visible.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const activity = extractAssistantActivity(cleaned);
+  if (!body) {
+    return "_Working… implementation details hidden while the task runs._";
+  }
+  if (!hidden && activity.length === 0) return body;
+  return `${body}${activity.length ? `\n\n${activity.map((item) => `- ${item}`).join("\n")}` : ""}\n\n_Working through implementation details…_`.trim();
+}
+
+function feedbackMarkdownStyles() {
+  return {
+    body: {
+      color: "#111827",
+      fontSize: 13,
+      lineHeight: 19,
+    },
+    paragraph: {
+      marginTop: 0,
+      marginBottom: 8,
+    },
+    bullet_list: {
+      marginTop: 0,
+      marginBottom: 8,
+    },
+    list_item: {
+      color: "#111827",
+    },
+    code_inline: {
+      backgroundColor: "#eef2ff",
+      color: "#4338ca",
+      borderRadius: 4,
+      paddingHorizontal: 4,
+      paddingVertical: 1,
+    },
+    fence: {
+      backgroundColor: "#f3f4f6",
+      borderRadius: 8,
+      padding: 10,
+      color: "#374151",
+    },
+  } as const;
+}
 
 /**
  * Global feedback overlay — draggable indigo "y" debug button.
@@ -37,6 +146,8 @@ export function FeedbackOverlay() {
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const [output, setOutput] = useState<string[]>([]);
+  const [assistantReply, setAssistantReply] = useState("");
+  const [taskStatusLine, setTaskStatusLine] = useState("");
   const [reloading, setReloading] = useState(false);
   const [fullSize, setFullSize] = useState(false);
   const isDragging = useRef(false);
@@ -89,6 +200,8 @@ export function FeedbackOverlay() {
           setChatOpen(false);
           setOutput([]);
           setMessage("");
+          setAssistantReply("");
+          setTaskStatusLine("");
           setSending(false);
         }
         setEnabled(newEnabled);
@@ -114,6 +227,8 @@ export function FeedbackOverlay() {
       if (!enabled && !isImplicitOptIn) return;
       setChatOpen(true);
       setFullSize(false);
+      setAssistantReply("");
+      setTaskStatusLine("");
       // Remember the source so handleSend can route to /vibing/execute
       // (with project context) instead of the generic /tasks path. Reset
       // on close.
@@ -143,8 +258,10 @@ export function FeedbackOverlay() {
     const msg = message.trim();
     setSending(true);
     setMessage("");
+    setAssistantReply("");
+    setTaskStatusLine("Sending…");
     Keyboard.dismiss();
-    addOutput(`> ${msg}`);
+    addOutput(`Asked: ${msg}`);
 
     const isGuestShake = lastLaunchSource.current === "native-guest-shake";
     const url = isGuestShake ? `${agentUrl}/vibing/execute` : `${agentUrl}/tasks`;
@@ -170,7 +287,7 @@ export function FeedbackOverlay() {
         setSending(false);
         return;
       }
-      addOutput(`task ${taskId} started...`);
+      setTaskStatusLine("Working on it…");
 
       // Poll task output for up to 30s. Vibing tasks live under
       // /vibing/task/{id} (SDK-token-accessible), generic tasks under
@@ -190,20 +307,17 @@ export function FeedbackOverlay() {
           }
           const task = await statusResp.json();
           const t = task.task ?? task;
+          const combined = Array.isArray(t.output) ? t.output.join("\n") : String(t.output || t.rawOutput || t.resultText || "");
+          if (combined.trim()) {
+            setAssistantReply(buildLiveAssistantMarkdown(combined));
+          }
 
           if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
-            // Get the last bit of output
-            const out = t.output ?? t.rawOutput ?? "";
-            if (out) {
-              const lines = out.split("\n").filter((l: string) => l.trim());
-              const last3 = lines.slice(-3);
-              for (const l of last3) addOutput(l.slice(0, 60));
-            }
-            addOutput(t.status === "completed" ? "done." : `${t.status}.`);
+            setTaskStatusLine(t.status === "completed" ? "Done." : t.status === "failed" ? "Could not finish." : "Stopped.");
             clearInterval(poll);
             setSending(false);
           } else if (attempts >= 15) {
-            addOutput("running in background...");
+            setTaskStatusLine("Still working…");
             clearInterval(poll);
             setSending(false);
           }
@@ -221,7 +335,9 @@ export function FeedbackOverlay() {
   // Generic: send a prefixed task to agent and poll output
   const runAgentAction = useCallback(async (label: string, prompt: string) => {
     if (!agentUrl || !token) return;
-    addOutput(`> ${label}`);
+    addOutput(label);
+    setAssistantReply("");
+    setTaskStatusLine("Working on it…");
     setSending(true);
     try {
       const resp = await fetch(`${agentUrl}/tasks`, {
@@ -237,7 +353,7 @@ export function FeedbackOverlay() {
       const data = await resp.json();
       const taskId = data.taskId ?? data.id ?? data.task?.id;
       if (!taskId) { addOutput("started (no id)"); setSending(false); return; }
-      addOutput(`${label}: task ${taskId}...`);
+      setTaskStatusLine(`${label} started…`);
 
       // Poll output
       let attempts = 0;
@@ -249,17 +365,15 @@ export function FeedbackOverlay() {
           });
           if (!sr.ok) { clearInterval(poll); setSending(false); return; }
           const json = await sr.json(); const t = json.task ?? json;
+          const combined = Array.isArray(t.output) ? t.output.join("\n") : String(t.output || t.rawOutput || t.resultText || "");
+          if (combined.trim()) {
+            setAssistantReply(buildLiveAssistantMarkdown(combined));
+          }
           if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
-            const out = t.output ?? t.rawOutput ?? "";
-            if (out) {
-              for (const l of out.split("\n").filter((l: string) => l.trim()).slice(-3)) {
-                addOutput(l.slice(0, 60));
-              }
-            }
-            addOutput(t.status === "completed" ? "done." : `${t.status}.`);
+            setTaskStatusLine(t.status === "completed" ? "Done." : t.status === "failed" ? "Could not finish." : "Stopped.");
             clearInterval(poll); setSending(false);
           } else if (attempts >= 30) {
-            addOutput("running in background...");
+            setTaskStatusLine("Still working…");
             clearInterval(poll); setSending(false);
           }
         } catch { clearInterval(poll); setSending(false); }
@@ -281,12 +395,13 @@ export function FeedbackOverlay() {
   const handleReload = useCallback(async () => {
     if (!isConnected) return;
     addOutput("> hot reload");
+    setTaskStatusLine("Sending reload…");
     setReloading(true);
     try {
       const ok = await quicClient.reloadDevServer({ mode: "bundle" });
-      addOutput(ok ? "reload sent. waiting for bundle..." : "reload failed");
+      setTaskStatusLine(ok ? "Reload sent. Waiting for bundle…" : "Reload failed.");
     } catch (e) {
-      addOutput(`reload err: ${String(e).slice(0, 40)}`);
+      setTaskStatusLine(`Reload error: ${String(e).slice(0, 40)}`);
     } finally {
       setReloading(false);
     }
@@ -304,7 +419,9 @@ export function FeedbackOverlay() {
 
   const handleBugReport = useCallback(async () => {
     if (!agentUrl || !token) return;
-    addOutput("> bug report");
+    addOutput("Bug report");
+    setAssistantReply("");
+    setTaskStatusLine("Sending bug report…");
     setSending(true);
     try {
       const resp = await fetch(`${agentUrl}/tasks`, {
@@ -319,12 +436,12 @@ export function FeedbackOverlay() {
       if (resp.ok) {
         const data = await resp.json();
         const taskId = data.taskId ?? data.id ?? data.task?.id;
-        addOutput(taskId ? `bug task ${taskId} created` : "bug report sent");
+        setTaskStatusLine(taskId ? "Bug fix task started…" : "Bug report sent.");
       } else {
-        addOutput(`err: ${resp.status}`);
+        setTaskStatusLine(`Error: ${resp.status}`);
       }
     } catch (e) {
-      addOutput(`fail: ${String(e).slice(0, 40)}`);
+      setTaskStatusLine(`Failed: ${String(e).slice(0, 40)}`);
     } finally {
       setSending(false);
     }
@@ -376,36 +493,41 @@ export function FeedbackOverlay() {
             <TouchableOpacity onPress={() => setFullSize(!fullSize)} style={styles.xBtn}>
               <Text style={styles.xBtnText}>{fullSize ? "\u25A1" : "\u2197"}</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => { setChatOpen(false); setFullSize(false); }} style={styles.xBtn}>
+            <TouchableOpacity onPress={() => { setChatOpen(false); setFullSize(false); setAssistantReply(""); setTaskStatusLine(""); }} style={styles.xBtn}>
               <Text style={styles.xBtnText}>{"\u2715"}</Text>
             </TouchableOpacity>
           </View>
 
           {/* Output area */}
           <View style={[styles.outputArea, fullSize && styles.outputAreaFull]}>
-            {output.length > 0 ? output.map((line, i) => (
-              <Text key={i} style={[
-                styles.outputLine,
-                fullSize && styles.outputLineFull,
-                line.startsWith(">") && { color: "#9ca3af" },
-              ]}>
-                {line}
-              </Text>
-            )) : (
+            {assistantReply ? (
+              <Markdown style={feedbackMarkdownStyles()}>
+                {assistantReply}
+              </Markdown>
+            ) : (
               <Text style={[styles.outputLine, { color: "#333" }]}>
                 {isConnected ? "connected. type a message or use actions below." : "not connected to agent."}
               </Text>
             )}
+            {taskStatusLine ? (
+              <Text style={[styles.outputLine, { color: buttonColor, marginTop: 8 }]}>
+                {taskStatusLine}
+              </Text>
+            ) : null}
+            {output.length > 0 ? (
+              <Text style={[styles.outputLine, { color: "#6b7280", marginTop: 8 }]}>
+                {output[output.length - 1]}
+              </Text>
+            ) : null}
             {sending && <ActivityIndicator color={buttonColor} size="small" style={{ marginTop: 4 }} />}
           </View>
 
           {/* Input */}
           <View style={styles.inputRow}>
-            <Text style={[styles.prompt, { color: buttonColor }]}>&gt;</Text>
             <TextInput
               style={[styles.input, fullSize && styles.inputFull]}
-              placeholder="tell the agent..."
-              placeholderTextColor="#444"
+              placeholder="Describe the issue or what to change"
+              placeholderTextColor="#6b7280"
               value={message}
               onChangeText={setMessage}
               onSubmitEditing={handleSend}
@@ -417,7 +539,7 @@ export function FeedbackOverlay() {
               onPress={handleSend}
               disabled={sending || !message.trim() || !isConnected}
             >
-              <Text style={styles.goBtnText}>run</Text>
+              <Text style={styles.goBtnText}>Send</Text>
             </TouchableOpacity>
           </View>
 
@@ -478,7 +600,7 @@ export function FeedbackOverlay() {
 
           {/* Bottom row */}
           <View style={styles.actionsRow}>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => setOutput([])}>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => { setOutput([]); setAssistantReply(""); setTaskStatusLine(""); }}>
               <Text style={styles.actionText}>clear</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.actionBtn} onPress={handleDisable}>
@@ -599,24 +721,22 @@ const styles = StyleSheet.create({
   inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    marginBottom: 6,
+    gap: 8,
+    marginBottom: 8,
   },
-  prompt: { fontSize: 16, fontWeight: "700", fontFamily: "Courier" },
   input: {
     flex: 1,
     backgroundColor: "#111",
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 7,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     color: "#e5e5e5",
     fontSize: 13,
-    fontFamily: "Courier",
     borderWidth: 1,
     borderColor: "#222",
   },
-  goBtn: { borderRadius: 6, paddingHorizontal: 12, paddingVertical: 7 },
-  goBtnText: { color: "#fff", fontSize: 12, fontWeight: "700", fontFamily: "Courier" },
+  goBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
+  goBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
   dim: { opacity: 0.3 },
   // Actions
   cardRow: { flexDirection: "row", gap: 6, marginBottom: 6 },
