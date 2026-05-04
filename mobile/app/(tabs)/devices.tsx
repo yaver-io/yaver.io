@@ -17,7 +17,8 @@ import { useLocalSearchParams, router } from "expo-router";
 import { Device, useDevice } from "../../src/context/DeviceContext";
 import { appTag } from "../../src/lib/appVersion";
 import { useAuth } from "../../src/context/AuthContext";
-import { useColors } from "../../src/context/ThemeContext";
+import { useColors, useTheme } from "../../src/context/ThemeContext";
+import { chipPalette } from "../../src/lib/chipPalette";
 import { quicClient } from "../../src/lib/quic";
 import DeviceDetailsModal from "../../src/components/DeviceDetailsModal";
 import { beaconListener, type DiscoveredDevice } from "../../src/lib/beacon";
@@ -50,8 +51,9 @@ function transportFor(device: Device): TransportInfo {
 }
 
 function TransportBadge({ device }: { device: Device }) {
+  const { isDark } = useTheme();
   const t = transportFor(device);
-  const palette = transportToneRGB(t.tone);
+  const palette = transportToneRGB(t.tone, isDark);
   return (
     <View style={{
       paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
@@ -61,6 +63,22 @@ function TransportBadge({ device }: { device: Device }) {
       <Text style={{ color: palette.text, fontSize: 9, fontWeight: "700", letterSpacing: 0.6 }}>
         {t.label.toUpperCase()}
       </Text>
+    </View>
+  );
+}
+
+function StatusChip({ tone, label, isDark }: {
+  tone: import("../../src/lib/chipPalette").ChipTone;
+  label: string;
+  isDark: boolean;
+}) {
+  const p = chipPalette(tone, isDark);
+  return (
+    <View style={{
+      paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+      backgroundColor: p.bg, borderWidth: 1, borderColor: p.border,
+    }}>
+      <Text style={{ color: p.text, fontSize: 10, fontWeight: "700" }}>{label}</Text>
     </View>
   );
 }
@@ -258,6 +276,7 @@ function DeviceCard({
   forceDetailsOpen?: boolean;
 }) {
   const c = useColors();
+  const { isDark } = useTheme();
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean }>({ pinging: false });
   const [recovering, setRecovering] = useState(false);
   const [runtimeLabel, setRuntimeLabel] = useState<string | null>(null);
@@ -475,18 +494,24 @@ function DeviceCard({
           : lifecycleState === "ready-to-connect"
             ? "ready to connect"
             : "offline";
-  const statusTone =
+  const statusChipTone: import("../../src/lib/chipPalette").ChipTone =
     isConnecting
-      ? c.warn
+      ? "amber"
       : lifecycleState === "connected"
-      ? c.success
-      : lifecycleState === "bootstrap"
-        ? "#8b5cf6"
-        : lifecycleState === "yaver-auth-expired"
-          ? "#f59e0b"
-          : lifecycleState === "ready-to-connect"
-            ? "#38bdf8"
-            : c.textMuted;
+        ? "emerald"
+        : lifecycleState === "bootstrap"
+          ? "violet"
+          : lifecycleState === "yaver-auth-expired"
+            ? "amber"
+            : lifecycleState === "ready-to-connect"
+              ? "blue"
+              : "slate";
+  const statusChip = chipPalette(statusChipTone, isDark);
+  // statusTone drives the descriptive line + the right-side dot. Use the
+  // palette text color (theme-aware), except for the offline state which
+  // should defer to the muted theme color so it doesn't shout.
+  const statusTone =
+    lifecycleState === "offline" ? c.textMuted : statusChip.text;
   const primaryActionLabel =
     lifecycleState === "bootstrap"
       ? "Reclaim & Connect"
@@ -497,11 +522,11 @@ function DeviceCard({
           : "Details";
   const primaryActionTone =
     lifecycleState === "bootstrap"
-      ? "#8b5cf6"
+      ? chipPalette("violet", isDark).text
       : lifecycleState === "yaver-auth-expired"
-        ? "#f59e0b"
+        ? chipPalette("amber", isDark).text
         : lifecycleState === "ready-to-connect"
-          ? "#38bdf8"
+          ? chipPalette("blue", isDark).text
           : c.accent;
   const handleSmartConnect = async () => {
     if (recovering) return;
@@ -536,81 +561,23 @@ function DeviceCard({
         <View style={styles.cardInfo}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
-            {device.isGuest ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#60a5fa22", borderWidth: 1, borderColor: "#60a5fa66",
-              }}>
-                <Text style={{ color: "#60a5fa", fontSize: 10, fontWeight: "700" }}>SHARED</Text>
-              </View>
-            ) : null}
-            {isPrimary ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#6366f122", borderWidth: 1, borderColor: "#6366f166",
-              }}>
-                <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PRIMARY ★</Text>
-              </View>
-            ) : null}
-            {defaultRunner ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#a78bfa22", borderWidth: 1, borderColor: "#a78bfa66",
-              }}>
-                <Text style={{ color: "#c4b5fd", fontSize: 10, fontWeight: "700" }}>
-                  ★ {labelForRunnerId(defaultRunner)}
-                </Text>
-              </View>
-            ) : null}
+            {device.isGuest ? <StatusChip tone="blue" label="SHARED" isDark={isDark} /> : null}
+            {isPrimary ? <StatusChip tone="indigo" label="PRIMARY ★" isDark={isDark} /> : null}
+            {defaultRunner ? <StatusChip tone="violet" label={`★ ${labelForRunnerId(defaultRunner)}`} isDark={isDark} /> : null}
             {recovering ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
-              }}>
-                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>RECOVERING…</Text>
-              </View>
+              <StatusChip tone="amber" label="RECOVERING…" isDark={isDark} />
             ) : autoPairing ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#818cf822", borderWidth: 1, borderColor: "#818cf866",
-              }}>
-                <Text style={{ color: "#818cf8", fontSize: 10, fontWeight: "700" }}>PAIRING…</Text>
-              </View>
+              <StatusChip tone="indigo" label="PAIRING…" isDark={isDark} />
             ) : lifecycleState === "bootstrap" ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#8b5cf622", borderWidth: 1, borderColor: "#8b5cf666",
-              }}>
-                <Text style={{ color: "#8b5cf6", fontSize: 10, fontWeight: "700" }}>BOOTSTRAP</Text>
-              </View>
+              <StatusChip tone="violet" label="BOOTSTRAP" isDark={isDark} />
             ) : lifecycleState === "yaver-auth-expired" ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
-              }}>
-                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>YAVER AUTH EXPIRED</Text>
-              </View>
+              <StatusChip tone="amber" label="YAVER AUTH EXPIRED" isDark={isDark} />
             ) : isConnecting ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
-              }}>
-                <Text style={{ color: "#f59e0b", fontSize: 10, fontWeight: "700" }}>CONNECTING</Text>
-              </View>
+              <StatusChip tone="amber" label="CONNECTING" isDark={isDark} />
             ) : lifecycleState === "connected" ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#22c55e22", borderWidth: 1, borderColor: "#22c55e66",
-              }}>
-                <Text style={{ color: "#22c55e", fontSize: 10, fontWeight: "700" }}>CONNECTED</Text>
-              </View>
+              <StatusChip tone="emerald" label="CONNECTED" isDark={isDark} />
             ) : lifecycleState === "ready-to-connect" ? (
-              <View style={{
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: "#38bdf822", borderWidth: 1, borderColor: "#38bdf866",
-              }}>
-                <Text style={{ color: "#38bdf8", fontSize: 10, fontWeight: "700" }}>READY TO CONNECT</Text>
-              </View>
+              <StatusChip tone="blue" label="READY TO CONNECT" isDark={isDark} />
             ) : null}
           </View>
           <View style={{ marginTop: 6 }}>

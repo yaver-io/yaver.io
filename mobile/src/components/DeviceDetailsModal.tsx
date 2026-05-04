@@ -8,7 +8,7 @@ import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "reac
 import * as Clipboard from "expo-clipboard";
 import { useRouter } from "expo-router";
 import { useDevice, type Device } from "../context/DeviceContext";
-import { useColors } from "../context/ThemeContext";
+import { useColors, useTheme } from "../context/ThemeContext";
 import { quicClient, type RunnerAuthStatusRow } from "../lib/quic";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import RunnerAuthModal from "./RunnerAuthModal";
@@ -838,6 +838,7 @@ function CodingAgentsSection({ device }: { device: Device }) {
 
 export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
   const c = useColors();
+  const { isDark } = useTheme();
   const t = device ? transportFor(device) : null;
   const [relayHealth, setRelayHealth] = useState<{ version?: string; tunnels?: number; activeDevices?: number } | null>(null);
 
@@ -857,7 +858,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
 
   if (!device || !t) return null;
 
-  const palette = transportToneRGB(t.tone);
+  const palette = transportToneRGB(t.tone, isDark);
 
   const lanIps = device.lanIps || [];
   const tailscaleIp = lanIps.find((ip) => /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(ip));

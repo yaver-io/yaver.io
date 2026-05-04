@@ -5,6 +5,8 @@
  * Keep these two files in sync when adding new transport types.
  */
 
+import { chipPalette } from "./chipPalette";
+
 export type TransportPrimary =
   | "yaver-public-relay"
   | "self-hosted-relay"
@@ -165,15 +167,10 @@ export async function fetchRelayHealth(
   }
 }
 
-export function transportToneRGB(tone: TransportInfo["tone"]): { bg: string; border: string; text: string } {
-  // RN-friendly palette (no Tailwind). Used by the mobile device
-  // card + details screen.
-  switch (tone) {
-    case "emerald": return { bg: "rgba(16,185,129,0.12)", border: "rgba(16,185,129,0.45)", text: "#a7f3d0" };
-    case "blue":    return { bg: "rgba(59,130,246,0.12)", border: "rgba(59,130,246,0.45)", text: "#bfdbfe" };
-    case "violet":  return { bg: "rgba(139,92,246,0.12)", border: "rgba(139,92,246,0.45)", text: "#ddd6fe" };
-    case "amber":   return { bg: "rgba(245,158,11,0.12)", border: "rgba(245,158,11,0.45)", text: "#fde68a" };
-    case "rose":    return { bg: "rgba(244,63,94,0.12)", border: "rgba(244,63,94,0.45)", text: "#fecdd3" };
-    default:        return { bg: "rgba(100,116,139,0.18)", border: "rgba(100,116,139,0.45)", text: "#cbd5e1" };
-  }
+export function transportToneRGB(tone: TransportInfo["tone"], isDark: boolean = true): { bg: string; border: string; text: string } {
+  // Delegates to the shared chipPalette so transport badges adapt to
+  // light/dark theme. Default isDark=true preserves the prior look for
+  // any caller that hasn't been updated yet.
+  const p = chipPalette(tone, isDark);
+  return { bg: p.bg, border: p.border, text: p.text };
 }

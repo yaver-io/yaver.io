@@ -28,6 +28,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
+import { chipPalette, type ChipTone } from "../../src/lib/chipPalette";
 import { appTag } from "../../src/lib/appVersion";
 import * as ExpoClipboard from "expo-clipboard";
 import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
@@ -2760,16 +2761,17 @@ export default function TasksScreen() {
                           : lifecycleState === "ready-to-connect"
                             ? "Ready"
                             : "Offline";
-                  const statusColor =
+                  const statusTone: ChipTone =
                     lifecycleState === "connected"
-                      ? "#22c55e"
+                      ? "emerald"
                       : lifecycleState === "bootstrap"
-                        ? "#8b5cf6"
+                        ? "violet"
                         : lifecycleState === "yaver-auth-expired"
-                          ? "#f59e0b"
+                          ? "amber"
                           : lifecycleState === "ready-to-connect"
-                            ? "#38bdf8"
-                            : "#a1a1aa";
+                            ? "blue"
+                            : "slate";
+                  const statusChip = chipPalette(statusTone, isDark);
                   const isRetrying = reconnectingDeviceId === d.id;
                   const isRecovering = recoveringDeviceId === d.id;
                   return (
@@ -2797,15 +2799,15 @@ export default function TasksScreen() {
                             {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
                           </Text>
                           {lifecycleState === "bootstrap" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#8b5cf6", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("violet", isDark).text, marginTop: 2 }]}>
                               Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
                             </Text>
                           ) : lifecycleState === "yaver-auth-expired" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("amber", isDark).text, marginTop: 2 }]}>
                               Machine is up, but the agent session expired. Tap to re-auth and connect.
                             </Text>
                           ) : lifecycleState === "ready-to-connect" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
                               Machine is reachable or has a recent live signal. Tap to connect.
                             </Text>
                           ) : null}
@@ -2816,9 +2818,9 @@ export default function TasksScreen() {
                           )}
                         </View>
                         <View style={{ alignItems: "flex-end" }}>
-                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusColor + "22" }]}>
-                            <View style={[s.reconnectStatusDot, { backgroundColor: statusColor }]} />
-                            <Text style={[s.reconnectStatusText, { color: statusColor }]}>{statusText}</Text>
+                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusChip.bg, borderWidth: 1, borderColor: statusChip.border }]}>
+                            <View style={[s.reconnectStatusDot, { backgroundColor: statusChip.dot }]} />
+                            <Text style={[s.reconnectStatusText, { color: statusChip.text }]}>{statusText}</Text>
                           </View>
                           {(isRetrying || isRecovering) ? (
                             <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
@@ -2968,16 +2970,17 @@ export default function TasksScreen() {
                           : lifecycleState === "ready-to-connect"
                             ? "Ready"
                             : "Offline";
-                  const statusColor =
+                  const statusTone: ChipTone =
                     lifecycleState === "connected"
-                      ? "#22c55e"
+                      ? "emerald"
                       : lifecycleState === "bootstrap"
-                        ? "#8b5cf6"
+                        ? "violet"
                         : lifecycleState === "yaver-auth-expired"
-                          ? "#f59e0b"
+                          ? "amber"
                           : lifecycleState === "ready-to-connect"
-                            ? "#38bdf8"
-                            : "#a1a1aa";
+                            ? "blue"
+                            : "slate";
+                  const statusChip = chipPalette(statusTone, isDark);
                   const isRetrying = reconnectingDeviceId === d.id;
                   const isRecovering = recoveringDeviceId === d.id;
                   return (
@@ -3010,15 +3013,15 @@ export default function TasksScreen() {
                             {d.deviceClass === "edge-mobile" ? " · mobile worker" : ""}
                           </Text>
                           {lifecycleState === "bootstrap" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#8b5cf6", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("violet", isDark).text, marginTop: 2 }]}>
                               Machine is up in bootstrap mode. Tap to reclaim Yaver and connect.
                             </Text>
                           ) : lifecycleState === "yaver-auth-expired" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#f59e0b", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("amber", isDark).text, marginTop: 2 }]}>
                               Machine is up, but the agent session expired. Tap to re-auth and connect.
                             </Text>
                           ) : lifecycleState === "ready-to-connect" ? (
-                            <Text style={[s.devicePickerMeta, { color: "#38bdf8", marginTop: 2 }]}>
+                            <Text style={[s.devicePickerMeta, { color: chipPalette("blue", isDark).text, marginTop: 2 }]}>
                               Machine is reachable or has a recent live signal. Tap to connect.
                             </Text>
                           ) : null}
@@ -3029,9 +3032,9 @@ export default function TasksScreen() {
                           )}
                         </View>
                         <View style={{ alignItems: "flex-end" }}>
-                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusColor + "22" }]}>
-                            <View style={[s.reconnectStatusDot, { backgroundColor: statusColor }]} />
-                            <Text style={[s.reconnectStatusText, { color: statusColor }]}>{statusText}</Text>
+                          <View style={[s.reconnectDeviceStatus, { backgroundColor: statusChip.bg, borderWidth: 1, borderColor: statusChip.border }]}>
+                            <View style={[s.reconnectStatusDot, { backgroundColor: statusChip.dot }]} />
+                            <Text style={[s.reconnectStatusText, { color: statusChip.text }]}>{statusText}</Text>
                           </View>
                           {(isRetrying || isRecovering) ? (
                             <ActivityIndicator size="small" color={isRecovering ? "#f59e0b" : c.accent} style={{ marginTop: 8 }} />
@@ -3130,56 +3133,19 @@ export default function TasksScreen() {
               <View style={s.modalHeader}>
                 <Text style={[s.modalTitle, { color: c.textPrimary }]}>New Task</Text>
                 <Pressable
-                  // Generous hit area — the visible badge is tight on a
-                  // tall iPhone, and inside a Modal+KeyboardAvoidingView
-                  // the press target was easy to miss. Surfaces a 12px
-                  // halo on every side without changing the visual.
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={({ pressed }) => [
-                    s.agentBadge,
-                    { backgroundColor: c.bgCardElevated, borderColor: c.border },
-                    pressed && { opacity: 0.55 },
-                  ]}
                   onPress={() => {
-                    // The picker has its own loading state when
-                    // availableRunners is empty; open it unconditionally
-                    // so the user always gets visible feedback that
-                    // their tap registered, instead of "I tapped Sonnet
-                    // but nothing happened" silence.
-                    // Dismiss the keyboard first so the bottom sheet
-                    // isn't covered by the keyboard — autoFocus on the
-                    // task TextInput pops the keyboard the moment the
-                    // composer opens, and the agent picker slides up
-                    // behind it otherwise.
                     Keyboard.dismiss();
-                    setShowAgentPicker(true);
+                    setShowNewTask(false);
+                    setNewTaskText("");
+                    setAttachedImages([]);
+                    setInputFromSpeech(false);
                   }}
+                  style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
                   accessibilityRole="button"
-                  accessibilityLabel="Change coding agent and model"
+                  accessibilityLabel="Close new task"
                 >
-                  <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
-                    {(() => {
-                      const runner = availableRunners.find(r => r.id === selectedRunner);
-                      const model = availableModels.find(m => m.id === selectedModel);
-                      // Fallback chain when the runner row hasn't loaded
-                      // yet: 1) Convex per-device primary, 2) the
-                      // selectedRunner id itself, 3) "Claude" as last
-                      // resort. Keeps the pill honest while
-                      // /agent/runners is still in flight.
-                      const fallbackRunner = activeDevice
-                        ? primaryRunnerByDevice[activeDevice.id]
-                        : "";
-                      const runnerLabel = selectedRunner === "custom"
-                        ? "Custom"
-                        : (runner?.name
-                          || (selectedRunner ? displayRunnerLabel(selectedRunner) : "")
-                          || (fallbackRunner ? displayRunnerLabel(fallbackRunner) : "")
-                          || "Claude");
-                      const modelLabel = model?.name || selectedModel || "";
-                      return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
-                    })()}
-                  </Text>
-                  <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                  <Ionicons name="close" size={24} color={c.textSecondary} />
                 </Pressable>
               </View>
               <View
@@ -3274,12 +3240,6 @@ export default function TasksScreen() {
                     </Pressable>
                   </View>
                 </View>
-              </View>
-              <View style={s.modalButtons}>
-                <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated, flex: 0, minWidth: 144 }]} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }}>
-                  <Text style={[s.cancelButtonText, { color: c.textSecondary }]}>Cancel</Text>
-                </Pressable>
-                <View style={{ flex: 1 }} />
               </View>
             </View>
           </KeyboardAvoidingView>
@@ -4198,6 +4158,7 @@ const s = StyleSheet.create({
   modalDismiss: { flex: 1 },
   modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, paddingTop: 28, paddingBottom: 40 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
+  modalCloseButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   modalTitle: { fontSize: 20, fontWeight: "700" },
   agentBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, borderWidth: 1 },
   agentBadgeText: { fontSize: 12, fontWeight: "500" },
