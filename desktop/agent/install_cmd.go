@@ -862,7 +862,13 @@ func runWebRTCInstall(ctx context.Context, progress func(string)) error {
 }
 
 func runRemoteRuntimeInstall(ctx context.Context, progress func(string)) error {
-	planNames := []string{"android-sdk"}
+	// Phase 1 stack: kotlin/flutter via Android emulator + WebRTC capture.
+	// Order matters — java first (sdkmanager + gradle dep), then the
+	// SDK + system image (heaviest download), then Flutter (independent
+	// of Android), then the webrtc-stack apt block (smallest, gives
+	// quick feedback that the multi-step plan completed). On macOS
+	// Apple's Xcode-shaped tooling layers on top.
+	planNames := []string{"java", "android-sdk", "flutter", "webrtc-stack"}
 	if runtime.GOOS == "darwin" {
 		planNames = append(planNames, "xcodegen", "cliclick")
 	}
@@ -1177,6 +1183,32 @@ func metaInstallPlan(name string) (installPlan, bool) {
 			name:        "android-sdk",
 			description: "Managed Android SDK host tools — command-line tools, adb, emulator, and a default AVD for remote runtime / sim-android workflows",
 			runFunc:     runAndroidSDKInstall,
+		}, true
+	case "flutter":
+		return installPlan{
+			name:        "flutter",
+			description: "Flutter SDK (stable) — required to build/run Flutter projects + drive Flutter hot reload from the Yaver remote-runtime emulator stream",
+			runFunc:     runFlutterInstall,
+		}, true
+	case "webrtc-stack":
+		return installPlan{
+			name:        "webrtc-stack",
+			description: "WebRTC capture + encode dependencies for streaming an emulator/Xvfb framebuffer to phone or web: ffmpeg, GStreamer, Xvfb, dbus, qemu user-mode (TCG fallback)",
+			macOS: []string{
+				// macOS uses HVF for emulator and ScreenCaptureKit for capture; the
+				// ffmpeg fallback path still benefits.
+				"brew install ffmpeg gstreamer dbus",
+			},
+			linux: []linuxStep{
+				{"apt-get", "sudo apt-get install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav xvfb x11-utils dbus-x11 qemu-system-arm qemu-utils"},
+				{"dnf", "sudo dnf install -y ffmpeg gstreamer1 gstreamer1-plugins-good gstreamer1-plugins-bad-free xorg-x11-server-Xvfb dbus-x11 qemu-system-aarch64"},
+			},
+		}, true
+	case "remote-runtime":
+		return installPlan{
+			name:        "remote-runtime",
+			description: "Meta-target: everything needed to host a phone-targeted WebRTC remote runtime — Java 17, Android SDK + ARM64 emulator, Flutter, ffmpeg/GStreamer capture stack. Run once per dev box.",
+			runFunc:     runRemoteRuntimeInstall,
 		}, true
 	case "opencode":
 		return installPlan{
