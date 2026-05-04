@@ -279,6 +279,22 @@ func LoadRunnersFromBackend(runners []backendRunnerFull) {
 		if r.Command == "" || r.RunnerID == "custom" {
 			continue // skip custom runner template
 		}
+		// Shipped runners (claude / codex / opencode) keep the local
+		// builtin definition. The Convex aiRunners table stores rows
+		// from older CLI releases — e.g. opencode is in there with
+		// args=["{prompt}"] from before sst's CLI rename, which makes
+		// startProcess spawn `opencode <prompt>` instead of
+		// `opencode run --dangerously-skip-permissions <prompt>`.
+		// The wrong argv used to crash the agent at args[:2]; even
+		// after the slice guard, opencode interprets the prompt as a
+		// filename and exits with ENAMETOOLONG. Argv for shipped
+		// runners must come from the binary that ships them.
+		if IsSupportedRunner(r.RunnerID) {
+			if existing, ok := builtinRunners[r.RunnerID]; ok {
+				log.Printf("  Runner loaded: %s (%s) — using local builtin (ignoring backend args)", existing.Name, existing.RunnerID)
+				continue
+			}
+		}
 		rc := RunnerConfig{
 			RunnerID:        r.RunnerID,
 			Name:            r.Name,

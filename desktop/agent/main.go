@@ -7230,7 +7230,21 @@ type backendRunnerFull struct {
 
 // fetchRunner fetches the runner list from the backend and finds the one
 // matching the given ID.
+//
+// For shipped runners (claude, codex, opencode) the local builtinRunners
+// table is the source of truth for argv. Convex still carries metadata
+// rows from older CLI releases — e.g. opencode used to spawn as
+// `opencode {prompt}` before sst's CLI rename, and that single-element
+// Args is still in the runners row. If we trust that here, startProcess
+// later does `args[:2]` on a one-element slice and panics the entire
+// HTTP server. Short-circuit to the builtin so version drift can't
+// reach the spawn path.
 func fetchRunner(client *http.Client, convexSiteURL, runnerID string) (RunnerConfig, error) {
+	if normalized := normalizeRunnerID(runnerID); normalized != "" {
+		if builtin, ok := builtinRunners[normalized]; ok {
+			return builtin, nil
+		}
+	}
 	req, err := http.NewRequest("GET", convexSiteURL+"/runners", nil)
 	if err != nil {
 		return RunnerConfig{}, err
