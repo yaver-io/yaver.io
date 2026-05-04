@@ -31,13 +31,13 @@ export interface ChipPalette {
 }
 
 const DARK: Record<ChipTone, ChipPalette> = {
-  emerald: { bg: "#22c55e22", border: "#22c55e66", text: "#22c55e", dot: "#22c55e" },
-  blue:    { bg: "#38bdf822", border: "#38bdf866", text: "#38bdf8", dot: "#38bdf8" },
-  violet:  { bg: "#8b5cf622", border: "#8b5cf666", text: "#8b5cf6", dot: "#8b5cf6" },
-  indigo:  { bg: "#6366f122", border: "#6366f166", text: "#818cf8", dot: "#818cf8" },
-  amber:   { bg: "#f59e0b22", border: "#f59e0b66", text: "#f59e0b", dot: "#f59e0b" },
-  rose:    { bg: "#f43f5e22", border: "#f43f5e66", text: "#fb7185", dot: "#fb7185" },
-  slate:   { bg: "#64748b2e", border: "#64748b66", text: "#cbd5e1", dot: "#94a3b8" },
+  emerald: { bg: "rgba(34, 197, 94, 0.14)", border: "#22c55e66", text: "#22c55e", dot: "#22c55e" },
+  blue:    { bg: "rgba(59, 130, 246, 0.14)", border: "#3b82f666", text: "#3b82f6", dot: "#3b82f6" },
+  violet:  { bg: "rgba(124, 102, 255, 0.16)", border: "#7c66ff66", text: "#7c66ff", dot: "#7c66ff" },
+  indigo:  { bg: "rgba(124, 102, 255, 0.16)", border: "#7c66ff", text: "#7c66ff", dot: "#7c66ff" },
+  amber:   { bg: "rgba(245, 158, 11, 0.14)", border: "#f59e0b66", text: "#f59e0b", dot: "#f59e0b" },
+  rose:    { bg: "rgba(239, 68, 68, 0.14)", border: "#ef444466", text: "#ef4444", dot: "#ef4444" },
+  slate:   { bg: "rgba(168, 168, 176, 0.10)", border: "#2d2d35", text: "#a8a8b0", dot: "#a8a8b0" },
 };
 
 const LIGHT: Record<ChipTone, ChipPalette> = {

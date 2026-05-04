@@ -269,7 +269,7 @@ export default function SettingsScreen() {
       justifyContent: "center" as const,
       borderWidth: 1,
       borderColor: c.border,
-      backgroundColor: c.bgCardElevated,
+      backgroundColor: c.surfaceMuted,
     };
 
     switch (provider) {
@@ -288,19 +288,19 @@ export default function SettingsScreen() {
       case "google":
         return (
           <View style={circle}>
-            <Ionicons name="logo-google" size={iconSize - 1} color={c.textPrimary} />
+            <Ionicons name="logo-google" size={iconSize - 1} color="#4285F4" />
           </View>
         );
       case "microsoft":
         return (
           <View style={circle}>
-            <FontAwesome name="windows" size={iconSize - 1} color={c.textPrimary} />
+            <FontAwesome name="windows" size={iconSize - 1} color="#2563EB" />
           </View>
         );
       case "gitlab":
         return (
-          <View style={[circle, { backgroundColor: "#2a160d", borderColor: "#5b3219" }]}>
-            <Text style={{ color: "#ff9a5a", fontSize: size === "sm" ? 10 : 11, fontWeight: "700" }}>GL</Text>
+          <View style={circle}>
+            <Text style={{ color: "#FC6D26", fontSize: size === "sm" ? 10 : 11, fontWeight: "700" }}>GL</Text>
           </View>
         );
       default:
@@ -1762,12 +1762,12 @@ export default function SettingsScreen() {
                 </Text>
                 <Text
                   selectable
-                  style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 13, marginTop: 4 }}
+                  style={{ color: c.textPrimary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace", fontSize: 15, marginTop: 4 }}
                   numberOfLines={1}
                 >
                   {user.id}
                 </Text>
-                <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 4 }}>
                   Share this with a friend so they can invite you without knowing your email.
                 </Text>
               </View>

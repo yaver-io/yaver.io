@@ -2,12 +2,14 @@ import { Tabs, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import * as ExpoDevice from "expo-device";
+import { Ionicons } from "@expo/vector-icons";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
 import { AppBackButton } from "../../src/components/AppBackButton";
+import { typography } from "../../src/theme/tokens";
 
 // (DeviceAttentionBanner / HeaderWithBanner removed — see commit
 // notes. Recovery is now silent: the agent and the per-tab UI hooks
@@ -17,21 +19,28 @@ import { AppBackButton } from "../../src/components/AppBackButton";
 
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
-  const icons: Record<string, string> = {
-    "Hot Reload": "\u21BB",
-    Tasks: "T",
-    Todos: "\u2610",
-    Projects: "\u25B6",
-    Repos: "\u{1F4C2}",
-    Builds: "B",
-    Devices: "D",
-    More: "\u22EF",
-    Settings: "S",
+  const icons: Record<string, { on: keyof typeof Ionicons.glyphMap; off: keyof typeof Ionicons.glyphMap }> = {
+    "Hot Reload": { on: "refresh-circle", off: "refresh-circle-outline" },
+    Tasks: { on: "checkmark-circle", off: "checkmark-circle-outline" },
+    Todos: { on: "checkbox", off: "square-outline" },
+    Projects: { on: "play-circle", off: "play-circle-outline" },
+    Repos: { on: "folder", off: "folder-outline" },
+    Builds: { on: "hammer", off: "hammer-outline" },
+    Devices: { on: "desktop", off: "desktop-outline" },
+    More: { on: "ellipsis-horizontal-circle", off: "ellipsis-horizontal-circle-outline" },
+    Settings: { on: "settings", off: "settings-outline" },
   };
+  const glyph = icons[label] ?? { on: "ellipse", off: "ellipse-outline" };
   return (
-    <View>
-      <Text style={[styles.icon, { color: focused ? c.tabActive : c.tabInactive }]}>
-        {icons[label] ?? "?"}
+    <View style={styles.tabIconWrap}>
+      {focused ? <View style={[styles.tabIndicator, { backgroundColor: c.accent }]} /> : <View style={styles.tabIndicatorSpacer} />}
+      <Ionicons
+        name={focused ? glyph.on : glyph.off}
+        size={20}
+        color={focused ? c.tabActive : c.tabInactive}
+      />
+      <Text style={[styles.tabLabel, { color: focused ? c.tabActive : c.tabInactive, fontWeight: focused ? "600" : "400" }]}>
+        {label}
       </Text>
       {showGreenDot && (
         <View style={styles.greenDot} />
@@ -186,12 +195,15 @@ export default function TabLayout() {
       screenOptions={{
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.textPrimary,
-        headerTitleStyle: { fontWeight: "700" },
+        headerTitleStyle: { ...typography.navTitle, color: c.textPrimary },
         tabBarStyle: {
           backgroundColor: c.bgTabBar,
           borderTopColor: c.border,
           borderTopWidth: 1,
+          height: 68,
+          paddingTop: 0,
         },
+        tabBarLabel: () => null,
         tabBarActiveTintColor: c.tabActive,
         tabBarInactiveTintColor: c.tabInactive,
       }}
@@ -277,19 +289,19 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  icon: {
-    fontSize: 18,
-    fontWeight: "700",
-  },
+  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 0 },
+  tabIndicator: { width: 24, height: 2, borderRadius: 999, marginBottom: 7 },
+  tabIndicatorSpacer: { width: 24, height: 2, marginBottom: 7 },
+  tabLabel: { marginTop: 3, fontSize: 12 },
   greenDot: {
     position: "absolute",
-    top: -2,
-    right: -6,
+    top: 6,
+    right: 6,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: "#22c55e",
     borderWidth: 1.5,
-    borderColor: "#0a0a0a",
+    borderColor: "#ffffff",
   },
 });

@@ -51,9 +51,11 @@ import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEEC
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
+import { Badge } from "../../src/components/Badge";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
+import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import {
   deriveMobileDeviceLifecycleState,
   probeMobileDeviceStatus,
@@ -94,31 +96,31 @@ const DARK_BANNER_CONFIG: Record<
   { bg: string; border: string; dot: string; text: string; label: string }
 > = {
   connected: {
-    bg: "#0d1a0d",
-    border: "#1a2e1a",
+    bg: "#15151A",
+    border: "#1F1F26",
     dot: "#22c55e",
-    text: "#4ade80",
+    text: "#22c55e",
     label: "Connected",
   },
   connecting: {
-    bg: "#1a1a0d",
-    border: "#2e2e1a",
-    dot: "#eab308",
-    text: "#facc15",
+    bg: "#15151A",
+    border: "#1F1F26",
+    dot: "#f59e0b",
+    text: "#f59e0b",
     label: "Reconnecting",
   },
   error: {
-    bg: "#1a0d0d",
-    border: "#2e1a1a",
+    bg: "#15151A",
+    border: "#1F1F26",
     dot: "#ef4444",
-    text: "#f87171",
-    label: "Reconnecting",
+    text: "#ef4444",
+    label: "Disconnected",
   },
   disconnected: {
-    bg: "#111",
-    border: "#222",
-    dot: "#666",
-    text: "#666",
+    bg: "#15151A",
+    border: "#1F1F26",
+    dot: "#A8A8B0",
+    text: "#A8A8B0",
     label: "Disconnected",
   },
 };
@@ -2444,6 +2446,7 @@ export default function TasksScreen() {
             }
           }}
         >
+          <View style={[s.bannerAccent, { backgroundColor: banner.dot }]} />
           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
             <View style={[s.dot, { backgroundColor: banner.dot }]} />
             <Text style={[s.bannerText, { color: banner.text, flexShrink: 1 }]} numberOfLines={1}>
@@ -2471,10 +2474,10 @@ export default function TasksScreen() {
             )}
             {!showReconnectProgress && showRetryButton && (
               <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#6366f133" }}
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: c.accentSoft }}
                 onPress={() => activeDevice && selectDevice(activeDevice)}
               >
-                <Text style={{ fontSize: 12, color: "#818cf8", fontWeight: "600" }}>Retry</Text>
+                <Text style={{ fontSize: 12, color: c.accent, fontWeight: "600" }}>Retry</Text>
               </Pressable>
             )}
             {/* Re-auth shortcut for the "agent gone silent / bootstrap"
@@ -2486,13 +2489,13 @@ export default function TasksScreen() {
             {!showReconnectProgress && showRetryButton && activeDevice
               && (activeDevice.needsAuth || !activeDevice.online) && (
               <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#a78bfa33" }}
+                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: c.accentSoft }}
                 onPress={() => {
                   if (!activeDevice) return;
                   recoverDeviceAuth(activeDevice).catch(() => {});
                 }}
               >
-                <Text style={{ fontSize: 12, color: "#c4b5fd", fontWeight: "600" }}>Re-auth</Text>
+                <Text style={{ fontSize: 12, color: c.accent, fontWeight: "600" }}>Re-auth</Text>
               </Pressable>
             )}
             {(showReconnectProgress || showRetryButton) && (
@@ -2551,8 +2554,8 @@ export default function TasksScreen() {
                   disabled={isReconnecting || recoveringDeviceId === activeDevice.id}
                   style={{
                     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
-                    borderWidth: 1, borderColor: "#f59e0b88",
-                    backgroundColor: "#f59e0b22",
+                    borderWidth: 1, borderColor: c.warn,
+                    backgroundColor: "rgba(213, 162, 38, 0.12)",
                     opacity: isReconnecting || recoveringDeviceId === activeDevice.id ? 0.5 : 1,
                   }}
                 >
@@ -2564,27 +2567,31 @@ export default function TasksScreen() {
             </View>
           )}
           {isEffectivelyConnected && !agentAuthExpired && (
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 4, marginLeft: 18 }}>
-              {runnerBannerState && (
-                <>
-                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: runnerBannerState.tone }} />
-                  <Text style={{ color: runnerBannerState.tone, fontSize: 11, marginLeft: 6 }}>
-                    {runnerBannerState.text}
-                  </Text>
-                </>
-              )}
-              {pingRtt !== null && (
-                <Pressable onPress={handlePing} style={{ marginLeft: 8, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4, backgroundColor: (pingRtt === -1 ? "#ef4444" : pingRtt < 100 ? "#22c55e" : pingRtt < 300 ? "#eab308" : "#ef4444") + "18" }}>
-                  <Text style={{ color: pingRtt === -1 ? "#f87171" : pingRtt < 100 ? "#4ade80" : pingRtt < 300 ? "#facc15" : "#f87171", fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
-                    {isPinging ? "..." : pingRtt === -1 ? "no response" : `${pingRtt}ms`}
-                  </Text>
-                </Pressable>
-              )}
-              {pingRtt === null && (
-                <Pressable onPress={handlePing} style={{ marginLeft: 8 }}>
-                  <Text style={{ color: banner.text, fontSize: 11 }}>{isPinging ? "pinging..." : "ping"}</Text>
-                </Pressable>
-              )}
+            <View style={s.bannerSecondaryRow}>
+              <View style={s.bannerSublineWrap}>
+                <Ionicons name="radio-outline" size={16} color={banner.dot} />
+                <Text style={[s.bannerSublinePrefix, { color: banner.text }]}>Connected via Relay</Text>
+                <Text style={[s.bannerSublineDevice, { color: c.textPrimary }]} numberOfLines={1}>
+                  {activeDevice?.name || "Connected device"}
+                </Text>
+              </View>
+              <View style={s.bannerStatusRow}>
+                {runnerBannerState ? (
+                  <Text style={[s.bannerStatusCopy, { color: c.textSecondary }]}>{runnerBannerState.text}</Text>
+                ) : null}
+                {pingRtt !== null ? (
+                  <Pressable onPress={handlePing}>
+                    <Badge
+                      variant={pingRtt === -1 ? "warning" : "live"}
+                      label={isPinging ? "..." : pingRtt === -1 ? "no response" : `${pingRtt}ms`}
+                    />
+                  </Pressable>
+                ) : (
+                  <Pressable onPress={handlePing}>
+                    <Text style={[s.bannerStatusCopy, { color: banner.text }]}>{isPinging ? "pinging..." : "ping"}</Text>
+                  </Pressable>
+                )}
+              </View>
             </View>
           )}
           {isEffectivelyConnected &&
@@ -2671,23 +2678,23 @@ export default function TasksScreen() {
         {/* Filter chips + action bar */}
         {isEffectivelyConnected && (
           <View style={[s.actionBar, { borderBottomColor: c.border }]}>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 2 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingLeft: 2, paddingRight: 8 }}>
               {([
-                { key: "running" as const, label: "Running", color: "#6366f1", count: tasks.filter(t => t.status === "running" || t.status === "queued").length },
+                { key: "running" as const, label: "Running", color: c.accent, count: tasks.filter(t => t.status === "running" || t.status === "queued").length },
                 { key: "completed" as const, label: "Completed", color: "#22c55e", count: tasks.filter(t => t.status === "completed").length },
                 { key: "failed" as const, label: "Failed", color: "#ef4444", count: tasks.filter(t => t.status === "failed" || t.status === "stopped").length },
-                { key: "all" as const, label: "All", color: c.textMuted, count: tasks.length },
+                { key: "all" as const, label: "All", color: c.textSecondary, count: tasks.length },
               ] as const).map(chip => (
                 <Pressable
                   key={chip.key}
                   onPress={() => setStatusFilter(chip.key)}
                   style={[s.actionButton, {
-                    backgroundColor: (effectiveFilter === chip.key) ? `${chip.color}22` : c.bgCardElevated,
+                    backgroundColor: (effectiveFilter === chip.key) ? withAlpha(c.accent, "24") : c.bgInput,
                     borderWidth: 1,
-                    borderColor: (effectiveFilter === chip.key) ? `${chip.color}66` : "transparent",
+                    borderColor: (effectiveFilter === chip.key) ? withAlpha(c.accent, "47") : "transparent",
                   }]}
                 >
-                  <Text style={[s.actionButtonText, { color: (effectiveFilter === chip.key) ? chip.color : c.textMuted }]}>
+                  <Text style={[s.actionButtonText, { color: (effectiveFilter === chip.key) ? c.accent : c.textSecondary }]}>
                     {chip.label}{chip.count > 0 ? ` ${chip.count}` : ""}
                   </Text>
                 </Pressable>
@@ -2715,6 +2722,7 @@ export default function TasksScreen() {
                 <Text style={[s.actionButtonText, { color: "#06b6d4" }]}>Summary</Text>
               </Pressable>
             </ScrollView>
+            <View pointerEvents="none" style={[s.actionBarFade, { backgroundColor: c.bg }]} />
           </View>
         )}
 
@@ -2850,7 +2858,7 @@ export default function TasksScreen() {
           ListEmptyComponent={
             isEffectivelyConnected ? (
               <View style={s.emptyList}>
-                <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"[ ]"}</Text>
+                <Ionicons name="file-tray-outline" size={56} color={withAlpha(c.textMuted, "99")} />
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>All Clear</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
                   No tasks yet. Tap the + button to create your first task.
@@ -3065,7 +3073,7 @@ export default function TasksScreen() {
         {isEffectivelyConnected && (
           <Pressable
             hitSlop={12}
-            style={({ pressed }) => [s.fab, pressed && s.fabPressed]}
+            style={({ pressed }) => [s.fab, { backgroundColor: c.accent }, pressed && s.fabPressed]}
             onPress={() => {
               // Defensive reset — guarantees the modal opens cleanly even if
               // a previous cancel/backdrop-dismiss left stale state around.
@@ -3076,7 +3084,7 @@ export default function TasksScreen() {
               setShowNewTask(true);
             }}
           >
-            <Text style={s.fabText}>+</Text>
+            <Ionicons name="add" size={28} color="#ffffff" />
           </Pressable>
         )}
 
@@ -4002,9 +4010,25 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Banner
-  banner: { flexDirection: "row", alignItems: "center", paddingHorizontal: 18, paddingVertical: 12, borderBottomWidth: 1 },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderLeftWidth: 0,
+    position: "relative",
+    overflow: "hidden",
+  },
+  bannerAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  bannerText: { fontSize: 13, fontWeight: "600", letterSpacing: 0.1 },
+  bannerText: { ...typography.captionStrong, letterSpacing: 0.1 },
+  bannerSecondaryRow: { marginTop: 6, marginLeft: 18, gap: 6 },
+  bannerSublineWrap: { flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 12 },
+  bannerSublinePrefix: { ...typography.captionStrong },
+  bannerSublineDevice: { ...typography.captionStrong, flexShrink: 1 },
+  bannerStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  bannerStatusCopy: { ...typography.caption },
 
   // Ping overlay
   pingOverlay: { marginHorizontal: 16, marginTop: 8, padding: 14, borderRadius: 12, borderWidth: 1 },
@@ -4051,15 +4075,15 @@ const s = StyleSheet.create({
   // your N devices" is always visible without scrolling up.
   emptyPickerHeader: { paddingHorizontal: 24, paddingTop: 32, paddingBottom: 16, borderBottomWidth: StyleSheet.hairlineWidth },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: "700", marginBottom: 8 },
-  emptySubtitle: { fontSize: 14, textAlign: "center", lineHeight: 20 },
+  emptyTitle: { ...typography.pageTitle, fontSize: 22, marginTop: 24, marginBottom: 8 },
+  emptySubtitle: { ...typography.body, textAlign: "center", lineHeight: 22, maxWidth: 280 },
 
   // Inline connect button (reconnect after user disconnect)
   inlineConnectBtn: { marginTop: 20, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 10 },
   inlineConnectText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
 
   // Device picker cards (multi-device selection)
-  devicePickerCard: { width: "100%", borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 },
+  devicePickerCard: { width: "100%", borderWidth: 1, borderRadius: 16, padding: 14, marginBottom: 10, shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 2 },
   devicePickerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   devicePickerNameRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   devicePickerName: { fontSize: 16, fontWeight: "600" },
@@ -4094,7 +4118,7 @@ const s = StyleSheet.create({
   reconnectDeviceRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   reconnectDeviceInfo: { flex: 1 },
   reconnectDeviceName: { fontSize: 16, fontWeight: "600" },
-  reconnectDeviceMeta: { fontSize: 12, marginTop: 2, fontFamily: "monospace" },
+  reconnectDeviceMeta: { fontSize: 12, marginTop: 2, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
   reconnectDeviceStatus: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
   reconnectStatusDot: { width: 8, height: 8, borderRadius: 4 },
   reconnectStatusText: { fontSize: 11, fontWeight: "600", textTransform: "uppercase" },
@@ -4149,8 +4173,24 @@ const s = StyleSheet.create({
   taskFooterMeta: { fontSize: 11, fontWeight: "600" },
 
   // FAB
-  fab: { position: "absolute", bottom: 24, right: 20, width: 58, height: 58, borderRadius: 29, backgroundColor: "#111827", alignItems: "center", justifyContent: "center", elevation: 12, zIndex: 41, shadowColor: "#000", shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.28, shadowRadius: 12 },
-  fabPressed: { opacity: 0.8, transform: [{ scale: 0.95 }] },
+  fab: {
+    position: "absolute",
+    bottom: 24,
+    right: 20,
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 12,
+    zIndex: 41,
+    backgroundColor: "#7C66FF",
+    shadowColor: "#7C66FF",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.32,
+    shadowRadius: 16,
+  },
+  fabPressed: { opacity: 0.92, transform: [{ scale: 0.96 }] },
   fabText: { fontSize: 28, color: "#ffffff", fontWeight: "300" },
 
   // New task modal
@@ -4176,11 +4216,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 8,
     paddingBottom: 8,
     marginBottom: 14,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.08,
-    shadowRadius: 22,
-    elevation: 3,
+    ...lightCardShadow,
   },
   composerInput: {
     borderWidth: 0,
@@ -4245,9 +4281,10 @@ const s = StyleSheet.create({
   submitButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
 
   // Action bar
-  actionBar: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8 },
+  actionBar: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8, position: "relative" },
+  actionBarFade: { position: "absolute", right: 0, top: 0, bottom: 0, width: 24, opacity: 0.9 },
   actionButton: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999 },
-  actionButtonText: { fontSize: 12, fontWeight: "700", letterSpacing: 0.1 },
+  actionButtonText: { ...typography.bodyStrong, fontSize: 14, letterSpacing: 0.1 },
 
   // ── Chat modal ─────────────────────────────────────────────────────
   chatModalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },

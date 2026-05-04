@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +25,7 @@ import {
 } from "../../src/lib/quic";
 import { loadAppIfChanged } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
+import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
 // kept so a future DeviceDetailsModal section can surface it on tap.
@@ -586,7 +588,7 @@ export default function HotReloadScreen() {
     return (
       <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
         <View style={s.emptyContainer}>
-          <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\uD83D\uDD25"}</Text>
+          <Ionicons name="flame-outline" size={48} color={c.textTertiary} style={{ opacity: 0.5, marginBottom: 12 }} />
           <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
           <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
             Connect to a device to hot reload your apps
@@ -602,11 +604,17 @@ export default function HotReloadScreen() {
         {agentInfo && (
           <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
             <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
-            <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
+            <Text style={[s.projectMeta, { color: c.textSecondary, marginTop: 4 }]}>
               {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version || "unknown"}
             </Text>
             {agentInfo.workDir ? (
-              <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
+              <Text
+                style={[
+                  s.projectPath,
+                  { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                ]}
+                numberOfLines={1}
+              >
                 {agentInfo.workDir}
               </Text>
             ) : null}
@@ -663,21 +671,21 @@ export default function HotReloadScreen() {
           <View style={[
             s.card,
             s.activeCard,
-            !devStatus.running && !devStatus.error && { borderColor: "#f59e0b44", backgroundColor: "#1a150f" },
-            !!devStatus.error && { borderColor: "#ef4444", backgroundColor: "#1a0a0a" },
+            !devStatus.running && !devStatus.error && { borderColor: c.warn, backgroundColor: c.bgCard },
+            !!devStatus.error && { borderColor: c.error, backgroundColor: c.bgCard },
           ]}>
             <View style={s.cardHeader}>
               <View style={[s.statusDot, { backgroundColor: devStatus.error ? "#ef4444" : devStatus.running ? "#22c55e" : "#f59e0b" }]} />
               <View style={s.cardTitleContainer}>
-                <Text style={s.cardTitle}>{runningProject}</Text>
-                <Text style={s.cardMeta}>
+                <Text style={[s.cardTitle, { color: c.textPrimary }]}>{runningProject}</Text>
+                <Text style={[s.cardMeta, { color: c.textSecondary }]}>
                   {devStatus.error
                     ? `${devStatus.framework} · failed to start`
                     : devStatus.running
                       ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
                       : `${devStatus.framework} · starting...`}
                 </Text>
-                <Text style={[s.cardMeta, { color: "#86efac" }]}>
+                <Text style={[s.cardMeta, { color: c.success }]}>
                   mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bytecode"}
                 </Text>
                 {devStatus.iosInstallReason && devStatus.iosInstallMethod === "native" ? (
@@ -711,7 +719,7 @@ export default function HotReloadScreen() {
                   </Text>
                 )}
               </View>
-              {!devStatus.running && !devStatus.error && <ActivityIndicator size="small" color="#f59e0b" />}
+              {!devStatus.running && !devStatus.error && <ActivityIndicator size="small" color={c.warn} />}
             </View>
             {loadingStatus ? (
               <Text style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>{loadingStatus}</Text>
@@ -916,7 +924,13 @@ export default function HotReloadScreen() {
                         </View>
                       ))}
                     </View>
-                    <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
+                    <Text
+                      style={[
+                        s.projectPath,
+                        { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                      ]}
+                      numberOfLines={1}
+                    >
                       {item.path}
                     </Text>
                     {isNativeRemoteRuntimeProject(item) ? (
@@ -985,28 +999,27 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Section
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-    marginHorizontal: 16,
-    marginTop: 20,
-    marginBottom: 8,
-  },
+  sectionTitle: { ...typography.badge, textTransform: "uppercase", letterSpacing: 1.2, marginHorizontal: 16, marginTop: 24, marginBottom: 12 },
 
   // Cards
-  card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },
-  activeCard: {
-    backgroundColor: "#0f1a0f",
+  card: {
+    marginHorizontal: spacing.lg,
+    borderRadius: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+    marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: "#22c55e44",
+    ...lightCardShadow,
+  },
+  activeCard: {
+    borderWidth: 1,
+    borderColor: "#6E56F6",
     marginTop: 12,
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   cardTitleContainer: { flex: 1 },
-  cardTitle: { fontSize: 16, fontWeight: "700", color: "#fff" },
-  cardMeta: { fontSize: 11, color: "#666", marginTop: 2 },
+  cardTitle: { ...typography.cardTitle, fontSize: 17 },
+  cardMeta: { ...typography.caption, color: "#5A5A66", marginTop: 3 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
 
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
@@ -1019,7 +1032,7 @@ const s = StyleSheet.create({
   stopBtnText: { color: "#ef4444", fontSize: 13, fontWeight: "600" },
 
   // Framework icon
-  frameworkIcon: { fontSize: 20 },
+  frameworkIcon: {},
 
   // Tag chips
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },
@@ -1033,8 +1046,9 @@ const s = StyleSheet.create({
 
   // Project cards
   projectCard: { borderWidth: 1 },
-  projectName: { fontSize: 14, fontWeight: "600" },
-  projectMeta: { fontSize: 11, marginTop: 1 },
+  projectName: { ...typography.cardTitle, fontSize: 17 },
+  projectMeta: { ...typography.caption, marginTop: 3 },
+  projectPath: { ...typography.path, marginTop: 3 },
   listContent: { paddingBottom: 40 },
   targetChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   targetChip: {

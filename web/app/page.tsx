@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/use-auth";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "Yaver is an open-source, mobile-first feedback and AI-debugging SDK for app teams. Install one SDK in your app, capture user context from real phones, and hand incidents to Claude Code, Codex, Aider, or local models without giving up self-hosting.";
+  "AI writes code in seconds. The loop around it still takes hours. Yaver collapses that loop into a single session: drop our SDK in your app, hand feedback to Claude Code, Codex, OpenCode, or your own agent, and watch the fix land on your phone before you put it down.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -1137,10 +1137,10 @@ export default function HomePage() {
           </div>
 
           <h1 className="mb-5 text-4xl font-bold leading-[1.02] tracking-tight text-surface-50 sm:text-5xl md:text-6xl">
-            Turn mobile feedback into
+            AI writes code in seconds.
             <br className="hidden sm:block" />
             <span className="bg-gradient-to-r from-indigo-400 to-emerald-400 bg-clip-text text-transparent">
-              AI-ready fixes.
+              The loop around it still takes hours.
             </span>
           </h1>
 
@@ -1149,9 +1149,15 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Yaver is an open-source, mobile-first feedback and AI-debugging SDK.
-            Capture user context from real phones and hand incidents to your team
-            or coding agents without giving up self-hosting.
+            Yaver collapses that loop into a single session. Drop our SDK in your
+            app, hand user feedback to your own coding agent, and watch the fix
+            land on your phone before you put it down.
+          </p>
+
+          <p className="mx-auto mt-4 max-w-3xl text-xs leading-relaxed text-surface-400 sm:text-sm md:text-[15px]">
+            Works with Claude Code, Codex, OpenCode, and any terminal agent you
+            already run. Open source, mobile-first, and your code never leaves
+            your machine.
           </p>
 
           <div className="mt-7 flex flex-col items-center justify-center gap-2">
@@ -1168,7 +1174,7 @@ export default function HomePage() {
           </div>
 
           <p className="mt-5 text-[11px] uppercase tracking-[0.16em] text-surface-600">
-            React Native first &middot; Real-device feedback &middot; P2P and self-hosted &middot; Agent-ready incidents
+            Real-device feedback &middot; Your own coding agent &middot; P2P and self-hosted &middot; Code stays on your machine
           </p>
         </div>
       </section>
@@ -1715,43 +1721,6 @@ return (
         </div>
       </section>
 
-      {/* ── Footer ── */}
-      <footer className="border-t border-surface-800/60 px-6 py-12">
-        <div className="mx-auto max-w-5xl">
-          <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
-            <p className="text-xs text-surface-500">
-              Open Source &middot;{" "}
-              <Link href="/licensing" className="hover:text-surface-300">
-                FSL core + Apache-2.0 SDKs
-              </Link>{" "}
-              &middot; Local First &middot;{" "}
-              <a
-                href="https://github.com/kivanccakmak/yaver.io"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-surface-300"
-              >
-                Source Code
-              </a>
-            </p>
-            <div className="flex flex-wrap items-center gap-4 text-xs text-surface-500">
-              <a href="#get-started" className="hover:text-surface-300">Get Started</a>
-              <a href="#faq" className="hover:text-surface-300">FAQ</a>
-              <a href="/docs" className="hover:text-surface-300">Docs</a>
-              <Link href="/download" className="hover:text-surface-300">Download</Link>
-              <a href="https://github.com/kivanccakmak/yaver.io" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">GitHub</a>
-              <a href="/privacy" className="hover:text-surface-300">Privacy</a>
-              <a href="/terms" className="hover:text-surface-300">Terms</a>
-            </div>
-          </div>
-          <p className="mt-6 text-center text-xs text-surface-600">
-            &copy; 2026{" "}
-            <a href="https://simkab.com" target="_blank" rel="noopener noreferrer" className="hover:text-surface-300">SIMKAB ELEKTRIK</a>.
-            {" "}All rights reserved.{" "}&middot;{" "}
-            <a href="mailto:kivanc.cakmak@simkab.com" className="hover:text-surface-300">kivanc.cakmak@simkab.com</a>
-          </p>
-        </div>
-      </footer>
     </>
   );
 }

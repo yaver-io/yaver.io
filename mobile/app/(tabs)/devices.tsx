@@ -35,6 +35,8 @@ import {
   type MobileDeviceLifecycleState,
   type MobileDeviceStatusProbe,
 } from "../../src/lib/deviceStatus";
+import { Badge } from "../../src/components/Badge";
+import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 
 function transportFor(device: Device): TransportInfo {
   return classifyTransport({
@@ -51,20 +53,9 @@ function transportFor(device: Device): TransportInfo {
 }
 
 function TransportBadge({ device }: { device: Device }) {
-  const { isDark } = useTheme();
   const t = transportFor(device);
-  const palette = transportToneRGB(t.tone, isDark);
-  return (
-    <View style={{
-      paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6,
-      backgroundColor: palette.bg, borderWidth: 1, borderColor: palette.border,
-      alignSelf: "flex-start",
-    }}>
-      <Text style={{ color: palette.text, fontSize: 9, fontWeight: "700", letterSpacing: 0.6 }}>
-        {t.label.toUpperCase()}
-      </Text>
-    </View>
-  );
+  const variant = t.tone === "emerald" ? "live" : t.tone === "blue" ? "ready" : "tech";
+  return <Badge variant={variant} label={t.label} />;
 }
 
 function StatusChip({ tone, label, isDark }: {
@@ -72,15 +63,13 @@ function StatusChip({ tone, label, isDark }: {
   label: string;
   isDark: boolean;
 }) {
-  const p = chipPalette(tone, isDark);
-  return (
-    <View style={{
-      paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-      backgroundColor: p.bg, borderWidth: 1, borderColor: p.border,
-    }}>
-      <Text style={{ color: p.text, fontSize: 10, fontWeight: "700" }}>{label}</Text>
-    </View>
-  );
+  const variant =
+    tone === "emerald" ? "live"
+    : tone === "blue" ? "ready"
+    : tone === "violet" || tone === "indigo" ? "brand"
+    : tone === "amber" ? "warning"
+    : "tech";
+  return <Badge variant={variant} label={label} />;
 }
 
 type DeviceProjectSummary = {
@@ -551,7 +540,16 @@ function DeviceCard({
     <Pressable
       style={({ pressed }) => [
         styles.card,
-        { backgroundColor: c.bgCard, borderColor: isActive ? c.accent : c.border },
+        {
+          backgroundColor: c.bgCard,
+          borderColor: isActive ? c.accent : c.border,
+          borderWidth: isActive ? 1.5 : 1,
+          shadowColor: isActive ? c.accent : "#000",
+          shadowOpacity: isActive ? 0.3 : 0.4,
+          shadowRadius: isActive ? 16 : 12,
+          shadowOffset: { width: 0, height: 2 },
+          elevation: 2,
+        },
         pressed && styles.cardPressed,
       ]}
       onPress={() => { void handleSmartConnect(); }}
@@ -583,7 +581,7 @@ function DeviceCard({
           <View style={{ marginTop: 6 }}>
             <TransportBadge device={device} />
           </View>
-          <Text style={[styles.deviceMeta, { color: c.textMuted }]}>
+          <Text style={[styles.deviceMeta, { color: c.textSecondary }]}>
             {platformLabel} &middot; {device.host}
             {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
           </Text>
@@ -591,7 +589,7 @@ function DeviceCard({
             {statusLabel}
             {device.lastSeen > 0 ? ` · ${timeSince(device.lastSeen)}` : ""}
           </Text>
-          <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+          <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
             {lifecycleState === "bootstrap"
               ? "Machine is up in bootstrap mode. Reclaim Yaver from this phone."
               : lifecycleState === "yaver-auth-expired"
@@ -602,7 +600,7 @@ function DeviceCard({
                     ? "No recent heartbeat. Power on and run yaver serve."
                     : "This phone is attached to the device."}
           </Text>
-          <Text style={[styles.deviceMeta, { color: c.textMuted, marginTop: 4 }]}>
+          <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
             {agentVersion ? `Yaver v${agentVersion}` : "Yaver version unknown"}
             {projectSummary ? ` · ${projectCount} project${projectCount === 1 ? "" : "s"}` : ""}
           </Text>
@@ -1286,9 +1284,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     padding: 32,
   },
-  emptyTitle: { fontSize: 20, fontWeight: "700", textAlign: "center" },
+  emptyTitle: { ...typography.pageTitle, fontSize: 22, textAlign: "center" },
   emptySubtitle: {
-    fontSize: 14,
+    ...typography.body,
     textAlign: "center",
     marginTop: 8,
     lineHeight: 20,
@@ -1355,16 +1353,18 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
   card: {
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+    marginBottom: spacing.md,
     borderWidth: 1,
+    ...lightCardShadow,
   },
   cardPressed: { opacity: 0.7 },
   cardRow: { flexDirection: "row", justifyContent: "space-between" },
   cardInfo: { flex: 1, marginRight: 12 },
-  deviceName: { fontSize: 16, fontWeight: "600" },
-  deviceMeta: { fontSize: 13, marginTop: 4 },
+  deviceName: { ...typography.cardTitle, fontSize: 17 },
+  deviceMeta: { ...typography.caption, marginTop: 4 },
   scopeSection: { marginTop: 8, gap: 6 },
   machineSummarySection: { marginTop: 10 },
   scopeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },

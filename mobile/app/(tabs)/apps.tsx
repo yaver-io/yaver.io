@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
   ActivityIndicator,
   Alert,
@@ -28,6 +29,7 @@ import { downloadArtifact } from "../../src/lib/builds";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
+import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -1388,7 +1390,7 @@ export default function AppsScreen() {
     return (
       <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
         <View style={s.emptyContainer}>
-          <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u{1F4F1}"}</Text>
+          <Ionicons name="phone-portrait-outline" size={56} color={c.textTertiary} style={{ opacity: 0.5, marginBottom: 12 }} />
           <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
           <Text style={[s.emptySubtitle, { color: c.textSecondary }]}>
             Connect to a device to see your projects
@@ -1611,8 +1613,8 @@ export default function AppsScreen() {
         )}
 
         {/* Search + Projects list */}
-        <View style={[s.searchRow, { borderColor: c.border }]}>
-          <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u{1F50D}"}</Text>
+        <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: "transparent" }]}>
+          <Ionicons name="search" size={16} color={c.textMuted} />
           <TextInput
             style={[s.searchInput, { color: c.textPrimary }]}
             placeholder="Search projects..."
@@ -1624,7 +1626,7 @@ export default function AppsScreen() {
           />
           {search.length > 0 && (
             <Pressable onPress={() => setSearch("")}>
-              <Text style={{ color: c.textMuted, fontSize: 14 }}>{"\u2715"}</Text>
+              <Ionicons name="close" size={16} color={c.textMuted} />
             </Pressable>
           )}
         </View>
@@ -1641,9 +1643,10 @@ export default function AppsScreen() {
           const visibleCategories = categoryOrder.filter((c) => categories.has(c));
           if (visibleCategories.length <= 1 && projects.length > 0) return null;
           return (
+            <View style={s.filterWrap}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
               <Pressable
-                style={[s.filterChip, !activeFilter && s.filterChipActive]}
+                style={[s.filterChip, { backgroundColor: !activeFilter ? c.accent + "14" : c.bgInput }, !activeFilter && s.filterChipActive]}
                 onPress={() => setActiveFilter(null)}
               >
                 <Text style={[s.filterChipText, !activeFilter && s.filterChipTextActive]}>All ({projects.length})</Text>
@@ -1651,7 +1654,7 @@ export default function AppsScreen() {
               {visibleCategories.map((cat) => (
                 <Pressable
                   key={cat}
-                  style={[s.filterChip, activeFilter === cat && s.filterChipActive]}
+                  style={[s.filterChip, { backgroundColor: activeFilter === cat ? c.accent + "14" : c.bgInput }, activeFilter === cat && s.filterChipActive]}
                   onPress={() => setActiveFilter(activeFilter === cat ? null : cat)}
                 >
                   <Text style={[s.filterChipText, activeFilter === cat && s.filterChipTextActive]}>
@@ -1660,6 +1663,8 @@ export default function AppsScreen() {
                 </Pressable>
               ))}
             </ScrollView>
+            <View pointerEvents="none" style={[s.filterFade, { backgroundColor: c.bg }]} />
+            </View>
           );
         })()}
 
@@ -1690,7 +1695,7 @@ export default function AppsScreen() {
             return (
               <Pressable
                 style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border },
-                  isRunning && { borderColor: "#22c55e44" }]}
+                  isRunning && { borderColor: c.accent, borderWidth: 1.5 }]}
                 onPress={() => handleTapProject(item)}
                 disabled={isStarting || loadingActions}
               >
@@ -1702,21 +1707,32 @@ export default function AppsScreen() {
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
                     {item.framework && (
                       <View style={s.tagRow}>
-                        <View style={s.tag}>
-                          <Text style={s.tagText}>{item.framework}</Text>
+                        <View style={[s.tag, { backgroundColor: c.bgInput }]}>
+                          <Text style={[s.tagText, { color: c.textSecondary }]}>{item.framework}</Text>
                         </View>
                       </View>
                     )}
-                    <Text style={[s.projectMeta, { color: c.textMuted }]} numberOfLines={1}>
-                      {item.branch ? `${item.branch} · ` : ""}{item.path}
+                    {item.branch ? (
+                      <Text style={[s.projectMeta, { color: c.textSecondary }]} numberOfLines={1}>
+                        {item.branch}
+                      </Text>
+                    ) : null}
+                    <Text
+                      style={[
+                        s.projectPath,
+                        { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.path}
                     </Text>
                   </View>
                   {isStarting ? (
                     <ActivityIndicator size="small" color={c.accent} />
                   ) : isRunning ? (
-                    <Text style={{ color: "#22c55e", fontSize: 12, fontWeight: "600" }}>Running</Text>
+                    <Text style={{ color: c.accent, fontSize: 12, fontWeight: "600" }}>Running</Text>
                   ) : (
-                    <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }}>{"\u25B6"}</Text>
+                    <Ionicons name="chevron-forward" size={16} color={c.textMuted} />
                   )}
                 </View>
               </Pressable>
@@ -2173,27 +2189,28 @@ const s = StyleSheet.create({
     marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
+    borderRadius: 12,
+    borderWidth: 0,
     gap: 8,
   },
-  searchInput: { flex: 1, fontSize: 14, paddingVertical: 0 },
+  searchInput: { ...typography.body, flex: 1, paddingVertical: 0 },
 
   // Filter chips
-  filterRow: { marginHorizontal: 16, marginBottom: 8, height: 30, flexGrow: 0 },
-  filterRowContent: { gap: 4, alignItems: "center" as const, paddingRight: 16 },
+  filterWrap: { marginHorizontal: 16, marginBottom: 8, position: "relative" },
+  filterRow: { height: 30, flexGrow: 0 },
+  filterFade: { position: "absolute", right: 0, top: 0, bottom: 0, width: 24, opacity: 0.9 },
+  filterRowContent: { gap: 8, alignItems: "center" as const, paddingRight: 8 },
   filterChip: {
-    height: 26,
-    paddingHorizontal: 8,
+    minHeight: 34,
+    paddingHorizontal: 14,
     borderRadius: 6,
-    backgroundColor: "#111",
     borderWidth: 1,
-    borderColor: "#222",
+    borderColor: "transparent",
     justifyContent: "center" as const,
   },
-  filterChipActive: { backgroundColor: "#6366f122", borderColor: "#6366f1" },
-  filterChipText: { fontSize: 10, fontWeight: "600", color: "#888" },
-  filterChipTextActive: { color: "#818cf8" },
+  filterChipActive: { borderColor: "#7C66FF" },
+  filterChipText: { ...typography.bodyStrong, fontSize: 14, color: "#A8A8B0" },
+  filterChipTextActive: { color: "#7C66FF" },
 
   // Tag chips on cards
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },
@@ -2279,7 +2296,15 @@ const s = StyleSheet.create({
   },
 
   // Active app card
-  card: { marginHorizontal: 16, borderRadius: 12, padding: 14, marginBottom: 8 },
+  card: {
+    marginHorizontal: spacing.lg,
+    borderRadius: 16,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 14,
+    marginBottom: spacing.md,
+    borderWidth: 0.5,
+    ...lightCardShadow,
+  },
   activeCard: {
     backgroundColor: "#0f1a0f",
     borderWidth: 1,
@@ -2292,7 +2317,7 @@ const s = StyleSheet.create({
   cardMeta: { fontSize: 11, color: "#666", marginTop: 2 },
   guidanceText: { lineHeight: 15, marginTop: 4 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
-  frameworkIcon: { fontSize: 20 },
+  frameworkIcon: {},
 
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
   actionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
@@ -2304,12 +2329,13 @@ const s = StyleSheet.create({
   stopBtnText: { color: "#ef4444", fontSize: 13, fontWeight: "600" },
 
   // Section
-  sectionTitle: { fontSize: 11, fontWeight: "600", textTransform: "uppercase", letterSpacing: 1, marginHorizontal: 16, marginTop: 20, marginBottom: 8 },
+  sectionTitle: { ...typography.badge, textTransform: "uppercase", letterSpacing: 1.2, marginHorizontal: 16, marginTop: 24, marginBottom: 12 },
 
   // Project cards
   projectCard: { borderWidth: 1 },
-  projectName: { fontSize: 14, fontWeight: "600" },
-  projectMeta: { fontSize: 11, marginTop: 1 },
+  projectName: { ...typography.cardTitle, fontSize: 17 },
+  projectMeta: { ...typography.caption, marginTop: 3 },
+  projectPath: { ...typography.path, marginTop: 3 },
   listContent: { paddingBottom: 40 },
 
   // Empty
