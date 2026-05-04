@@ -139,6 +139,17 @@ type projectPreparationStatus struct {
 	MissingTools               []string `json:"missingTools,omitempty"`
 	HermesCompiler             string   `json:"hermesCompiler,omitempty"`
 	HermesCompilerError        string   `json:"hermesCompilerError,omitempty"`
+	// Monorepo-awareness. When the project is a member of an
+	// npm/yarn/pnpm workspaces monorepo, WorkspaceRoot is the absolute
+	// path to the directory whose package.json declares the workspaces
+	// array — and that's where `npm install` (etc.) MUST run for the
+	// workspace symlinks (carrotbet/node_modules/@backgammon/* →
+	// packages/...) to materialise. Running install in the leaf package
+	// (mobile/) only populates mobile/node_modules and leaves the
+	// workspace deps unresolvable, which then surfaces during bundle
+	// build as "Unable to resolve module @scope/foo from <leaf>/X.tsx".
+	// Empty when the project isn't part of a workspaces tree.
+	WorkspaceRoot string `json:"workspaceRoot,omitempty"`
 }
 
 type projectPackageManifest struct {
@@ -548,6 +559,73 @@ func projectFileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+// findWorkspaceRoot walks up from workDir looking for a package.json
+// that declares a non-empty `workspaces` array. Returns the absolute
+// path of the workspace root (the directory containing that
+// package.json), or "" if no enclosing workspace is found.
+//
+// Stops at the filesystem root or after 10 levels — far more than any
+// realistic monorepo nesting and a guard against pathological symlink
+// loops. Returns "" for workDir itself if it's already the workspace
+// root *unless* its package.json sub-includes itself (npm allows this
+// — the root can list "." in workspaces) — in that case we still
+// return workDir so the install path collapses cleanly.
+//
+// `workspaces` may be a JSON array OR an object `{"packages": [...]}`
+// (yarn classic). We accept both.
+func findWorkspaceRoot(workDir string) string {
+	dir, err := filepath.Abs(workDir)
+	if err != nil {
+		return ""
+	}
+	for i := 0; i < 10; i++ {
+		pkgPath := filepath.Join(dir, "package.json")
+		if data, err := os.ReadFile(pkgPath); err == nil {
+			if hasWorkspaces(data) {
+				return dir
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	return ""
+}
+
+func hasWorkspaces(pkgJSON []byte) bool {
+	var probe struct {
+		Workspaces json.RawMessage `json:"workspaces"`
+	}
+	if err := json.Unmarshal(pkgJSON, &probe); err != nil {
+		return false
+	}
+	raw := bytes.TrimSpace(probe.Workspaces)
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	// Array form: workspaces: ["apps/*", "packages/*", "mobile"]
+	if raw[0] == '[' {
+		var arr []string
+		if err := json.Unmarshal(raw, &arr); err != nil {
+			return false
+		}
+		return len(arr) > 0
+	}
+	// Object form (yarn classic): workspaces: {"packages": [...]}
+	if raw[0] == '{' {
+		var obj struct {
+			Packages []string `json:"packages"`
+		}
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return false
+		}
+		return len(obj.Packages) > 0
+	}
+	return false
+}
+
 func commandExists(name string) bool {
 	_, err := lookPathWithRuntimes(name)
 	return err == nil
@@ -612,6 +690,26 @@ func detectProjectPreparation(workDir string, manifest *projectPackageManifest) 
 	if !prep.DependenciesInstalled {
 		if stat, err := os.Stat(filepath.Join(workDir, "node_modules")); err == nil && stat.IsDir() {
 			prep.DependenciesInstalled = true
+		}
+	}
+	// Monorepo handling. If the project lives inside a workspaces tree,
+	// the workspace ROOT is the source of truth for "are deps installed"
+	// — that's where workspace symlinks (e.g.
+	// carrotbet/node_modules/@scope/foo → packages/foo) live, and
+	// running `npm install` only inside the leaf package never creates
+	// them. So if the root has no node_modules, install is needed
+	// regardless of what the leaf looks like; we mark NeedsInstall
+	// true and route the install to the workspace root in
+	// installProjectDependenciesTo. carrotbet's "bundle 500" was
+	// exactly this: mobile/node_modules existed (from a leaf-only
+	// install), the root never got installed, Metro's parent walk
+	// found no @backgammon/*, bundle errored — but the prep check
+	// above said "looks fine" because it only checked the leaf.
+	prep.WorkspaceRoot = findWorkspaceRoot(workDir)
+	if prep.WorkspaceRoot != "" && prep.WorkspaceRoot != workDir {
+		rootStat, err := os.Stat(filepath.Join(prep.WorkspaceRoot, "node_modules"))
+		if err != nil || !rootStat.IsDir() {
+			prep.DependenciesInstalled = false
 		}
 	}
 	prep.NeedsDependencyInstall = !prep.DependenciesInstalled
@@ -753,9 +851,24 @@ func installProjectDependencies(workDir string, prep projectPreparationStatus) e
 // devLogWriter whose onLogLine emits SSE "log" events so the mobile
 // Hot Reload card sees every npm/yarn line live. Pass nil to fall
 // back to stdout-only (matches the pre-streaming behaviour).
+//
+// Monorepo routing: when prep.WorkspaceRoot is set and differs from
+// workDir, install runs at the workspace root. That's required for
+// workspace-linked deps (e.g. mobile depends on @backgammon/game-engine
+// at version "*", which only resolves once the root install
+// materialises carrotbet/node_modules/@backgammon/game-engine as a
+// symlink into packages/game-engine). Running install in the leaf
+// only would silently leave those symlinks missing and the next
+// bundle build would fail with "Unable to resolve module
+// @backgammon/game-engine from <leaf>/X.tsx".
 func installProjectDependenciesTo(workDir string, prep projectPreparationStatus, extraOut io.Writer) error {
 	if err := ensureProjectPackageManager(prep, extraOut); err != nil {
 		return err
+	}
+
+	installDir := workDir
+	if prep.WorkspaceRoot != "" {
+		installDir = prep.WorkspaceRoot
 	}
 
 	var cmd *exec.Cmd
@@ -769,7 +882,7 @@ func installProjectDependenciesTo(workDir string, prep projectPreparationStatus,
 	default:
 		cmd = exec.Command("npm", "install", "--legacy-peer-deps")
 	}
-	cmd.Dir = workDir
+	cmd.Dir = installDir
 	// Pick up the agent-managed Node runtime (~/.yaver/runtimes/node/bin)
 	// when system Node is missing, so a fresh Linux box can install
 	// project deps after a phone-driven /install/mobile.
@@ -2535,9 +2648,37 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": errMsg})
 			return
 		}
-		s.emitBuildProgress(fmt.Sprintf("Installing dependencies with %s...", prep.PackageManager), "install")
-		s.upsertDevOperation("build_native", "running", "install", fmt.Sprintf("Installing dependencies with %s…", prep.PackageManager), workDir, target.DeviceID, phaseProgress("install"), map[string]interface{}{"platform": req.Platform})
-		if err := installProjectDependencies(workDir, prep); err != nil {
+		// Surface the actual install location in the progress message so
+		// the user can tell from the mobile Hot Reload card that we're
+		// installing at the workspace root (not just the leaf). For a
+		// monorepo this is exactly the bit that distinguishes a
+		// successful auto-bootstrap from a leaf-only install that
+		// silently misses workspace symlinks.
+		installAt := workDir
+		if prep.WorkspaceRoot != "" {
+			installAt = prep.WorkspaceRoot
+		}
+		progressMsg := fmt.Sprintf("Installing dependencies with %s in %s…", prep.PackageManager, installAt)
+		if installAt != workDir {
+			progressMsg = fmt.Sprintf("Installing workspace dependencies with %s at %s (monorepo root) — required so workspace-linked deps resolve before bundling.", prep.PackageManager, installAt)
+		}
+		s.emitBuildProgress(progressMsg, "install")
+		s.upsertDevOperation("build_native", "running", "install", progressMsg, workDir, target.DeviceID, phaseProgress("install"), map[string]interface{}{
+			"platform":      req.Platform,
+			"installAt":     installAt,
+			"workspaceRoot": prep.WorkspaceRoot,
+		})
+		// Tee install stdout/stderr through devLogWriter so every
+		// npm/yarn/pnpm line surfaces as an SSE "log" event on
+		// /dev/events — the mobile Hot Reload card and web preview
+		// both already render those lines, so the user sees the
+		// install happen live instead of staring at "Installing
+		// dependencies…" for two minutes with nothing changing.
+		installLogger := &devLogWriter{prefix: "[install]"}
+		if s.devServerMgr != nil {
+			installLogger.onLogLine = func(line string) { s.devServerMgr.EmitLog(line) }
+		}
+		if err := installProjectDependenciesTo(workDir, prep, installLogger); err != nil {
 			errMsg := fmt.Sprintf("dependency install failed: %v", err)
 			incident := s.appendDevIncident("build", ReasonBuildNativeFailed, "Dependency install failed", "The agent could not install the project dependencies required for bundle build.", errMsg, "Fix the dependency install failure on the host and retry.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
 			s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
