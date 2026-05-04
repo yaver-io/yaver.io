@@ -1,12 +1,42 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
+
+// Memoized chat bubble. Without this, every streaming token rebuilt
+// `conversationTurns` (filter() returns a fresh array; turns themselves
+// keep stable identity but the .map() at the render site recreates the
+// element nodes), causing every prior bubble to commit on every token.
+// The <pre> + whitespace-pre-wrap are cheap individually but at 60+
+// bubbles × 100 tokens/sec they stall the layout pass and degrade
+// streaming smoothness. Compare on (role, content) — turns are
+// append-only, so once a turn is finalized its content never changes
+// and React skips it.
+type ChatTurn = { role: string; content: string; timestamp?: number | string };
+const ChatBubble = memo(function ChatBubble({ turn }: { turn: ChatTurn }) {
+  return (
+    <div
+      className={`max-w-[88%] rounded-2xl border px-4 py-3 ${
+        turn.role === "user"
+          ? "ml-auto border-indigo-500/30 bg-indigo-500/10 text-surface-100"
+          : "border-surface-800 bg-surface-900/70 text-surface-200"
+      }`}
+    >
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
+        {turn.role === "user" ? "You" : "Agent"}
+      </div>
+      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{turn.content}</pre>
+    </div>
+  );
+}, (prev, next) =>
+  prev.turn.role === next.turn.role &&
+  prev.turn.content === next.turn.content,
+);
 
 type SectionKey = "projects" | "runner" | "actions" | "repo" | "secrets" | "providers" | "sessions";
 
@@ -267,7 +297,21 @@ export default function VibeCodingView({
     () => (activeTask?.turns || []).filter((turn) => String(turn.content || "").trim()),
     [activeTask?.turns],
   );
-  const liveOutput = streamedOutput.trim() || activeTask?.output?.join("\n").trim() || "";
+  // Cap the live-output buffer the same way mobile does (8000 lines per
+  // task). Codex / opencode tool runs spew bash stdout uncompressed; a
+  // multi-hour vibing session against a remote agent can accumulate
+  // 50k+ lines, each ~80–120 chars. Even on desktop browsers the
+  // resulting multi-MB string + every prior chat bubble re-rendering
+  // on stream tick is enough to thrash the layout pass. Keep the tail;
+  // the agent retains the full transcript on disk.
+  const liveOutput = useMemo(() => {
+    const stream = streamedOutput.trim();
+    if (stream) return stream;
+    const lines = activeTask?.output;
+    if (!lines || lines.length === 0) return "";
+    const bounded = lines.length > 8000 ? lines.slice(-8000) : lines;
+    return bounded.join("\n").trim();
+  }, [streamedOutput, activeTask?.output]);
   const lastAssistantTurn = useMemo(() => {
     for (let i = conversationTurns.length - 1; i >= 0; i -= 1) {
       if (conversationTurns[i].role === "assistant") return conversationTurns[i].content.trim();
@@ -1636,19 +1680,10 @@ export default function VibeCodingView({
               {conversationTurns.length > 0 || showLiveOutput ? (
                 <div className="space-y-4">
                   {conversationTurns.map((turn, index) => (
-                    <div
+                    <ChatBubble
                       key={`${turn.role}:${turn.timestamp}:${index}`}
-                      className={`max-w-[88%] rounded-2xl border px-4 py-3 ${
-                        turn.role === "user"
-                          ? "ml-auto border-indigo-500/30 bg-indigo-500/10 text-surface-100"
-                          : "border-surface-800 bg-surface-900/70 text-surface-200"
-                      }`}
-                    >
-                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
-                        {turn.role === "user" ? "You" : "Agent"}
-                      </div>
-                      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{turn.content}</pre>
-                    </div>
+                      turn={turn}
+                    />
                   ))}
                   {showLiveOutput ? (
                     <div className="max-w-[92%] rounded-2xl border border-amber-500/20 bg-[#14110a] px-4 py-3 text-surface-200">
