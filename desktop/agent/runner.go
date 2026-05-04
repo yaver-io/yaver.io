@@ -809,6 +809,18 @@ func runJobShell(ctx context.Context, store *RunnerStore, job RunnerJob, trigger
 						break
 					}
 					txt := strings.TrimRight(string(line[:idx]), "\r")
+					// Yaver-action sentinel interception. If the runner
+					// emitted `<<yaver-action: <verb> <args>>>` on this
+					// line, fire the side-effect (e.g. broadcast open_app
+					// to the paired phone) AND let the line through to
+					// the user's chat — the LLM usually wraps the
+					// sentinel inside a sentence ("Reloading sfmg now.
+					// <<yaver-action: reload sfmg>>") so suppressing it
+					// would leave a confusing trailing fragment, and
+					// the sentinel itself is short + readable.
+					if verb, args, ok := ParseYaverActionSentinel(txt); ok {
+						go DispatchYaverAction(verb, args, rec.ID)
+					}
 					store.Append(rec.ID, txt)
 					line = line[idx+1:]
 				}

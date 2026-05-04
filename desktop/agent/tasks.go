@@ -105,7 +105,7 @@ var defaultRunner = RunnerConfig{
 		"--include-partial-messages",
 		"--model", "sonnet",
 		"--tools", "Bash",
-		"--dangerously-skip-permissions",
+		"--permission-mode", "bypassPermissions",
 	},
 	OutputMode:      "stream-json",
 	ResumeSupported: false,
@@ -142,7 +142,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// chosen model wins. Hardcoding "sonnet" here would shadow
 		// --implementer claude:opus (sees --model twice, last one
 		// wins, depends on CLI parsing — flaky).
-		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--dangerously-skip-permissions"},
+		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--permission-mode", "bypassPermissions"},
 		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
 		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
 		// lockstep so a feedback task arriving with task.Model="" lands on
@@ -1813,6 +1813,17 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	taskDirForArgs := tm.workDir
 	if task.WorkDir != "" {
 		taskDirForArgs = task.WorkDir
+	}
+	// Yaver-action sentinel instruction: tells the runner it can emit
+	// `<<yaver-action: reload <slug>>>` to drive the user's paired
+	// phone. Only relevant when the user is actually talking through
+	// the mobile app (Tasks tab) — CLI / connect / autodev sessions
+	// don't have a phone to talk to and don't need the noise. Prepended
+	// rather than threaded as a flag because codex / opencode don't
+	// have a clean --append-system-prompt; one channel for all
+	// runners keeps the dispatch path simple.
+	if task.Source == "mobile" || task.Source == "mobile-code" {
+		prompt = YaverActionSystemPrompt + "\n\n---\n\n" + prompt
 	}
 	args := buildRunnerArgsWithWorkDir(runner, prompt, taskDirForArgs)
 

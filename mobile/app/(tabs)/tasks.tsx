@@ -27,7 +27,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
-import { useColors } from "../../src/context/ThemeContext";
+import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { appTag } from "../../src/lib/appVersion";
 import * as ExpoClipboard from "expo-clipboard";
 import { getLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
@@ -51,7 +51,6 @@ import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
 import {
@@ -61,14 +60,23 @@ import {
   type MobileDeviceStatusProbe,
 } from "../../src/lib/deviceStatus";
 
-// Persisted toggle state — codeMode (a.k.a. "yaver code mode" / wrap mode)
-// defaults to ON for new users so the agent invokes claude/codex/opencode
-// in terminal-wrapping mode out of the box. Persisting the user's override
-// means a user who explicitly turns it OFF on one task session keeps that
-// choice on the next; without the persistence layer the default would
-// re-assert itself every screen mount.
-const CODE_MODE_KEY = "@yaver/tasks_code_mode_enabled";
-const CODE_MODE_DEFAULT = true;
+// Cap streaming output retained per task. A vibing session can produce
+// 50k+ output lines (codex/claude tool runs spew bash stdout uncompressed),
+// each ~80–120 chars. At ~100 char/line and 50k lines, that's 5MB per
+// task held in JS heap as a string array — multiplied across multiple
+// open tasks, this is what eventually OOMs the app on iOS. Cap at 8000
+// lines and keep the tail (the head is rarely useful by line 8000).
+// When we drop, prepend a marker so the user knows scrollback was
+// truncated. The agent retains the full transcript on disk; the mobile
+// is a window onto recent activity, not the source of truth.
+const MAX_OUTPUT_LINES_PER_TASK = 8000;
+const OUTPUT_TRUNCATED_MARKER = "[… earlier output truncated to keep memory bounded — agent has full log …]";
+
+function capOutput(lines: string[]): string[] {
+  if (lines.length <= MAX_OUTPUT_LINES_PER_TASK) return lines;
+  const tail = lines.slice(-(MAX_OUTPUT_LINES_PER_TASK - 1));
+  return [OUTPUT_TRUNCATED_MARKER, ...tail];
+}
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -80,7 +88,7 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   stopped: "#a1a1aa",
 };
 
-const BANNER_CONFIG: Record<
+const DARK_BANNER_CONFIG: Record<
   ConnectionState,
   { bg: string; border: string; dot: string; text: string; label: string }
 > = {
@@ -113,6 +121,47 @@ const BANNER_CONFIG: Record<
     label: "Disconnected",
   },
 };
+
+function bannerConfigForTheme(
+  state: ConnectionState,
+  isDark: boolean,
+): { bg: string; border: string; dot: string; text: string; label: string } {
+  if (isDark) return DARK_BANNER_CONFIG[state];
+  if (state === "connected") {
+    return {
+      bg: "#f0fdf4",
+      border: "#bbf7d0",
+      dot: "#22c55e",
+      text: "#15803d",
+      label: "Connected",
+    };
+  }
+  if (state === "connecting") {
+    return {
+      bg: "#fffbeb",
+      border: "#fde68a",
+      dot: "#f59e0b",
+      text: "#b45309",
+      label: "Reconnecting",
+    };
+  }
+  if (state === "error") {
+    return {
+      bg: "#fef2f2",
+      border: "#fecaca",
+      dot: "#ef4444",
+      text: "#b91c1c",
+      label: "Reconnecting",
+    };
+  }
+  return {
+    bg: "#f5f5f5",
+    border: "#e5e5e5",
+    dot: "#9ca3af",
+    text: "#6b7280",
+    label: "Disconnected",
+  };
+}
 
 function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();
@@ -990,6 +1039,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
 
 export default function TasksScreen() {
   const c = useColors();
+  const { isDark } = useTheme();
   const taskRouter = useRouter();
   // Optional `?dir=/abs/path` scopes chat/tasks to a project directory.
   // When present, we pass it as workDir on new tasks so the runner executes
@@ -1098,19 +1148,6 @@ export default function TasksScreen() {
   // records a short MP4 demo after the task finishes and the task row
   // gets a "▶ Watch demo" button when the clip is ready.
   const [videoSummaryEnabled, setVideoSummaryEnabled] = useState(false);
-  // codeMode toggle = "yaver code mode" (a.k.a. wrap mode). When ON,
-  // the task is sent with source="mobile-code" so the agent applies
-  // the same prompt wrapping the `yaver code` CLI uses (terminal-style,
-  // no markdown headings by default) — i.e. the user's prompt is forwarded
-  // to the Go agent which invokes claude / codex / opencode from the
-  // terminal and pipes back the response. OFF = mobile dev-server /
-  // Hermes wrapping (markdown answers, dev-server hot-reload context).
-  // Same /tasks endpoint, same TaskManager — only the prompt prefix
-  // differs. See mobile/src/lib/quic.ts::sendTask doc for the wire
-  // contract. Default ON; persisted to AsyncStorage so the user's
-  // override survives across screen mounts (the previous code reset
-  // to true on every visit, fighting any opt-out).
-  const [codeModeEnabled, setCodeModeEnabledState] = useState<boolean>(CODE_MODE_DEFAULT);
   useEffect(() => {
     let cancelled = false;
     loadTaskVideoSummaryEnabled()
@@ -1119,23 +1156,9 @@ export default function TasksScreen() {
         setVideoSummaryEnabled(enabled);
       })
       .catch(() => {});
-    AsyncStorage.getItem(CODE_MODE_KEY)
-      .then((raw) => {
-        if (cancelled) return;
-        if (raw === null || raw === undefined) return; // first run — keep default ON
-        setCodeModeEnabledState(raw === "1");
-      })
-      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
-  const setCodeModeEnabled = useCallback((next: boolean | ((v: boolean) => boolean)) => {
-    setCodeModeEnabledState((prev) => {
-      const value = typeof next === "function" ? next(prev) : next;
-      AsyncStorage.setItem(CODE_MODE_KEY, value ? "1" : "0").catch(() => {});
-      return value;
-    });
   }, []);
   // Inline player state — set the clipId to open the modal that plays
   // the task's recorded demo MP4. Sourced from the agent at
@@ -1412,11 +1435,17 @@ export default function TasksScreen() {
       // Filter out locally-deleted tasks and internal vibing-cache tasks
       const deletedIds = await getDeletedTaskIds();
       const filtered = list.filter((t) => !deletedIds.has(t.id) && t.source !== "vibing-cache");
-      setTasks(filtered);
+      // Cap each task's output even on the initial fetch — a multi-day-old
+      // task can come back from the agent with 100k+ lines of cached output,
+      // which spikes JS heap on tab open.
+      const capped = filtered.map((t) => t.output.length > MAX_OUTPUT_LINES_PER_TASK
+        ? { ...t, output: capOutput(t.output) }
+        : t);
+      setTasks(capped);
       // Keep selected task in sync with latest data
       setSelectedTask((prev) => {
         if (!prev) return null;
-        return filtered.find((t) => t.id === prev.id) || prev;
+        return capped.find((t) => t.id === prev.id) || prev;
       });
     } catch {}
   }, []);
@@ -1485,12 +1514,12 @@ export default function TasksScreen() {
       prev.map((t) => {
         const newLines = buffer[t.id];
         if (!newLines) return t;
-        return { ...t, output: [...t.output, ...newLines] };
+        return { ...t, output: capOutput([...t.output, ...newLines]) };
       })
     );
     setSelectedTask((prev) => {
       if (!prev || !buffer[prev.id]) return prev;
-      return { ...prev, output: [...prev.output, ...buffer[prev.id]] };
+      return { ...prev, output: capOutput([...prev.output, ...buffer[prev.id]]) };
     });
   };
 
@@ -1540,8 +1569,11 @@ export default function TasksScreen() {
         // Agent has been silent for 20s — force refresh task status
         const fresh = await quicClient.getTask(selectedTask.id);
         if (fresh && fresh.status !== "running") {
-          setSelectedTask(fresh);
-          setTasks(prev => prev.map(t => t.id === fresh.id ? fresh : t));
+          const capped = fresh.output.length > MAX_OUTPUT_LINES_PER_TASK
+            ? { ...fresh, output: capOutput(fresh.output) }
+            : fresh;
+          setSelectedTask(capped);
+          setTasks(prev => prev.map(t => t.id === capped.id ? capped : t));
         }
       }
     }, 5000);
@@ -1859,7 +1891,7 @@ export default function TasksScreen() {
         projectDir || undefined,
         selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
         videoSummaryEnabled ? { enabled: true } : undefined,
-        codeModeEnabled,
+        true,
       );
       setNewTaskText("");
       setAttachedImages([]);
@@ -2208,7 +2240,7 @@ export default function TasksScreen() {
     // Show yellow "Reconnecting" for error state (active retries)
     connectionStatus === "error" ? "connecting" :
     connectionStatus;
-  const banner = BANNER_CONFIG[effectiveState];
+  const banner = bannerConfigForTheme(effectiveState, isDark);
   const isEffectivelyConnected = effectiveState === "connected";
   const modeLabel = connMode === "relay" ? " via Relay" : connMode === "direct" ? " Direct" : "";
 
@@ -3044,43 +3076,6 @@ export default function TasksScreen() {
                   </View>
                 </View>
               </View>
-              {/*
-                yaver code mode toggle — flips the agent's prompt
-                wrapping. Both modes use the same /tasks endpoint and
-                same TaskManager; they differ only in the prompt
-                prefix the agent injects:
-                  • OFF: mobile-style. Agent layers in the
-                    Hermes / Metro / dev-server hot-reload context
-                    so an Expo project can call /dev/start. Markdown
-                    answers, bullet framing, the works. (yaver go)
-                  • ON (default): terminal-style. Agent skips the dev-server
-                    prefix and instead injects the same wrapper
-                    capability context the `yaver code` CLI uses —
-                    plain terminal output, no canned formatting.
-                Pick ON when you want the runner to behave like a CLI
-                coding session; OFF for "build me an Expo screen".
-              */}
-              <Pressable
-                onPress={() => setCodeModeEnabled((v) => !v)}
-                style={({ pressed }) => [
-                  s.optionRow,
-                  { backgroundColor: c.bgCardElevated, opacity: pressed ? 0.6 : 1 },
-                ]}
-              >
-                <View
-                  style={{
-                    width: 18, height: 18, borderRadius: 4,
-                    borderWidth: 1.5, borderColor: codeModeEnabled ? c.accent : c.border,
-                    backgroundColor: codeModeEnabled ? c.accent : "transparent",
-                    alignItems: "center", justifyContent: "center",
-                  }}
-                >
-                  {codeModeEnabled ? <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>✓</Text> : null}
-                </View>
-                <Text style={{ color: c.textSecondary, fontSize: 13 }}>
-                  ⌨️ yaver code mode (terminal-style wrapping)
-                </Text>
-              </Pressable>
               <View style={s.modalButtons}>
                 <Pressable style={[s.cancelButton, { backgroundColor: c.bgCardElevated, flex: 0, minWidth: 144 }]} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }}>
                   <Text style={[s.cancelButtonText, { color: c.textSecondary }]}>Cancel</Text>

@@ -2715,6 +2715,10 @@ func runServe(args []string) {
 		log.Printf("Warning: blackbox unavailable: %v", err)
 	} else {
 		httpServer.blackboxMgr = bbMgr
+		// Register so runner.go's pump can fire <<yaver-action:...>>
+		// sentinels (e.g. "reload sfmg") at the paired phone without
+		// threading the manager through every Task struct.
+		SetActiveBlackboxMgr(bbMgr)
 		log.Printf("Black box manager ready")
 	}
 	httpServer.devServerMgr = NewDevServerManager()
