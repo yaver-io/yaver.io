@@ -20,7 +20,7 @@ import { typography } from "../../src/theme/tokens";
 function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boolean; showGreenDot?: boolean }) {
   const c = useColors();
   const icons: Record<string, { on: keyof typeof Ionicons.glyphMap; off: keyof typeof Ionicons.glyphMap }> = {
-    "Hot Reload": { on: "refresh-circle", off: "refresh-circle-outline" },
+    Reload: { on: "refresh-circle", off: "refresh-circle-outline" },
     Tasks: { on: "checkmark-circle", off: "checkmark-circle-outline" },
     Todos: { on: "checkbox", off: "square-outline" },
     Projects: { on: "play-circle", off: "play-circle-outline" },
@@ -211,9 +211,14 @@ export default function TabLayout() {
       <Tabs.Screen
         name="hotreload"
         options={{
-          title: "Hot Reload",
+          // One-word label — "Hot Reload" wraps to two lines on every
+          // tab on a phone, while every other tab is single-word, so it
+          // sticks out. Route + screen file name stay `hotreload` to
+          // avoid breaking deeplinks (yaver://hotreload, sentry / convex
+          // event slugs, autodev session naming, etc.).
+          title: "Reload",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Hot Reload" focused={focused} showGreenDot={devServerRunning} />
+            <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} />
           ),
         }}
       />
