@@ -1183,7 +1183,7 @@ export default function HomePage() {
           The terminal-side companion video lives in demo-videos/ for
           deep-dive blog posts and is no longer the landing hero. */}
       <section id="demo" className="px-6 pb-16 pt-2">
-        <div className="mx-auto max-w-md">
+        <div className="mx-auto max-w-3xl">
           <video
             className="w-full rounded-2xl bg-black shadow-2xl shadow-black/50"
             src="/yaver-vibe-reload.mp4"
@@ -1193,7 +1193,7 @@ export default function HomePage() {
             playsInline
             preload="metadata"
           />
-          <p className="mx-auto mt-4 max-w-md text-center text-sm text-surface-300">
+          <p className="mx-auto mt-4 max-w-2xl text-center text-sm text-surface-300">
             Open Yaver, pick a project from your dev box, preview it on your
             phone, shake to vibe-code — fix a bug, ship a small feature, or
             tweak a style — and a fresh bundle lands in seconds.
