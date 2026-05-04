@@ -2567,18 +2567,27 @@ export default function TasksScreen() {
             </View>
           )}
           {isEffectivelyConnected && !agentAuthExpired && (
-            <View style={s.bannerSecondaryRow}>
-              <View style={s.bannerSublineWrap}>
-                <Ionicons name="radio-outline" size={16} color={banner.dot} />
-                <Text style={[s.bannerSublinePrefix, { color: banner.text }]}>Connected via Relay</Text>
-                <Text style={[s.bannerSublineDevice, { color: c.textPrimary }]} numberOfLines={1}>
-                  {activeDevice?.name || "Connected device"}
-                </Text>
+            // Subline: transport icon + runner state on the left, ping
+            // on the right — single row, no duplicated copy. The first
+            // banner line already says "Connected via Relay · <device>";
+            // re-stating it here just made the box read like it had been
+            // pasted twice. The radio/wifi icon is the transport hint
+            // now, and runner state ("OpenAI Codex ready") + ping carry
+            // the unique signal.
+            <View style={[s.bannerSecondaryRow, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
+              <View style={[s.bannerSublineWrap, { flexShrink: 1 }]}>
+                <Ionicons
+                  name={connMode === "direct" ? "wifi-outline" : "radio-outline"}
+                  size={16}
+                  color={banner.dot}
+                />
+                {runnerBannerState ? (
+                  <Text style={[s.bannerStatusCopy, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
+                    {runnerBannerState.text}
+                  </Text>
+                ) : null}
               </View>
               <View style={s.bannerStatusRow}>
-                {runnerBannerState ? (
-                  <Text style={[s.bannerStatusCopy, { color: c.textSecondary }]}>{runnerBannerState.text}</Text>
-                ) : null}
                 {pingRtt !== null ? (
                   <Pressable onPress={handlePing}>
                     <Badge
