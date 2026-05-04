@@ -18,4 +18,7 @@ RCT_EXTERN_METHOD(getAvailableModules:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(isLoaded:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(getLoadedBundleMd5:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

@@ -13,7 +13,7 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
-import { loadApp, onBundleEvent } from "../lib/bundleLoader";
+import { loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
 import { VibePreviewModal } from "./VibePreviewModal";
@@ -357,11 +357,20 @@ export function DevPreview() {
         }
       }
 
-      // Load the compiled native bundle
+      // Load the compiled native bundle. loadAppIfChanged short-circuits
+      // when md5 matches what's already running — saves the bridge reload.
       setLastLogLine("Loading bundle on device...");
       const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
       const moduleName = buildResult.moduleName || "main";
-      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+      const loadResult = await loadAppIfChanged(
+        bundleUrl,
+        moduleName,
+        buildResult.md5,
+        (quicClient as any).authHeaders,
+      );
+      if (loadResult.skipped) {
+        setLastLogLine("Already up to date");
+      }
     } catch (err: any) {
       clearTimeout(buildAbortTimer);
       setNativeLoading(false);

@@ -181,6 +181,12 @@ class YaverBundleLoader: RCTEventEmitter {
         UserDefaults.standard.set(
           bundleMeta?.runtimeFamilySelection?.selected.label ?? "",
           forKey: "yaverSelectedRuntimeFamilyLabel")
+        // Persist md5 so JS-side loadAppIfChanged can short-circuit a
+        // reload when the agent reports the new bundle has the same
+        // hash as the one already running. Empty string when the agent
+        // didn't send the metadata header (legacy fallback path) — the
+        // JS guard treats empty as "don't skip".
+        UserDefaults.standard.set(bundleMeta?.md5 ?? "", forKey: "yaverLoadedBundleMd5")
 
         // Store agent base URL + auth token so AppDelegate / native panes
         // (YaverFeedbackPane, YaverAgentsPane) can call agent endpoints.
@@ -293,6 +299,7 @@ class YaverBundleLoader: RCTEventEmitter {
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
     UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyID")
     UserDefaults.standard.removeObject(forKey: "yaverSelectedRuntimeFamilyLabel")
+    UserDefaults.standard.removeObject(forKey: "yaverLoadedBundleMd5")
     YaverGuestCrashReporter.clearGuestSession()
     resolve(["unloaded": true])
     sendEvent(withName: "onBundleUnloaded", body: ["unloaded": true])
@@ -315,6 +322,16 @@ class YaverBundleLoader: RCTEventEmitter {
                       rejecter reject: @escaping RCTPromiseRejectBlock) {
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
     resolve(["loaded": FileManager.default.fileExists(atPath: docs.appendingPathComponent("bundles/main.jsbundle").path)])
+  }
+
+  /// Returns the md5 of the currently-loaded bundle (as reported by
+  /// the agent in X-Yaver-Bundle-Metadata at load time), or "" if no
+  /// bundle is loaded / the agent didn't send a hash. JS uses this to
+  /// short-circuit a reload when the freshly-built bundle has the same
+  /// hash as the one already running.
+  @objc func getLoadedBundleMd5(_ resolve: @escaping RCTPromiseResolveBlock,
+                                rejecter reject: @escaping RCTPromiseRejectBlock) {
+    resolve(UserDefaults.standard.string(forKey: "yaverLoadedBundleMd5") ?? "")
   }
 
   /// Static, instance-free, bridge-free counterpart to `loadBundle`.
@@ -398,6 +415,11 @@ class YaverBundleLoader: RCTEventEmitter {
         let savePath = dir.appendingPathComponent("main.jsbundle")
         try data.write(to: savePath, options: .atomic)
         UserDefaults.standard.set(moduleName, forKey: "yaverLoadedModuleName")
+        // swap() doesn't parse X-Yaver-Bundle-Metadata, so we don't
+        // know the new md5. Clear any stale persisted hash so the
+        // next loadAppIfChanged falls through to a full reload
+        // instead of false-skipping against a different project's md5.
+        UserDefaults.standard.removeObject(forKey: "yaverLoadedBundleMd5")
         // Persist agent base URL + auth header for any subsequent
         // pane that needs them. Same logic as the instance loadBundle
         // (lines ~196-251) — keeps the relay routing prefix.

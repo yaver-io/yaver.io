@@ -22,7 +22,7 @@ import {
   type MobileWorkerPreviewSession,
   type OperationState,
 } from "../../src/lib/quic";
-import { loadApp } from "../../src/lib/bundleLoader";
+import { loadAppIfChanged } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
@@ -392,16 +392,27 @@ export default function HotReloadScreen() {
         }
       }
 
-      // Step 3: Download + validate HBC bundle (integrity checked via X-Yaver-Bundle-Metadata)
+      // Step 3: Download + validate HBC bundle (integrity checked via X-Yaver-Bundle-Metadata).
+      // loadAppIfChanged short-circuits when buildResult.md5 matches the
+      // bundle already running on the bridge — no download, no bridge
+      // teardown, ~50ms instead of ~1-3s.
       setLoadingStatus(`Downloading ${sizeKB}KB bundle...`);
       const bundleUrl = `${baseUrl}${buildResult.bundleUrl}`;
       const moduleName = buildResult.moduleName || "main";
-      await loadApp(bundleUrl, moduleName, (quicClient as any).authHeaders);
+      const loadResult = await loadAppIfChanged(
+        bundleUrl,
+        moduleName,
+        buildResult.md5,
+        (quicClient as any).authHeaders,
+      );
 
       // If we get here, bundle was validated (MD5 + BC version match)
       const loadedFamilyLabel = familySelection?.selected?.label || familySelection?.selected?.id || "";
+      const md5Short = (buildResult.md5 || "").slice(0, 8);
       setLoadingStatus(
-        `Loaded${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""}! MD5: ${(buildResult.md5 || "").slice(0, 8)}...`,
+        loadResult.skipped
+          ? `Already up to date${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""} · MD5: ${md5Short}...`
+          : `Loaded${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""}! MD5: ${md5Short}...`,
       );
     } catch (err: any) {
       clearTimeout(buildAbortTimer);

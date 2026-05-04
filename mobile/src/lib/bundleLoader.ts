@@ -10,6 +10,9 @@ const emitter = YaverBundleLoader
 export interface BundleLoadResult {
   loaded: boolean;
   url?: string;
+  /** True when loadAppIfChanged short-circuited because the agent reported
+   * the new bundle has the same md5 as the one already running. */
+  skipped?: boolean;
 }
 
 /**
@@ -26,6 +29,45 @@ export async function loadApp(
 ): Promise<BundleLoadResult> {
   if (!YaverBundleLoader) {
     throw new Error("YaverBundleLoader native module not available");
+  }
+  return YaverBundleLoader.loadBundle(bundleUrl, moduleName, headers || {});
+}
+
+/**
+ * Iteration optimization: like loadApp, but skips download + bridge
+ * reload entirely when the freshly-built bundle's md5 matches what's
+ * already loaded. Use this from in-app reload flows (Hot Reload tab,
+ * DevPreview banner) — NOT from the Apps-tab "Open in Yaver" entry,
+ * because a backed-out user expects "Open" to re-enter the guest even
+ * when the bytes haven't changed.
+ *
+ * Falls through to full loadApp on:
+ *   - empty / missing expectedMd5 (initial load — agent may also omit it)
+ *   - native module without getLoadedBundleMd5 (Android, older Yaver)
+ *   - any error reading the persisted md5
+ *   - md5 mismatch (the normal "user changed JS" path)
+ */
+export async function loadAppIfChanged(
+  bundleUrl: string,
+  moduleName: string = "main",
+  expectedMd5: string | undefined | null,
+  headers?: Record<string, string>
+): Promise<BundleLoadResult> {
+  if (!YaverBundleLoader) {
+    throw new Error("YaverBundleLoader native module not available");
+  }
+  if (expectedMd5 && YaverBundleLoader.getLoadedBundleMd5) {
+    try {
+      const loadedMd5: string = await YaverBundleLoader.getLoadedBundleMd5();
+      if (loadedMd5 && loadedMd5 === expectedMd5) {
+        const stillThere = await isBundleLoaded();
+        if (stillThere) {
+          return { loaded: true, skipped: true, url: bundleUrl };
+        }
+      }
+    } catch {
+      // Fall through to full reload on any check failure.
+    }
   }
   return YaverBundleLoader.loadBundle(bundleUrl, moduleName, headers || {});
 }
