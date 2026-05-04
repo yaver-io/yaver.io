@@ -943,6 +943,18 @@ export default function ToolsView({ devices = [] }: Props) {
                     setOpenCodeConfigResult(`✓ ${provider.id} baseURL saved`);
                     if (res.config) setOpenCodeConfig(res.config);
                   }}
+                  onDelete={async () => {
+                    const res = await agentClient.saveOpenCodeConfig({
+                      providers: [{ id: provider.id, delete: true }],
+                    }, target);
+                    if (!res.ok) {
+                      setOpenCodeConfigError(res.error || "Failed to delete provider");
+                      return;
+                    }
+                    setOpenCodeConfigError(null);
+                    setOpenCodeConfigResult(`✓ provider "${provider.id}" removed`);
+                    if (res.config) setOpenCodeConfig(res.config);
+                  }}
                 />
               ))}
             </div>
@@ -1121,12 +1133,15 @@ export default function ToolsView({ devices = [] }: Props) {
 function ProviderCard({
   provider,
   onSaveBaseUrl,
+  onDelete,
 }: {
   provider: { id: string; name?: string; baseUrl?: string; models?: Array<{ id: string }> };
   onSaveBaseUrl: (baseUrl: string) => Promise<void>;
+  onDelete: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(provider.baseUrl || "");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   useEffect(() => { setDraft(provider.baseUrl || ""); }, [provider.baseUrl]);
   const dirty = draft.trim() !== (provider.baseUrl || "").trim();
   return (
@@ -1148,10 +1163,28 @@ function ProviderCard({
             try { await onSaveBaseUrl(draft.trim()); }
             finally { setSaving(false); }
           }}
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || deleting}
           className="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40"
         >
           {saving ? "…" : "Save"}
+        </button>
+        {/* Removing a provider is the standard way to drop a stale
+            config (e.g. switched z.ai keys, retired a provider). The
+            delete prompt's `${provider.id}` makes sure a misclick on
+            a busy list of providers can't quietly wipe the wrong one. */}
+        <button
+          onClick={async () => {
+            if (deleting || saving) return;
+            if (!confirm(`Remove provider "${provider.id}" from opencode.json? This won't touch any vault entries.`)) return;
+            setDeleting(true);
+            try { await onDelete(); }
+            finally { setDeleting(false); }
+          }}
+          disabled={saving || deleting}
+          className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-40"
+          title={`Delete provider "${provider.id}"`}
+        >
+          {deleting ? "…" : "Delete"}
         </button>
       </div>
     </div>
@@ -1176,12 +1209,26 @@ const providerPresets: Array<{
   baseUrl: string;
   hint: string;
 }> = [
+  // z.ai's Coding Plan and Zhipu's OpenAPI are different products with
+  // different keys. Authenticating Coding-Plan keys against bigmodel.cn
+  // (and vice versa) returns 401 mid-task, so the two presets stay
+  // distinct — provider id "zai" for the coding plan, "glm" for the
+  // legacy OpenAPI — matching mobile's OpenCodeConfigModal so the two
+  // surfaces never write conflicting `provider.<id>` blocks for the
+  // same opencode.json.
   {
-    label: "Z.ai (GLM-4)",
+    label: "Z.ai Coding (GLM-4.7)",
+    id: "zai",
+    name: "Z.ai Coding Plan",
+    baseUrl: "https://api.z.ai/api/coding/paas/v4",
+    hint: "GLM-4.7 + GLM-4.5 Air via z.ai's coding endpoint. Key from z.ai.",
+  },
+  {
+    label: "Zhipu OpenAPI (GLM-4)",
     id: "glm",
-    name: "Z.ai (Zhipu)",
+    name: "Zhipu (open.bigmodel.cn)",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    hint: "GLM-4 + GLM-4V family from Zhipu. API key from open.bigmodel.cn.",
+    hint: "Legacy GLM-4 / GLM-4V via open.bigmodel.cn. Different key from Z.ai Coding Plan.",
   },
   {
     label: "Groq",

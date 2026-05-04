@@ -2,11 +2,62 @@
 
 import type { ReactNode } from "react";
 import { memo, useEffect, useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import { agentClient, type ConnectionState, type GitCommitRow, type GitProviderStatusRow, type GitRemoteRepo, type GitStatusRow, type MachineInfo, type Runner, type Task } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { useAuth } from "@/lib/use-auth";
 import PreviewPane from "./PreviewPane";
 import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePrimaryRunnerByDevice } from "./DevicesView";
+
+// ANSI escape stripper. Mirrors desktop/agent/result_cleanup.go::stripANSI
+// so anything reaching the chat surface — historic task.Output rows that
+// the older agent persisted with raw codes, MCP-piped output, or any
+// future runner whose live stream isn't yet pre-cleaned — renders as
+// plain text instead of literal `[91m` blobs. Cheap regex; called once
+// per turn render, not per token.
+const ANSI_ESC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][0AB]|\x1b[=>NOM78cDEHM]|\x07/g;
+const BARE_CSI_RE = /\[\d+(?:;\d+)*m/g;
+function stripAnsi(s: string): string {
+  if (!s) return s;
+  return s.replace(ANSI_ESC_RE, "").replace(BARE_CSI_RE, "");
+}
+
+// react-markdown component overrides shared by every assistant-side
+// surface (final bubble + live streaming bubble). Keeps the visual
+// vocabulary aligned with web/components/ChatWidget.tsx so the support
+// chat and the vibing surface don't diverge.
+//
+// `**$ <cmd>**` is the marker readStreamJSON emits for claude bash
+// tool_use events and that opencodeStreamFilter rewrites for opencode
+// shell calls; the `strong` override pulls those out as a slightly
+// styled pill so the eye can scan a long agent run for tool calls
+// without parsing prose.
+const ASSISTANT_MARKDOWN_COMPONENTS = {
+  a: ({ href, children }: { href?: string; children?: ReactNode }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-[#818cf8] hover:text-[#a5b4fc]">
+      {children}
+    </a>
+  ),
+  p: ({ children }: { children?: ReactNode }) => <p className="mb-1 last:mb-0">{children}</p>,
+  strong: ({ children }: { children?: ReactNode }) => {
+    // Detect the shell-pill marker (`$ <cmd>`) and apply a distinct
+    // visual treatment so it doesn't blend with prose-emphasized bold.
+    const text = Array.isArray(children) && typeof children[0] === "string" ? children[0] : (typeof children === "string" ? children : "");
+    if (text.startsWith("$ ")) {
+      return (
+        <code className="rounded bg-surface-900/70 px-1.5 py-0.5 font-mono text-[12px] text-cyan-200">
+          {children}
+        </code>
+      );
+    }
+    return <strong className="font-semibold text-surface-100">{children}</strong>;
+  },
+  ul: ({ children }: { children?: ReactNode }) => <ul className="list-disc pl-4 mb-1">{children}</ul>,
+  ol: ({ children }: { children?: ReactNode }) => <ol className="list-decimal pl-4 mb-1">{children}</ol>,
+  li: ({ children }: { children?: ReactNode }) => <li className="mb-0.5">{children}</li>,
+  code: ({ children }: { children?: ReactNode }) => <code className="bg-surface-900/50 px-1 rounded text-[12px] font-mono">{children}</code>,
+  pre: ({ children }: { children?: ReactNode }) => <pre className="my-1 overflow-x-auto rounded bg-surface-900/50 p-2 text-[12px] font-mono leading-5">{children}</pre>,
+};
 
 // Memoized chat bubble. Without this, every streaming token rebuilt
 // `conversationTurns` (filter() returns a fresh array; turns themselves
@@ -19,18 +70,35 @@ import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePri
 // and React skips it.
 type ChatTurn = { role: string; content: string; timestamp?: number | string };
 const ChatBubble = memo(function ChatBubble({ turn }: { turn: ChatTurn }) {
+  // User input stays as a verbatim block — preserves whitespace,
+  // never re-parses markdown the user didn't intend (a literal
+  // backslash or asterisk in a code-question shouldn't bold).
+  // Assistant output renders through react-markdown with shared
+  // component overrides (mirrors mobile's react-native-markdown-
+  // display flow) so claude / codex / opencode all show consistent
+  // bold, code, lists, and the `$ <cmd>` shell-pill marker that the
+  // agent emits for tool calls. ANSI is stripped defensively for
+  // historic rows persisted before the live-stream filter shipped.
+  const isUser = turn.role === "user";
+  const content = isUser ? turn.content : stripAnsi(turn.content);
   return (
     <div
       className={`max-w-[88%] rounded-2xl border px-4 py-3 ${
-        turn.role === "user"
+        isUser
           ? "ml-auto border-indigo-500/30 bg-indigo-500/10 text-surface-100"
           : "border-surface-800 bg-surface-900/70 text-surface-200"
       }`}
     >
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-surface-500">
-        {turn.role === "user" ? "You" : "Agent"}
+        {isUser ? "You" : "Agent"}
       </div>
-      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{turn.content}</pre>
+      {isUser ? (
+        <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{content}</pre>
+      ) : (
+        <div className="prose-invert text-[13px] leading-6 break-words [&_pre]:whitespace-pre-wrap">
+          <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{content}</ReactMarkdown>
+        </div>
+      )}
     </div>
   );
 }, (prev, next) =>
@@ -1690,7 +1758,9 @@ export default function VibeCodingView({
                       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-300">
                         {activeTask?.status === "running" ? "Live output" : "Agent output"}
                       </div>
-                      <pre className="whitespace-pre-wrap font-mono text-[13px] leading-6">{liveOutput}</pre>
+                      <div className="text-[13px] leading-6 break-words [&_pre]:whitespace-pre-wrap">
+                        <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>{stripAnsi(liveOutput)}</ReactMarkdown>
+                      </div>
                     </div>
                   ) : null}
                 </div>
