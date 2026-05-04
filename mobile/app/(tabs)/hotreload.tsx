@@ -321,26 +321,41 @@ export default function HotReloadScreen() {
       });
       clearTimeout(buildAbortTimer);
 
-      // Guard against non-JSON responses BEFORE attempting JSON.parse.
-      // The relay can return text/plain bodies on tunnel read errors
-      // (e.g. "tunnel read error" when the agent's bundling phase
-      // outlives the relay's HTTP read timeout). buildRes.json() would
-      // throw the cryptic "JSON Parse error: Unexpected character: t/u"
-      // and the user sees nothing actionable. Read content-type +
-      // status, raise a readable error, let the outer error handler
-      // surface a real message.
+      // Two failure modes share this branch:
+      //   (1) HTTP 5xx + application/json — the agent's structured build
+      //       failure. The body is {error, phase, command, workDir,
+      //       output (last 120 lines stderr), helpHint, ...}. Parse it,
+      //       attach to the error so the outer Alert can call
+      //       nativeBuildFailureTitle/Message and surface the real reason.
+      //       Truncating it to 240 chars used to hide everything except
+      //       the command line — the user saw "HTTP 500 — {command:[...]}"
+      //       and had no clue what actually failed.
+      //   (2) Non-JSON body (text/plain or HTML) — relay or proxy error.
+      //       Most common: 502 "tunnel read error" when the relay's HTTP
+      //       wait window expires while the bundler is still running.
       const ct = String(buildRes.headers.get("content-type") || "");
-      if (!buildRes.ok || !ct.includes("application/json")) {
+      if (!buildRes.ok) {
+        if (ct.includes("application/json")) {
+          let parsed: any = null;
+          try { parsed = await buildRes.json(); } catch {}
+          if (parsed) {
+            const error = new Error(nativeBuildFailureMessage(parsed));
+            (error as any).buildResult = parsed;
+            throw error;
+          }
+        }
         const text = await buildRes.text();
         const trimmed = text.length > 240 ? text.slice(0, 240) + "…" : text;
         const reason = trimmed || `HTTP ${buildRes.status}`;
-        // 502 + "tunnel read error" is the relay-timeout case. Help
-        // the user understand what's happening so they don't just
-        // mash the button again.
         if (buildRes.status === 502 && /tunnel read error/i.test(text)) {
           throw new Error(`Bundle build is still running on the agent — the relay closed our HTTP wait window before the build finished. The build may have completed; check the agent logs and re-tap to load. Detail: ${reason}`);
         }
         throw new Error(`Bundle build failed: HTTP ${buildRes.status} ${ct ? `(${ct})` : ""} — ${reason}`);
+      }
+      if (!ct.includes("application/json")) {
+        const text = await buildRes.text();
+        const trimmed = text.length > 240 ? text.slice(0, 240) + "…" : text;
+        throw new Error(`Bundle build returned non-JSON response — ${ct || "unknown content-type"} — ${trimmed || "(empty)"}`);
       }
       const buildResult = await buildRes.json();
 

@@ -36,6 +36,17 @@ export function nativeBuildFailureMessage(buildResult: any): string {
     compatibilityDetails(buildResult),
     buildResult?.helpHint || null,
   ].filter(Boolean);
+  // /dev/build-native returns the last 120 lines of subprocess stderr+stdout
+  // in `output` on HTTP-error responses (devserver_http.go:2789). Surface a
+  // tail so the user sees the actual failure (npm error, missing dep, expo
+  // CLI quirk, etc.) instead of just "Build failed".
+  if (typeof buildResult?.output === "string" && buildResult.output.trim()) {
+    const tail = buildResult.output.split("\n").filter((l: string) => l.trim()).slice(-25).join("\n");
+    if (tail) {
+      lines.push("---");
+      lines.push(tail);
+    }
+  }
   return lines.join("\n");
 }
 
