@@ -117,6 +117,7 @@ func (s *HTTPServer) vibingifyFeedbackTaskBody(
 	projectName *string,
 	workDir *string,
 	runner *string,
+	model *string,
 	bundleID string,
 ) bool {
 	if !shouldVibingifyFeedbackTask(source) {
@@ -150,19 +151,54 @@ func (s *HTTPServer) vibingifyFeedbackTaskBody(
 		*title = ctx + "\n\nUser request:\n" + *title
 	}
 
-	// Pick a runner that's ready. Mirrors handleVibingExecute exactly:
-	// the configured primary wins when ready, otherwise the first
-	// builtin that passes CheckRunnerReady. Avoids the "task hangs
-	// forever because codex isn't auth'd on this box" footgun.
+	// Pick a runner that's ready. Source-of-truth order:
+	//   1. Inbound `runner` from the /tasks payload (mobile / SDK).
+	//   2. Convex `userSettings.primaryRunnerByDevice` for THIS device
+	//      (authoritative — the user's pick from DeviceDetailsModal).
+	//   3. pickReadyVibingRunner — walks supportedRunnerIDs in order,
+	//      claude → codex → opencode.
 	//
-	// Also re-pick when the inbound runner is set BUT not actually
-	// runnable on this machine (binary missing / auth missing / root
-	// refusal for claude --dangerously-skip-permissions). Older
-	// mobile builds wrote a stale `yaverPreferredRunner=claude`
-	// UserDefaults that survived even after the user picked codex
-	// in DeviceDetailsModal — without this branch the feedback flow
-	// would happily forward that stale value, and the task would
-	// fail (or hang for users who didn't notice the failure).
+	// Why we need #2: the mobile pushes the per-device runner into
+	// UserDefaults (`yaverPreferredRunner`), and the feedback POST
+	// forwards it. But the JS push only fires once activeDevice + the
+	// userSettings sub-row is loaded; if the user shakes/sends before
+	// that settles, UserDefaults is empty and the POST has runner="".
+	// Without #2, the agent fell into pickReadyVibingRunner whose old
+	// implementation walked the FULL builtinRunners map (populated
+	// from Convex with aider/goose/amp/...) in randomized order, so
+	// feedback tasks ended up running on aider — visible to the user
+	// as "OpenRouter sign-in" while their picked runner (codex) sat
+	// idle. We now consult Convex directly so the agent agrees with
+	// what the user picked, even when the mobile hint is missing.
+	convexRunner, convexModel := resolvePrimaryRunnerForSelf(r.Context(), s)
+	if model != nil && strings.TrimSpace(*model) == "" && convexModel != "" {
+		// Model is forwarded to the runner via task.Model →
+		// effectiveModel splice in tasks.go (`--model X`). Without
+		// this fallback, an empty mobile model on the POST means
+		// runner default (codex falls back to o3-mini, which fails
+		// on ChatGPT-account auth) — instead pull from Convex's
+		// per-device pin so codex runs with the user's picked
+		// model (e.g. gpt-5.4) even when the mobile UserDefault
+		// hint is empty.
+		*model = convexModel
+		log.Printf("[feedback→vibe] picked model %q from Convex primaryRunnerByDevice", convexModel)
+	}
+	// Defense-in-depth: if the inbound runner+model combo is
+	// incompatible (stale model from a previous runner pick that the
+	// mobile didn't reset), drop the model so the agent falls
+	// through to the runner's default. The mobile DEFAULT_MODEL_BY_RUNNER
+	// fix in DeviceContext should auto-correct this on switch, but a
+	// stale Convex row could still ship a sonnet-on-codex combo —
+	// let the agent be the second line of defense.
+	if model != nil && runner != nil {
+		current := strings.TrimSpace(*runner)
+		curModel := strings.TrimSpace(*model)
+		if current != "" && curModel != "" && !runnerModelCompatible(current, curModel) {
+			log.Printf("[feedback→vibe] dropping incompatible model %q for runner %q (will use runner default)", curModel, current)
+			*model = ""
+		}
+	}
+
 	if runner != nil {
 		current := strings.TrimSpace(*runner)
 		needsRepick := current == ""
@@ -170,6 +206,17 @@ func (s *HTTPServer) vibingifyFeedbackTaskBody(
 			if err := CheckRunnerReady(GetRunnerConfig(current), strDeref(workDir)); err != nil {
 				log.Printf("[feedback→vibe] inbound runner %q not ready (%v) — re-picking", current, err)
 				needsRepick = true
+			}
+		}
+		if needsRepick && convexRunner != "" {
+			if IsSupportedRunner(convexRunner) {
+				if err := CheckRunnerReady(GetRunnerConfig(convexRunner), strDeref(workDir)); err == nil {
+					*runner = convexRunner
+					needsRepick = false
+					log.Printf("[feedback→vibe] picked %q from Convex primaryRunnerByDevice", convexRunner)
+				} else {
+					log.Printf("[feedback→vibe] Convex primary %q not ready (%v) — falling through", convexRunner, err)
+				}
 			}
 		}
 		if needsRepick {

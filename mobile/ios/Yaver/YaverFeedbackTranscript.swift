@@ -23,9 +23,6 @@ final class YaverFeedbackTranscript: UIView {
 
   // MARK: - Public
 
-  /// Called when the user taps the embedded Reload chip so the host
-  /// pane can dispatch the same `/dev/reload-app` POST it does today.
-  var onReloadTap: (() -> Void)?
   /// Called when the user taps Close / X so the host pane can dismiss.
   var onCloseTap: (() -> Void)?
 
@@ -45,6 +42,29 @@ final class YaverFeedbackTranscript: UIView {
     stream?.stop(); stream = nil
     spinnerTimer?.invalidate(); spinnerTimer = nil
     pendingFollowUp?.cancel(); pendingFollowUp = nil
+  }
+
+  /// Public hook for the parent pane to push narration into the
+  /// transcript — used by the Reload chip flow so the user sees
+  /// streaming Hot-Reload progress (bundling → compiling →
+  /// downloading → ready) IN the transcript instead of staring at
+  /// a frozen-looking overlay.
+  ///
+  /// The text is appended to the current assistant turn's buffer
+  /// and runs through the same throttle + markdown pipeline as
+  /// vibing output, so a stream of "Bundling Expo for ios…" /
+  /// "Compiling Hermes bytecode…" / "Reloaded ✓" lines render with
+  /// the same chrome.
+  func appendNarration(_ text: String) {
+    appendAssistantChunk(text)
+  }
+
+  /// Reset the assistant accumulator so the next narration block
+  /// starts fresh (used when Reload is tapped between turns — we
+  /// want the reload progress to land in its own card, not appended
+  /// to the prior assistant output).
+  func startNewBlock() {
+    startNewAssistantTurn()
   }
 
   // MARK: - State
@@ -136,11 +156,17 @@ final class YaverFeedbackTranscript: UIView {
 
       composerRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
       composerRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-      // More room at the bottom for keyboard + chips row. Was -10,
-      // bumped to -16 per "give some area to text input and reload
-      // button… more healthy way".
-      composerRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
-      composerRow.heightAnchor.constraint(equalToConstant: 44),
+      // Bottom inset bumped from -16 to -28 so "Send a command…" sits
+      // visibly above the home-indicator gesture area instead of
+      // hugging the bottom edge. Output scroll-area absorbs the
+      // 12-pt difference automatically (its bottom anchors to the
+      // composer's top).
+      composerRow.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -28),
+      // Composer is just the input row now — bottom Reload chip and
+      // agent label moved into the header. 48pt (input row 44 + 4pt
+      // touch-target slack); was 52pt, trimmed because we now reserve
+      // the saved pixels for bottom inset instead.
+      composerRow.heightAnchor.constraint(equalToConstant: 48),
     ])
   }
 
@@ -157,11 +183,11 @@ final class YaverFeedbackTranscript: UIView {
   }
 
   private func makeComposer() -> UIView {
-    // Two rows stacked: composer (input + send) on top, agent chip
-    // pill on the bottom — mirrors the Tasks tab where the runner +
-    // model is shown right above (or beside) the composer. Reload
-    // chip sits to the LEFT of the agent chip so the user keeps the
-    // "fix → reload to verify" loop one tap away.
+    // Composer is just the input row + ↑ Send. Reload chip and agent
+    // label moved to the overlay header (the `↻ Reload App` chip
+    // there fires the same path) — this keeps the bottom of the pane
+    // uncluttered so the user can fire follow-ups without stepping
+    // over a crowded button row.
     let outer = UIView()
     outer.translatesAutoresizingMaskIntoConstraints = false
 
@@ -209,121 +235,84 @@ final class YaverFeedbackTranscript: UIView {
       row.bottomAnchor.constraint(equalTo: field.bottomAnchor),
     ])
 
-    // Below the input row: reload chip + agent picker chip, right-
-    // aligned. Reload triggers the same /dev/reload-app the drawer's
-    // Reload button uses; agent chip surfaces the runner + model
-    // and opens YaverAgentsPane on tap.
-    let chipsRow = UIStackView()
-    chipsRow.translatesAutoresizingMaskIntoConstraints = false
-    chipsRow.axis = .horizontal
-    chipsRow.spacing = 8
-    chipsRow.alignment = .center
-    chipsRow.distribution = .fill
-
-    let spacer = UIView()
-    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-    let reloadChip = UIButton(type: .system)
-    reloadChip.translatesAutoresizingMaskIntoConstraints = false
-    let rCfg = UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
-    reloadChip.setImage(UIImage(systemName: "arrow.clockwise", withConfiguration: rCfg), for: .normal)
-    reloadChip.setTitle("  Reload", for: .normal)
-    reloadChip.titleLabel?.font = .systemFont(ofSize: 12, weight: .medium)
-    reloadChip.contentEdgeInsets = UIEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-    reloadChip.backgroundColor = UIColor(white: 1, alpha: 0.06)
-    reloadChip.tintColor = UIColor(white: 1, alpha: 0.78)
-    reloadChip.setTitleColor(UIColor(white: 1, alpha: 0.78), for: .normal)
-    reloadChip.layer.cornerRadius = 10
-    reloadChip.layer.borderWidth = 1
-    reloadChip.layer.borderColor = UIColor(white: 1, alpha: 0.10).cgColor
-    reloadChip.addTarget(self, action: #selector(handleTranscriptReloadTap), for: .touchUpInside)
-
-    // Display-only agent label (no tap target). Switching the runner
-    // mid-task would either re-spawn (slow, surprising) or be ignored
-    // (confusing); per the user's call we ship without that feature
-    // and just SHOW which runner is responding. Cleaner UI, smaller
-    // surface, no follow-on edge cases to handle.
-    let agentChip = UILabel()
-    agentChip.translatesAutoresizingMaskIntoConstraints = false
-    agentChip.font = .systemFont(ofSize: 12, weight: .medium)
-    agentChip.textColor = UIColor(white: 1, alpha: 0.62)
-    agentChip.text = transcriptAgentChipLabel()
-    agentChip.textAlignment = .right
-    transcriptAgentChip = agentChip
-
-    chipsRow.addArrangedSubview(spacer)
-    chipsRow.addArrangedSubview(reloadChip)
-    chipsRow.addArrangedSubview(agentChip)
-    outer.addSubview(chipsRow)
-
     NSLayoutConstraint.activate([
       row.topAnchor.constraint(equalTo: outer.topAnchor),
       row.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
       row.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
-
-      chipsRow.topAnchor.constraint(equalTo: row.bottomAnchor, constant: 8),
-      chipsRow.leadingAnchor.constraint(equalTo: outer.leadingAnchor),
-      chipsRow.trailingAnchor.constraint(equalTo: outer.trailingAnchor),
-      chipsRow.bottomAnchor.constraint(equalTo: outer.bottomAnchor),
-      chipsRow.heightAnchor.constraint(equalToConstant: 28),
+      row.bottomAnchor.constraint(equalTo: outer.bottomAnchor),
     ])
     return outer
-  }
-
-  // Tappable runner+model chip ("OpenAI Codex · GPT-5.4 ▾"). Re-read
-  // every present() so a Tasks-tab runner switch reflects here.
-  private weak var transcriptAgentChip: UILabel?
-
-  private func transcriptAgentChipLabel() -> String {
-    let runner = (UserDefaults.standard.string(forKey: "yaverPreferredRunner") ?? "")
-      .trimmingCharacters(in: .whitespaces)
-    let model = (UserDefaults.standard.string(forKey: "yaverPreferredModel") ?? "")
-      .trimmingCharacters(in: .whitespaces)
-    let r: String
-    switch runner.lowercased() {
-    case "claude": r = "Claude"
-    case "codex":  r = "OpenAI Codex"
-    case "opencode": r = "opencode"
-    default: r = runner.isEmpty ? "Claude" : runner
-    }
-    // Trailing chevron dropped — the label is now display-only, no
-    // tap target. Switching the runner mid-task is intentionally
-    // unsupported in this slice.
-    return model.isEmpty ? r : "\(r) · \(model)"
-  }
-
-  @objc private func handleTranscriptReloadTap() {
-    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-    onReloadTap?()
   }
 
   // MARK: - User bubbles + assistant output
 
   /// Right-aligned purple chip for the prompt the user just sent.
   /// Mirrors the Tasks tab's chat bubble for the user-input line.
+  ///
+  /// Pads the text properly with a container view (was: bubble label
+  /// with `"  " + text + "  "` hack which only padded HORIZONTAL
+  /// edges and gave zero vertical breathing room — the previous
+  /// build looked squeezed at the top/bottom on multi-line prompts).
   private func appendUserBubble(_ text: String) {
     guard let stack = stack else { return }
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty { return }
+
     let row = UIView()
     row.translatesAutoresizingMaskIntoConstraints = false
-    let bubble = UILabel()
+
+    // Padded container = the visible bubble. Holds the label inset
+    // so the text never touches the rounded corners.
+    let bubble = UIView()
     bubble.translatesAutoresizingMaskIntoConstraints = false
-    bubble.text = "  " + trimmed + "  "
-    bubble.numberOfLines = 0
-    bubble.font = .systemFont(ofSize: 15, weight: .regular)
-    bubble.textColor = .white
     bubble.backgroundColor = UIColor(red: 0.46, green: 0.51, blue: 0.96, alpha: 1)
-    bubble.layer.cornerRadius = 14
+    bubble.layer.cornerRadius = 18
     bubble.layer.masksToBounds = true
-    bubble.textAlignment = .left
+
+    let label = UILabel()
+    label.translatesAutoresizingMaskIntoConstraints = false
+    label.text = trimmed
+    label.numberOfLines = 0
+    label.lineBreakMode = .byWordWrapping
+    label.font = .systemFont(ofSize: 15, weight: .regular)
+    label.textColor = .white
+    label.textAlignment = .left
+    // Slight line-height bump for readability on multi-line prompts.
+    let para = NSMutableParagraphStyle()
+    para.lineSpacing = 2
+    para.lineBreakMode = .byWordWrapping
+    label.attributedText = NSAttributedString(
+      string: trimmed,
+      attributes: [
+        .font: UIFont.systemFont(ofSize: 15, weight: .regular),
+        .foregroundColor: UIColor.white,
+        .paragraphStyle: para,
+      ])
+
+    bubble.addSubview(label)
     row.addSubview(bubble)
     NSLayoutConstraint.activate([
-      bubble.topAnchor.constraint(equalTo: row.topAnchor, constant: 4),
-      bubble.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -4),
+      // Bubble pinned to the right; capped at 85% of row width so it
+      // has room to breathe like the response card while still
+      // visually distinct from a full-width assistant block. Was
+      // 0.78 — bumped because the user wanted a "more relaxed box,
+      // like the response".
+      bubble.topAnchor.constraint(equalTo: row.topAnchor, constant: 6),
+      bubble.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -6),
       bubble.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-      bubble.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor, constant: 60),
+      bubble.leadingAnchor.constraint(greaterThanOrEqualTo: row.leadingAnchor, constant: 40),
+      bubble.widthAnchor.constraint(lessThanOrEqualTo: row.widthAnchor, multiplier: 0.85),
+
+      // Label inset — match the response card's interior padding
+      // (14×18) so single-line and multi-line prompts both look
+      // intentional. Was 10×14 (squeezed); 14×18 matches the
+      // assistant card and reads as a real "speech bubble".
+      label.topAnchor.constraint(equalTo: bubble.topAnchor, constant: 14),
+      label.bottomAnchor.constraint(equalTo: bubble.bottomAnchor, constant: -14),
+      label.leadingAnchor.constraint(equalTo: bubble.leadingAnchor, constant: 18),
+      label.trailingAnchor.constraint(equalTo: bubble.trailingAnchor, constant: -18),
     ])
+
     // Insert ABOVE the phase chip so the phase chip stays at the bottom.
     if let phase = phaseLabel, let idx = stack.arrangedSubviews.firstIndex(of: phase) {
       stack.insertArrangedSubview(row, at: idx)
@@ -499,8 +488,22 @@ final class YaverFeedbackTranscript: UIView {
     "or related Yaver preview tools instead of asking them to guess.",
     "pick up where you left off.",
     "give correct results when using with locales other than en-US.",
-    "the user wants to read the output themselves.",
+    // Was "the user wants…" — wrong word; the agent's actual string
+    // (consoleTaskResponseContext / mobileTaskResponseContext in
+    // task_context.go) says "the HUMAN wants to read the output
+    // themselves." That typo silently disabled this slice and let
+    // the entire "[Inspection commands — show raw output]" /
+    // "Do NOT paraphrase" / "Do NOT replace the listing" prompt
+    // block leak into the transcript.
+    "the human wants to read the output themselves.",
+    // End of Operation Contract from buildFeedbackPrompt — last
+    // bullet of the contract block, just before "User feedback:".
+    "use targeted reads.",
+    "one short line, no exhaustive list.",
     "[Attached images — use the Read tool to examine these files]",
+    // Final line of mobileTaskResponseContext when the older copy
+    // is in flight on the agent — covers a parallel-session change.
+    "Be concise without dropping critical information.",
   ]
 
   /// Render a string with bold, inline code, fenced code blocks, and

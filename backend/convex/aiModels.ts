@@ -1,35 +1,40 @@
 import { mutation, query } from "./_generated/server";
 
 export const PREDEFINED_MODELS = [
-  // Claude models
+  // Claude Code (Anthropic SDK). modelIds are the canonical full IDs
+  // that the Claude CLI / Anthropic API accept directly — `--model
+  // claude-opus-4-7` works on the CLI, the API likewise accepts these
+  // full strings. Default = opus to match
+  // web/components/dashboard/DevicesView.tsx::DEFAULT_MODEL_BY_RUNNER
+  // and mobile/DeviceContext::DEFAULT_MODEL_BY_RUNNER.
   {
-    modelId: "sonnet",
+    modelId: "claude-opus-4-7",
     runnerId: "claude",
-    name: "Sonnet",
-    description: "Fast and capable — best for most tasks",
+    name: "Opus 4.7",
+    description: "Most powerful — complex reasoning and architecture",
     isDefault: true,
     sortOrder: 1,
   },
   {
-    modelId: "opus",
+    modelId: "claude-sonnet-4-6",
     runnerId: "claude",
-    name: "Opus",
-    description: "Most powerful — complex reasoning and architecture",
+    name: "Sonnet 4.6",
+    description: "Fast and capable — best for most tasks",
     sortOrder: 2,
   },
   {
-    modelId: "haiku",
+    modelId: "claude-haiku-4-5-20251001",
     runnerId: "claude",
-    name: "Haiku",
+    name: "Haiku 4.5",
     description: "Fastest — quick edits and simple tasks",
     sortOrder: 3,
   },
-  // Codex models. ChatGPT-account auth (the common path) does NOT
-  // support `o3-mini` — Codex CLI 400s with "The 'o3-mini' model is
-  // not supported when using Codex with a ChatGPT account." gpt-5.4
-  // is the default the web's DEFAULT_MODEL_BY_RUNNER also uses
-  // (web/components/dashboard/DevicesView.tsx) so the surfaces stay
-  // in sync.
+  // Codex CLI (OpenAI). ChatGPT-account auth (the common path) does
+  // NOT support `o3-mini` — Codex CLI 400s with "The 'o3-mini' model
+  // is not supported when using Codex with a ChatGPT account."
+  // gpt-5.4 is the default the web's DEFAULT_MODEL_BY_RUNNER also
+  // uses (web/components/dashboard/DevicesView.tsx) so the surfaces
+  // stay in sync.
   {
     modelId: "gpt-5.4",
     runnerId: "codex",
@@ -51,21 +56,6 @@ export const PREDEFINED_MODELS = [
     name: "GPT-5 Mini",
     description: "Fastest — quick edits and simple tasks",
     sortOrder: 3,
-  },
-  // Aider models (aider auto-selects, but user can override)
-  {
-    modelId: "sonnet",
-    runnerId: "aider",
-    name: "Sonnet",
-    description: "Default Aider model",
-    isDefault: true,
-    sortOrder: 1,
-  },
-  {
-    modelId: "opus",
-    runnerId: "aider",
-    name: "Opus",
-    sortOrder: 2,
   },
 ];
 

@@ -44,6 +44,22 @@ type RemoteRuntimeCapabilities struct {
 	SupportedTransports     []string              `json:"supportedTransports,omitempty"`
 	CurrentHostClass        string                `json:"currentHostClass,omitempty"`
 	Targets                 []RemoteRuntimeTarget `json:"targets"`
+	// RemoteBuilders is the list of paired builders the dashboard
+	// can dispatch to. Populated for Swift / iOS sessions on
+	// non-darwin hosts; empty everywhere else. Each entry is the
+	// public-safe subset of the on-disk registry (no token).
+	RemoteBuilders []RemoteBuilderSummary `json:"remoteBuilders,omitempty"`
+}
+
+// RemoteBuilderSummary is the public-safe view of a paired builder.
+// Tokens, hostnames, and any other infra-sensitive field stay on
+// disk per the privacy contract (see CLAUDE.md `convex_privacy_test`
+// forbidden keys: `remoteBuilderHostname`, `remoteBuilderTunnelToken`).
+type RemoteBuilderSummary struct {
+	Alias     string   `json:"alias"`
+	URL       string   `json:"url"`
+	Platforms []string `json:"platforms"`
+	Default   bool     `json:"default,omitempty"`
 }
 
 type RemoteRuntimeSession struct {
@@ -63,28 +79,54 @@ type RemoteRuntimeSession struct {
 	CreatedAt        string               `json:"createdAt"`
 	UpdatedAt        string               `json:"updatedAt"`
 	Note             string               `json:"note,omitempty"`
+	// RemoteBuilderId is the alias (NOT the URL or token) of the
+	// builder this session is dispatched to. Set when a Linux dev
+	// box forwards a Swift session to a paired Mac via the Phase-5
+	// proxy. Empty for local sessions. URL + token are private to
+	// the agent's on-disk registry and never appear in any payload
+	// returned by the agent.
+	RemoteBuilderId string `json:"remoteBuilderId,omitempty"`
+	// DeviceDims carries the booted device's logical resolution +
+	// rotation so the web viewer can scale pointer coordinates back
+	// to device space. Populated on Attach by ProbeDeviceDims; updated
+	// whenever a rotation event fires. Pointer-typed because not every
+	// session exposes dims (relay-jpeg-poll mode doesn't need them).
+	DeviceDims *DeviceDims `json:"deviceDims,omitempty"`
 }
 
 type RemoteRuntimeManager struct {
 	mu       sync.RWMutex
 	sessions map[string]RemoteRuntimeSession
 	live     map[string]*remoteRuntimeLiveState
+	// proxied maps a local session ID to the dispatch record for a
+	// session served by a paired Mac builder. Phase-5 closer: HTTP
+	// handlers consult this before touching the local manager and
+	// forward when a mapping exists. Local-only sessions stay nil.
+	proxied map[string]*proxiedSession
 }
 
 func NewRemoteRuntimeManager() *RemoteRuntimeManager {
 	return &RemoteRuntimeManager{
 		sessions: map[string]RemoteRuntimeSession{},
 		live:     map[string]*remoteRuntimeLiveState{},
+		proxied:  map[string]*proxiedSession{},
 	}
 }
 
 func executionModeForFramework(framework string) ProjectExecutionMode {
 	switch strings.ToLower(strings.TrimSpace(framework)) {
 	case "expo", "react-native":
+		// Hermes hot-reload only — never WebRTC. RN apps load as guest
+		// bundles into the Yaver mobile super-host. See
+		// docs/native-webrtc-web-streaming.md §13.
 		return ExecutionModeRNHermes
 	case "next", "nextjs", "vite", "react":
 		return ExecutionModeWebWebview
-	case "swift", "kotlin":
+	case "swift", "kotlin", "flutter":
+		// Flutter joins Swift + Kotlin in the WebRTC family because
+		// it doesn't fit the Hermes guest-bundle model — its UI runs
+		// on Skia/Impeller in its own process. The web dashboard's
+		// RemoteRuntimeViewer streams the running emulator/simulator.
 		return ExecutionModeNativeWebRTC
 	default:
 		return ExecutionModeUnsupported
@@ -149,9 +191,62 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 			caps.Targets = []RemoteRuntimeTarget{probeIOSSimulatorTarget()}
 		case "kotlin":
 			caps.Targets = []RemoteRuntimeTarget{probeAndroidEmulatorTarget()}
+		case "flutter":
+			// Flutter projects compile to the same booted simulators
+			// or emulators as their native counterparts. Expose both
+			// targets so the user can pick which surface they want
+			// to stream — `flutter build apk` for the Android side,
+			// `flutter build ios` for the iOS side. The session's
+			// build dispatch is identical to native; only the build
+			// command differs (handled in native_build.go).
+			caps.Targets = []RemoteRuntimeTarget{
+				probeAndroidEmulatorTarget(),
+				probeIOSSimulatorTarget(),
+			}
 		}
 	}
+
+	// Surface paired builders for any framework whose iOS target
+	// can't run locally (i.e. anything Swift / Flutter on a
+	// non-darwin host). The dashboard uses this to show "Open via
+	// mac-rack-1" instead of the generic disabled-target message.
+	caps.RemoteBuilders = collectIOSBuilderSummaries()
 	return caps
+}
+
+// collectIOSBuilderSummaries reads the local registry and returns
+// the iOS-capable builders. Errors are swallowed: a missing or
+// corrupt file means "no builders paired", which is the right
+// thing to advertise.
+func collectIOSBuilderSummaries() []RemoteBuilderSummary {
+	reg, err := LoadBuilders()
+	if err != nil || reg == nil {
+		return nil
+	}
+	var out []RemoteBuilderSummary
+	for _, alias := range reg.SortedAliases() {
+		entry := reg.Builders[alias]
+		if !platformsContain(entry.Platforms, "ios") {
+			continue
+		}
+		out = append(out, RemoteBuilderSummary{
+			Alias:     entry.Alias,
+			URL:       entry.URL,
+			Platforms: entry.Platforms,
+			Default:   reg.Default == entry.Alias,
+		})
+	}
+	return out
+}
+
+func platformsContain(list []string, want string) bool {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, p := range list {
+		if strings.ToLower(strings.TrimSpace(p)) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func probeIOSSimulatorTarget() RemoteRuntimeTarget {
@@ -248,11 +343,24 @@ func (m *RemoteRuntimeManager) Update(id string, mutate func(*RemoteRuntimeSessi
 func (m *RemoteRuntimeManager) Delete(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.sessions, strings.TrimSpace(id))
-	delete(m.live, strings.TrimSpace(id))
+	id = strings.TrimSpace(id)
+	delete(m.sessions, id)
+	delete(m.live, id)
+	delete(m.proxied, id)
 }
 
 func (m *RemoteRuntimeManager) Create(workDir, framework, targetID, transportMode string) (RemoteRuntimeSession, error) {
+	// Phase-5 closer: when this host can't run the requested target
+	// natively (e.g. Linux + Swift/iOS) and a paired Mac builder is
+	// configured, dispatch the create call to the builder. Every
+	// follow-up HTTP call (offer / control / frame / delete) is
+	// forwarded by `proxiedFor()` checks at the handler level. RTP
+	// media flows direct viewer↔builder once SDP is exchanged — the
+	// Linux box never decodes or re-encodes a single byte.
+	if entry, _ := pickBuilderForFramework(framework, targetID); entry != nil {
+		return m.dispatchCreateToBuilder(*entry, workDir, framework, targetID, transportMode)
+	}
+
 	caps := remoteRuntimeCapabilitiesForProject(workDir, framework)
 	if !caps.RemoteRuntimeEligible {
 		return RemoteRuntimeSession{}, fmt.Errorf("%s projects use %s, not WebRTC remote runtime", framework, caps.PrimarySurface)
@@ -356,10 +464,16 @@ func (s *HTTPServer) handleRemoteRuntimeSessions(w http.ResponseWriter, r *http.
 			jsonError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		session, err = mgr.Attach(session.ID)
-		if err != nil {
-			jsonError(w, http.StatusBadRequest, err.Error())
-			return
+		// Proxied sessions are already booted on the builder — the
+		// Mac handles its own simctl boot + dims probe. The local
+		// Attach() would fail trying to look up live state we don't
+		// keep for proxied IDs.
+		if proxy := mgr.proxiedFor(session.ID); proxy == nil {
+			session, err = mgr.Attach(session.ID)
+			if err != nil {
+				jsonError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		jsonReply(w, http.StatusOK, session)
 	default:

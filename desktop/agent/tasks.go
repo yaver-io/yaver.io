@@ -143,7 +143,13 @@ var builtinRunners = map[string]RunnerConfig{
 		// --implementer claude:opus (sees --model twice, last one
 		// wins, depends on CLI parsing — flaky).
 		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--dangerously-skip-permissions"},
-		Model:       "claude-sonnet-4-6", // cheap default; HybridSpec / --implementer claude:X overrides
+		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
+		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
+		// lockstep so a feedback task arriving with task.Model="" lands on
+		// opus regardless of which client picked it. HybridSpec /
+		// --implementer claude:X still wins because they prepend their own
+		// --model and CLI last-flag-wins applies.
+		Model:       "claude-opus-4-7",
 		OutputMode:  "stream-json",
 		ExitCommand: "/exit",
 	},
@@ -151,7 +157,17 @@ var builtinRunners = map[string]RunnerConfig{
 		RunnerID: "codex",
 		Name:     "OpenAI Codex",
 		Command:  "codex",
-		Args:     []string{"exec", "--full-auto", "--skip-git-repo-check", "{prompt}"},
+		// `--skip-git-repo-check` was suppressing codex's workspace
+		// detection, leaving its workspace-write sandbox at
+		// /root/.codex/.tmp/plugins and rejecting every write to the
+		// real project as "outside writable root / Read-only file
+		// system" (user verified, mobile feedback flow). Dropped: the
+		// agent already sets cmd.Dir = task.WorkDir, so codex walks up
+		// from there to the git root and sets workspace-write
+		// correctly. Verified: this same prompt that previously failed
+		// patched app/index.tsx (#0f172a → #22c55e) on yaver-test-
+		// ephemeral once the flag was removed.
+		Args:     []string{"exec", "--full-auto", "{prompt}"},
 		// Codex CLI's own default is `o3-mini`, which fails immediately
 		// for users on a ChatGPT-account login with:
 		//   "The 'o3-mini' model is not supported when using Codex with
@@ -225,6 +241,33 @@ func IsSupportedRunner(id string) bool {
 		}
 	}
 	return false
+}
+
+// runnerModelCompatible reports whether the model name is plausibly a
+// match for the runner. Catches the cross-runner stale-model footgun:
+// a feedback task arrives with runner=codex but model=sonnet (left
+// over from a previous claude pick), spawning codex with --model
+// sonnet which the ChatGPT API rejects with HTTP 400. Heuristic
+// (substring/prefix) keeps us forward-compatible with new model
+// names without a hardcoded enum.
+func runnerModelCompatible(runnerID, model string) bool {
+	r := normalizeRunnerID(runnerID)
+	m := strings.ToLower(strings.TrimSpace(model))
+	if m == "" {
+		return true // empty model means "use runner default", always fine
+	}
+	switch r {
+	case "claude":
+		return strings.HasPrefix(m, "claude") || m == "opus" || m == "sonnet" || m == "haiku" || m == "claude-opus-4-7"
+	case "codex":
+		return strings.HasPrefix(m, "gpt") || strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4")
+	case "opencode":
+		// opencode accepts an enormous variety of provider-prefixed
+		// model strings; trust whatever the user picked.
+		return true
+	}
+	// Unknown runner → don't second-guess.
+	return true
 }
 
 // cachedModels stores models fetched from Convex for the /agent/runners endpoint.
@@ -1684,7 +1727,18 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// pins the task to the host's workdir, and allowing prompt keywords to
 	// redirect the task cwd into a neighboring project would let a guest
 	// traverse host projects they were not granted.
-	if task.GuestUserID == "" {
+	// Auto-switch only when the caller didn't pin a workDir. Mobile's
+	// feedback flow + the vibingify reshape already resolve the right
+	// project path from yaverInheritedGuestProjectPath / projectName —
+	// running autoSwitchProject on top of that lets prompt-word matches
+	// like "codex" (a runner name commonly echoed in the prompt) hijack
+	// the workDir to /root/.codex/.tmp/plugins, which is read-only
+	// inside codex's own sandbox. Net effect on test-ephemeral: every
+	// vibe task got cmd.Dir=/root/.codex/.tmp/plugins, codex's
+	// workspace-write sandbox treated the actual project as outside
+	// the writable root, and apply_patch failed with "Read-only file
+	// system". Five user iterations later we figured it out.
+	if task.GuestUserID == "" && strings.TrimSpace(task.WorkDir) == "" {
 		tm.autoSwitchProject(task, prompt)
 	}
 

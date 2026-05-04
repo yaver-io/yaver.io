@@ -74,17 +74,36 @@ object YaverFeedbackPane {
       elevation = dp(ctx, 16f)
     }
 
-    // Title row
+    // Header: elegant `↻ Reload App` chip on the left (mirrors iOS
+    // YaverFeedbackPane transcript-overlay header). Replaces the
+    // static "Feedback" title — the user already knows they're in the
+    // feedback pane, the chip serves a dual purpose: visual identity
+    // + tap target for hot-reload.
     val titleRow = LinearLayout(ctx).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
     }
-    val title = TextView(ctx).apply {
-      text = "Feedback"
-      setTextColor(Color.WHITE)
-      textSize = 17f
-      typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    val reloadChip = TextView(ctx).apply {
+      text = "↻  Reload App"
+      setTextColor(Color.rgb(158, 168, 255))
+      textSize = 14f
+      typeface = android.graphics.Typeface.create(
+          android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+      isAllCaps = false
+      gravity = Gravity.CENTER
+      setPadding(dp(ctx, 14f).toInt(), dp(ctx, 8f).toInt(),
+                 dp(ctx, 16f).toInt(), dp(ctx, 8f).toInt())
+      background = GradientDrawable().apply {
+        cornerRadius = dp(ctx, 12f)
+        setColor(Color.argb(20, 255, 255, 255))
+        setStroke(dp(ctx, 1f).toInt(), Color.argb(31, 255, 255, 255))
+      }
+      val lp = LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, 0f)
+      layoutParams = lp
+    }
+    val titleSpacer = View(ctx).apply {
+      layoutParams = LinearLayout.LayoutParams(0, 1, 1f)
     }
     val close = Button(ctx).apply {
       text = "×"
@@ -93,7 +112,8 @@ object YaverFeedbackPane {
       background = null
       setOnClickListener { dismiss() }
     }
-    titleRow.addView(title)
+    titleRow.addView(reloadChip)
+    titleRow.addView(titleSpacer)
     titleRow.addView(close)
 
     val sub = TextView(ctx).apply {
@@ -148,40 +168,28 @@ object YaverFeedbackPane {
     }
     toggleRow.addView(cb)
 
-    val actionRow = LinearLayout(ctx).apply {
-      orientation = LinearLayout.HORIZONTAL
+    // Composer becomes a single full-width ↑ Send button — Reload
+    // moved to the header chip, agent label dropped (display-only and
+    // crowded). Mirrors iOS post-redesign: input area + just an up-
+    // arrow Send.
+    val accent = Color.rgb(117, 130, 245)
+    val send = Button(ctx).apply {
+      text = "↑  Send"
+      setTextColor(Color.WHITE)
+      textSize = 15f
+      isAllCaps = false
+      typeface = android.graphics.Typeface.create(
+          android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+      background = GradientDrawable().apply {
+        cornerRadius = dp(ctx, 12f)
+        setColor(accent)
+      }
       val lp = LinearLayout.LayoutParams(
           LinearLayout.LayoutParams.MATCH_PARENT,
           dp(ctx, 48f).toInt()
       )
       layoutParams = lp
     }
-    val accent = Color.rgb(117, 130, 245)
-    val reload = Button(ctx).apply {
-      text = "Reload"
-      setTextColor(Color.WHITE)
-      textSize = 15f
-      isAllCaps = false
-      background = GradientDrawable().apply {
-        cornerRadius = dp(ctx, 12f)
-        setColor(Color.argb(30, 255, 255, 255))
-      }
-      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-          .apply { rightMargin = dp(ctx, 8f).toInt() }
-    }
-    val send = Button(ctx).apply {
-      text = "Send"
-      setTextColor(Color.WHITE)
-      textSize = 15f
-      isAllCaps = false
-      background = GradientDrawable().apply {
-        cornerRadius = dp(ctx, 12f)
-        setColor(accent)
-      }
-      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
-    }
-    actionRow.addView(reload)
-    actionRow.addView(send)
 
     val status = TextView(ctx).apply {
       text = " "
@@ -195,55 +203,11 @@ object YaverFeedbackPane {
       layoutParams = lp
     }
 
-    // Agent + model chip — mirrors iOS YaverFeedbackPane.swift's
-    // agentChipButton. Reads PREFERRED_RUNNER / PREFERRED_MODEL prefs
-    // (pushed by DeviceContext from Convex source-of-truth) so the
-    // user can see what their feedback will route to before tapping
-    // Send. Tap → opens YaverAgentsPane. Hidden when no preference
-    // pushed yet.
-    val prefs = ctx.getSharedPreferences(YaverNativePrefs.NAME, Context.MODE_PRIVATE)
-    val preferredRunner = (prefs.getString(YaverNativePrefs.PREFERRED_RUNNER, "") ?: "").trim()
-    val preferredModel = (prefs.getString(YaverNativePrefs.PREFERRED_MODEL, "") ?: "").trim()
-    val agentChip = TextView(ctx).apply {
-      val runnerLabel = when (preferredRunner.lowercase()) {
-        "claude" -> "Claude"
-        "codex" -> "OpenAI Codex"
-        "opencode" -> "opencode"
-        "" -> ""
-        else -> preferredRunner
-      }
-      val combined = if (preferredModel.isEmpty()) runnerLabel
-                     else "$runnerLabel · $preferredModel"
-      text = "$combined  ▾"
-      setTextColor(Color.argb(200, 255, 255, 255))
-      textSize = 12f
-      isAllCaps = false
-      gravity = Gravity.CENTER
-      setPadding(dp(ctx, 12f).toInt(), dp(ctx, 6f).toInt(),
-                 dp(ctx, 12f).toInt(), dp(ctx, 6f).toInt())
-      background = GradientDrawable().apply {
-        cornerRadius = dp(ctx, 10f)
-        setColor(Color.argb(15, 255, 255, 255))
-        setStroke(dp(ctx, 1f).toInt(), Color.argb(26, 255, 255, 255))
-      }
-      val lp = LinearLayout.LayoutParams(
-          LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-      )
-      lp.gravity = Gravity.END
-      lp.topMargin = dp(ctx, 4f).toInt()
-      lp.bottomMargin = dp(ctx, 10f).toInt()
-      layoutParams = lp
-      visibility = if (preferredRunner.isEmpty() && preferredModel.isEmpty())
-                   View.GONE else View.VISIBLE
-      setOnClickListener { YaverAgentsPane.show(activity) }
-    }
-
     card.addView(titleRow)
     card.addView(sub)
     card.addView(prompt)
     card.addView(toggleRow)
-    card.addView(agentChip)
-    card.addView(actionRow)
+    card.addView(send)
     card.addView(status)
 
     val params = FrameLayout.LayoutParams(
@@ -256,7 +220,7 @@ object YaverFeedbackPane {
     current = card
     card.animate().translationY(0f).setDuration(320).start()
 
-    reload.setOnClickListener { hitReload(ctx, status) }
+    reloadChip.setOnClickListener { hitReload(ctx, status) }
     send.setOnClickListener {
       val txt = prompt.text?.toString()?.trim().orEmpty()
       if (txt.isEmpty()) {

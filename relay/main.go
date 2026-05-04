@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -109,6 +110,14 @@ func runServe(args []string) {
 	convexURL := fs.String("convex-url", "", "Convex backend URL for per-user password validation (env: CONVEX_URL)")
 	exposeDomain := fs.String("expose-domain", "yaver.io", "Base domain for subdomain expose routing (env: EXPOSE_DOMAIN)")
 	allowOpen := fs.Bool("allow-open", false, "Explicitly allow running with no password and no Convex URL (open mode). Refuses to start otherwise. C-9 audit.")
+	// Phase 7 — colocated TURN. Disabled by default (port=0) so existing
+	// docker-compose deployments don't suddenly bind a new port. Operators
+	// flip it on by passing --turn-port=3478 (or via env). The TURN auth
+	// secret defaults to the same RELAY_PASSWORD; override with
+	// TURN_AUTH_SECRET if you want them to rotate independently.
+	turnPort := fs.Int("turn-port", 0, "UDP port for the colocated TURN server. 0 = disabled (default). 3478 is the IANA-assigned port. (env: TURN_PORT)")
+	turnPublicIP := fs.String("turn-public-ip", "", "WAN-reachable IP for TURN candidates. Required when --turn-port is set. (env: TURN_PUBLIC_IP)")
+	turnRealm := fs.String("turn-realm", "yaver-relay", "TURN authentication realm")
 	fs.Parse(args)
 
 	pw := *password
@@ -211,6 +220,43 @@ func runServe(args []string) {
 		log.Printf("Received %s, shutting down...", sig)
 		cancel()
 	}()
+
+	// Resolve TURN configuration. Env vars override flags only when
+	// the flag wasn't explicitly set, mirroring how RELAY_PASSWORD is
+	// handled above.
+	turnP := *turnPort
+	if turnP == 0 {
+		if v := os.Getenv("TURN_PORT"); v != "" {
+			if p, err := strconv.Atoi(v); err == nil {
+				turnP = p
+			}
+		}
+	}
+	turnIP := *turnPublicIP
+	if turnIP == "" {
+		turnIP = os.Getenv("TURN_PUBLIC_IP")
+	}
+	turnSecret := os.Getenv("TURN_AUTH_SECRET")
+	if turnSecret == "" {
+		// Reuse the relay password by default — same secret, no extra
+		// key material to distribute.
+		turnSecret = pw
+	}
+
+	if turnP > 0 {
+		switch {
+		case turnIP == "":
+			log.Printf("  TURN server:      DISABLED — --turn-port=%d set but TURN_PUBLIC_IP / --turn-public-ip is empty", turnP)
+		case turnSecret == "":
+			log.Printf("  TURN server:      DISABLED — --turn-port=%d set but no auth secret available (set RELAY_PASSWORD or TURN_AUTH_SECRET)", turnP)
+		default:
+			go func(port int, ip, realm, secret string) {
+				if err := StartTURN(ctx, ip, realm, port, secret); err != nil {
+					log.Printf("TURN server error: %v", err)
+				}
+			}(turnP, turnIP, *turnRealm, turnSecret)
+		}
+	}
 
 	server := NewRelayServer(*quicPort, *httpPort, pw, cURL, eDomain)
 	if err := server.Start(ctx); err != nil {

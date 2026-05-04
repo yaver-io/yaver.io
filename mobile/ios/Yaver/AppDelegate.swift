@@ -1,3 +1,4 @@
+import CoreMotion
 import Expo
 import React
 import ReactAppDependencyProvider
@@ -288,11 +289,38 @@ public class AppDelegate: ExpoAppDelegate {
     // Guest app is running. Shake phone to reveal "Back to Yaver" overlay.
     isGuestAppRunning = true
 
+    // Restart shake detection. The UIKit responder-chain delivery of
+    // motionShake to ShakeDetectingWindow stops working after the
+    // SECONDARY bridge swap (the new RCTSurfaceHostingProxyRootView
+    // mounted by factory.startReactNative consumes motionEnded
+    // before it bubbles up to the window). The CoreMotion path
+    // bypasses the responder chain entirely — accelerometer
+    // sampling at the OS level — so it survives any number of
+    // bridge invalidate/recreate cycles without re-wiring.
+    startCoreMotionShakeDetector()
+
     // If the user opted into the floating-Y trigger, mount it now over
     // the freshly loaded guest UI. dismounted automatically when we
     // route back to the Yaver shell (isGuestAppRunning = false).
     refreshFeedbackTriggerMount()
+
+    // Phase-3 signal in the reload protocol. The feedback overlay
+    // listens for this notification to advance the in-flight reload
+    // status from "🔄 Swapping app…" → "✓ Reloaded — changes are
+    // live" and clear its in-flight latch. The previous flow showed
+    // ✓ Reloaded the moment the agent emitted reload_done, which
+    // was wrong — the bundle hadn't even downloaded yet, let alone
+    // swapped. Now ✓ only fires after the new bridge actually
+    // started rendering.
+    NotificationCenter.default.post(name: AppDelegate.guestReloadCompleteNotification,
+                                    object: nil,
+                                    userInfo: ["moduleName": moduleName])
   }
+
+  /// Posted from initGuestBridge when the new guest bundle has
+  /// finished mounting. The feedback overlay subscribes to clear its
+  /// reload spinner. See YaverFeedbackPane.swift::kickOverlayReload.
+  static let guestReloadCompleteNotification = Notification.Name("YaverGuestReloadComplete")
 
   private var isGuestAppRunning = false
   private var backOverlay: UIView?
@@ -353,6 +381,60 @@ public class AppDelegate: ExpoAppDelegate {
     guard isGuestAppRunning else { return }
     guard let window = self.window else { return }
     showShakeOverlay(in: window)
+  }
+
+  // MARK: - CoreMotion-based shake detector
+  //
+  // UIKit's responder-chain motionEnded delivery breaks after the
+  // SECONDARY bridge swap because the new RCTSurfaceHostingProxyRootView
+  // mounted by factory.startReactNative consumes motionEnded before
+  // it bubbles to ShakeDetectingWindow. Accelerometer-driven detection
+  // ignores the responder chain entirely and survives every bridge
+  // recreate. CMMotionManager.deviceMotion runs at the OS level — no
+  // UIKit involvement — so it works regardless of which view is the
+  // first responder, which window is key, or whether the guest bundle
+  // intercepts touch/motion events.
+  private static let shakeAccelerationThreshold: Double = 2.5    // g
+  private static let shakeMinSpikes: Int = 3                     // need this many in window
+  private static let shakeWindowSeconds: Double = 0.7
+  private static let shakeCooldownSeconds: Double = 1.2          // ignore re-fires
+  private var motionManager: CMMotionManager?
+  private var shakeSpikeTimestamps: [Date] = []
+  private var lastShakeFiredAt: Date = .distantPast
+
+  private func startCoreMotionShakeDetector() {
+    if motionManager?.isDeviceMotionActive == true { return }
+    let mgr = CMMotionManager()
+    guard mgr.isDeviceMotionAvailable else {
+      NSLog("[AppDelegate] CoreMotion deviceMotion unavailable on this device")
+      return
+    }
+    mgr.deviceMotionUpdateInterval = 1.0 / 30.0    // 30 Hz — plenty for shake detection
+    self.motionManager = mgr
+    mgr.startDeviceMotionUpdates(to: .main) { [weak self] motion, _ in
+      guard let self = self, let m = motion else { return }
+      // userAcceleration is acceleration with gravity already subtracted.
+      let a = m.userAcceleration
+      let magnitude = sqrt(a.x * a.x + a.y * a.y + a.z * a.z)
+      if magnitude < AppDelegate.shakeAccelerationThreshold { return }
+      let now = Date()
+      // Cooldown — one shake gesture is one event, not 30 at 30 Hz.
+      if now.timeIntervalSince(self.lastShakeFiredAt) < AppDelegate.shakeCooldownSeconds {
+        return
+      }
+      self.shakeSpikeTimestamps.append(now)
+      // Drop samples outside the rolling window.
+      let windowStart = now.addingTimeInterval(-AppDelegate.shakeWindowSeconds)
+      self.shakeSpikeTimestamps.removeAll { $0 < windowStart }
+      if self.shakeSpikeTimestamps.count >= AppDelegate.shakeMinSpikes {
+        NSLog("[AppDelegate] CoreMotion shake detected (mag=%.2f, spikes=%d)",
+              magnitude, self.shakeSpikeTimestamps.count)
+        self.lastShakeFiredAt = now
+        self.shakeSpikeTimestamps.removeAll()
+        self.handleShakeGesture()
+      }
+    }
+    NSLog("[AppDelegate] CoreMotion shake detector started")
   }
 
   private func showShakeOverlay(in window: UIWindow) {

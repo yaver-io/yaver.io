@@ -316,4 +316,127 @@ class YaverBundleLoader: RCTEventEmitter {
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
     resolve(["loaded": FileManager.default.fileExists(atPath: docs.appendingPathComponent("bundles/main.jsbundle").path)])
   }
+
+  /// Static, instance-free, bridge-free counterpart to `loadBundle`.
+  /// Callable from any Swift code (native panes, AppDelegate, …)
+  /// without needing an `RCTBridge` reference or a `YaverBundleLoader`
+  /// instance — solves the "no live bridge to swap" failure on
+  /// Bridgeless / RCTHost (the New Architecture path Expo's
+  /// `ReactAppDependencyProvider` uses) where there is no
+  /// `RCTRootView` and `bridge.module(for:)` simply does not exist.
+  ///
+  /// Mirrors the same pipeline as the instance `loadBundle`:
+  ///   1. URLSession download with the supplied headers.
+  ///   2. HBC magic + BC version validation (legacy fallback path —
+  ///      no metadata header is required from the caller).
+  ///   3. Save to `<docs>/bundles/main.jsbundle`.
+  ///   4. Persist `yaverLoadedModuleName` + `yaverAgentBaseURL` + auth
+  ///      header in UserDefaults so the next pane / overlay flow has
+  ///      what it needs.
+  ///   5. Post `reloadNotification` — AppDelegate handles it the same
+  ///      way it does for the JS-driven path, invalidating the
+  ///      current host bridge and recreating it with the freshly
+  ///      saved bundle.
+  ///
+  /// `completion` fires on the main queue with `nil` on success, an
+  /// error message on failure. Callers use it to advance their UI
+  /// state (e.g. the feedback overlay narrating "downloaded —
+  /// swapping app").
+  @objc static func swap(url urlString: String,
+                         moduleName: String,
+                         headers: [String: String]?,
+                         completion: @escaping (String?) -> Void) {
+    NSLog("[YaverBundleLoader] swap (static) called: url=%@ moduleName=%@", urlString, moduleName)
+    YaverGuestCrashReporter.markGuestPhase("bundle_download_requested",
+                                           moduleName: moduleName,
+                                           sourceURL: urlString)
+    guard let bundleURL = URL(string: urlString) else {
+      DispatchQueue.main.async { completion("Invalid bundle URL: \(urlString)") }
+      return
+    }
+    var request = URLRequest(url: bundleURL)
+    request.timeoutInterval = 60
+    if let headers = headers {
+      for (k, v) in headers { request.setValue(v, forHTTPHeaderField: k) }
+    }
+    URLSession.shared.dataTask(with: request) { data, response, error in
+      if let error = error {
+        NSLog("[YaverBundleLoader] swap DOWNLOAD_FAILED: %@", error.localizedDescription)
+        DispatchQueue.main.async { completion("Download failed: \(error.localizedDescription)") }
+        return
+      }
+      guard let data = data, !data.isEmpty else {
+        DispatchQueue.main.async { completion("Empty bundle response") }
+        return
+      }
+      if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+        DispatchQueue.main.async { completion("HTTP \(http.statusCode)") }
+        return
+      }
+      // Lightweight magic + BC validation (skips the X-Yaver-Bundle-Metadata
+      // path the JS-driven loadBundle uses; the agent always sends
+      // valid HBC, and the metadata header is mostly belt-and-braces).
+      if data.count >= 12 {
+        let magic: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 4, as: UInt32.self) }
+        let bcVersion: UInt32 = data.withUnsafeBytes { $0.load(fromByteOffset: 8, as: UInt32.self) }
+        let expectedBC = SDKManifest.shared.hermesBytecodeVersion
+        if magic == 0x1F1903C1 {
+          if expectedBC > 0 && bcVersion != expectedBC {
+            let msg = "Hermes BC\(bcVersion) != expected BC\(expectedBC)"
+            NSLog("[YaverBundleLoader] swap BC_MISMATCH: %@", msg)
+            DispatchQueue.main.async { completion(msg) }
+            return
+          }
+        } else {
+          NSLog("[YaverBundleLoader] swap: plain JS bundle (not HBC) — proceeding anyway")
+        }
+      }
+      do {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let dir = docs.appendingPathComponent("bundles", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let savePath = dir.appendingPathComponent("main.jsbundle")
+        try data.write(to: savePath, options: .atomic)
+        UserDefaults.standard.set(moduleName, forKey: "yaverLoadedModuleName")
+        // Persist agent base URL + auth header for any subsequent
+        // pane that needs them. Same logic as the instance loadBundle
+        // (lines ~196-251) — keeps the relay routing prefix.
+        if let parsed = URL(string: urlString),
+           let scheme = parsed.scheme,
+           let host = parsed.host {
+          var baseURL = "\(scheme)://\(host)"
+          if let port = parsed.port { baseURL += ":\(port)" }
+          var trimmed = parsed.path
+          for marker in ["/yaver/", "/dev/", "/info"] {
+            if let r = trimmed.range(of: marker) {
+              trimmed = String(trimmed[..<r.lowerBound])
+              break
+            }
+          }
+          while trimmed.hasSuffix("/") { trimmed.removeLast() }
+          if !trimmed.isEmpty { baseURL += trimmed }
+          UserDefaults.standard.set(baseURL, forKey: "yaverAgentBaseURL")
+          let trimmedNoLeading = trimmed.hasPrefix("/") ? String(trimmed.dropFirst()) : trimmed
+          let segments = trimmedNoLeading.split(separator: "/", omittingEmptySubsequences: true)
+          if segments.count >= 2 && segments[0] == "d" {
+            let deviceId = String(segments[1])
+            if !deviceId.isEmpty {
+              UserDefaults.standard.set(deviceId, forKey: "yaverInheritedDeviceId")
+            }
+          }
+        }
+        if let auth = headers?["Authorization"] ?? headers?["authorization"] {
+          UserDefaults.standard.set(auth, forKey: "yaverAgentAuth")
+        }
+        NSLog("[YaverBundleLoader] swap saved bundle (%d bytes); posting reloadNotification", data.count)
+        DispatchQueue.main.async {
+          NotificationCenter.default.post(name: YaverBundleLoader.reloadNotification, object: nil,
+                                          userInfo: ["moduleName": moduleName])
+          completion(nil)
+        }
+      } catch {
+        DispatchQueue.main.async { completion("Save failed: \(error.localizedDescription)") }
+      }
+    }.resume()
+  }
 }

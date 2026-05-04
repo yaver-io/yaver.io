@@ -20,6 +20,8 @@ func TestExecutionModeForFramework(t *testing.T) {
 		{"nextjs", ExecutionModeWebWebview, "webview"},
 		{"swift", ExecutionModeNativeWebRTC, "webrtc"},
 		{"kotlin", ExecutionModeNativeWebRTC, "webrtc"},
+		// Flutter joins the WebRTC family — see docs/native-webrtc-web-streaming.md §1.
+		{"flutter", ExecutionModeNativeWebRTC, "webrtc"},
 	}
 	for _, tc := range cases {
 		if got := executionModeForFramework(tc.framework); got != tc.wantMode {
@@ -87,6 +89,52 @@ func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
 	}
 	if target.RequiredCLI != "adb + emulator" {
 		t.Fatalf("kotlin required cli = %q", target.RequiredCLI)
+	}
+}
+
+func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
+	caps := remoteRuntimeCapabilitiesForProject("/tmp/flutter-app", "flutter")
+	if !caps.RemoteRuntimeEligible {
+		t.Fatal("flutter should be remote-runtime eligible")
+	}
+	if len(caps.Targets) != 2 {
+		t.Fatalf("flutter targets = %d, want 2 (android-emulator + ios-simulator)", len(caps.Targets))
+	}
+	ids := []string{caps.Targets[0].ID, caps.Targets[1].ID}
+	wantIDs := map[string]bool{"android-emulator": true, "ios-simulator": true}
+	for _, id := range ids {
+		if !wantIDs[id] {
+			t.Fatalf("unexpected flutter target id %q (got %v)", id, ids)
+		}
+	}
+}
+
+func TestRemoteRuntimeSessionCarriesDeviceDims(t *testing.T) {
+	// The DeviceDims field should round-trip through JSON unscathed
+	// so the web viewer can pick it up directly from the session
+	// payload without waiting for the events channel.
+	session := RemoteRuntimeSession{
+		ID:         "rr_dims",
+		Framework:  "kotlin",
+		Status:     "streaming",
+		DeviceDims: &DeviceDims{Width: 1080, Height: 2400, Scale: 3, Rotation: "portrait"},
+	}
+	raw, err := json.Marshal(session)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded RemoteRuntimeSession
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded.DeviceDims == nil {
+		t.Fatal("decoded session missing DeviceDims")
+	}
+	if decoded.DeviceDims.Width != 1080 || decoded.DeviceDims.Height != 2400 {
+		t.Fatalf("decoded dims = %+v, want 1080x2400", decoded.DeviceDims)
+	}
+	if decoded.DeviceDims.Rotation != "portrait" {
+		t.Fatalf("decoded rotation = %q", decoded.DeviceDims.Rotation)
 	}
 }
 

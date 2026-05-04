@@ -3582,29 +3582,29 @@ export default function TasksScreen() {
                         <Text style={{ color: c.textMuted, fontSize: 15 }}>{isRunning ? "Send a command..." : "Follow up..."}</Text>
                       </View>
                     </Pressable>
-                    {/* Agent picker shortcut on the collapsed bar — one tap
-                        to switch coding agent without expanding the composer
-                        first. Shows the parent task's runner; tapping opens
-                        the same shared agent picker. handleFollowUp does
-                        the fork when selectedRunner differs from parent. */}
+                    {/* ↑ Send button — mirrors the feedback overlay's
+                        composer (clean input + arrow). Tapping expands
+                        the composer with autofocus so the user can
+                        type and submit; the agent picker still lives
+                        inside the expanded view. Replaces the previous
+                        "OpenAI Codex ▾" chip which clutterd the
+                        collapsed bar with a setting most users only
+                        change once per device. */}
                     <Pressable
-                      hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                       style={({ pressed }) => [
-                        { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: 1, backgroundColor: c.bgCardElevated, borderColor: c.border },
-                        pressed && { opacity: 0.55 },
+                        {
+                          width: 44, height: 44, borderRadius: 12,
+                          backgroundColor: c.accent,
+                          alignItems: "center", justifyContent: "center",
+                        },
+                        pressed && { opacity: 0.7 },
                       ]}
-                      onPress={() => setShowAgentPicker(true)}
+                      onPress={() => setFollowUpExpanded(true)}
                       accessibilityRole="button"
-                      accessibilityLabel="Change coding agent and model"
+                      accessibilityLabel="Send command"
                     >
-                      <Text style={{ color: c.textSecondary, fontSize: 12, fontWeight: "600" }}>
-                        {(() => {
-                          const parentRunner = selectedTask?.runnerId || "";
-                          const desired = (selectedRunner || parentRunner).trim();
-                          const runner = availableRunners.find(r => r.id === desired);
-                          return runner?.name || (desired ? desired : "Claude");
-                        })()} ▾
-                      </Text>
+                      <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 22 }}>↑</Text>
                     </Pressable>
                   </View>
                 )}

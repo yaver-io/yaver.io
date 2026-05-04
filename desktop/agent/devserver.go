@@ -897,6 +897,22 @@ func (m *DevServerManager) Subscribe() chan DevServerEvent {
 	return ch
 }
 
+// SubscribeFresh is Subscribe without the history replay. Use for
+// short-lived consumers (mobile feedback overlay reload chip) that
+// only care about events emitted from this moment forward. The
+// default Subscribe replays up to 200 buffered events so dashboards
+// don't lose context across reconnects, which is the wrong shape
+// for a "watch this one reload finish" UX — the user saw the prior
+// reload's hbc_cache_lookup → ready cycle replay PLUS the new live
+// one and got "Hot reload triggered" twice in the transcript.
+func (m *DevServerManager) SubscribeFresh() chan DevServerEvent {
+	m.subsMu.Lock()
+	defer m.subsMu.Unlock()
+	ch := make(chan DevServerEvent, 16)
+	m.subs = append(m.subs, ch)
+	return ch
+}
+
 // Unsubscribe removes a subscriber channel.
 func (m *DevServerManager) Unsubscribe(ch chan DevServerEvent) {
 	m.subsMu.Lock()
@@ -1057,6 +1073,36 @@ func (m *DevServerManager) EmitLog(line string) {
 	m.emit(DevServerEvent{
 		Type:      "log",
 		LogLine:   line,
+		Message:   line, // mirror into Message so SSE consumers that read .message see it too
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+// EmitReloadDone emits an explicit terminal event that
+// /dev/reload-app SSE consumers (feedback-overlay reload chip)
+// can use to clear their progress spinner without waiting on a
+// safety timeout. The shape is fixed by contract — type must stay
+// "reload_done" for the iOS summarizer to detect it.
+//
+// `bundleURL` is the signed relative path the agent broadcast on
+// /blackbox/command-stream so the in-Yaver feedback overlay (native
+// iOS) can swap the running guest bridge directly via
+// YaverBundleLoader instead of waiting on the JS-side BlackBox
+// listener — which is dead the moment the bridge swapped to a guest
+// (the previous Yaver-side listener died with the host bridge, and
+// the guest's yaver-feedback-react-native SDK is suppressed when
+// IS_HOST_MODE=true). Without this, reload_bundle was a tree-falls-
+// in-the-forest event: the agent broadcast it, no one listened, the
+// underlying app stayed at the pre-vibe version even after the
+// transcript said ✓ Reloaded.
+func (m *DevServerManager) EmitReloadDone(projectPath, deviceID, bundleURL string) {
+	m.emit(DevServerEvent{
+		Type:      "reload_done",
+		Topic:     "reload-app",
+		Phase:     "done",
+		Message:   "Reload complete",
+		BundleURL: bundleURL,
+		WorkDir:   projectPath,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	})
 }

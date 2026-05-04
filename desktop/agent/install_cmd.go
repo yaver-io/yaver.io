@@ -287,6 +287,18 @@ var integrations = []installPlan{
 		runFunc:     runRemoteRuntimeInstall,
 	},
 	{
+		// webrtc is the Phase-2 alias for the remote-runtime install
+		// that ALSO runs `yaver doctor webrtc` at the end so the
+		// user sees what's still missing in one shot. The npm
+		// postinstall already runs remote-runtime; this entry exists
+		// so a user who skipped that path (or deliberately turned it
+		// off via YAVER_SKIP_POSTINSTALL_REMOTE_RUNTIME) has an
+		// easy command to provision the WebRTC pipeline by name.
+		name:        "webrtc",
+		description: "WebRTC remote-runtime pipeline (alias for remote-runtime + doctor probe). Run after `npm install -g yaver-cli` if you opted out of the postinstall bootstrap.",
+		runFunc:     runWebRTCInstall,
+	},
+	{
 		name:        "opencode",
 		description: "opencode — yaver's third first-class runner. BYOK any provider (Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) via opencode.json.",
 		macOS:       []string{"brew install opencode"},
@@ -813,6 +825,40 @@ func runVibePreviewInstall(ctx context.Context, progress func(string)) error {
 
 func runAndroidSDKInstall(ctx context.Context, progress func(string)) error {
 	return installAndroidSDKRuntime(ctx, progress)
+}
+
+// runWebRTCInstall provisions the WebRTC remote-runtime pipeline.
+// In practice this means running the same `remote-runtime` plan (adb
+// + xcodegen + cliclick where applicable), then printing the doctor
+// report so the user sees the post-state immediately. No new
+// per-platform packages — the `npm install -g yaver-cli` bootstrap
+// already covers what the agent role needs thanks to the in-tree
+// H.264 NAL extractor (h264_extract.go).
+func runWebRTCInstall(ctx context.Context, progress func(string)) error {
+	if err := runRemoteRuntimeInstall(ctx, progress); err != nil {
+		return err
+	}
+	if progress != nil {
+		progress("==> Probing WebRTC stack")
+	}
+	report := buildWebRTCDoctorReport(ctx)
+	if progress != nil {
+		// Inline a compact summary in the install stream — same as
+		// the human-readable doctor printer, just one OK/missing
+		// line per check, no headers.
+		for _, c := range report.Checks {
+			mark := "✓"
+			if !c.OK {
+				mark = "✗"
+			}
+			if c.Detail != "" {
+				progress(fmt.Sprintf("%s %s — %s", mark, c.Name, c.Detail))
+			} else {
+				progress(fmt.Sprintf("%s %s", mark, c.Name))
+			}
+		}
+	}
+	return nil
 }
 
 func runRemoteRuntimeInstall(ctx context.Context, progress func(string)) error {

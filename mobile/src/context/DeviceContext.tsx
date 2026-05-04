@@ -136,6 +136,21 @@ AsyncStorage.getItem("@yaver/debug_logs_enabled").then((val) => {
   _debugLogsEnabled = val === "true";
 });
 
+// Default per-runner model used when the user changes runner without
+// picking a specific model. Single source of truth — keep aligned with
+// web/components/dashboard/DevicesView.tsx::DEFAULT_MODEL_BY_RUNNER and
+// the agent's RunnerConfig.Model defaults in desktop/agent/tasks.go.
+// Why hardcoded: the alternative is round-tripping
+// /agent/runners → models lookup just to render the picker, which would
+// add network latency to a UX flow that needs to feel instant.
+// "opencode" intentionally has no entry — opencode picks its own
+// internal default; clearing the per-device model is safer than
+// inheriting Codex's gpt-5.4 or Claude's opus when switching to it.
+export const DEFAULT_MODEL_BY_RUNNER: Record<string, string> = {
+  claude: "claude-opus-4-7",
+  codex: "gpt-5.4",
+};
+
 const APP_VERSION = Constants.expoConfig?.version ?? "unknown";
 const BUILD_NUMBER =
   Constants.expoConfig?.ios?.buildNumber ??
@@ -989,9 +1004,37 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const setPrimaryRunnerForDevice = useCallback(
     async (deviceId: string, runnerId: string | null, model?: string | null) => {
       if (!token) throw new Error("Not signed in");
-      // Optimistic local update for both runner + model.
+      // When the runner changes (e.g. user picks Codex while the
+      // previous pick was Claude with model "sonnet"), the stale
+      // model is no longer compatible: codex spawned with
+      // `--model sonnet` returns "The 'sonnet' model is not supported
+      // when using Codex with a ChatGPT account." Auto-fill the new
+      // runner's default model — single source of truth lives in
+      // DEFAULT_MODEL_BY_RUNNER (mirrors web/DevicesView and the
+      // agent's RunnerConfig.Model defaults). Caller can still pass
+      // an explicit model to override, or `null` to clear.
       const previousRunner = primaryRunnerByDevice;
       const previousModel = primaryModelByDevice;
+      const previousRunnerForThisDevice = previousRunner[deviceId] ?? "";
+      const runnerChanged =
+        !!runnerId && runnerId !== previousRunnerForThisDevice;
+      let resolvedModel: string | null | undefined = model;
+      if (resolvedModel === undefined && runnerChanged && runnerId) {
+        const fallback = DEFAULT_MODEL_BY_RUNNER[runnerId];
+        if (fallback) {
+          resolvedModel = fallback;
+          appLog(
+            "info",
+            `[settings] runner changed → ${runnerId}; auto-picking default model ${fallback}`,
+          );
+        } else {
+          // Runner has no documented default (opencode etc.) — clear
+          // any stale model so the agent falls through to the
+          // runner's own internal default rather than re-using the
+          // previous runner's incompatible model.
+          resolvedModel = null;
+        }
+      }
       setPrimaryRunnerByDeviceState((prev) => {
         const next = { ...prev };
         if (runnerId) next[deviceId] = runnerId;
@@ -1000,10 +1043,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       });
       setPrimaryModelByDeviceState((prev) => {
         const next = { ...prev };
-        if (!runnerId || model === null) {
+        if (!runnerId || resolvedModel === null) {
           delete next[deviceId];
-        } else if (typeof model === "string" && model.length > 0) {
-          next[deviceId] = model;
+        } else if (
+          typeof resolvedModel === "string" &&
+          resolvedModel.length > 0
+        ) {
+          next[deviceId] = resolvedModel;
         }
         return next;
       });
@@ -1012,7 +1058,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           primaryRunnerForDevice: {
             deviceId,
             runnerId,
-            ...(model !== undefined ? { model } : {}),
+            ...(resolvedModel !== undefined ? { model: resolvedModel } : {}),
           },
         });
       } catch (e) {

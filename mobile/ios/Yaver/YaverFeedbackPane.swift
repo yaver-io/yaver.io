@@ -1,4 +1,5 @@
 import Foundation
+import React
 import UIKit
 
 /// Yaver's native feedback pane — presented over a loaded guest bundle when
@@ -1035,12 +1036,27 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
         handle.heightAnchor.constraint(equalToConstant: 5),
       ])
 
-      // Title row + close button.
-      let title = UILabel()
+      // Header: a single elegant `↻ Reload App` chip on the left
+      // (replaces the old "Vibing" static title — the user is
+      // obviously vibing, the chip serves a dual purpose) plus the
+      // close ✕ on the right. Tapping the chip fires the overlay
+      // reload flow (kickOverlayReload), same path the bottom-of-
+      // composer reload used to use.
+      let title = UIButton(type: .system)
       title.translatesAutoresizingMaskIntoConstraints = false
-      title.text = "Vibing"
-      title.font = .systemFont(ofSize: 17, weight: .semibold)
-      title.textColor = .white
+      let titleCfg = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+      title.setImage(UIImage(systemName: "arrow.clockwise", withConfiguration: titleCfg), for: .normal)
+      title.setTitle("  Reload App", for: .normal)
+      title.titleLabel?.font = .systemFont(ofSize: 14, weight: .semibold)
+      title.contentEdgeInsets = UIEdgeInsets(top: 8, left: 14, bottom: 8, right: 16)
+      title.backgroundColor = UIColor(white: 1, alpha: 0.08)
+      title.tintColor = UIColor(red: 0.62, green: 0.66, blue: 1.0, alpha: 1)
+      title.setTitleColor(UIColor(red: 0.62, green: 0.66, blue: 1.0, alpha: 1), for: .normal)
+      title.layer.cornerRadius = 12
+      title.layer.borderWidth = 1
+      title.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
+      title.addTarget(self, action: #selector(self.headerReloadChipTapped),
+                      for: .touchUpInside)
       card.addSubview(title)
 
       let close = UIButton(type: .system)
@@ -1053,8 +1069,9 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
       card.addSubview(close)
 
       NSLayoutConstraint.activate([
-        title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+        title.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 14),
         title.topAnchor.constraint(equalTo: handle.bottomAnchor, constant: 8),
+        title.heightAnchor.constraint(equalToConstant: 34),
         close.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -14),
         close.centerYAnchor.constraint(equalTo: title.centerYAnchor),
         close.widthAnchor.constraint(equalToConstant: 32),
@@ -1062,7 +1079,9 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
       ])
 
       // Drop in the existing transcript view — it already handles
-      // SSE subscribe, phase chip, follow-up composer, reload chip.
+      // SSE subscribe, phase chip, follow-up composer. Reload now
+      // lives in the header chip (`↻ Reload App`) wired via
+      // headerReloadChipTapped → kickOverlayReload.
       let transcript = YaverFeedbackTranscript()
       transcript.translatesAutoresizingMaskIntoConstraints = false
       transcript.onCloseTap = { [weak self] in self?.closeTranscriptOverlay() }
@@ -1094,7 +1113,394 @@ final class YaverFeedbackPane: NSObject, UIGestureRecognizerDelegate {
     }
   }
 
+  /// Reload chip in the transcript overlay → fires /dev/reload-app
+  /// AND subscribes to /dev/events so the streaming Hot-Reload phases
+  /// (bundling → compiling → downloading → ready) appear inline in
+  /// the transcript. User stays on the same screen, sees progress
+  /// like the rest of the vibing output.
+  ///
+  /// Why we duplicate the drawer's reloadTapped logic instead of
+  /// reusing it: drawer's path writes to the drawer's status label
+  /// (hidden under the overlay) and uses the in-flight latch to gate
+  /// further taps. The overlay needs its OWN narration sink (the
+  /// transcript) and its OWN latch so a vibing follow-up isn't
+  /// blocked by an in-flight reload.
+  private func kickOverlayReload(transcript: YaverFeedbackTranscript?) {
+    NSLog("[YaverFeedback] kickOverlayReload")
+    guard let t = transcript else { return }
+    if overlayReloadInFlight {
+      t.appendNarration("\n\n_reload already in flight…_")
+      return
+    }
+    overlayReloadInFlight = true
+    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+
+    // Resolve each endpoint via yaverResolveAgentURL directly. The old
+    // approach (yaverResolveAgentURL("/") + deletingLastPathComponent)
+    // produced corrupted URLs when the cached agentBase ended in a
+    // trailing slash: Foundation's deletingLastPathComponent on
+    // `https://public.yaver.io/d/<id>/` STRIPS the deviceId segment,
+    // and re-appending "dev/reload-app" gave `/d/dev/reload-app` —
+    // which the relay treats as deviceId="dev" and 502s with "device
+    // not connected to relay" because no agent registered under that
+    // ID. /dev/events SSE was also broken the same way.
+    //
+    // ?fresh=1 on /dev/events skips the agent's 200-event history
+    // replay so the overlay sees only events from THIS reload cycle.
+    // Without it, the user got the prior reload's hbc_cache_lookup
+    // → ready cycle on the wire as "memory" plus the live cycle, so
+    // the transcript narrated "Hot reload triggered" twice and the
+    // safety timeout fired before any of them registered as terminal.
+    guard let reloadURL = yaverResolveAgentURL("/dev/reload-app"),
+          let eventsURL = yaverResolveAgentURL("/dev/events?fresh=1") else {
+      t.appendNarration("\n\n**Reload failed:** missing agent URL.")
+      overlayReloadInFlight = false
+      return
+    }
+    let headers = yaverRelayHeaders()
+
+    // Start a fresh narration block so reload progress doesn't
+    // splice into the previous assistant turn.
+    t.startNewBlock()
+    t.appendNarration("**↻ Reload requested**\nSubscribing to /dev/events…")
+
+    // Subscribe to /dev/events FIRST, then POST /dev/reload-app.
+    // Order matters: the agent's /dev/reload-app handler is
+    // synchronous — it runs the full hermesc compile + bundle
+    // broadcast inline (4–17s) before writing the HTTP response.
+    // If we subscribe AFTER the POST returns, every phase event
+    // (including the terminal `reload_done`) has already fired and
+    // ?fresh=1 (no replay) drops them — the spinner sat forever
+    // until the 90s safety timeout. Subscribing first means the
+    // SSE channel is hot when the agent starts emitting and we
+    // see the events as they arrive.
+    subscribeOverlayReloadEvents(eventsURL: eventsURL, headers: headers, transcript: t)
+    postReloadAppWithRetry(reloadURL: reloadURL, eventsURL: eventsURL,
+                           headers: headers, transcript: t,
+                           attempt: 1, maxAttempts: 4)
+  }
+
+  /// POST /dev/reload-app with a small retry budget. The relay can
+  /// return HTTP 502 "device not connected to relay" when its tunnel
+  /// session map briefly forgets the agent — happens after the
+  /// agent restarts, after a long-idle keepalive, and occasionally
+  /// mid-session for reasons that aren't worth a full investigation
+  /// when the cheap fix (retry) works. Without this, the user sees
+  /// "Reload HTTP 502" the first time and has to tap Reload again
+  /// — which is exactly what we'd otherwise be coding into them.
+  /// Backoff is 600 ms / 1.2 s / 2 s; total worst-case wait ≈ 4 s.
+  private func postReloadAppWithRetry(reloadURL: URL,
+                                      eventsURL: URL,
+                                      headers: [String: String],
+                                      transcript t: YaverFeedbackTranscript?,
+                                      attempt: Int,
+                                      maxAttempts: Int) {
+    var req = URLRequest(url: reloadURL)
+    req.httpMethod = "POST"
+    for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.httpBody = "{\"mode\":\"bundle\"}".data(using: .utf8)
+    let task = URLSession.shared.dataTask(with: req) { [weak self, weak t] data, resp, err in
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        if let err = err {
+          t?.appendNarration("\n\n**Reload error:** \(err.localizedDescription)")
+          self.overlayReloadInFlight = false
+          return
+        }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        let body = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+        if code < 200 || code >= 300 {
+          // 502 = relay can't reach agent (tunnel transiently lost).
+          // 503 = agent reachable but dev-server build queue full.
+          // Both recover on retry; 4xx are caller errors and stick.
+          let retryable = code == 502 || code == 503
+          if retryable && attempt < maxAttempts {
+            let backoffMs = min(2000, 400 + attempt * 400)
+            t?.appendNarration("\n_relay returned \(code); retrying (\(attempt)/\(maxAttempts - 1))…_")
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(backoffMs)) { [weak self, weak t] in
+              self?.postReloadAppWithRetry(reloadURL: reloadURL, eventsURL: eventsURL,
+                                           headers: headers, transcript: t,
+                                           attempt: attempt + 1, maxAttempts: maxAttempts)
+            }
+            return
+          }
+          t?.appendNarration("\n\n**Reload HTTP \(code):** \(body.prefix(120))")
+          self.overlayReloadInFlight = false
+          return
+        }
+        t?.appendNarration("\n_/dev/reload-app accepted; subscribing to /dev/events…_")
+        self.subscribeOverlayReloadEvents(eventsURL: eventsURL, headers: headers, transcript: t)
+      }
+    }
+    overlayReloadTask = task
+    task.resume()
+  }
+
+  /// Subscribe to /dev/events SSE and turn each event into a one-line
+  /// narration in the transcript. We strip down the JSON payload to
+  /// the most useful field (kind/type + message/phase) so the user
+  /// sees a tight progress trail, not a JSON dump.
+  private func subscribeOverlayReloadEvents(
+    eventsURL: URL,
+    headers: [String: String],
+    transcript: YaverFeedbackTranscript?
+  ) {
+    overlayReloadStream?.stop()
+    overlayReloadStream = nil
+    let url = eventsURL
+    // YaverSSEReader splits init from start: init takes only the
+    // event handlers; start(url:headers:) opens the actual session.
+    let reader = YaverSSEReader(
+      onEvent: { [weak self, weak transcript] payload in
+        guard let t = transcript else { return }
+        let line = self?.summarizeReloadEvent(payload) ?? payload
+        if !line.isEmpty {
+          DispatchQueue.main.async { t.appendNarration("\n" + line) }
+        }
+      },
+      onComplete: { [weak self] in
+        DispatchQueue.main.async {
+          self?.overlayReloadInFlight = false
+        }
+      }
+    )
+    reader.start(url: url, headers: headers)
+    overlayReloadStream = reader
+    // Hard timeout — if the reload never reports complete in 90s,
+    // release the latch so the user can retry.
+    let timeout = DispatchWorkItem { [weak self] in
+      if self?.overlayReloadInFlight == true {
+        transcript?.appendNarration("\n_…(reload stream still running, giving up after 90s)_")
+        self?.overlayReloadStream?.stop()
+        self?.overlayReloadStream = nil
+        self?.overlayReloadInFlight = false
+      }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: timeout)
+    overlayReloadTimeout = timeout
+  }
+
+  /// Squeeze the most useful field out of a /dev/events SSE payload.
+  /// Returns "" for events we should silently drop (heartbeats etc.).
+  ///
+  /// Side effect: when a terminal event (`reload_done` / phase=done on
+  /// topic="reload-app") arrives, clears `overlayReloadInFlight` so the
+  /// composer's send button re-enables and the safety 90s timeout is
+  /// no-op. Without this the spinner stayed up until the hard timeout
+  /// even though the build had finished and the bundle had broadcast.
+  private func summarizeReloadEvent(_ payload: String) -> String {
+    guard let data = payload.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return ""
+    }
+    let type = (json["type"] as? String) ?? (json["kind"] as? String) ?? ""
+    if type == "heartbeat" { return "" }
+    let topic = (json["topic"] as? String ?? "").lowercased()
+    let phase = (json["phase"] as? String ?? "").lowercased()
+    // Pull message from the four shapes the agent uses: emit() sets
+    // Message / Phase / LogLine on different paths. EmitLog now
+    // mirrors logLine into message but older agents (still on the
+    // wire while we roll out 1.99.150+) only set logLine.
+    let message = (json["message"] as? String)
+      ?? (json["logLine"] as? String)
+      ?? (json["phase"] as? String)
+      ?? (json["line"] as? String)
+      ?? ""
+    let lower = type.lowercased()
+    // STRICT terminal detection. Earlier the broader
+    // `lower.contains("complete")` matched `hermesc compile complete`
+    // and other mid-build phase messages — clearing the spinner BEFORE
+    // the agent's own reload_done event ever arrived, so the iOS
+    // overlay never saw the bundleUrl payload and `swapBundleViaNativeLoader`
+    // never fired. Now: only the agent's explicit `reload_done` type
+    // or topic="reload-app" + phase="done" counts. Anything looser is
+    // a false positive.
+    let isTerminal = lower == "reload_done"
+      || (topic == "reload-app" && phase == "done")
+    if isTerminal {
+      // Pull the agent-supplied bundleUrl out of the event so the
+      // overlay can swap the running guest bridge directly. We can't
+      // rely on the JS-side BlackBox listener for reload_bundle: when
+      // the user has a guest loaded (todo-rn etc.), Yaver's host
+      // bridge has been invalidated (the listener died with it) and
+      // the guest's yaver-feedback-react-native SDK suppresses its
+      // own listener via IS_HOST_MODE. Without this direct native
+      // path, the broadcast was a tree-falls-in-the-forest event.
+      let bundleURL = (json["bundleUrl"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+      NSLog("[YaverFeedback] reload_done received bundleURL=%@", bundleURL)
+      DispatchQueue.main.async { [weak self] in
+        // Stop polling /dev/events — we have what we needed.
+        self?.overlayReloadStream?.stop()
+        self?.overlayReloadStream = nil
+        self?.overlayReloadTimeout?.cancel()
+        self?.overlayReloadTimeout = nil
+        // Note: we DON'T clear overlayReloadInFlight here — that
+        // happens after swapBundleViaNativeLoader resolves, so the
+        // user knows the actual app swap succeeded. Otherwise the
+        // overlay said ✓ Reloaded while the bundle was still
+        // downloading and the guest behind was unchanged.
+        if !bundleURL.isEmpty {
+          self?.swapBundleViaNativeLoader(bundleURL: bundleURL)
+        } else {
+          NSLog("[YaverFeedback] reload_done has no bundleURL — leaving guest as-is")
+          self?.overlayReloadInFlight = false
+        }
+      }
+      return "✓ **Bundle ready** — swapping app…"
+    }
+    if lower.contains("fail") || lower.contains("error") || phase == "error" {
+      let detail = message.isEmpty ? (json["error"] as? String ?? "") : message
+      DispatchQueue.main.async { [weak self] in
+        self?.overlayReloadInFlight = false
+      }
+      return "**Reload failed:** " + detail
+    }
+    if !message.isEmpty {
+      return "· " + message
+    }
+    return ""
+  }
+
+  // Latch + handles for the overlay reload flow. Mirrors the drawer's
+  // reload state but in a different name space so an in-flight
+  // overlay reload doesn't gate the drawer's reload (or vice versa).
+  private var overlayReloadInFlight = false
+  private var overlayReloadTask: URLSessionDataTask?
+  private var overlayReloadStream: YaverSSEReader?
+  private var overlayReloadTimeout: DispatchWorkItem?
+
+  /// Swap the running guest's RN bridge to the freshly-built bundle.
+  /// Stage-2 of the reload protocol:
+  ///   stage 1 (agent):    build → emit `reload_done` with bundleUrl
+  ///   stage 2 (this fn):  download HBC → post YaverBundleLoader.reloadNotification
+  ///   stage 3 (AppDelegate.initGuestBridge): new bridge mounted →
+  ///                       post AppDelegate.guestReloadCompleteNotification
+  ///                       → overlay clears spinner with "✓ Reloaded"
+  ///
+  /// We get the YaverBundleLoader instance from the live RN bridge —
+  /// it's a native module bundled into the app binary so it's
+  /// re-registered in EVERY bridge instance, including the guest's
+  /// post-swap bridge. Calling .loadBundle on it triggers the same
+  /// download + reloadNotification + AppDelegate swap path as the JS
+  /// route would, but bypasses the dead JS listeners (Yaver's host
+  /// listener died with the original bridge; the guest's
+  /// yaver-feedback-react-native SDK suppresses its own listener
+  /// under IS_HOST_MODE).
+  private func swapBundleViaNativeLoader(bundleURL: String) {
+    NSLog("[YaverFeedback] swapBundleViaNativeLoader bundleURL=%@", bundleURL)
+    guard let absoluteURL = yaverResolveAgentURL(bundleURL.hasPrefix("/") ? bundleURL : "/" + bundleURL) else {
+      NSLog("[YaverFeedback] swapBundleViaNativeLoader: yaverResolveAgentURL returned nil")
+      transcriptView?.appendNarration("\n**Reload failed:** could not resolve bundle URL.")
+      overlayReloadInFlight = false
+      return
+    }
+    // CRITICAL ARCHITECTURAL NOTE — why we go through the static
+    // YaverBundleLoader.swap instead of looking up an instance via
+    // the RN bridge:
+    //
+    // Yaver's host (and the guest bundle Yaver loads via "Open in
+    // Yaver") use Expo's ReactAppDependencyProvider, which runs
+    // React Native in BRIDGELESS / RCTHost mode. In that mode there
+    // is NO `RCTBridge` object — the root view is
+    // `RCTSurfaceHostingProxyRootView`, `as? RCTRootView` always
+    // fails, and `bridge.module(for:)` doesn't exist. Walking
+    // windows or scenes can't help; the API just isn't there.
+    //
+    // The fix: extract the entire download → validate → save →
+    // post-reloadNotification pipeline into a static class func
+    // (YaverBundleLoader.swap). The instance method `loadBundle`
+    // that JS callers go through (initial "Open in Yaver" via
+    // NativeModules.YaverBundleLoader.loadBundle) is untouched —
+    // it still runs end-to-end. Native panes invoke the static
+    // counterpart, which hits the same NotificationCenter-driven
+    // AppDelegate swap path and produces the exact same end state.
+    // No bridge, no instance, no architectural mode dependency.
+    let headers = yaverRelayHeaders()
+    let moduleName = UserDefaults.standard.string(forKey: "yaverLoadedModuleName") ?? "main"
+    NSLog("[YaverFeedback] invoking YaverBundleLoader.swap url=%@ module=%@", absoluteURL.absoluteString, moduleName)
+
+    // Arm AppDelegate's stage-3 listener BEFORE kicking the swap
+    // so a fast-path bridge re-init can't beat us to the
+    // notification post.
+    armReloadCompleteListener()
+
+    YaverBundleLoader.swap(url: absoluteURL.absoluteString,
+                           moduleName: moduleName,
+                           headers: headers) { [weak self] errorMessage in
+      // completion fires on the main queue.
+      if let err = errorMessage {
+        NSLog("[YaverFeedback] swap failed: %@", err)
+        self?.transcriptView?.appendNarration("\n**Reload failed:** \(err)")
+        self?.overlayReloadInFlight = false
+        self?.disarmReloadCompleteListener()
+        return
+      }
+      NSLog("[YaverFeedback] swap success — bundle saved + reloadNotification posted")
+      self?.transcriptView?.appendNarration("\n🔄 **Swapping app…**")
+      // overlayReloadInFlight stays true — armReloadCompleteListener's
+      // observer (or its 8s fallback) clears it and posts ✓ Reloaded
+      // when AppDelegate finishes mounting the new bridge.
+    }
+  }
+
+  /// Stage-3 listener — clears the overlay's spinner the moment
+  /// AppDelegate's new bridge has mounted. Without this we'd either
+  /// (a) declare ✓ Reloaded too early (when the agent finished build,
+  /// before the bundle even downloaded — the user's complaint that
+  /// the underlying app was still compiling) or (b) leave the
+  /// spinner up until the 90s safety timeout fired even though the
+  /// reload had succeeded.
+  private var reloadCompleteObserver: NSObjectProtocol?
+  private var reloadCompleteFallback: DispatchWorkItem?
+
+  private func armReloadCompleteListener() {
+    disarmReloadCompleteListener()
+    reloadCompleteObserver = NotificationCenter.default.addObserver(
+      forName: AppDelegate.guestReloadCompleteNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      NSLog("[YaverFeedback] guestReloadComplete notification received")
+      self?.transcriptView?.appendNarration("\n✓ **Reloaded** — changes are live")
+      self?.overlayReloadInFlight = false
+      self?.disarmReloadCompleteListener()
+    }
+    // Belt-and-braces fallback: if the swap completes but the
+    // notification doesn't reach us for some reason (timing race,
+    // notification dropped during reentry), clear after 8s — the
+    // bridge invalidate+rebuild on a 5-MB bundle takes 1–3s in
+    // practice, so 8s is generous without being annoying.
+    let fallback = DispatchWorkItem { [weak self] in
+      guard let self = self, self.overlayReloadInFlight else { return }
+      NSLog("[YaverFeedback] reload-complete fallback fired (8s)")
+      self.transcriptView?.appendNarration("\n✓ **Reloaded** — bridge swap complete")
+      self.overlayReloadInFlight = false
+      self.disarmReloadCompleteListener()
+    }
+    reloadCompleteFallback = fallback
+    DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: fallback)
+  }
+
+  private func disarmReloadCompleteListener() {
+    if let observer = reloadCompleteObserver {
+      NotificationCenter.default.removeObserver(observer)
+      reloadCompleteObserver = nil
+    }
+    reloadCompleteFallback?.cancel()
+    reloadCompleteFallback = nil
+  }
+
   @objc private func closeTranscriptOverlayTapped() { closeTranscriptOverlay() }
+
+  /// Header `↻ Reload App` chip in the transcript overlay. Same path
+  /// as the (now-removed) bottom reload chip — fires /dev/reload-app
+  /// and subscribes to /dev/events so the streaming Hot-Reload phases
+  /// appear inline in the transcript.
+  @objc private func headerReloadChipTapped() {
+    NSLog("[YaverFeedback] headerReloadChipTapped")
+    self.kickOverlayReload(transcript: self.transcriptView)
+  }
 
   private func closeTranscriptOverlay() {
     NSLog("[YaverFeedback] closeTranscriptOverlay")

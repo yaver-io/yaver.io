@@ -1595,12 +1595,22 @@ func (s *HTTPServer) handleVibingExecute(w http.ResponseWriter, r *http.Request)
 // AND whose runner-specific auth/config checks pass for the agent's
 // current workdir. Preference order:
 //
-//  1. The agent's configured primary runner if it's ready.
-//  2. The first builtin runner that's ready (claude / codex / opencode
-//     / etc.) in builtinRunners-iteration order.
+//  1. The agent's configured primary runner if it's ready AND in the
+//     supported allowlist (claude / codex / opencode).
+//  2. The first runner from supportedRunnerIDs that's ready, in
+//     supportedRunnerIDs order (deterministic — not map iteration).
 //  3. Empty string — let CreateTask fall through to its own defaults.
 //     (CreateTask already has a "first installed builtin" fallback,
 //     so we never block here even if nothing passes the auth check.)
+//
+// Why we restrict to supportedRunnerIDs instead of walking the full
+// builtinRunners map: LoadRunnersFromBackend injects whatever Convex
+// has in its runners table (aider, goose, amp, ollama, …) into the
+// global builtinRunners. Iterating that map dropped feedback tasks
+// onto aider when it happened to be installed and not auth'd — the
+// user saw aider's OpenRouter sign-in banner instead of their picked
+// runner running. Mobile UI only offers claude/codex/opencode, so
+// the picker should match.
 func pickReadyVibingRunner(s *HTTPServer) string {
 	if s == nil || s.taskMgr == nil {
 		return ""
@@ -1611,14 +1621,18 @@ func pickReadyVibingRunner(s *HTTPServer) string {
 	workDir = s.taskMgr.workDir
 	s.taskMgr.mu.Unlock()
 
-	if strings.TrimSpace(primary.Command) != "" {
+	primaryID := normalizeRunnerID(primary.RunnerID)
+	if strings.TrimSpace(primary.Command) != "" && IsSupportedRunner(primaryID) {
 		if err := CheckRunnerReady(primary, workDir); err == nil {
 			return primary.RunnerID
 		}
 	}
-	// Walk every builtin and pick the first one that's actually ready.
-	for id, runner := range builtinRunners {
-		if normalizeRunnerID(id) == normalizeRunnerID(primary.RunnerID) {
+	for _, id := range supportedRunnerIDs {
+		if normalizeRunnerID(id) == primaryID {
+			continue
+		}
+		runner, ok := builtinRunners[id]
+		if !ok {
 			continue
 		}
 		if err := CheckRunnerReady(runner, workDir); err == nil {

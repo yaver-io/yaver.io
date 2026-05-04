@@ -3238,7 +3238,7 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	if guestUID != "" {
 		bodyWorkDir = guestWorkDir
 	}
-	s.vibingifyFeedbackTaskBody(r, source, &title, &body.ProjectName, &bodyWorkDir, &body.Runner, body.BundleID)
+	s.vibingifyFeedbackTaskBody(r, source, &title, &body.ProjectName, &bodyWorkDir, &body.Runner, &body.Model, body.BundleID)
 	if guestUID == "" {
 		body.WorkDir = bodyWorkDir
 	}

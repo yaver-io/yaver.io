@@ -1883,6 +1883,18 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[dev] Reload-app (bundle mode): broadcast reload_bundle to SDK devices")
 		}
 		s.upsertDevOperation("reload_app", "completed", "push", "Fresh bundle sent. The phone is restarting the guest inside Yaver.", projectPath, target.DeviceID, 1, map[string]interface{}{"mode": "bundle"})
+		// Explicit terminal event on /dev/events so SSE consumers
+		// (feedback-overlay reload chip) can clear their progress
+		// spinner without waiting on a 90s safety timeout. Without
+		// this, the only "we're done" signal lived on
+		// /blackbox/command-stream (phase=push with progress=0.98)
+		// which the overlay isn't subscribed to — the build had
+		// finished and the bundle had broadcast successfully but
+		// the spinner kept going until the hard timeout fired.
+		if s.devServerMgr != nil {
+			s.devServerMgr.EmitLog("Reload complete — bundle broadcast")
+			s.devServerMgr.EmitReloadDone(projectPath, target.DeviceID, bundleURL)
+		}
 		// Note: response already written by handleBuildNativeBundle
 
 	default:
@@ -1951,7 +1963,19 @@ func (s *HTTPServer) handleDevServerEvents(w http.ResponseWriter, r *http.Reques
 	fmt.Fprintf(w, ":hello %d\n\n", time.Now().Unix())
 	flusher.Flush()
 
-	ch := mgr.Subscribe()
+	// `?fresh=1` skips the history replay so callers that only care
+	// about events emitted AFTER they subscribed (mobile feedback
+	// overlay reload chip) don't have to filter the replayed prior
+	// reload cycle out client-side. The dashboard CONSOLE keeps
+	// replay (default) so it doesn't lose context across reconnects.
+	fresh := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("fresh")), "1") ||
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("fresh")), "true")
+	var ch chan DevServerEvent
+	if fresh {
+		ch = mgr.SubscribeFresh()
+	} else {
+		ch = mgr.Subscribe()
+	}
 	defer mgr.Unsubscribe(ch)
 
 	// Periodic keepalive comments. Without these, an idle Metro that
@@ -2824,62 +2848,95 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
 	} else {
 		log.Printf("[super-host] using hermesc at: %s", hermescPath)
-		tmpPath := bundlePath + ".tmp"
-		os.Rename(bundlePath, tmpPath)
 
-		// Wall-clock cap on hermesc compile. hermesc is fast (<30s for a
-		// large RN bundle) but a corrupt input or an OOM-killed retry can
-		// hang it; without this the /dev/build-native HTTP request would
-		// stay open indefinitely after a successful Metro bundle.
-		hermesCtx, hermesCancel := context.WithTimeout(r.Context(), hermesCompileTimeout)
-		// Re-register under the hermesc cancel so /dev/stop can also
-		// interrupt the compile phase, not just the Metro bundle phase.
-		releaseHermesBuild := registerActiveBuild(workDir, req.Platform, hermesCancel)
-		// Default: -O (heavy optimization) — production-grade bundle.
-		// Debug=true: -Og + -g + -output-source-map — keeps Hermes
-		// runtime backtraces symbolicatable. See req.Debug docs above.
-		hermesArgs := []string{"-emit-binary", "-out", bundlePath}
-		if req.Debug {
-			hermesArgs = append(hermesArgs, "-Og", "-g", "-output-source-map")
-			log.Printf("[super-host] hermesc DEBUG mode: emitting -Og -g + source map")
-			s.devServerMgr.EmitLog("Hermes debug build (source maps + line info)")
-		} else {
-			hermesArgs = append(hermesArgs, "-O")
-		}
-		hermesArgs = append(hermesArgs, tmpPath)
-		hermesCmd := exec.CommandContext(hermesCtx, hermescPath, hermesArgs...)
-		hermesCmd.Dir = workDir
-		hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
-		hermesCmd.Stdout = hermesLogW
-		hermesCmd.Stderr = hermesLogW
-
-		hermesErr := hermesCmd.Run()
-		hermesCancel()
-		releaseHermesBuild()
-		if err := hermesErr; err != nil {
-			if hermesCtx.Err() == context.DeadlineExceeded {
-				err = fmt.Errorf("hermesc timed out after %s (subprocess killed)", hermesCompileTimeout)
-			}
-			os.Rename(tmpPath, bundlePath)
-			log.Printf("[super-host] hermesc failed: %v — using plain JS", err)
-			s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
-			incident := s.appendDevIncident("build", ReasonBuildHermesFailed, "Hermes compilation failed", "Hermes bytecode compilation failed on the host.", err.Error(), "Inspect the Hermes compiler output and retry after fixing the host-side build issue.", workDir, target.DeviceID, req.Platform, IncidentSeverityWarn, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
-			s.upsertDevOperation("build_native", "running", "hermes", "Hermes compilation failed; falling back to plain JS bundle.", workDir, target.DeviceID, 0.8, map[string]interface{}{"platform": req.Platform}, incident.ID)
-			if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
-				mgr.hermesTracker.transitionPhase("error")
-			}
-		} else {
-			os.Remove(tmpPath)
-			log.Printf("[super-host] hermesc compile complete")
+		// ── Layer 0: HBC content-hash cache (secondary-reload optimization) ──
+		// If the JS bundle Metro just produced is byte-identical to one we
+		// previously compiled, skip hermesc entirely and serve the cached
+		// HBC. Cache failures fall through silently. See
+		// docs/hermes-secondary-reload-optimization.md §13.1 for the
+		// safety analysis. The lookup emits cache_lookup → cache_hit /
+		// cache_miss / cache_corrupt phase events on the hermesTracker so
+		// the mobile UI sees what happened (the "always stream even on
+		// fallback" guarantee).
+		hbcCache := prepareDevHBCCacheLookup(bundlePath, hermescPath, req.Debug, s.devServerMgr)
+		if hbcCache.Hit() {
+			// Cache hit — bundlePath now contains the validated cached
+			// HBC; skip the hermesc invocation entirely. The
+			// hermesTracker has already been transitioned to `ready`
+			// inside prepareDevHBCCacheLookup, mirroring the success
+			// path below.
 			GlobalIncidentStore().ResolveOpenByKey(IncidentKey{
 				Category:    "build",
 				Code:        ReasonBuildHermesFailed,
 				DeviceID:    strings.TrimSpace(target.DeviceID),
 				ProjectPath: strings.TrimSpace(workDir),
 				Target:      strings.TrimSpace(req.Platform),
-			}, "Hermes compilation recovered.")
-			if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
-				mgr.hermesTracker.transitionPhase("ready")
+			}, "Hermes bundle served from cache.")
+			s.devServerMgr.EmitLog("Hermes bundle served from cache (no compile needed)")
+			log.Printf("[super-host] hermes cache hit — skipped hermesc")
+		} else {
+			tmpPath := bundlePath + ".tmp"
+			os.Rename(bundlePath, tmpPath)
+
+			// Wall-clock cap on hermesc compile. hermesc is fast (<30s for a
+			// large RN bundle) but a corrupt input or an OOM-killed retry can
+			// hang it; without this the /dev/build-native HTTP request would
+			// stay open indefinitely after a successful Metro bundle.
+			hermesCtx, hermesCancel := context.WithTimeout(r.Context(), hermesCompileTimeout)
+			// Re-register under the hermesc cancel so /dev/stop can also
+			// interrupt the compile phase, not just the Metro bundle phase.
+			releaseHermesBuild := registerActiveBuild(workDir, req.Platform, hermesCancel)
+			// Default: -O (heavy optimization) — production-grade bundle.
+			// Debug=true: -Og + -g + -output-source-map — keeps Hermes
+			// runtime backtraces symbolicatable. See req.Debug docs above.
+			hermesArgs := []string{"-emit-binary", "-out", bundlePath}
+			if req.Debug {
+				hermesArgs = append(hermesArgs, "-Og", "-g", "-output-source-map")
+				log.Printf("[super-host] hermesc DEBUG mode: emitting -Og -g + source map")
+				s.devServerMgr.EmitLog("Hermes debug build (source maps + line info)")
+			} else {
+				hermesArgs = append(hermesArgs, "-O")
+			}
+			hermesArgs = append(hermesArgs, tmpPath)
+			hermesCmd := exec.CommandContext(hermesCtx, hermescPath, hermesArgs...)
+			hermesCmd.Dir = workDir
+			hermesLogW := &devLogWriter{prefix: "[super-host:hermesc]"}
+			hermesCmd.Stdout = hermesLogW
+			hermesCmd.Stderr = hermesLogW
+
+			hermesErr := hermesCmd.Run()
+			hermesCancel()
+			releaseHermesBuild()
+			if err := hermesErr; err != nil {
+				if hermesCtx.Err() == context.DeadlineExceeded {
+					err = fmt.Errorf("hermesc timed out after %s (subprocess killed)", hermesCompileTimeout)
+				}
+				os.Rename(tmpPath, bundlePath)
+				log.Printf("[super-host] hermesc failed: %v — using plain JS", err)
+				s.devServerMgr.EmitLog(fmt.Sprintf("hermesc failed, using plain JS: %v", err))
+				incident := s.appendDevIncident("build", ReasonBuildHermesFailed, "Hermes compilation failed", "Hermes bytecode compilation failed on the host.", err.Error(), "Inspect the Hermes compiler output and retry after fixing the host-side build issue.", workDir, target.DeviceID, req.Platform, IncidentSeverityWarn, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+				s.upsertDevOperation("build_native", "running", "hermes", "Hermes compilation failed; falling back to plain JS bundle.", workDir, target.DeviceID, 0.8, map[string]interface{}{"platform": req.Platform}, incident.ID)
+				if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
+					mgr.hermesTracker.transitionPhase("error")
+				}
+				// Compile failed → don't poison the cache.
+			} else {
+				os.Remove(tmpPath)
+				log.Printf("[super-host] hermesc compile complete")
+				GlobalIncidentStore().ResolveOpenByKey(IncidentKey{
+					Category:    "build",
+					Code:        ReasonBuildHermesFailed,
+					DeviceID:    strings.TrimSpace(target.DeviceID),
+					ProjectPath: strings.TrimSpace(workDir),
+					Target:      strings.TrimSpace(req.Platform),
+				}, "Hermes compilation recovered.")
+				if mgr := s.devServerMgr; mgr != nil && mgr.hermesTracker != nil {
+					mgr.hermesTracker.transitionPhase("ready")
+				}
+				// Compile succeeded — file the bytecode under the
+				// cache key prepared at lookup time. Failures are
+				// logged inside the helper and never propagate.
+				hbcCache.CommitOnSuccess(bundlePath)
 			}
 		}
 	}

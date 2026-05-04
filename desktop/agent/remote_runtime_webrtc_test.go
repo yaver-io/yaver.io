@@ -134,6 +134,241 @@ func TestApplyWebRTCOffer_AnswerHasBothDataChannels(t *testing.T) {
 	}
 }
 
+func TestApplyWebRTCOffer_VideoTransceiverPicksRTPH264Path(t *testing.T) {
+	// The web viewer signals "I can decode H.264 — give me an RTP
+	// track" by adding a recv-only video transceiver to the offer.
+	// The agent must spot the m=video line, attach a Pion video
+	// track, and stamp the negotiated transport on the session
+	// payload as `webrtc-rtp-h264-v1`. framesDC must NOT be created
+	// in this branch — old viewers that poll on framesDC are not
+	// the audience here.
+	mgr, sessionID := newPrimedManager(t, "android-emulator")
+
+	// Override the encoder-capability probe so the test doesn't need
+	// adb on PATH. The production check still runs in normal flow.
+	prev := agentCanEncodeRTPH264
+	agentCanEncodeRTPH264 = func(string) bool { return true }
+	t.Cleanup(func() { agentCanEncodeRTPH264 = prev })
+
+	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("client PC: %v", err)
+	}
+	defer clientPC.Close()
+
+	if _, err := clientPC.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		t.Fatalf("add video transceiver: %v", err)
+	}
+	offer, err := clientPC.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	gather := webrtc.GatheringCompletePromise(clientPC)
+	if err := clientPC.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local: %v", err)
+	}
+	<-gather
+	finalOffer := *clientPC.LocalDescription()
+	if !strings.Contains(finalOffer.SDP, "m=video") {
+		t.Fatal("offer missing m=video — test setup wrong")
+	}
+
+	updated, answer, err := mgr.ApplyWebRTCOffer(sessionID, finalOffer)
+	if err != nil {
+		t.Fatalf("ApplyWebRTCOffer: %v", err)
+	}
+	if updated.FrameTransport != "webrtc-rtp-h264-v1" {
+		t.Errorf("FrameTransport = %q, want webrtc-rtp-h264-v1", updated.FrameTransport)
+	}
+	if !strings.Contains(answer.SDP, "m=video") {
+		t.Errorf("answer should echo m=video: %s", answer.SDP)
+	}
+
+	live, _ := mgr.getLive(sessionID)
+	live.mu.Lock()
+	track := live.videoTrack
+	frames := live.framesDC
+	live.mu.Unlock()
+	if track == nil {
+		t.Error("videoTrack must be stored on live state for RTP path")
+	}
+	if frames != nil {
+		t.Error("framesDC must NOT be created on RTP path — that's the JPEG-DC code path")
+	}
+}
+
+func TestApplyWebRTCOffer_VideoTransceiverFallsBackWhenAgentCannotEncode(t *testing.T) {
+	// If the viewer asks for RTP but the host can't encode (no adb,
+	// or iOS without the MP4 parser), we silently fall back to
+	// JPEG-DC. The viewer learns about it from the negotiated
+	// transport string in the answer.
+	mgr, sessionID := newPrimedManager(t, "android-emulator")
+	prev := agentCanEncodeRTPH264
+	agentCanEncodeRTPH264 = func(string) bool { return false }
+	t.Cleanup(func() { agentCanEncodeRTPH264 = prev })
+
+	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatalf("client PC: %v", err)
+	}
+	defer clientPC.Close()
+	if _, err := clientPC.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+		Direction: webrtc.RTPTransceiverDirectionRecvonly,
+	}); err != nil {
+		t.Fatalf("add video transceiver: %v", err)
+	}
+	offer, err := clientPC.CreateOffer(nil)
+	if err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+	gather := webrtc.GatheringCompletePromise(clientPC)
+	if err := clientPC.SetLocalDescription(offer); err != nil {
+		t.Fatalf("set local: %v", err)
+	}
+	<-gather
+	updated, _, err := mgr.ApplyWebRTCOffer(sessionID, *clientPC.LocalDescription())
+	if err != nil {
+		t.Fatalf("ApplyWebRTCOffer: %v", err)
+	}
+	if updated.FrameTransport != "webrtc-datachannel-jpeg-v1" {
+		t.Errorf("FrameTransport = %q, want fallback webrtc-datachannel-jpeg-v1", updated.FrameTransport)
+	}
+	live, _ := mgr.getLive(sessionID)
+	live.mu.Lock()
+	track := live.videoTrack
+	frames := live.framesDC
+	live.mu.Unlock()
+	if track != nil {
+		t.Error("videoTrack must NOT be created when agent cannot encode")
+	}
+	if frames == nil {
+		t.Error("framesDC must be created on fallback")
+	}
+}
+
+func TestApplyWebRTCOffer_FansOutToSecondViewerWithoutTearingDownFirst(t *testing.T) {
+	// Phase-9 multi-viewer fan-out. Two browser tabs (or a tab +
+	// the mobile dashboard) hit /webrtc/offer for the same session.
+	// Pre-fan-out behavior: the second offer called closePeer() and
+	// the first viewer was disconnected. After: both are tracked,
+	// both get an answer, both share the same Pion video track.
+	mgr, sessionID := newPrimedManager(t, "android-emulator")
+	prev := agentCanEncodeRTPH264
+	agentCanEncodeRTPH264 = func(string) bool { return true }
+	t.Cleanup(func() { agentCanEncodeRTPH264 = prev })
+
+	mkOffer := func(t *testing.T) webrtc.SessionDescription {
+		t.Helper()
+		client, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			t.Fatalf("client PC: %v", err)
+		}
+		t.Cleanup(func() { client.Close() })
+		if _, err := client.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionRecvonly,
+		}); err != nil {
+			t.Fatalf("add transceiver: %v", err)
+		}
+		offer, err := client.CreateOffer(nil)
+		if err != nil {
+			t.Fatalf("create offer: %v", err)
+		}
+		gather := webrtc.GatheringCompletePromise(client)
+		if err := client.SetLocalDescription(offer); err != nil {
+			t.Fatalf("set local: %v", err)
+		}
+		<-gather
+		return *client.LocalDescription()
+	}
+
+	// First viewer attaches.
+	if _, _, err := mgr.ApplyWebRTCOffer(sessionID, mkOffer(t)); err != nil {
+		t.Fatalf("first ApplyWebRTCOffer: %v", err)
+	}
+	live, _ := mgr.getLive(sessionID)
+	live.mu.Lock()
+	firstTrack := live.videoTrack
+	firstPeerCount := len(live.peers)
+	live.mu.Unlock()
+	if firstTrack == nil {
+		t.Fatal("first peer should have created the videoTrack")
+	}
+	if firstPeerCount != 1 {
+		t.Errorf("after first offer: peers=%d, want 1", firstPeerCount)
+	}
+
+	// Second viewer attaches. Must NOT tear down the first.
+	if _, _, err := mgr.ApplyWebRTCOffer(sessionID, mkOffer(t)); err != nil {
+		t.Fatalf("second ApplyWebRTCOffer: %v", err)
+	}
+	live.mu.Lock()
+	secondTrack := live.videoTrack
+	secondPeerCount := len(live.peers)
+	firstPeerStillThere := false
+	for _, p := range live.peers {
+		if p != nil && p.pc != nil &&
+			p.pc.ConnectionState() != webrtc.PeerConnectionStateClosed {
+			firstPeerStillThere = true
+		}
+	}
+	live.mu.Unlock()
+	if secondTrack != firstTrack {
+		t.Errorf("video track was replaced — fan-out should reuse the same TrackLocalStaticSample")
+	}
+	if secondPeerCount != 2 {
+		t.Errorf("after second offer: peers=%d, want 2 (fan-out)", secondPeerCount)
+	}
+	if !firstPeerStillThere {
+		t.Error("first viewer should not have been closed by second offer")
+	}
+}
+
+func TestApplyWebRTCOffer_JPEGModeStaysSingleViewer(t *testing.T) {
+	// JPEG-DC mode predates fan-out and the framesDC payload isn't
+	// designed for broadcast. A second JPEG offer for the same
+	// session must still close the first peer (legacy behavior),
+	// otherwise we'd quietly start two competing JPEG pumps.
+	mgr, sessionID := newPrimedManager(t, "ios-simulator")
+
+	mkJpegOffer := func(t *testing.T) webrtc.SessionDescription {
+		t.Helper()
+		client, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { client.Close() })
+		if _, err := client.CreateDataChannel("primer", nil); err != nil {
+			t.Fatal(err)
+		}
+		offer, err := client.CreateOffer(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gather := webrtc.GatheringCompletePromise(client)
+		if err := client.SetLocalDescription(offer); err != nil {
+			t.Fatal(err)
+		}
+		<-gather
+		return *client.LocalDescription()
+	}
+
+	if _, _, err := mgr.ApplyWebRTCOffer(sessionID, mkJpegOffer(t)); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if _, _, err := mgr.ApplyWebRTCOffer(sessionID, mkJpegOffer(t)); err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	live, _ := mgr.getLive(sessionID)
+	live.mu.Lock()
+	peerCount := len(live.peers)
+	live.mu.Unlock()
+	if peerCount != 1 {
+		t.Errorf("JPEG-DC mode should stay single-viewer, got %d peers", peerCount)
+	}
+}
+
 func TestApplyWebRTCOffer_RejectsRelayJpegPollSession(t *testing.T) {
 	// Sessions created in relay-jpeg-poll mode do not use WebRTC at
 	// all. Attempting an SDP exchange against one is a client bug; we
@@ -174,6 +409,87 @@ func TestApplyWebRTCOffer_UnknownSession(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "not found") {
 		t.Errorf("error should say not-found: %v", err)
+	}
+}
+
+func TestAndroidKeycodeForName_KnownAliases(t *testing.T) {
+	// Spot-check the canonical map and its alias spellings. This is
+	// the protocol the web viewer relies on — a typo here silently
+	// breaks a hardware-button click in the browser, which is
+	// frustrating to debug without a regression gate.
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"home", 3},
+		{"HOME", 3},
+		{"back", 4},
+		{"menu", 82},
+		{"recents", 187},
+		{"app_switch", 187},
+		{"app-switch", 187},
+		{"AppSwitch", 187},
+		{"overview", 187},
+		{"volume_up", 24},
+		{"volumeup", 24},
+		{"Volume Up", 24},
+		{"volume_down", 25},
+		{"mute", 164},
+		{"power", 26},
+		{"wake", 224},
+		{"sleep", 223},
+		{"enter", 66},
+		{"tab", 61},
+		{"esc", 111},
+		{"escape", 111},
+		{"backspace", 67},
+		{"delete", 67},
+		{"search", 84},
+		{"camera", 27},
+		{"play_pause", 85},
+		{"playpause", 85},
+		{"next", 87},
+		{"previous", 88},
+	}
+	for _, c := range cases {
+		got, ok := androidKeycodeForName(c.in)
+		if !ok {
+			t.Errorf("androidKeycodeForName(%q): expected hit, got miss", c.in)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("androidKeycodeForName(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
+func TestAndroidKeycodeForName_UnknownReturnsFalse(t *testing.T) {
+	for _, in := range []string{"", "  ", "nonsense", "   xxxx   "} {
+		if _, ok := androidKeycodeForName(in); ok {
+			t.Errorf("androidKeycodeForName(%q) should miss", in)
+		}
+	}
+}
+
+func TestExecuteControl_NumericKeycodeStillWorks(t *testing.T) {
+	// Escape hatch: even when the friendly name doesn't exist, the
+	// numeric KEYCODE_* string ("82" for KEYCODE_MENU, "187" for
+	// KEYCODE_APP_SWITCH) must still flow through. Lets a power
+	// user drive any keycode without waiting for the alias map to
+	// catch up. The test stops at the request validation layer —
+	// without an actual device, the adb call can't succeed, so we
+	// only verify the "missing action" / "unsupported" gates don't
+	// fire.
+	mgr, sessionID := newPrimedManager(t, "android-emulator")
+	_, err := mgr.ExecuteControl(sessionID, remoteRuntimeControlRequest{
+		Action: "key", Key: "999999", // numeric, but no real adb device
+	})
+	// We expect an error from the underlying adb exec, not from the
+	// validation layer. The error message should NOT be the
+	// "unsupported key" string that earlier code emitted before this
+	// change.
+	if err != nil && strings.Contains(err.Error(), "unsupported key") {
+		t.Errorf("numeric keycode should bypass the unknown-name error, got %q", err.Error())
 	}
 }
 
@@ -233,6 +549,43 @@ func TestExecuteControl_TextRejectsEmpty(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "text is empty") {
 		t.Errorf("error should be specific: %v", err)
+	}
+}
+
+func TestExecuteControl_SwipeRejectsNegativeCoords(t *testing.T) {
+	// Same defense-in-depth as tap. Negative swipe coords would slip
+	// past adb input swipe and produce undefined behavior.
+	mgr, sessionID := newPrimedManager(t, "android-emulator")
+	cases := []struct{ x1, y1, x2, y2 int }{
+		{-1, 100, 200, 200},
+		{100, -1, 200, 200},
+		{100, 100, -1, 200},
+		{100, 100, 200, -1},
+	}
+	for _, c := range cases {
+		_, err := mgr.ExecuteControl(sessionID, remoteRuntimeControlRequest{
+			Action: "swipe", X: c.x1, Y: c.y1, X2: c.x2, Y2: c.y2,
+		})
+		if err == nil {
+			t.Errorf("swipe(%d,%d → %d,%d) should be rejected", c.x1, c.y1, c.x2, c.y2)
+		}
+	}
+}
+
+func TestExecuteControl_SwipeUnsupportedOnIOS(t *testing.T) {
+	// iOS Simulator has no built-in swipe primitive in xcrun. Until
+	// a WDA / cliclick path lands in a follow-up phase the handler
+	// must error so the viewer can either fall back to short taps or
+	// surface the limitation to the user.
+	mgr, sessionID := newPrimedManager(t, "ios-simulator")
+	_, err := mgr.ExecuteControl(sessionID, remoteRuntimeControlRequest{
+		Action: "swipe", X: 100, Y: 200, X2: 100, Y2: 600, DurationMs: 300,
+	})
+	if err == nil {
+		t.Fatal("expected swipe-on-iOS to error pending Phase 6+ support")
+	}
+	if !strings.Contains(err.Error(), "ios-simulator") {
+		t.Errorf("error should call out the platform: %v", err)
 	}
 }
 

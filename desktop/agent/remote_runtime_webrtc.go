@@ -22,6 +22,18 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
+// remoteRuntimePeer is one viewer attached to a session. RTP-mode
+// sessions can hold many peers in parallel — they all receive the
+// same video track via Pion's track-fan-out and each gets its own
+// events DataChannel. JPEG-DC mode stays single-viewer (the framesDC
+// payload is too large to broadcast efficiently and there are no
+// users left who'd benefit from concurrent JPEG viewers anyway).
+type remoteRuntimePeer struct {
+	pc       *webrtc.PeerConnection
+	framesDC *webrtc.DataChannel
+	eventsDC *webrtc.DataChannel
+}
+
 type remoteRuntimeLiveState struct {
 	mu        sync.Mutex
 	sessionID string
@@ -29,9 +41,26 @@ type remoteRuntimeLiveState struct {
 	platform  string
 	deviceID  string
 
+	// peers is the active subscriber list. Phase-9 multi-viewer
+	// fan-out: every RTP-mode offer appends; JPEG-DC mode replaces.
+	// The slice is the source of truth — `pc`, `framesDC`,
+	// `eventsDC` below are just convenience pointers to the LATEST
+	// peer (preserved so existing callers that grab them under the
+	// mutex keep compiling without further refactor).
+	peers []*remoteRuntimePeer
+
 	pc       *webrtc.PeerConnection
 	framesDC *webrtc.DataChannel
 	eventsDC *webrtc.DataChannel
+
+	// videoTrack + videoPump are non-nil when the negotiated transport
+	// is direct-webrtc-rtp-h264 (browser viewer with a video
+	// transceiver). Old viewers (no m=video in their offer) leave
+	// these nil and use framesDC for JPEG polling instead. The track
+	// outlives any single peer — multi-viewer fan-out adds peers to
+	// it without restarting the capture pipeline.
+	videoTrack *webrtc.TrackLocalStaticSample
+	videoPump  *videoTrackPump
 
 	streamCancel context.CancelFunc
 	lastFrame    []byte
@@ -42,8 +71,12 @@ type remoteRuntimeControlRequest struct {
 	Action string `json:"action"`
 	X      int    `json:"x,omitempty"`
 	Y      int    `json:"y,omitempty"`
-	Text   string `json:"text,omitempty"`
-	Key    string `json:"key,omitempty"`
+	// Swipe end-point + duration. Used when Action == "swipe".
+	X2         int `json:"x2,omitempty"`
+	Y2         int `json:"y2,omitempty"`
+	DurationMs int `json:"durationMs,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Key        string `json:"key,omitempty"`
 }
 
 func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, error) {
@@ -88,10 +121,21 @@ func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, e
 	live.deviceID = deviceID
 	live.mu.Unlock()
 
+	// Probe the booted device's screen dims now (before signaling
+	// starts) so the session payload carries them, and the events
+	// channel can emit the same numbers on first connect. Fallback
+	// values inside ProbeDeviceDims keep this from blocking session
+	// start on transient adb/xcrun failures.
+	dimsCtx, dimsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	dims := ProbeDeviceDims(dimsCtx, session.TargetID, deviceID)
+	dimsCancel()
+
 	updated, _ := m.Update(sessionID, func(current *RemoteRuntimeSession) {
 		current.DeviceID = deviceID
 		current.Status = "control-ready"
-		current.Note = fmt.Sprintf("Attached to %s (%s). WebRTC screenshot streaming is ready for signaling.", current.TargetLabel, deviceID)
+		current.DeviceDims = &dims
+		current.Note = fmt.Sprintf("Attached to %s (%s). Screen %dx%d %s. WebRTC streaming ready for signaling.",
+			current.TargetLabel, deviceID, dims.Width, dims.Height, dims.Rotation)
 	})
 	return updated, nil
 }
@@ -104,19 +148,77 @@ func (m *RemoteRuntimeManager) CloseSession(sessionID string) {
 	m.Delete(sessionID)
 }
 
+// closePeer tears down the entire session: every subscriber peer,
+// the video track, the JPEG pump. Called from CloseSession + when
+// the underlying WebRTC connection state goes Failed/Closed AND no
+// other peers remain attached. Multi-viewer fan-out means a single
+// PC failure shouldn't kill the session for the rest of the
+// audience — see closeOnePeer for the per-peer teardown.
 func (live *remoteRuntimeLiveState) closePeer() {
+	live.mu.Lock()
+	pump := live.videoPump
+	peers := live.peers
+	live.peers = nil
+	live.mu.Unlock()
+	// Stop pump *before* taking the mutex so its goroutine can drain
+	// without deadlocking against any callbacks that try to grab the
+	// lock during shutdown.
+	if pump != nil {
+		pump.Stop()
+	}
+	for _, p := range peers {
+		closeRemoteRuntimePeer(p)
+	}
 	live.mu.Lock()
 	defer live.mu.Unlock()
 	if live.streamCancel != nil {
 		live.streamCancel()
 		live.streamCancel = nil
 	}
-	if live.pc != nil {
-		_ = live.pc.Close()
-		live.pc = nil
-	}
+	live.pc = nil
 	live.framesDC = nil
 	live.eventsDC = nil
+	live.videoTrack = nil
+	live.videoPump = nil
+}
+
+// closeRemoteRuntimePeer tears down a single subscriber. Safe to
+// call with a nil peer (no-op).
+func closeRemoteRuntimePeer(p *remoteRuntimePeer) {
+	if p == nil {
+		return
+	}
+	if p.pc != nil {
+		_ = p.pc.Close()
+	}
+}
+
+// dropPeerLocked removes a single peer from live.peers. Caller must
+// hold live.mu. Returns true if the peer was actually present so
+// the caller can decide whether to log "session ended" (peers==0)
+// vs. "viewer disconnected" (peers>0).
+func (live *remoteRuntimeLiveState) dropPeerLocked(p *remoteRuntimePeer) bool {
+	for i, q := range live.peers {
+		if q == p {
+			live.peers = append(live.peers[:i], live.peers[i+1:]...)
+			// If we just dropped the peer the legacy single-PC
+			// pointers reference, repoint them at the new tail
+			// (or clear them when the list emptied).
+			if live.pc == p.pc {
+				live.pc = nil
+				live.framesDC = nil
+				live.eventsDC = nil
+				if n := len(live.peers); n > 0 {
+					tail := live.peers[n-1]
+					live.pc = tail.pc
+					live.framesDC = tail.framesDC
+					live.eventsDC = tail.eventsDC
+				}
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.SessionDescription) (RemoteRuntimeSession, webrtc.SessionDescription, error) {
@@ -132,28 +234,94 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 		return RemoteRuntimeSession{}, webrtc.SessionDescription{}, fmt.Errorf("remote runtime state missing")
 	}
 
-	live.closePeer()
+	// Auto-detect the desired transport from the offer SDP. A
+	// browser viewer that wants RTP video calls
+	// `pc.addTransceiver("video", { direction: "recvonly" })` before
+	// generating its offer, which puts an `m=video` line in the SDP.
+	// Old viewers (no video transceiver) skip the RTP path
+	// entirely — same behavior as before this change.
+	wantVideo := strings.Contains(offer.SDP, "m=video") && agentCanEncodeRTPH264(session.TargetID)
+
+	// Phase-9 fan-out: if there's already an active video track AND
+	// the new offer also wants RTP, attach this offer as an
+	// additional subscriber instead of replacing the running peer.
+	// The existing capture pipeline keeps streaming uninterrupted —
+	// Pion fans out RTP packets to every PC the track is attached
+	// to. JPEG-DC mode stays single-viewer (the framesDC path is
+	// not designed for broadcast and the legacy mobile viewer is
+	// the only consumer).
+	live.mu.Lock()
+	existingTrack := live.videoTrack
+	live.mu.Unlock()
+	if !wantVideo {
+		// JPEG-DC offer arriving — close any existing peers (legacy
+		// single-viewer behavior). Same as pre-fan-out code path.
+		live.closePeer()
+	}
 
 	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return session, webrtc.SessionDescription{}, err
 	}
-	framesDC, err := pc.CreateDataChannel("frames", nil)
-	if err != nil {
-		_ = pc.Close()
-		return session, webrtc.SessionDescription{}, err
+
+	negotiatedTransport := "webrtc-datachannel-jpeg-v1"
+
+	var (
+		framesDC   *webrtc.DataChannel
+		videoTrack *webrtc.TrackLocalStaticSample
+	)
+	if wantVideo {
+		// Reuse the existing track if one is already running so all
+		// peers consume the same encoded H.264 bitstream. Only the
+		// FIRST RTP peer creates the track + boots the pump; later
+		// peers just AddTrack onto the existing one.
+		if existingTrack != nil {
+			videoTrack = existingTrack
+		} else {
+			track, terr := webrtc.NewTrackLocalStaticSample(
+				webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000},
+				"yaver-runtime", "yaver-stream",
+			)
+			if terr != nil {
+				_ = pc.Close()
+				return session, webrtc.SessionDescription{}, fmt.Errorf("create h264 track: %w", terr)
+			}
+			videoTrack = track
+		}
+		if _, terr := pc.AddTrack(videoTrack); terr != nil {
+			_ = pc.Close()
+			return session, webrtc.SessionDescription{}, fmt.Errorf("add track: %w", terr)
+		}
+		negotiatedTransport = "webrtc-rtp-h264-v1"
+	} else {
+		dc, derr := pc.CreateDataChannel("frames", nil)
+		if derr != nil {
+			_ = pc.Close()
+			return session, webrtc.SessionDescription{}, derr
+		}
+		framesDC = dc
 	}
+
 	eventsDC, err := pc.CreateDataChannel("events", nil)
 	if err != nil {
 		_ = pc.Close()
 		return session, webrtc.SessionDescription{}, err
 	}
 
+	peer := &remoteRuntimePeer{pc: pc, framesDC: framesDC, eventsDC: eventsDC}
 	live.mu.Lock()
+	live.peers = append(live.peers, peer)
 	live.pc = pc
 	live.framesDC = framesDC
 	live.eventsDC = eventsDC
+	live.videoTrack = videoTrack
 	live.mu.Unlock()
+	// Reflect the negotiated transport on the session so the JSON
+	// response carries it back to the viewer (and Convex sees a
+	// transport counter that matches reality).
+	m.Update(sessionID, func(current *RemoteRuntimeSession) {
+		current.FrameTransport = negotiatedTransport
+	})
 
 	pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		status := "signaling"
@@ -174,23 +342,80 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 			current.Note = fmt.Sprintf("WebRTC state: %s", state.String())
 		})
 		if state == webrtc.PeerConnectionStateConnected {
-			live.startFramePump(m)
+			// Branch on which transport was negotiated. videoTrack !=
+			// nil means the viewer offered an m=video transceiver and
+			// the agent attached an H.264 track. The pump is shared
+			// across viewers — only the FIRST peer for a given
+			// session boots it. Subsequent fan-out peers piggy-back
+			// on the existing pump.
+			live.mu.Lock()
+			track := live.videoTrack
+			pumpRunning := live.videoPump != nil
+			live.mu.Unlock()
+			if track != nil {
+				if !pumpRunning {
+					pump := newVideoTrackPump(live.targetID, live.deviceID, track, func(ev map[string]any) {
+						live.sendEventJSON(ev)
+					})
+					live.mu.Lock()
+					live.videoPump = pump
+					live.mu.Unlock()
+					pump.Start(context.Background())
+				}
+			} else {
+				live.startFramePump(m)
+			}
 			live.sendEventJSON(map[string]any{
 				"type":     "session",
 				"session":  updated,
 				"platform": updated.Platform,
 			})
+			// Emit `dims` once on connect so the viewer can size its
+			// <video> wrapper (CSS aspect-ratio) and scale pointer
+			// coordinates back to device space. The session payload
+			// already carries these but newer viewers prefer to
+			// listen on the events channel — keeps both paths in
+			// sync.
+			if updated.DeviceDims != nil {
+				live.sendEventJSON(map[string]any{
+					"type":     "dims",
+					"width":    updated.DeviceDims.Width,
+					"height":   updated.DeviceDims.Height,
+					"scale":    updated.DeviceDims.Scale,
+					"rotation": updated.DeviceDims.Rotation,
+					"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+				})
+			}
 		}
 		if state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateClosed {
-			live.closePeer()
+			// Phase-9 fan-out: tearing down ONE peer must not kill
+			// the session if other viewers are still attached.
+			// Drop just this peer; if the list emptied AND we're in
+			// JPEG-DC mode, fully close (the pump has nothing to
+			// feed). RTP sessions keep the track + pump alive until
+			// CloseSession so a momentary disconnect-and-reconnect
+			// from the same viewer doesn't restart the encoder.
+			live.mu.Lock()
+			live.dropPeerLocked(peer)
+			remaining := len(live.peers)
+			rtpMode := live.videoTrack != nil
+			live.mu.Unlock()
+			closeRemoteRuntimePeer(peer)
+			if remaining == 0 && !rtpMode {
+				live.closePeer()
+			}
 		}
 	})
 
-	framesDC.OnOpen(func() {
+	// `ready` rides on the events channel because that's the one
+	// signal both transports always carry. negotiatedTransport tells
+	// the viewer whether to expect a video track (rtp-h264-v1) or
+	// JPEG payloads on framesDC (datachannel-jpeg-v1).
+	eventsDC.OnOpen(func() {
 		live.sendEventJSON(map[string]any{
 			"type":      "ready",
 			"sessionId": sessionID,
-			"transport": "webrtc-datachannel-jpeg-v1",
+			"transport": negotiatedTransport,
 		})
 	})
 
@@ -263,18 +488,34 @@ func (live *remoteRuntimeLiveState) startFramePump(mgr *RemoteRuntimeManager) {
 	}()
 }
 
+// sendEventJSON broadcasts payload to every attached viewer's
+// events DataChannel. Sends are best-effort: a closed or stuck
+// channel is silently skipped — the per-viewer connection-state
+// callback handles its own teardown via dropPeerLocked.
 func (live *remoteRuntimeLiveState) sendEventJSON(payload map[string]any) {
 	live.mu.Lock()
-	dc := live.eventsDC
+	channels := make([]*webrtc.DataChannel, 0, len(live.peers))
+	for _, p := range live.peers {
+		if p != nil && p.eventsDC != nil {
+			channels = append(channels, p.eventsDC)
+		}
+	}
 	live.mu.Unlock()
-	if dc == nil || dc.ReadyState() != webrtc.DataChannelStateOpen {
+
+	if len(channels) == 0 {
 		return
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-	_ = dc.SendText(string(buf))
+	text := string(buf)
+	for _, dc := range channels {
+		if dc.ReadyState() != webrtc.DataChannelStateOpen {
+			continue
+		}
+		_ = dc.SendText(text)
+	}
 }
 
 func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byte, int, int, error) {
@@ -391,12 +632,25 @@ func (m *RemoteRuntimeManager) ExecuteControl(sessionID string, req remoteRuntim
 	switch action {
 	case "tap":
 		err = live.tap(ctx, req.X, req.Y)
+	case "swipe":
+		err = live.swipe(ctx, req.X, req.Y, req.X2, req.Y2, req.DurationMs)
 	case "text":
 		err = live.text(ctx, req.Text)
 	case "back":
 		err = live.key(ctx, "back")
 	case "home":
 		err = live.key(ctx, "home")
+	case "key":
+		// Generic hardware-key path. The viewer can send a friendly
+		// name ("recents", "volume_up", "menu") or a raw KEYCODE_*
+		// integer as a string ("187"). androidKeycodeForName
+		// resolves the name; the numeric escape hatch lives inside
+		// live.key().
+		if strings.TrimSpace(req.Key) == "" {
+			err = fmt.Errorf("missing key")
+		} else {
+			err = live.key(ctx, req.Key)
+		}
 	default:
 		err = fmt.Errorf("unsupported control action %q", req.Action)
 	}
@@ -414,6 +668,8 @@ func (m *RemoteRuntimeManager) ExecuteControl(sessionID string, req remoteRuntim
 		switch action {
 		case "tap":
 			current.Note = fmt.Sprintf("Tapped %d,%d on %s", req.X, req.Y, current.TargetLabel)
+		case "swipe":
+			current.Note = fmt.Sprintf("Swiped %d,%d → %d,%d on %s", req.X, req.Y, req.X2, req.Y2, current.TargetLabel)
 		case "text":
 			current.Note = fmt.Sprintf("Sent text to %s", current.TargetLabel)
 		default:
@@ -436,6 +692,30 @@ func (live *remoteRuntimeLiveState) tap(ctx context.Context, x, y int) error {
 		return (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y)
 	case "android-emulator":
 		return (&testkit.AndroidEmuDriver{}).Tap(ctx, deviceID, x, y)
+	default:
+		return fmt.Errorf("unsupported target %q", targetID)
+	}
+}
+
+// swipe drags from (x1,y1) to (x2,y2) over durationMs. Used by the
+// web viewer's pointer-drag handler. iOS Simulator has no built-in
+// swipe primitive in xcrun, so iOS sessions return a clear "not
+// implemented" error rather than silently no-oping — the viewer can
+// then either fall back to a series of small taps or surface the
+// limitation to the user.
+func (live *remoteRuntimeLiveState) swipe(ctx context.Context, x1, y1, x2, y2, durationMs int) error {
+	if x1 < 0 || y1 < 0 || x2 < 0 || y2 < 0 {
+		return fmt.Errorf("swipe coordinates must be non-negative")
+	}
+	live.mu.Lock()
+	targetID := live.targetID
+	deviceID := live.deviceID
+	live.mu.Unlock()
+	switch targetID {
+	case "android-emulator":
+		return (&testkit.AndroidEmuDriver{}).Swipe(ctx, deviceID, x1, y1, x2, y2, durationMs)
+	case "ios-simulator":
+		return fmt.Errorf("swipe is not implemented for ios-simulator yet — drop in WDA or cliclick path in a follow-up phase")
 	default:
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
@@ -468,17 +748,72 @@ func (live *remoteRuntimeLiveState) key(ctx context.Context, key string) error {
 		return fmt.Errorf("%s is only supported for Android emulator sessions right now", key)
 	}
 	driver := &testkit.AndroidEmuDriver{}
-	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "home":
-		return driver.KeyEvent(ctx, deviceID, 3)
-	case "back":
-		return driver.KeyEvent(ctx, deviceID, 4)
-	default:
-		if code, err := strconv.Atoi(strings.TrimSpace(key)); err == nil {
-			return driver.KeyEvent(ctx, deviceID, code)
-		}
-		return fmt.Errorf("unsupported key %q", key)
+	keycode, ok := androidKeycodeForName(key)
+	if ok {
+		return driver.KeyEvent(ctx, deviceID, keycode)
 	}
+	// Numeric escape hatch — `{"action":"key","key":"82"}` still
+	// works for any KEYCODE_* the user wants, even ones we don't
+	// have a friendly name for.
+	if code, err := strconv.Atoi(strings.TrimSpace(key)); err == nil {
+		return driver.KeyEvent(ctx, deviceID, code)
+	}
+	return fmt.Errorf("unsupported key %q", key)
+}
+
+// androidKeycodeForName maps the friendly key names the web viewer
+// sends ("home", "back", "recents", "menu", "volume_up", …) to
+// Android's KEYCODE_* integer constants. Constants from
+// https://developer.android.com/reference/android/view/KeyEvent —
+// stable across every API level we care about.
+//
+// Names are normalized to lowercase + underscores so the protocol
+// is forgiving of "VolumeUp", "volume-up", "Volume_Up", etc.
+func androidKeycodeForName(name string) (int, bool) {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	normalized = strings.ReplaceAll(normalized, "-", "_")
+	normalized = strings.ReplaceAll(normalized, " ", "_")
+	switch normalized {
+	case "home":
+		return 3, true
+	case "back":
+		return 4, true
+	case "menu":
+		return 82, true
+	case "recents", "app_switch", "appswitch", "overview":
+		return 187, true
+	case "volume_up", "volumeup":
+		return 24, true
+	case "volume_down", "volumedown":
+		return 25, true
+	case "volume_mute", "mute":
+		return 164, true
+	case "power":
+		return 26, true
+	case "wake", "wakeup":
+		return 224, true
+	case "sleep":
+		return 223, true
+	case "enter":
+		return 66, true
+	case "tab":
+		return 61, true
+	case "escape", "esc":
+		return 111, true
+	case "delete", "backspace":
+		return 67, true
+	case "search":
+		return 84, true
+	case "camera":
+		return 27, true
+	case "media_play_pause", "playpause", "play_pause":
+		return 85, true
+	case "media_next", "next":
+		return 87, true
+	case "media_previous", "previous", "prev":
+		return 88, true
+	}
+	return 0, false
 }
 
 func (s *HTTPServer) handleRemoteRuntimeSessionRoute(w http.ResponseWriter, r *http.Request) {
@@ -488,6 +823,26 @@ func (s *HTTPServer) handleRemoteRuntimeSessionRoute(w http.ResponseWriter, r *h
 	if path == "" {
 		jsonError(w, http.StatusBadRequest, "missing session id")
 		return
+	}
+
+	// Phase-5 closer: if the session is dispatched to a paired
+	// builder, every per-session HTTP call is forwarded verbatim.
+	// Path suffixes (`/command`, `/frame`, `/webrtc/offer`,
+	// `/control`, "" for GET/DELETE) flow through unchanged so the
+	// builder's handler shape and ours stay in lockstep without
+	// special-casing each.
+	sessionID, suffix := splitSessionRoutePath(path)
+	if sessionID != "" {
+		if proxy := mgr.proxiedFor(sessionID); proxy != nil {
+			if r.Method == http.MethodDelete {
+				// Tear down the local mapping after forwarding so a
+				// subsequent GET returns 404 here just like it does
+				// after a normal Delete.
+				defer mgr.Delete(sessionID)
+			}
+			forwardSessionRequest(w, r, proxy, suffix)
+			return
+		}
 	}
 	switch {
 	case strings.HasSuffix(path, "/command"):
@@ -540,7 +895,11 @@ func (s *HTTPServer) handleRemoteRuntimeSessionRoute(w http.ResponseWriter, r *h
 				"type": answer.Type.String(),
 				"sdp":  answer.SDP,
 			},
-			"transport": "webrtc-datachannel-jpeg-v1",
+			// Mirror the field we just stamped on the session so the
+			// viewer can read it from either place. Old viewers that
+			// only inspect this top-level "transport" string still
+			// see a sensible value.
+			"transport": answerSession.FrameTransport,
 			"note":      "Current WebRTC phase uses direct/Tailscale-reachable candidates from the host machine. TURN is not wired yet.",
 		})
 		return

@@ -207,3 +207,19 @@ func (d *AndroidEmuDriver) KeyEvent(ctx context.Context, deviceID string, keycod
 	_, err := runCtx(ctx, "adb", "-s", deviceID, "shell", "input", "keyevent", fmt.Sprintf("%d", keycode))
 	return err
 }
+
+// Swipe drags from (x1,y1) to (x2,y2) over durationMs milliseconds.
+// Used by the remote-runtime web viewer for pointer drags. adb's
+// `input swipe` accepts the duration as a fifth positional arg in
+// every supported Android version; <=0 falls back to its default
+// (~250 ms).
+func (d *AndroidEmuDriver) Swipe(ctx context.Context, deviceID string, x1, y1, x2, y2, durationMs int) error {
+	args := []string{"-s", deviceID, "shell", "input", "swipe",
+		fmt.Sprintf("%d", x1), fmt.Sprintf("%d", y1),
+		fmt.Sprintf("%d", x2), fmt.Sprintf("%d", y2)}
+	if durationMs > 0 {
+		args = append(args, fmt.Sprintf("%d", durationMs))
+	}
+	_, err := runCtx(ctx, "adb", args...)
+	return err
+}

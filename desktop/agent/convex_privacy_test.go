@@ -95,6 +95,25 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"agentMessageText",
 	"messageText",
 	"resultText",
+	// Native WebRTC remote-runtime — RTP video frames, control
+	// payloads, simctl/adb stdout, and any builder credential
+	// stay agent-side. Convex sees only counters in
+	// `remoteRuntimeSessionMetrics` (counts, durations, transport
+	// choice) — never bytes, coords, or hostnames.
+	"videoFrame",
+	"rtpPayload",
+	"mediaSegment",
+	"screenStream",
+	"simctlOutput",
+	"screenrecordPayload",
+	"tapCoord",
+	"swipeCoord",
+	"keyText",
+	"clipboardText",
+	"remoteBuilderHostname",
+	"remoteBuilderTunnelToken",
+	"builderUrl",
+	"builderToken",
 }
 
 type recordedMutation struct {
@@ -357,6 +376,86 @@ func TestVibePreviewClipPayload_isCounterOnly(t *testing.T) {
 		switch k {
 		case "clipPath", "videoBlob", "clipBytes", "clipMp4", "summaryText", "posterBytes":
 			t.Errorf("forbidden field %q must not be in clip metadata payload", k)
+		}
+	}
+}
+
+// TestRemoteRuntimeSessionMetricsPayload_isCounterOnly is the
+// forward-looking guardrail for the eventual `recordRemoteRuntime
+// SessionMetrics` mutation (see docs/native-webrtc-web-streaming.md
+// §15). When a future implementer wires the syncer to call Convex
+// at session-end, the payload must contain ONLY counters (bytes in/
+// out, frame count, duration, transport choice). The fake payload
+// here mirrors the documented schema; if a drive-by commit later
+// stuffs a video blob or builder URL into args, the
+// forbidden-keys + abs-path walkers fail the test.
+func TestRemoteRuntimeSessionMetricsPayload_isCounterOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	convexMutationRecorder(
+		"agentSync:recordRemoteRuntimeSessionMetrics",
+		map[string]interface{}{
+			"deviceId":    "test-device",
+			"framework":   "swift",
+			"transport":   "webrtc-rtp-h264-v1",
+			"bytesIn":     0,
+			"bytesOut":    14_300_000,
+			"frames":      720,
+			"durationSec": 30,
+			"endedAt":     1714000060,
+		},
+	)
+
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	// Specifically: a future "convenience addition" of any of these
+	// MUST be caught here, even if forgotten on the deny-list.
+	for k := range rec.Args {
+		switch k {
+		case "videoFrame", "rtpPayload", "screenStream",
+			"tapCoord", "swipeCoord", "keyText",
+			"builderUrl", "builderToken",
+			"remoteBuilderHostname", "remoteBuilderTunnelToken":
+			t.Errorf("forbidden field %q must not be in metrics payload", k)
+		}
+	}
+}
+
+// TestRemoteBuilderPairingMetadata_isAliasOnly mirrors the
+// guardrail above for the builder-registry sync. The on-disk
+// ~/.yaver/builders.json carries (alias, URL, token, platforms);
+// only the alias may ever cross the wire. URL gives away infra
+// shape; token is the actual auth secret.
+func TestRemoteBuilderPairingMetadata_isAliasOnly(t *testing.T) {
+	buf, teardown := installConvexRecorder(t)
+	defer teardown()
+
+	// Hypothetical future call — the alias is fine, everything else
+	// is forbidden. Drive-by addition of `url` / `token` would land
+	// here.
+	convexMutationRecorder(
+		"agentSync:recordRemoteBuilderPairing",
+		map[string]interface{}{
+			"deviceId": "test-device",
+			"alias":    "mac-rack-1",
+			"platforms": []interface{}{"ios"},
+			"pairedAt": 1714000060,
+		},
+	)
+	if len(*buf) != 1 {
+		t.Fatalf("expected 1 mutation, got %d", len(*buf))
+	}
+	rec := (*buf)[0]
+	assertNoForbiddenFields(t, rec)
+	for k := range rec.Args {
+		switch k {
+		case "url", "token", "builderUrl", "builderToken",
+			"remoteBuilderHostname", "remoteBuilderTunnelToken":
+			t.Errorf("forbidden field %q must not be in builder pairing payload", k)
 		}
 	}
 }

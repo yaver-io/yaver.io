@@ -375,6 +375,42 @@ yaver wire push                                          # detect framework + in
 Multiple RN projects fight for port 8081. Either kill the others
 (`pgrep "expo start" | xargs kill`) or build Release.
 
+### Pushing Yaver itself (`yaver wire push` / `yaver wireless push`)
+
+Both commands auto-detect the mobile project from CWD by walking up to
+the first `app.json` / `package.json` with `expo` or `react-native`,
+or `pubspec.yaml`, or `ios/*.xcodeproj`. **CWD matters.**
+
+**To iterate on Yaver mobile (this repo):**
+```bash
+# from repo ROOT — wire/wireless walks into ./mobile automatically
+cd /Users/kivanccakmak/Workspace/yaver.io
+yaver wireless push                                      # WiFi-paired iPhone
+# or:
+yaver wire push                                          # USB-attached
+```
+Running from `desktop/agent`, `web/`, `relay/`, or any non-mobile
+subdir fails with `no mobile project detected at <path>`. Always
+`cd` to repo root first.
+
+**To iterate on a third-party app (sfmg, talos, …):**
+```bash
+cd /Users/kivanccakmak/Workspace/sfmg
+yaver wire push       # builds + installs sfmg, NOT Yaver
+```
+Third-party RN apps load INSIDE the Yaver container via Hermes-push;
+they don't need their own native install once Yaver is on-device.
+But `yaver wire push` from the third-party repo will native-build +
+install the third-party app (useful for first-time setup or when
+testing a non-Hermes change).
+
+**Rule of thumb**: the binary getting installed = whatever mobile
+project lives in CWD. If you want to ship Yaver, `cd yaver.io` first.
+
+Output ends with `App installed:` + `bundleID: io.yaver.mobile` (when
+pushing Yaver) or `bundleID: <third-party>` (when pushing a guest
+app). Check the bundleID line if unsure what just got installed.
+
 ## Mobile dev-server proxy / Hermes flow on remote agent
 
 Three commands matter:
