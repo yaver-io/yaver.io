@@ -86,7 +86,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   // ── AI agents (Section 8) ───────────────────────────────────────────
   {
     q: "Which AI coding agents work with Yaver?",
-    a: "Anything that runs in a terminal: Claude Code, Codex, Aider, Ollama, Goose, OpenCode, Amp, Continue, or any tmux session. Switch agents per task or set a default.",
+    a: "Yaver ships first-class support for three runners: Claude Code, OpenAI Codex, and OpenCode. OpenCode is intentionally the third pick because it's the gate to everything else — Aider, Goose, Amp, Continue, Cursor's CLI, OpenRouter, GLM, ZAI, local Ollama models, custom HTTP providers all run inside OpenCode without any Yaver-side wiring. Anything else that runs in a terminal works too via the generic tmux runner. Switch agents per task or set a default.",
   },
   {
     q: "Can I use my own LLM keys, Claude Max plan, or a local model?",
@@ -1195,7 +1195,8 @@ export default function HomePage() {
           />
           <p className="mx-auto mt-4 max-w-md text-center text-sm text-surface-300">
             Open Yaver, pick a project from your dev box, preview it on your
-            phone, shake to vibe-code on the bug — fresh bundle in seconds.
+            phone, shake to vibe-code — fix a bug, ship a small feature, or
+            tweak a style — and a fresh bundle lands in seconds.
             One screen, real device, no extra hardware.
           </p>
         </div>
@@ -1597,14 +1598,42 @@ return (
           <p className="mx-auto mb-8 max-w-2xl text-sm leading-relaxed text-surface-400">
             Anything that runs in a terminal. Switch agents per task or set a default.
           </p>
-          <p className="mb-8 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-sm font-medium text-surface-200">
-            {["Claude Code", "Codex", "Aider", "Ollama", "Goose", "OpenCode", "Amp", "Continue", "any tmux session"].map((a, i, arr) => (
+
+          {/* First-class trio — what Yaver ships native support for */}
+          <p className="mb-3 text-[11px] uppercase tracking-[0.16em] text-surface-500">
+            First-class
+          </p>
+          <p className="mb-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-base font-semibold text-surface-50">
+            {["Claude Code", "OpenAI Codex", "OpenCode"].map((a, i, arr) => (
+              <span key={a} className="flex items-center gap-3">
+                <span className="rounded-full border border-surface-700 bg-surface-900/80 px-4 py-1.5">{a}</span>
+                {i < arr.length - 1 && <span className="text-surface-600">&middot;</span>}
+              </span>
+            ))}
+          </p>
+
+          {/* OpenCode is the gateway — call it out explicitly */}
+          <div className="mx-auto mb-8 max-w-2xl rounded-xl border-l-2 border-indigo-500/60 bg-surface-900/50 p-5 text-left text-sm leading-relaxed text-surface-300">
+            <strong className="text-surface-100">OpenCode is the gate to everything else.</strong>{" "}
+            Inside Yaver it ships first-class — and OpenCode itself routes to{" "}
+            Aider, Goose, Amp, Continue, Cursor's CLI, OpenRouter, GLM, ZAI,
+            local Ollama models, custom HTTP providers, anything that exposes
+            a chat-completion endpoint. Pick OpenCode in the picker and you
+            get the whole catalog for free, no extra config inside Yaver.
+          </div>
+
+          <p className="mb-3 text-[11px] uppercase tracking-[0.16em] text-surface-500">
+            Reachable through OpenCode (or any tmux session)
+          </p>
+          <p className="mb-8 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-sm font-medium text-surface-300">
+            {["Aider", "Ollama", "Goose", "Amp", "Continue", "Cursor CLI", "OpenRouter", "GLM", "ZAI", "any tmux session"].map((a, i, arr) => (
               <span key={a} className="flex items-center gap-3">
                 <span>{a}</span>
                 {i < arr.length - 1 && <span className="text-surface-600">&middot;</span>}
               </span>
             ))}
           </p>
+
           <div className="rounded-xl border-l-2 border-emerald-500/60 bg-surface-900/50 p-5 text-left text-sm leading-relaxed text-surface-300">
             Run Llama, Qwen, DeepSeek, Mistral, or CodeGemma on your own hardware.
             Zero API keys. Zero cloud. Fully air-gapped if you want.
