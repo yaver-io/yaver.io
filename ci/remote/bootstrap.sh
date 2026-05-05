@@ -148,12 +148,23 @@ if [ ! -x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
 fi
 SDKMGR="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH"
-yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
-# google_atd is the headless-optimized Test Driver image — ~40% smaller
-# than google_apis_playstore, no Play surface to fight, and ships ARM64-v8a
+# Single combined install: --install accepts licenses inline when fed
+# `yes`. Earlier we ran --licenses as a separate step before --install;
+# that pattern sometimes left licenses partially accepted and the
+# install then errored with "Package path is not valid" because the
+# repository cache wasn't fully refreshed. Inline install fixes that
+# AND auto-accepts only for the requested packages.
+# google_atd is the headless-optimized Test Driver image (~40% smaller
+# than google_apis_playstore, no Play surface) and ships ARM64-v8a
 # variants that run native on Hetzner cax (Ampere Altra).
-"$SDKMGR" "platform-tools" "emulator" "platforms;android-35" \
-  "system-images;android-35;google_atd;arm64-v8a" || true
+yes | "$SDKMGR" --install \
+  "platform-tools" "emulator" \
+  "platforms;android-35" \
+  "system-images;android-35;google_atd;arm64-v8a" 2>&1 | tail -8 || true
+# Belt-and-suspenders: confirm the bits we need actually landed.
+"$SDKMGR" --list_installed 2>&1 \
+  | grep -E "platform-tools|emulator|platforms;android-35|system-images;android-35" \
+  | head -8 || true
 
 # Default AVD. avdmanager-from-cmdline-tools/latest. -d 33 = Pixel 7
 # device profile — sane defaults (1080x2400, 6.3", densities). Skip if
@@ -171,24 +182,28 @@ export ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT
 export PATH=\$PATH:\$ANDROID_HOME/cmdline-tools/latest/bin:\$ANDROID_HOME/platform-tools:\$ANDROID_HOME/emulator
 EOF
 
-log "flutter sdk (linux arm64 stable)"
+log "flutter sdk (linux arm64 — git clone, no official tarball)"
+# IMPORTANT: Flutter does NOT publish official Linux ARM64 tarballs
+# (verified against releases_linux.json — zero ARM64 archive entries
+# as of 3.27.4). The supported install path on aarch64 Linux is to
+# git-clone the flutter repo and let Flutter bootstrap itself: the
+# Dart SDK download IS published per-arch and `flutter --version`
+# auto-fetches the right one on first run.
 FLUTTER_ROOT=/opt/flutter
 if [ ! -x "$FLUTTER_ROOT/bin/flutter" ]; then
-  # Pin to a known-good stable tag with arm64 prebuilt. flutter.dev
-  # publishes per-arch tarballs at storage.googleapis.com.
-  FLUTTER_VER=3.27.4
-  FLUTTER_ARCHIVE=flutter_linux_arm64_${FLUTTER_VER}-stable.tar.xz
-  FLUTTER_URL=https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${FLUTTER_ARCHIVE}
-  curl -fsSL "$FLUTTER_URL" -o /tmp/flutter.tar.xz
-  tar -C /opt -xJf /tmp/flutter.tar.xz
-  rm -f /tmp/flutter.tar.xz
+  git clone --depth 1 -b stable https://github.com/flutter/flutter.git "$FLUTTER_ROOT"
 fi
+# git safe.directory: avoid "fatal: detected dubious ownership" when
+# the agent later spawns flutter under a different user.
+git config --global --add safe.directory "$FLUTTER_ROOT" || true
 install -m 0644 /dev/stdin /etc/profile.d/flutter.sh <<EOF
 export FLUTTER_ROOT=$FLUTTER_ROOT
 export PATH=\$PATH:\$FLUTTER_ROOT/bin
 EOF
-# git safe.directory so flutter's own .git pulls don't error in CI
-"$FLUTTER_ROOT/bin/flutter" --version >/dev/null 2>&1 || true
+# Pre-warm: triggers Dart SDK download for arm64 + initial pub-cache
+# fill. ~1-2 min on first run, instant after. Allowed to fail —
+# subsequent agent-driven `flutter` calls retry the bootstrap.
+"$FLUTTER_ROOT/bin/flutter" --version 2>&1 | tail -3 || true
 
 log "webrtc capture stack: ffmpeg + gstreamer + xvfb"
 # ffmpeg with libx264 + x11grab is enough for the v1 capture pipeline

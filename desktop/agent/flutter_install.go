@@ -40,29 +40,54 @@ func flutterRoot() string {
 
 // flutterStableTarball returns the platform-appropriate Flutter SDK
 // archive URL + local archive name. flutter.dev publishes per-arch
-// builds at storage.googleapis.com; the bootstrap pinned 3.27.4 stable
-// for yaver-test-ephemeral arm64. Keep that in lockstep so a phone-
-// driven install matches what bootstrap.sh already provisioned.
+// builds at storage.googleapis.com — but NOT for Linux ARM64. Verified
+// against releases_linux.json: zero arm64 archive entries as of
+// 3.27.4. For that target we fall through to git-clone (handled by
+// the caller). macOS arm64 + x86_64 share a universal archive since
+// Flutter 3.10.
 func flutterStableTarball() (string, string, bool) {
 	const ver = "3.27.4"
 	switch runtime.GOOS {
 	case "linux":
 		switch runtime.GOARCH {
-		case "arm64":
-			name := fmt.Sprintf("flutter_linux_arm64_%s-stable.tar.xz", ver)
-			return "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/" + name, name, true
 		case "amd64":
 			name := fmt.Sprintf("flutter_linux_%s-stable.tar.xz", ver)
 			return "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/" + name, name, true
+		case "arm64":
+			// No official tarball for Linux ARM64. Caller falls
+			// through to git-clone install path.
+			return "", "", false
 		}
 	case "darwin":
-		// Flutter on macOS ships a single archive (universal binary
-		// since Flutter 3.10). One tarball covers both arm64 and x86_64
-		// hosts, so we don't branch on GOARCH.
 		name := fmt.Sprintf("flutter_macos_%s-stable.zip", ver)
 		return "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/" + name, name, true
 	}
 	return "", "", false
+}
+
+// flutterGitClone is the install fallback for platforms without an
+// official tarball (today: Linux ARM64). Clones the flutter repo at
+// the stable branch into root; `flutter --version` on first run
+// fetches the per-arch Dart SDK + completes bootstrap. Returns nil
+// on success or a description of why we couldn't clone.
+func flutterGitClone(ctx context.Context, root string) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return fmt.Errorf("git is required for the Linux ARM64 Flutter install path (no official tarball exists). Install git first.")
+	}
+	if err := os.MkdirAll(filepath.Dir(root), 0o755); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "-b", "stable",
+		"https://github.com/flutter/flutter.git", root)
+	cmd.Env = augmentEnv(nil)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone flutter: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	// git safe.directory so flutter doesn't refuse to operate on this
+	// checkout when the agent later runs flutter under a different uid.
+	safe := exec.CommandContext(ctx, "git", "config", "--global", "--add", "safe.directory", root)
+	_ = safe.Run()
+	return nil
 }
 
 // runFlutterInstall is invoked from the install_cmd registry. The
@@ -86,7 +111,21 @@ func runFlutterInstall(ctx context.Context, progress func(string)) error {
 
 	url, archiveName, ok := flutterStableTarball()
 	if !ok {
-		return fmt.Errorf("flutter install: unsupported platform %s/%s — run `flutter doctor` manually after installing per flutter.dev/install", runtime.GOOS, runtime.GOARCH)
+		// Linux ARM64 + any other platform without an official
+		// tarball: fall back to git-clone. Slower first run (the
+		// `flutter --version` pre-warm has to download the Dart SDK
+		// for arm64), but bog-standard supported by Flutter itself.
+		logf(fmt.Sprintf("No official Flutter tarball for %s/%s — falling back to git clone (Flutter's supported install for this platform).", runtime.GOOS, runtime.GOARCH))
+		if err := flutterGitClone(ctx, root); err != nil {
+			return err
+		}
+		// Pre-warm so the first agent-driven build doesn't pay the
+		// snapshot-build cost. Same as the tarball path below.
+		warm := exec.CommandContext(ctx, flutterBin, "--version")
+		warm.Env = append(augmentEnv(nil), "FLUTTER_ROOT="+root)
+		_ = warm.Run()
+		logf("Flutter SDK ready at " + root + " (git clone)")
+		return ensureFlutterShellPath(progress)
 	}
 
 	logf(fmt.Sprintf("Downloading Flutter SDK (%s) …", archiveName))
