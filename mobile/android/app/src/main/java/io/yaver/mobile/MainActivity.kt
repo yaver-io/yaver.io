@@ -50,6 +50,7 @@ class MainActivity : ReactActivity() {
         activity = this,
         onFeedback = { YaverFeedbackPane.show(this) },
         onAgents = { YaverAgentsPane.show(this) },
+        onDeploy = { YaverDeployPane.show(this) },
         onBack = { restoreYaverBundle() }
     )
   }

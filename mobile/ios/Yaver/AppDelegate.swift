@@ -500,10 +500,12 @@ public class AppDelegate: ExpoAppDelegate {
                                action: #selector(handleAgentsTap))
     let settingsBtn = makeButton(title: "Settings", icon: "gearshape", color: accentColor,
                                  action: #selector(handleSettingsTap))
+    let deployBtn = makeButton(title: "Deploy", icon: "paperplane.fill", color: accentColor,
+                               action: #selector(handleDeployTap))
     let backBtn = makeButton(title: "Back to Yaver", icon: "chevron.left", color: accentColor,
                              action: #selector(handleBackTap))
 
-    let stack = UIStackView(arrangedSubviews: [feedbackBtn, agentsBtn, settingsBtn, backBtn])
+    let stack = UIStackView(arrangedSubviews: [feedbackBtn, agentsBtn, settingsBtn, deployBtn, backBtn])
     stack.axis = .vertical
     stack.spacing = 10
     stack.distribution = .fillEqually
@@ -605,6 +607,17 @@ public class AppDelegate: ExpoAppDelegate {
     YaverSettingsPane.shared.present(in: win, applyTrigger: { [weak self] in
       self?.refreshFeedbackTriggerMount()
     })
+  }
+
+  @objc private func handleDeployTap() {
+    NSLog("[AppDelegate] Deploy tapped — presenting native deploy pane")
+    dismissOverlay()
+    guard let win = self.window else { return }
+    // Pane lets the user pick a target (TestFlight / Play / Both) and a
+    // machine from their fleet to run the deploy on. Capabilities come
+    // from /fleet/deploy-options on the agent — Linux machines greyed
+    // out for TestFlight, macOS without Xcode greyed out the same way.
+    YaverDeployPane.shared.present(in: win)
   }
 
   @objc private func handleOverlayCloseTap() {

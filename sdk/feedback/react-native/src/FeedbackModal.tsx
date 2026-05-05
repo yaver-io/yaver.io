@@ -28,6 +28,7 @@ import { DeviceInfo, FeedbackBundle } from './types';
 import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
 import { VibeChatScreen } from './VibeChatScreen';
+import { DeployPanel } from './DeployPanel';
 import { listReachableDevices, RemoteDevice } from './auth';
 import {
   QUICK_ICON_COLOR_PRESETS,
@@ -80,6 +81,7 @@ export const FeedbackModal: React.FC = () => {
   // "pick something for me" prompt (which in 0.7.13 pointed Claude at
   // the wrong project because the matcher grepped the prompt itself).
   const [showVibeInput, setShowVibeInput] = useState(false);
+  const [showDeploy, setShowDeploy] = useState(false);
   const [vibePrompt, setVibePrompt] = useState('');
   const [lastVibeTaskId, setLastVibeTaskId] = useState<string | null>(null);
   const [quickIconColorPreset, setQuickIconColorPreset] =
@@ -890,6 +892,23 @@ export const FeedbackModal: React.FC = () => {
                 disabled={busy}
                 busy={action === 'capturing'}
               />
+
+              {/* Deploy — opens an inline panel that talks to
+                  /fleet/deploy-options on the agent and lets the user
+                  pick TestFlight / Play / Both, then a machine to run
+                  it on. Capabilities (e.g. "Linux can't TestFlight")
+                  come from the agent's doctor probes — no client-side
+                  platform smarts here. */}
+              {!showDeploy ? (
+                <ActionRow
+                  label="Deploy"
+                  tint="#7f8cf7"
+                  onPress={() => setShowDeploy(true)}
+                  disabled={busy}
+                />
+              ) : (
+                <DeployPanel onClose={() => setShowDeploy(false)} />
+              )}
 
               {/* Remote sign-in buttons — trigger codex/claude device-auth
                   on the selected agent without leaving the app. Opens a

@@ -1,7 +1,7 @@
 package io.yaver.mobile
 
 // Native shake overlay — Android counterpart to AppDelegate.swift's
-// showShakeOverlay (3-button card: Feedback / Agents / Back to Yaver).
+// showShakeOverlay. Buttons: Feedback / Agents / Deploy / Back to Yaver.
 // Adds the card directly to the activity's decor view so it floats above
 // the React Native root view without needing a separate Window. Same
 // purple-black tint and bottom-sheet feel as iOS.
@@ -27,15 +27,16 @@ object YaverShakeOverlay {
   private val main = Handler(Looper.getMainLooper())
   private var dismissRunnable: Runnable? = null
 
-  /** Show the 3-button card. Auto-dismisses after 5s if the user
+  /** Show the 4-button card. Auto-dismisses after 5s if the user
    *  doesn't tap anything; that timer is also cancelled when a button
-   *  routes to a sub-pane (Feedback / Agents) so the overlay tear-down
-   *  doesn't fight the next pane's slide-in. */
+   *  routes to a sub-pane so the overlay tear-down doesn't fight the
+   *  next pane's slide-in. */
   fun show(activity: Activity,
            onFeedback: () -> Unit,
            onAgents: () -> Unit,
+           onDeploy: () -> Unit,
            onBack: () -> Unit) {
-    main.post { presentInternal(activity, onFeedback, onAgents, onBack) }
+    main.post { presentInternal(activity, onFeedback, onAgents, onDeploy, onBack) }
   }
 
   fun dismiss() {
@@ -54,6 +55,7 @@ object YaverShakeOverlay {
   private fun presentInternal(activity: Activity,
                               onFeedback: () -> Unit,
                               onAgents: () -> Unit,
+                              onDeploy: () -> Unit,
                               onBack: () -> Unit) {
     dismiss()  // wipe any previous overlay to avoid stacking
     val ctx = activity
@@ -103,6 +105,7 @@ object YaverShakeOverlay {
 
     card.addView(makeButton("💬  Feedback", onFeedback))
     card.addView(makeButton("⚙  Agents", onAgents))
+    card.addView(makeButton("✈  Deploy", onDeploy))
     card.addView(makeButton("‹  Back to Yaver", onBack))
 
     val params = FrameLayout.LayoutParams(

@@ -124,6 +124,15 @@ export interface FeedbackConfig {
   /** How feedback collection is triggered */
   trigger?: 'shake' | 'floating-button' | 'manual';
   /**
+   * App slug used by the in-modal Deploy panel when calling the agent's
+   * `/fleet/deploy-options` and `/deploy/ship` endpoints. Should match an
+   * `apps[].name` entry in the agent's `yaver.workspace.yaml`. When omitted
+   * the panel falls back to the last dot-segment of `bundleId` (e.g.
+   * `io.yaver.sfmg` → `sfmg`). Set explicitly when the workspace name
+   * differs from the bundleId tail.
+   */
+  deployAppSlug?: string;
+  /**
    * Non-default escape hatch for host apps that want the SDK without
    * shake gesture handling. When enabled:
    * - the SDK does not start ShakeDetector
