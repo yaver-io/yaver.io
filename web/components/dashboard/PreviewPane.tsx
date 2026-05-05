@@ -1316,10 +1316,10 @@ export default function PreviewPane({
         <button
           onClick={() => void handleReconnect()}
           disabled={recovering}
-          className={`text-[10px] font-semibold rounded border px-2 py-0.5 ${
+          className={`text-[10px] font-semibold rounded px-2.5 py-1 transition-all ${
             recovering
-              ? "border-amber-400 bg-amber-50 text-amber-700 cursor-wait dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
-              : "border-slate-300 bg-white text-slate-700 hover:border-emerald-400 hover:text-emerald-700 dark:border-surface-700 dark:bg-transparent dark:text-surface-400 dark:hover:border-emerald-500/40 dark:hover:text-emerald-300"
+              ? "bg-warning-soft text-warning-softFg cursor-wait"
+              : "bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.97]"
           }`}
           title="Try to recover: ping agent, stop, clear caches, restart, refresh"
         >
@@ -1329,24 +1329,24 @@ export default function PreviewPane({
           <>
             <button
               onClick={() => void handleReload()}
-              className="rounded border border-surface-700 px-2 py-0.5 text-[10px] text-surface-300 hover:bg-surface-800 hover:text-surface-100"
+              className="rounded border border-warning/40 px-2 py-0.5 text-[10px] text-warning hover:bg-warning/10 transition-colors"
               title={isWebPreviewFramework(devStatus?.framework) ? "Refresh preview" : "Reload mobile app"}
             >
-              ↻ Reload
+              ↻ Hard reload
             </button>
             <button
               onClick={handleStop}
               disabled={stopState === "stopping"}
-              className="rounded border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] text-red-200 hover:bg-red-500/20 disabled:opacity-60 disabled:cursor-wait"
+              className="rounded px-2 py-0.5 text-[10px] text-danger hover:bg-danger/10 disabled:opacity-60 disabled:cursor-wait transition-colors"
               title="Stop the dev server, cancel any in-flight Hermes build, clear stale incidents"
             >
               {stopState === "stopping" ? (
                 <span className="inline-flex items-center gap-1">
-                  <span className="h-2 w-2 animate-spin rounded-full border border-red-200/40 border-t-red-200" />
+                  <span className="h-2 w-2 animate-spin rounded-full border border-danger/40 border-t-danger" />
                   Stopping…
                 </span>
               ) : (
-                "■ Stop & switch"
+                "■ Stop"
               )}
             </button>
           </>
@@ -1360,8 +1360,8 @@ export default function PreviewPane({
         <div
           className={`flex items-start gap-2 border-b px-3 py-1.5 text-[10px] ${
             stopState === "stopped"
-              ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-200"
-              : "border-red-500/30 bg-red-500/5 text-red-200"
+              ? "border-success/30 bg-success-soft/40 text-success-softFg"
+              : "border-danger/30 bg-danger-soft/40 text-danger-softFg"
           }`}
           role="status"
         >
@@ -2087,21 +2087,26 @@ function ConsoleStatusHeader({
           issue. */}
       <div className="mt-1 flex items-center gap-2 text-[10px]">
         {(() => {
+          // Subtle pulse on `live` (always-on but breathing). Hard ping
+          // ripple on `syncing` / `reconnecting` (active recovery).
           const map = {
-            live: { dot: "#34d399", label: "channel: live", animate: false, color: "text-emerald-300" },
-            idle: { dot: "#64748b", label: "channel: idle (no dev server)", animate: false, color: "text-surface-500" },
-            syncing: { dot: "#fbbf24", label: "channel: syncing…", animate: true, color: "text-amber-300" },
-            reconnecting: { dot: "#fb923c", label: "channel: reconnecting…", animate: true, color: "text-orange-300" },
-            lost: { dot: "#ef4444", label: "channel: lost — Reconnect & Fix", animate: false, color: "text-red-300" },
+            live: { dot: "#34d399", label: "channel: live", animate: "subtle" as const, color: "text-success" },
+            idle: { dot: "#64748b", label: "channel: idle (no dev server)", animate: "none" as const, color: "text-surface-500" },
+            syncing: { dot: "#fbbf24", label: "channel: syncing…", animate: "ping" as const, color: "text-warning" },
+            reconnecting: { dot: "#fb923c", label: "channel: reconnecting…", animate: "ping" as const, color: "text-warning" },
+            lost: { dot: "#ef4444", label: "channel: lost — Reconnect & Fix", animate: "none" as const, color: "text-danger" },
           } as const;
           const m = map[connectionHealth];
           return (
             <>
-              <span className={`relative inline-flex h-1.5 w-1.5 items-center justify-center`}>
-                {m.animate && (
+              <span className="relative inline-flex h-1.5 w-1.5 items-center justify-center">
+                {m.animate === "ping" ? (
                   <span className="absolute inset-0 animate-ping rounded-full opacity-50" style={{ background: m.dot }} />
-                )}
-                <span className="relative inline-block h-1.5 w-1.5 rounded-full" style={{ background: m.dot }} />
+                ) : null}
+                <span
+                  className={`relative inline-block h-1.5 w-1.5 rounded-full ${m.animate === "subtle" ? "animate-live-pulse" : ""}`}
+                  style={{ background: m.dot }}
+                />
               </span>
               <span className={m.color}>{m.label}</span>
             </>

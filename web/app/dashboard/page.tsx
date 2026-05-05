@@ -1604,12 +1604,15 @@ export default function DashboardPage() {
               <button
                 key={it.id}
                 onClick={() => setActiveTab(it.id)}
-                className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                className={`relative flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
                   activeTab === it.id
-                    ? "bg-indigo-500/10 text-indigo-300"
-                    : "text-surface-400 hover:bg-surface-800 hover:text-surface-200"
+                    ? "bg-brand-soft/60 text-brand-softFg font-medium"
+                    : "text-surface-400 hover:bg-surface-800/60 hover:text-surface-200"
                 }`}
               >
+                {activeTab === it.id ? (
+                  <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-brand" />
+                ) : null}
                 <span className="w-4 text-center text-[13px]">{it.icon}</span>
                 <span>{it.label}</span>
               </button>
@@ -1643,11 +1646,11 @@ export default function DashboardPage() {
                 const connectedReauthMsg =
                   reauthMsg && reauthMsg.deviceId === liveDevice.id ? reauthMsg : null;
                 const pillBorder = connectedNeedsAuth
-                  ? "border-amber-500/40 bg-amber-500/10"
-                  : "border-emerald-500/30 bg-emerald-500/5";
+                  ? "border-warning/40 bg-warning-soft/40"
+                  : "border-success/30 bg-success-soft/30";
                 const dotColor = connectedNeedsAuth
-                  ? (connectedIsReauthing ? "bg-amber-400 animate-pulse" : "bg-amber-400")
-                  : "bg-emerald-400";
+                  ? (connectedIsReauthing ? "bg-warning animate-pulse" : "bg-warning")
+                  : "bg-success animate-live-pulse";
                 return (
                   <div className={`rounded-lg border ${pillBorder} px-3 py-2.5 shadow-sm`}>
                     <div className="flex items-center gap-2">
@@ -1666,12 +1669,12 @@ export default function DashboardPage() {
                             onClick={() => reauthDevice(liveDevice)}
                             disabled={connectedIsReauthing}
                             title="Agent's session token expired — re-auth so /projects, runners, and tasks accept your bearer again"
-                            className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-200 hover:bg-amber-500/30 disabled:opacity-40"
+                            className="rounded border border-brand/40 bg-brand-soft px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-brand-softFg hover:bg-brand/15 hover:border-brand/60 disabled:opacity-40 transition-colors"
                           >
                             {connectedIsReauthing ? "…" : "Re-auth"}
                           </button>
                         ) : null}
-                        <button onClick={disconnect} className="text-[10px] text-red-400 hover:text-red-300">disconnect</button>
+                        <button onClick={disconnect} className="text-[10px] text-danger hover:underline transition-colors">disconnect</button>
                       </div>
                     </div>
                     {connectedNeedsAuth ? (
@@ -1850,10 +1853,10 @@ export default function DashboardPage() {
 
           <div className="min-h-6 flex-1" />
 
-          <div className="shrink-0 space-y-3 border-t border-surface-800 pt-4">
+          <div className="shrink-0 space-y-3 border-t border-surface-800/60 pt-4">
             <button
               onClick={() => setActiveTab("guests")}
-              className="w-full rounded-md border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-200 dark:hover:bg-indigo-500/15"
+              className="w-full rounded-md border border-brand/30 bg-brand-soft/60 px-3 py-1.5 text-xs font-medium text-brand-softFg hover:bg-brand-soft hover:border-brand/50 transition-colors"
               title="Invite someone to share this machine"
             >
               Invite a guest

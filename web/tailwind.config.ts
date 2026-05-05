@@ -23,6 +23,45 @@ const config: Config = {
           900: "rgb(var(--surface-900) / <alpha-value>)",
           950: "rgb(var(--surface-950) / <alpha-value>)",
         },
+        // Semantic palette — every dashboard color must map to one of these
+        // roles. Decoration colors are forbidden. See web/components/ui/ for
+        // shared Badge / Card / Button primitives that consume these.
+        brand: {
+          DEFAULT: "rgb(var(--brand) / <alpha-value>)",
+          fg: "rgb(var(--brand-fg) / <alpha-value>)",
+          soft: "rgb(var(--brand-soft) / <alpha-value>)",
+          softFg: "rgb(var(--brand-soft-fg) / <alpha-value>)",
+        },
+        success: {
+          DEFAULT: "rgb(var(--success) / <alpha-value>)",
+          fg: "rgb(var(--success-fg) / <alpha-value>)",
+          soft: "rgb(var(--success-soft) / <alpha-value>)",
+          softFg: "rgb(var(--success-soft-fg) / <alpha-value>)",
+        },
+        warning: {
+          DEFAULT: "rgb(var(--warning) / <alpha-value>)",
+          fg: "rgb(var(--warning-fg) / <alpha-value>)",
+          soft: "rgb(var(--warning-soft) / <alpha-value>)",
+          softFg: "rgb(var(--warning-soft-fg) / <alpha-value>)",
+        },
+        danger: {
+          DEFAULT: "rgb(var(--danger) / <alpha-value>)",
+          fg: "rgb(var(--danger-fg) / <alpha-value>)",
+          soft: "rgb(var(--danger-soft) / <alpha-value>)",
+          softFg: "rgb(var(--danger-soft-fg) / <alpha-value>)",
+        },
+        info: {
+          DEFAULT: "rgb(var(--info) / <alpha-value>)",
+          fg: "rgb(var(--info-fg) / <alpha-value>)",
+          soft: "rgb(var(--info-soft) / <alpha-value>)",
+          softFg: "rgb(var(--info-soft-fg) / <alpha-value>)",
+        },
+        muted: {
+          DEFAULT: "rgb(var(--muted) / <alpha-value>)",
+          fg: "rgb(var(--muted-fg) / <alpha-value>)",
+          soft: "rgb(var(--muted-soft) / <alpha-value>)",
+          softFg: "rgb(var(--muted-soft-fg) / <alpha-value>)",
+        },
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "-apple-system", "sans-serif"],
@@ -32,6 +71,8 @@ const config: Config = {
         "fade-in": "fadeIn 0.6s ease-out",
         "slide-up": "slideUp 0.6s ease-out",
         blink: "blink 1s step-end infinite",
+        "live-pulse": "livePulse 2s ease-in-out infinite",
+        shimmer: "shimmer 1.6s linear infinite",
       },
       keyframes: {
         fadeIn: {
@@ -44,6 +85,14 @@ const config: Config = {
         },
         blink: {
           "50%": { borderColor: "transparent" },
+        },
+        livePulse: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.55" },
+        },
+        shimmer: {
+          "0%": { backgroundPosition: "-200% 0" },
+          "100%": { backgroundPosition: "200% 0" },
         },
       },
     },

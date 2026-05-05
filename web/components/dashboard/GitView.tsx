@@ -451,11 +451,12 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <StatPill label="ahead" value={status?.ahead || 0} />
-                        <StatPill label="behind" value={status?.behind || 0} />
+                        <StatPill label="ahead" value={status?.ahead || 0} tone="success" />
+                        <StatPill label="behind" value={status?.behind || 0} tone="warning" />
                         <StatPill
                           label="changes"
                           value={(status?.staged?.length || 0) + (status?.modified?.length || 0) + (status?.untracked?.length || 0)}
+                          tone="info"
                         />
                       </div>
                     </div>
@@ -662,19 +663,26 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
                       key={provider}
                       onClick={() => void startGitAccountLink(provider)}
                       disabled={linked || linkingGitProvider !== null}
-                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-60 ${
+                      className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold disabled:opacity-60 transition-colors ${
                         linked
-                          ? "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
-                          : "border border-surface-700 bg-surface-950 text-surface-200 hover:border-surface-600"
+                          ? "bg-success-soft text-success-softFg cursor-default"
+                          : "border border-surface-700 bg-surface-950 text-surface-200 hover:border-brand/50 hover:text-brand-softFg"
                       }`}
                     >
-                      <ProviderIcon provider={provider} className={`h-4 w-4 ${provider === "gitlab" ? "text-orange-300" : "text-surface-300"}`} />
-                      {linked ? `${provider === "github" ? "GitHub" : "GitLab"} linked` : linkingGitProvider === provider ? "Opening…" : `Connect ${provider === "github" ? "GitHub" : "GitLab"}`}
+                      <ProviderIcon provider={provider} className={`h-4 w-4 ${linked ? "" : provider === "gitlab" ? "text-warning" : "text-surface-300"}`} />
+                      {linked ? (
+                        <span className="inline-flex items-center gap-1">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3" aria-hidden>
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                          {provider === "github" ? "GitHub" : "GitLab"} linked
+                        </span>
+                      ) : linkingGitProvider === provider ? "Opening…" : `Connect ${provider === "github" ? "GitHub" : "GitLab"}`}
                     </button>
                   );
                 })}
               </div>
-              {gitLinkError ? <div className="mt-2 text-xs text-red-300">{gitLinkError}</div> : null}
+              {gitLinkError ? <div className="mt-2 text-xs text-danger">{gitLinkError}</div> : null}
             </div>
 
             <div className="rounded-md border border-surface-800 bg-surface-950/70 p-4">
@@ -685,20 +693,23 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setManualProvider("github")}
-                className="inline-flex items-center gap-2 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
-              >
-                <ProviderIcon provider="github" className="h-4 w-4 text-surface-300" />
-                Add GitHub Token
-              </button>
-              <button
-                onClick={() => setManualProvider("gitlab")}
-                className="inline-flex items-center gap-2 rounded-xl border border-surface-700 bg-surface-950 px-3 py-2 text-xs font-semibold text-surface-200 hover:border-surface-600"
-              >
-                <ProviderIcon provider="gitlab" className="h-4 w-4 text-orange-300" />
-                Add GitLab Token
-              </button>
+              {(["github", "gitlab"] as const).map((p) => {
+                const hasToken = providers.some((x) => x.provider === p);
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setManualProvider(p)}
+                    className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+                      hasToken
+                        ? "text-surface-400 hover:text-surface-100 hover:bg-surface-800/50"
+                        : "border border-brand/40 bg-brand-soft/40 text-brand-softFg hover:border-brand/60 hover:bg-brand-soft"
+                    }`}
+                  >
+                    <ProviderIcon provider={p} className={`h-4 w-4 ${p === "gitlab" ? "text-warning" : ""}`} />
+                    {hasToken ? `Manage ${p === "github" ? "GitHub" : "GitLab"} token` : `Add ${p === "github" ? "GitHub" : "GitLab"} Token`}
+                  </button>
+                );
+              })}
             </div>
 
             {manualProvider ? (
@@ -710,7 +721,7 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
                   href={providerTokenHelp(manualProvider).href}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 text-[11px] font-medium text-sky-300 hover:text-sky-200"
+                  className="inline-flex items-center gap-2 text-[11px] font-medium text-info hover:text-info-softFg"
                 >
                   <ProviderIcon provider={manualProvider} className="h-3.5 w-3.5" />
                   {providerTokenHelp(manualProvider).label}
@@ -745,7 +756,7 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
                     <div className="flex items-center gap-2">
                       <ProviderIcon
                         provider={(provider.provider === "gitlab" ? "gitlab" : "github")}
-                        className={`h-4 w-4 ${provider.provider === "gitlab" ? "text-orange-300" : "text-surface-300"}`}
+                        className={`h-4 w-4 ${provider.provider === "gitlab" ? "text-warning" : "text-surface-300"}`}
                       />
                       <div className="text-sm font-semibold text-surface-100">{provider.username}</div>
                     </div>
@@ -840,9 +851,28 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub: st
   );
 }
 
-function StatPill({ label, value }: { label: string; value: string | number }) {
+function StatPill({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string | number;
+  tone?: "success" | "warning" | "info";
+}) {
+  // Numeric zeroes stay neutral; non-zero gets the semantic tone so the eye
+  // catches divergence without reading the number.
+  const numeric = typeof value === "number" ? value : Number.parseInt(String(value), 10);
+  const isZero = !Number.isFinite(numeric) || numeric === 0;
+  const cls = isZero || !tone
+    ? "border-surface-700 bg-surface-950 text-surface-400"
+    : tone === "success"
+      ? "border-success/30 bg-success-soft text-success-softFg"
+      : tone === "warning"
+        ? "border-warning/30 bg-warning-soft text-warning-softFg"
+        : "border-info/30 bg-info-soft text-info-softFg";
   return (
-    <span className="rounded-full border border-surface-700 bg-surface-950 px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-surface-400">
+    <span className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] ${cls}`}>
       {label}: {value}
     </span>
   );

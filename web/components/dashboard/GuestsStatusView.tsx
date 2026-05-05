@@ -23,12 +23,14 @@ import {
 type Scope = "full" | "feedback-only" | "sdk-project";
 
 function StatusBadge({ status }: { status: string }) {
+  // Pending = informational ("waiting on guest"), not a warning. Accepted/
+  // active = success. Revoked = danger. Expired = muted.
   const map: Record<string, { bg: string; fg: string }> = {
-    pending: { bg: "bg-amber-500/10 border-amber-500/40", fg: "text-amber-300" },
-    accepted: { bg: "bg-emerald-500/10 border-emerald-500/40", fg: "text-emerald-300" },
-    revoked: { bg: "bg-red-500/10 border-red-500/40", fg: "text-red-300" },
+    pending: { bg: "bg-info-soft/60 border-info/30", fg: "text-info-softFg" },
+    accepted: { bg: "bg-success-soft/60 border-success/30", fg: "text-success-softFg" },
+    revoked: { bg: "bg-danger-soft/60 border-danger/30", fg: "text-danger-softFg" },
     expired: { bg: "bg-surface-800 border-surface-700", fg: "text-surface-400" },
-    active: { bg: "bg-emerald-500/10 border-emerald-500/40", fg: "text-emerald-300" },
+    active: { bg: "bg-success-soft/60 border-success/30", fg: "text-success-softFg" },
   };
   const tone = map[status] ?? map.pending;
   return (
@@ -53,10 +55,10 @@ function ScopeButton({
     <button
       type="button"
       onClick={onClick}
-      className={`border px-2 py-1 text-xs ${
+      className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
         active
-          ? "border-indigo-500 bg-indigo-500/15 text-indigo-200"
-          : "border-surface-700 bg-surface-900 text-surface-400 hover:text-surface-200"
+          ? "border-brand/40 bg-brand-soft text-brand-softFg"
+          : "border-surface-700 bg-surface-900 text-surface-400 hover:text-surface-200 hover:border-surface-600"
       }`}
     >
       {label}
@@ -541,22 +543,29 @@ export default function GuestsStatusView() {
                 </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                {ownDevices.map((device) => (
+                {ownDevices.map((device) => {
+                  const selected = inviteDeviceIds.includes(device.id);
+                  return (
                   <button
                     key={device.id}
                     type="button"
                     onClick={() => toggleInviteDevice(device.id)}
-                    className={`border px-3 py-2 text-left text-xs ${
-                      inviteDeviceIds.includes(device.id)
-                        ? "border-indigo-500 bg-indigo-500/15 text-surface-100"
-                        : "border-surface-700 bg-surface-950 text-surface-400"
+                    className={`relative rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                      selected
+                        ? "border-brand/40 bg-brand-soft text-surface-100"
+                        : device.online
+                          ? "border-success/25 bg-surface-950 text-surface-300 hover:border-success/40"
+                          : "border-surface-700 bg-surface-950 text-surface-400 hover:border-surface-600"
                     }`}
                   >
+                    {device.online && !selected ? (
+                      <span aria-hidden className="absolute left-0 top-0 h-full w-0.5 rounded-l-md bg-success/60" />
+                    ) : null}
                     <div className="flex items-center justify-between gap-2">
                       <div className="font-semibold text-surface-200">{device.name}</div>
                       <span
                         className={`inline-flex h-2.5 w-2.5 rounded-full ${
-                          device.online ? "bg-emerald-400" : "bg-surface-600"
+                          device.online ? "bg-success animate-live-pulse" : "bg-surface-600"
                         }`}
                       />
                     </div>
@@ -570,7 +579,8 @@ export default function GuestsStatusView() {
                       })}
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -638,7 +648,7 @@ export default function GuestsStatusView() {
               type="button"
               onClick={() => void handleInvite()}
               disabled={busy === "invite" || !inviteTarget.trim()}
-              className="w-full whitespace-nowrap bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              className="w-full whitespace-nowrap rounded-md bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.99] px-4 py-1.5 text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy === "invite" ? "Sending…" : "Send Invite"}
             </button>
@@ -674,7 +684,7 @@ export default function GuestsStatusView() {
               Use this when the host invited a different email than the one you signed in with.
             </p>
           </div>
-          <div className="text-xs text-surface-500">Out-of-band code or pending invite</div>
+          <div className="text-[11px] text-surface-600">Out-of-band code or pending invite</div>
         </div>
         <div className="mt-4 flex gap-2">
           <input

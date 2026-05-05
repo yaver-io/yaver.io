@@ -5,6 +5,7 @@ import { agentClient } from "@/lib/agent-client";
 import EnvironmentSwitcher from "./EnvironmentSwitcher";
 import ProjectDetailView from "./ProjectDetailView";
 import RemoteRuntimeViewer from "./RemoteRuntimeViewer";
+import { EmptyState, LiveDot, Button } from "@/components/ui";
 
 interface Project {
   name: string;
@@ -283,17 +284,26 @@ export default function ProjectsView({
   return (
     <div className="space-y-3">
       {devStatus?.running && (
-        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3 flex items-center justify-between">
-          <div className="text-sm">
-            <span className="text-emerald-400 font-medium">{devStatus.servingLabel || "Serving preview"}</span>
-            <span className="text-surface-400 ml-2">{devStatus.framework} &middot; {devStatus.workDir?.split("/").pop()}</span>
+        <div className="rounded-lg border border-success/25 bg-success-soft/40 px-3 py-2 flex items-center justify-between">
+          <div className="text-sm flex items-center gap-2">
+            <LiveDot tone="success" size="xs" />
+            <span className="text-success-softFg dark:text-success font-medium">{devStatus.servingLabel || "Serving preview"}</span>
+            <span className="text-surface-400">{devStatus.framework} &middot; {devStatus.workDir?.split("/").pop()}</span>
             {devStatus.targetDeviceName ? (
-              <span className="text-sky-300 ml-2">→ {devStatus.targetDeviceName}</span>
+              <span className="text-info dark:text-info-softFg">→ {devStatus.targetDeviceName}</span>
             ) : null}
           </div>
-          <div className="flex gap-2">
-            <button onClick={() => void agentClient.reloadDevServer({ mode: (devStatus?.framework || "").match(/^(expo|react-native)$/i) ? "bundle" : "dev" })} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Refresh Preview</button>
-            <button onClick={stopDev} className="px-3 py-1 text-xs rounded-md bg-red-500/10 text-red-400 hover:bg-red-500/20">{devStatus.stopActionLabel || "Stop Serving"}</button>
+          <div className="flex gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void agentClient.reloadDevServer({ mode: (devStatus?.framework || "").match(/^(expo|react-native)$/i) ? "bundle" : "dev" })}
+            >
+              Refresh
+            </Button>
+            <Button variant="danger-ghost" size="sm" onClick={stopDev}>
+              {devStatus.stopActionLabel || "Stop"}
+            </Button>
           </div>
         </div>
       )}
@@ -342,7 +352,7 @@ export default function ProjectsView({
               onClick={() => setFilter(c.id)}
               className={`px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors ${
                 filter === c.id
-                  ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-400"
+                  ? "bg-brand-soft border-brand/30 text-brand-softFg"
                   : "border-surface-800 text-surface-500 hover:text-surface-300 hover:border-surface-700"
               }`}
             >
@@ -354,71 +364,122 @@ export default function ProjectsView({
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search projects..."
-          className="flex-1 min-w-[140px] rounded-md border border-surface-800 bg-surface-900 px-2.5 py-1 text-xs text-surface-200 placeholder-surface-600 outline-none focus:border-surface-600"
+          className="flex-1 min-w-[140px] rounded-md border border-surface-800 bg-surface-900 px-2.5 py-1 text-xs text-surface-200 placeholder-surface-600 outline-none focus:border-surface-600 focus:ring-1 focus:ring-brand/30"
         />
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-surface-800 bg-surface-900/40 px-4 py-10 text-center">
-          <div className="text-sm text-surface-400">
-            {loadError || "No projects found on remote machine"}
-          </div>
+        <div className="rounded-lg border border-surface-800 bg-surface-900/40">
+          <EmptyState
+            icon={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+              </svg>
+            }
+            title={loadError ? "Couldn't load projects" : "No projects yet"}
+            description={loadError || "Projects on the remote machine will appear here once they're discovered."}
+            action={
+              <div className="flex gap-2 justify-center">
+                <Button variant="secondary" size="sm" onClick={loadProjects}>Retry</Button>
+                {onRepairRelay && loadError && /invalid relay password/i.test(loadError) ? (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => void repairRelayAndReload("manual")}
+                  >
+                    {repairState === "repairing" ? "Repairing…" : "Repair relay"}
+                  </Button>
+                ) : null}
+              </div>
+            }
+          />
           {repairMessage ? (
-            <div className={`mt-3 text-xs ${
+            <div className={`pb-4 text-center text-xs ${
               repairState === "failed"
-                ? "text-red-300"
+                ? "text-danger"
                 : repairState === "repaired"
-                  ? "text-emerald-300"
-                  : "text-amber-300"
+                  ? "text-success"
+                  : "text-warning"
             }`}>
               {repairMessage}
             </div>
           ) : null}
-          <button
-            onClick={loadProjects}
-            className="mt-3 rounded-md border border-surface-700 px-3 py-1.5 text-xs text-surface-300 hover:border-surface-600 hover:text-surface-100"
-          >
-            Retry
-          </button>
-          {onRepairRelay && loadError && /invalid relay password/i.test(loadError) ? (
-            <button
-              onClick={() => void repairRelayAndReload("manual")}
-              className="mt-3 ml-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-500/20"
-            >
-              {repairState === "repairing" ? "Repairing…" : "Repair relay"}
-            </button>
-          ) : null}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-8 text-surface-500 text-sm">No projects match filter</div>
+        <EmptyState
+          compact
+          title="No matches"
+          description="Try a different filter or search term."
+        />
       ) : (
         <div className="space-y-2">
           {filtered.map((p) => {
             const cat = getCategory(p.framework);
             const icon = FRAMEWORK_ICONS[p.framework || ""] || (cat === "mobile" ? "\uD83D\uDCF1" : cat === "web" ? "\uD83C\uDF10" : "\uD83D\uDCC1");
             return (
-              <div key={p.path} onClick={(e) => { if ((e.target as HTMLElement).tagName !== "BUTTON") setDetailPath(p.path); }} className="rounded-lg border border-surface-800 bg-surface-900/50 p-3 flex items-center gap-3 hover:border-indigo-500/40 transition-colors cursor-pointer">
+              <div key={p.path} onClick={(e) => { if ((e.target as HTMLElement).tagName !== "BUTTON") setDetailPath(p.path); }} className="group rounded-lg border border-surface-800 bg-surface-900/50 p-3 flex items-center gap-3 hover:border-brand/40 transition-colors cursor-pointer">
                 <span className="text-lg">{icon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium truncate">{p.name}</div>
-                  <div className="text-xs text-surface-500">
-                    {p.branch && <span>{p.branch} &middot; </span>}
-                    {p.framework || "unknown"}
-                    {p.tags && p.tags.length > 0 && <span className="ml-1 text-surface-600">&middot; {p.tags.join(", ")}</span>}
+                  <div className="text-xs text-surface-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                    {p.branch ? <span className="font-mono">{p.branch}</span> : null}
+                    {p.framework ? <><span className="text-surface-700">·</span><span>{p.framework}</span></> : null}
+                    {p.tags && p.tags.length > 0 ? (
+                      <>
+                        <span className="text-surface-700">·</span>
+                        <span className="text-surface-600 truncate">
+                          {p.tags.slice(0, 4).join(", ")}
+                          {p.tags.length > 4 ? ` +${p.tags.length - 4}` : ""}
+                        </span>
+                      </>
+                    ) : null}
                   </div>
                   {p.primarySurface ? (
-                    <div className="mt-1 text-[10px] uppercase tracking-wide text-surface-600">
-                      Primary: {p.primarySurface}{p.executionMode ? ` · ${p.executionMode}` : ""}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <span className="text-[10px] uppercase tracking-wide text-surface-600">
+                        Primary: {p.primarySurface}{p.executionMode ? ` · ${p.executionMode}` : ""}
+                      </span>
+                      {p.primarySurface.toLowerCase() === "none" || /unsupported/i.test(p.executionMode || "") ? (
+                        <span className="rounded bg-warning-soft text-warning-softFg text-[9px] font-semibold uppercase tracking-wider px-1.5 py-px">
+                          Unsupported
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
-                <button onClick={() => setEnvProject(p.path)} className="px-2 py-1 text-[10px] rounded-md bg-surface-800 text-surface-400 hover:text-indigo-400" title="Switch environment">Env</button>
-                <button onClick={() => gitSync(p)} className="px-3 py-1 text-xs rounded-md bg-surface-800 text-surface-300 hover:bg-surface-700">Sync</button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEnvProject(p.path); }}
+                  className="px-2 py-1 text-[10px] rounded-md text-surface-500 hover:text-brand hover:bg-surface-800/60 transition-colors"
+                  title="Switch environment"
+                >
+                  Env
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); gitSync(p); }}
+                  className="px-2.5 py-1 text-xs rounded-md text-surface-400 hover:text-surface-100 hover:bg-surface-800/60 transition-colors"
+                >
+                  Sync
+                </button>
                 {p.executionMode === "native-webrtc" ? (
-                  <button onClick={() => void openRemoteRuntime(p)} className="px-3 py-1 text-xs rounded-md bg-amber-500/10 text-amber-300 hover:bg-amber-500/20">Remote Runtime</button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); void openRemoteRuntime(p); }}
+                    className="px-3 py-1 text-xs rounded-md bg-warning-soft text-warning-softFg hover:bg-warning/15 transition-colors"
+                  >
+                    Remote Runtime
+                  </button>
+                ) : p.executionMode === "rn-hermes" ? (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startProject(p); }}
+                    className="px-3 py-1 text-xs font-medium rounded-md bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.97] transition-all"
+                  >
+                    Start Hermes
+                  </button>
                 ) : (
-                  <button onClick={() => startProject(p)} className="px-3 py-1 text-xs rounded-md bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20">
-                    {p.executionMode === "rn-hermes" ? "Start Hermes" : "Start"}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startProject(p); }}
+                    className="px-3 py-1 text-xs rounded-md bg-brand-soft text-brand-softFg hover:bg-brand/15 transition-colors"
+                  >
+                    Start
                   </button>
                 )}
               </div>

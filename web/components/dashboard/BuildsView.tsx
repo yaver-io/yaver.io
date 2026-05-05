@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { agentClient, type CapabilitySnapshot, type CapabilityTargetReadiness } from "@/lib/agent-client";
+import { EmptyState } from "@/components/ui";
 
 interface Build { id: string; platform: string; status: string; startedAt?: number; artifactName?: string; }
 interface Project { name: string; path: string; framework?: string; }
@@ -142,8 +143,14 @@ export default function BuildsView({
     return readiness.reason || readiness.suggestedAction || "This target is not ready on the connected machine.";
   }
 
-  function deployButtonClass(disabled: boolean) {
-    return `px-3 py-2 text-sm rounded-lg border flex items-center gap-2 ${disabled ? "border-surface-800 bg-surface-950 text-surface-500 cursor-not-allowed opacity-70" : "border-surface-700 bg-surface-900 hover:bg-surface-800 text-surface-200"}`;
+  function deployButtonClass(disabled: boolean, primary = false) {
+    if (disabled) {
+      return "px-3 py-2 text-sm rounded-lg border border-surface-800 bg-surface-950 text-surface-500 cursor-not-allowed opacity-70 flex items-center gap-2";
+    }
+    if (primary) {
+      return "px-3 py-2 text-sm font-medium rounded-lg bg-brand text-brand-fg hover:bg-brand/90 active:scale-[0.97] transition-all flex items-center gap-2";
+    }
+    return "px-3 py-2 text-sm rounded-lg border border-surface-700 bg-surface-900 hover:bg-surface-800 text-surface-200 transition-colors flex items-center gap-2";
   }
 
   async function runPublish(targetId: string) {
@@ -198,11 +205,12 @@ export default function BuildsView({
           </select>
         </div>
 
-        <label className="mb-3 flex items-center gap-2 text-xs text-surface-400">
+        <label className="mb-3 flex items-center gap-2 text-xs text-surface-400 cursor-pointer select-none">
           <input
             type="checkbox"
             checked={allowGitHubFallback}
             onChange={(e) => setAllowGitHubFallback(e.target.checked)}
+            className="h-3.5 w-3.5 rounded border-surface-700 bg-surface-900 text-brand focus:ring-1 focus:ring-brand/40 focus:ring-offset-0 cursor-pointer accent-brand"
           />
           Allow GitHub fallback for this run
         </label>
@@ -228,7 +236,18 @@ export default function BuildsView({
       <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
         <div className="mb-3 text-xs font-medium uppercase tracking-wider text-surface-500">Recent Publishes</div>
         {publishRuns.length === 0 ? (
-          <div className="text-sm text-surface-500">No publish runs yet.</div>
+          <EmptyState
+            compact
+            icon={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+            }
+            title="No publishes yet"
+            description="Publish a project to see runs here."
+          />
         ) : (
           <div className="space-y-2">
             {publishRuns.slice(0, 10).map((run) => (
@@ -249,7 +268,16 @@ export default function BuildsView({
       <div className="rounded-xl border border-surface-800 bg-surface-900/40 p-4">
         <div className="mb-3 text-xs font-medium uppercase tracking-wider text-surface-500">Recent Unity Runs</div>
         {unityRuns.length === 0 ? (
-          <div className="text-sm text-surface-500">No Unity test, build, or relaunch runs yet.</div>
+          <EmptyState
+            compact
+            icon={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+              </svg>
+            }
+            title="No Unity runs"
+            description="Tests, builds, and relaunches show up here."
+          />
         ) : (
           <div className="space-y-2">
             {unityRuns.slice(0, 8).map((run, index) => {
@@ -277,7 +305,7 @@ export default function BuildsView({
           onClick={() => deploy("testflight")}
           disabled={!!deployDisabledReason("testflight")}
           title={deployDisabledReason("testflight")}
-          className={deployButtonClass(!!deployDisabledReason("testflight"))}
+          className={deployButtonClass(!!deployDisabledReason("testflight"), true)}
         >
           <span>&#x1F34E;</span> TestFlight Task
         </button>
@@ -295,7 +323,7 @@ export default function BuildsView({
       </div>
 
       {(deployDisabledReason("testflight") || deployDisabledReason("playstore")) ? (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200 space-y-2">
+        <div className="rounded-xl border border-warning/30 bg-warning-soft/40 p-4 text-sm text-warning-softFg space-y-2">
           <div className="font-medium">Host readiness blockers</div>
           {deployDisabledReason("testflight") ? <div>TestFlight: {deployDisabledReason("testflight")}</div> : null}
           {deployDisabledReason("playstore") ? <div>Play Store: {deployDisabledReason("playstore")}</div> : null}
@@ -307,7 +335,18 @@ export default function BuildsView({
       {loading ? (
         <div className="text-center py-8 text-surface-500 text-sm">Loading...</div>
       ) : builds.length === 0 ? (
-        <div className="text-center py-8 text-surface-500 text-sm">No builds yet. Publish or deploy to see build history.</div>
+        <EmptyState
+          compact
+          icon={
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+              <line x1="12" y1="22.08" x2="12" y2="12" />
+            </svg>
+          }
+          title="No builds yet"
+          description="Publish or deploy to see build history."
+        />
       ) : (
         <div className="space-y-1">
           {builds.slice(0, 15).map((b) => (

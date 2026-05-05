@@ -23,6 +23,33 @@ body.dashboard-mode main { flex: 1; }
     --surface-900: 245 245 245;
     --surface-950: 255 255 255;
     --selection-bg: rgba(0, 0, 0, 0.08);
+
+    /* Semantic tokens — light. <fg> = solid badge text on solid bg.
+       <soft> = pill/banner background. <soft-fg> = text on soft bg. */
+    --brand: 110 86 246;          /* #6E56F6 */
+    --brand-fg: 255 255 255;
+    --brand-soft: 237 233 254;    /* #EDE9FE */
+    --brand-soft-fg: 76 53 197;   /* #4C35C5 */
+    --success: 22 163 74;         /* #16A34A */
+    --success-fg: 255 255 255;
+    --success-soft: 220 252 231;  /* #DCFCE7 */
+    --success-soft-fg: 21 128 61; /* #15803D */
+    --warning: 217 119 6;         /* #D97706 */
+    --warning-fg: 255 255 255;
+    --warning-soft: 254 243 199;  /* #FEF3C7 */
+    --warning-soft-fg: 146 64 14; /* #92400E */
+    --danger: 220 38 38;          /* #DC2626 */
+    --danger-fg: 255 255 255;
+    --danger-soft: 254 226 226;   /* #FEE2E2 */
+    --danger-soft-fg: 153 27 27;  /* #991B1B */
+    --info: 37 99 235;            /* #2563EB */
+    --info-fg: 255 255 255;
+    --info-soft: 219 234 254;     /* #DBEAFE */
+    --info-soft-fg: 30 64 175;    /* #1E40AF */
+    --muted: 107 114 128;         /* #6B7280 */
+    --muted-fg: 255 255 255;
+    --muted-soft: 241 241 245;    /* #F1F1F5 */
+    --muted-soft-fg: 75 85 99;    /* #4B5563 */
   }
 
   .dark {
@@ -41,6 +68,34 @@ body.dashboard-mode main { flex: 1; }
     --surface-900: 16 16 16;
     --surface-950: 9 9 9;
     --selection-bg: rgba(160, 160, 160, 0.28);
+
+    /* Semantic tokens — dark. Solid stays the same hue but slightly
+       lighter; soft variants use translucent overlays so they blend
+       with the dark surface stack. */
+    --brand: 124 102 255;         /* #7C66FF */
+    --brand-fg: 255 255 255;
+    --brand-soft: 41 32 92;       /* approx rgba(124,102,255,0.16) on #0a0a0a */
+    --brand-soft-fg: 196 184 255;
+    --success: 34 197 94;         /* #22C55E */
+    --success-fg: 5 30 12;
+    --success-soft: 17 49 27;
+    --success-soft-fg: 134 239 172;
+    --warning: 245 158 11;        /* #F59E0B */
+    --warning-fg: 30 18 0;
+    --warning-soft: 56 36 8;
+    --warning-soft-fg: 252 211 77;
+    --danger: 239 68 68;          /* #EF4444 */
+    --danger-fg: 30 6 6;
+    --danger-soft: 60 18 18;
+    --danger-soft-fg: 252 165 165;
+    --info: 59 130 246;           /* #3B82F6 */
+    --info-fg: 255 255 255;
+    --info-soft: 23 39 72;
+    --info-soft-fg: 147 197 253;
+    --muted: 168 168 176;         /* #A8A8B0 */
+    --muted-fg: 17 17 22;
+    --muted-soft: 30 30 36;
+    --muted-soft-fg: 200 200 210;
   }
 
   body {

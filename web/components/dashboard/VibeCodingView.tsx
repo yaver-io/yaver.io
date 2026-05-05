@@ -1186,11 +1186,11 @@ export default function VibeCodingView({
                   <button
                     key={runner.id}
                     onClick={() => setSelectedRunner(runner.id)}
-                    className={`rounded-full border px-3 py-2 text-xs font-semibold ${
+                    className={`rounded-full border px-3 py-2 text-xs font-semibold transition-colors ${
                       selectedRunner === runner.id
-                        ? "border-sky-500/40 bg-sky-500/10 text-sky-100"
+                        ? "border-brand/40 bg-brand-soft text-brand-softFg"
                         : runner.ready === false
-                          ? "border-amber-500/20 bg-amber-500/5 text-amber-100 hover:border-amber-500/40"
+                          ? "border-warning/30 bg-warning-soft/40 text-warning-softFg hover:border-warning/50"
                           : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
                     }`}
                     title={runner.error || runner.warning || runner.name}
@@ -1260,9 +1260,9 @@ export default function VibeCodingView({
                         <button
                           key={id || "default"}
                           onClick={() => setSelectedMode(id)}
-                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                          className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors ${
                             selectedMode === id
-                              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100"
+                              ? "border-brand/40 bg-brand-soft text-brand-softFg"
                               : "border-surface-700 bg-surface-950 text-surface-300 hover:border-surface-600"
                           } ${!agent.isBuiltin && id !== "" ? "italic" : ""}`}
                           title={tooltip}
@@ -1329,9 +1329,9 @@ export default function VibeCodingView({
                     <button
                       key={model.id}
                       onClick={() => setSelectedModel(model.id)}
-                      className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold ${
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors ${
                         selectedModel === model.id
-                          ? "border-indigo-500/40 bg-indigo-500/10 text-indigo-100"
+                          ? "border-brand/40 bg-brand-soft text-brand-softFg"
                           : "border-surface-700 bg-surface-950 text-surface-400 hover:border-surface-600"
                       }`}
                       title={model.description || model.name}

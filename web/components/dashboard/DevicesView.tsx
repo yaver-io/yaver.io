@@ -1645,8 +1645,8 @@ export default function DevicesView({
                         <span
                           className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
                             device.sessionBinding === "dedicated"
-                              ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
-                              : "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                              ? "border-info/30 bg-info-soft text-info-softFg dark:border-info/30 dark:bg-info-soft dark:text-info-softFg"
+                              : "border-warning/30 bg-warning-soft text-warning-softFg dark:border-warning/30 dark:bg-warning-soft dark:text-warning-softFg"
                           }`}
                         >
                           {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
@@ -1656,13 +1656,13 @@ export default function DevicesView({
                         const lifecycle = deriveDeviceLifecycleState(device);
                         const dotClass =
                           lifecycle === "connected"
-                            ? "bg-emerald-300"
+                            ? "bg-success animate-live-pulse"
                             : lifecycle === "bootstrap"
-                              ? "bg-violet-400"
+                              ? "bg-info"
                               : lifecycle === "yaver-auth-expired"
-                                ? "bg-amber-400"
+                                ? "bg-warning animate-live-pulse"
                                 : lifecycle === "ready-to-connect"
-                                  ? "bg-cyan-400"
+                                  ? "bg-info/70"
                                   : "bg-surface-600";
                         const label =
                           lifecycle === "connected"
@@ -1736,10 +1736,10 @@ export default function DevicesView({
                             alert(`Failed to update primary: ${e?.message ?? e}`);
                           }
                         }}
-                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
                           primaryDeviceId === device.id
-                            ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
-                            : "border-slate-300 bg-white text-slate-700 hover:border-amber-300 hover:text-amber-700 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/30 dark:hover:text-amber-200"
+                            ? "border-brand/40 bg-brand-soft text-brand-softFg dark:border-brand/40 dark:bg-brand-soft dark:text-brand-softFg"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-brand/40 hover:text-brand dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-brand/40 dark:hover:text-brand-softFg"
                         }`}
                         title={primaryDeviceId === device.id ? "This is your primary device" : "Mark this device as your primary machine"}
                       >
@@ -1768,7 +1768,7 @@ export default function DevicesView({
                     ) : null}
                     <button
                       onClick={() => setShellDevice(device)}
-                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-medium leading-none text-cyan-700 hover:border-cyan-400 hover:bg-cyan-100 dark:border-cyan-500/40 dark:bg-cyan-500/10 dark:text-cyan-200 dark:hover:border-cyan-500/60 dark:hover:bg-cyan-500/20"
+                      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium leading-none text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-200 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-50 transition-colors"
                       title="Open a browser shell on this device (PTY over relay) — Hetzner / GCP-style"
                     >
                       <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>

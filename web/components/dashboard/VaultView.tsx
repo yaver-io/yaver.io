@@ -9,23 +9,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { agentClient, type VaultEntrySummary, type VaultEntry, type VaultCategory } from "@/lib/agent-client";
+import { EmptyState, Button } from "@/components/ui";
 
 const CATEGORIES: VaultCategory[] = ["api-key", "signing-key", "ssh-key", "git-credential", "custom"];
 
-function categoryColor(c: VaultCategory): string {
-  switch (c) {
-    case "api-key":
-      return "bg-indigo-900/40 text-indigo-200 border-indigo-700";
-    case "signing-key":
-      return "bg-amber-900/40 text-amber-200 border-amber-700";
-    case "ssh-key":
-      return "bg-emerald-900/40 text-emerald-200 border-emerald-700";
-    case "git-credential":
-      return "bg-sky-900/40 text-sky-200 border-sky-700";
-    default:
-      return "bg-surface-800 text-surface-300 border-surface-700";
-  }
-}
+// Per-entry category badge — single neutral style. The category text itself
+// is the differentiator; we don't decorate-color types. Filter pills are a
+// separate decision (brand-soft when selected, neutral otherwise).
+const CATEGORY_BADGE = "bg-surface-800/60 text-surface-300 border-surface-700/60";
 
 interface VaultViewProps {
   /** True when the connected device is in needsAuth state. Lets us
@@ -276,47 +267,36 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
           /HTTP 5(03|02)|HTTP 401|HTTP 403|needs auth|expired|unauthor/i.test(err);
         if (looksLikeAuthFailure) {
           return (
-            <div className="flex items-start gap-3 rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100" role="alert">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-amber-300">
+            <div className="flex items-start gap-3 rounded-lg border border-warning/40 bg-warning-soft/40 px-3 py-2.5 text-sm text-warning-softFg" role="alert">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-warning">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                 <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
-              <div className="flex-1">
+              <div className="flex-1 min-w-0">
                 <p className="font-medium">Vault locked: agent session expired on this machine</p>
-                <p className="mt-0.5 text-[12px] text-amber-200/80">
+                <p className="mt-0.5 text-[12px] opacity-80">
                   Vault stays sealed until the host signs back in. Run <code className="rounded bg-surface-800 px-1 py-px font-mono text-[11px]">yaver auth</code> on the host, or click Reconnect.
                 </p>
               </div>
-              {onReconnect && (
-                <button
-                  type="button"
-                  onClick={() => { void onReconnect(); }}
-                  className="shrink-0 self-start rounded border border-amber-400/50 bg-amber-500/20 px-2.5 py-1 text-[11px] hover:bg-amber-500/30"
-                >
-                  Reconnect
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => void load()}
-                className="shrink-0 self-start rounded border border-amber-400/40 px-2 py-1 text-[11px] text-amber-200 hover:bg-amber-500/15"
-                title="Retry the vault list call"
-              >
-                Retry
-              </button>
+              <div className="flex shrink-0 gap-1.5 self-start">
+                {onReconnect && (
+                  <Button variant="primary" size="sm" onClick={() => { void onReconnect(); }}>
+                    Reconnect
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={() => void load()} title="Retry the vault list call">
+                  Retry
+                </Button>
+              </div>
             </div>
           );
         }
         return (
-          <div className="flex items-center gap-2 rounded border border-red-500/40 bg-red-950/30 px-3 py-2 text-sm text-red-200" role="alert">
+          <div className="flex items-center gap-2 rounded-lg border border-danger/40 bg-danger-soft/40 px-3 py-2 text-sm text-danger-softFg" role="alert">
             <span className="flex-1">{err}</span>
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="rounded border border-red-500/40 px-2 py-0.5 text-[11px] hover:bg-red-500/15"
-            >
+            <Button variant="ghost" size="sm" onClick={() => void load()}>
               Retry
-            </button>
+            </Button>
           </div>
         );
       })()}
@@ -329,10 +309,15 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
           {!editingName && (
             <button
               type="button"
-              className="ml-auto rounded border border-surface-700 bg-surface-900 px-2 py-0.5 text-xs text-surface-400 hover:text-surface-100"
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-info-soft text-info-softFg px-2.5 py-1 text-xs font-medium hover:bg-info/15 transition-colors"
               onClick={() => setImportOpen((v) => !v)}
             >
-              {importOpen ? "Close .env import" : "Import from .env"}
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5" aria-hidden>
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+              {importOpen ? "Close" : "Import from .env"}
             </button>
           )}
         </div>
@@ -433,14 +418,14 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
               Cancel
             </button>
           )}
-          <button
-            type="button"
-            className="rounded bg-indigo-600 px-4 py-1.5 text-sm font-semibold disabled:opacity-40"
+          <Button
+            variant="primary"
+            size="md"
             disabled={saving || !draftName.trim() || !draftValue.trim()}
             onClick={() => void save()}
           >
             {saving ? (editingName ? "Updating…" : "Saving…") : editingName ? "Update" : "Save"}
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -460,8 +445,10 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
               <button
                 key={cat}
                 type="button"
-                className={`rounded border px-2 py-0.5 text-[10px] ${
-                  filter.has(cat) ? categoryColor(cat) : "border-surface-800 bg-surface-900 text-surface-500"
+                className={`rounded border px-2 py-0.5 text-[10px] transition-colors ${
+                  filter.has(cat)
+                    ? "border-brand/30 bg-brand-soft text-brand-softFg"
+                    : "border-surface-800 bg-surface-900 text-surface-500 hover:border-surface-700 hover:text-surface-300"
                 }`}
                 onClick={() => {
                   setFilter((prev) => {
@@ -488,7 +475,17 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
         </div>
         {loading && <p className="p-3 text-sm text-surface-400">Loading…</p>}
         {!loading && entries.length === 0 && (
-          <p className="p-3 text-sm text-surface-500">No entries yet.</p>
+          <EmptyState
+            compact
+            icon={
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </svg>
+            }
+            title="No entries yet"
+            description="Add your first secret to start using the vault."
+          />
         )}
         <ul className="divide-y divide-surface-800">
           {entries
@@ -505,7 +502,7 @@ export default function VaultView({ needsAuth, onReconnect }: VaultViewProps = {
               <li key={e.name} className="flex flex-col gap-1 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-sm">{e.name}</span>
-                  <span className={`rounded border px-1.5 py-0.5 text-[10px] ${categoryColor(e.category)}`}>
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] ${CATEGORY_BADGE}`}>
                     {e.category}
                   </span>
                   <span className="ml-auto flex gap-1 text-xs">
