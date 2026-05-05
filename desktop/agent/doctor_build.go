@@ -116,13 +116,19 @@ func BuildTargetNames() []string {
 
 // BuildDoctorReport is the machine-readable outcome of a preflight run.
 type BuildDoctorReport struct {
-	Target  string                `json:"target"`
-	Stack   string                `json:"stack,omitempty"`
-	Project string                `json:"project,omitempty"`
-	OK      bool                  `json:"ok"`
-	Tools   []BuildToolResult     `json:"tools"`
-	Secrets []BuildSecretResult   `json:"secrets,omitempty"`
-	Notes   []string              `json:"notes,omitempty"`
+	Target  string              `json:"target"`
+	Stack   string              `json:"stack,omitempty"`
+	Project string              `json:"project,omitempty"`
+	OK      bool                `json:"ok"`
+	Tools   []BuildToolResult   `json:"tools"`
+	Secrets []BuildSecretResult `json:"secrets,omitempty"`
+	Notes   []string            `json:"notes,omitempty"`
+	// ProjectStatus is populated by runDeepChecks when the doctor is
+	// asked about a specific project — tells the caller whether the
+	// app slug exists in this machine's workspace manifest. Crucial
+	// for the multi-machine deploy picker: a remote box with a green
+	// toolchain but no source tree shouldn't claim ok=true.
+	ProjectStatus *BuildProjectStatus `json:"projectStatus,omitempty"`
 }
 
 type BuildToolResult struct {
@@ -134,6 +140,17 @@ type BuildToolResult struct {
 	InstallHint string `json:"install_hint,omitempty"`
 	Skipped     bool   `json:"skipped,omitempty"` // e.g. platform mismatch
 	SkipReason  string `json:"skip_reason,omitempty"`
+	// DeepValid is set by runDeepChecks for tools that have a deeper
+	// probe beyond LookPath: xcodebuild (must resolve inside Xcode.app,
+	// not the CLT stub), java (major version >= 17 for Gradle/RN). nil
+	// when no deep probe applies. *bool so a "checked and false" is
+	// distinguishable from "didn't check."
+	DeepValid *bool `json:"deepValid,omitempty"`
+	// DeepError is the human-readable reason DeepValid is false.
+	DeepError string `json:"deepError,omitempty"`
+	// VersionMajor is parsed by deep probes (currently java) so the
+	// UI doesn't have to re-parse Version. Zero if not extracted.
+	VersionMajor int `json:"versionMajor,omitempty"`
 }
 
 type BuildSecretResult struct {
@@ -141,6 +158,17 @@ type BuildSecretResult struct {
 	Found   bool   `json:"found"`
 	Source  string `json:"source,omitempty"` // "vault:project", "vault:global", "env"
 	Project string `json:"project,omitempty"`
+	// PathValid is set by runDeepChecks when the secret name suggests a
+	// filesystem path (suffixes _PATH, _FILE, _KEY_PATH, _KEYSTORE) and
+	// reflects whether the resolved path actually exists. nil when the
+	// secret isn't path-shaped. *bool so callers can tell "checked +
+	// invalid" from "didn't check / N/A."
+	PathValid *bool `json:"pathValid,omitempty"`
+	// PathError is the reason PathValid is false (e.g. "file not found
+	// at ~/path/to/key.p8"). Home dir is sanitised to "~" before
+	// returning so cross-device responses don't leak the macOS short
+	// username.
+	PathError string `json:"pathError,omitempty"`
 }
 
 // RunBuildDoctor probes the local machine for the given target (e.g.
@@ -197,6 +225,12 @@ func RunBuildDoctor(target, project string, vs *VaultStore) (BuildDoctorReport, 
 					name, name, projectFlag(project)))
 		}
 	}
+
+	// Deep capability checks — see doctor_build_deep.go. Layered after
+	// the basic pass so a tool/secret that's already missing doesn't
+	// get a redundant deep probe (and so the deep-fail notes appear
+	// AFTER the basic ones in the human report).
+	runDeepChecks(&report, target, project, vs)
 
 	if !report.OK && len(report.Notes) == 0 {
 		report.Notes = append(report.Notes, "Install the missing required tools, then re-run `yaver doctor build`.")
