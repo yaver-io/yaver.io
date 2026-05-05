@@ -866,6 +866,17 @@ function CodingAgentsSection({ device }: { device: Device }) {
   );
 }
 
+function isHardwareProfileIncomplete(hardware: Device["hardwareProfile"]): boolean {
+  if (!hardware) return true;
+  const hasCpu = !!hardware.cpu;
+  const hasRam = typeof hardware.ramMb === "number" && hardware.ramMb > 0;
+  const hasCores = typeof hardware.numCores === "number" && hardware.numCores > 0;
+  const hasArch = !!hardware.arch;
+  // Any of these missing means the agent never sent (or failed to detect)
+  // a complete profile — kick the refresh.
+  return !(hasCpu && hasRam && hasCores && hasArch);
+}
+
 function HardwareCapabilitiesSection({ device }: { device: Device }) {
   const c = useColors();
   const hardware = device.hardwareProfile;
@@ -873,23 +884,91 @@ function HardwareCapabilitiesSection({ device }: { device: Device }) {
   const iosSimulators = formatList(hardware?.iosSimulators);
   const androidEmulators = formatList(hardware?.androidEmulators);
 
+  const incomplete = isHardwareProfileIncomplete(hardware);
+  const [refreshState, setRefreshState] = useState<
+    | { phase: "idle" }
+    | { phase: "refreshing" }
+    | { phase: "ok"; via: string }
+    | { phase: "error"; message: string }
+  >({ phase: "idle" });
+
+  const triggerRefresh = useCallback(async () => {
+    setRefreshState({ phase: "refreshing" });
+    try {
+      const res = await quicClient.refreshDeviceHardware(device.id);
+      if (res.ok) {
+        // Convex live query updates the device row → DetailRow re-renders.
+        setRefreshState({ phase: "ok", via: res.via });
+      } else {
+        setRefreshState({ phase: "error", message: res.error });
+      }
+    } catch (e: unknown) {
+      setRefreshState({ phase: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }, [device.id]);
+
+  // Auto-fire once when the modal first sees an incomplete profile for this
+  // device. Re-arms if the user opens a different device. The refresh is
+  // idempotent server-side, so a duplicate kick is harmless.
+  useEffect(() => {
+    if (!incomplete) return;
+    if (refreshState.phase !== "idle") return;
+    void triggerRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device.id, incomplete]);
+
+  // If a previously-empty profile filled in via Convex live query, drop the
+  // "ok" / "refreshing" banner so the user just sees the populated rows.
+  useEffect(() => {
+    if (!incomplete && (refreshState.phase === "ok" || refreshState.phase === "refreshing")) {
+      setRefreshState({ phase: "idle" });
+    }
+  }, [incomplete, refreshState.phase]);
+
+  const placeholder = incomplete && refreshState.phase === "refreshing" ? "detecting…" : "—";
+
   return (
     <View style={{
       borderWidth: 1, borderColor: c.border, borderRadius: 8,
       backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
     }}>
-      <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
-        HARDWARE
-      </Text>
-      <DetailRow label="OS" value={osValue || "—"} />
-      <DetailRow label="CPU" value={hardware?.cpu || "—"} mono={!!hardware?.cpu} />
-      <DetailRow label="RAM" value={formatMemoryMb(hardware?.ramMb) || "—"} />
-      <DetailRow label="GPU" value={hardware?.gpu || "—"} mono={!!hardware?.gpu} />
-      <DetailRow label="VRAM" value={formatMemoryMb(hardware?.vramMb) || "—"} />
-      <DetailRow label="Cores" value={typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : "—"} />
-      <DetailRow label="Arch" value={hardware?.arch || "—"} mono={!!hardware?.arch} />
+      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1 }}>
+          HARDWARE
+        </Text>
+        {incomplete ? (
+          <Pressable
+            onPress={triggerRefresh}
+            disabled={refreshState.phase === "refreshing"}
+            style={{
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 6,
+              borderWidth: 1,
+              borderColor: c.border,
+              opacity: refreshState.phase === "refreshing" ? 0.5 : 1,
+            }}
+          >
+            <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600" }}>
+              {refreshState.phase === "refreshing" ? "Refreshing…" : "Refresh"}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <DetailRow label="OS" value={osValue || placeholder} />
+      <DetailRow label="CPU" value={hardware?.cpu || placeholder} mono={!!hardware?.cpu} />
+      <DetailRow label="RAM" value={formatMemoryMb(hardware?.ramMb) || placeholder} />
+      <DetailRow label="GPU" value={hardware?.gpu || placeholder} mono={!!hardware?.gpu} />
+      <DetailRow label="VRAM" value={formatMemoryMb(hardware?.vramMb) || placeholder} />
+      <DetailRow label="Cores" value={typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : placeholder} />
+      <DetailRow label="Arch" value={hardware?.arch || placeholder} mono={!!hardware?.arch} />
       {iosSimulators ? <DetailRow label="iOS simulators" value={iosSimulators} mono /> : null}
       {androidEmulators ? <DetailRow label="Android emulators" value={androidEmulators} mono /> : null}
+      {refreshState.phase === "error" ? (
+        <Text style={{ color: "#fecdd3", fontSize: 11, marginTop: 6 }}>
+          ✗ {refreshState.message}
+        </Text>
+      ) : null}
     </View>
   );
 }

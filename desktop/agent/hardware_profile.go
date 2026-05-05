@@ -44,6 +44,7 @@ func (p *DeviceHardwareProfile) isEmpty() bool {
 
 var (
 	hardwareProfileOnce      sync.Once
+	hardwareProfileMu        sync.Mutex
 	hardwareProfileCached    *DeviceHardwareProfile
 	hardwareProfileSentMu    sync.Mutex
 	hardwareProfileLastSent  time.Time
@@ -53,10 +54,38 @@ var (
 func cachedHardwareProfile() *DeviceHardwareProfile {
 	hardwareProfileOnce.Do(func() {
 		profile := detectHardwareProfile()
+		hardwareProfileMu.Lock()
 		if !profile.isEmpty() {
 			hardwareProfileCached = profile
 		}
+		hardwareProfileMu.Unlock()
 	})
+	hardwareProfileMu.Lock()
+	defer hardwareProfileMu.Unlock()
+	return hardwareProfileCached
+}
+
+// forceRefreshHardwareProfile re-runs detection, replaces the cached snapshot,
+// and clears the heartbeat-sent timestamp so the next heartbeat carries the
+// fresh profile to Convex (bypassing the 24h gate).
+func forceRefreshHardwareProfile() *DeviceHardwareProfile {
+	// Make sure the sync.Once has fired so the slow-path/fast-path agree
+	// on whether the cache is populated.
+	cachedHardwareProfile()
+
+	profile := detectHardwareProfile()
+	hardwareProfileMu.Lock()
+	if !profile.isEmpty() {
+		hardwareProfileCached = profile
+	}
+	hardwareProfileMu.Unlock()
+
+	hardwareProfileSentMu.Lock()
+	hardwareProfileLastSent = time.Time{}
+	hardwareProfileSentMu.Unlock()
+
+	hardwareProfileMu.Lock()
+	defer hardwareProfileMu.Unlock()
 	return hardwareProfileCached
 }
 

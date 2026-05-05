@@ -247,6 +247,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
 	mux.HandleFunc("/summary", s.auth(s.handleSummary))
 	mux.HandleFunc("/info", s.auth(s.handleInfo))
+	mux.HandleFunc("/hardware/refresh", s.auth(s.handleHardwareRefresh))
 	mux.HandleFunc("/self-check", s.auth(s.handleSelfCheck))
 	mux.HandleFunc("/bus/status", s.auth(s.handleBusStatus))
 	mux.HandleFunc("/bus/retained", s.auth(s.handleBusRetained))
@@ -2355,6 +2356,25 @@ func isNonOwnerInfoCaller(r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// handleHardwareRefresh re-runs hardware detection (bypassing the in-process
+// cache + the 24h heartbeat gate) and kicks the heartbeat loop so the fresh
+// profile lands in Convex within ~1s. Mobile + web call this when a device's
+// hardwareProfile row is missing or stale (e.g. the agent was upgraded from a
+// pre-detection build) so users don't have to wait the regular 24h refresh.
+// POST /hardware/refresh
+func (s *HTTPServer) handleHardwareRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	profile := forceRefreshHardwareProfile()
+	s.TriggerHeartbeat()
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":       true,
+		"hardware": profile,
+	})
 }
 
 // handleProjectsRefresh forces a re-scan of projects on the machine.

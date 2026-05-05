@@ -6578,6 +6578,91 @@ export class QuicClient {
     return { ok: false, error: lastError };
   }
 
+  /** Ask a remote device's agent to re-detect its hardware profile and push
+   *  it to Convex now (bypassing the agent's 24h heartbeat gate). Used by
+   *  DeviceDetailsModal when a device row is missing CPU/RAM/etc — typically
+   *  because the agent was upgraded from a build that pre-dated the
+   *  hardwareProfile feature, so the profile was never sent.
+   *
+   *  Walks LAN beacon → tunnel → relay to find a working transport. The
+   *  agent answers immediately with the freshly detected profile; the
+   *  Convex row updates a moment later via the kicked heartbeat, which
+   *  is what the modal actually re-renders against. */
+  async refreshDeviceHardware(
+    deviceId: string,
+  ): Promise<{ ok: true; via: string } | { ok: false; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!deviceId) return { ok: false, error: "missing deviceId" };
+    const userBearer = this.token;
+    const baseHeaders: Record<string, string> = {
+      Authorization: `Bearer ${userBearer}`,
+      "X-Client-Platform": Platform.OS,
+    };
+
+    const targets: Array<{ url: string; headers: Record<string, string>; label: string }> = [];
+    const seen = new Set<string>();
+    const push = (url: string, headers: Record<string, string>, label: string) => {
+      if (!url || seen.has(url)) return;
+      seen.add(url);
+      targets.push({ url, headers, label });
+    };
+
+    const lanInfo = beaconListener.getLocalIP(deviceId);
+    if (lanInfo) {
+      push(`http://${lanInfo.ip}:${lanInfo.port}/hardware/refresh`, baseHeaders, `lan ${lanInfo.ip}`);
+    }
+    if (this.deviceId === deviceId && this.host && this.port) {
+      push(`http://${this.host}:${this.port}/hardware/refresh`, baseHeaders, `direct ${this.host}`);
+    }
+    for (const tunnel of this.effectiveTunnelServers) {
+      const headers: Record<string, string> = { ...baseHeaders };
+      if (tunnel.cfAccessClientId) {
+        headers["CF-Access-Client-Id"] = tunnel.cfAccessClientId;
+        headers["CF-Access-Client-Secret"] = tunnel.cfAccessClientSecret || "";
+      }
+      push(`${tunnel.url.replace(/\/+$/, "")}/hardware/refresh`, headers, `tunnel ${tunnel.url}`);
+    }
+    for (const relay of this.relayServers) {
+      const headers: Record<string, string> = { ...baseHeaders };
+      if (relay.password) headers["X-Relay-Password"] = relay.password;
+      const url = `${relay.httpUrl}/d/${deviceId}/hardware/refresh` +
+        (relay.password ? `?__rp=${encodeURIComponent(relay.password)}` : "");
+      push(url, headers, `relay ${relay.id || relay.httpUrl}`);
+    }
+
+    if (targets.length === 0) return { ok: false, error: "no transport for device" };
+
+    let lastError = "no transport reached the device";
+    for (const t of targets) {
+      try {
+        const res = await this.fetchWithTimeout(t.url, {
+          method: "POST",
+          headers: t.headers,
+        }, 8000);
+        if (res.ok) {
+          return { ok: true, via: t.label };
+        }
+        if (res.status === 401 || res.status === 403) {
+          let body = "";
+          try { body = (await res.json())?.error || ""; } catch {
+            try { body = await res.text(); } catch {}
+          }
+          return { ok: false, error: `${res.status}: ${body || "forbidden"}` };
+        }
+        if (res.status === 404) {
+          // Agent build is too old to expose /hardware/refresh — no point
+          // walking further; every transport hits the same agent. The user
+          // needs to upgrade the agent before this endpoint exists.
+          return { ok: false, error: "agent build is too old — upgrade with `npm i -g yaver-cli@latest`" };
+        }
+        lastError = `${res.status} on ${t.label}`;
+      } catch (e: unknown) {
+        lastError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    return { ok: false, error: lastError };
+  }
+
   /** One-click pair for a device in bootstrap mode. Hits
    *  /auth/pair/owner-claim — agent verifies ownership via
    *  Convex round-trip and splices the bearer into the active
