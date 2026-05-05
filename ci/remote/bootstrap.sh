@@ -24,10 +24,30 @@ if dpkg --print-foreign-architectures 2>/dev/null | grep -q amd64; then
   log "removing leaked amd64 foreign architecture"
   dpkg --remove-architecture amd64 2>&1 | head -3 || true
 fi
-# Acquire::Retries=0 + 5s timeouts so any remaining flake fails fast
-# instead of hanging the whole bootstrap on a single dead mirror.
-APT_FAST=(-y -o Acquire::Retries=0 -o Acquire::http::Timeout=5 -o Acquire::https::Timeout=5)
-apt-get "${APT_FAST[@]}" update || true
+
+# Apply Acquire::Retries=0 + 5s timeouts GLOBALLY for every apt-get in
+# this bootstrap (and all future runs on this box). Without this, the
+# nested apt-get update calls inside the docker / nodesource / etc.
+# blocks bypass the fail-fast envelope and re-introduce the multi-
+# minute hang on dead amd64 mirror lookups. Persistent file is the
+# right scope: the box is a CI test target, owner is in full control,
+# and a fast-fail policy is the right default for a fresh provision.
+install -m 0644 /dev/stdin /etc/apt/apt.conf.d/99-yaver-fast.conf <<'EOF'
+Acquire::Retries "0";
+Acquire::http::Timeout "5";
+Acquire::https::Timeout "5";
+EOF
+
+# Strip explicit `[arch=amd64]` references from any sources.list.d/*
+# entry left behind by the prior provisioning. Even after the
+# foreign-arch removal above, apt still TRIES amd64 repos when they're
+# in sources files. sed is idempotent + harmless on lines without the
+# pattern.
+find /etc/apt/sources.list.d -type f -name '*.list' -exec \
+  sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' {} \;
+sed -i 's/\[arch=amd64\]//g; s/\[arch=amd64,arm64\]/[arch=arm64]/g' /etc/apt/sources.list 2>/dev/null || true
+
+apt-get update -y || true
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg git jq rsync tmux unzip zip \
   build-essential pkg-config \
