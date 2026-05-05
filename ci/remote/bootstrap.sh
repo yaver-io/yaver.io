@@ -81,7 +81,9 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] \
     https://download.docker.com/linux/ubuntu ${codename} stable" \
     > /etc/apt/sources.list.d/docker.list
-  apt-get update -y
+  # Tolerate the amd64-leak noise like every other apt-get update in
+  # this script — set -e treats apt's E: lines as fatal otherwise.
+  apt-get update -y || true
   apt-get install -y docker-ce docker-ce-cli containerd.io \
     docker-buildx-plugin docker-compose-plugin
   systemctl enable --now docker
