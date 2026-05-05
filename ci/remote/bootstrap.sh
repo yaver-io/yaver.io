@@ -14,21 +14,20 @@ export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
 log "apt base"
-# `apt-get update` may exit non-zero on a multi-arch box where the
-# Hetzner ports mirror was added (arm64) AND someone earlier ran
-# `dpkg --add-architecture amd64` — the ports mirror 404s on amd64
-# indices, the update returns E: errors, and set -e then kills the
-# rest of the bootstrap. Tolerate the failure: arm64 lists are still
-# fetched fine (apt prints `Get:` for them above the `Err:` noise),
-# and our subsequent `apt-get install` calls only ever pull arm64
-# packages on a cax box.
-apt-get update -y || true
-# Defensive: nuke amd64 from the dpkg arch list if it leaked in.
-# Keeps the noise from coming back on rerun.
+# Multi-arch hygiene FIRST. On a previous-state box where someone ran
+# `dpkg --add-architecture amd64`, the Hetzner ports mirror 404s on
+# amd64 indices and each retry takes ~15s to time out — running
+# apt-get update before this cleanup blows >5 min on dead lookups.
+# Removing the foreign architecture is cheap (dpkg state edit, no
+# network), and only needs the apt update to follow once.
 if dpkg --print-foreign-architectures 2>/dev/null | grep -q amd64; then
-  dpkg --remove-architecture amd64 2>&1 | head -1 || true
-  apt-get update -y || true
+  log "removing leaked amd64 foreign architecture"
+  dpkg --remove-architecture amd64 2>&1 | head -3 || true
 fi
+# Acquire::Retries=0 + 5s timeouts so any remaining flake fails fast
+# instead of hanging the whole bootstrap on a single dead mirror.
+APT_FAST=(-y -o Acquire::Retries=0 -o Acquire::http::Timeout=5 -o Acquire::https::Timeout=5)
+apt-get "${APT_FAST[@]}" update || true
 apt-get install -y --no-install-recommends \
   ca-certificates curl gnupg git jq rsync tmux unzip zip \
   build-essential pkg-config \
