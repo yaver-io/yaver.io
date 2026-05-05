@@ -665,6 +665,9 @@ function PhaseStatusLine({ task }: { task: Task }) {
   const isRunning = task.status === "running" || task.status === "queued";
   const [phaseIdx, setPhaseIdx] = useState(0);
   const [spinIdx, setSpinIdx] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(() =>
+    Math.max(0, Math.floor((Date.now() - task.createdAt) / 1000)),
+  );
   const fade = useRef(new Animated.Value(1)).current;
 
   // Spinner: ~10 fps, cheap to keep alive — only mounts while the
@@ -676,6 +679,17 @@ function PhaseStatusLine({ task }: { task: Task }) {
     }, 90);
     return () => clearInterval(t);
   }, [isRunning]);
+
+  // Elapsed timer — ticks every 1s while running. Spec B3 fallback:
+  // "Working · 4s", "Still working · 12s". Bumps a number, doesn't
+  // touch the chat surface.
+  useEffect(() => {
+    if (!isRunning) return;
+    const t = setInterval(() => {
+      setElapsedSec(Math.max(0, Math.floor((Date.now() - task.createdAt) / 1000)));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [isRunning, task.createdAt]);
 
   // Phase rotation: same 1.8s cadence + fade-flip the inline pill
   // already used.
@@ -719,6 +733,16 @@ function PhaseStatusLine({ task }: { task: Task }) {
         marginLeft: 4,
       }}>
         {current?.label || "working"}…
+      </Text>
+      {/* Elapsed counter — switches to "still working" past 10s so
+          the user knows the agent is alive and we're not stuck. */}
+      <Text style={{
+        color: c.textTertiary,
+        fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+        fontSize: 12,
+        marginLeft: 8,
+      }}>
+        · {elapsedSec >= 10 ? "still working " : ""}{elapsedSec}s
       </Text>
     </Animated.View>
   );
@@ -1768,6 +1792,26 @@ export default function TasksScreen() {
     }
   }, [selectedTask?.status, selectedTask?.resultText, ttsEnabled]);
 
+  // Haptic notification on task transition: fire success on
+  // completed, error on failed. Single ref tracks the last status
+  // we already handled per task id so we don't re-fire on every
+  // re-render. See spec X1.
+  const lastHapticTaskStatusRef = useRef<{ id: string; status: TaskStatus } | null>(null);
+  useEffect(() => {
+    if (!selectedTask) return;
+    const prev = lastHapticTaskStatusRef.current;
+    const newKey = { id: selectedTask.id, status: selectedTask.status };
+    if (prev?.id === newKey.id && prev.status === newKey.status) return;
+    if (prev?.id === newKey.id) {
+      // Same task, status changed — fire transition haptic. Skip on
+      // queued/running (those don't need a haptic), only on terminal
+      // states.
+      if (newKey.status === "completed") taskHaptics.taskCompleted();
+      else if (newKey.status === "failed") taskHaptics.taskFailed();
+    }
+    lastHapticTaskStatusRef.current = newKey;
+  }, [selectedTask?.id, selectedTask?.status]);
+
   // Auto-scroll to bottom when keyboard appears (prevents last message from being hidden)
   useEffect(() => {
     const sub = Keyboard.addListener("keyboardDidShow", () => {
@@ -2068,11 +2112,27 @@ export default function TasksScreen() {
       setNewTaskText("");
       setAttachedImages([]);
       setInputFromSpeech(false);
-      // Add task to list immediately
+      // Add task to list immediately (optimistic UI — the user's
+      // command becomes the first chat bubble before the server
+      // confirms; if the network rejects it the row falls back to a
+      // failed status downstream).
       setTasks((prev) => [task, ...prev]);
-      // Store task to open after modal closes (onDismiss will pick it up)
-      pendingOpenTaskRef.current = task;
-      setShowNewTask(false);
+      // Spec A7 (transition redesign): open the detail modal FIRST,
+      // then close the compose modal. The previous flow ("close
+      // compose -> onDismiss callback opens detail") flashed the
+      // tasks list between the two slide animations because the
+      // detail wasn't mounted yet. Setting both modals visible
+      // briefly stacks them; the compose modal slides down over an
+      // already-mounted detail screen, so the user sees one
+      // continuous motion instead of compose -> list -> detail.
+      setSelectedTask(task);
+      // Tiny delay so the detail modal's opening transition begins
+      // before the compose dismiss starts — keeps the morph feeling
+      // continuous without leaving the compose modal stacked too
+      // long. The pendingOpenTaskRef path is kept as an Android
+      // fallback for the prior flow but won't normally trigger now
+      // since selectedTask is already set.
+      setTimeout(() => setShowNewTask(false), 60);
       // Refresh from server in background
       fetchTasks();
     } catch (e) {
@@ -4505,7 +4565,10 @@ const s = StyleSheet.create({
 
   userRow: { flexDirection: "row", justifyContent: "flex-end", marginBottom: 12 },
   userBubble: { maxWidth: "80%", borderRadius: 20, borderBottomRightRadius: 6, paddingHorizontal: 16, paddingVertical: 11 },
-  userBubbleText: { color: "#fff", fontSize: 15, lineHeight: 21 },
+  // User-bubble content is the user's command — terminal-shaped
+  // text. Spec X2 typography: mono for "what a developer would see
+  // in a terminal", sans for UI chrome.
+  userBubbleText: { color: "#fff", fontSize: 14, lineHeight: 20, fontFamily: monoFamily },
 
   assistantRow: { flexDirection: "row", justifyContent: "flex-start", marginBottom: 12 },
   // assistantFrame is the polished container around the markdown — a

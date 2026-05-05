@@ -8,6 +8,12 @@ export const spacing = {
   xxxl: 32,
 } as const;
 
+// SF Mono ships with iOS but isn't installed by name; Menlo is the
+// system mono that picks SF Mono glyphs. On Android we fall back to
+// the platform monospace family.
+import { Platform } from "react-native";
+export const monoFamily = Platform.OS === "ios" ? "Menlo" : "monospace";
+
 export const typography = {
   navTitle: { fontSize: 17, fontWeight: "600" as const },
   cardTitle: { fontSize: 17, fontWeight: "600" as const },
@@ -19,6 +25,12 @@ export const typography = {
   badge: { fontSize: 11, fontWeight: "600" as const, letterSpacing: 0.4 },
   badgeSm: { fontSize: 10, fontWeight: "600" as const, letterSpacing: 0.4 },
   path: { fontSize: 13, fontWeight: "400" as const },
+  // Mono variants for terminal-style content (file paths, command
+  // strings, tool call names, error message bodies with flags). Keep
+  // the mono surface narrow — see X2 typography rules in the
+  // task-chat polish pass.
+  monoBody: { fontSize: 14, fontFamily: monoFamily, fontWeight: "400" as const },
+  monoCaption: { fontSize: 12, fontFamily: monoFamily, fontWeight: "400" as const },
 } as const;
 
 export const lightCardShadow = {
