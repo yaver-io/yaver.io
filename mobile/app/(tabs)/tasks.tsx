@@ -55,7 +55,12 @@ import { Badge } from "../../src/components/Badge";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
 import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
-import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
+import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
+import { taskHaptics } from "../../src/lib/taskHaptics";
+import { MessageBubble } from "../../src/components/MessageBubble";
+import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
+import { AgentContextPanel, type AgentContextRow } from "../../src/components/AgentContextPanel";
+import { TaskHeader } from "../../src/components/TaskHeader";
 import {
   deriveMobileDeviceLifecycleState,
   probeMobileDeviceStatus,
@@ -83,9 +88,13 @@ function capOutput(lines: string[]): string[] {
 
 // ── Constants ────────────────────────────────────────────────────────
 
+// Status palette. RUNNING is statusInfo (blue) rather than indigo —
+// the legacy #6366f1 sat in the same hue family as the brand purple
+// used for user message bubbles, so two purples shadowed each other
+// in the chat surface. See spec X3 status color discipline.
 const STATUS_COLORS: Record<TaskStatus, string> = {
   queued: "#eab308",
-  running: "#6366f1",
+  running: "#3b82f6",
   completed: "#22c55e",
   failed: "#ef4444",
   stopped: "#a1a1aa",
@@ -1062,6 +1071,68 @@ function TaskCard({
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+// Extract a usable error message from a failed task. Tasks don't
+// have a structured error field — failures land in resultText (final
+// summary the runner emitted) or the tail of the output stream. Pick
+// the most informative thing we can find. ANSI is stripped because
+// codex/opencode tend to colour stderr.
+function extractTaskErrorMessage(task: Task): string {
+  const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
+  const result = task.resultText ? stripAnsi(task.resultText).trim() : "";
+  if (result) return result;
+  const out = (task.output || []).map(stripAnsi).map((l) => l.trim()).filter(Boolean);
+  if (out.length === 0) return "Task failed without a clear reason.";
+  // Keep the last ~6 lines so the user sees the immediate failure
+  // context rather than just the final cryptic line.
+  return out.slice(-6).join("\n");
+}
+
+// Build the rows shown in the AgentContextPanel below the chat. All
+// fields are best-effort — we render whatever we have access to from
+// the local state. Branch and full workDir aren't on the Task type
+// today, so they're sourced from the screen's projectDir param when
+// present.
+function buildAgentContextRows(
+  task: Task,
+  deviceName: string | undefined,
+  connMode: ConnectionMode,
+  models: ModelInfo[],
+): AgentContextRow[] {
+  const rows: AgentContextRow[] = [];
+  const elapsedSec = Math.max(0, Math.round((Date.now() - task.createdAt) / 1000));
+  const elapsedLabel = elapsedSec < 60
+    ? `${elapsedSec}s`
+    : elapsedSec < 3600
+      ? `${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s`
+      : `${Math.floor(elapsedSec / 3600)}h ${Math.floor((elapsedSec % 3600) / 60)}m`;
+
+  if (deviceName) {
+    rows.push({ label: "Device", value: deviceName.replace(/\.local$/, ""), mono: false });
+  }
+  if (task.runnerId) {
+    const modelMatch = models.find((m) => m.id === task.runnerId);
+    rows.push({
+      label: "Runner",
+      value: modelMatch?.name || task.runnerId,
+      mono: false,
+    });
+  }
+  if (connMode) {
+    rows.push({ label: "Transport", value: connMode, mono: false });
+  }
+  rows.push({
+    label: task.status === "failed" || task.status === "completed" || task.status === "stopped"
+      ? "Ran for"
+      : "Running for",
+    value: elapsedLabel,
+    mono: false,
+  });
+  if (task.id) {
+    rows.push({ label: "Task ID", value: task.id, mono: true });
+  }
+  return rows;
+}
+
 function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts;
   if (diff < 60_000) return "just now";
@@ -1174,6 +1245,14 @@ export default function TasksScreen() {
   // `--agent <mode>` on `opencode run`. Empty = use the user's
   // defaultAgent from opencode.json. Other runners ignore it.
   const [selectedOpenCodeMode, setSelectedOpenCodeMode] = useState<string>("");
+  // Custom agents the user has defined under `agent.<name>` in
+  // opencode.json (review / chat / research / …). Loaded once when the
+  // composer opens with selectedRunner=opencode, plus a refresh on
+  // device switch — without this the picker would only ever show
+  // build / plan even for users who already wired a custom agent up
+  // through OpenCodeConfigModal or by hand. Empty array = "couldn't
+  // fetch" or "no customs configured"; we fall back to the stock pair.
+  const [opencodeAgents, setOpencodeAgents] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [customCommand, setCustomCommand] = useState("");
   const [showAgentPicker, setShowAgentPicker] = useState(false);
@@ -1313,6 +1392,28 @@ export default function TasksScreen() {
       cancelled = true;
     };
   }, [activeDevice?.id, connectionStatus]);
+
+  // Pull the connected device's opencode.json agent list whenever the
+  // user has opencode picked. Falls back to [] (which means the
+  // composer chip rail will use just the stock build/plan pair).
+  // Refetch on device change so a context switch from machine A
+  // (with `agent.review` defined) to machine B (without) doesn't
+  // leave the picker showing review.
+  useEffect(() => {
+    if (connectionStatus !== "connected" || selectedRunner !== "opencode") {
+      setOpencodeAgents([]);
+      return;
+    }
+    let cancelled = false;
+    quicClient.getOpenCodeConfig().then((cfg) => {
+      if (cancelled) return;
+      const names = (cfg?.agents || []).map((a) => a.name).filter((n): n is string => typeof n === "string" && n.length > 0);
+      setOpencodeAgents(names);
+    }).catch(() => {
+      if (!cancelled) setOpencodeAgents([]);
+    });
+    return () => { cancelled = true; };
+  }, [connectionStatus, selectedRunner, activeDevice?.id]);
 
   // Seed selectedRunner when runners load or the active device / pin
   // changes. Uses a functional setState callback so we can read the
@@ -3148,7 +3249,17 @@ export default function TasksScreen() {
             <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }} />
             <View style={[s.modalContent, { backgroundColor: c.bgCard }]}>
               <View style={s.modalHeader}>
-                <Text style={[s.modalTitle, { color: c.textPrimary }]}>New Task</Text>
+                <Text style={[s.modalTitle, { color: c.textPrimary }]}>
+                  {(() => {
+                    const r = selectedRunner
+                      || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
+                      || "claude";
+                    if (r === "codex") return "Send to Codex";
+                    if (r === "opencode") return "Send to OpenCode";
+                    if (r === "custom") return "Send to custom runner";
+                    return "Send to Claude";
+                  })()}
+                </Text>
                 <Pressable
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   onPress={() => {
@@ -3176,14 +3287,7 @@ export default function TasksScreen() {
               >
                 <TextInput
                   style={[s.input, s.inputMultiline, s.composerInput, { color: c.textPrimary }]}
-                  placeholder={(() => {
-                    const effective = selectedRunner
-                      || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
-                      || "claude";
-                    if (effective === "codex") return "Chat with Codex";
-                    if (effective === "opencode") return "Chat with OpenCode";
-                    return "Chat with Claude";
-                  })()}
+                  placeholder={tasks.length > 0 ? "Send another command…" : "What should the agent do?"}
                   placeholderTextColor={c.textMuted}
                   value={newTaskText}
                   onChangeText={(t) => { setNewTaskText(t); setInputFromSpeech(false); }}
@@ -3220,41 +3324,54 @@ export default function TasksScreen() {
                     <Ionicons name="add" size={26} color={c.textPrimary} />
                   </Pressable>
                   <View style={s.composerFooterRight}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        s.composerIconButton,
-                        {
-                          backgroundColor: isRecording ? c.error : c.bgCard,
-                          borderColor: isRecording ? c.error : c.border,
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={() => {
-                        if (!speechProvider) {
-                          Alert.alert("Voice Not Configured", "Set up a speech-to-text provider in Settings → Voice to use voice input.");
-                          return;
-                        }
-                        if (isRecording) {
-                          stopRecordingAndTranscribe();
-                        } else {
-                          startRecording();
-                        }
-                      }}
-                      disabled={isTranscribing}
-                    >
-                      <Ionicons name={isRecording ? "stop" : "mic-outline"} size={22} color={isRecording ? "#fff" : c.textPrimary} />
-                    </Pressable>
-                    <Pressable
-                      style={[
-                        s.sendButtonLarge,
-                        { backgroundColor: c.accent },
-                        ((!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected) && s.submitButtonDisabled,
-                      ]}
-                      onPress={handleCreateTask}
-                      disabled={(!newTaskText.trim() && attachedImages.length === 0) || isSubmitting || isTranscribing || !isEffectivelyConnected}
-                    >
-                      <Text style={s.submitButtonText}>{isSubmitting ? "Sending..." : "Send"}</Text>
-                    </Pressable>
+                    {/* Mic button removed: voice path was retired
+                        2026-04-28; the visual feedback loop now flows
+                        through screenshots/screen-recording, not
+                        speech-to-text. Keeping speechProvider /
+                        isRecording state in place so other surfaces
+                        (and a possible voice revival) don't regress. */}
+                    {(() => {
+                      const isDisabled =
+                        (!newTaskText.trim() && attachedImages.length === 0) ||
+                        isSubmitting ||
+                        isTranscribing ||
+                        !isEffectivelyConnected;
+                      return (
+                        <Pressable
+                          style={({ pressed }) => [
+                            s.sendButtonLarge,
+                            isDisabled
+                              ? { backgroundColor: c.surfaceMuted }
+                              : {
+                                  backgroundColor: c.brandPrimary,
+                                  shadowColor: c.brandPrimary,
+                                  shadowOffset: { width: 0, height: 2 },
+                                  shadowOpacity: 0.24,
+                                  shadowRadius: 8,
+                                  elevation: 3,
+                                },
+                            !isDisabled && pressed && {
+                              backgroundColor: c.accentDim,
+                              transform: [{ scale: 0.96 }],
+                            },
+                          ]}
+                          onPress={() => {
+                            taskHaptics.send();
+                            handleCreateTask();
+                          }}
+                          disabled={isDisabled}
+                        >
+                          <Text
+                            style={[
+                              s.submitButtonText,
+                              isDisabled && { color: c.textTertiary },
+                            ]}
+                          >
+                            {isSubmitting ? "Sending…" : "Send"}
+                          </Text>
+                        </Pressable>
+                      );
+                    })()}
                   </View>
                 </View>
               </View>
@@ -3447,38 +3564,51 @@ export default function TasksScreen() {
                 </View>
               </>
             )}
-            {/* OpenCode-only: Build vs Plan agent. Maps to
-                `--agent <mode>` on `opencode run`. Empty = use the
-                machine's defaultAgent from opencode.json. Custom
-                agents the user has defined are reachable via the
-                Tools view; this chip rail covers the two builtin
-                agents most users need on the chat surface. */}
-            {selectedRunner === "opencode" && (
-              <>
-                <Text style={[s.agentPickerSection, { color: c.textMuted }]}>OPENCODE AGENT</Text>
-                <View style={s.agentPickerChips}>
-                  {[
-                    { id: "", name: "Default" },
-                    { id: "build", name: "Build" },
-                    { id: "plan", name: "Plan" },
-                  ].map((m) => (
-                    <Pressable
-                      key={m.id || "default"}
-                      style={[
-                        s.modelChip,
-                        { borderColor: selectedOpenCodeMode === m.id ? c.accent : c.border },
-                        selectedOpenCodeMode === m.id && { backgroundColor: c.accent + "20" },
-                      ]}
-                      onPress={() => setSelectedOpenCodeMode(m.id)}
-                    >
-                      <Text style={[s.modelChipText, { color: selectedOpenCodeMode === m.id ? c.accent : c.textMuted }]}>
-                        {m.name}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            )}
+            {/* OpenCode-only: pick the agent. Maps to `--agent <mode>`
+                on `opencode run`. Empty = use the machine's
+                defaultAgent from opencode.json. The chip rail merges
+                the two stock agents (build / plan) with whatever the
+                user has defined under `agent.<name>` in their config —
+                review / chat / research / etc. — so a custom agent
+                isn't a hidden CLI-only feature. Names are
+                title-cased for display; the value sent to the runner
+                stays lowercase so it matches the on-disk config. */}
+            {selectedRunner === "opencode" && (() => {
+              const titleCase = (n: string) => n.length === 0 ? "Default" : n.charAt(0).toUpperCase() + n.slice(1);
+              const seen = new Set<string>();
+              const chips: Array<{ id: string; name: string }> = [{ id: "", name: "Default" }];
+              for (const stock of ["build", "plan"]) {
+                if (!seen.has(stock)) { chips.push({ id: stock, name: titleCase(stock) }); seen.add(stock); }
+              }
+              for (const a of opencodeAgents) {
+                const id = a.toLowerCase();
+                if (seen.has(id)) continue;
+                seen.add(id);
+                chips.push({ id, name: titleCase(a) });
+              }
+              return (
+                <>
+                  <Text style={[s.agentPickerSection, { color: c.textMuted }]}>OPENCODE AGENT</Text>
+                  <View style={s.agentPickerChips}>
+                    {chips.map((m) => (
+                      <Pressable
+                        key={m.id || "default"}
+                        style={[
+                          s.modelChip,
+                          { borderColor: selectedOpenCodeMode === m.id ? c.accent : c.border },
+                          selectedOpenCodeMode === m.id && { backgroundColor: c.accent + "20" },
+                        ]}
+                        onPress={() => setSelectedOpenCodeMode(m.id)}
+                      >
+                        <Text style={[s.modelChipText, { color: selectedOpenCodeMode === m.id ? c.accent : c.textMuted }]}>
+                          {m.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              );
+            })()}
           </View>
         </Modal>
         <RunnerAuthModal
@@ -3502,125 +3632,98 @@ export default function TasksScreen() {
             <Pressable style={s.chatModalDismissArea} onPress={() => setSelectedTask(null)} />
             {selectedTask && (
               <View style={[s.chatModal, { backgroundColor: c.bg }]}>
-                {/* Header — Back (left) | Title+Status+Device (center) | Stop (right) */}
-                <View style={[s.chatHeader, { borderBottomColor: c.border }]}>
-                  {/* Left: Back button */}
-                  <Pressable
-                    style={({ pressed }) => [
-                      { flexDirection: "row", alignItems: "center", gap: 4, paddingVertical: 6, paddingHorizontal: 10, paddingRight: 14, borderRadius: 8, backgroundColor: c.accent + "15" },
-                      pressed && { opacity: 0.6 },
-                    ]}
-                    onPress={() => { setSelectedTask(null); setFollowUpText(""); }}
-                  >
-                    <Text style={{ fontSize: 18, color: c.accent, fontWeight: "600" }}>{"\u2039"}</Text>
-                    <Text style={{ fontSize: 13, color: c.accent, fontWeight: "600" }}>Back</Text>
-                  </Pressable>
+                {/* TaskHeader collapses the legacy 3-row stack
+                    (Back/title/Stop, status/Logs, device) into a
+                    2-row design. Title slot is intentionally empty:
+                    the user's first command becomes the chat bubble
+                    below, so duplicating it in the title was visual
+                    noise. See spec section B1. */}
+                <TaskHeader
+                  status={selectedTask.status}
+                  deviceName={activeDevice?.name}
+                  onBack={() => { setSelectedTask(null); setFollowUpText(""); }}
+                  onOpenLogs={() => setShowLogs(true)}
+                  primaryAction={
+                    selectedTask.status === "failed" ? "retry"
+                      : isRunning && selectedTask.isAdopted ? "detach"
+                      : isRunning ? "stop"
+                      : "none"
+                  }
+                  onStop={() => {
+                    taskHaptics.stop();
+                    Alert.alert(
+                      "Stop Task",
+                      "The AI agent will be stopped and this session will be terminated. You can send a follow-up to resume later.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Stop", style: "destructive", onPress: () => handleExitTask(selectedTask.id) },
+                      ]
+                    );
+                  }}
+                  onForceKill={() => {
+                    Alert.alert(
+                      "Force Kill",
+                      "The process will be killed immediately. Any unsaved progress will be lost.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Kill", style: "destructive", onPress: () => handleStopTask(selectedTask.id) },
+                      ]
+                    );
+                  }}
+                  onDetach={() => {
+                    Alert.alert(
+                      "Detach Session",
+                      `Stop monitoring "${selectedTask.tmuxSession || "tmux session"}"? The session will keep running.`,
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Detach", onPress: () => handleDetachTmuxSession(selectedTask.id) },
+                      ]
+                    );
+                  }}
+                  onRetry={() => {
+                    taskHaptics.retry();
+                    // Re-send the original title with the same runner.
+                    // Model and workDir come from per-device defaults —
+                    // same path as the New Task modal. Smart-retry
+                    // with an extra flag is offered separately in the
+                    // ErrorMessage card below.
+                    void quicClient.sendTask(
+                      selectedTask.title,
+                      "",
+                      undefined,
+                      selectedTask.runnerId || undefined,
+                      undefined,
+                      undefined,
+                      undefined,
+                      projectDir || undefined,
+                    ).then((retried) => {
+                      setTasks((prev) => [retried, ...prev]);
+                      setSelectedTask(retried);
+                    }).catch((err) => {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      Alert.alert("Retry failed", msg);
+                    });
+                  }}
+                />
 
-                  {/* Center: title + status + device (3 lines) */}
-                  <View style={{ flex: 1, alignItems: "center" }}>
-                    <Text style={[s.chatHeaderTitle, { color: c.textPrimary }]} numberOfLines={1}>
-                      {normalizeTaskTitle(selectedTask.title)}
-                    </Text>
-                    <View style={[s.chatHeaderMeta, { marginTop: 3 }]}>
-                      <View style={[s.statusDotSmall, { backgroundColor: STATUS_COLORS[selectedTask.status] }]} />
-                      <Text style={[s.chatHeaderStatus, { color: STATUS_COLORS[selectedTask.status] }]}>
-                        {selectedTask.status}
-                      </Text>
-                      {/* PhaseChip used to live here — moved to a dedicated
-                          PhaseStatusLine at the bottom of the streaming
-                          ScrollView so the header stays minimal (back +
-                          status + Logs/Stop) and the live phase is right
-                          next to the latest output rather than competing
-                          with the title for attention. */}
-                      <Pressable
-                        onPress={() => setShowLogs(true)}
-                        style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#64748b22" }}
-                      >
-                        <Text style={{ color: "#94a3b8", fontSize: 11, fontWeight: "600" }}>Logs</Text>
-                      </Pressable>
-                      {/* Video summary chip — visible whenever the task has a
-                          clip in any state. Tapping a "ready" clip plays it
-                          via the existing VibePreviewModal (clip strip).
-                          For "recording" / "queued" we show an indicator
-                          pill. */}
-                      {selectedTask.videoStatus === "ready" && selectedTask.videoClipId ? (
-                        <Pressable
-                          onPress={() => {
-                            // Open the VibePreviewModal anchored to this
-                            // task's project so its clip strip pre-loads
-                            // the just-recorded MP4. ProjectName comes
-                            // from the agent's videoProjectForTask helper.
-                            // For now, just open the device dev banner's
-                            // modal — the existing VibePreviewModal scrubber
-                            // will surface the clip.
-                            setVideoSummaryClipId(selectedTask.videoClipId!);
-                          }}
-                          style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#22c55e22" }}
-                        >
-                          <Text style={{ color: "#22c55e", fontSize: 11, fontWeight: "600" }}>▶ Watch demo</Text>
-                        </Pressable>
-                      ) : selectedTask.videoStatus === "recording" || selectedTask.videoStatus === "queued" ? (
-                        <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#eab30822" }}>
-                          <Text style={{ color: "#eab308", fontSize: 11, fontWeight: "600" }}>🎬 {selectedTask.videoStatus}…</Text>
-                        </View>
-                      ) : null}
-                      {/* Cost hidden — Yaver is positioned as part of the free/open-source AI tool stack */}
-                    </View>
-                    {activeDevice && (
-                      <Text style={{ fontSize: 10, color: c.textMuted, marginTop: 2 }} numberOfLines={1}>
-                        {activeDevice.name.replace(/\.local$/, "")}
-                      </Text>
-                    )}
-                  </View>
-
-                  {/* Right: Stop button (only when running) */}
-                  {isRunning ? (
+                {/* Video summary chip — kept out of the header so Row 1
+                    stays clean (B1). Inline strip below the header. */}
+                {selectedTask.videoStatus === "ready" && selectedTask.videoClipId ? (
+                  <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
                     <Pressable
-                      style={({ pressed }) => [
-                        { flexDirection: "row", alignItems: "center", gap: 5, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, backgroundColor: selectedTask.isAdopted ? "#8b5cf618" : "#ef444418" },
-                        pressed && { opacity: 0.6 },
-                      ]}
-                      onPress={() => {
-                        if (selectedTask.isAdopted) {
-                          Alert.alert(
-                            "Detach Session",
-                            `Stop monitoring "${selectedTask.tmuxSession || "tmux session"}"? The session will keep running.`,
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Detach", onPress: () => handleDetachTmuxSession(selectedTask.id) },
-                            ]
-                          );
-                        } else {
-                          Alert.alert(
-                            "Stop Task",
-                            "The AI agent will be stopped and this session will be terminated. You can send a follow-up to resume later.",
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Stop", style: "destructive", onPress: () => handleExitTask(selectedTask.id) },
-                            ]
-                          );
-                        }
-                      }}
-                      onLongPress={() => {
-                        if (!selectedTask.isAdopted) {
-                          Alert.alert(
-                            "Force Kill",
-                            "The process will be killed immediately. Any unsaved progress will be lost.",
-                            [
-                              { text: "Cancel", style: "cancel" },
-                              { text: "Kill", style: "destructive", onPress: () => handleStopTask(selectedTask.id) },
-                            ]
-                          );
-                        }
-                      }}
+                      onPress={() => setVideoSummaryClipId(selectedTask.videoClipId!)}
+                      style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: "#22c55e22" }}
                     >
-                      <Text style={{ fontSize: 14, color: selectedTask.isAdopted ? "#8b5cf6" : "#ef4444" }}>{selectedTask.isAdopted ? "\u23CF" : "\u25A0"}</Text>
-                      <Text style={{ fontSize: 13, color: selectedTask.isAdopted ? "#8b5cf6" : "#ef4444", fontWeight: "600" }}>{selectedTask.isAdopted ? "Detach" : "Stop"}</Text>
+                      <Text style={{ color: "#22c55e", fontSize: 11, fontWeight: "600" }}>▶ Watch demo</Text>
                     </Pressable>
-                  ) : (
-                    <View style={{ width: 60 }} />
-                  )}
-                </View>
+                  </View>
+                ) : selectedTask.videoStatus === "recording" || selectedTask.videoStatus === "queued" ? (
+                  <View style={{ paddingHorizontal: 16, paddingTop: 6 }}>
+                    <View style={{ alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, backgroundColor: "#eab30822" }}>
+                      <Text style={{ color: "#eab308", fontSize: 11, fontWeight: "600" }}>🎬 {selectedTask.videoStatus}…</Text>
+                    </View>
+                  </View>
+                ) : null}
 
                 {/* Dev server banner — shown inside task detail so user doesn't have to go back */}
                 {isEffectivelyConnected && <DevPreview />}
@@ -3657,6 +3760,60 @@ export default function TasksScreen() {
                     ListFooterComponent={
                       <>
                         {isRunning && <PhaseStatusLine task={selectedTask} />}
+                        {selectedTask.status === "failed" && (() => {
+                          const errMsg = extractTaskErrorMessage(selectedTask);
+                          return (
+                            <ErrorMessage
+                              message={errMsg}
+                              onSmartRetry={(suggestion) => {
+                                taskHaptics.retry();
+                                try {
+                                  console.log("[yaver-analytics]", JSON.stringify({
+                                    event: "task_smart_retry",
+                                    suggestion: suggestion.kind,
+                                    runner: selectedTask.runnerId || null,
+                                    ts: Date.now(),
+                                  }));
+                                } catch { /* analytics is best-effort */ }
+                                // Append the suggested fix as a hint to the
+                                // task title — the agent reads the title and
+                                // can pick up the flag verbatim. Other
+                                // suggestion kinds (api-key-missing,
+                                // node-modules, permission) re-send unchanged
+                                // and rely on the user to act on the hint.
+                                const titleHint =
+                                  suggestion.kind === "skip-git-repo-check"
+                                    ? `${selectedTask.title} --skip-git-repo-check`
+                                    : selectedTask.title;
+                                void quicClient.sendTask(
+                                  titleHint,
+                                  "",
+                                  undefined,
+                                  selectedTask.runnerId || undefined,
+                                  undefined,
+                                  undefined,
+                                  undefined,
+                                  projectDir || undefined,
+                                ).then((retried) => {
+                                  setTasks((prev) => [retried, ...prev]);
+                                  setSelectedTask(retried);
+                                }).catch((err) => {
+                                  const msg = err instanceof Error ? err.message : String(err);
+                                  Alert.alert("Retry failed", msg);
+                                });
+                              }}
+                              onOpenInAgent={() => setShowLogs(true)}
+                              onCopyError={() => {
+                                ExpoClipboard.setStringAsync(errMsg);
+                                Alert.alert("Copied", "Error copied to clipboard.");
+                              }}
+                            />
+                          );
+                        })()}
+                        <AgentContextPanel
+                          rows={buildAgentContextRows(selectedTask, activeDevice?.name, connMode, availableModels)}
+                          defaultExpanded={selectedTask.status === "failed"}
+                        />
                         <DebugSection task={selectedTask} connMode={connMode} c={c} />
                       </>
                     }
@@ -3708,7 +3865,7 @@ export default function TasksScreen() {
                     </View>
                     <TextInput
                       style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
-                      placeholder={isRunning ? "Send a command..." : "Follow up..."}
+                      placeholder={isRunning ? "Agent is working…" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
                       value={followUpText}
                       onChangeText={(t) => { setFollowUpText(t); setInputFromSpeech(false); }}
@@ -3784,38 +3941,68 @@ export default function TasksScreen() {
                   </View>
                 ) : (
                   <View style={[s.chatInputBar, { borderTopColor: c.border, backgroundColor: c.bgCard, flexDirection: "row", alignItems: "center", gap: 8 }]}>
+                    {/* During RUNNING the input is disabled and the
+                        right-side button becomes Stop. No queueing
+                        in the agent today — making the input look
+                        tappable was misleading. See spec section
+                        B6 + X4 (copy strings). */}
                     <Pressable
                       style={{ flex: 1 }}
                       onPress={() => setFollowUpExpanded(true)}
+                      disabled={isRunning}
                     >
-                      <View style={[s.chatInput, { backgroundColor: c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44 }]}>
-                        <Text style={{ color: c.textMuted, fontSize: 15 }}>{isRunning ? "Send a command..." : "Follow up..."}</Text>
+                      <View style={[s.chatInput, { backgroundColor: isRunning ? c.surfaceMuted : c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44, opacity: isRunning ? 0.7 : 1 }]}>
+                        <Text style={{ color: c.textMuted, fontSize: 15 }}>
+                          {isRunning ? "Agent is working…" : "Follow up — or send another command"}
+                        </Text>
                       </View>
                     </Pressable>
-                    {/* ↑ Send button — mirrors the feedback overlay's
-                        composer (clean input + arrow). Tapping expands
-                        the composer with autofocus so the user can
-                        type and submit; the agent picker still lives
-                        inside the expanded view. Replaces the previous
-                        "OpenAI Codex ▾" chip which clutterd the
-                        collapsed bar with a setting most users only
-                        change once per device. */}
-                    <Pressable
-                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                      style={({ pressed }) => [
-                        {
-                          width: 44, height: 44, borderRadius: 12,
-                          backgroundColor: c.accent,
-                          alignItems: "center", justifyContent: "center",
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={() => setFollowUpExpanded(true)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Send command"
-                    >
-                      <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 22 }}>↑</Text>
-                    </Pressable>
+                    {isRunning ? (
+                      <Pressable
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={({ pressed }) => [
+                          {
+                            width: 44, height: 44, borderRadius: 12,
+                            backgroundColor: c.errorBg,
+                            alignItems: "center", justifyContent: "center",
+                            borderWidth: 1, borderColor: c.error,
+                          },
+                          pressed && { opacity: 0.7 },
+                        ]}
+                        onPress={() => {
+                          taskHaptics.stop();
+                          Alert.alert(
+                            "Stop Task",
+                            "The AI agent will be stopped and this session will be terminated. You can send a follow-up to resume later.",
+                            [
+                              { text: "Cancel", style: "cancel" },
+                              { text: "Stop", style: "destructive", onPress: () => handleExitTask(selectedTask.id) },
+                            ]
+                          );
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Stop task"
+                      >
+                        <Text style={{ color: c.error, fontSize: 16, fontWeight: "700", lineHeight: 18 }}>{"■"}</Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={({ pressed }) => [
+                          {
+                            width: 44, height: 44, borderRadius: 12,
+                            backgroundColor: c.brandPrimary,
+                            alignItems: "center", justifyContent: "center",
+                          },
+                          pressed && { opacity: 0.7, transform: [{ scale: 0.96 }] },
+                        ]}
+                        onPress={() => setFollowUpExpanded(true)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Send command"
+                      >
+                        <Text style={{ color: "#fff", fontSize: 20, fontWeight: "700", lineHeight: 22 }}>↑</Text>
+                      </Pressable>
+                    )}
                   </View>
                 )}
               </View>

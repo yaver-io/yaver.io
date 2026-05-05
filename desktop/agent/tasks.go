@@ -2274,6 +2274,20 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	if normalizeRunnerID(task.runner.RunnerID) == "opencode" {
 		ocFilter = &opencodeStreamFilter{}
 	}
+	// Other raw-mode runners — codex in particular ships its banner
+	// + sandbox status lines ANSI-coloured. Without a per-chunk strip
+	// those `\x1b[…m` codes shipped through task.outputCh as literal
+	// text and only got cleaned by stripPromptEcho on completion, so
+	// mobile + web saw "[1m[33mcodex" mid-stream until the run ended.
+	// stripANSI is idempotent so the completion-time scrub still
+	// runs harmlessly on already-clean text.
+	//
+	// Best-effort: an ANSI sequence split exactly at an 8 KB chunk
+	// boundary leaks the partial code (the regex needs a complete
+	// `\x1b[…m` to match). Codex flushes lines aggressively so this
+	// is rare in practice — and the same partial would have shipped
+	// raw before this change, so we never regress.
+	stripLiveANSI := ocFilter == nil && normalizeRunnerID(task.runner.RunnerID) != ""
 
 	var wg sync.WaitGroup
 	readStream := func(name string, r io.Reader) {
@@ -2288,6 +2302,8 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 				payload := buf[:n]
 				if ocFilter != nil {
 					payload = ocFilter.process(payload)
+				} else if stripLiveANSI {
+					payload = []byte(stripANSI(string(payload)))
 				}
 				if len(payload) > 0 {
 					outputMu.Lock()
