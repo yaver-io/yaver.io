@@ -2194,6 +2194,7 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"version":        version,
 		"workDir":        s.taskMgr.workDir,
 		"hwid":           HardwareID(),
+		"hardware":       cachedHardwareProfile(),
 		"lifecycleState": lifecycle.State,
 		"lifecycle":      lifecycle,
 		"runner": map[string]interface{}{

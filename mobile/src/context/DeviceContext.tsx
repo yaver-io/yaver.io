@@ -197,6 +197,19 @@ export interface Device {
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
   hwid?: string;
+  /** best-effort cached machine + local runtime capability snapshot */
+  hardwareProfile?: {
+    os?: string;
+    osVersion?: string;
+    cpu?: string;
+    gpu?: string;
+    ramMb?: number;
+    vramMb?: number;
+    numCores?: number;
+    arch?: string;
+    iosSimulators?: string[];
+    androidEmulators?: string[];
+  };
   /** Real-time tunnel event from the relay (optional — only populated
    * when the relay has CONVEX_PRESENCE_URL + _SECRET wired). Mobile
    * shows a "relay-online since X" badge when this is fresher than
@@ -837,6 +850,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             runners: d.runners ?? [],
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
+            hardwareProfile: d.hardwareProfile ?? undefined,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             lastTunnelEvent,
             needsAuth: d.needsAuth ?? false,

@@ -72,6 +72,36 @@ function timeAgo(epochMs: number | undefined): string {
   return `${d}d ago`;
 }
 
+function formatMemoryMb(value: number | undefined): string | null {
+  if (typeof value !== "number" || value <= 0) return null;
+  if (value >= 1024) return `${(value / 1024).toFixed(value >= 10 * 1024 ? 0 : 1)} GB`;
+  return `${Math.round(value)} MB`;
+}
+
+function formatList(items: string[] | undefined): string | null {
+  if (!Array.isArray(items)) return null;
+  const cleaned = items.map((item) => String(item || "").trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.join(", ") : null;
+}
+
+function DetailRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  const c = useColors();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 }}>
+      <Text style={{ color: c.textMuted, fontSize: 12, width: 110 }}>{label}</Text>
+      <Text style={{
+        flex: 1,
+        color: c.textPrimary,
+        fontSize: 13,
+        textAlign: "right",
+        fontFamily: mono ? "Menlo" : undefined,
+      }}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
 function sshSelectorForDevice(device: Pick<Device, "alias" | "id">): string {
   const alias = String(device.alias || "").trim();
   if (alias) return `@${alias}`;
@@ -836,6 +866,34 @@ function CodingAgentsSection({ device }: { device: Device }) {
   );
 }
 
+function HardwareCapabilitiesSection({ device }: { device: Device }) {
+  const c = useColors();
+  const hardware = device.hardwareProfile;
+  const osValue = [hardware?.os || device.os, hardware?.osVersion].filter(Boolean).join(" ");
+  const iosSimulators = formatList(hardware?.iosSimulators);
+  const androidEmulators = formatList(hardware?.androidEmulators);
+
+  return (
+    <View style={{
+      borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
+    }}>
+      <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
+        HARDWARE
+      </Text>
+      <DetailRow label="OS" value={osValue || "—"} />
+      <DetailRow label="CPU" value={hardware?.cpu || "—"} mono={!!hardware?.cpu} />
+      <DetailRow label="RAM" value={formatMemoryMb(hardware?.ramMb) || "—"} />
+      <DetailRow label="GPU" value={hardware?.gpu || "—"} mono={!!hardware?.gpu} />
+      <DetailRow label="VRAM" value={formatMemoryMb(hardware?.vramMb) || "—"} />
+      <DetailRow label="Cores" value={typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : "—"} />
+      <DetailRow label="Arch" value={hardware?.arch || "—"} mono={!!hardware?.arch} />
+      {iosSimulators ? <DetailRow label="iOS simulators" value={iosSimulators} mono /> : null}
+      {androidEmulators ? <DetailRow label="Android emulators" value={androidEmulators} mono /> : null}
+    </View>
+  );
+}
+
 export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
   const c = useColors();
   const { isDark } = useTheme();
@@ -1056,6 +1114,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               entries (often empty) instead of the actually-useful
               "is claude/codex/opencode signed in on this box?" view. */}
           <CodingAgentsSection device={device} />
+          <HardwareCapabilitiesSection device={device} />
 
           {/* Active task runners — only shown if there are any. */}
           {(device.runners || []).filter((r) => r.pid).length > 0 ? (

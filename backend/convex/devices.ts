@@ -19,6 +19,19 @@ const recoveryPostureValidator = v.object({
   summary: v.string(),
 });
 
+const hardwareProfileValidator = v.object({
+  os: v.optional(v.string()),
+  osVersion: v.optional(v.string()),
+  cpu: v.optional(v.string()),
+  gpu: v.optional(v.string()),
+  ramMb: v.optional(v.number()),
+  vramMb: v.optional(v.number()),
+  numCores: v.optional(v.number()),
+  arch: v.optional(v.string()),
+  iosSimulators: v.optional(v.array(v.string())),
+  androidEmulators: v.optional(v.array(v.string())),
+});
+
 // HEARTBEAT_STALE_MS: how long after the last heartbeat we still
 // trust the device's `isOnline` flag. The agent beats every 5 min
 // (see `desktop/agent/main.go::heartbeatLoop`), so 6 min is "missed
@@ -94,9 +107,30 @@ type ListedDevice = {
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
+  hardwareProfile?: Doc<"devices">["hardwareProfile"];
   agentVersion?: string;
   agentVersionReportedAt?: number;
 };
+
+function mergeHardwareProfile(
+  a: ListedDevice["hardwareProfile"] | undefined,
+  b: ListedDevice["hardwareProfile"] | undefined,
+): ListedDevice["hardwareProfile"] | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    os: b.os || a.os,
+    osVersion: b.osVersion || a.osVersion,
+    cpu: b.cpu || a.cpu,
+    gpu: b.gpu || a.gpu,
+    ramMb: b.ramMb ?? a.ramMb,
+    vramMb: b.vramMb ?? a.vramMb,
+    numCores: b.numCores ?? a.numCores,
+    arch: b.arch || a.arch,
+    iosSimulators: (b.iosSimulators && b.iosSimulators.length > 0) ? b.iosSimulators : a.iosSimulators,
+    androidEmulators: (b.androidEmulators && b.androidEmulators.length > 0) ? b.androidEmulators : a.androidEmulators,
+  };
+}
 
 type ShareRule = {
   allowedProjects?: string[];
@@ -158,6 +192,7 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
     runnerDown: base.runnerDown && other.runnerDown,
     publicKey: base.publicKey || other.publicKey,
     hardwareId: base.hardwareId || other.hardwareId,
+    hardwareProfile: mergeHardwareProfile(other.hardwareProfile, base.hardwareProfile),
     lastHeartbeat: Math.max(a.lastHeartbeat || 0, b.lastHeartbeat || 0),
     lastTunnelEvent:
       (() => {
@@ -343,6 +378,7 @@ export const registerDevice = mutation({
     quicPort: v.number(),
     publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
+    hardwareProfile: v.optional(hardwareProfileValidator),
     recoveryPosture: v.optional(recoveryPostureValidator),
     agentVersion: v.optional(v.string()),
   },
@@ -381,6 +417,7 @@ export const registerDevice = mutation({
         needsAuth: false,
         lastHeartbeat: Date.now(),
         ...(args.hardwareId ? { hardwareId: args.hardwareId } : {}),
+        ...(args.hardwareProfile ? { hardwareProfile: args.hardwareProfile } : {}),
         ...(args.recoveryPosture ? { recoveryPosture: args.recoveryPosture } : {}),
         // register is always an authoritative refresh — stamp version
         // if the agent reported one (older agents omit the field).
@@ -429,6 +466,7 @@ export const registerDevice = mutation({
       lastHeartbeat: Date.now(),
       createdAt: Date.now(),
       hardwareId: args.hardwareId,
+      hardwareProfile: args.hardwareProfile,
       recoveryPosture: args.recoveryPosture,
       agentVersion: args.agentVersion,
       agentVersionReportedAt: args.agentVersion ? Date.now() : undefined,
@@ -562,6 +600,7 @@ export const heartbeat = mutation({
     localIps: v.optional(v.array(v.string())),
     publicEndpoints: v.optional(v.array(v.string())),
     hardwareId: v.optional(v.string()),
+    hardwareProfile: v.optional(hardwareProfileValidator),
     deviceClass: v.optional(
       v.union(
         v.literal("desktop"),
@@ -649,6 +688,9 @@ export const heartbeat = mutation({
     // on their next heartbeat.
     if (args.hardwareId && args.hardwareId !== device.hardwareId) {
       patch.hardwareId = args.hardwareId;
+    }
+    if (args.hardwareProfile) {
+      patch.hardwareProfile = args.hardwareProfile;
     }
     if (args.deviceClass) {
       patch.deviceClass = args.deviceClass;
@@ -823,6 +865,7 @@ export const listMyDevices = query({
       platform: d.platform,
       publicKey: d.publicKey,
       hardwareId: d.hardwareId,
+      hardwareProfile: d.hardwareProfile,
       quicHost: d.quicHost,
       localIps: d.localIps ?? [],
       publicEndpoints: d.publicEndpoints ?? [],
@@ -890,6 +933,7 @@ export const listMyDevices = query({
           platform: d.platform,
           publicKey: d.publicKey,
           hardwareId: d.hardwareId,
+          hardwareProfile: d.hardwareProfile,
           quicHost: d.quicHost,
           localIps: d.localIps ?? [],
           publicEndpoints: d.publicEndpoints ?? [],
@@ -951,6 +995,7 @@ export const listMyDevices = query({
           platform: d.platform,
           publicKey: d.publicKey,
           hardwareId: d.hardwareId,
+          hardwareProfile: d.hardwareProfile,
           quicHost: d.quicHost,
           localIps: d.localIps ?? [],
           publicEndpoints: d.publicEndpoints ?? [],
@@ -1018,6 +1063,7 @@ export const recommendTaskPlacement = query({
           platform: device.platform,
           publicKey: device.publicKey,
           hardwareId: device.hardwareId,
+          hardwareProfile: device.hardwareProfile,
           quicHost: device.quicHost,
           localIps: device.localIps ?? [],
           publicEndpoints: device.publicEndpoints ?? [],

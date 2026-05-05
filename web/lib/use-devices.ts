@@ -20,6 +20,18 @@ export interface Device {
   online: boolean;
   publicKey?: string;
   hardwareId?: string;
+  hardwareProfile?: {
+    os?: string;
+    osVersion?: string;
+    cpu?: string;
+    gpu?: string;
+    ramMb?: number;
+    vramMb?: number;
+    numCores?: number;
+    arch?: string;
+    iosSimulators?: string[];
+    androidEmulators?: string[];
+  };
   localIps?: string[];
   deviceClass?: "desktop" | "edge-mobile" | "server";
   edgeProfile?: {
@@ -248,6 +260,7 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
     online: base.online || other.online,
     publicKey: base.publicKey || other.publicKey,
     hardwareId: base.hardwareId || other.hardwareId,
+    hardwareProfile: base.hardwareProfile || other.hardwareProfile,
     lastTunnelEvent: (() => {
       const baseAt = base.lastTunnelEvent?.at || 0;
       const otherAt = other.lastTunnelEvent?.at || 0;
@@ -482,6 +495,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         online,
         publicKey: d.publicKey,
         hardwareId: d.hardwareId ?? d.hwid,
+        hardwareProfile: d.hardwareProfile ?? undefined,
         localIps: Array.isArray(d.localIps) ? d.localIps : undefined,
         deviceClass: d.deviceClass,
         edgeProfile: d.edgeProfile,

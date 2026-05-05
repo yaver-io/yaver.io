@@ -8,8 +8,8 @@ import (
 	"net/http"
 	urlpkg "net/url"
 	"sort"
-	"sync"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -1321,6 +1321,7 @@ type RegisterDeviceRequest struct {
 	PublicEndpoints []string                  `json:"publicEndpoints,omitempty"`
 	HardwareID      string                    `json:"hardwareId,omitempty"`
 	RecoveryPosture *RecoveryTransportPosture `json:"recoveryPosture,omitempty"`
+	HardwareProfile *DeviceHardwareProfile    `json:"hardwareProfile,omitempty"`
 	// AgentVersion is the `const version` string from main.go. Reported
 	// so the dashboard can show which build each machine is running.
 	// Convex side gates the actual write to once per 24h + on change.
@@ -1491,6 +1492,9 @@ func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 		respBody, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("register device failed (status %d): %s", resp.StatusCode, string(respBody))
 	}
+	if r.HardwareProfile != nil {
+		markHardwareProfileSent()
+	}
 	var result struct {
 		Token string `json:"token"`
 	}
@@ -1514,6 +1518,9 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 		"runners":      runners,
 		"hardwareId":   HardwareID(),
 		"agentVersion": version,
+	}
+	if profile := hardwareProfileForHeartbeat(); profile != nil {
+		payload["hardwareProfile"] = profile
 	}
 	// Always include quicHost + localIps + publicEndpoints in the
 	// heartbeat payload — even if empty — so a previously-set
@@ -1562,6 +1569,9 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHo
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("heartbeat failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	if _, ok := payload["hardwareProfile"]; ok {
+		markHardwareProfileSent()
 	}
 	return nil
 }

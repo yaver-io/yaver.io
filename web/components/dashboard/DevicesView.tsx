@@ -692,6 +692,18 @@ interface DeviceRuntimeInfo {
   [k: string]: unknown;
 }
 
+function formatMemoryMb(value: number | undefined): string | null {
+  if (typeof value !== "number" || value <= 0) return null;
+  if (value >= 1024) return `${(value / 1024).toFixed(value >= 10 * 1024 ? 0 : 1)} GB`;
+  return `${Math.round(value)} MB`;
+}
+
+function formatCapabilityList(items: string[] | undefined): string | null {
+  if (!Array.isArray(items)) return null;
+  const cleaned = items.map((item) => String(item || "").trim()).filter(Boolean);
+  return cleaned.length > 0 ? cleaned.join(", ") : null;
+}
+
 function useDevicePing(device: Device, token: string | null | undefined) {
   const [pingState, setPingState] = useState<{ pinging: boolean; rttMs?: number; ok?: boolean; error?: string }>({ pinging: false });
 
@@ -2881,6 +2893,10 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   const currentVersion = typeof effectiveInfo?.version === "string" && effectiveInfo.version.trim()
     ? effectiveInfo.version
     : device.agentVersion;
+  const hardware = device.hardwareProfile;
+  const hardwareOS = [hardware?.os || device.platform, hardware?.osVersion].filter(Boolean).join(" ");
+  const iosSimulators = formatCapabilityList(hardware?.iosSimulators);
+  const androidEmulators = formatCapabilityList(hardware?.androidEmulators);
   const latestVersion = updateStatus?.latestVersion;
   const outdated = updateStatus?.updateAvailable || isVersionOutdated(currentVersion, latestVersion);
 
@@ -2964,6 +2980,18 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           {row("Session binding", device.sessionBinding)}
           {row("Access scope", device.accessScope)}
           {row("Priority mode", device.priorityMode)}
+        </div>
+        <div>
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Hardware</div>
+          {row("OS", hardwareOS || null)}
+          {row("CPU", hardware?.cpu ? <span className="font-mono text-[11px]">{hardware.cpu}</span> : null)}
+          {row("RAM", formatMemoryMb(hardware?.ramMb))}
+          {row("GPU", hardware?.gpu ? <span className="font-mono text-[11px]">{hardware.gpu}</span> : null)}
+          {row("VRAM", formatMemoryMb(hardware?.vramMb))}
+          {row("Cores", typeof hardware?.numCores === "number" && hardware.numCores > 0 ? String(hardware.numCores) : null)}
+          {row("Arch", hardware?.arch ? <span className="font-mono">{hardware.arch}</span> : null)}
+          {row("iOS simulators", iosSimulators)}
+          {row("Android emulators", androidEmulators)}
         </div>
         <div>
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-surface-500">Runtime</div>

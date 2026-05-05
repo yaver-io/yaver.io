@@ -1137,6 +1137,7 @@ http.route({
       quicPort: body.quicPort,
       publicEndpoints: Array.isArray(body.publicEndpoints) ? body.publicEndpoints : undefined,
       hardwareId: body.hardwareId || undefined,
+      hardwareProfile: body.hardwareProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
       agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
     });
@@ -1360,6 +1361,7 @@ http.route({
           ? []
           : undefined,
       hardwareId: body.hardwareId || undefined,
+      hardwareProfile: body.hardwareProfile || undefined,
       deviceClass: body.deviceClass || undefined,
       edgeProfile: body.edgeProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,

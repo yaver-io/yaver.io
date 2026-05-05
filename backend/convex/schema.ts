@@ -11,6 +11,19 @@ const recoveryPosture = v.object({
   summary: v.string(),
 });
 
+const hardwareProfile = v.object({
+  os: v.optional(v.string()),
+  osVersion: v.optional(v.string()),
+  cpu: v.optional(v.string()),
+  gpu: v.optional(v.string()),
+  ramMb: v.optional(v.number()),
+  vramMb: v.optional(v.number()),
+  numCores: v.optional(v.number()),
+  arch: v.optional(v.string()),
+  iosSimulators: v.optional(v.array(v.string())),
+  androidEmulators: v.optional(v.array(v.string())),
+});
+
 export default defineSchema({
   users: defineTable({
     userId: v.string(),
@@ -223,6 +236,7 @@ export default defineSchema({
     // /auth/recover with their Convex token and we look up the
     // device by hardwareId to confirm they own it.
     hardwareId: v.optional(v.string()),
+    hardwareProfile: v.optional(hardwareProfile),
     recoveryPosture: v.optional(recoveryPosture),
     // Version string of the Go agent binary currently running on this
     // device (e.g. "1.99.36"). Reported on register and refreshed at

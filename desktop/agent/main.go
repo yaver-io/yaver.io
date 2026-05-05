@@ -2128,6 +2128,7 @@ func runServe(args []string) {
 			QuicPort:        *httpPort,
 			PublicEndpoints: publicEndpoints,
 			HardwareID:      HardwareID(),
+			HardwareProfile: cachedHardwareProfile(),
 			RecoveryPosture: &recoveryPosture,
 			AgentVersion:    version,
 		}); err != nil {
@@ -2147,6 +2148,7 @@ func runServe(args []string) {
 					QuicPort:        *httpPort,
 					PublicEndpoints: publicEndpoints,
 					HardwareID:      HardwareID(),
+					HardwareProfile: cachedHardwareProfile(),
 					RecoveryPosture: &recoveryPosture,
 					AgentVersion:    version,
 				}); err2 != nil {
@@ -6643,9 +6645,9 @@ func runSSHWrap(args []string) {
 // resolution pipeline for `yaver ssh primary` / bare `yaver ssh`.
 //
 // Priority:
-//   1. Convex userSettings.primaryDeviceId — explicit user choice.
-//   2. The single owner device, if exactly one is registered (the
-//      "I just ran yaver auth on my only machine" case).
+//  1. Convex userSettings.primaryDeviceId — explicit user choice.
+//  2. The single owner device, if exactly one is registered (the
+//     "I just ran yaver auth on my only machine" case).
 //
 // The returned string is whatever the device list considers the most
 // stable handle: alias if present, otherwise device name, otherwise
