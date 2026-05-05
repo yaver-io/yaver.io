@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/use-auth";
 // third-party dev-portal gate) rather than specific competitor names,
 // per LEGAL_SAFETY.md §2 (trademark) and §3 (comparative claims).
 const LANDING_TAGLINE =
-  "AI writes code in seconds. The loop around it still takes hours. Yaver collapses that loop into a single session: drop our SDK in your app, hand feedback to Claude Code, Codex, OpenCode, or your own agent, and watch the fix land on your phone before you put it down.";
+  "AI writes code in seconds. The loop around it still takes hours. Drop the Yaver SDK in your app, hand user feedback to your own coding agent, and watch the fix land on your phone. Works with Claude Code, Codex, OpenCode — your code never leaves your machine.";
 
 // Option B (Phone-first BaaS) is the YC-application framing, not the
 // launch hero. When closer to the 2026-05-04 YC submission, swap
@@ -1149,15 +1149,10 @@ export default function HomePage() {
           <p className="sr-only">{LANDING_TAGLINE}</p>
 
           <p className="mx-auto max-w-2xl text-sm leading-relaxed text-surface-300 sm:text-base md:text-[17px]">
-            Yaver collapses that loop into a single session. Drop our SDK in your
-            app, hand user feedback to your own coding agent, and watch the fix
-            land on your phone before you put it down.
-          </p>
-
-          <p className="mx-auto mt-4 max-w-3xl text-xs leading-relaxed text-surface-400 sm:text-sm md:text-[15px]">
-            Works with Claude Code, Codex, OpenCode, and any terminal agent you
-            already run. Open source, mobile-first, and your code never leaves
-            your machine.
+            Drop the Yaver SDK in your app, hand user feedback to your own
+            coding agent, and watch the fix land on your phone. Works with
+            Claude Code, Codex, OpenCode &mdash; your code never leaves your
+            machine.
           </p>
 
           <div className="mt-7 flex flex-col items-center justify-center gap-2">
@@ -1173,9 +1168,6 @@ export default function HomePage() {
             </p>
           </div>
 
-          <p className="mt-5 text-[11px] uppercase tracking-[0.16em] text-surface-600">
-            Real-device feedback &middot; Your own coding agent &middot; P2P and self-hosted &middot; Code stays on your machine
-          </p>
         </div>
       </section>
 
