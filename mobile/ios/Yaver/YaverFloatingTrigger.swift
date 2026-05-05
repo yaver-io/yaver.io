@@ -53,8 +53,8 @@ final class YaverFloatingTrigger: NSObject {
       stale.removeFromSuperview()
       bubble = nil
     }
-    overlayWindow?.isHidden = true
-    overlayWindow = nil
+    onTap = nil
+    tearDownOverlayWindow()
 
     self.onTap = onTap
 
@@ -142,7 +142,22 @@ final class YaverFloatingTrigger: NSObject {
   }
 
   func dismount() {
-    guard let b = bubble else { return }
+    // Why: prior to this commit, dismount() faded + removed the bubble
+    // subview but left the dedicated alert+1 UIWindow alive in the
+    // scene. Toggling Settings Shake → Floating-Y → Shake repeatedly
+    // (which the user did while reproducing the "screen stuck after
+    // closing feedback" bug) accumulated a window per toggle. The
+    // pass-through view normally lets taps through, but UIKit hit-test
+    // walks every alert+1 window per touch, and on some iOS versions
+    // an orphan window with no rootView subviews still consumes the
+    // motion-touch sequence on the way to the host window.
+    guard let b = bubble else {
+      // No bubble — but a previous mount() may still have left an
+      // orphan overlayWindow alive (e.g. a Settings flip while a
+      // dismount animation was in flight). Nuke it defensively.
+      tearDownOverlayWindow()
+      return
+    }
     // Reset bubble + onTap immediately so a subsequent mount() during
     // the fade-out doesn't see stale state. The view itself fades out
     // on its own.
@@ -153,7 +168,20 @@ final class YaverFloatingTrigger: NSObject {
       b.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
     }, completion: { _ in
       b.removeFromSuperview()
+      self.tearDownOverlayWindow()
     })
+  }
+
+  /// Hide + release the dedicated overlay window. Called from dismount
+  /// (animation completion) and from mount() at the start so a remount
+  /// during a fade-out doesn't end up with two alert+1 windows. Setting
+  /// rootViewController = nil first breaks any UIKit-side retain on
+  /// the controller's view tree before we drop the strong window ref.
+  private func tearDownOverlayWindow() {
+    guard let win = overlayWindow else { return }
+    win.isHidden = true
+    win.rootViewController = nil
+    overlayWindow = nil
   }
 
   // MARK: - Gesture handlers
