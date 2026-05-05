@@ -36,6 +36,65 @@ func TestResolveBuildCommand(t *testing.T) {
 	}
 }
 
+func TestResolveBuildCommandXcodeIPA(t *testing.T) {
+	cmd, pats := resolveBuildCommand(PlatformXcodeIPA, "/tmp", nil)
+	if len(pats) != 1 {
+		t.Fatalf("xcode-ipa: expected 1 artifact pattern, got %d", len(pats))
+	}
+	if !strings.Contains(cmd, `xcodebuild $FLAG -scheme`) || !strings.Contains(cmd, `-archivePath build/App.xcarchive archive`) {
+		t.Fatalf("xcode-ipa: archive action should come after xcodebuild options, got %q", cmd)
+	}
+	if strings.Contains(cmd, "xcodebuild archive $FLAG") {
+		t.Fatalf("xcode-ipa: old invalid archive ordering still present in %q", cmd)
+	}
+	if !strings.Contains(cmd, `<key>uploadSymbols</key><false/>`) {
+		t.Fatalf("xcode-ipa: export options should disable dSYM upload, got %q", cmd)
+	}
+	if !strings.Contains(cmd, `ENABLE_USER_SCRIPT_SANDBOXING=NO`) {
+		t.Fatalf("xcode-ipa: archive command should disable user script sandboxing, got %q", cmd)
+	}
+	if !strings.Contains(cmd, `APP_STORE_KEY_PATH`) || !strings.Contains(cmd, `APP_STORE_KEY_ISSUER`) {
+		t.Fatalf("xcode-ipa: auth env passthrough missing from %q", cmd)
+	}
+}
+
+func TestResolveBuildCommandGradle(t *testing.T) {
+	for _, plat := range []BuildPlatform{PlatformGradleAPK, PlatformGradleAAB} {
+		cmd, pats := resolveBuildCommand(plat, "/tmp", nil)
+		if len(pats) == 0 {
+			t.Fatalf("%s: expected at least one artifact pattern", plat)
+		}
+		if !strings.Contains(cmd, "JAVA_HOME=") {
+			t.Fatalf("%s: command should set JAVA_HOME, got %q", plat, cmd)
+		}
+		if !strings.Contains(cmd, `GRADLE_OPTS="-Xmx`) {
+			t.Fatalf("%s: command should inject GRADLE_OPTS heap defaults to survive expo prebuild --clean wiping gradle.properties, got %q", plat, cmd)
+		}
+		if !strings.Contains(cmd, "MaxMetaspaceSize") {
+			t.Fatalf("%s: GRADLE_OPTS should include MaxMetaspaceSize, got %q", plat, cmd)
+		}
+	}
+
+	// PlatformGradleAAB → bundleRelease task by default.
+	cmdAAB, _ := resolveBuildCommand(PlatformGradleAAB, "/tmp", nil)
+	if !strings.Contains(cmdAAB, "bundleRelease") {
+		t.Fatalf("gradle-aab: expected bundleRelease task, got %q", cmdAAB)
+	}
+
+	// PlatformGradleAPK → assembleRelease task by default.
+	cmdAPK, _ := resolveBuildCommand(PlatformGradleAPK, "/tmp", nil)
+	if !strings.Contains(cmdAPK, "assembleRelease") {
+		t.Fatalf("gradle-apk: expected assembleRelease task, got %q", cmdAPK)
+	}
+
+	// User-exported GRADLE_OPTS should win over the default.
+	t.Setenv("GRADLE_OPTS", "-Xmx2g")
+	cmdOverride, _ := resolveBuildCommand(PlatformGradleAAB, "/tmp", nil)
+	if !strings.Contains(cmdOverride, `GRADLE_OPTS="-Xmx2g"`) {
+		t.Fatalf("gradle-aab: user-exported GRADLE_OPTS should be honoured, got %q", cmdOverride)
+	}
+}
+
 func TestDetectArtifact(t *testing.T) {
 	tmpDir := t.TempDir()
 

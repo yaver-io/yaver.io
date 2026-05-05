@@ -344,12 +344,31 @@ func nativeProjectMatches(native, stack string) bool {
 	}
 }
 
+func yaverRepoMobileDir(start string) string {
+	root, err := gitOutput(start, "rev-parse", "--show-toplevel")
+	if err != nil || strings.TrimSpace(root) == "" {
+		return ""
+	}
+	detected := detectRepoRemoteFromGit(start)
+	if !strings.EqualFold(detected.Host, "github.com") || !strings.EqualFold(detected.Repo, "kivanccakmak/yaver.io") {
+		return ""
+	}
+	mobileDir := filepath.Join(root, "mobile")
+	if !wireExists(mobileDir) {
+		return ""
+	}
+	return mobileDir
+}
+
 func discoverNativeProjectCandidates(start, native string) []nativeProjectCandidate {
 	start = strings.TrimSpace(start)
 	if start == "" {
 		start = "."
 	}
 	candidates := []string{start}
+	if mobileDir := yaverRepoMobileDir(start); mobileDir != "" {
+		candidates = append(candidates, mobileDir)
+	}
 	if detectMobileStack(start) == "" {
 		candidates = append(candidates,
 			filepath.Join(start, "mobile"),

@@ -98,6 +98,19 @@ func NewBuildManager(execMgr *ExecManager, workDir string) *BuildManager {
 	}
 }
 
+// defaultGradleOpts returns the JVM args we inject into `yaver build android`.
+// Why: `expo prebuild --clean` rewrites mobile/android/gradle.properties from
+// Expo's 2 GiB template, which OOMs mid bundleRelease on RN trees. CI fixed
+// this with GRADLE_OPTS in release-mobile.yml; the local CLI needs the same
+// guarantee so post-prebuild rebuilds don't surprise users with OOM. If the
+// caller has already exported GRADLE_OPTS we honour it.
+func defaultGradleOpts() string {
+	if v := strings.TrimSpace(os.Getenv("GRADLE_OPTS")); v != "" {
+		return v
+	}
+	return `-Xmx6g -XX:MaxMetaspaceSize=1g -Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g`
+}
+
 // resolveBuildCommand returns the shell command and expected artifact patterns for a platform.
 func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []string) (command string, artifactPatterns []string) {
 	// Native build platforms (gradle-device-install, flutter-device-install)
@@ -159,7 +172,7 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("cd %s && JAVA_HOME=%s %s %s", shellQuote(projectDir), findJavaHome(), gradlew, task), []string{
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s GRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), defaultGradleOpts(), gradlew, task), []string{
 			patternIn(workDir, projectDir, "app/build/outputs/apk/release/*.apk"),
 			patternIn(workDir, projectDir, "app/build/outputs/apk/debug/*.apk"),
 		}
@@ -174,7 +187,7 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("cd %s && JAVA_HOME=%s %s %s", shellQuote(projectDir), findJavaHome(), gradlew, task), []string{
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s GRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), defaultGradleOpts(), gradlew, task), []string{
 			patternIn(workDir, projectDir, "app/build/outputs/bundle/release/*.aab"),
 		}
 	case PlatformXcodeIPA:
@@ -189,7 +202,9 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
 			`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
 			`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
-			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; `
+			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; ` +
+			`TEAM_ARGS=""; if [ -n "${APPLE_TEAM_ID:-}" ]; then TEAM_ARGS="DEVELOPMENT_TEAM=$APPLE_TEAM_ID CODE_SIGN_STYLE=Automatic"; fi; ` +
+			`AUTH_ARGS=""; if [ -n "${APP_STORE_KEY_PATH:-}" ] && [ -n "${APP_STORE_KEY_ID:-}" ] && [ -n "${APP_STORE_KEY_ISSUER:-}" ]; then AUTH_ARGS="-authenticationKeyPath $APP_STORE_KEY_PATH -authenticationKeyID $APP_STORE_KEY_ID -authenticationKeyIssuerID $APP_STORE_KEY_ISSUER"; fi; `
 		if schemeOverride != "" {
 			script += fmt.Sprintf("SCHEME=%q; ", schemeOverride)
 		}
@@ -201,10 +216,12 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			`  <key>destination</key><string>export</string>` + "\n" +
 			`  <key>method</key><string>app-store-connect</string>` + "\n" +
 			`  <key>signingStyle</key><string>automatic</string>` + "\n" +
+			`  <key>uploadSymbols</key><false/>` + "\n" +
 			`</dict></plist>` + "\n" +
 			`EOF` + "\n" +
-			`xcodebuild archive $FLAG -scheme "$SCHEME" -configuration Release -archivePath build/App.xcarchive -allowProvisioningUpdates && ` +
-			`xcodebuild -exportArchive -archivePath build/App.xcarchive -exportPath build/ipa -exportOptionsPlist build/ExportOptions.plist -allowProvisioningUpdates`
+			`if [ -n "${APPLE_TEAM_ID:-}" ]; then /usr/libexec/PlistBuddy -c "Add :teamID string $APPLE_TEAM_ID" build/ExportOptions.plist >/dev/null 2>&1 || /usr/libexec/PlistBuddy -c "Set :teamID $APPLE_TEAM_ID" build/ExportOptions.plist; fi; ` +
+			`eval "xcodebuild $FLAG -scheme \"$SCHEME\" -configuration Release -archivePath build/App.xcarchive archive $TEAM_ARGS ENABLE_USER_SCRIPT_SANDBOXING=NO -allowProvisioningUpdates $AUTH_ARGS" && ` +
+			`eval "xcodebuild -exportArchive -archivePath build/App.xcarchive -exportPath build/ipa -exportOptionsPlist build/ExportOptions.plist -allowProvisioningUpdates $AUTH_ARGS"`
 		return fmt.Sprintf("cd %s && %s", shellQuote(projectDir), script), []string{
 			patternIn(workDir, projectDir, "build/ipa/*.ipa"),
 		}
