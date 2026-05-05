@@ -53,7 +53,7 @@ final class YaverFloatingTrigger: NSObject {
       stale.removeFromSuperview()
       bubble = nil
     }
-    onTap = nil
+    self.onTap = nil
     tearDownOverlayWindow()
 
     self.onTap = onTap
