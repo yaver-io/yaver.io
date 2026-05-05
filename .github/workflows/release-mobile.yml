@@ -52,15 +52,19 @@ jobs:
           echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
   ios:
-    # iOS TestFlight is LOCAL-ONLY — never run from CI. The runner's
-    # keychain doesn't carry the developer-account-registered iPhone
-    # UDIDs that the provisioning profile bakes in, so xcodebuild
-    # always fails at archive with "Device <UDID> isn't registered"
-    # / "No profiles for 'io.yaver.mobile' were found". Don't try to
-    # fix it; ship from the Mac with `./scripts/deploy-testflight.sh`.
-    # See README.md → "iOS TestFlight is LOCAL-ONLY".
+    # iOS TestFlight historically ran LOCAL-ONLY — earlier ad-hoc
+    # provisioning profiles baked in registered iPhone UDIDs and the
+    # GH macOS runner couldn't archive without them. App Store
+    # distribution profiles (which TestFlight uses) don't carry
+    # UDIDs, so workflow_dispatch with upload_testflight=true is
+    # safe to run from CI as long as the App Store Connect API key,
+    # the .p12 cert, and APPLE_TEAM_ID are in repo secrets — they
+    # already are (gh secret list -R kivanccakmak/yaver.io). Tag
+    # pushes still skip this job by default to keep accidental tag
+    # pushes from spending TestFlight quota; explicit dispatch is
+    # the opt-in.
     needs: validate
-    if: false  # disabled: see README.md
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_testflight == 'true' }}
     runs-on: macos-15
     env:
       VERSION: ${{ needs.validate.outputs.version }}
