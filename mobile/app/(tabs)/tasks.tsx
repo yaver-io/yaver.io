@@ -3916,6 +3916,29 @@ export default function TasksScreen() {
                                     ts: Date.now(),
                                   }));
                                 } catch { /* analytics is best-effort */ }
+                                // chown-fix is a one-tap "copy the command"
+                                // affordance, not a retry — the user has to
+                                // run chown in their own shell on the host
+                                // box before vibing again. We also surface
+                                // a nudge so they know to retry once they're
+                                // done. The agent's preflight error embedded
+                                // the exact command in suggestion.payload.
+                                if (suggestion.kind === "chown-fix") {
+                                  const cmd = suggestion.payload || "";
+                                  if (cmd) {
+                                    void ExpoClipboard.setStringAsync(cmd);
+                                    Alert.alert(
+                                      "Copied",
+                                      `${cmd}\n\nRun this on the agent box, then retry the task.`,
+                                    );
+                                  } else {
+                                    Alert.alert(
+                                      "Permissions issue",
+                                      "Codex's sandbox can't write into the project directory. Chown the project to the user running yaver and retry.",
+                                    );
+                                  }
+                                  return;
+                                }
                                 // Append the suggested fix as a hint to the
                                 // task title — the agent reads the title and
                                 // can pick up the flag verbatim. Other

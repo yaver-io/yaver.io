@@ -12,11 +12,34 @@ import { monoFamily, spacing } from "../theme/tokens";
 export interface SmartRetrySuggestion {
   label: string;
   /** Raw key for analytics so we can see which suggestions get tapped. */
-  kind: "skip-git-repo-check" | "api-key-missing" | "node-modules" | "permission";
+  kind: "skip-git-repo-check" | "api-key-missing" | "node-modules" | "permission" | "chown-fix";
+  /** Optional payload tied to the suggestion. For chown-fix this
+   *  carries the exact `sudo chown -R …` command pulled out of the
+   *  agent's preflight error so the UI can offer a Copy button without
+   *  having to re-derive it. */
+  payload?: string;
+}
+
+/** Extract the `sudo chown -R <uid:gid> <path>` line from the agent's
+ *  workdir-not-writable preflight error. The agent emits it verbatim
+ *  inside backticks; pull it out so the mobile UI can put it on the
+ *  clipboard with one tap. Returns "" when nothing matches.
+ */
+function extractChownCommand(raw: string): string {
+  // Backtick-delimited form — current agent text (1.99.156+).
+  const backtick = raw.match(/`(sudo chown -R [^`]+)`/i);
+  if (backtick && backtick[1]) return backtick[1];
+  // Defensive fallback for log lines without backticks. Match up to the
+  // next sentence boundary or newline so we don't swallow trailing
+  // explanatory text.
+  const bare = raw.match(/sudo chown -R [^\s][^.\n]*/i);
+  if (bare && bare[0]) return bare[0].trim();
+  return "";
 }
 
 export function detectSmartRetry(message: string): SmartRetrySuggestion | null {
-  const m = String(message || "").toLowerCase();
+  const raw = String(message || "");
+  const m = raw.toLowerCase();
   if (!m) return null;
   if (m.includes("skip-git-repo-check") && m.includes("not specified")) {
     return { label: "Retry with --skip-git-repo-check", kind: "skip-git-repo-check" };
@@ -35,6 +58,19 @@ export function detectSmartRetry(message: string): SmartRetrySuggestion | null {
     m.includes("module not found")
   ) {
     return { label: "Try `npm install` first", kind: "node-modules" };
+  }
+  // Codex bwrap workdir-not-writable preflight (agent 1.99.156+). The
+  // error embeds the exact `sudo chown -R <uid:gid> <path>` to copy —
+  // present it as a one-tap fix so the user doesn't have to re-derive
+  // it from the message. Match this BEFORE the generic "permission
+  // denied" rule so we offer the actionable suggestion first.
+  if (m.includes("codex sandbox cannot write") || m.includes("must be owned by the user running yaver")) {
+    const cmd = extractChownCommand(raw);
+    return {
+      label: cmd ? "Copy chown command" : "Open Permissions doctor",
+      kind: "chown-fix",
+      payload: cmd || undefined,
+    };
   }
   if (m.includes("permission denied") || m.includes("eacces")) {
     return { label: "Check directory permissions", kind: "permission" };

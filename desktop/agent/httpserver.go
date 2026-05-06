@@ -3329,8 +3329,23 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
 	if err != nil {
-		jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
-		return
+		// Preflight failures (workDir not writable, runner not authed,
+		// Linux sandbox kernel prereqs missing, …) come back here with
+		// a non-nil err AND a task object whose Status is already
+		// TaskStatusFailed and whose Output carries the readable
+		// reason. Surface those as a 201 with status=failed so the
+		// chat UI renders a normal failed bubble in the conversation
+		// instead of a transient banner — the user reads the chown
+		// command (or whatever the fix is) right where they're typing,
+		// chowns, retries, done.
+		//
+		// Pure validation errors (missing title, ID collision, etc.)
+		// have task == nil and continue to surface as 500 like before.
+		if task == nil || task.Status != TaskStatusFailed || task.Output == "" {
+			jsonError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create task: %v", err))
+			return
+		}
+		log.Printf("[HTTP] Task %s preflight-failed: %v (surfacing as failed bubble)", task.ID, err)
 	}
 
 	log.Printf("[HTTP] Task created: %s — %s (status: %s, model: %s, runner: %s)", task.ID, task.Title, task.Status, body.Model, task.RunnerID)

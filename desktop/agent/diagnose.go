@@ -99,6 +99,7 @@ func RunDiagnose(ctx context.Context, opts DiagnoseOptions, emit DiagEmit) DiagR
 		{Name: "ports", Run: checkPorts},
 		{Name: "auth-state", Run: checkAuthState(opts.Agent)},
 		{Name: "workspace", Run: checkWorkspace(opts.Agent)},
+		{Name: "project-ownership", Run: checkProjectOwnership},
 		{Name: "systemd-unit", Run: checkSystemdUnit},
 		{Name: "runtime-deps", Run: checkRuntimeDeps},
 	}
