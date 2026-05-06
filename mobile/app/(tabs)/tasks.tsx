@@ -648,6 +648,53 @@ function PhaseChip({ task }: { task: Task }) {
 // spinning circle to dominate the line).
 const PHASE_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+// Animated three-dot assistant bubble shown while the runner is
+// spinning up but hasn't emitted any chat text yet. Without it the
+// chat shows only the user turn for the 3–10s of a Codex/Claude
+// cold start, which feels like Send did nothing.
+function ThinkingBubble({ runner, deviceName }: { runner?: string; deviceName?: string }) {
+  const c = useColors();
+  const dotOpacity = useRef([new Animated.Value(0.25), new Animated.Value(0.25), new Animated.Value(0.25)]).current;
+  useEffect(() => {
+    const loops = dotOpacity.map((v, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 180),
+          Animated.timing(v, { toValue: 1, duration: 360, useNativeDriver: true }),
+          Animated.timing(v, { toValue: 0.25, duration: 360, useNativeDriver: true }),
+          Animated.delay(180),
+        ]),
+      ),
+    );
+    loops.forEach((l) => l.start());
+    return () => loops.forEach((l) => l.stop());
+  }, [dotOpacity]);
+  const subtitle = runner && deviceName ? `${runner} · ${deviceName}` : runner || deviceName || "thinking";
+  return (
+    <View style={{ paddingHorizontal: 16, paddingVertical: 6 }}>
+      <View style={{
+        alignSelf: "flex-start",
+        borderWidth: 1,
+        borderColor: c.border,
+        borderRadius: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+      }}>
+        {dotOpacity.map((v, i) => (
+          <Animated.View
+            key={i}
+            style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.textMuted, opacity: v }}
+          />
+        ))}
+        <Text style={{ color: c.textMuted, fontSize: 12, marginLeft: 8 }}>{subtitle}</Text>
+      </View>
+    </View>
+  );
+}
+
 /// Single-line streaming status: morphing braille spinner + the
 /// current derived phase ("searching", "compiling", …). Replaces
 /// the prior two-block pattern (big TypingIndicator → "Working…"
@@ -2112,28 +2159,16 @@ export default function TasksScreen() {
       setNewTaskText("");
       setAttachedImages([]);
       setInputFromSpeech(false);
-      // Add task to list immediately (optimistic UI — the user's
-      // command becomes the first chat bubble before the server
-      // confirms; if the network rejects it the row falls back to a
-      // failed status downstream).
       setTasks((prev) => [task, ...prev]);
-      // Spec A7 (transition redesign): open the detail modal FIRST,
-      // then close the compose modal. The previous flow ("close
-      // compose -> onDismiss callback opens detail") flashed the
-      // tasks list between the two slide animations because the
-      // detail wasn't mounted yet. Setting both modals visible
-      // briefly stacks them; the compose modal slides down over an
-      // already-mounted detail screen, so the user sees one
-      // continuous motion instead of compose -> list -> detail.
-      setSelectedTask(task);
-      // Tiny delay so the detail modal's opening transition begins
-      // before the compose dismiss starts — keeps the morph feeling
-      // continuous without leaving the compose modal stacked too
-      // long. The pendingOpenTaskRef path is kept as an Android
-      // fallback for the prior flow but won't normally trigger now
-      // since selectedTask is already set.
-      setTimeout(() => setShowNewTask(false), 60);
-      // Refresh from server in background
+      // Stage the task; iOS onDismiss (line 3299) and Android effect
+      // (line 2155) hand it to setSelectedTask once the compose
+      // Modal's slide-down completes. We can't open the chat-detail
+      // Modal in parallel — React Native's native <Modal> doesn't
+      // reliably present a second one while the first is on screen,
+      // which is why Send used to land you on the list instead of in
+      // the chat.
+      pendingOpenTaskRef.current = task;
+      setShowNewTask(false);
       fetchTasks();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -3819,6 +3854,12 @@ export default function TasksScreen() {
                     removeClippedSubviews
                     ListFooterComponent={
                       <>
+                        {isRunning && chatMessages[chatMessages.length - 1]?.role === "user" && (
+                          <ThinkingBubble
+                            runner={selectedTask.runnerId || undefined}
+                            deviceName={activeDevice?.name}
+                          />
+                        )}
                         {isRunning && <PhaseStatusLine task={selectedTask} />}
                         {selectedTask.status === "failed" && (() => {
                           const errMsg = extractTaskErrorMessage(selectedTask);
