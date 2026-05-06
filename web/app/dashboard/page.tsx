@@ -1043,6 +1043,29 @@ export default function DashboardPage() {
 
   useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines, chatMsgs]);
 
+  // Reconcile the activeTask's status from the polled tasks list. With-
+  // out this, activeTask.status stays at "running" forever even after
+  // the task completes — the SSE handler only appends output chunks,
+  // it doesn't mutate status. Symptom: after the assistant's reply
+  // streams in, the composer's "Update task" button stays disabled
+  // (taskRunning is computed from activeTask.status === "running")
+  // and the user can't type a follow-up. This effect re-finds the
+  // active task in the polled list and syncs status / runnerId /
+  // resultText / costUsd / turns whenever anything changed.
+  useEffect(() => {
+    if (!activeTask) return;
+    const fresh = tasks.find((t) => t.id === activeTask.id);
+    if (!fresh) return;
+    if (
+      fresh.status !== activeTask.status ||
+      fresh.resultText !== activeTask.resultText ||
+      fresh.costUsd !== activeTask.costUsd ||
+      fresh.turns?.length !== activeTask.turns?.length
+    ) {
+      setActiveTask(fresh);
+    }
+  }, [tasks, activeTask]);
+
   // Keep selectedRunner valid: prefer the connected device's chosen
   // primary runner, then the agent's default/active runner, then a
   // sensible installed fallback. Clears when the picker's choice
@@ -1457,7 +1480,17 @@ export default function DashboardPage() {
       return;
     }
     setInput(""); setSending(true);
-    const continuing = activeTask?.status === "running";
+    // continuing = "resume the existing task's runner session". The
+    // agent's POST /tasks/<id>/continue path REJECTS with 500 when the
+    // task is still running ("task is already running") — that endpoint
+    // is for AFTER the prior turn finished. Earlier this flag was
+    // `activeTask?.status === "running"` (inverted), which 500'd every
+    // Update-task click during streaming AND created a brand new task
+    // for completed ones, dropping the user out of the conversation.
+    // Now: an active completed/failed/stopped task continues; a running
+    // task is blocked at the button (disabled below) before we get
+    // here; absent activeTask creates a new task.
+    const continuing = !!activeTask && activeTask.status !== "running" && activeTask.status !== "queued";
     // Optimistic user echo — always push the user bubble + empty assistant placeholder
     // so the next streamed line flows into the assistant bubble, not into the last
     // run's response.
@@ -2775,15 +2808,43 @@ export default function DashboardPage() {
                     </div>
                   ) : null}
                   <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">
-                    <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                      placeholder={activeRunnerAuthIssue ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...` : activeTask ? "Add a task update or refinement..." : preferredSurfaceProjectPath ? "Describe what to do in this repo..." : "Describe the task you want this machine to run..."} rows={1}
-                      disabled={Boolean(activeRunnerAuthIssue)}
-                      className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500" style={{ minHeight: "48px" }} />
-                    <button type="submit" disabled={!input.trim() || sending || runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id)).length === 0 || Boolean(activeRunnerAuthIssue)}
-                      className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
-                      {sending ? "..." : activeTask ? "Update task" : "Start task"}
-                    </button>
+                    {(() => {
+                      const taskRunning = activeTask?.status === "running" || activeTask?.status === "queued";
+                      const placeholder = activeRunnerAuthIssue
+                        ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...`
+                        : taskRunning
+                          ? "Task is running — wait for the response, then add a follow-up…"
+                          : activeTask
+                            ? "Add a task update or refinement..."
+                            : preferredSurfaceProjectPath
+                              ? "Describe what to do in this repo..."
+                              : "Describe the task you want this machine to run...";
+                      const buttonLabel = sending
+                        ? "..."
+                        : taskRunning
+                          ? "Working…"
+                          : activeTask
+                            ? "Update task"
+                            : "Start task";
+                      const disabled = !input.trim()
+                        || sending
+                        || taskRunning
+                        || runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id)).length === 0
+                        || Boolean(activeRunnerAuthIssue);
+                      return (
+                        <>
+                          <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+                            placeholder={placeholder} rows={1}
+                            disabled={Boolean(activeRunnerAuthIssue) || taskRunning}
+                            className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500 disabled:cursor-not-allowed disabled:opacity-60" style={{ minHeight: "48px" }} />
+                          <button type="submit" disabled={disabled}
+                            className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
+                            {buttonLabel}
+                          </button>
+                        </>
+                      );
+                    })()}
                   </form>
                 </div>
               </div>
