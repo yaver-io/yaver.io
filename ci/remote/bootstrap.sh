@@ -363,6 +363,18 @@ if systemctl is-active --quiet yaver-agent.service 2>/dev/null; then
   systemctl restart yaver-agent.service || true
 fi
 
+log "normalize ownership under /root/Workspace"
+# Anything rsync'd in via `rsync -az` from a Mac (uid 501, gid staff)
+# keeps its source uid:gid because rsync preserves ownership by default.
+# That breaks codex's bwrap sandbox: bwrap drops CAP_DAC_OVERRIDE before
+# spawning, so even root inside the sandbox is treated as unprivileged
+# against the host DAC, and `codex exec` hard-fails with
+#   bwrap: Can't create file at /root/Workspace/<proj>/.codex: Permission denied
+# Idempotent + harmless if /root/Workspace doesn't exist yet.
+if [ -d /root/Workspace ]; then
+  chown -R root:root /root/Workspace || true
+fi
+
 log "done"
 echo "Installed versions:"
 echo "  docker: $(docker --version 2>&1 | head -1)"

@@ -1355,10 +1355,31 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 	log.Printf("[task %s] Starting %s process for: %s", id, taskRunner.Name, title)
 	if err := tm.startProcess(task); err != nil {
 		log.Printf("[task %s] Failed to start %s: %v", id, taskRunner.Name, err)
+		// Surface the start-time error into the task itself so the web/
+		// mobile chat bubble shows a readable message instead of a bare
+		// "(failed)" — this is the surface the user actually reads. The
+		// preflight checks in CheckRunnerReady (workDir-not-writable,
+		// runner-not-authed, sandbox-blocked) all flow through here.
+		now := time.Now()
+		failureMsg := fmt.Sprintf("Could not start %s: %v\n", taskRunner.Name, err)
 		task.Status = TaskStatusFailed
+		task.Output = failureMsg
+		task.ResultText = strings.TrimSpace(failureMsg)
+		task.FinishedAt = &now
 		tm.mu.Lock()
 		tm.persist()
 		tm.mu.Unlock()
+		// Best-effort emit so any already-subscribed SSE stream sees
+		// the failure line; the channel may be closed if nobody opened
+		// /tasks/<id>/output yet, which is fine.
+		func() {
+			defer func() { _ = recover() }()
+			select {
+			case task.outputCh <- failureMsg:
+			default:
+			}
+			close(task.outputCh)
+		}()
 		return task, fmt.Errorf("start process: %w", err)
 	}
 	log.Printf("[task %s] %s process started (PID %d)", id, taskRunner.Name, task.cmd.Process.Pid)

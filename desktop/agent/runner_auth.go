@@ -33,7 +33,73 @@ func CheckRunnerReady(runner RunnerConfig, workDir string) error {
 	if !status.Ready && strings.TrimSpace(status.Error) != "" {
 		return fmt.Errorf("%s", status.Error)
 	}
+	if err := checkRunnerWorkDirWritable(runner, workDir); err != nil {
+		return err
+	}
 	return nil
+}
+
+// checkRunnerWorkDirWritable returns a friendly error when the runner's
+// sandbox would fail to write into workDir. Codex 0.123.0 wraps every
+// `codex exec` in a bwrap (bubblewrap) sandbox that drops
+// CAP_DAC_OVERRIDE before invoking the model — so even root inside the
+// sandbox is treated as an unprivileged user against the host's DAC,
+// and a `chown 501:staff` left over from a Mac → Linux rsync makes
+// codex hard-fail mid-task with `bwrap: Can't create file at
+// <workDir>/.codex: Permission denied`. The user sees a partial output
+// like "blocked: every shell command fails with bwrap…" which doesn't
+// point at the actual fix (chown the dir).
+//
+// We probe by trying to create + remove a dotfile in workDir using the
+// agent's effective uid. If the create fails for any reason we surface
+// a single readable line that tells the user exactly which path is
+// unwritable, who currently owns it, and the command that fixes it.
+//
+// Skipped for non-sandboxed runners (claude, opencode) — their write
+// path is the agent's normal cmd.Dir, so the host's regular DAC rules
+// already apply and a normal "permission denied" travels straight to
+// the user without sandbox indirection.
+func checkRunnerWorkDirWritable(runner RunnerConfig, workDir string) error {
+	if normalizeRunnerID(runner.RunnerID) != "codex" {
+		return nil
+	}
+	dir := strings.TrimSpace(workDir)
+	if dir == "" {
+		return nil // empty workDir = agent uses its own cwd; that path is exercised by SDK token checks
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return nil // non-existent paths surface a clearer error elsewhere
+	}
+	probe, probeErr := os.CreateTemp(dir, ".yaver-codex-probe-*")
+	if probeErr == nil {
+		probe.Close()
+		_ = os.Remove(probe.Name())
+	}
+	// The probe lies when the agent is root: CAP_DAC_OVERRIDE lets the
+	// host write succeed even though bwrap (which strips that cap) is
+	// going to refuse the same operation. codexBwrapWillFail catches
+	// that case by inspecting ownership directly.
+	bwrapBlocked := codexBwrapWillFail(info)
+	if probeErr == nil && !bwrapBlocked {
+		return nil
+	}
+	owner := workDirOwnerLabel(info)
+	if owner == "" {
+		owner = "unknown"
+	}
+	uid := os.Geteuid()
+	gid := os.Getegid()
+	probeNote := "host probe failed: " + fmt.Sprintf("%v", probeErr)
+	if probeErr == nil && bwrapBlocked {
+		probeNote = "host probe succeeded via CAP_DAC_OVERRIDE but bwrap will drop that cap"
+	}
+	return fmt.Errorf(
+		"codex sandbox cannot write into %s (dir owner: %s, agent: uid=%d gid=%d). "+
+			"Codex's bwrap drops CAP_DAC_OVERRIDE so the project must be owned by the user running yaver. "+
+			"Run `sudo chown -R %d:%d %s` on the host and retry. (%s)",
+		dir, owner, uid, gid, uid, gid, dir, probeNote,
+	)
 }
 
 // DetectRunnerRuntimeStatus performs best-effort readiness checks for runners

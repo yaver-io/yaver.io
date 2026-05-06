@@ -62,3 +62,13 @@ rsync -az --delete-after \
   --exclude 'desktop/agent/yaver-*' \
   --exclude 'ci/.artifacts' \
   "$repo_root/" "root@$ip:$remote_repo_dir/"
+
+# rsync -az preserves source uid:gid, so a Mac-side 501:staff lands on
+# the Linux box and trips codex's bwrap sandbox (drops CAP_DAC_OVERRIDE,
+# can't write into a foreign-owned dir). Force ownership to root since
+# the test box runs the agent as root.
+log "normalize ownership at $remote_repo_dir to root:root"
+ssh -i "$HCLOUD_SSH_PRIVATE_KEY_PATH" \
+  -o StrictHostKeyChecking=no \
+  -o UserKnownHostsFile=/dev/null \
+  "root@$ip" "chown -R root:root '$remote_repo_dir'"
