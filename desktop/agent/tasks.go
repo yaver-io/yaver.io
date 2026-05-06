@@ -1661,6 +1661,54 @@ func buildRunnerArgsWithWorkDir(runner RunnerConfig, prompt, workDir string) []s
 		}
 		args = out
 	}
+	// Codex-specific: when the resolved workDir (or, if empty, the
+	// agent's spawn cwd) isn't inside a git repo, codex 0.123.0 aborts
+	// before running anything with:
+	//   "Not inside a trusted directory and --skip-git-repo-check
+	//   was not specified."
+	// That surfaces on yaver-test-ephemeral and any clean VPS where
+	// the task lands in /root or /home/<user>. We can't keep
+	// --skip-git-repo-check on by default — codex's workspace-write
+	// sandbox depends on the git-walk to add the project to the
+	// writable allowlist (without it, apply_patch is rejected as
+	// Read-only; see the -C splice above for the prior incident).
+	// Conditional injection threads the needle: real repos still get
+	// the workspace detection, /root-style cwd's no longer hard-fail
+	// on `Run ls`.
+	if runner.RunnerID == "codex" {
+		probe := strings.TrimSpace(workDir)
+		if probe == "" {
+			if cwd, cerr := os.Getwd(); cerr == nil {
+				probe = cwd
+			}
+		}
+		if probe != "" && !isInsideGitRepo(probe) {
+			alreadyHas := false
+			for _, a := range args {
+				if a == "--skip-git-repo-check" {
+					alreadyHas = true
+					break
+				}
+			}
+			if !alreadyHas {
+				out := make([]string, 0, len(args)+1)
+				inserted := false
+				for _, a := range args {
+					out = append(out, a)
+					if !inserted && a == "exec" {
+						out = append(out, "--skip-git-repo-check")
+						inserted = true
+					}
+				}
+				if !inserted {
+					// No `exec` token (custom args) — append at end so
+					// the flag still reaches the codex CLI.
+					out = append(out, "--skip-git-repo-check")
+				}
+				args = out
+			}
+		}
+	}
 	// Opencode-specific: splice `--agent <mode>` immediately after the
 	// `run` subcommand when the user picked a build/plan/custom agent.
 	// Hardcoded here rather than templated because opencode is the only
@@ -1686,6 +1734,31 @@ func buildRunnerArgsWithWorkDir(runner RunnerConfig, prompt, workDir string) []s
 		args = out
 	}
 	return args
+}
+
+// isInsideGitRepo reports whether dir (or any ancestor) contains a
+// `.git` entry — the same check `git rev-parse --is-inside-work-tree`
+// performs, but without shelling out (the runner-args build path is
+// hot, and we don't want a per-task git invocation just to flip one
+// flag). Symlinked .git files (worktrees, submodules) count.
+func isInsideGitRepo(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for {
+		if _, err := os.Lstat(filepath.Join(abs, ".git")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return false
+		}
+		abs = parent
+	}
 }
 
 // buildArgs is a convenience wrapper using the task manager's default runner.

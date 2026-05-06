@@ -19,6 +19,13 @@ export interface TaskHeaderProps {
   status: TaskHeaderStatus;
   /** Device alias / hostname rendered next to the status dot. */
   deviceName?: string;
+  /** Runner display name (e.g. "Codex"). Rendered as a chip on the
+   *  third line so the user can see at-a-glance which agent is running
+   *  the task without expanding Agent context. */
+  runnerLabel?: string;
+  /** Model display name (e.g. "GPT-5.4"). Paired with runnerLabel in
+   *  the same chip. Renders only when runnerLabel is also present. */
+  modelLabel?: string;
   /** Tap "Logs" — already wired in tasks.tsx. */
   onOpenLogs?: () => void;
   onBack: () => void;
@@ -33,6 +40,8 @@ export interface TaskHeaderProps {
 export function TaskHeader({
   status,
   deviceName,
+  runnerLabel,
+  modelLabel,
   onOpenLogs,
   onBack,
   primaryAction,
@@ -166,6 +175,38 @@ export function TaskHeader({
           </Pressable>
         ) : null}
       </View>
+
+      {/* Row 3: runner · model chip — surfaces "what's actually
+          running this task" without forcing the user to expand
+          Agent context. Replaces the redundant ThinkingBubble pill
+          that used to render the same info inside the chat. */}
+      {runnerLabel ? (
+        <View style={styles.chipRow}>
+          <View
+            style={[
+              styles.runnerChip,
+              {
+                backgroundColor: c.surfaceElevated,
+                borderColor: c.border,
+              },
+            ]}
+          >
+            <View style={[styles.runnerChipDot, { backgroundColor: palette.dot }]} />
+            <Text
+              style={[styles.runnerChipText, { color: c.textPrimary }]}
+              numberOfLines={1}
+            >
+              {runnerLabel}
+              {modelLabel ? (
+                <Text style={{ color: c.textTertiary }}>
+                  {"  ·  "}
+                  {modelLabel}
+                </Text>
+              ) : null}
+            </Text>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -287,4 +328,31 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   logsText: { fontSize: 13, fontWeight: "600" },
+  chipRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 4,
+    marginTop: 2,
+  },
+  runnerChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    maxWidth: "100%",
+  },
+  runnerChipDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  runnerChipText: {
+    fontSize: 11,
+    fontWeight: "600",
+    letterSpacing: 0.2,
+    flexShrink: 1,
+  },
 });

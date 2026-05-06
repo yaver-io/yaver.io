@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -77,4 +79,85 @@ func TestBuildRunnerArgs_CodexCdInjection(t *testing.T) {
 			t.Fatalf("expected trimmed -C /a/b, got: %v", args)
 		}
 	})
+}
+
+// TestBuildRunnerArgs_CodexSkipGitRepoCheck — codex 0.123.0 aborts
+// with "Not inside a trusted directory" when spawned from a non-git
+// cwd (e.g. /root on yaver-test-ephemeral). We auto-inject
+// --skip-git-repo-check only in that case so real-repo workdirs
+// keep their workspace-write detection (which the flag suppresses).
+func TestBuildRunnerArgs_CodexSkipGitRepoCheck(t *testing.T) {
+	codex := builtinRunners["codex"]
+
+	t.Run("non-git workDir gets --skip-git-repo-check", func(t *testing.T) {
+		// macOS resolves /tmp via /private/tmp symlink, but t.TempDir
+		// returns the resolved path, so the parent walk in
+		// isInsideGitRepo doesn't escape the tmp jail.
+		nonRepo := t.TempDir()
+		args := buildRunnerArgsWithWorkDir(codex, "Run ls", nonRepo)
+		if !containsArg(args, "--skip-git-repo-check") {
+			t.Fatalf("expected --skip-git-repo-check for non-git workDir, got: %v", args)
+		}
+		// Flag must come AFTER `exec` so codex's subcommand parser sees it.
+		var execIdx, flagIdx = -1, -1
+		for i, a := range args {
+			if a == "exec" {
+				execIdx = i
+			}
+			if a == "--skip-git-repo-check" {
+				flagIdx = i
+			}
+		}
+		if flagIdx <= execIdx {
+			t.Fatalf("--skip-git-repo-check must come after `exec`; got exec=%d, flag=%d in %v",
+				execIdx, flagIdx, args)
+		}
+	})
+
+	t.Run("git workDir omits --skip-git-repo-check", func(t *testing.T) {
+		repo := t.TempDir()
+		// .git as a directory satisfies isInsideGitRepo's Lstat probe;
+		// no need to actually init a git repo for this check.
+		if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		args := buildRunnerArgsWithWorkDir(codex, "Run ls", repo)
+		if containsArg(args, "--skip-git-repo-check") {
+			t.Fatalf("did not expect --skip-git-repo-check when inside a git repo: %v", args)
+		}
+	})
+
+	t.Run("git ancestor still counts as inside repo", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		nested := filepath.Join(repo, "src", "components")
+		if err := os.MkdirAll(nested, 0o755); err != nil {
+			t.Fatalf("mkdir nested: %v", err)
+		}
+		args := buildRunnerArgsWithWorkDir(codex, "Run ls", nested)
+		if containsArg(args, "--skip-git-repo-check") {
+			t.Fatalf("nested dir of git repo should not get --skip-git-repo-check: %v", args)
+		}
+	})
+
+	t.Run("non-codex runners are not affected", func(t *testing.T) {
+		opencode := builtinRunners["opencode"]
+		nonRepo := t.TempDir()
+		args := buildRunnerArgsWithWorkDir(opencode, "Run ls", nonRepo)
+		// opencode never gets --skip-git-repo-check (codex-only flag).
+		if containsArg(args, "--skip-git-repo-check") {
+			t.Fatalf("opencode should not receive --skip-git-repo-check: %v", args)
+		}
+	})
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
 }

@@ -3755,6 +3755,26 @@ export default function TasksScreen() {
                 <TaskHeader
                   status={selectedTask.status}
                   deviceName={activeDevice?.name}
+                  runnerLabel={selectedTask.runnerId ? displayRunnerLabel(selectedTask.runnerId) : undefined}
+                  modelLabel={(() => {
+                    // Model name with two fallbacks because Task.model
+                    // isn't yet plumbed through quic.ts. (1) match the
+                    // currently-loaded availableModels by id (covers
+                    // most live tasks since the picker state is
+                    // contemporaneous), (2) fall back to the runner's
+                    // device-aware default. Both end up rendering
+                    // "GPT-5.4" / "Claude Opus 4.7" — the same labels
+                    // already shown on the device card.
+                    const explicit = availableModels.find((m) => m.id === selectedModel)?.name;
+                    if (explicit) return explicit;
+                    const fallbackId = preferredDefaultModelForRunner(
+                      selectedTask.runnerId,
+                      activeDevice ?? {},
+                      user?.email,
+                    );
+                    if (!fallbackId) return undefined;
+                    return availableModels.find((m) => m.id === fallbackId)?.name || fallbackId;
+                  })()}
                   onBack={() => { setSelectedTask(null); setFollowUpText(""); }}
                   onOpenLogs={() => setShowLogs(true)}
                   primaryAction={
@@ -3873,12 +3893,13 @@ export default function TasksScreen() {
                     removeClippedSubviews
                     ListFooterComponent={
                       <>
-                        {isRunning && chatMessages[chatMessages.length - 1]?.role === "user" && (
-                          <ThinkingBubble
-                            runner={selectedTask.runnerId || undefined}
-                            deviceName={activeDevice?.name}
-                          />
-                        )}
+                        {/* ThinkingBubble used to render here next to
+                            PhaseStatusLine; the two pulsing effects
+                            stacked on top of each other made the
+                            screen feel busy. The runner+model info it
+                            carried is now surfaced as a chip in the
+                            TaskHeader, so we only keep the one
+                            spinner-with-elapsed line below. */}
                         {isRunning && <PhaseStatusLine task={selectedTask} />}
                         {selectedTask.status === "failed" && (() => {
                           const errMsg = extractTaskErrorMessage(selectedTask);
