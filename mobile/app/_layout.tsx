@@ -23,6 +23,7 @@ import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
+import { RunningTasksPill } from "../src/components/RunningTasksPill";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
 import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
 import { startFeedbackShakeBridge } from "../src/lib/feedbackTrigger";
@@ -82,6 +83,7 @@ function InnerLayout() {
         }}
       />
       <FeedbackOverlay />
+      <RunningTasksPill />
       <PairLinkHandler />
     </>
   );

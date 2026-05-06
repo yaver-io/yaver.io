@@ -58,6 +58,7 @@ import { withAlpha } from "../../src/lib/themeUtils";
 import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
 import { taskHaptics } from "../../src/lib/taskHaptics";
 import { MessageBubble } from "../../src/components/MessageBubble";
+import { openTaskBus } from "../../src/lib/runningTasksBus";
 import { ErrorMessage, detectSmartRetry } from "../../src/components/ErrorMessage";
 import { AgentContextPanel, type AgentContextRow } from "../../src/components/AgentContextPanel";
 import { TaskHeader } from "../../src/components/TaskHeader";
@@ -1829,6 +1830,24 @@ export default function TasksScreen() {
       setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
   }, [selectedTask?.output.length, selectedTask?.resultText, selectedTask?.status]);
+
+  // Open-task intents from RunningTasksPill (rendered in the root
+  // layout). The pill navigates to /tasks then publishes the id; we
+  // resolve it against the current list and fall back to a one-shot
+  // getTask fetch if the polling cycle hasn't caught it yet.
+  useEffect(() => {
+    return openTaskBus.subscribe(async (taskId) => {
+      const found = tasks.find((t) => t.id === taskId);
+      if (found) { setSelectedTask(found); return; }
+      try {
+        const fresh = await quicClient.getTask(taskId);
+        if (fresh) {
+          setTasks((prev) => prev.some((t) => t.id === fresh.id) ? prev : [fresh, ...prev]);
+          setSelectedTask(fresh);
+        }
+      } catch { /* drop intent silently — pill will retry next tap */ }
+    });
+  }, [tasks]);
 
   // TTS: speak the final result when task completes
   const lastSpokenTaskRef = useRef<string | null>(null);
