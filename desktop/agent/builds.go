@@ -146,6 +146,13 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 		}
 		return filepath.ToSlash(tail)
 	}
+	androidSDKEnv := func() string {
+		if root := detectedAndroidSDKRoot(); root != "" {
+			q := shellQuote(root)
+			return fmt.Sprintf("ANDROID_HOME=%s ANDROID_SDK_ROOT=%s ", q, q)
+		}
+		return ""
+	}
 
 	switch platform {
 	case PlatformFlutterAPK:
@@ -172,7 +179,7 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("cd %s && JAVA_HOME=%s GRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), defaultGradleOpts(), gradlew, task), []string{
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s %sGRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), androidSDKEnv(), defaultGradleOpts(), gradlew, task), []string{
 			patternIn(workDir, projectDir, "app/build/outputs/apk/release/*.apk"),
 			patternIn(workDir, projectDir, "app/build/outputs/apk/debug/*.apk"),
 		}
@@ -187,7 +194,7 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			task = strings.TrimSpace(extra)
 			extra = ""
 		}
-		return fmt.Sprintf("cd %s && JAVA_HOME=%s GRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), defaultGradleOpts(), gradlew, task), []string{
+		return fmt.Sprintf("cd %s && JAVA_HOME=%s %sGRADLE_OPTS=\"%s\" %s %s", shellQuote(projectDir), findJavaHome(), androidSDKEnv(), defaultGradleOpts(), gradlew, task), []string{
 			patternIn(workDir, projectDir, "app/build/outputs/bundle/release/*.aab"),
 		}
 	case PlatformXcodeIPA:
@@ -198,8 +205,8 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			extra = ""
 		}
 		script := `set -e; ` +
-			`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
-			`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+			`WS=""; for d in *.xcworkspace; do if [ -e "$d" ]; then WS="$d"; break; fi; done; ` +
+			`PROJ=""; for d in *.xcodeproj; do if [ -e "$d" ]; then PROJ="$d"; break; fi; done; ` +
 			`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
 			`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
 			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; ` +
@@ -268,8 +275,8 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 					"--bundle-output %s/main.jsbundle --assets-dest %s && ",
 				iosSub, iosSub)
 			script := `set -e; ` +
-				`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
-				`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+				`WS=""; for d in *.xcworkspace; do if [ -e "$d" ]; then WS="$d"; break; fi; done; ` +
+				`PROJ=""; for d in *.xcodeproj; do if [ -e "$d" ]; then PROJ="$d"; break; fi; done; ` +
 				`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
 				`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
 				`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; ` +
@@ -296,8 +303,8 @@ func resolveBuildCommand(platform BuildPlatform, workDir string, extraArgs []str
 			extra = ""
 		}
 		script := `set -e; ` +
-			`WS=$(ls -1 *.xcworkspace 2>/dev/null | head -1 || true); ` +
-			`PROJ=$(ls -1 *.xcodeproj 2>/dev/null | head -1 || true); ` +
+			`WS=""; for d in *.xcworkspace; do if [ -e "$d" ]; then WS="$d"; break; fi; done; ` +
+			`PROJ=""; for d in *.xcodeproj; do if [ -e "$d" ]; then PROJ="$d"; break; fi; done; ` +
 			`if [ -n "$WS" ]; then FLAG="-workspace $WS"; SCHEME=$(basename "$WS" .xcworkspace); ` +
 			`elif [ -n "$PROJ" ]; then FLAG="-project $PROJ"; SCHEME=$(basename "$PROJ" .xcodeproj); ` +
 			`else echo "no .xcworkspace or .xcodeproj found" >&2; exit 1; fi; `

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -35,5 +36,26 @@ func TestAndroidCommandLineToolsArchive_UsesOfficialGoogleHost(t *testing.T) {
 	}
 	if want := "https://dl.google.com/android/repository/"; len(url) < len(want) || url[:len(want)] != want {
 		t.Fatalf("archive url = %q, want official Google repository host", url)
+	}
+}
+
+func TestDetectedAndroidSDKRoot_FallsBackToStandardMacPath(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS-specific Android SDK default path")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("ANDROID_HOME", "")
+	t.Setenv("ANDROID_SDK_ROOT", "")
+	root := filepath.Join(home, "Library", "Android", "sdk")
+	adb := filepath.Join(root, "platform-tools", "adb")
+	if err := os.MkdirAll(filepath.Dir(adb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(adb, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := detectedAndroidSDKRoot(); got != root {
+		t.Fatalf("detectedAndroidSDKRoot() = %q, want %q", got, root)
 	}
 }

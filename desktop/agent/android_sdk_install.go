@@ -53,8 +53,53 @@ func androidSDKCandidateRoots() []string {
 	}
 	add(os.Getenv("ANDROID_SDK_ROOT"))
 	add(os.Getenv("ANDROID_HOME"))
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		switch runtime.GOOS {
+		case "darwin":
+			add(filepath.Join(home, "Library", "Android", "sdk"))
+		case "linux":
+			add(filepath.Join(home, "Android", "Sdk"))
+			add(filepath.Join(home, "Android", "sdk"))
+		}
+	}
+	add("/opt/android-sdk")
 	add(androidSDKRoot())
 	return roots
+}
+
+func looksLikeAndroidSDKRoot(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	for _, rel := range []string{
+		filepath.Join("platform-tools", "adb"),
+		"platforms",
+		"build-tools",
+		filepath.Join("cmdline-tools", "latest"),
+	} {
+		if info, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			if strings.HasSuffix(rel, "adb") {
+				if !info.IsDir() {
+					return true
+				}
+				continue
+			}
+			if info.IsDir() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func detectedAndroidSDKRoot() string {
+	for _, root := range androidSDKCandidateRoots() {
+		if looksLikeAndroidSDKRoot(root) {
+			return root
+		}
+	}
+	return ""
 }
 
 func androidToolRelativePath(name string) string {

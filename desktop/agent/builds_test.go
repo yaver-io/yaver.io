@@ -41,6 +41,12 @@ func TestResolveBuildCommandXcodeIPA(t *testing.T) {
 	if len(pats) != 1 {
 		t.Fatalf("xcode-ipa: expected 1 artifact pattern, got %d", len(pats))
 	}
+	if strings.Contains(cmd, `ls -1 *.xcworkspace`) || strings.Contains(cmd, `ls -1 *.xcodeproj`) {
+		t.Fatalf("xcode-ipa: workspace/project detection should not shell out through ls because ls on a matched directory prints contents, got %q", cmd)
+	}
+	if !strings.Contains(cmd, `for d in *.xcworkspace; do if [ -e "$d" ]; then WS="$d"; break; fi; done;`) {
+		t.Fatalf("xcode-ipa: workspace detection should capture the matched directory name directly, got %q", cmd)
+	}
 	if !strings.Contains(cmd, `xcodebuild $FLAG -scheme`) || !strings.Contains(cmd, `-archivePath build/App.xcarchive archive`) {
 		t.Fatalf("xcode-ipa: archive action should come after xcodebuild options, got %q", cmd)
 	}
@@ -55,6 +61,13 @@ func TestResolveBuildCommandXcodeIPA(t *testing.T) {
 	}
 	if !strings.Contains(cmd, `APP_STORE_KEY_PATH`) || !strings.Contains(cmd, `APP_STORE_KEY_ISSUER`) {
 		t.Fatalf("xcode-ipa: auth env passthrough missing from %q", cmd)
+	}
+}
+
+func TestResolveBuildCommandXcodeBuildAvoidsLsOnWorkspaceDirs(t *testing.T) {
+	cmd, _ := resolveBuildCommand(PlatformXcodeBuild, "/tmp", []string{"App"})
+	if strings.Contains(cmd, `ls -1 *.xcworkspace`) || strings.Contains(cmd, `ls -1 *.xcodeproj`) {
+		t.Fatalf("xcode-build: workspace/project detection should not use ls on matched directories, got %q", cmd)
 	}
 }
 
