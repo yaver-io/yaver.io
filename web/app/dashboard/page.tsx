@@ -85,20 +85,22 @@ function DeviceIcon({ platform }: { platform: string }) {
   );
 }
 
-function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "host">): boolean {
+// Trust the agent's authoritative isWsl bit (hardwareProfile.isWsl,
+// derived from /proc/version + WSL_DISTRO_NAME on the host) when
+// reported. Hostname suffix is a soft fallback for older agents.
+// We deliberately do NOT use the IP-shape heuristic — Docker bridges
+// (172.16-31.x.y) on real Linux boxes (Hetzner, Pi, plain VPS)
+// false-positived as WSL with that rule.
+function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "hardwareProfile">): boolean {
   const platform = String(device.platform || "").trim().toLowerCase();
   if (platform !== "linux") return false;
+  if (device.hardwareProfile?.isWsl === true) return true;
+  if (device.hardwareProfile?.isWsl === false) return false;
   const name = String(device.name || "").trim().toUpperCase();
-  const host = String(device.host || "").trim();
-  return (
-    name.startsWith("DESKTOP-") ||
-    name.startsWith("LAPTOP-") ||
-    name.startsWith("WIN-") ||
-    /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host)
-  );
+  return name.startsWith("DESKTOP-") || name.startsWith("LAPTOP-") || name.startsWith("WIN-");
 }
 
-function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "host">): string {
+function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "hardwareProfile">): string {
   const platform = String(device.platform || "").trim().toLowerCase();
   if (isLikelyWSLDevice(device)) return "Linux (likely WSL)";
   switch (platform) {

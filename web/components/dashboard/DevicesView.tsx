@@ -141,20 +141,30 @@ function platformLabel(platform: string): string {
   }
 }
 
-function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "host">): boolean {
+// isLikelyWSLDevice trusts the agent's authoritative WSL signal
+// (set from /proc/version + WSL_DISTRO_NAME on the host itself, see
+// agent's hardware_profile.go) when present. The earlier IP-based
+// heuristic (172.16-31.x.y → "WSL NAT") false-positived on every
+// real Linux box that picks a Docker bridge as its LAN IP — Hetzner
+// VMs, Pi devices with docker0, plain VPS — labelling them all as
+// "Linux (likely WSL)". Hostname suffixes like "DESKTOP-" remain a
+// soft fallback for older agents that haven't yet shipped isWsl.
+function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "hardwareProfile">): boolean {
   const platform = String(device.platform || "").trim().toLowerCase();
   if (platform !== "linux") return false;
+  // Authoritative bit from the agent — trust it when present.
+  if (device.hardwareProfile?.isWsl === true) return true;
+  if (device.hardwareProfile?.isWsl === false) return false;
+  // No isWsl reported (agent < 1.99.159 or hardware profile not yet
+  // synced) → soft hostname-shape fallback. We deliberately stop at
+  // hostname patterns; the IP-shape heuristic that this used to also
+  // run is gone because Docker bridges trip it on every real Linux
+  // box with containerd/docker installed.
   const name = String(device.name || "").trim().toUpperCase();
-  const host = String(device.host || "").trim();
-  const windowsHostLike =
-    name.startsWith("DESKTOP-") ||
-    name.startsWith("LAPTOP-") ||
-    name.startsWith("WIN-");
-  const wslNatLike = /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host);
-  return windowsHostLike || wslNatLike;
+  return name.startsWith("DESKTOP-") || name.startsWith("LAPTOP-") || name.startsWith("WIN-");
 }
 
-function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "host">): string {
+function devicePlatformLabel(device: Pick<Device, "name" | "platform" | "hardwareProfile">): string {
   const base = platformLabel(device.platform);
   if (isLikelyWSLDevice(device)) {
     return "Linux (likely WSL)";

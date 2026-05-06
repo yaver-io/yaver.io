@@ -29,6 +29,11 @@ export interface Device {
     vramMb?: number;
     numCores?: number;
     arch?: string;
+    /** True when the agent is running inside Windows Subsystem for
+     *  Linux (detected via WSL_DISTRO_NAME / /proc/version on the
+     *  host). Replaces the old IP-shape heuristic that false-
+     *  positived on Linux boxes with Docker bridges. */
+    isWsl?: boolean;
     iosSimulators?: string[];
     androidEmulators?: string[];
   };

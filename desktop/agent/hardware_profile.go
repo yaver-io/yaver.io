@@ -27,6 +27,15 @@ type DeviceHardwareProfile struct {
 	Arch             string   `json:"arch,omitempty"`
 	IOSSimulators    []string `json:"iosSimulators,omitempty"`
 	AndroidEmulators []string `json:"androidEmulators,omitempty"`
+	// IsWSL is true when the agent is running inside Microsoft's
+	// Windows Subsystem for Linux. Detected via WSL_DISTRO_NAME /
+	// WSL_INTEROP env vars and /proc/version (which always contains
+	// "Microsoft" or "WSL2" on a real WSL kernel). The web/mobile
+	// surfaces consume this boolean to label the machine — without
+	// it they fall back to a 172.16-31 host-IP heuristic that
+	// false-positives on any Linux box with a Docker bridge as the
+	// reported host (Hetzner, Pi, plain VPS, …).
+	IsWSL bool `json:"isWsl,omitempty"`
 }
 
 func (p *DeviceHardwareProfile) isEmpty() bool {
@@ -38,6 +47,7 @@ func (p *DeviceHardwareProfile) isEmpty() bool {
 		p.VRAMMB == 0 &&
 		p.NumCores == 0 &&
 		p.Arch == "" &&
+		!p.IsWSL &&
 		len(p.IOSSimulators) == 0 &&
 		len(p.AndroidEmulators) == 0)
 }
@@ -113,6 +123,7 @@ func detectHardwareProfile() *DeviceHardwareProfile {
 		OS:       normalizedHardwareOS(),
 		NumCores: runtime.NumCPU(),
 		Arch:     runtime.GOARCH,
+		IsWSL:    isWSL(),
 	}
 	if ramMB, err := getSystemMemoryMB(); err == nil && ramMB > 0 {
 		profile.RAMMB = ramMB

@@ -33,7 +33,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const version = "1.99.158"
+const version = "1.99.159"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7656,7 +7656,26 @@ func getLocalIP() string {
 
 // firstPrivateIPv4 enumerates every UP non-loopback interface and
 // returns the first RFC1918 IPv4 address it finds. Used as a fallback
-// when getLocalIP's outbound-route probe lands on a public IP.
+// when getLocalIP's outbound-route probe lands on a public IP (cloud
+// VMs, Hetzner, public-IP boxes, …) so the registered host is at
+// least private and reachable from a teammate on the same LAN.
+//
+// Skips virtual / container bridge interfaces (docker0, br-*, virbr*,
+// podman*, cni*, kube-bridge, weave, flannel, …). On a Hetzner cloud
+// VM with Docker installed, these are the FIRST private interface
+// `net.Interfaces()` returns — without filtering, the heartbeat
+// reports `host=172.17.0.1` which:
+//
+//   - Is unreachable from any browser / mobile / SSH client.
+//   - Trips the web's "172.16-31.x.y → likely WSL" heuristic (now
+//     replaced by the hardwareProfile.isWsl bit, but legacy clients
+//     still see the wrong label).
+//   - Wedges the web shell modal at "connection error" because
+//     terminalWsUrl falls through to the direct ws://172.17.0.1 path.
+//
+// Skipping container bridges does NOT skip Tailscale (100.x CGNAT) —
+// that interface is intentionally reachable on the tailnet and the
+// mobile client races it during direct-connect.
 func firstPrivateIPv4() string {
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -7664,6 +7683,9 @@ func firstPrivateIPv4() string {
 	}
 	for _, iface := range ifaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if isContainerBridgeInterfaceName(iface.Name) {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -7681,12 +7703,53 @@ func firstPrivateIPv4() string {
 			if ip == nil || ip.To4() == nil {
 				continue
 			}
-			if ip.IsPrivate() {
-				return ip.String()
+			if !ip.IsPrivate() {
+				continue
 			}
+			// Defense-in-depth: even an interface whose name slipped
+			// past the prefix filter (custom Docker networks named
+			// without the `br-` prefix, exotic CNI implementations)
+			// still gets caught if its IP is on a known docker
+			// bridge gateway (172.x.0.1).
+			if isLikelyDockerBridgeIP(ip.String()) {
+				continue
+			}
+			return ip.String()
 		}
 	}
 	return ""
+}
+
+// isContainerBridgeInterfaceName matches every common virtual /
+// container-network interface so the LAN-IP picker skips them. Linux
+// distros vary, so we go on prefixes (case-insensitive) rather than
+// exact names. A real Wi-Fi / Ethernet / Tailscale / VPN interface
+// never matches this.
+func isContainerBridgeInterfaceName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "" {
+		return false
+	}
+	prefixes := []string{
+		"docker",   // docker0, dockerN
+		"br-",      // user-defined Docker networks
+		"virbr",    // libvirt
+		"podman",   // podmanN
+		"cni",      // CNI plugins (Kubernetes, OpenShift, …)
+		"flannel",  // Flannel CNI
+		"weave",    // Weave Net
+		"calico",   // Calico CNI
+		"cali",     // Calico interfaces (cali123abc)
+		"vxlan",    // overlay networks
+		"kube-",    // kube-bridge etc.
+		"veth",     // virtual ethernet pair (container side)
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // getLocalIPs enumerates every reachable IPv4 address this host has —
@@ -8612,21 +8675,34 @@ func relayConnectAndServe(ctx context.Context, relayAddr, agentAddr, deviceID, t
 func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *http.Client) {
 	defer stream.Close()
 
-	// 64 MiB cap on the inbound TunnelRequest envelope — matches the
-	// relay's outbound limit. Inbound bodies (POSTs to the agent) are
-	// usually small; the room is for symmetry with the response path
-	// where a 5–15 MB JS bundle is normal.
-	data, err := io.ReadAll(io.LimitReader(stream, 64<<20))
-	if err != nil {
-		log.Printf("[RELAY] read request: %v", err)
-		return
-	}
-
+	// Read the TunnelRequest JSON envelope WITHOUT waiting for EOF on
+	// the stream. The previous `io.ReadAll(stream)` worked for normal
+	// HTTP requests because the relay calls `stream.Close()` after
+	// writing the request envelope (signaling end-of-write to the
+	// agent), so the read returns once the FIN arrives. But for
+	// WebSocket upgrades — Metro HMR, the dashboard's /ws/terminal,
+	// and any future bidirectional channel — the relay deliberately
+	// keeps the stream open for bidirectional proxying after writing
+	// the envelope. ReadAll then blocks forever, the agent never
+	// processes the request, the browser sees no 101 and the shell
+	// modal renders "connection error / disconnected" with nothing
+	// in any log to point at the cause.
+	//
+	// json.NewDecoder reads only as many bytes as the JSON value
+	// needs and returns; any over-read bytes (the streaming-wire
+	// post-envelope payload, if any) are buffered inside the decoder
+	// and we drain them via decoder.Buffered() into the backend pipe
+	// in the WS branch so the first WebSocket frame the browser sent
+	// before the agent finished the handshake doesn't get dropped.
+	// 64 MiB cap mirrors the relay's outbound limit.
+	limited := io.LimitReader(stream, 64<<20)
+	decoder := json.NewDecoder(limited)
 	var req relayTunnelRequest
-	if err := json.Unmarshal(data, &req); err != nil {
-		log.Printf("[RELAY] parse request: %v", err)
+	if err := decoder.Decode(&req); err != nil {
+		log.Printf("[RELAY] read/parse request: %v", err)
 		return
 	}
+	envelopeOverflow := decoder.Buffered()
 
 	// Build local HTTP request
 	target := agentAddr
@@ -8649,7 +8725,7 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 		httpReq.Header.Set(k, v)
 	}
 
-	// Check if WebSocket upgrade (Metro HMR, debugger)
+	// Check if WebSocket upgrade (Metro HMR, debugger, /ws/terminal)
 	isWebSocket := strings.EqualFold(req.Headers["Upgrade"], "websocket")
 	if isWebSocket {
 		// Open raw TCP to the local agent HTTP server and bidirectionally proxy
@@ -8666,9 +8742,20 @@ func relayHandleProxiedRequest(stream quic.Stream, agentAddr string, client *htt
 			return
 		}
 
-		// Bidirectional copy between QUIC stream and local TCP
+		// Bidirectional copy between QUIC stream and local TCP. The
+		// JSON decoder may have over-read past the envelope (e.g.
+		// the relay flushed the envelope + the first WS frame from
+		// the browser in a single QUIC packet); drain that buffer
+		// into the backend BEFORE handing the stream to io.Copy so
+		// no client bytes are dropped on the floor.
 		done := make(chan struct{}, 2)
-		go func() { io.Copy(backendConn, stream); done <- struct{}{} }()
+		go func() {
+			if envelopeOverflow != nil {
+				io.Copy(backendConn, envelopeOverflow)
+			}
+			io.Copy(backendConn, stream)
+			done <- struct{}{}
+		}()
 		go func() { io.Copy(stream, backendConn); done <- struct{}{} }()
 		<-done
 		return
