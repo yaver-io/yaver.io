@@ -963,27 +963,72 @@ export default function DashboardPage() {
 
   useEffect(() => { const u = agentClient.on("connectionState", setConnState); return u; }, []);
 
+  // Tracks which task is currently being live-streamed via SSE.
+  // While SSE owns the wheel, the 3-second polling loop in agent-
+  // client must NOT also push lines for that task or every chunk
+  // double-renders. Polling stays alive for non-active tasks (the
+  // sidebar list refresh) and as a backstop after SSE closes.
+  const sseActiveTaskRef = useRef<string | null>(null);
+
+  const appendAssistantChunk = useCallback((tid: string, chunk: string) => {
+    if (!chunk) return;
+    setActiveTask(at => {
+      if (!at || tid !== at.id) return at;
+      // Stream chunks may carry multiple lines; normalize so
+      // outputLines stays one-line-per-entry like the polling path.
+      const lines = chunk.split("\n").filter(l => l.length > 0 || chunk.indexOf("\n\n") >= 0);
+      setOutputLines(p => [...p, ...lines]);
+      setChatMsgs(prev => {
+        const next = prev.slice();
+        const last = next[next.length - 1];
+        if (last && last.role === "assistant") {
+          next[next.length - 1] = { role: "assistant", text: last.text ? last.text + chunk : chunk };
+        } else {
+          next.push({ role: "assistant", text: chunk });
+        }
+        return next;
+      });
+      return at;
+    });
+  }, []);
+
   useEffect(() => {
     const u = agentClient.on("output", (tid, line) => {
-      setActiveTask(at => {
-        if (at && tid === at.id) {
-          setOutputLines(p => [...p, line]);
-          setChatMsgs(prev => {
-            const next = prev.slice();
-            const last = next[next.length - 1];
-            if (last && last.role === "assistant") {
-              next[next.length - 1] = { role: "assistant", text: last.text ? last.text + "\n" + line : line };
-            } else {
-              next.push({ role: "assistant", text: line });
-            }
-            return next;
-          });
-        }
-        return at;
-      });
+      // SSE is faster + survives relay flakes (the 3s poller hits
+      // /tasks?limit=5 and on relay 502 falls into 30s reconnect
+      // backoff, which is exactly the 2-minute-stuck-spinner bug
+      // users were hitting in the chat). When SSE owns the active
+      // task, ignore polled emissions for it.
+      if (sseActiveTaskRef.current && sseActiveTaskRef.current === tid) return;
+      appendAssistantChunk(tid, line);
     });
     return u;
-  }, []);
+  }, [appendAssistantChunk]);
+
+  // Live SSE for the active running task. The 3s poller is fine for
+  // background sync but caps tail latency at the polling cadence
+  // (and stalls during relay outages). Subscribing to /tasks/<id>/
+  // output via SSE makes the chat bubble update token-by-token —
+  // matches what VibeCodingView already does.
+  useEffect(() => {
+    if (!activeTask) {
+      sseActiveTaskRef.current = null;
+      return;
+    }
+    if (activeTask.status !== "running" && activeTask.status !== "queued") {
+      sseActiveTaskRef.current = null;
+      return;
+    }
+    const tid = activeTask.id;
+    sseActiveTaskRef.current = tid;
+    const stop = agentClient.streamTaskOutput(tid, (chunk) => {
+      appendAssistantChunk(tid, chunk);
+    });
+    return () => {
+      stop();
+      if (sseActiveTaskRef.current === tid) sseActiveTaskRef.current = null;
+    };
+  }, [activeTask?.id, activeTask?.status, appendAssistantChunk]);
 
   useEffect(() => { if (outputRef.current) outputRef.current.scrollTop = outputRef.current.scrollHeight; }, [outputLines, chatMsgs]);
 
@@ -2417,31 +2462,16 @@ export default function DashboardPage() {
                     }
                     return (
                       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2">
-                        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                          <span className="text-surface-500">Runner</span>
-                          {installed.map(r => {
-                            const active = r.id === selectedRunner;
-                            const warn = !r.ready && (r.error || r.warning);
-                            return (
-                              <button
-                                key={r.id}
-                                type="button"
-                                onClick={() => setSelectedRunner(r.id)}
-                                title={warn || (r.authConfigured ? `auth: configured` : undefined)}
-                                className={`rounded-full border px-2.5 py-1 transition ${
-                                  active
-                                    ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-200"
-                                    : warn
-                                      ? "border-amber-500/40 bg-surface-900 text-amber-300 hover:border-amber-400/70"
-                                      : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
-                                }`}
-                              >
-                                {r.name}
-                                {warn && <span className="ml-1 opacity-60">!</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
+                        {/* Runner picker chip rail removed — primary
+                            runner is set on the Devices tab and the
+                            provider chips below already communicate the
+                            runner choice (opencode + provider). Showing
+                            both rows duplicated state and confused users
+                            who'd flip the runner here without realising
+                            the change wouldn't persist back to the
+                            device's primary on Convex. The provider/
+                            model row + "Active: …" badge below carries
+                            all the info this rail used to. */}
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
                           {selectedRunner !== "opencode" && selectedRunnerModels.length > 0 ? (
                             <>
