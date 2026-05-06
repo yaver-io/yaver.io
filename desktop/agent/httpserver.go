@@ -2190,6 +2190,26 @@ func (s *HTTPServer) handleSelfCheck(w http.ResponseWriter, r *http.Request) {
 func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	hostname, _ := os.Hostname()
 	lifecycle := s.lifecycleInfo()
+	// Surface the per-device runner pref from Convex when set, so
+	// `yaver primary status` (which reads info.runner.id) reflects the
+	// dashboard's "primary runner" choice without restarting the agent.
+	// Falls through to tm.runner — which itself was resolved from the
+	// global userSettings.runnerId at boot — when no per-device pref
+	// exists.
+	runnerID := s.taskMgr.runner.RunnerID
+	runnerName := s.taskMgr.runner.Name
+	runnerModel := s.taskMgr.runner.Model
+	if id, model := resolvePrimaryRunnerForSelf(r.Context(), s); id != "" {
+		runnerID = id
+		if cfg, ok := builtinRunners[id]; ok {
+			runnerName = cfg.Name
+		} else {
+			runnerName = id
+		}
+		if model != "" {
+			runnerModel = model
+		}
+	}
 	info := map[string]interface{}{
 		"ok":             true,
 		"hostname":       hostname,
@@ -2200,9 +2220,9 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"lifecycleState": lifecycle.State,
 		"lifecycle":      lifecycle,
 		"runner": map[string]interface{}{
-			"id":    s.taskMgr.runner.RunnerID,
-			"name":  s.taskMgr.runner.Name,
-			"model": s.taskMgr.runner.Model,
+			"id":    runnerID,
+			"name":  runnerName,
+			"model": runnerModel,
 		},
 	}
 

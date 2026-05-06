@@ -2276,7 +2276,7 @@ func runServe(args []string) {
 	}
 
 	// Resolve runner config (fetch user settings, fall back to auto-detect)
-	runner := resolveRunner(cfg.ConvexSiteURL, cfg.AuthToken)
+	runner := resolveRunner(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID)
 
 	// If no runner was explicitly set by user, auto-detect available agents
 	if runner.AutoDetected {
@@ -7124,7 +7124,7 @@ func uninstallPackageWrapper() (bool, string) {
 
 // resolveRunner fetches user settings from the backend and returns the
 // appropriate RunnerConfig. Falls back to defaultRunner on any error.
-func resolveRunner(convexSiteURL, token string) RunnerConfig {
+func resolveRunner(convexSiteURL, token, deviceID string) RunnerConfig {
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	// Step 1: Fetch user settings
@@ -7153,46 +7153,87 @@ func resolveRunner(convexSiteURL, token string) RunnerConfig {
 		return defaultRunner
 	}
 
-	// Convex returns { settings: { runnerId, customRunnerCommand, ... } }.
+	// Convex returns { settings: { runnerId, primaryRunnerByDevice, ... } }.
 	// Older code tried to parse the response as a flat object, so
 	// userSettings.runnerId was always ""; every agent fell back to the
 	// hard-coded "claude" default even after the user explicitly picked
 	// codex through the web UI.
+	type primaryRunnerEntry struct {
+		DeviceID string `json:"deviceId"`
+		RunnerID string `json:"runnerId"`
+		Model    string `json:"model,omitempty"`
+	}
 	var settingsEnv struct {
 		Settings struct {
-			RunnerID            string `json:"runnerId"`
-			CustomRunnerCommand string `json:"customRunnerCommand"`
+			RunnerID              string               `json:"runnerId"`
+			CustomRunnerCommand   string               `json:"customRunnerCommand"`
+			PrimaryRunnerByDevice []primaryRunnerEntry `json:"primaryRunnerByDevice"`
 		} `json:"settings"`
 		// Tolerate future/legacy flat shapes too — populated only if the
 		// nested Settings.RunnerID is empty.
-		RunnerID            string `json:"runnerId"`
-		CustomRunnerCommand string `json:"customRunnerCommand"`
+		RunnerID              string               `json:"runnerId"`
+		CustomRunnerCommand   string               `json:"customRunnerCommand"`
+		PrimaryRunnerByDevice []primaryRunnerEntry `json:"primaryRunnerByDevice"`
 	}
 	if err := json.Unmarshal(body, &settingsEnv); err != nil {
 		log.Printf("Runner: could not parse settings: %v — using default", err)
 		return defaultRunner
 	}
 	settings := struct {
-		RunnerID            string
-		CustomRunnerCommand string
+		RunnerID              string
+		CustomRunnerCommand   string
+		PrimaryRunnerByDevice []primaryRunnerEntry
 	}{
-		RunnerID:            settingsEnv.Settings.RunnerID,
-		CustomRunnerCommand: settingsEnv.Settings.CustomRunnerCommand,
+		RunnerID:              settingsEnv.Settings.RunnerID,
+		CustomRunnerCommand:   settingsEnv.Settings.CustomRunnerCommand,
+		PrimaryRunnerByDevice: settingsEnv.Settings.PrimaryRunnerByDevice,
 	}
 	if settings.RunnerID == "" && settingsEnv.RunnerID != "" {
 		settings.RunnerID = settingsEnv.RunnerID
 		settings.CustomRunnerCommand = settingsEnv.CustomRunnerCommand
 	}
+	if len(settings.PrimaryRunnerByDevice) == 0 && len(settingsEnv.PrimaryRunnerByDevice) > 0 {
+		settings.PrimaryRunnerByDevice = settingsEnv.PrimaryRunnerByDevice
+	}
+
+	// Per-device preference wins over the global runnerId. The dashboard
+	// writes this when the user picks a runner+model on a specific
+	// device's tile (web/components/dashboard/DevicesView.tsx); the agent
+	// must honor it so `yaver primary status`, /info, and any /tasks
+	// POST without an explicit runner all spawn the runner the user
+	// pinned for THIS box.
+	deviceID = strings.TrimSpace(deviceID)
+	var deviceRunnerID, deviceModel string
+	if deviceID != "" {
+		for _, e := range settings.PrimaryRunnerByDevice {
+			if strings.TrimSpace(e.DeviceID) == deviceID {
+				deviceRunnerID = strings.TrimSpace(e.RunnerID)
+				deviceModel = strings.TrimSpace(e.Model)
+				break
+			}
+		}
+	}
+
+	effectiveRunnerID := deviceRunnerID
+	if effectiveRunnerID == "" {
+		effectiveRunnerID = settings.RunnerID
+	}
+	if deviceRunnerID != "" {
+		log.Printf("Runner: using per-device pref %q (model=%q) for device %s", deviceRunnerID, deviceModel, deviceID)
+	}
 
 	// No runner configured — use default but mark as auto-detected
-	if settings.RunnerID == "" {
+	if effectiveRunnerID == "" {
 		r := defaultRunner
 		r.AutoDetected = true
 		return r
 	}
 
-	// Custom runner: wrap in sh -c with {prompt} placeholder
-	if settings.RunnerID == "custom" && settings.CustomRunnerCommand != "" {
+	// Custom runner: wrap in sh -c with {prompt} placeholder. Custom is
+	// only valid as the global setting (it carries the literal command),
+	// so we honor CustomRunnerCommand only when the global runnerId is
+	// the one we're spawning — never from a per-device pref.
+	if effectiveRunnerID == "custom" && deviceRunnerID == "" && settings.CustomRunnerCommand != "" {
 		log.Printf("Runner: using custom command: %s", settings.CustomRunnerCommand)
 		return RunnerConfig{
 			RunnerID:        "custom",
@@ -7205,14 +7246,20 @@ func resolveRunner(convexSiteURL, token string) RunnerConfig {
 	}
 
 	// Known runner ID — use builtinRunners (populated from Convex) or default
-	if r, ok := builtinRunners[settings.RunnerID]; ok {
+	if r, ok := builtinRunners[effectiveRunnerID]; ok {
+		if deviceModel != "" {
+			r.Model = deviceModel
+		}
 		return r
 	}
 
-	runner, err := fetchRunner(client, convexSiteURL, settings.RunnerID)
+	runner, err := fetchRunner(client, convexSiteURL, effectiveRunnerID)
 	if err != nil {
-		log.Printf("Runner: could not fetch runner %q: %v — using default", settings.RunnerID, err)
+		log.Printf("Runner: could not fetch runner %q: %v — using default", effectiveRunnerID, err)
 		return defaultRunner
+	}
+	if deviceModel != "" {
+		runner.Model = deviceModel
 	}
 	return runner
 }

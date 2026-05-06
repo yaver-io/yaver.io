@@ -1223,27 +1223,53 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 			OutputMode: "raw",
 		}
 	} else {
-		// Resolve which runner to use for this task
+		// Resolve which runner to use for this task.
+		//
+		// Order:
+		//   1. Caller's explicit runnerID (mobile/web "I picked codex")
+		//   2. Convex userSettings.primaryRunnerByDevice for THIS device
+		//      — lets the dashboard's "set primary for this machine"
+		//      choice flow without restarting the agent. Cached 30s.
+		//   3. tm.runner (resolved at boot from global userSettings.runnerId)
+		callerRunnerID := normalizeRunnerID(runnerID)
+		effectiveRunnerID := callerRunnerID
+		var perDeviceModel string
+		if effectiveRunnerID == "" {
+			if id, m := resolvePrimaryRunnerForSelf(context.Background(), nil); id != "" {
+				effectiveRunnerID = id
+				perDeviceModel = m
+			}
+		}
+
 		taskRunner = tm.runner // default (could be custom)
-		normalizedRunnerID := normalizeRunnerID(runnerID)
 		currentRunnerID := normalizeRunnerID(tm.runner.RunnerID)
-		if normalizedRunnerID != "" && normalizedRunnerID != currentRunnerID {
-			if r, ok := builtinRunners[normalizedRunnerID]; ok {
+		if effectiveRunnerID != "" && effectiveRunnerID != currentRunnerID {
+			if r, ok := builtinRunners[effectiveRunnerID]; ok {
 				taskRunner = r
-			} else if normalizedRunnerID == "custom" || normalizedRunnerID == currentRunnerID {
+			} else if effectiveRunnerID == "custom" {
 				taskRunner = tm.runner
 			} else {
 				return nil, fmt.Errorf("unknown runner: %s", runnerID)
 			}
 		}
 
-		// If the caller left the runner unspecified and the agent's configured
-		// default isn't actually installed on this host, fall back to the first
-		// installed builtin. Without this the task would spawn a missing binary,
-		// crash with <100 bytes of output, and enter the 4x auto-restart loop
-		// until the runner gets marked down in Convex — visible to the user as
-		// "Agent process crashed — restarting (attempt N/4)" with no recourse.
-		if !tm.DummyMode && normalizedRunnerID == "" {
+		// Inherit the per-device model only when the caller left both
+		// runner and model empty. An explicit caller-supplied runner is
+		// allowed to keep its caller-supplied (or empty) model.
+		if model == "" && perDeviceModel != "" && callerRunnerID == "" {
+			model = perDeviceModel
+		}
+
+		// If the caller left the runner unspecified and the resolved
+		// default isn't actually installed on this host, fall back to
+		// the first installed builtin. Without this the task would spawn
+		// a missing binary, crash with <100 bytes of output, and enter
+		// the 4x auto-restart loop until the runner gets marked down in
+		// Convex — visible to the user as "Agent process crashed —
+		// restarting (attempt N/4)" with no recourse. Only applies when
+		// the caller didn't pick a runner — explicit picks must surface
+		// "runner not ready" instead of silently switching binaries.
+		if !tm.DummyMode && callerRunnerID == "" {
 			if err := CheckRunnerBinary(taskRunner.Command); err != nil {
 				if alt, ok := firstInstalledBuiltinRunner(); ok {
 					log.Printf("[runner] configured default %q not installed (%v) — falling back to %q for this task", taskRunner.Command, err, alt.RunnerID)
