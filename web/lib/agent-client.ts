@@ -489,6 +489,14 @@ export interface OpenCodeProviderSummary {
   id: string;
   name?: string;
   baseUrl?: string;
+  /** True when this provider already has a non-empty `options.apiKey`
+   *  set in the agent's opencode.json. The agent never returns the
+   *  key value over the wire — only this boolean — so the UI can show
+   *  "✓ Key configured · Change" instead of forcing the user to paste
+   *  the key every time they pick this provider chip. P2P: comes
+   *  straight from /runner/opencode/config, never round-tripped via
+   *  Convex. */
+  hasApiKey?: boolean;
   models?: OpenCodeModelSummary[];
 }
 

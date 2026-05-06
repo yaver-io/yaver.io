@@ -702,6 +702,15 @@ export default function DashboardPage() {
   const [opencodeApiKey, setOpencodeApiKey] = useState<string>("");
   const [opencodeSaving, setOpencodeSaving] = useState(false);
   const [opencodeSaveMsg, setOpencodeSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Map of provider id → whether the agent's opencode.json already has
+  // a non-empty apiKey for it. P2P: read straight from
+  // /runner/opencode/config, never via Convex. Drives the "✓ Key
+  // configured" badge + the "Change key" toggle so users don't paste
+  // the same Z.ai/Anthropic/etc key on every visit.
+  const [opencodeKeyState, setOpencodeKeyState] = useState<Record<string, boolean>>({});
+  // When true, a saved-key provider still shows the input so the user
+  // can replace the key. Reset on provider switch.
+  const [opencodeChangingKey, setOpencodeChangingKey] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
@@ -1235,6 +1244,31 @@ export default function DashboardPage() {
     const poll = async () => { try { setTodoCount(await agentClient.todoCount()); } catch {} };
     poll(); const iv = setInterval(poll, 30000); return () => clearInterval(iv);
   }, [isConnected]);
+
+  // Load the agent's opencode.json provider state so the chat composer
+  // can render "✓ Key configured" instead of an empty input every time
+  // the user picks a saved provider. P2P: lives at /runner/opencode/
+  // config on the agent itself, never round-tripped via Convex (the
+  // boolean is innocuous but the key value would be — agent never
+  // emits the value, only the boolean).
+  const refreshOpencodeKeyState = useCallback(async () => {
+    if (!isConnected || selectedRunner !== "opencode") return;
+    try {
+      const cfg = await agentClient.openCodeConfig();
+      const map: Record<string, boolean> = {};
+      for (const p of cfg.providers || []) {
+        if (p.id) map[p.id] = !!p.hasApiKey;
+      }
+      setOpencodeKeyState(map);
+    } catch {
+      // Best-effort. A failed read just means the indicator stays
+      // unset; the existing "Save key + use" flow continues to work.
+    }
+  }, [isConnected, selectedRunner]);
+
+  useEffect(() => {
+    void refreshOpencodeKeyState();
+  }, [refreshOpencodeKeyState]);
 
   // ── Actions ─────────────────────────────────────────────────────
 
@@ -2549,6 +2583,17 @@ export default function DashboardPage() {
                         } else {
                           setSelectedModel(fullModel);
                           setOpencodeApiKey("");
+                          setOpencodeChangingKey(false);
+                          // Optimistically flip the indicator so the
+                          // user sees the "✓ Key configured" badge
+                          // immediately, then reconcile with the
+                          // agent's view to catch the case where the
+                          // patch only updated baseUrl/model and not
+                          // the key.
+                          if (provider.requiresKey && opencodeApiKey.trim()) {
+                            setOpencodeKeyState((prev) => ({ ...prev, [provider.id]: true }));
+                          }
+                          void refreshOpencodeKeyState();
                           setOpencodeSaveMsg({ ok: true, text: `Saved. Using ${provider.label} · ${modelId}.` });
                         }
                       } catch (err: any) {
@@ -2570,6 +2615,7 @@ export default function DashboardPage() {
                                 onClick={() => {
                                   setOpencodeProvider(p.id);
                                   setOpencodeApiKey("");
+                                  setOpencodeChangingKey(false);
                                   setOpencodeSaveMsg(null);
                                   // Seed the model with the provider's first option so the user always has a valid pre-selection.
                                   const m = p.models[0];
@@ -2610,27 +2656,82 @@ export default function DashboardPage() {
                             );
                           })}
                         </div>
-                        {provider.requiresKey ? (
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            <span className="text-[11px] text-surface-500">{provider.keyEnv || "API key"}</span>
-                            <input
-                              type="password"
-                              value={opencodeApiKey}
-                              onChange={(e) => setOpencodeApiKey(e.target.value)}
-                              placeholder="sk-…"
-                              autoComplete="off"
-                              className="min-w-[220px] flex-1 rounded-lg border border-surface-700 bg-surface-950 px-3 py-1.5 text-[12px] font-mono text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleSaveOpenCode}
-                              disabled={opencodeSaving}
-                              className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
-                            >
-                              {opencodeSaving ? "Saving…" : "Save key + use"}
-                            </button>
-                          </div>
-                        ) : (
+                        {provider.requiresKey ? (() => {
+                          const keyAlreadySaved = !!opencodeKeyState[provider.id];
+                          // Show the input when (a) no key has been
+                          // saved yet for this provider on the agent,
+                          // or (b) the user explicitly clicked "Change
+                          // key" to replace it. Otherwise just render
+                          // the "✓ Key configured · Change" badge so
+                          // the user can re-pick the model and start
+                          // tasks without re-pasting the secret.
+                          const showInput = !keyAlreadySaved || opencodeChangingKey;
+                          if (!showInput) {
+                            return (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-200">
+                                  ✓ {provider.keyEnv || "Key"} configured on this device
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpencodeApiKey("");
+                                    setOpencodeChangingKey(true);
+                                    setOpencodeSaveMsg(null);
+                                  }}
+                                  className="rounded-lg border border-surface-700 bg-surface-900 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-500"
+                                  title="Replace the saved API key on this device. Read-only key state lives on the agent (opencode.json), never in Convex."
+                                >
+                                  Change key
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleSaveOpenCode}
+                                  disabled={opencodeSaving}
+                                  className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                                  title="Use this provider + model for the next task without changing the saved key."
+                                >
+                                  {opencodeSaving ? "Saving…" : "Use this provider"}
+                                </button>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="mt-3 flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] text-surface-500">{provider.keyEnv || "API key"}</span>
+                              <input
+                                type="password"
+                                value={opencodeApiKey}
+                                onChange={(e) => setOpencodeApiKey(e.target.value)}
+                                placeholder="sk-…"
+                                autoComplete="off"
+                                className="min-w-[220px] flex-1 rounded-lg border border-surface-700 bg-surface-950 px-3 py-1.5 text-[12px] font-mono text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={handleSaveOpenCode}
+                                disabled={opencodeSaving}
+                                className="rounded-lg border border-cyan-400/40 bg-cyan-400/10 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-400/20 disabled:opacity-50"
+                              >
+                                {opencodeSaving ? "Saving…" : "Save key + use"}
+                              </button>
+                              {keyAlreadySaved && opencodeChangingKey ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpencodeApiKey("");
+                                    setOpencodeChangingKey(false);
+                                    setOpencodeSaveMsg(null);
+                                  }}
+                                  className="rounded-lg border border-surface-700 bg-surface-900 px-2.5 py-1 text-[11px] text-surface-400 hover:border-surface-500"
+                                  title="Cancel — keep the previously saved key."
+                                >
+                                  Cancel
+                                </button>
+                              ) : null}
+                            </div>
+                          );
+                        })() : (
                           <div className="mt-3 flex flex-wrap items-center gap-2">
                             <span className="text-[11px] text-surface-500">No key needed.</span>
                             <button

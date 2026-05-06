@@ -19,10 +19,19 @@ type OpenCodeModelSummary struct {
 }
 
 type OpenCodeProviderSummary struct {
-	ID      string                 `json:"id"`
-	Name    string                 `json:"name,omitempty"`
-	BaseURL string                 `json:"baseUrl,omitempty"`
-	Models  []OpenCodeModelSummary `json:"models,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// HasAPIKey is true when the provider entry in opencode.json has a
+	// non-empty `options.apiKey`. Used by the web/mobile composer to
+	// render "✓ Key configured · Change" instead of forcing the user
+	// to re-paste the key every time they pick that provider chip.
+	// We never expose the key value itself — just the boolean — so
+	// the same data round-trips through Convex sync without leaking
+	// the secret. P2P-friendly: the summary is read straight off the
+	// agent's opencode.json via /runner/opencode/config.
+	HasAPIKey bool                   `json:"hasApiKey,omitempty"`
+	BaseURL   string                 `json:"baseUrl,omitempty"`
+	Models    []OpenCodeModelSummary `json:"models,omitempty"`
 }
 
 // OpenCodeAgentSummary is one entry under `agent.` (or legacy `mode.`)
@@ -471,6 +480,9 @@ func openCodeProvidersFromConfig(cfg map[string]any) []OpenCodeProviderSummary {
 			row.BaseURL, _ = stringFromMap(options, "baseURL")
 			if row.BaseURL == "" {
 				row.BaseURL, _ = stringFromMap(options, "baseUrl")
+			}
+			if key, _ := stringFromMap(options, "apiKey"); strings.TrimSpace(key) != "" {
+				row.HasAPIKey = true
 			}
 		}
 		if modelsNode, ok := entry["models"].(map[string]any); ok {

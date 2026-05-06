@@ -2893,7 +2893,14 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   const currentVersion = typeof effectiveInfo?.version === "string" && effectiveInfo.version.trim()
     ? effectiveInfo.version
     : device.agentVersion;
-  const hardware = device.hardwareProfile;
+  // Prefer the agent's live /info.hardware (always current, even on a
+  // fresh restart) and fall back to device.hardwareProfile (Convex-
+  // synced, may be stale or empty if the agent hasn't pushed yet).
+  // The Convex-only path made the Details panel render "—" for every
+  // hardware row whenever the heartbeat hadn't shipped a profile, even
+  // though /info has the same data live.
+  const liveHardware = (effectiveInfo as unknown as { hardware?: typeof device.hardwareProfile })?.hardware;
+  const hardware = liveHardware ?? device.hardwareProfile;
   const hardwareOS = [hardware?.os || device.platform, hardware?.osVersion].filter(Boolean).join(" ");
   const iosSimulators = formatCapabilityList(hardware?.iosSimulators);
   const androidEmulators = formatCapabilityList(hardware?.androidEmulators);
