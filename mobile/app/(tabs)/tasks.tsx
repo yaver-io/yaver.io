@@ -1273,7 +1273,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, setPrimaryRunnerForDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -1486,6 +1486,19 @@ export default function TasksScreen() {
     });
     return () => { cancelled = true; };
   }, [connectionStatus, selectedRunner, activeDevice?.id]);
+
+  useEffect(() => {
+    if (selectedRunner !== "opencode") return;
+    if (userPickedRunnerRef.current) return;
+    const preferredMode = activeDevice ? primaryModeByDevice[activeDevice.id] : "";
+    if (preferredMode && selectedOpenCodeMode !== preferredMode) {
+      setSelectedOpenCodeMode(preferredMode);
+      return;
+    }
+    if (!preferredMode && selectedOpenCodeMode !== "") {
+      setSelectedOpenCodeMode("");
+    }
+  }, [selectedRunner, activeDevice?.id, primaryModeByDevice, selectedOpenCodeMode]);
 
   // Seed selectedRunner when runners load or the active device / pin
   // changes. Uses a functional setState callback so we can read the
@@ -3712,7 +3725,17 @@ export default function TasksScreen() {
                           { borderColor: selectedOpenCodeMode === m.id ? c.accent : c.border },
                           selectedOpenCodeMode === m.id && { backgroundColor: c.accent + "20" },
                         ]}
-                        onPress={() => setSelectedOpenCodeMode(m.id)}
+                        onPress={() => {
+                          setSelectedOpenCodeMode(m.id);
+                          if (activeDevice?.id && selectedRunner === "opencode") {
+                            void setPrimaryRunnerForDevice(
+                              activeDevice.id,
+                              "opencode",
+                              selectedModel || null,
+                              m.id || null,
+                            ).catch(() => {});
+                          }
+                        }}
                       >
                         <Text style={[s.modelChipText, { color: selectedOpenCodeMode === m.id ? c.accent : c.textMuted }]}>
                           {m.name}

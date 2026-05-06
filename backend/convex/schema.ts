@@ -473,6 +473,15 @@ export default defineSchema({
           // Empty/undefined = runner's own default (preserves legacy
           // rows without a model field).
           model: v.optional(v.string()),
+          // Optional non-secret runner sub-selection. Today this is
+          // primarily for OpenCode's `--agent <mode>` (build / plan /
+          // custom agents). Other runners ignore it.
+          mode: v.optional(v.string()),
+          // Optional non-secret provider hint (e.g. "zai", "glm",
+          // "ollama"). Secrets still stay on the machine in
+          // opencode.json / env / vault; Convex only stores the
+          // user's cross-surface preference.
+          provider: v.optional(v.string()),
         }),
       ),
     ),

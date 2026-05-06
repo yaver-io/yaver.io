@@ -112,8 +112,16 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       return;
     }
     if (res.config) setConfig(res.config);
+    if (activeDevice) {
+      void setPrimaryRunnerForDevice(
+        activeDevice.id,
+        "opencode",
+        res.config?.model || null,
+        res.config?.defaultAgent || null,
+      ).catch(() => {});
+    }
     Alert.alert("Saved", "OpenCode config updated.");
-  }, [defaultAgent, model, smallModel, buildModel, planModel]);
+  }, [defaultAgent, model, smallModel, buildModel, planModel, activeDevice, setPrimaryRunnerForDevice]);
 
   const saveProviderEdit = useCallback(async () => {
     if (!editingProvider) return;
@@ -134,8 +142,14 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       return;
     }
     if (res.config) setConfig(res.config);
-    if (apiKeyTrimmed && activeDevice && primaryRunnerByDevice[activeDevice.id] !== "opencode") {
-      void setPrimaryRunnerForDevice(activeDevice.id, "opencode").catch(() => {});
+    if (activeDevice) {
+      void setPrimaryRunnerForDevice(
+        activeDevice.id,
+        "opencode",
+        res.config?.model || null,
+        res.config?.defaultAgent || null,
+        editingProvider.id,
+      ).catch(() => {});
     }
     setEditingProvider(null);
     setEditBaseUrl("");
@@ -164,8 +178,14 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       return;
     }
     if (res.config) setConfig(res.config);
-    if (apiKeyTrimmed && activeDevice && primaryRunnerByDevice[activeDevice.id] !== "opencode") {
-      void setPrimaryRunnerForDevice(activeDevice.id, "opencode").catch(() => {});
+    if (activeDevice) {
+      void setPrimaryRunnerForDevice(
+        activeDevice.id,
+        "opencode",
+        res.config?.model || null,
+        res.config?.defaultAgent || null,
+        addId.trim(),
+      ).catch(() => {});
     }
     setShowAdd(false);
     setAddId("");

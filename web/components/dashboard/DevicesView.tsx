@@ -1221,10 +1221,20 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
    *  `qwen2.5-coder:14b`, … — read from the same Convex row and stored
    *  alongside runnerId. Empty when the user hasn't picked one yet. */
   primaryModelByDevice: Record<string, string>;
-  setPrimaryRunner: (deviceId: string, runnerId: string | null, model?: string | null) => Promise<void>;
+  primaryModeByDevice: Record<string, string>;
+  primaryProviderByDevice: Record<string, string>;
+  setPrimaryRunner: (
+    deviceId: string,
+    runnerId: string | null,
+    model?: string | null,
+    mode?: string | null,
+    provider?: string | null,
+  ) => Promise<void>;
 } {
   const [runnerMap, setRunnerMap] = useState<Record<string, string>>({});
   const [modelMap, setModelMap] = useState<Record<string, string>>({});
+  const [modeMap, setModeMap] = useState<Record<string, string>>({});
+  const [providerMap, setProviderMap] = useState<Record<string, string>>({});
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
@@ -1251,18 +1261,24 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
         if (!res.ok) return;
         const data = await res.json();
         const rows = Array.isArray(data?.settings?.primaryRunnerByDevice)
-          ? (data.settings.primaryRunnerByDevice as Array<{ deviceId: string; runnerId: string; model?: string }>)
+          ? (data.settings.primaryRunnerByDevice as Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>)
           : [];
         if (!cancelled) {
           const runners: Record<string, string> = {};
           const models: Record<string, string> = {};
+          const modes: Record<string, string> = {};
+          const providers: Record<string, string> = {};
           for (const row of rows) {
             if (!row?.deviceId || !row?.runnerId) continue;
             runners[row.deviceId] = row.runnerId;
             if (row.model) models[row.deviceId] = row.model;
+            if (row.mode) modes[row.deviceId] = row.mode;
+            if (row.provider) providers[row.deviceId] = row.provider;
           }
           setRunnerMap(runners);
           setModelMap(models);
+          setModeMap(modes);
+          setProviderMap(providers);
         }
       } catch {
         // best-effort — falls back to no per-device pref
@@ -1272,10 +1288,12 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   }, [token, refreshNonce]);
 
   const setPrimaryRunner = useCallback(
-    async (deviceId: string, runnerId: string | null, model?: string | null) => {
+    async (deviceId: string, runnerId: string | null, model?: string | null, mode?: string | null, provider?: string | null) => {
       if (!token) return;
       const previousRunner = runnerMap;
       const previousModel = modelMap;
+      const previousMode = modeMap;
+      const previousProvider = providerMap;
       // Optimistic update.
       setRunnerMap((prev) => {
         const next = { ...prev };
@@ -1292,12 +1310,32 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
         }
         return next;
       });
+      setModeMap((prev) => {
+        const next = { ...prev };
+        if (!runnerId || mode === null) {
+          delete next[deviceId];
+        } else if (typeof mode === "string" && mode.length > 0) {
+          next[deviceId] = mode;
+        }
+        return next;
+      });
+      setProviderMap((prev) => {
+        const next = { ...prev };
+        if (!runnerId || provider === null) {
+          delete next[deviceId];
+        } else if (typeof provider === "string" && provider.length > 0) {
+          next[deviceId] = provider;
+        }
+        return next;
+      });
       try {
         const body: Record<string, unknown> = {
           primaryRunnerForDevice: {
             deviceId,
             runnerId,
             ...(model !== undefined ? { model } : {}),
+            ...(mode !== undefined ? { mode } : {}),
+            ...(provider !== undefined ? { provider } : {}),
           },
         };
         const res = await fetch(`${CONVEX_URL}/settings`, {
@@ -1312,13 +1350,21 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
       } catch (e) {
         setRunnerMap(previousRunner);
         setModelMap(previousModel);
+        setModeMap(previousMode);
+        setProviderMap(previousProvider);
         throw e;
       }
     },
-    [token, runnerMap, modelMap],
+    [token, runnerMap, modelMap, modeMap, providerMap],
   );
 
-  return { primaryRunnerByDevice: runnerMap, primaryModelByDevice: modelMap, setPrimaryRunner };
+  return {
+    primaryRunnerByDevice: runnerMap,
+    primaryModelByDevice: modelMap,
+    primaryModeByDevice: modeMap,
+    primaryProviderByDevice: providerMap,
+    setPrimaryRunner,
+  };
 }
 
 // Default model per runner when the user hasn't picked one yet.
@@ -1459,15 +1505,9 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
     ],
   },
   {
-    // Provider id matches the mobile OpenCodeConfigModal preset so the
-    // same opencode.json provider entry gets edited from either surface
-    // (mobile writes provider.zai.options.{baseURL,apiKey}; web does
-    // the same here). Earlier this was id="glm" + url="api.z.ai" — that
-    // wrote a `glm` provider with the Coding Plan URL while the mobile
-    // preset's `glm` provider held bigmodel.cn (different vendor, same
-    // id). Different keys + same id = mid-task 401s when surfaces drift.
+    // Matches the mobile preset for the coding-plan endpoint.
     id: "zai",
-    label: "Z.ai Coding Plan (GLM-4.7)",
+    label: "GLM 4.7 (Z.ai)",
     baseUrl: "https://api.z.ai/api/coding/paas/v4",
     requiresKey: true,
     keyEnv: "ZAI_API_KEY",
@@ -1479,9 +1519,60 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
     ],
   },
   {
+    id: "glm",
+    label: "Zhipu GLM",
+    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    requiresKey: true,
+    keyEnv: "GLM_API_KEY",
+    blurb: "Zhipu OpenAPI / bigmodel.cn. Separate key from z.ai Coding Plan.",
+    models: [
+      { id: "glm-4.5-air", label: "GLM-4.5 Air", hint: "fast + cheap" },
+      { id: "glm-4.5", label: "GLM-4.5", hint: "general coding" },
+      { id: "glm-4-plus", label: "GLM-4 Plus", hint: "legacy larger model" },
+    ],
+  },
+  {
+    id: "groq",
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    requiresKey: true,
+    keyEnv: "GROQ_API_KEY",
+    blurb: "Fast hosted open-weight models via Groq.",
+    models: [
+      { id: "qwen/qwen3-32b", label: "Qwen3 32B" },
+      { id: "llama-3.3-70b-versatile", label: "Llama 3.3 70B" },
+      { id: "deepseek-r1-distill-llama-70b", label: "DeepSeek R1 Distill 70B" },
+    ],
+  },
+  {
+    id: "together",
+    label: "Together",
+    baseUrl: "https://api.together.xyz/v1",
+    requiresKey: true,
+    keyEnv: "TOGETHER_API_KEY",
+    blurb: "Hosted open-weight coding models via Together AI.",
+    models: [
+      { id: "Qwen/Qwen2.5-Coder-32B-Instruct", label: "Qwen Coder 32B" },
+      { id: "deepseek-ai/DeepSeek-V3", label: "DeepSeek V3" },
+      { id: "meta-llama/Llama-3.3-70B-Instruct-Turbo", label: "Llama 3.3 70B" },
+    ],
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    requiresKey: true,
+    keyEnv: "DEEPSEEK_API_KEY",
+    blurb: "DeepSeek-hosted coding/reasoning models.",
+    models: [
+      { id: "deepseek-chat", label: "DeepSeek Chat" },
+      { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+    ],
+  },
+  {
     id: "ollama",
     label: "Ollama (local, free)",
-    baseUrl: "http://127.0.0.1:11434",
+    baseUrl: "http://127.0.0.1:11434/v1",
     requiresKey: false,
     blurb: "Runs entirely on this machine. No keys, no spend.",
     models: [
@@ -1490,6 +1581,18 @@ export const OPENCODE_PROVIDER_CATALOGUE: OpenCodeCatalogueProvider[] = [
       { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B", hint: "needs 48+ GB" },
       { id: "deepseek-coder-v2:16b", label: "DeepSeek Coder v2 16B" },
       { id: "llama3.3:70b", label: "Llama 3.3 70B", hint: "needs 64+ GB" },
+    ],
+  },
+  {
+    id: "ollama-tailscale",
+    label: "Ollama (Tailscale)",
+    baseUrl: "http://yaver-gpu.tailscale.net:11434/v1",
+    requiresKey: false,
+    blurb: "Remote Ollama over your tailnet. Edit the host in settings if needed.",
+    models: [
+      { id: "qwen2.5-coder:14b", label: "Qwen Coder 14B" },
+      { id: "qwen2.5-coder:32b", label: "Qwen Coder 32B" },
+      { id: "deepseek-coder-v2:16b", label: "DeepSeek Coder v2 16B" },
     ],
   },
 ];

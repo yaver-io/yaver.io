@@ -7162,6 +7162,8 @@ func resolveRunner(convexSiteURL, token, deviceID string) RunnerConfig {
 		DeviceID string `json:"deviceId"`
 		RunnerID string `json:"runnerId"`
 		Model    string `json:"model,omitempty"`
+		Mode     string `json:"mode,omitempty"`
+		Provider string `json:"provider,omitempty"`
 	}
 	var settingsEnv struct {
 		Settings struct {

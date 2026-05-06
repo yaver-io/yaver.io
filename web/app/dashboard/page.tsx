@@ -6,7 +6,7 @@ import WebShellModal from "@/components/dashboard/WebShellModal";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
 import ProjectsView from "@/components/dashboard/ProjectsView";
@@ -56,6 +56,7 @@ function statusColor(s: string) {
 }
 
 type ChatMsg = { role: "user" | "assistant"; text: string };
+type OpenCodeAgentRow = { name: string; model?: string; isBuiltin?: boolean };
 
 // Tasks created from the mobile "Open App" / "Run" flow carry a full
 // "Project context: - Work dir: X\nUser request: Y" prompt as their title
@@ -697,6 +698,8 @@ export default function DashboardPage() {
   const [runners, setRunners] = useState<Runner[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>("");
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [selectedOpenCodeMode, setSelectedOpenCodeMode] = useState<string>("");
+  const [openCodeAgents, setOpenCodeAgents] = useState<OpenCodeAgentRow[]>([]);
   // OpenCode-specific provider + key flow. Only used when
   // selectedRunner === "opencode". The chosen model id is also written
   // to selectedModel so the existing createTask path picks it up.
@@ -787,7 +790,13 @@ export default function DashboardPage() {
   // hook (same Convex query, cached by Convex). Used to (a) pre-select
   // the chat tab's runner when a workspace opens, (b) decide which
   // runner the Hot Reload "Sign in & reconnect" CTA triggers.
-  const { primaryRunnerByDevice, primaryModelByDevice } = usePrimaryRunnerByDevice(token);
+  const {
+    primaryRunnerByDevice,
+    primaryModelByDevice,
+    primaryModeByDevice,
+    primaryProviderByDevice,
+    setPrimaryRunner,
+  } = usePrimaryRunnerByDevice(token);
   // Pick the runner the user actually wants to use on this device.
   // Order:
   //   1. Explicit primary persisted to userSettings
@@ -1113,6 +1122,20 @@ export default function DashboardPage() {
   }, [selectedRunner, opencodeProvider, selectedModel]);
 
   useEffect(() => {
+    if (selectedRunner !== "opencode") return;
+    const deviceId = connectedDevice?.id || "";
+    const preferredMode = deviceId ? primaryModeByDevice[deviceId] || "" : "";
+    if (preferredMode !== selectedOpenCodeMode) {
+      setSelectedOpenCodeMode(preferredMode);
+    }
+    const preferredProvider = deviceId ? primaryProviderByDevice[deviceId] || "" : "";
+    if (preferredProvider && preferredProvider !== opencodeProvider) {
+      setOpencodeProvider(preferredProvider);
+      setOpencodeChangingKey(false);
+    }
+  }, [selectedRunner, connectedDevice?.id, primaryModeByDevice, primaryProviderByDevice, selectedOpenCodeMode, opencodeProvider]);
+
+  useEffect(() => {
     // OpenCode owns its own provider/model selection (see the inline
     // BYOK picker below). Don't let the generic model-syncer reset it.
     if (selectedRunner === "opencode") return;
@@ -1294,6 +1317,29 @@ export default function DashboardPage() {
   useEffect(() => {
     void refreshOpencodeKeyState();
   }, [refreshOpencodeKeyState]);
+
+  useEffect(() => {
+    if (!isConnected || selectedRunner !== "opencode") {
+      setOpenCodeAgents([]);
+      return;
+    }
+    let cancelled = false;
+    agentClient.openCodeConfig().then((cfg) => {
+      if (cancelled) return;
+      setOpenCodeAgents(
+        Array.isArray(cfg?.agents)
+          ? cfg.agents.map((agent) => ({
+              name: String(agent?.name || "").trim(),
+              model: typeof agent?.model === "string" ? agent.model : undefined,
+              isBuiltin: !!agent?.isBuiltin,
+            })).filter((agent) => agent.name.length > 0)
+          : [],
+      );
+    }).catch(() => {
+      if (!cancelled) setOpenCodeAgents([]);
+    });
+    return () => { cancelled = true; };
+  }, [isConnected, selectedRunner, connectedDevice?.id]);
 
   // ── Actions ─────────────────────────────────────────────────────
 
@@ -1508,6 +1554,7 @@ export default function DashboardPage() {
           description: text,
           runner: selectedRunner || undefined,
           model: selectedModel || undefined,
+          mode: selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
           workDir: preferredSurfaceProjectPath || undefined,
         });
         setActiveTask(t);
@@ -1614,6 +1661,10 @@ export default function DashboardPage() {
   const activeRunnerRow = runners.find((r) => r.id === activeRunnerId) || null;
   const activeRunnerAuthIssue = runnerAuthIssue(activeRunnerRow);
   const canStartBrowserRunnerAuth = Boolean(activeRunnerRow && (activeRunnerRow.id === "claude" || activeRunnerRow.id === "codex"));
+  const chatRunnerChoices = useMemo(
+    () => runners.filter((runner) => runner.installed && RUNNER_WHITELIST_SET.has(runner.id)),
+    [runners],
+  );
   const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");
   const dormantDevices = displayDevices.filter((d) => isDormantUnreachableDevice(d));
   const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
@@ -1821,14 +1872,26 @@ export default function DashboardPage() {
                       // to + whether its cloud auth is healthy.  Lets the
                       // user spot "agent is connected but my Claude Code
                       // token expired" without opening Devices tab.
-                      const runners = (liveDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean; needsAuth?: boolean }>;
+                      const deviceRunnerStates = (liveDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean; needsAuth?: boolean }>;
                       const primary = connectedDevicePrimaryRunner;
-                      if (!primary && runners.length === 0) return null;
-                      const primaryRow = primary ? runners.find((r) => r?.runnerId === primary) : runners.find((r) => r?.authConfigured) ?? runners[0];
+                      if (!primary && deviceRunnerStates.length === 0) return null;
+                      const primaryRow = primary
+                        ? deviceRunnerStates.find((r) => r?.runnerId === primary)
+                        : deviceRunnerStates.find((r) => r?.authConfigured) ?? deviceRunnerStates[0];
                       const runnerId = primary || primaryRow?.runnerId || "";
                       if (!runnerId) return null;
                       const isCloud = !runnerId.startsWith("ollama") && runnerId !== "aider-ollama" && runnerId !== "yaver-local";
-                      const authed = primaryRow ? !!primaryRow.authConfigured && !primaryRow.needsAuth : false;
+                      const livePrimaryRow =
+                        connectedDevice && connectedDevice.id === liveDevice.id
+                          ? (primary
+                              ? runners.find((r) => r.id === primary)
+                              : runners.find((r) => r.authConfigured) || runners[0])
+                          : null;
+                      const authed = livePrimaryRow
+                        ? livePrimaryRow.ready !== false
+                        : primaryRow
+                          ? !!primaryRow.authConfigured && !primaryRow.needsAuth
+                          : false;
                       // Single-action design: when sign-in is needed
                       // we show ONE button (the call-to-action) with
                       // amber "Sign in {Runner}" copy. When authed,
@@ -2320,6 +2383,7 @@ export default function DashboardPage() {
                 onSwitchAgent={() => setActiveTab("devices")}
                 onTriggerReauth={(runner) => setChatRunnerAuthModal(runner)}
                 primaryRunner={connectedDevicePrimaryRunner}
+                runnerRows={runners}
               />
             </div>
           ) : activeTab === "health" ? (
@@ -2531,17 +2595,36 @@ export default function DashboardPage() {
                     }
                     return (
                       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2">
-                        {/* Runner picker chip rail removed — primary
-                            runner is set on the Devices tab and the
-                            provider chips below already communicate the
-                            runner choice (opencode + provider). Showing
-                            both rows duplicated state and confused users
-                            who'd flip the runner here without realising
-                            the change wouldn't persist back to the
-                            device's primary on Convex. The provider/
-                            model row + "Active: …" badge below carries
-                            all the info this rail used to. */}
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
+                          {chatRunnerChoices.length > 0 ? (
+                            <>
+                              <span>Agent</span>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {chatRunnerChoices.map((runner) => {
+                                  const active = runner.id === selectedRunner;
+                                  return (
+                                    <button
+                                      key={runner.id}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedRunner(runner.id);
+                                        setOpencodeSaveMsg(null);
+                                        setOpencodeChangingKey(false);
+                                      }}
+                                      title={runner.error || runner.warning || runner.name}
+                                      className={`rounded-full border px-2.5 py-1 transition ${
+                                        active
+                                          ? "border-amber-400/60 bg-amber-400/10 text-amber-100"
+                                          : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                      }`}
+                                    >
+                                      {runner.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          ) : null}
                           {selectedRunner !== "opencode" && selectedRunnerModels.length > 0 ? (
                             <>
                               <span>Model</span>
@@ -2628,7 +2711,29 @@ export default function DashboardPage() {
                           if (provider.requiresKey && opencodeApiKey.trim()) {
                             setOpencodeKeyState((prev) => ({ ...prev, [provider.id]: true }));
                           }
+                          if (connectedDevice?.id) {
+                            void setPrimaryRunner(
+                              connectedDevice.id,
+                              "opencode",
+                              fullModel,
+                              selectedOpenCodeMode || null,
+                              provider.id,
+                            ).catch(() => {});
+                          }
+                          setOpenCodeAgents(
+                            Array.isArray(res.config?.agents)
+                              ? res.config!.agents
+                                  .map((agent) => ({
+                                    name: String(agent?.name || "").trim(),
+                                    model: typeof agent?.model === "string" ? agent.model : undefined,
+                                    isBuiltin: !!agent?.isBuiltin,
+                                  }))
+                                  .filter((agent) => agent.name.length > 0)
+                              : [],
+                          );
                           void refreshOpencodeKeyState();
+                          void refreshConnectedRunners();
+                          void refreshDevices();
                           setOpencodeSaveMsg({ ok: true, text: `Saved. Using ${provider.label} · ${modelId}.` });
                         }
                       } catch (err: any) {
@@ -2690,6 +2795,54 @@ export default function DashboardPage() {
                               </button>
                             );
                           })}
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="text-surface-500">Mode</span>
+                          {[{ name: "", isBuiltin: true } as OpenCodeAgentRow]
+                            .concat(
+                              openCodeAgents.length > 0
+                                ? openCodeAgents
+                                : [
+                                    { name: "build", isBuiltin: true },
+                                    { name: "plan", isBuiltin: true },
+                                  ],
+                            )
+                            .map((agent) => {
+                              const id = agent.name;
+                              const label = id === "" ? "Default" : id.charAt(0).toUpperCase() + id.slice(1);
+                              return (
+                                <button
+                                  key={id || "default"}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedOpenCodeMode(id);
+                                    if (connectedDevice?.id) {
+                                      void setPrimaryRunner(
+                                        connectedDevice.id,
+                                        "opencode",
+                                        selectedModel || null,
+                                        id || null,
+                                        opencodeProvider || null,
+                                      ).catch(() => {});
+                                    }
+                                  }}
+                                  title={
+                                    id === ""
+                                      ? "Use defaultAgent from opencode.json"
+                                      : agent.model
+                                        ? `Run with --agent ${id} (${agent.model})`
+                                        : `Run with --agent ${id}`
+                                  }
+                                  className={`rounded-full border px-2.5 py-1 transition ${
+                                    selectedOpenCodeMode === id
+                                      ? "border-emerald-400/60 bg-emerald-400/10 text-emerald-100"
+                                      : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-500"
+                                  } ${!agent.isBuiltin && id !== "" ? "italic" : ""}`}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
                         </div>
                         {provider.requiresKey ? (() => {
                           const keyAlreadySaved = !!opencodeKeyState[provider.id];

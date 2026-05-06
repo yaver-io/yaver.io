@@ -16,7 +16,7 @@
 //   └──────────────────────────────────────────────────────────────┘
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { agentClient, type WorkspaceAppView } from "@/lib/agent-client";
+import { agentClient, type Runner, type WorkspaceAppView } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { WebAppSelector } from "./WebAppSelector";
 import { WebPreviewFrame, WEB_PREVIEW_VIEWPORTS, type ViewportId } from "./WebPreviewFrame";
@@ -40,9 +40,29 @@ interface Props {
    *  manual button. When absent, the button is hidden. */
   onRepairRelay?: () => Promise<{ repaired: boolean; reason: string }>;
   onReconnect?: () => Promise<void>;
+  /** The runner the agent will spawn for vibe tasks on this device.
+   *  Same value the sidebar shows next to "runner:". Used to detect
+   *  the "Codex selected but not signed in → every task crashes" case
+   *  before we let the user submit a doomed prompt. */
+  primaryRunner?: string | null;
+  runnerRows?: Runner[];
+  /** Open the per-runner browser sign-in modal owned by the dashboard.
+   *  Mirrors the sidebar "Sign in →" affordance so the Vibing CTA
+   *  finishes auth in one click instead of sending the user to a
+   *  different tab. */
+  onTriggerReauth?: (runner: string) => void;
 }
 
-export function WebReloadView({ connectedDevice, connState, preferredProjectPath, onRepairRelay, onReconnect }: Props) {
+export function WebReloadView({
+  connectedDevice,
+  connState,
+  preferredProjectPath,
+  onRepairRelay,
+  onReconnect,
+  primaryRunner,
+  runnerRows = [],
+  onTriggerReauth,
+}: Props) {
   const [apps, setApps] = useState<WorkspaceAppView[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -158,6 +178,37 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
   const needsAuth = !!connectedDevice?.needsAuth;
   const statusError = devStatus?.error || null;
   const statusHttp = devStatus?.httpStatus || 0;
+
+  // Mirror the sidebar logic at app/dashboard/page.tsx:1710-1717. If the
+  // device's primary coding-agent runner is a cloud runner that hasn't
+  // been signed in (authConfigured=false or needsAuth=true), every vibe
+  // task we POST will spawn the CLI, get exit code != 0 within ms, and
+  // trip tasks.go's "Agent process crashed — restarting (1/4)…" loop.
+  // We disable Send and surface the same Sign in → CTA the sidebar
+  // shows, so the user can fix it inline instead of seeing 4 retries
+  // and a red row with no explanation.
+  const runnerAuthState = useMemo(() => {
+    if (!connectedDevice) return null;
+    const deviceRows = (connectedDevice.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean; needsAuth?: boolean }>;
+    const liveRows = Array.isArray(runnerRows) ? runnerRows.filter((row) => row.installed) : [];
+    if (!primaryRunner && deviceRows.length === 0 && liveRows.length === 0) return null;
+    const primaryRow = primaryRunner
+      ? deviceRows.find((r) => r?.runnerId === primaryRunner)
+      : deviceRows.find((r) => r?.authConfigured) ?? deviceRows[0];
+    const livePrimaryRow = primaryRunner
+      ? liveRows.find((r) => r.id === primaryRunner)
+      : liveRows.find((r) => r.authConfigured) ?? liveRows[0];
+    const runnerId = primaryRunner || primaryRow?.runnerId || livePrimaryRow?.id || "";
+    if (!runnerId) return null;
+    const isCloud = !runnerId.startsWith("ollama") && runnerId !== "aider-ollama" && runnerId !== "yaver-local";
+    if (!isCloud) return { runnerId, needsAuth: false };
+    const authed = livePrimaryRow ? livePrimaryRow.ready !== false : primaryRow ? !!primaryRow.authConfigured && !primaryRow.needsAuth : false;
+    return { runnerId, needsAuth: !authed };
+  }, [connectedDevice, primaryRunner, runnerRows]);
+  const runnerNeedsAuth = !!runnerAuthState?.needsAuth;
+  const runnerAuthLabel = runnerAuthState?.runnerId
+    ? runnerAuthState.runnerId.charAt(0).toUpperCase() + runnerAuthState.runnerId.slice(1)
+    : "the runner";
 
   // Load workspace apps on connect and whenever device changes. This
   // also serves as an early transport/auth probe so we can surface
@@ -1534,6 +1585,23 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
                     <div className="text-[11px] text-surface-500">Start a task and the runner stream will stay here.</div>
                   )}
                 </div>
+                {runnerNeedsAuth ? (
+                  <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-[11px] leading-5 text-amber-100">
+                    <div className="font-semibold">{runnerAuthLabel} isn&apos;t signed in on this machine.</div>
+                    <div className="mt-1 text-amber-100/80">
+                      Vibe tasks would spawn <span className="font-mono">{runnerAuthState?.runnerId}</span> and crash immediately
+                      with no auth. Sign in once and the runner sticks.
+                    </div>
+                    {onTriggerReauth ? (
+                      <button
+                        onClick={() => onTriggerReauth(runnerAuthState!.runnerId)}
+                        className="mt-2 rounded-md border border-amber-400/60 bg-amber-200 px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-300 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-100 dark:hover:bg-amber-500/25"
+                      >
+                        Sign in to {runnerAuthLabel} →
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <textarea
                   value={composer}
                   onChange={(event) => setComposer(event.target.value)}
@@ -1546,8 +1614,9 @@ export function WebReloadView({ connectedDevice, connState, preferredProjectPath
                   </div>
                   <button
                     onClick={() => void handleSendPrompt()}
-                    disabled={!composer.trim() || sending || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
+                    disabled={!composer.trim() || sending || runnerNeedsAuth || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
                     className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
+                    title={runnerNeedsAuth ? `Sign in to ${runnerAuthLabel} first — without auth the runner crashes on spawn.` : undefined}
                   >
                     {sending ? "Sending…" : "Send"}
                   </button>

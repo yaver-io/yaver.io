@@ -2199,15 +2199,23 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	runnerID := s.taskMgr.runner.RunnerID
 	runnerName := s.taskMgr.runner.Name
 	runnerModel := s.taskMgr.runner.Model
-	if id, model := resolvePrimaryRunnerForSelf(r.Context(), s); id != "" {
-		runnerID = id
-		if cfg, ok := builtinRunners[id]; ok {
+	runnerMode := s.taskMgr.runner.Mode
+	runnerProvider := ""
+	if pref := resolvePrimaryRunnerPrefForSelf(r.Context(), s); pref.RunnerID != "" {
+		runnerID = pref.RunnerID
+		if cfg, ok := builtinRunners[runnerID]; ok {
 			runnerName = cfg.Name
 		} else {
-			runnerName = id
+			runnerName = runnerID
 		}
-		if model != "" {
-			runnerModel = model
+		if pref.Model != "" {
+			runnerModel = pref.Model
+		}
+		if pref.Mode != "" {
+			runnerMode = pref.Mode
+		}
+		if pref.Provider != "" {
+			runnerProvider = pref.Provider
 		}
 	}
 	info := map[string]interface{}{
@@ -2220,9 +2228,11 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"lifecycleState": lifecycle.State,
 		"lifecycle":      lifecycle,
 		"runner": map[string]interface{}{
-			"id":    runnerID,
-			"name":  runnerName,
-			"model": runnerModel,
+			"id":       runnerID,
+			"name":     runnerName,
+			"model":    runnerModel,
+			"mode":     runnerMode,
+			"provider": runnerProvider,
 		},
 	}
 

@@ -543,11 +543,13 @@ export interface UserSettings {
     deviceId: string;
     runnerId: string | null;
     model?: string | null;
+    mode?: string | null;
+    provider?: string | null;
   };
   /** Read-only: full per-device runner map populated by the server on
    * GET /settings. Clients should not write this directly — write via
    * primaryRunnerForDevice instead. */
-  primaryRunnerByDevice?: Array<{ deviceId: string; runnerId: string; model?: string }>;
+  primaryRunnerByDevice?: Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>;
 }
 
 // ── Local secret storage (iOS Keychain / Android SecureStore) ───────

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { Runner } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import PreviewPane from "./PreviewPane";
 import { WebReloadView } from "./WebReloadView";
@@ -26,6 +27,7 @@ interface Props {
   onSwitchAgent?: () => void;
   onTriggerReauth?: (runner: string) => void;
   primaryRunner?: string | null;
+  runnerRows?: Runner[];
 }
 
 export default function WebviewView({
@@ -42,6 +44,7 @@ export default function WebviewView({
   onSwitchAgent,
   onTriggerReauth,
   primaryRunner,
+  runnerRows,
 }: Props) {
   const [mode, setMode] = useState<WebviewMode>(preferredMode);
 
@@ -103,6 +106,9 @@ export default function WebviewView({
             preferredProjectPath={preferredProjectPath}
             onReconnect={onReconnect}
             onRepairRelay={onRepairRelay}
+            primaryRunner={primaryRunner}
+            runnerRows={runnerRows}
+            onTriggerReauth={onTriggerReauth}
           />
         )}
       </div>

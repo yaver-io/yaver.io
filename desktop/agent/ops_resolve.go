@@ -39,7 +39,16 @@ type userSettingsRow struct {
 		DeviceID string `json:"deviceId"`
 		RunnerID string `json:"runnerId"`
 		Model    string `json:"model,omitempty"`
+		Mode     string `json:"mode,omitempty"`
+		Provider string `json:"provider,omitempty"`
 	} `json:"primaryRunnerByDevice"`
+}
+
+type primaryRunnerPreference struct {
+	RunnerID string
+	Model    string
+	Mode     string
+	Provider string
 }
 
 var (
@@ -104,19 +113,29 @@ func fetchUserSettings(ctx context.Context, s *HTTPServer) (*userSettingsRow, er
 // /tasks payload doesn't carry an explicit runner — Convex is the
 // authoritative source, the mobile UserDefault is only a hint that
 // can be stale or absent.
-func resolvePrimaryRunnerForSelf(ctx context.Context, s *HTTPServer) (string, string) {
+func resolvePrimaryRunnerPrefForSelf(ctx context.Context, s *HTTPServer) primaryRunnerPreference {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || strings.TrimSpace(cfg.DeviceID) == "" {
-		return "", ""
+		return primaryRunnerPreference{}
 	}
 	row, err := fetchUserSettings(ctx, s)
 	if err != nil || row == nil {
-		return "", ""
+		return primaryRunnerPreference{}
 	}
 	for _, e := range row.PrimaryRunnerByDevice {
 		if strings.TrimSpace(e.DeviceID) == cfg.DeviceID {
-			return strings.TrimSpace(e.RunnerID), strings.TrimSpace(e.Model)
+			return primaryRunnerPreference{
+				RunnerID: strings.TrimSpace(e.RunnerID),
+				Model:    strings.TrimSpace(e.Model),
+				Mode:     strings.TrimSpace(e.Mode),
+				Provider: strings.TrimSpace(e.Provider),
+			}
 		}
 	}
-	return "", ""
+	return primaryRunnerPreference{}
+}
+
+func resolvePrimaryRunnerForSelf(ctx context.Context, s *HTTPServer) (string, string) {
+	pref := resolvePrimaryRunnerPrefForSelf(ctx, s)
+	return pref.RunnerID, pref.Model
 }

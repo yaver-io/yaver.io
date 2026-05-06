@@ -643,10 +643,20 @@ interface DeviceState {
    *  spawn time so users can pick Opus-for-one-device / Sonnet-for-
    *  another without editing env vars. */
   primaryModelByDevice: Record<string, string>;
-  /** Persist a per-device primary coding agent + optional model.
+  /** Per-device OpenCode mode hint (`build` / `plan` / custom). */
+  primaryModeByDevice: Record<string, string>;
+  /** Per-device OpenCode provider hint (`zai`, `glm`, `ollama`, …). */
+  primaryProviderByDevice: Record<string, string>;
+  /** Persist a per-device primary coding agent + optional model/mode/provider.
    *  runnerId=null clears the entry. model=null clears just the model
    *  (runner stays). model=undefined leaves any existing model alone. */
-  setPrimaryRunnerForDevice: (deviceId: string, runnerId: string | null, model?: string | null) => Promise<void>;
+  setPrimaryRunnerForDevice: (
+    deviceId: string,
+    runnerId: string | null,
+    model?: string | null,
+    mode?: string | null,
+    provider?: string | null,
+  ) => Promise<void>;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -737,6 +747,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // independent state so callers that only care about the runner id
   // don't have to re-render when the model changes and vice-versa.
   const [primaryModelByDevice, setPrimaryModelByDeviceState] = useState<Record<string, string>>({});
+  const [primaryModeByDevice, setPrimaryModeByDeviceState] = useState<Record<string, string>>({});
+  const [primaryProviderByDevice, setPrimaryProviderByDeviceState] = useState<Record<string, string>>({});
   const hasLoadedOnce = useRef(false);
 
   const markDeviceUnreachable = useCallback((deviceId: string) => {
@@ -1016,7 +1028,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const setPrimaryRunnerForDevice = useCallback(
-    async (deviceId: string, runnerId: string | null, model?: string | null) => {
+    async (deviceId: string, runnerId: string | null, model?: string | null, mode?: string | null, provider?: string | null) => {
       if (!token) throw new Error("Not signed in");
       // When the runner changes (e.g. user picks Codex while the
       // previous pick was Claude with model "sonnet"), the stale
@@ -1029,6 +1041,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // an explicit model to override, or `null` to clear.
       const previousRunner = primaryRunnerByDevice;
       const previousModel = primaryModelByDevice;
+      const previousMode = primaryModeByDevice;
+      const previousProvider = primaryProviderByDevice;
       const previousRunnerForThisDevice = previousRunner[deviceId] ?? "";
       const runnerChanged =
         !!runnerId && runnerId !== previousRunnerForThisDevice;
@@ -1067,22 +1081,44 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
         return next;
       });
+      setPrimaryModeByDeviceState((prev) => {
+        const next = { ...prev };
+        if (!runnerId || mode === null) {
+          delete next[deviceId];
+        } else if (typeof mode === "string" && mode.length > 0) {
+          next[deviceId] = mode;
+        }
+        return next;
+      });
+      setPrimaryProviderByDeviceState((prev) => {
+        const next = { ...prev };
+        if (!runnerId || provider === null) {
+          delete next[deviceId];
+        } else if (typeof provider === "string" && provider.length > 0) {
+          next[deviceId] = provider;
+        }
+        return next;
+      });
       try {
         await saveUserSettings(token, {
           primaryRunnerForDevice: {
             deviceId,
             runnerId,
             ...(resolvedModel !== undefined ? { model: resolvedModel } : {}),
+            ...(mode !== undefined ? { mode } : {}),
+            ...(provider !== undefined ? { provider } : {}),
           },
         });
       } catch (e) {
         appLog("error", `[settings] setPrimaryRunnerForDevice failed: ${e}`);
         setPrimaryRunnerByDeviceState(previousRunner);
         setPrimaryModelByDeviceState(previousModel);
+        setPrimaryModeByDeviceState(previousMode);
+        setPrimaryProviderByDeviceState(previousProvider);
         throw e;
       }
     },
-    [token, primaryRunnerByDevice, primaryModelByDevice],
+    [token, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice],
   );
 
   const stopReconnectAndBounce = useCallback(async () => {
@@ -1296,6 +1332,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       const id = activeDevice?.id;
       const runner = id ? (primaryRunnerByDevice[id] ?? "") : "";
       const model = id ? (primaryModelByDevice[id] ?? "") : "";
+      const { NativeModules } = require("react-native");
       NativeModules.YaverInfo?.setInheritedPrimaryRunner?.(runner, model);
     } catch {
       // Native module unavailable — non-iOS / unit-test path. Same
@@ -1483,6 +1520,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (Array.isArray(rows)) {
           const runners: Record<string, string> = {};
           const models: Record<string, string> = {};
+          const modes: Record<string, string> = {};
+          const providers: Record<string, string> = {};
           // Drop legacy / dead model identifiers when loading so a stale
           // selection from a previous app version doesn't keep forcing
           // the picker into a broken state. Codex CLI's old default
@@ -1491,16 +1530,24 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           // preferredDefaultModelForRunner substitutes the current
           // default (`gpt-5.4`, OpenAI's latest GPT-5 release).
           const obsoleteModels = new Set(["o3-mini", "gpt-5-codex"]);
-          for (const row of rows as Array<{ deviceId?: string; runnerId?: string; model?: string }>) {
+          for (const row of rows as Array<{ deviceId?: string; runnerId?: string; model?: string; mode?: string; provider?: string }>) {
             if (!row?.deviceId || !row?.runnerId) continue;
             runners[String(row.deviceId)] = String(row.runnerId);
             if (row.model && !obsoleteModels.has(String(row.model))) {
               models[String(row.deviceId)] = String(row.model);
             }
+            if (row.mode) {
+              modes[String(row.deviceId)] = String(row.mode);
+            }
+            if (row.provider) {
+              providers[String(row.deviceId)] = String(row.provider);
+            }
           }
           setPrimaryRunnerByDeviceState(runners);
           setPrimaryModelByDeviceState(models);
-          appLog("info", `[settings] primaryRunnerByDevice=${Object.keys(runners).length} entries, models=${Object.keys(models).length}`);
+          setPrimaryModeByDeviceState(modes);
+          setPrimaryProviderByDeviceState(providers);
+          appLog("info", `[settings] primaryRunnerByDevice=${Object.keys(runners).length} entries, models=${Object.keys(models).length}, modes=${Object.keys(modes).length}, providers=${Object.keys(providers).length}`);
         }
 
         // Apply tunnel from settings (if no local override)
@@ -2510,9 +2557,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setPrimaryDevice,
       primaryRunnerByDevice,
       primaryModelByDevice,
+      primaryModeByDevice,
+      primaryProviderByDevice,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

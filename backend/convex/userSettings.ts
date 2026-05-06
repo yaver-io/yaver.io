@@ -121,6 +121,13 @@ export const set = mutation({
         // Optional model hint. null clears just the model (keeps the
         // runner selection). undefined leaves the existing model alone.
         model: v.optional(v.union(v.string(), v.null())),
+        // Optional runner sub-selection. Used by OpenCode's
+        // `--agent <mode>` path. null clears the saved mode.
+        mode: v.optional(v.union(v.string(), v.null())),
+        // Optional provider hint such as "zai" / "glm" / "ollama".
+        // Secrets remain host-local; this only remembers the user's
+        // preference across surfaces.
+        provider: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     // Per-subsystem managed: true (Yaver-hosted) | false (user-hosted)
@@ -157,7 +164,7 @@ export const set = mutation({
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
-      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>;
       const payload = args.primaryRunnerForDevice;
       const filtered = cur.filter((row) => row.deviceId !== payload.deviceId);
       let next = filtered;
@@ -174,11 +181,29 @@ export const set = mutation({
         } else if (prevRow?.runnerId === payload.runnerId) {
           model = prevRow.model;
         }
-        const row: { deviceId: string; runnerId: string; model?: string } = {
+        let mode: string | undefined;
+        if (payload.mode === null) {
+          mode = undefined;
+        } else if (payload.mode !== undefined) {
+          mode = payload.mode;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          mode = prevRow.mode;
+        }
+        let provider: string | undefined;
+        if (payload.provider === null) {
+          provider = undefined;
+        } else if (payload.provider !== undefined) {
+          provider = payload.provider;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          provider = prevRow.provider;
+        }
+        const row: { deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string } = {
           deviceId: payload.deviceId,
           runnerId: payload.runnerId,
         };
         if (model) row.model = model;
+        if (mode) row.mode = mode;
+        if (provider) row.provider = provider;
         next = [...filtered, row];
       }
       patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;
@@ -223,6 +248,8 @@ export const setByToken = mutation({
         // Optional model hint. null clears just the model (keeps the
         // runner selection). undefined leaves the existing model alone.
         model: v.optional(v.union(v.string(), v.null())),
+        mode: v.optional(v.union(v.string(), v.null())),
+        provider: v.optional(v.union(v.string(), v.null())),
       }),
     ),
     managed: v.optional(managedPatchValidator),
@@ -258,7 +285,7 @@ export const setByToken = mutation({
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
-      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string }>;
+      const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>;
       const payload = args.primaryRunnerForDevice;
       const filtered = cur.filter((row) => row.deviceId !== payload.deviceId);
       let next = filtered;
@@ -275,11 +302,29 @@ export const setByToken = mutation({
         } else if (prevRow?.runnerId === payload.runnerId) {
           model = prevRow.model;
         }
-        const row: { deviceId: string; runnerId: string; model?: string } = {
+        let mode: string | undefined;
+        if (payload.mode === null) {
+          mode = undefined;
+        } else if (payload.mode !== undefined) {
+          mode = payload.mode;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          mode = prevRow.mode;
+        }
+        let provider: string | undefined;
+        if (payload.provider === null) {
+          provider = undefined;
+        } else if (payload.provider !== undefined) {
+          provider = payload.provider;
+        } else if (prevRow?.runnerId === payload.runnerId) {
+          provider = prevRow.provider;
+        }
+        const row: { deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string } = {
           deviceId: payload.deviceId,
           runnerId: payload.runnerId,
         };
         if (model) row.model = model;
+        if (mode) row.mode = mode;
+        if (provider) row.provider = provider;
         next = [...filtered, row];
       }
       patch.primaryRunnerByDevice = next.length > 0 ? next : undefined;

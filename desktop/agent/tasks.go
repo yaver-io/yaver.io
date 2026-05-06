@@ -1208,6 +1208,8 @@ func (tm *TaskManager) CreateTask(title, description, model, source, runnerID, c
 
 func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, runnerID, customCommand string, images []ImageAttachment, opts TaskCreateOptions, verbosityCtx ...*TaskVerbosity) (*Task, error) {
 	var taskRunner RunnerConfig
+	callerRunnerID := normalizeRunnerID(runnerID)
+	var perDeviceMode string
 
 	if customCommand != "" {
 		// Sandbox: validate custom commands before execution
@@ -1231,13 +1233,13 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		//      — lets the dashboard's "set primary for this machine"
 		//      choice flow without restarting the agent. Cached 30s.
 		//   3. tm.runner (resolved at boot from global userSettings.runnerId)
-		callerRunnerID := normalizeRunnerID(runnerID)
 		effectiveRunnerID := callerRunnerID
 		var perDeviceModel string
 		if effectiveRunnerID == "" {
-			if id, m := resolvePrimaryRunnerForSelf(context.Background(), nil); id != "" {
-				effectiveRunnerID = id
-				perDeviceModel = m
+			if pref := resolvePrimaryRunnerPrefForSelf(context.Background(), nil); pref.RunnerID != "" {
+				effectiveRunnerID = pref.RunnerID
+				perDeviceModel = pref.Model
+				perDeviceMode = pref.Mode
 			}
 		}
 
@@ -1284,6 +1286,10 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		if err := CheckRunnerBinary(taskRunner.Command); err != nil {
 			return nil, fmt.Errorf("runner not ready: %w", err)
 		}
+	}
+
+	if strings.TrimSpace(opts.Mode) == "" && callerRunnerID == "" && strings.TrimSpace(perDeviceMode) != "" {
+		opts.Mode = strings.TrimSpace(perDeviceMode)
 	}
 
 	// Thread the per-task mode (build / plan / custom) onto the runner
