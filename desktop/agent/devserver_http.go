@@ -82,6 +82,58 @@ func cancelAllActiveBuilds() int {
 	return n
 }
 
+// cancelActiveBuildsForProject cancels every registered build whose workDir
+// matches the supplied path, leaving builds for other projects alone.
+// Returns the number of builds cancelled. Used by /dev/stop when the user
+// is stopping a specific preview — killing an unrelated in-flight bundle
+// would discard a still-valid build that another flow (parallel project
+// switch, autodev loop, etc.) is depending on. Empty workDir is a no-op
+// and returns 0; callers wanting wildcard semantics must use
+// cancelAllActiveBuilds.
+func cancelActiveBuildsForProject(workDir string) int {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return 0
+	}
+	activeBuildsMu.Lock()
+	defer activeBuildsMu.Unlock()
+	n := 0
+	prefix := workDir + "\x00"
+	for k, h := range activeBuilds {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if h != nil && h.cancel != nil {
+			h.cancel()
+			n++
+		}
+		delete(activeBuilds, k)
+	}
+	return n
+}
+
+// bundleWrittenOK reports whether the bundler appears to have produced a
+// valid bundle file at bundlePath even though the parent process exited
+// non-zero. expo export:embed and react-native bundle log
+// "Done writing bundle output" AFTER fsync — its presence in the captured
+// tail combined with a non-empty file on disk is a strong signal that
+// the kill happened during the post-write tail of the bundler (asset
+// fingerprinting, Metro cache flush, source-map emission) rather than
+// mid-bundle. On a project switch, /dev/stop will SIGKILL the bundler in
+// this window; the bundle is valid and Hermes can proceed.
+func bundleWrittenOK(bundlePath string, tailLines []string) bool {
+	info, err := os.Stat(bundlePath)
+	if err != nil || info.Size() == 0 {
+		return false
+	}
+	for _, line := range tailLines {
+		if strings.Contains(line, "Done writing bundle output") {
+			return true
+		}
+	}
+	return false
+}
+
 type nativeBuildStatus struct {
 	State         string `json:"state"`
 	Platform      string `json:"platform,omitempty"`
@@ -1131,19 +1183,33 @@ func (s *HTTPServer) stopServingPreviewResult() map[string]interface{} {
 	// build/reload incidents so the UI doesn't keep showing a stale
 	// "current blocker" pill, and (d) verify the server is really
 	// down before returning.
-	cancelledBuilds := cancelAllActiveBuilds()
-
+	//
+	// Cancellation is project-scoped when there is an active dev server:
+	// stopping the todo-rn preview must not kill an unrelated /dev/build-native
+	// or /dev/build for sfmg that's still running. Without this, switching
+	// from one app to another in mobile would surface a misleading
+	// "bundle failed: signal: killed" for whichever build was still
+	// flushing post-write tail. When no dev server is running, fall back
+	// to the wildcard sweep — a user-Stop in idle state is "clean slate"
+	// intent and orphan builds can't be disambiguated by project.
 	if s.devServerMgr == nil {
 		return map[string]interface{}{
 			"ok":                false,
 			"stoppedServing":    false,
 			"previouslyServing": false,
-			"buildsCancelled":   cancelledBuilds,
+			"buildsCancelled":   cancelAllActiveBuilds(),
 			"message":           "Dev server manager not available.",
 		}
 	}
 
 	status := s.devServerMgr.Status()
+	var cancelledBuilds int
+	if status != nil && status.Running && strings.TrimSpace(status.WorkDir) != "" {
+		cancelledBuilds = cancelActiveBuildsForProject(status.WorkDir)
+	} else {
+		cancelledBuilds = cancelAllActiveBuilds()
+	}
+
 	if status == nil || !status.Running {
 		// Even if no dev server is running, the user clicked Stop —
 		// resolve any open build incidents so the UI returns to a
@@ -2891,7 +2957,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	cmd.Stdout = io.MultiWriter(logW, tail)
 	cmd.Stderr = io.MultiWriter(logW, tail)
 
-	if err := cmd.Run(); err != nil {
+	if runErr := cmd.Run(); runErr != nil {
 		tailLines := tail.lines()
 		// Timeout takes precedence over the raw exec error — when the
 		// bundler hangs, exec.CommandContext kills it and cmd.Run returns
@@ -2899,39 +2965,55 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		// mobile app shows a useful message and the user knows to look at
 		// project state (broken node_modules, infinite resolver loop, etc.)
 		timedOut := bundleCtx.Err() == context.DeadlineExceeded
-		errMsg := fmt.Sprintf("bundle failed: %v", err)
-		summary := "JavaScript bundle build failed"
-		userMsg := "The agent failed while producing the JavaScript bundle used for Hermes compilation."
-		hint := "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause."
-		if timedOut {
-			errMsg = fmt.Sprintf("bundle timed out after %s — the bundler was killed", bundleBuildTimeout)
-			summary = "JavaScript bundle build timed out"
-			userMsg = fmt.Sprintf("The bundler did not finish in %s. The subprocess was killed so the build endpoint can return an answer.", bundleBuildTimeout)
-			hint = "Common causes: missing node_modules (run `npm install` in the project), Metro stuck on a circular import, or `npm install` running inside the bundler waiting for the network. The tail above shows what the bundler was doing when it was killed."
+
+		// Post-write SIGKILL rescue: expo export:embed and react-native
+		// bundle do non-trivial work AFTER they log
+		// "Done writing bundle output" — asset fingerprinting, Metro cache
+		// flush, source-map emission. If /dev/stop fires in that window
+		// (common on project-switch in mobile), exec.CommandContext kills
+		// the parent and cmd.Run returns "signal: killed" even though the
+		// bundle file is fully on disk. Stat + tail-line check before we
+		// flag this as a build failure; if both line up, the bundle is
+		// valid and Hermes can proceed normally.
+		if !timedOut && bundleWrittenOK(bundlePath, tailLines) {
+			log.Printf("[super-host] bundler exited %v after writing bundle to %s — treating as success and continuing to Hermes", runErr, bundlePath)
+			s.devServerMgr.EmitLog("Bundler subprocess was cancelled after the bundle was fully written; proceeding to Hermes compile.")
+			// Fall through past this if-block to the prelude inject + Hermes path.
+		} else {
+			errMsg := fmt.Sprintf("bundle failed: %v", runErr)
+			summary := "JavaScript bundle build failed"
+			userMsg := "The agent failed while producing the JavaScript bundle used for Hermes compilation."
+			hint := "Output above is the last 120 lines of bundler stdout/stderr — usually contains a 'Cannot find module' / 'Unable to resolve' / 'JavaScript heap out of memory' line that points at the real cause."
+			if timedOut {
+				errMsg = fmt.Sprintf("bundle timed out after %s — the bundler was killed", bundleBuildTimeout)
+				summary = "JavaScript bundle build timed out"
+				userMsg = fmt.Sprintf("The bundler did not finish in %s. The subprocess was killed so the build endpoint can return an answer.", bundleBuildTimeout)
+				hint = "Common causes: missing node_modules (run `npm install` in the project), Metro stuck on a circular import, or `npm install` running inside the bundler waiting for the network. The tail above shows what the bundler was doing when it was killed."
+			}
+			s.devServerMgr.EmitLog(errMsg)
+			incident := s.appendDevIncident("build", ReasonBuildNativeFailed, summary, userMsg, runErr.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
+			s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
+			writeNativeBuildStatus(workDir, nativeBuildStatus{
+				State:        "build_failed",
+				Platform:     req.Platform,
+				LastFailedAt: time.Now().UTC().Format(time.RFC3339),
+				LastError:    errMsg,
+			})
+			statusCode := http.StatusInternalServerError
+			if timedOut {
+				statusCode = http.StatusGatewayTimeout
+			}
+			jsonReply(w, statusCode, map[string]interface{}{
+				"error":    errMsg,
+				"phase":    "bundle",
+				"command":  cmd.Args,
+				"workDir":  workDir,
+				"output":   strings.Join(tailLines, "\n"),
+				"timedOut": timedOut,
+				"helpHint": hint,
+			})
+			return
 		}
-		s.devServerMgr.EmitLog(errMsg)
-		incident := s.appendDevIncident("build", ReasonBuildNativeFailed, summary, userMsg, err.Error(), "Inspect the bundler output and fix the project build error before retrying.", workDir, target.DeviceID, req.Platform, IncidentSeverityError, true, true, []string{"stream:dev-events"}, nil, buildOp.ID)
-		s.upsertDevOperation("build_native", "failed", "error", incident.UserMessage, workDir, target.DeviceID, 1, map[string]interface{}{"platform": req.Platform}, incident.ID)
-		writeNativeBuildStatus(workDir, nativeBuildStatus{
-			State:        "build_failed",
-			Platform:     req.Platform,
-			LastFailedAt: time.Now().UTC().Format(time.RFC3339),
-			LastError:    errMsg,
-		})
-		statusCode := http.StatusInternalServerError
-		if timedOut {
-			statusCode = http.StatusGatewayTimeout
-		}
-		jsonReply(w, statusCode, map[string]interface{}{
-			"error":    errMsg,
-			"phase":    "bundle",
-			"command":  cmd.Args,
-			"workDir":  workDir,
-			"output":   strings.Join(tailLines, "\n"),
-			"timedOut": timedOut,
-			"helpHint": hint,
-		})
-		return
 	}
 
 	if err := injectGuestSafePrelude(bundlePath); err != nil {

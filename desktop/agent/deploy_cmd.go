@@ -15,6 +15,9 @@ func runDeploy(args []string) {
 	// New subcommands: vault-aware shell-script generator, shipper,
 	// post-mortem log viewer, list, and preflight diagnose.
 	switch args[0] {
+	case "all":
+		runDeployAllCmd(args[1:])
+		return
 	case "generate", "gen":
 		runDeployGenerateCmd(args[1:])
 		return
@@ -148,6 +151,13 @@ func runDeployGitLab(projectID, branch string) {
 
 func printDeployUsage() {
 	fmt.Print(`Usage:
+  # Ship the entire Yaver stack (TestFlight → Play internal → Convex →
+  # Cloudflare → npm CLI release). Runs locally; npm tag-pushes for CI.
+  yaver deploy all                                     Sequential pipeline.
+  yaver deploy all --skip-testflight --skip-playstore  Per-stage skips.
+  yaver deploy all --bump minor                        Bump cli minor (default: patch).
+  yaver deploy all --dry-run                           Print what would run; no side effects.
+
   # Script generation + shared-machine ship (vault-aware, runs locally):
   yaver deploy generate --app <name> --target <target> [--out <file>]
                                                        Emit a bash deploy script
