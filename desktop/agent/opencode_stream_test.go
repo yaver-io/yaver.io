@@ -28,6 +28,9 @@ func TestOpencodeStreamFilter_StripsAnsiAndRewritesShellLines(t *testing.T) {
 	if strings.Contains(got, "[0m") {
 		t.Fatalf("bare CSI leaked into output:\n%q", got)
 	}
+	if strings.Contains(got, "build · glm-4.7") {
+		t.Fatalf("opencode banner leaked into output:\n%s", got)
+	}
 	if !strings.Contains(got, "**$ ls -la /tmp | head -3**") {
 		t.Errorf("first shell line not rewritten:\n%s", got)
 	}

@@ -3507,7 +3507,18 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 			return
 		case text, ok := <-task.outputCh:
 			if !ok {
-				// Channel closed — task finished.
+				// Channel closed — the stdout reader is done, but the task's
+				// process waiter may still be racing to flip Status from
+				// running/queued -> completed/failed/stopped. Wait briefly for
+				// doneCh so the terminal SSE event reflects the real final
+				// state instead of leaving mobile/web stuck animating
+				// "running" until the next poll.
+				select {
+				case <-task.doneCh:
+				case <-ctx.Done():
+					return
+				case <-time.After(2 * time.Second):
+				}
 				s.taskMgr.mu.RLock()
 				finalStatus := task.Status
 				s.taskMgr.mu.RUnlock()

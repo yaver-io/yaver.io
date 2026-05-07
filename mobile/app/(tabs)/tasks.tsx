@@ -585,7 +585,18 @@ type TaskPhaseTone = "neutral" | "active" | "warm" | "success";
 
 function deriveTaskPhases(task: Task): Array<{ label: string; tone: TaskPhaseTone }> {
   const tail = task.output.length > 120 ? task.output.slice(-120) : task.output;
-  const haystack = `${task.title}\n${tail.join("\n")}\n${task.resultText || ""}`.toLowerCase();
+  const signalLines = tail
+    .map((line) => stripAnsi(line).trim())
+    .filter(Boolean)
+    // OpenCode's banner (`> build · glm-4.7`) is transport metadata,
+    // not task activity. If we keep it, trivial commands like `ls`
+    // get mislabeled as "compiling…" purely because the selected
+    // OpenCode agent is named "build".
+    .filter((line) => !/^>\s+[A-Za-z0-9._-]+\s+·\s+[A-Za-z0-9_./:-]+$/.test(line))
+    // Shell markers tell us a command ran, but not which phase the
+    // task is in. The command text itself is enough.
+    .map((line) => line.replace(/^\*\*\$\s+/, "").replace(/\*\*$/, ""));
+  const haystack = `${task.title}\n${signalLines.join("\n")}\n${task.resultText || ""}`.toLowerCase();
   const phases: Array<{ label: string; tone: TaskPhaseTone }> = [];
   const push = (label: string, tone: TaskPhaseTone) => {
     if (!phases.some((phase) => phase.label === label)) phases.push({ label, tone });
@@ -1751,6 +1762,10 @@ export default function TasksScreen() {
         }
       },
       (status) => {
+        if (status === "completed" || status === "failed" || status === "stopped") {
+          setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, status: status as TaskStatus } : t));
+          setSelectedTask((prev) => prev?.id === selectedTask.id ? { ...prev, status: status as TaskStatus } : prev);
+        }
         // Task finished via SSE — refresh to get final state
         fetchTasks();
       }
@@ -2230,8 +2245,8 @@ export default function TasksScreen() {
     try {
       await quicClient.stopTask(taskId);
       // ACK received — immediately update UI
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "completed" as TaskStatus } : t));
-      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "completed" as TaskStatus } : prev);
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "stopped" as TaskStatus } : t));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "stopped" as TaskStatus } : prev);
       await fetchTasks(); // Sync with server for final state
     } catch {
       // Stop not ACK'd — show error state
@@ -2243,8 +2258,8 @@ export default function TasksScreen() {
     try {
       await quicClient.exitTask(taskId);
       // ACK received — immediately update UI
-      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "completed" as TaskStatus } : t));
-      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "completed" as TaskStatus } : prev);
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "stopped" as TaskStatus } : t));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "stopped" as TaskStatus } : prev);
       await fetchTasks();
     } catch {
       Alert.alert("Stop Failed", "Could not reach the agent. The task may still be running.");
@@ -3493,6 +3508,7 @@ export default function TasksScreen() {
                               s.submitButtonText,
                               isDisabled && { color: c.textTertiary },
                             ]}
+                            numberOfLines={1}
                           >
                             {isSubmitting ? "Sending…" : "Send"}
                           </Text>
@@ -4642,11 +4658,13 @@ const s = StyleSheet.create({
     borderWidth: 1,
   },
   sendButtonLarge: {
-    minWidth: 104,
+    minWidth: 120,
+    minHeight: 56,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 20,
     alignItems: "center",
+    justifyContent: "center",
   },
   optionRow: {
     flexDirection: "row",
@@ -4661,7 +4679,7 @@ const s = StyleSheet.create({
   cancelButtonText: { fontWeight: "600", fontSize: 15 },
   submitButton: { flex: 1, paddingVertical: 14, borderRadius: 10, alignItems: "center" },
   submitButtonDisabled: { opacity: 0.4 },
-  submitButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15 },
+  submitButtonText: { color: "#ffffff", fontWeight: "600", fontSize: 15, flexShrink: 0 },
 
   // Action bar
   actionBar: { flexDirection: "row", paddingHorizontal: 14, paddingVertical: 8, gap: 8, position: "relative" },

@@ -51,6 +51,16 @@ type opencodeStreamFilter struct {
 // internal whitespace; outer whitespace is trimmed.
 var opencodeShellLineRE = regexp.MustCompile(`^[ \t]*\$[ \t]+(\S.*?\S|\S)[ \t]*$`)
 
+// OpenCode prints a lightweight banner line near the top of each run:
+//   > build · glm-4.7
+// That is transport metadata, not assistant output. Once mobile/web
+// started deriving "what is it doing?" from the raw stream, this
+// banner falsely forced trivial commands like `ls` into a
+// "compiling…" phase because the word "build" was present. The runner
+// + model already live in task metadata and the header chip, so we
+// drop the banner from the transcript entirely.
+var opencodeBannerLineRE = regexp.MustCompile(`^[ \t]*>[ \t]+[A-Za-z0-9._-]+[ \t]+·[ \t]+[A-Za-z0-9_./:-]+[ \t]*$`)
+
 // process consumes a raw chunk of bytes from opencode's stdout (or
 // stderr) and returns the transformed text ready to push onto
 // task.outputCh + task.Output. Idempotent w.r.t. ANSI: callers may
@@ -94,6 +104,9 @@ func (f *opencodeStreamFilter) writeLine(out *bytes.Buffer, line []byte, hasNewl
 	// transport-agnostic — be friendly to a Windows future where the
 	// CLI might write CRLF).
 	clean = strings.TrimRight(clean, "\r")
+	if opencodeBannerLineRE.MatchString(clean) {
+		return
+	}
 	if m := opencodeShellLineRE.FindStringSubmatch(clean); m != nil {
 		// Mirror readStreamJSON's claude-side format exactly so the
 		// mobile + web chat-bubble renderer that already grep's for
