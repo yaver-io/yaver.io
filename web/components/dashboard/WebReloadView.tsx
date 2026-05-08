@@ -1630,24 +1630,24 @@ export function WebReloadView({
             ) : null}
           </div>
 
-          {/* Running — kept as a small always-visible status footer. */}
-          <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2 text-[11px]">
-            <p className="text-[10px] uppercase tracking-widest text-surface-500">Running</p>
-            <p className="mt-1 font-medium text-surface-100">
-              {devStatus?.running ? (
-                <>
-                  {devStatus.framework} <span className="text-surface-500">· :{devStatus.port}</span>
-                </>
-              ) : (
-                "No app running"
-              )}
-            </p>
-            {devStatus?.workDir && (
-              <p className="mt-0.5 truncate text-[10px] text-surface-500" title={devStatus.workDir}>
-                {devStatus.workDir}
+          {/* Running — only shown when something is actually running.
+              On multi-project remotes (e.g. yaver-test-ephemeral with
+              several scanned projects) "No app running" reads as a
+              warning when it's just the idle state — hide it entirely
+              and let the projects list be the call to action. */}
+          {devStatus?.running ? (
+            <div className="rounded-md border border-surface-800 bg-surface-900/40 p-2 text-[11px]">
+              <p className="text-[10px] uppercase tracking-widest text-surface-500">Running</p>
+              <p className="mt-1 font-medium text-surface-100">
+                {devStatus.framework} <span className="text-surface-500">· :{devStatus.port}</span>
               </p>
-            )}
-          </div>
+              {devStatus.workDir && (
+                <p className="mt-0.5 truncate text-[10px] text-surface-500" title={devStatus.workDir}>
+                  {devStatus.workDir}
+                </p>
+              )}
+            </div>
+          ) : null}
         </aside>
       </div>
     </div>
