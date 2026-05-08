@@ -3839,20 +3839,22 @@ export class AgentClient {
 
   // ── Workspace manifest (monorepo) ────────────────────────────────
 
-  async getWorkspace(): Promise<WorkspaceResponse | null> {
+  async getWorkspace(root?: string): Promise<WorkspaceResponse | null> {
     this.assertConnected();
     try {
-      const res = await fetch(`${this.baseUrl}/workspace`, { headers: this.authHeaders });
+      const query = root ? `?root=${encodeURIComponent(root)}` : "";
+      const res = await fetch(`${this.baseUrl}/workspace${query}`, { headers: this.authHeaders });
       if (!res.ok) return null;
       return res.json();
     } catch { return null; }
   }
 
-  async getWorkspaceApps(kind?: string | string[]): Promise<WorkspaceAppView[]> {
+  async getWorkspaceApps(kind?: string | string[], root?: string): Promise<WorkspaceAppView[]> {
     this.assertConnected();
-    const query = kind
-      ? `?kind=${encodeURIComponent(Array.isArray(kind) ? kind.join(",") : kind)}`
-      : "";
+    const params = new URLSearchParams();
+    if (kind) params.set("kind", Array.isArray(kind) ? kind.join(",") : kind);
+    if (root) params.set("root", root);
+    const query = params.toString() ? `?${params.toString()}` : "";
     const res = await fetch(`${this.baseUrl}/workspace/apps${query}`, { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `Failed to load workspace apps: HTTP ${res.status}`);

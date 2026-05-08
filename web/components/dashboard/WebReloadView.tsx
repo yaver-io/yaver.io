@@ -209,6 +209,7 @@ export function WebReloadView({
   const runnerAuthLabel = runnerAuthState?.runnerId
     ? runnerAuthState.runnerId.charAt(0).toUpperCase() + runnerAuthState.runnerId.slice(1)
     : "the runner";
+  const workspaceRootHint = preferredProjectPath || undefined;
 
   // Load workspace apps on connect and whenever device changes. This
   // also serves as an early transport/auth probe so we can surface
@@ -227,7 +228,7 @@ export function WebReloadView({
     (async () => {
       try {
         const [list, scanned] = await Promise.all([
-          agentClient.getWorkspaceApps("web,hybrid"),
+          agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
           agentClient.listProjects(),
         ]);
         if (cancelled) return;
@@ -263,7 +264,7 @@ export function WebReloadView({
     return () => { cancelled = true; };
     // repairRelayThenReconnect is stable in this component.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, connectedDevice?.id]);
+  }, [isConnected, connectedDevice?.id, preferredProjectPath]);
 
   const repairRelayThenReconnect = async (mode: "auto" | "manual") => {
     if (!onRepairRelay) return;
@@ -280,7 +281,7 @@ export function WebReloadView({
         // Retry the workspace load now that the password is fresh.
         try {
           const [list, scanned] = await Promise.all([
-            agentClient.getWorkspaceApps("web,hybrid"),
+            agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
             agentClient.listProjects(),
           ]);
           setApps(list);
@@ -453,8 +454,11 @@ export function WebReloadView({
       // RN, in which case we route through the bundle path here too.
       let response: Awaited<ReturnType<typeof agentClient.startDevServer>> | null = null;
       if (useProjectFallback && selectedProject) {
+        const framework = (selectedProject.framework || "").toLowerCase() === "monorepo"
+          ? undefined
+          : selectedProject.framework;
         response = await agentClient.startDevServer({
-          framework: selectedProject.framework,
+          framework,
           workDir: selectedProject.path,
           projectName: selectedProject.name,
           surface: "web-reload",
