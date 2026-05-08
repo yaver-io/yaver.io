@@ -780,6 +780,7 @@ export default function DashboardPage() {
   const outputRef = useRef<HTMLDivElement>(null);
   const relayReadyPromiseRef = useRef<Promise<void> | null>(null);
   const previousActiveTabRef = useRef<string | null>(null);
+  const hydratedOpenCodePrefKeyRef = useRef("");
   // Per-device debounce of the proactive Open-Workspace re-auth.
   // The relay rate-limits agent recovery to ~5 s — without this map
   // a quick double-click on Open Workspace produces "too many
@@ -1126,18 +1127,32 @@ export default function DashboardPage() {
   }, [selectedRunner, opencodeProvider, selectedModel]);
 
   useEffect(() => {
-    if (selectedRunner !== "opencode") return;
+    if (selectedRunner !== "opencode") {
+      hydratedOpenCodePrefKeyRef.current = "";
+      return;
+    }
     const deviceId = connectedDevice?.id || "";
     const preferredMode = deviceId ? primaryModeByDevice[deviceId] || "" : "";
+    const explicitModel = deviceId ? primaryModelByDevice[deviceId] || "" : "";
+    const derivedProvider =
+      explicitModel && explicitModel.includes("/")
+        ? explicitModel.slice(0, explicitModel.indexOf("/"))
+        : "";
+    const preferredProvider = (deviceId ? primaryProviderByDevice[deviceId] || "" : "") || derivedProvider;
+    const hydrationKey = `${deviceId}|${preferredProvider}|${explicitModel}|${preferredMode}`;
+    if (hydratedOpenCodePrefKeyRef.current === hydrationKey) return;
+    hydratedOpenCodePrefKeyRef.current = hydrationKey;
     if (preferredMode !== selectedOpenCodeMode) {
       setSelectedOpenCodeMode(preferredMode);
     }
-    const preferredProvider = deviceId ? primaryProviderByDevice[deviceId] || "" : "";
     if (preferredProvider && preferredProvider !== opencodeProvider) {
       setOpencodeProvider(preferredProvider);
       setOpencodeChangingKey(false);
     }
-  }, [selectedRunner, connectedDevice?.id, primaryModeByDevice, primaryProviderByDevice, selectedOpenCodeMode, opencodeProvider]);
+    if (explicitModel && explicitModel !== selectedModel) {
+      setSelectedModel(explicitModel);
+    }
+  }, [selectedRunner, connectedDevice?.id, primaryModeByDevice, primaryProviderByDevice, primaryModelByDevice, selectedOpenCodeMode, opencodeProvider, selectedModel]);
 
   useEffect(() => {
     // OpenCode owns its own provider/model selection (see the inline
