@@ -340,6 +340,9 @@ for (const path of [
   "/auth/verify-totp", "/auth/providers", "/auth/oauth-link/start", "/auth/oauth-link/complete",
   "/auth/test/oauth-signin",
   "/auth/device-code/authorize",
+  "/auth/passkey/register/start", "/auth/passkey/register/finish",
+  "/auth/passkey/login/start", "/auth/passkey/login/finish",
+  "/auth/passkey/list", "/auth/passkey/remove",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
@@ -439,6 +442,129 @@ http.route({
 
     const token = await createSessionToken(ctx, user._id);
     return jsonResponse({ token, userId: user.userId });
+  }),
+});
+
+// ── Passkey (WebAuthn) Endpoints ───────────────────────────────────
+// Strictly additive to the existing email/OAuth flows. The four
+// routes below mint the same session token /auth/login does, so all
+// downstream auth (validate/refresh/etc.) is unchanged. Origin is
+// validated inside the action against an allowlist.
+
+/** POST /auth/passkey/register/start — signed-in user begins enrollment. */
+http.route({
+  path: "/auth/passkey/register/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const body = await request.json().catch(() => ({} as any));
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const options = await ctx.runAction(api.passkeys.registerStart, {
+        userDocId: session.userDocId as any,
+        origin,
+        deviceLabel: typeof body?.deviceLabel === "string" ? body.deviceLabel : undefined,
+      });
+      return jsonResponse({ options });
+    } catch (e: any) {
+      return errorResponse(e?.message || "registerStart failed", 400);
+    }
+  }),
+});
+
+/** POST /auth/passkey/register/finish — signed-in user completes enrollment. */
+http.route({
+  path: "/auth/passkey/register/finish",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const body = await request.json().catch(() => ({} as any));
+    if (!body?.response) return errorResponse("Missing response", 400);
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const result = await ctx.runAction(api.passkeys.registerFinish, {
+        userDocId: session.userDocId as any,
+        origin,
+        response: body.response,
+        deviceLabel: typeof body?.deviceLabel === "string" ? body.deviceLabel : undefined,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e?.message || "registerFinish failed", 400);
+    }
+  }),
+});
+
+/** POST /auth/passkey/login/start — anonymous; returns assertion challenge. */
+http.route({
+  path: "/auth/passkey/login/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const options = await ctx.runAction(api.passkeys.loginStart, { origin });
+      return jsonResponse({ options });
+    } catch (e: any) {
+      return errorResponse(e?.message || "loginStart failed", 400);
+    }
+  }),
+});
+
+/** POST /auth/passkey/login/finish — anonymous; mints session on success. */
+http.route({
+  path: "/auth/passkey/login/finish",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({} as any));
+    if (!body?.response) return errorResponse("Missing response", 400);
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const result = await ctx.runAction(api.passkeys.loginFinish, {
+        origin,
+        response: body.response,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e?.message || "loginFinish failed", 401);
+    }
+  }),
+});
+
+/** GET /auth/passkey/list — signed-in user lists their passkeys. */
+http.route({
+  path: "/auth/passkey/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const rows = await ctx.runQuery(api.passkeysDb.listForUser, {
+      userId: session.userDocId as any,
+    });
+    return jsonResponse({ passkeys: rows });
+  }),
+});
+
+/** POST /auth/passkey/remove — signed-in user revokes one of their passkeys. */
+http.route({
+  path: "/auth/passkey/remove",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    const body = await request.json().catch(() => ({} as any));
+    const credentialId = String(body?.credentialId || "").trim();
+    if (!credentialId) return errorResponse("Missing credentialId", 400);
+    try {
+      const result = await ctx.runMutation(api.passkeysDb.removeCredential, {
+        userId: session.userDocId as any,
+        credentialId,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e?.message || "remove failed", 400);
+    }
   }),
 });
 

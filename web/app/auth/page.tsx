@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { CONVEX_URL } from "@/lib/constants";
 import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
@@ -23,6 +24,14 @@ function AuthContent() {
   const [rePassword, setRePassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  // Hide the passkey button on browsers that don't speak WebAuthn (very
+  // old / privacy-mode locked configs). Existing OAuth + email flows are
+  // unaffected — passkey is purely additive.
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  useEffect(() => {
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
 
   const redirectAfterAuth = async (token: string) => {
     if (client === "desktop") {
@@ -57,6 +66,70 @@ function AuthContent() {
     }
 
     window.location.href = "/dashboard";
+  };
+
+  const handlePasskeyLogin = async () => {
+    setFormError(null);
+    setPasskeyLoading(true);
+    try {
+      // 1. Pull a fresh challenge from the backend.
+      const startRes = await fetch(`${CONVEX_URL}/auth/passkey/login/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!startRes.ok) {
+        const text = await startRes.text();
+        setFormError(text || "Could not start passkey sign-in.");
+        setPasskeyLoading(false);
+        return;
+      }
+      const { options } = await startRes.json();
+
+      // 2. Have the browser sign the challenge with whichever passkey
+      //    the user picks (or the auto-fill credential they already
+      //    chose). Cancellation is the most common "error" — treat it
+      //    silently rather than as a flow failure.
+      let asseResp;
+      try {
+        asseResp = await startAuthentication({ optionsJSON: options });
+      } catch (err: any) {
+        if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
+          setPasskeyLoading(false);
+          return;
+        }
+        setFormError(err?.message || "Passkey sign-in cancelled.");
+        setPasskeyLoading(false);
+        return;
+      }
+
+      // 3. Verify the assertion server-side; on success a session token
+      //    drops out, identical shape to /auth/login.
+      const finishRes = await fetch(`${CONVEX_URL}/auth/passkey/login/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: asseResp }),
+      });
+      if (!finishRes.ok) {
+        const text = await finishRes.text();
+        setFormError(text || "Passkey verification failed. Use email or OAuth instead.");
+        setPasskeyLoading(false);
+        return;
+      }
+      const data = await finishRes.json();
+      const token = data?.token;
+      if (!token) {
+        setFormError("No token received from server.");
+        setPasskeyLoading(false);
+        return;
+      }
+      localStorage.setItem("yaver_auth_token", token);
+      document.cookie = `yaver_auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
+      await redirectAfterAuth(token);
+    } catch {
+      setFormError("Network error. Please try again.");
+      setPasskeyLoading(false);
+    }
   };
 
   const handleOAuth = (provider: "google" | "microsoft" | "apple" | "github" | "gitlab") => {
@@ -186,6 +259,24 @@ function AuthContent() {
         )}
 
         <div className="space-y-3">
+          {/* Passkey sign-in. Hidden when the browser doesn't support
+              WebAuthn or the user is in signup mode (passkey enrollment
+              happens after the first sign-in, see /dashboard prompt). */}
+          {mode === "signin" && passkeySupported && (
+            <button
+              onClick={handlePasskeyLogin}
+              disabled={passkeyLoading}
+              className={`flex w-full items-center justify-center gap-3 border border-cyan-400/40 bg-cyan-400/10 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-50 ${controlClass}`}
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                <circle cx="12" cy="16" r="1.5" />
+              </svg>
+              {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+            </button>
+          )}
+
           <button
             onClick={() => handleOAuth("apple")}
             className={`flex w-full items-center justify-center gap-3 border border-surface-700 bg-surface-900 text-sm font-medium text-surface-200 transition-colors hover:border-surface-600 hover:text-surface-50 ${controlClass}`}

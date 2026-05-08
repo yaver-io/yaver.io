@@ -1,6 +1,6 @@
 {
   "name": "yaver-web",
-  "version": "1.1.124",
+  "version": "1.1.125",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -10,6 +10,7 @@
     "start": "next start"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0",
     "@tailwindcss/typography": "^0.5.19",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

@@ -34,6 +34,8 @@ import type * as http from "../http.js";
 import type * as managedRelays from "../managedRelays.js";
 import type * as mobileStreamLogs from "../mobileStreamLogs.js";
 import type * as packages from "../packages.js";
+import type * as passkeys from "../passkeys.js";
+import type * as passkeysDb from "../passkeysDb.js";
 import type * as pendingDeviceClaims from "../pendingDeviceClaims.js";
 import type * as platformConfig from "../platformConfig.js";
 import type * as privacyMigrations from "../privacyMigrations.js";
@@ -80,6 +82,8 @@ declare const fullApi: ApiFromModules<{
   managedRelays: typeof managedRelays;
   mobileStreamLogs: typeof mobileStreamLogs;
   packages: typeof packages;
+  passkeys: typeof passkeys;
+  passkeysDb: typeof passkeysDb;
   pendingDeviceClaims: typeof pendingDeviceClaims;
   platformConfig: typeof platformConfig;
   privacyMigrations: typeof privacyMigrations;

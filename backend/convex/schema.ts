@@ -124,6 +124,43 @@ export default defineSchema({
   })
     .index("by_pendingToken", ["pendingToken"]),
 
+  // WebAuthn / passkey credentials. Strictly additive to the existing
+  // password + OAuth flows: a user can have N passkeys attached to a
+  // single users row alongside any other identity. Public-key only —
+  // private material lives on the user's device / iCloud Keychain.
+  // credentialId is base64url; counter monotonically increases on each
+  // assertion to detect cloned authenticators (informational; iCloud-
+  // synced passkeys legitimately keep counter=0).
+  passkeys: defineTable({
+    userId: v.id("users"),
+    credentialId: v.string(),       // base64url; unique per credential
+    publicKey: v.string(),          // base64url COSE public key
+    counter: v.number(),
+    transports: v.optional(v.array(v.string())), // "internal" | "hybrid" | ...
+    deviceLabel: v.optional(v.string()),         // user-supplied nickname
+    backedUp: v.optional(v.boolean()),           // synced via iCloud / Google
+    createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),
+  })
+    .index("by_credentialId", ["credentialId"])
+    .index("by_userId", ["userId"]),
+
+  // Short-lived WebAuthn challenges. Issued by registerStart / loginStart
+  // and consumed by the Finish steps. Two flavours so a stolen-but-still-
+  // valid challenge can't be cross-used between flows. Anonymous challenges
+  // (login without a known userId) carry email==null and are matched by
+  // challenge value alone — login completes against whichever user owns
+  // the credential the browser produced.
+  passkeyChallenges: defineTable({
+    challenge: v.string(),         // base64url, ~32 random bytes
+    purpose: v.union(v.literal("register"), v.literal("login")),
+    userId: v.optional(v.id("users")),  // null for anonymous login start
+    expiresAt: v.number(),         // ~5 minutes from issuance
+    createdAt: v.number(),
+  })
+    .index("by_challenge", ["challenge"])
+    .index("by_expiresAt", ["expiresAt"]),
+
   sessions: defineTable({
     tokenHash: v.string(),
     userId: v.id("users"),
