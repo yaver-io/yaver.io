@@ -716,6 +716,17 @@ export default function DashboardPage() {
   // When true, a saved-key provider still shows the input so the user
   // can replace the key. Reset on provider switch.
   const [opencodeChangingKey, setOpencodeChangingKey] = useState(false);
+  // Chat composer's runner/provider/model/mode picker is verbose. Hide
+  // by default and let the user expand it; persist the choice across
+  // page loads so they don't fight it on every visit.
+  const [chatPickerExpanded, setChatPickerExpanded] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("yaver:chat-picker-expanded") === "1";
+  });
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try { window.localStorage.setItem("yaver:chat-picker-expanded", chatPickerExpanded ? "1" : "0"); } catch {}
+  }, [chatPickerExpanded]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [guestCode, setGuestCode] = useState("");
@@ -2608,6 +2619,60 @@ export default function DashboardPage() {
                         </div>
                       );
                     }
+                    // Collapsed summary row — single line, ~28px tall.
+                    // Shows the active selections so the user can confirm
+                    // at a glance and click "Edit" to open the full picker.
+                    if (!chatPickerExpanded) {
+                      const runnerName = runnerLabel(selectedRunner) || selectedRunner || "—";
+                      const providerEntry = selectedRunner === "opencode"
+                        ? OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === opencodeProvider) || OPENCODE_PROVIDER_CATALOGUE[0]
+                        : null;
+                      const modelDisplay = (() => {
+                        const sm = selectedModel || "";
+                        if (!sm) return "default model";
+                        const slash = sm.indexOf("/");
+                        const tail = slash >= 0 ? sm.slice(slash + 1) : sm;
+                        if (selectedRunner === "opencode" && providerEntry) {
+                          const m = providerEntry.models.find((mm) => mm.id === tail);
+                          return m?.label || tail;
+                        }
+                        const m = selectedRunnerModels.find((mm) => mm.id === sm);
+                        return m?.name || sm;
+                      })();
+                      const modeDisplay = selectedRunner === "opencode"
+                        ? (selectedOpenCodeMode ? selectedOpenCodeMode.charAt(0).toUpperCase() + selectedOpenCodeMode.slice(1) : "Default")
+                        : null;
+                      return (
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2 text-[11px] text-surface-400">
+                          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                            <span className="text-surface-500">Agent</span>
+                            <span className="rounded-full border border-amber-400/30 bg-amber-400/5 px-2 py-0.5 text-amber-100">{runnerName}</span>
+                            {providerEntry ? (
+                              <>
+                                <span className="text-surface-700">·</span>
+                                <span className="rounded-full border border-cyan-400/30 bg-cyan-400/5 px-2 py-0.5 text-cyan-100">{providerEntry.label}</span>
+                              </>
+                            ) : null}
+                            <span className="text-surface-700">·</span>
+                            <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-400/5 px-2 py-0.5 text-fuchsia-100">{modelDisplay}</span>
+                            {modeDisplay ? (
+                              <>
+                                <span className="text-surface-700">·</span>
+                                <span className="rounded-full border border-emerald-400/30 bg-emerald-400/5 px-2 py-0.5 text-emerald-100">{modeDisplay}</span>
+                              </>
+                            ) : null}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setChatPickerExpanded(true)}
+                            className="rounded-lg border border-surface-700 bg-surface-900 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-500"
+                            title="Edit agent, provider, model, and mode"
+                          >
+                            Edit ▾
+                          </button>
+                        </div>
+                      );
+                    }
                     return (
                       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-surface-800 bg-surface-950/60 px-3 py-2">
                         <div className="flex flex-wrap items-center gap-2 text-[11px] text-surface-500">
@@ -2671,6 +2736,14 @@ export default function DashboardPage() {
                             </span>
                           ) : null}
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => setChatPickerExpanded(false)}
+                          className="rounded-lg border border-surface-700 bg-surface-900 px-2.5 py-1 text-[11px] text-surface-300 hover:border-surface-500"
+                          title="Collapse picker"
+                        >
+                          Hide ▴
+                        </button>
                       </div>
                     );
                   })()}
@@ -2679,7 +2752,7 @@ export default function DashboardPage() {
                       runner. Picking an Ollama model needs no key;
                       everything else prompts for a BYOK API key that
                       gets persisted to opencode.json on the agent. */}
-                  {selectedRunner === "opencode" ? (() => {
+                  {chatPickerExpanded && selectedRunner === "opencode" ? (() => {
                     const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === opencodeProvider) || OPENCODE_PROVIDER_CATALOGUE[0];
                     const currentModelId = (() => {
                       const sm = selectedModel || "";
