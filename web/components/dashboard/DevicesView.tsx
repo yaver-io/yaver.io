@@ -1632,7 +1632,7 @@ export default function DevicesView({
 }: DevicesViewProps) {
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
-  const { primaryRunnerByDevice, primaryModelByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
+  const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Latest released agent version from GitHub. Drives the per-device
   // "✓ latest" / "update available" badge + the remote-update button.
   const latestAgentVersion = useLatestAgentVersion();
@@ -2149,13 +2149,16 @@ export default function DevicesView({
                               </option>
                             ))}
                           </select>
-                          {/* Model selector — only surfaces when the
-                              current primary runner actually has model
-                              presets (claude / codex). OpenCode picks
-                              its model through its own provider+key
-                              flow in the chat input, so it has no
-                              preset list here. */}
-                          {primaryId && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
+                          {/* Model selector — surfaces when the current
+                              primary runner has model presets
+                              (claude / codex). For OpenCode we render
+                              two selects (provider + model from the
+                              shared catalogue) so users can pick
+                              GLM 4.7 / Anthropic / etc. straight from
+                              the device card without bouncing to the
+                              chat composer. The same Convex row backs
+                              both surfaces. */}
+                          {primaryId && primaryId !== "opencode" && MODEL_OPTIONS_BY_RUNNER[primaryId] ? (
                             <select
                               value={
                                 primaryModelByDevice[device.id]
@@ -2176,6 +2179,65 @@ export default function DevicesView({
                               ))}
                             </select>
                           ) : null}
+                          {primaryId === "opencode" ? (() => {
+                            const savedProvider = primaryProviderByDevice[device.id] || "";
+                            const savedModelFull = primaryModelByDevice[device.id] || "";
+                            const inferredProviderId = savedProvider
+                              || (savedModelFull.includes("/") ? savedModelFull.split("/")[0] : "")
+                              || OPENCODE_PROVIDER_CATALOGUE[0].id;
+                            const provider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === inferredProviderId)
+                              || OPENCODE_PROVIDER_CATALOGUE[0];
+                            const inferredModelId = (() => {
+                              if (!savedModelFull) return provider.models[0]?.id || "";
+                              const slash = savedModelFull.indexOf("/");
+                              const tail = slash >= 0 ? savedModelFull.slice(slash + 1) : savedModelFull;
+                              const match = provider.models.find((m) => m.id === tail);
+                              return match ? match.id : provider.models[0]?.id || "";
+                            })();
+                            return (
+                              <>
+                                <select
+                                  value={provider.id}
+                                  onChange={(e) => {
+                                    const nextProvider = OPENCODE_PROVIDER_CATALOGUE.find((p) => p.id === e.target.value);
+                                    if (!nextProvider) return;
+                                    const nextModel = nextProvider.models[0]?.id || "";
+                                    const fullModel = nextModel ? `${nextProvider.id}/${nextModel}` : null;
+                                    const mode = primaryRunnerByDevice[device.id] === "opencode"
+                                      ? null
+                                      : null;
+                                    void setPrimaryRunner(device.id, "opencode", fullModel, mode, nextProvider.id).catch(() => {});
+                                  }}
+                                  className="rounded border border-cyan-400/40 bg-white px-2 py-1 text-[11px] text-cyan-700 hover:border-cyan-400/70 focus:outline-none focus:ring-1 focus:ring-cyan-400/40 dark:border-cyan-400/30 dark:bg-surface-900 dark:text-cyan-100 dark:hover:border-cyan-400/60"
+                                  title="OpenCode provider for this device. The matching API key is read from opencode.json on the agent — secrets never round-trip to Convex."
+                                >
+                                  {OPENCODE_PROVIDER_CATALOGUE.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                {provider.models.length > 0 ? (
+                                  <select
+                                    value={inferredModelId}
+                                    onChange={(e) => {
+                                      const nextModelId = e.target.value;
+                                      const fullModel = nextModelId ? `${provider.id}/${nextModelId}` : null;
+                                      void setPrimaryRunner(device.id, "opencode", fullModel, null, provider.id).catch(() => {});
+                                    }}
+                                    className="rounded border border-fuchsia-400/40 bg-white px-2 py-1 text-[11px] text-fuchsia-700 hover:border-fuchsia-400/70 focus:outline-none focus:ring-1 focus:ring-fuchsia-400/40 dark:border-fuchsia-400/30 dark:bg-surface-900 dark:text-fuchsia-100 dark:hover:border-fuchsia-400/60"
+                                    title={`Model OpenCode spawns with on this device (${provider.label}).`}
+                                  >
+                                    {provider.models.map((m) => (
+                                      <option key={m.id} value={m.id} title={m.hint || ""}>
+                                        {m.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : null}
+                              </>
+                            );
+                          })() : null}
                           {!explicitPrimary && seededPrimary ? (
                             <button
                               type="button"
