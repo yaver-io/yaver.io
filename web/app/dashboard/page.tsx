@@ -815,6 +815,10 @@ export default function DashboardPage() {
     if (ready?.runnerId) return ready.runnerId;
     return null;
   })();
+  const chatRunnerChoices = useMemo(
+    () => runners.filter((runner) => runner.installed && RUNNER_WHITELIST_SET.has(runner.id)),
+    [runners],
+  );
 
   // When the primary runner changes (broadcast from another tab/view),
   // also kick a device refresh so the sidebar's `runners` array
@@ -1661,10 +1665,6 @@ export default function DashboardPage() {
   const activeRunnerRow = runners.find((r) => r.id === activeRunnerId) || null;
   const activeRunnerAuthIssue = runnerAuthIssue(activeRunnerRow);
   const canStartBrowserRunnerAuth = Boolean(activeRunnerRow && (activeRunnerRow.id === "claude" || activeRunnerRow.id === "codex"));
-  const chatRunnerChoices = useMemo(
-    () => runners.filter((runner) => runner.installed && RUNNER_WHITELIST_SET.has(runner.id)),
-    [runners],
-  );
   const mobileWorkers = displayDevices.filter((d) => d.deviceClass === "edge-mobile");
   const dormantDevices = displayDevices.filter((d) => isDormantUnreachableDevice(d));
   const visibleDevices = displayDevices.filter((d) => !isDormantUnreachableDevice(d));
