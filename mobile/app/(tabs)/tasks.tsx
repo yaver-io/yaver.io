@@ -1104,10 +1104,12 @@ function TaskCard({
   item,
   onPress,
   onDelete,
+  onComplete,
 }: {
   item: Task;
   onPress: () => void;
   onDelete: () => void;
+  onComplete: () => void;
 }) {
   const c = useColors();
   const isRunning = item.status === "running" || item.status === "queued";
@@ -1141,10 +1143,20 @@ function TaskCard({
   }, [isRunning, pulse]);
 
   const handleLongPress = () => {
-    if (isRunning) {
-      Alert.alert("Stop & Delete Task", "This will kill the running process and remove the task.", [
+    // Long-press menu — manual control over auto-completion. Without
+    // this, the only way to "finish" a task was to wait for the runner
+    // to exit on its own. Now: running/review tasks expose a "Mark
+    // complete" action that stops the runner and flips status to
+    // completed; completed tasks expose delete only.
+    const canMarkComplete =
+      item.status === "running" ||
+      item.status === "queued" ||
+      item.status === "review";
+    if (canMarkComplete) {
+      Alert.alert("Task actions", normalizeTaskTitle(item.title), [
+        { text: "Mark complete", onPress: onComplete },
+        { text: "Delete", style: "destructive", onPress: onDelete },
         { text: "Cancel", style: "cancel" },
-        { text: "Stop & Delete", style: "destructive", onPress: onDelete },
       ]);
     } else {
       Alert.alert("Delete Task", "Are you sure?", [
@@ -2466,69 +2478,94 @@ export default function TasksScreen() {
         // For adopted tmux sessions, send input directly via tmux send-keys
         await quicClient.sendTmuxInput(selectedTask.id, followUpText.trim());
       } else {
-        // Runtime agent switch: if the user changed the runner picker
-        // since this task was started, fork a child task with the new
-        // runner instead of continuing the parent in place. Parent
-        // session stays immutable. See task_fork.go on the agent side.
+        // Decide between continue (resume in place) vs. fork (spawn a
+        // child task). We fork when:
+        //   - the user changed the runner picker since this task started, OR
+        //   - the parent task already finished (completed/review/failed/
+        //     stopped). Continuing a finished task in place tries to
+        //     --resume the runner's old session; forking is cleaner and
+        //     matches Codex/Claude Code "continue into a new session"
+        //     semantics. See task_fork.go on the agent side.
         const parentRunner = (selectedTask.runnerId || "").trim();
         const desiredRunner = (selectedRunner || "").trim();
-        const switching = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
+        const runnerChanged = !!desiredRunner && !!parentRunner && desiredRunner !== parentRunner;
+        const parentFinished =
+          selectedTask.status === "completed" ||
+          selectedTask.status === "review" ||
+          selectedTask.status === "failed" ||
+          selectedTask.status === "stopped";
+        const switching = runnerChanged || parentFinished;
 
         if (switching) {
-          // Confirm before forking — explains that this creates a new
-          // child task and only the recent part of the conversation
-          // travels with it.
-          const niceName = desiredRunner.charAt(0).toUpperCase() + desiredRunner.slice(1);
-          const confirmed = await new Promise<boolean>((resolve) => {
-            Alert.alert(
-              `Switch to ${niceName}?`,
-              `Switching to ${niceName} will start a new child chat. ` +
-                `Yaver will include the most recent part of this conversation as context ` +
-                `so the new agent can pick up where you left off.\n\n` +
-                `For speed and token safety, Yaver sends roughly the last ~1200 words plus ` +
-                `the latest task summary, not the entire chat history.`,
-              [
-                { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-                { text: `Switch to ${niceName}`, style: "default", onPress: () => resolve(true) },
-              ],
-            );
-          });
-          if (!confirmed) {
-            // user backed out — drop the throw so the catch below
-            // doesn't double-handle, then leave the input in place.
-            return;
+          // Two flavors of fork:
+          //  - runnerChanged: confirm before switching agents (different
+          //    chat formats, picker explicitly changed by user).
+          //  - parentFinished only: silent fork to a child task, same
+          //    runner. This is the "continue a completed task" path —
+          //    no extra dialog because the user just typed and tapped
+          //    send.
+          if (runnerChanged) {
+            const niceName = desiredRunner.charAt(0).toUpperCase() + desiredRunner.slice(1);
+            const confirmed = await new Promise<boolean>((resolve) => {
+              Alert.alert(
+                `Switch to ${niceName}?`,
+                `Switching to ${niceName} will start a new child chat. ` +
+                  `Yaver will include the most recent part of this conversation as context ` +
+                  `so the new agent can pick up where you left off.\n\n` +
+                  `For speed and token safety, Yaver sends roughly the last ~1200 words plus ` +
+                  `the latest task summary, not the entire chat history.`,
+                [
+                  { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+                  { text: `Switch to ${niceName}`, style: "default", onPress: () => resolve(true) },
+                ],
+              );
+            });
+            if (!confirmed) {
+              // user backed out — drop the throw so the catch below
+              // doesn't double-handle, then leave the input in place.
+              return;
+            }
+            try {
+              console.log("[yaver-analytics]", JSON.stringify({
+                event: "agent_switch_requested",
+                source: "mobile",
+                from: parentRunner,
+                to: desiredRunner,
+                ts: Date.now(),
+              }));
+            } catch { /* analytics is best-effort */ }
           }
-          try {
-            console.log("[yaver-analytics]", JSON.stringify({
-              event: "agent_switch_requested",
-              source: "mobile",
-              from: parentRunner,
-              to: desiredRunner,
-              ts: Date.now(),
-            }));
-          } catch { /* analytics is best-effort */ }
           // Fork is non-destructive — no need to stop the parent.
           // Image attachments don't carry over (the child receives
-          // text-only conversation context instead).
+          // text-only conversation context instead). When the parent
+          // is finished but the runner is unchanged, send the parent's
+          // runner so the fork uses the same one. Fork requires a
+          // non-empty runner; legacy tasks without a recorded runnerId
+          // fall back to claude.
+          const forkRunner = runnerChanged
+            ? desiredRunner
+            : (parentRunner || desiredRunner || "claude");
           const result = await quicClient.forkTask(selectedTask.id, {
-            runner: desiredRunner,
+            runner: forkRunner,
             input: followUpText.trim(),
           });
           // Switch the chat to the new child so subsequent follow-ups
           // continue against the forked task.
           setSelectedTask((prev) => prev && prev.id === selectedTask.id
-            ? { ...prev, id: result.taskId, runnerId: result.runnerId }
+            ? { ...prev, id: result.taskId, runnerId: result.runnerId, status: "queued" as TaskStatus }
             : prev);
-          try {
-            console.log("[yaver-analytics]", JSON.stringify({
-              event: "agent_switch_completed",
-              source: "mobile",
-              from: parentRunner,
-              to: desiredRunner,
-              contextWords: result.contextWordsUsed,
-              ts: Date.now(),
-            }));
-          } catch { /* analytics is best-effort */ }
+          if (runnerChanged) {
+            try {
+              console.log("[yaver-analytics]", JSON.stringify({
+                event: "agent_switch_completed",
+                source: "mobile",
+                from: parentRunner,
+                to: desiredRunner,
+                contextWords: result.contextWordsUsed,
+                ts: Date.now(),
+              }));
+            } catch { /* analytics is best-effort */ }
+          }
         } else {
           // Same runner: regular continue. The agent now accepts
           // follow-ups while a task is still streaming and queues them
@@ -3507,6 +3544,7 @@ export default function TasksScreen() {
               item={item}
               onPress={() => setSelectedTask(item)}
               onDelete={() => handleDeleteTask(item.id)}
+              onComplete={() => handleCompleteTask(item.id)}
             />
           )}
         />
@@ -3742,17 +3780,40 @@ export default function TasksScreen() {
             <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }} />
             <View style={[s.modalContent, { backgroundColor: c.bgCard }]}>
               <View style={s.modalHeader}>
-                <Text style={[s.modalTitle, { color: c.textPrimary }]}>
-                  {(() => {
-                    const r = selectedRunner
-                      || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
-                      || "claude";
-                    if (r === "codex") return "Send to Codex";
-                    if (r === "opencode") return "Send to OpenCode";
-                    if (r === "custom") return "Send to custom runner";
-                    return "Send to Claude";
-                  })()}
-                </Text>
+                <Text style={[s.modalTitle, { color: c.textPrimary }]}>New task</Text>
+                {/* Tappable runner+model pill — mirrors the badge in the
+                    follow-up bar so the user can pick the agent at task
+                    creation, not only after the task starts. Opens the
+                    same showAgentPicker sheet that follow-ups use. */}
+                <Pressable
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  style={({ pressed }) => [
+                    s.agentBadge,
+                    { backgroundColor: c.bgCardElevated, borderColor: c.border, marginLeft: "auto", marginRight: 10 },
+                    pressed && { opacity: 0.55 },
+                  ]}
+                  onPress={() => setShowAgentPicker(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Change coding agent and model for this task"
+                >
+                  <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
+                    {(() => {
+                      const r = selectedRunner
+                        || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
+                        || "claude";
+                      const runner = availableRunners.find((x) => x.id === r);
+                      const model = availableModels.find((m) => m.id === selectedModel);
+                      const runnerLabel = runner?.name
+                        || (r === "codex" ? "Codex"
+                          : r === "opencode" ? "OpenCode"
+                          : r === "custom" ? "Custom"
+                          : "Claude");
+                      const modelLabel = model?.name || selectedModel || "";
+                      return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
+                    })()}
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                </Pressable>
                 <Pressable
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   onPress={() => {

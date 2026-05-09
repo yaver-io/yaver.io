@@ -2417,7 +2417,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					Timestamp: finishNow,
 				})
 			}
-			if task.Status == TaskStatusReview && len(task.PendingFollowUps) > 0 {
+			if (task.Status == TaskStatusReview || task.Status == TaskStatusFinished) && len(task.PendingFollowUps) > 0 {
 				next := task.PendingFollowUps[0]
 				task.PendingFollowUps = task.PendingFollowUps[1:]
 				oldDoneCh := task.doneCh
@@ -3043,19 +3043,20 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 		return nil, fmt.Errorf("task %s not found", id)
 	}
 	if task.Status == TaskStatusRunning || task.Status == TaskStatusQueued {
-		if !taskAwaitsManualCompletion(task) {
-			tm.mu.Unlock()
-			return nil, fmt.Errorf("task %s is already running", id)
-		}
+		// Queue the follow-up onto the running task. The drain runs
+		// after the current response finishes (see startTask / startResume
+		// completion blocks). Works for any task source so phones can
+		// text mid-stream the way Codex/Claude Code do.
 		task.PendingFollowUps = append(task.PendingFollowUps, PendingFollowUp{
 			Input:   strings.TrimSpace(input),
 			Images:  append([]ImageAttachment{}, images...),
 			Options: opts,
 		})
-		task.Output += "\n[Mobile follow-up queued; it will run after the current response finishes.]\n"
+		queuedNote := "\n[Follow-up queued; it will run after the current response finishes.]\n"
+		task.Output += queuedNote
 		if task.outputCh != nil {
 			select {
-			case task.outputCh <- "\n[Mobile follow-up queued; it will run after the current response finishes.]\n":
+			case task.outputCh <- queuedNote:
 			default:
 			}
 		}
@@ -3248,7 +3249,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 					Timestamp: now,
 				})
 			}
-			if task.Status == TaskStatusReview && len(task.PendingFollowUps) > 0 {
+			if (task.Status == TaskStatusReview || task.Status == TaskStatusFinished) && len(task.PendingFollowUps) > 0 {
 				next := task.PendingFollowUps[0]
 				task.PendingFollowUps = task.PendingFollowUps[1:]
 				oldDoneCh := task.doneCh
@@ -3420,14 +3421,37 @@ func (tm *TaskManager) SetTaskVideoState(id, clipID, status string) {
 }
 
 func (tm *TaskManager) CompleteTask(id string) error {
-	tm.mu.Lock()
-	defer tm.mu.Unlock()
+	tm.mu.RLock()
 	task, ok := tm.tasks[id]
 	if !ok {
+		tm.mu.RUnlock()
 		return fmt.Errorf("task %s not found", id)
 	}
-	if task.Status == TaskStatusRunning || task.Status == TaskStatusQueued {
-		return fmt.Errorf("task %s is still running", id)
+	isRunning := task.Status == TaskStatusRunning || task.Status == TaskStatusQueued
+	doneCh := task.doneCh
+	tm.mu.RUnlock()
+
+	// Auto-stop running tasks so the user's "mark complete" gesture
+	// from mobile doesn't leave the runner eating tokens after the
+	// status flips. Mirrors DeleteTask's auto-stop pattern.
+	if isRunning {
+		if err := tm.StopTask(id); err != nil {
+			log.Printf("[task %s] Stop failed during complete: %v", id, err)
+		}
+		if doneCh != nil {
+			select {
+			case <-doneCh:
+			case <-time.After(3 * time.Second):
+				log.Printf("[task %s] Timed out waiting for process exit during complete", id)
+			}
+		}
+	}
+
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	task, ok = tm.tasks[id]
+	if !ok {
+		return fmt.Errorf("task %s not found", id)
 	}
 	now := time.Now()
 	task.Status = TaskStatusFinished

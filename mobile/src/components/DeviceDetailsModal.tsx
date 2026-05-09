@@ -686,7 +686,7 @@ function WatchdogRecoverRow({ device }: { device: Device }) {
 // instead of relying on whatever the agent reports — that way "agent
 // installed but never authed" still surfaces a Sign in button. authConfigured
 // comes from /runner-auth/status (per-device, peered when not active).
-function CodingAgentsSection({ device }: { device: Device }) {
+export function CodingAgentsSection({ device }: { device: Device }) {
   const c = useColors();
   const {
     activeDevice,

@@ -26,6 +26,7 @@ import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
+import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS } from "../../src/lib/speech";
@@ -2785,6 +2786,20 @@ export default function SettingsScreen() {
             </View>
           </View>
         )}
+
+        {/* Per-device coding agent — mirrors the picker in
+            DeviceDetailsModal but accessible directly from Settings, so
+            users don't have to long-press the device card to set the
+            default runner. Scoped to the active device; shows nothing
+            until the user is connected to one. */}
+        {connectionStatus === "connected" && activeDevice && !activeDevice.isGuest ? (
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>
+              Coding agent — {activeDevice.name}
+            </Text>
+            <CodingAgentsSection device={activeDevice} />
+          </View>
+        ) : null}
 
         {/* AI Runner */}
         <View style={styles.section}>
