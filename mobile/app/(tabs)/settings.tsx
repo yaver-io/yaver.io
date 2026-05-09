@@ -39,7 +39,11 @@ import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../
 
 WebBrowser.maybeCompleteAuthSession();
 
-const SUPPORTED_RUNNERS = new Set(["claude-code", "codex", "opencode"]);
+// Canonical runnerIds match backend/convex/aiRunners.ts ("claude", not
+// "claude-code"). Older builds shipped "claude-code" here and silently
+// dropped Claude Code from the picker because the backend never had a
+// row with that ID.
+const SUPPORTED_RUNNERS = new Set(["claude", "claude-code", "codex", "opencode"]);
 
 const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
 const BUILD_NUMBER =
