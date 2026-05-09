@@ -768,8 +768,8 @@ export function WebReloadView({
     const prompt = composer.trim();
     if (!prompt || sending) return;
     const appRow = selectedApp ? apps.find((app) => app.name === selectedApp) ?? null : null;
-    const workDir = selectedProject?.path || appRow?.absPath || devStatus?.workDir;
-    const projectName = selectedProject?.name || appRow?.name || workDir?.split("/").filter(Boolean).slice(-1)[0];
+    const workDir = selectedProject?.path || appRow?.absPath || activeProject?.path || devStatus?.workDir;
+    const projectName = selectedProject?.name || appRow?.name || activeProject?.name || workDir?.split("/").filter(Boolean).slice(-1)[0];
     setSending(true);
     setSendStatus(null);
     try {
@@ -829,7 +829,7 @@ export function WebReloadView({
     } finally {
       setSending(false);
     }
-  }, [apps, composer, devStatus?.workDir, selectedApp, selectedProject, sending, stopActiveTaskStream]);
+  }, [activeProject, apps, composer, devStatus?.workDir, selectedApp, selectedProject, sending, stopActiveTaskStream]);
 
   // Reconnect & Fix — same robust recovery the Hot Reload tab runs.
   // Ping → repair relay password (if relevant) → stop → git-pull →
@@ -1559,9 +1559,9 @@ export function WebReloadView({
                 <span className="rounded bg-surface-800 px-1.5 py-0.5 text-[9px] normal-case tracking-normal text-surface-400">
                   {(useProjectFallback ? projects.length : apps.length) || 0}
                 </span>
-                {(selectedProject?.name || selectedApp) ? (
+                {(selectedProject?.name || selectedApp || activeProject?.name) ? (
                   <span className="truncate normal-case tracking-normal text-[10px] text-indigo-300/80">
-                    · {selectedProject?.name || selectedApp}
+                    · {selectedProject?.name || selectedApp || activeProject?.name}
                   </span>
                 ) : null}
               </span>
@@ -1655,11 +1655,11 @@ export function WebReloadView({
                 />
                 <div className="mt-3 flex items-center justify-between gap-3">
                   <div className="text-[11px] text-surface-500">
-                    {selectedProject?.name || selectedApp || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
+                    {selectedProject?.name || selectedApp || activeProject?.name || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
                   </div>
                   <button
                     onClick={() => void handleSendPrompt()}
-                    disabled={!composer.trim() || sending || runnerNeedsAuth || (!selectedProject && !selectedApp && !activeApp && !devStatus?.workDir)}
+                    disabled={!composer.trim() || sending || runnerNeedsAuth || (!selectedProject && !selectedProjectPath && !selectedApp && !activeProject && !activeApp && !devStatus?.workDir)}
                     className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
                     title={runnerNeedsAuth ? `Sign in to ${runnerAuthLabel} first — without auth the runner crashes on spawn.` : undefined}
                   >
