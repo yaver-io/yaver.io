@@ -2,7 +2,11 @@ import { mutation, query } from "./_generated/server";
 
 export const PREDEFINED_RUNNERS = [
   {
-    runnerId: "claude",
+    // runnerId is "claude-code" — the canonical id used across mobile,
+    // web, and the Go agent's switch tables (loop_cmd / autodev / etc.,
+    // which already accept both "claude" legacy and "claude-code"). The
+    // CLI binary itself is still `claude`, hence command:"claude".
+    runnerId: "claude-code",
     name: "Claude Code",
     command: "claude",
     args: JSON.stringify(["-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--model", "sonnet", "--tools", "Bash", "--dangerously-skip-permissions"]),
@@ -111,6 +115,17 @@ export const list = query({
 export const seed = mutation({
   args: {},
   handler: async (ctx) => {
+    // One-time migration: drop the legacy "claude" row before upserting
+    // "claude-code", otherwise both rows coexist after the rename and
+    // the picker shows a duplicate. Safe to run repeatedly — once the
+    // legacy row is gone, this is a no-op.
+    const legacyClaude = await ctx.db
+      .query("aiRunners")
+      .withIndex("by_runnerId", (q) => q.eq("runnerId", "claude"))
+      .first();
+    if (legacyClaude) {
+      await ctx.db.delete(legacyClaude._id);
+    }
     for (const runner of PREDEFINED_RUNNERS) {
       const existing = await ctx.db
         .query("aiRunners")

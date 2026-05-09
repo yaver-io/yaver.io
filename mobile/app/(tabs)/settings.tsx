@@ -39,11 +39,14 @@ import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../
 
 WebBrowser.maybeCompleteAuthSession();
 
-// Canonical runnerIds match backend/convex/aiRunners.ts ("claude", not
-// "claude-code"). Older builds shipped "claude-code" here and silently
-// dropped Claude Code from the picker because the backend never had a
-// row with that ID.
-const SUPPORTED_RUNNERS = new Set(["claude", "claude-code", "codex", "opencode"]);
+// User-facing picker has exactly three rows: Claude Code, OpenAI Codex,
+// OpenCode. The backend's catalog (backend/convex/aiRunners.ts) ships
+// Claude under runnerId="claude"; we rewrite it to "claude-code" at
+// fetch time so the picker keys + saved settings stay aligned with the
+// rest of the codebase (devices.tsx, RunnerAuthModal, autodev, etc.,
+// which all already accept "claude-code"). Without the rewrite, Claude
+// silently dropped out of the picker.
+const SUPPORTED_RUNNERS = new Set(["claude-code", "codex", "opencode"]);
 
 const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
 const BUILD_NUMBER =
@@ -149,7 +152,7 @@ export default function SettingsScreen() {
   const [showGuide, setShowGuide] = useState(false);
   const [guideSection, setGuideSection] = useState<string | null>(null);
   const [runners, setRunners] = useState<AiRunner[]>([]);
-  const [selectedRunner, setSelectedRunner] = useState<string>("claude");
+  const [selectedRunner, setSelectedRunner] = useState<string>("claude-code");
   const [customRunnerCommand, setCustomRunnerCommand] = useState("");
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [agentLastPing, setAgentLastPing] = useState<Date | null>(null);
@@ -670,7 +673,12 @@ export default function SettingsScreen() {
         setForceRelay(s.forceRelay);
         quicClient.setForceRelay(s.forceRelay);
       }
-      if (s.runnerId) setSelectedRunner(s.runnerId);
+      if (s.runnerId) {
+        // Normalize legacy "claude" → "claude-code" so the picker radio
+        // matches a row instead of leaving every option unselected for
+        // users whose userSettings was saved before the rename.
+        setSelectedRunner(s.runnerId === "claude" ? "claude-code" : s.runnerId);
+      }
       if (s.customRunnerCommand) setCustomRunnerCommand(s.customRunnerCommand);
       if (s.speechProvider) setSpeechProvider(s.speechProvider);
       if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);

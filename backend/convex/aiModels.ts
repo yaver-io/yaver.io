@@ -9,7 +9,7 @@ export const PREDEFINED_MODELS = [
   // and mobile/DeviceContext::DEFAULT_MODEL_BY_RUNNER.
   {
     modelId: "claude-opus-4-7",
-    runnerId: "claude",
+    runnerId: "claude-code",
     name: "Opus 4.7",
     description: "Most powerful — complex reasoning and architecture",
     isDefault: true,
@@ -17,14 +17,14 @@ export const PREDEFINED_MODELS = [
   },
   {
     modelId: "claude-sonnet-4-6",
-    runnerId: "claude",
+    runnerId: "claude-code",
     name: "Sonnet 4.6",
     description: "Fast and capable — best for most tasks",
     sortOrder: 2,
   },
   {
     modelId: "claude-haiku-4-5-20251001",
-    runnerId: "claude",
+    runnerId: "claude-code",
     name: "Haiku 4.5",
     description: "Fastest — quick edits and simple tasks",
     sortOrder: 3,
