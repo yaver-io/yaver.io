@@ -36,6 +36,7 @@ export default defineSchema({
       v.literal("github"),
       v.literal("gitlab"),
       v.literal("email"),
+      v.literal("passkey"),
     ),
     passwordHash: v.optional(v.string()),
     surveyCompleted: v.optional(v.boolean()),
@@ -58,6 +59,7 @@ export default defineSchema({
       v.literal("github"),
       v.literal("gitlab"),
       v.literal("email"),
+      v.literal("passkey"),
     ),
     providerId: v.string(),
     email: v.optional(v.string()),
@@ -153,7 +155,7 @@ export default defineSchema({
   // the credential the browser produced.
   passkeyChallenges: defineTable({
     challenge: v.string(),         // base64url, ~32 random bytes
-    purpose: v.union(v.literal("register"), v.literal("login")),
+    purpose: v.union(v.literal("register"), v.literal("login"), v.literal("signup")),
     userId: v.optional(v.id("users")),  // null for anonymous login start
     expiresAt: v.number(),         // ~5 minutes from issuance
     createdAt: v.number(),

@@ -27,6 +27,13 @@ import {
   signupWithEmail,
   loginWithEmail,
 } from "../src/lib/auth";
+import {
+  PasskeyCancelled,
+  PasskeyError,
+  isPasskeySupported,
+  passkeySignin,
+  passkeySignup,
+} from "../src/lib/passkey";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -42,6 +49,8 @@ export default function LoginScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [emailError, setEmailError] = useState("");
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const passkeySupported = isPasskeySupported();
 
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
@@ -63,6 +72,72 @@ export default function LoginScreen() {
 
     return () => subscription.remove();
   }, [login]);
+
+  // Passkey sign-in: works for any user who has previously enrolled
+  // a passkey on web or mobile, regardless of how they originally
+  // signed up (Apple OAuth, Google OAuth, email/password). Discoverable
+  // credentials let the platform passkey picker show without needing
+  // an email field first.
+  const handlePasskeySignin = async () => {
+    setEmailError("");
+    setPasskeyLoading(true);
+    try {
+      const result = await passkeySignin(getConvexSiteUrl());
+      await login(result.token);
+      router.replace("/");
+    } catch (e: unknown) {
+      if (e instanceof PasskeyCancelled) {
+        // User dismissed the platform sheet — silent.
+      } else if (e instanceof PasskeyError) {
+        setEmailError(e.message || "Passkey sign-in failed.");
+      } else {
+        setEmailError(e instanceof Error ? e.message : "Passkey sign-in failed.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
+
+  // Passkey sign-up: brand-new account. Email + full name come from
+  // the email-form fields above; we surface a clear hint when the
+  // email is already registered (route the user to sign-in instead).
+  const handlePasskeySignup = async () => {
+    setEmailError("");
+    if (!email.trim() || !email.includes("@")) {
+      setEmailError("Enter your email first.");
+      setShowEmailForm(true);
+      setIsSignUp(true);
+      return;
+    }
+    setPasskeyLoading(true);
+    try {
+      const outcome = await passkeySignup(getConvexSiteUrl(), email.trim(), fullName.trim());
+      if (!outcome.ok) {
+        if (outcome.error === "EMAIL_EXISTS") {
+          setEmailError(
+            outcome.hasPasskey
+              ? "An account with that email already exists. Use 'Sign in with passkey' instead."
+              : "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
+          );
+        } else if (outcome.error === "INVALID_EMAIL") {
+          setEmailError("Email looks invalid.");
+        }
+        return;
+      }
+      await login(outcome.result.token);
+      router.replace("/");
+    } catch (e: unknown) {
+      if (e instanceof PasskeyCancelled) {
+        // Silent
+      } else if (e instanceof PasskeyError) {
+        setEmailError(e.message || "Passkey sign-up failed.");
+      } else {
+        setEmailError(e instanceof Error ? e.message : "Passkey sign-up failed.");
+      }
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
 
   const handleOAuth = async (provider: OAuthProvider) => {
     const url = getOAuthUrl(provider);
@@ -194,6 +269,31 @@ export default function LoginScreen() {
         </View>
 
         <View style={styles.buttons}>
+          {/* Passkey: shown first so a returning user with a synced
+              iCloud Keychain credential can sign in with one tap.
+              Hidden when the device claims no passkey support (older
+              iOS / Android). Sign-in works for any account, regardless
+              of original auth method, as long as a passkey is enrolled. */}
+          {passkeySupported && !showEmailForm && (
+            <Pressable
+              style={({ pressed }) => [
+                styles.button,
+                { backgroundColor: c.accent + "15", borderColor: c.accent + "60" },
+                pressed && styles.buttonPressed,
+                passkeyLoading && { opacity: 0.6 },
+              ]}
+              onPress={handlePasskeySignin}
+              disabled={passkeyLoading}
+            >
+              <View style={styles.buttonContent}>
+                <Ionicons name="key-outline" size={18} color={c.accent} style={styles.buttonIcon} />
+                <Text style={[styles.buttonTextCentered, { color: c.accent }]}>
+                  {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+                </Text>
+              </View>
+            </Pressable>
+          )}
+
           <Pressable
             style={({ pressed }) => [
               styles.button,
@@ -350,6 +450,32 @@ export default function LoginScreen() {
                     </Text>
                   )}
                 </Pressable>
+
+                {/* Passkey sign-up: only shown in signup mode. Email +
+                    fullName from the form above are used as the new
+                    account's identifiers; the password fields are
+                    ignored. EMAIL_EXISTS routes the user to sign-in. */}
+                {isSignUp && passkeySupported && (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.submitButton,
+                      { backgroundColor: c.accent + "15", borderWidth: 1, borderColor: c.accent + "60" },
+                      pressed && styles.buttonPressed,
+                      passkeyLoading && { opacity: 0.6 },
+                    ]}
+                    onPress={handlePasskeySignup}
+                    disabled={passkeyLoading || !email.trim() || !fullName.trim()}
+                  >
+                    {passkeyLoading ? (
+                      <ActivityIndicator size="small" color={c.accent} />
+                    ) : (
+                      <View style={styles.buttonContent}>
+                        <Ionicons name="key-outline" size={16} color={c.accent} style={styles.buttonIcon} />
+                        <Text style={[styles.submitButtonText, { color: c.accent }]}>Sign up with passkey</Text>
+                      </View>
+                    )}
+                  </Pressable>
+                )}
 
                 {!isSignUp && (
                   <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>

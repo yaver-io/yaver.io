@@ -1,0 +1,15 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls",
+      "delegate_permission/common.get_login_creds"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "io.yaver.mobile",
+      "sha256_cert_fingerprints": [
+        "5C:52:8F:DF:2C:9E:4A:0E:B7:1B:57:1F:2D:EC:E8:D6:88:35:A3:10:AB:39:70:4E:C1:25:77:7B:70:DF:25:6F"
+      ]
+    }
+  }
+]

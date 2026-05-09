@@ -4,13 +4,20 @@
 
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { randomHex } from "./auth";
+
+const challengePurpose = v.union(
+  v.literal("register"),
+  v.literal("login"),
+  v.literal("signup"),
+);
 
 // ── Challenges ──────────────────────────────────────────────────────
 
 export const recordChallenge = mutation({
   args: {
     challenge: v.string(),
-    purpose: v.union(v.literal("register"), v.literal("login")),
+    purpose: challengePurpose,
     userId: v.optional(v.id("users")),
   },
   handler: async (ctx, args) => {
@@ -30,7 +37,7 @@ export const recordChallenge = mutation({
 export const findChallenge = query({
   args: {
     challenge: v.string(),
-    purpose: v.union(v.literal("register"), v.literal("login")),
+    purpose: challengePurpose,
   },
   handler: async (ctx, args) => {
     const row = await ctx.db
@@ -166,5 +173,119 @@ export const removeCredential = mutation({
     if (row.userId !== args.userId) throw new Error("NOT_OWNER");
     await ctx.db.delete(row._id);
     return { ok: true };
+  },
+});
+
+// ── Signup-with-passkey ─────────────────────────────────────────────
+
+// emailAvailable lets the signupStart action gate before we issue a
+// challenge. We don't want a passkey-signup attempt to silently fail
+// at signupFinish after the user has already done the Touch ID prompt.
+//
+// Returns:
+//   { available: true }                    — email is unused → proceed
+//   { available: false, hasPasskey: true } — email exists AND has a passkey already
+//   { available: false, hasPasskey: false }— email exists via OAuth/email; user
+//                                            should sign in normally + enroll
+//                                            from settings (PasskeyEnrollPrompt)
+export const emailAvailable = query({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const normalized = args.email.trim().toLowerCase();
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalized))
+      .unique();
+    if (!existing) {
+      return { available: true, hasPasskey: false };
+    }
+    const passkeys = await ctx.db
+      .query("passkeys")
+      .withIndex("by_userId", (q) => q.eq("userId", existing._id))
+      .take(1);
+    return { available: false, hasPasskey: passkeys.length > 0 };
+  },
+});
+
+// createPasskeyUser is the mutation called from signupFinish AFTER
+// attestation has been verified. Atomically:
+//   1. Re-check email is still free (race protection — someone else
+//      could have signed up with the same email between signupStart
+//      and signupFinish).
+//   2. Insert the users row with provider="passkey" and no
+//      passwordHash. The user can later add a password / link OAuth
+//      from settings.
+//   3. Insert the first passkey credential.
+//   4. Insert the auth identity row so future OAuth flows that match
+//      this email can link rather than collide.
+//   5. Insert default userSettings (relay, etc.) — same pattern as
+//      email signup.
+//
+// Returns the new userDocId so the action can mint a session token.
+export const createPasskeyUser = mutation({
+  args: {
+    email: v.string(),
+    fullName: v.string(),
+    credentialId: v.string(),
+    publicKey: v.string(),
+    counter: v.number(),
+    transports: v.optional(v.array(v.string())),
+    deviceLabel: v.optional(v.string()),
+    backedUp: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const email = args.email.trim().toLowerCase();
+    const dupe = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", email))
+      .unique();
+    if (dupe) throw new Error("EMAIL_EXISTS");
+
+    const credDupe = await ctx.db
+      .query("passkeys")
+      .withIndex("by_credentialId", (q) => q.eq("credentialId", args.credentialId))
+      .unique();
+    if (credDupe) throw new Error("CREDENTIAL_EXISTS");
+
+    const userId = randomHex(16);
+    const userDocId = await ctx.db.insert("users", {
+      userId,
+      email,
+      fullName: args.fullName.trim() || email,
+      provider: "passkey",
+      providerId: args.credentialId,
+      createdAt: Date.now(),
+    });
+
+    await ctx.db.insert("passkeys", {
+      userId: userDocId,
+      credentialId: args.credentialId,
+      publicKey: args.publicKey,
+      counter: args.counter,
+      transports: args.transports,
+      deviceLabel: args.deviceLabel,
+      backedUp: args.backedUp,
+      createdAt: Date.now(),
+    });
+
+    await ctx.db.insert("authIdentities", {
+      userId: userDocId,
+      provider: "passkey",
+      providerId: args.credentialId,
+      email,
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+    });
+
+    // Default settings — copied from auth.ts createEmailUser path.
+    // Skips the welcome email (we don't have a passkey-specific
+    // template yet, and adding email could surprise users who picked
+    // passkey for privacy). TODO: send welcome email asynchronously.
+    await ctx.db.insert("userSettings", {
+      userId: userDocId,
+      forceRelay: false,
+    });
+
+    return userDocId;
   },
 });

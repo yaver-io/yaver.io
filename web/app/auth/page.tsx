@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import { startAuthentication, browserSupportsWebAuthn } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { CONVEX_URL } from "@/lib/constants";
 import { hasRegisteredMachine } from "@/lib/onboarding";
 import { sanitizeReturnTo } from "@/lib/oauth";
@@ -113,6 +113,89 @@ function AuthContent() {
       if (!finishRes.ok) {
         const text = await finishRes.text();
         setFormError(text || "Passkey verification failed. Use email or OAuth instead.");
+        setPasskeyLoading(false);
+        return;
+      }
+      const data = await finishRes.json();
+      const token = data?.token;
+      if (!token) {
+        setFormError("No token received from server.");
+        setPasskeyLoading(false);
+        return;
+      }
+      localStorage.setItem("yaver_auth_token", token);
+      document.cookie = `yaver_auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
+      await redirectAfterAuth(token);
+    } catch {
+      setFormError("Network error. Please try again.");
+      setPasskeyLoading(false);
+    }
+  };
+
+  const handlePasskeySignup = async () => {
+    setFormError(null);
+    if (!email.trim() || !email.includes("@")) {
+      setFormError("Enter your email first.");
+      return;
+    }
+    setPasskeyLoading(true);
+    try {
+      // 1. Start signup — server checks email is unused, returns
+      //    options. EMAIL_EXISTS branches into a helpful redirect to
+      //    sign-in instead of silent failure mid-Touch-ID.
+      const startRes = await fetch(`${CONVEX_URL}/auth/passkey/signup/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, fullName }),
+      });
+      if (!startRes.ok) {
+        const text = await startRes.text();
+        setFormError(text || "Could not start passkey sign-up.");
+        setPasskeyLoading(false);
+        return;
+      }
+      const startData = await startRes.json();
+      if (startData?.ok === false) {
+        if (startData.error === "EMAIL_EXISTS") {
+          setFormError(
+            startData.hasPasskey
+              ? "An account with that email already exists. Use 'Sign in with passkey' instead."
+              : "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
+          );
+        } else if (startData.error === "INVALID_EMAIL") {
+          setFormError("Email looks invalid.");
+        } else {
+          setFormError("Could not start passkey sign-up.");
+        }
+        setPasskeyLoading(false);
+        return;
+      }
+
+      // 2. Browser produces an attestation. Cancellation is the most
+      //    common "error" — treat it silently.
+      let attResp;
+      try {
+        attResp = await startRegistration({ optionsJSON: startData.options });
+      } catch (err: any) {
+        if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
+          setPasskeyLoading(false);
+          return;
+        }
+        setFormError(err?.message || "Passkey sign-up cancelled.");
+        setPasskeyLoading(false);
+        return;
+      }
+
+      // 3. Verify on the server; success creates the user atomically
+      //    and mints a session token (same shape as login).
+      const finishRes = await fetch(`${CONVEX_URL}/auth/passkey/signup/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, fullName, response: attResp }),
+      });
+      if (!finishRes.ok) {
+        const text = await finishRes.text();
+        setFormError(text || "Passkey sign-up failed.");
         setPasskeyLoading(false);
         return;
       }
@@ -274,6 +357,25 @@ function AuthContent() {
                 <circle cx="12" cy="16" r="1.5" />
               </svg>
               {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+            </button>
+          )}
+
+          {/* Passkey sign-up. Requires email to be filled in; the form
+              field below is the source. EMAIL_EXISTS routes the user
+              back to sign-in via an inline hint instead of failing
+              silently after Touch ID. */}
+          {mode === "signup" && passkeySupported && (
+            <button
+              onClick={handlePasskeySignup}
+              disabled={passkeyLoading || !email.trim()}
+              className={`flex w-full items-center justify-center gap-3 border border-cyan-400/40 bg-cyan-400/10 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-50 ${controlClass}`}
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                <circle cx="12" cy="16" r="1.5" />
+              </svg>
+              {passkeyLoading ? "Waiting for passkey..." : "Sign up with passkey"}
             </button>
           )}
 

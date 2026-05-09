@@ -2,7 +2,7 @@
   "expo": {
     "name": "Yaver",
     "slug": "yaver",
-    "version": "1.18.87",
+    "version": "1.18.88",
     "orientation": "portrait",
     "scheme": "yaver",
     "icon": "./assets/icon.png",
@@ -14,6 +14,10 @@
       "supportsTablet": true,
       "bundleIdentifier": "io.yaver.mobile",
       "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:yaver.io",
+        "webcredentials:yaver.io"
+      ],
       "infoPlist": {
         "CFBundleURLTypes": [
           {

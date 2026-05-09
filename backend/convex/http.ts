@@ -497,6 +497,57 @@ http.route({
   }),
 });
 
+/** POST /auth/passkey/signup/start — anonymous; brand-new email + display name.
+ *  Returns either { ok:true, options } or { ok:false, error, hasPasskey } so
+ *  the client can route email-already-registered users to sign-in instead. */
+http.route({
+  path: "/auth/passkey/signup/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({} as any));
+    const email = String(body?.email || "").trim();
+    const fullName = String(body?.fullName || "").trim();
+    if (!email) return errorResponse("Missing email", 400);
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const result = await ctx.runAction(api.passkeys.signupStart, {
+        origin,
+        email,
+        fullName,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e?.message || "signupStart failed", 400);
+    }
+  }),
+});
+
+/** POST /auth/passkey/signup/finish — anonymous; mints session for the new user. */
+http.route({
+  path: "/auth/passkey/signup/finish",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({} as any));
+    if (!body?.response) return errorResponse("Missing response", 400);
+    const email = String(body?.email || "").trim();
+    const fullName = String(body?.fullName || "").trim();
+    if (!email) return errorResponse("Missing email", 400);
+    const origin = request.headers.get("Origin") || "";
+    try {
+      const result = await ctx.runAction(api.passkeys.signupFinish, {
+        origin,
+        email,
+        fullName,
+        response: body.response,
+        deviceLabel: body?.deviceLabel,
+      });
+      return jsonResponse(result);
+    } catch (e: any) {
+      return errorResponse(e?.message || "signupFinish failed", 400);
+    }
+  }),
+});
+
 /** POST /auth/passkey/login/start — anonymous; returns assertion challenge. */
 http.route({
   path: "/auth/passkey/login/start",

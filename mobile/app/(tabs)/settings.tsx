@@ -123,6 +123,8 @@ export default function SettingsScreen() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
   const [removingMachine, setRemovingMachine] = useState(false);
+  const [enrollingPasskey, setEnrollingPasskey] = useState(false);
+  const [passkeyEnrollMessage, setPasskeyEnrollMessage] = useState<string | null>(null);
   // Streaming uninstall progress: mirrors the web AccountsView. Each
   // entry is one step the remote agent emits via /streams/<machine-remove:...>.
   // Cleared when the user starts a fresh removal.
@@ -1383,6 +1385,35 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleAddPasskey = async () => {
+    setPasskeyEnrollMessage(null);
+    setEnrollingPasskey(true);
+    try {
+      const { getToken } = await import("../../src/lib/auth");
+      const token = await getToken();
+      if (!token) {
+        setPasskeyEnrollMessage("Sign in first.");
+        return;
+      }
+      const { passkeyEnroll, PasskeyCancelled, PasskeyError } = await import("../../src/lib/passkey");
+      const { getConvexSiteUrl } = await import("../../src/lib/auth");
+      try {
+        await passkeyEnroll(getConvexSiteUrl(), token, "iPhone");
+        setPasskeyEnrollMessage("✓ Passkey added. Next sign-in: just Face ID.");
+      } catch (e: unknown) {
+        if (e instanceof PasskeyCancelled) {
+          // Silent — user dismissed the platform sheet.
+        } else if (e instanceof PasskeyError) {
+          setPasskeyEnrollMessage(e.message || "Could not add passkey.");
+        } else {
+          setPasskeyEnrollMessage(e instanceof Error ? e.message : "Could not add passkey.");
+        }
+      }
+    } finally {
+      setEnrollingPasskey(false);
+    }
+  };
+
   const handleRemoveMachine = async () => {
     if (machineDeleteConfirm !== "delete my machine") return;
     if (connectionStatus !== "connected" || !activeDevice) {
@@ -2033,6 +2064,55 @@ export default function SettingsScreen() {
                 </Text>
               </View>
             )}
+          </View>
+        </View>
+
+        {/* Passkeys — sign-in fast next time. Lets the currently
+            signed-in user (regardless of how they got here — Apple,
+            Google, email/password, or another passkey) add a new
+            passkey to their account. iCloud Keychain / Google
+            Password Manager syncs across the user's devices, so one
+            enrollment from this phone surfaces on macOS Safari, Mac
+            Yaver, etc. */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Passkeys</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}>
+            <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+              Add a passkey to sign in faster next time — no password, just Face ID / Touch ID. You stay signed in everywhere you already are.
+            </Text>
+            {passkeyEnrollMessage ? (
+              <Text
+                style={{
+                  color: passkeyEnrollMessage.startsWith("✓") ? "#10b981" : c.error,
+                  fontSize: 12,
+                  marginTop: 10,
+                }}
+              >
+                {passkeyEnrollMessage}
+              </Text>
+            ) : null}
+            <Pressable
+              style={({ pressed }) => [
+                {
+                  marginTop: 12,
+                  paddingVertical: 10,
+                  paddingHorizontal: 14,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: c.accent + "60",
+                  backgroundColor: c.accent + "15",
+                  alignItems: "center",
+                },
+                pressed && { opacity: 0.8 },
+                enrollingPasskey && { opacity: 0.6 },
+              ]}
+              onPress={handleAddPasskey}
+              disabled={enrollingPasskey}
+            >
+              <Text style={{ color: c.accent, fontWeight: "600", fontSize: 14 }}>
+                {enrollingPasskey ? "Waiting for passkey..." : "Add a passkey"}
+              </Text>
+            </Pressable>
           </View>
         </View>
 

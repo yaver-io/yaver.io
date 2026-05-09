@@ -329,6 +329,179 @@ export const loginFinish = action({
   },
 });
 
+// ── Signup-with-passkey ─────────────────────────────────────────────
+//
+// Anonymous flow: no session token required. Creates a NEW user row
+// and a first passkey atomically inside signupFinish. Used as the
+// initial-signup path on web + mobile so a brand-new user can land on
+// the dashboard with one Touch ID prompt and zero passwords.
+//
+// Email-already-registered case: signupStart returns
+// { error: "EMAIL_EXISTS", hasPasskey } so the client can route the
+// user to the right next step (sign in with passkey, or sign in with
+// their existing OAuth/email and add a passkey from settings). This
+// avoids the silent-failure trap where the user goes through the
+// Touch ID prompt only to be rejected at signupFinish.
+
+/**
+ * Step 1 of signup. Validates the email isn't already registered,
+ * issues a registration challenge, returns the WebAuthn options blob
+ * for navigator.credentials.create() / native passkey.create().
+ */
+export const signupStart = action({
+  args: {
+    origin: v.string(),
+    email: v.string(),
+    fullName: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    | { ok: true; options: any }
+    | { ok: false; error: "EMAIL_EXISTS" | "INVALID_EMAIL"; hasPasskey?: boolean }
+  > => {
+    if (!allowedOrigins().includes(args.origin)) {
+      throw new Error("origin not allowed");
+    }
+    const email = args.email.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      return { ok: false, error: "INVALID_EMAIL" };
+    }
+
+    const availability: { available: boolean; hasPasskey: boolean } = await ctx.runQuery(
+      api.passkeysDb.emailAvailable,
+      { email },
+    );
+    if (!availability.available) {
+      return { ok: false, error: "EMAIL_EXISTS", hasPasskey: availability.hasPasskey };
+    }
+
+    const rpID = rpIdForOrigin(args.origin);
+    const options = await generateRegistrationOptions({
+      rpName: rpName(),
+      rpID,
+      userName: email,
+      userDisplayName: args.fullName.trim() || email,
+      // userID is the WebAuthn-internal handle the authenticator
+      // persists. For a fresh signup we have no users row yet, so
+      // bind it to the email — the email is the stable identifier
+      // until the user picks a userId post-signup. The authenticator
+      // never reveals this back to the RP, so the choice is private.
+      userID: new TextEncoder().encode(email),
+      attestationType: "none",
+      excludeCredentials: [],
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "preferred",
+      },
+    });
+
+    await ctx.runMutation(api.passkeysDb.recordChallenge, {
+      challenge: options.challenge,
+      purpose: "signup",
+      userId: undefined,
+    });
+
+    return { ok: true, options };
+  },
+});
+
+/**
+ * Step 2 of signup. Verifies the attestation, creates the user row
+ * and first passkey atomically (via createPasskeyUser mutation), mints
+ * a session token. Same response shape as loginFinish.
+ */
+export const signupFinish = action({
+  args: {
+    origin: v.string(),
+    email: v.string(),
+    fullName: v.string(),
+    response: v.any(),
+    deviceLabel: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ token: string; userId: string; userDocId: string; email: string }> => {
+    if (!allowedOrigins().includes(args.origin)) {
+      throw new Error("origin not allowed");
+    }
+    const rpID = rpIdForOrigin(args.origin);
+    const email = args.email.trim().toLowerCase();
+
+    const expectedChallenge = args.response?.response?.clientDataJSON
+      ? extractClientDataChallenge(args.response.response.clientDataJSON)
+      : null;
+    if (!expectedChallenge) throw new Error("invalid response");
+
+    const challengeRow = await ctx.runQuery(api.passkeysDb.findChallenge, {
+      challenge: expectedChallenge,
+      purpose: "signup",
+    });
+    if (!challengeRow) throw new Error("challenge expired or unknown");
+
+    const verification = await verifyRegistrationResponse({
+      response: args.response,
+      expectedChallenge,
+      expectedOrigin: args.origin,
+      expectedRPID: rpID,
+      requireUserVerification: false,
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      throw new Error("attestation failed");
+    }
+
+    const cred = verification.registrationInfo.credential;
+    const credentialIdB64 = cred.id;
+    const publicKeyB64 = bytesToB64url(cred.publicKey);
+
+    // createPasskeyUser is atomic: re-checks email + credentialId
+    // uniqueness inside a single mutation, so a concurrent signup with
+    // the same email racing this one safely fails with EMAIL_EXISTS.
+    const userDocId = await ctx.runMutation(api.passkeysDb.createPasskeyUser, {
+      email,
+      fullName: args.fullName,
+      credentialId: credentialIdB64,
+      publicKey: publicKeyB64,
+      counter: cred.counter,
+      transports: cred.transports ?? undefined,
+      deviceLabel: args.deviceLabel,
+      backedUp: verification.registrationInfo.credentialBackedUp,
+    });
+
+    await ctx.runMutation(api.passkeysDb.consumeChallenge, {
+      challenge: expectedChallenge,
+    });
+
+    // Mint a session — same shape as loginFinish.
+    const tokenBytes = new Uint8Array(32);
+    crypto.getRandomValues(tokenBytes);
+    const token = Array.from(tokenBytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const tokenHash = await sha256HexLocal(token);
+    const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    await ctx.runMutation(api.auth.createSession, {
+      tokenHash,
+      userId: userDocId,
+      expiresAt,
+    });
+
+    const profile: { userId: string; email: string } | null = await ctx.runQuery(
+      api.auth.getUserPublicProfile,
+      { userDocId },
+    );
+
+    return {
+      token,
+      userId: profile?.userId ?? String(userDocId),
+      userDocId: String(userDocId),
+      email: profile?.email ?? email,
+    };
+  },
+});
+
 // SHA-256 hex of a string. Mirrors auth.sha256Hex but is reachable
 // from a "use node" action (importing from auth.ts would pull mutation
 // helpers that V8/node can both serve, but we keep this self-contained

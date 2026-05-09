@@ -18,7 +18,8 @@ type OAuthProvider =
   | "apple"
   | "github"
   | "gitlab"
-  | "email";
+  | "email"
+  | "passkey";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -520,7 +521,7 @@ export async function validateSessionInternal(
     userId: string;
     email: string;
     fullName: string;
-    provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email";
+    provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email" | "passkey";
     providerId: string;
     passwordHash?: string;
     avatarUrl?: string;
