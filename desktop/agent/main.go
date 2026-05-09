@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.173"
+const version = "1.99.174"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -417,6 +417,12 @@ func main() {
 		runVibe(os.Args[2:])
 	case "repo":
 		runRepo(os.Args[2:])
+	case "git":
+		// `yaver git push-creds <device|alias> [...]` — forward locally
+		// detected GitHub/GitLab tokens to one or more owned remote
+		// machines via the same /machine/onboarding/apply flow the
+		// dashboard uses. See git_push_creds_cmd.go.
+		runGit(os.Args[2:])
 	case "pipeline":
 		runPipeline(os.Args[2:])
 	case "loop":
@@ -2183,6 +2189,28 @@ func runServe(args []string) {
 	log.Printf("  HTTP port: %d", *httpPort)
 	if !*noQUIC {
 		log.Printf("  QUIC port: %d", *quicPort)
+	}
+
+	// Probe gh + glab once at boot. Used by /info, the runner-task
+	// preamble (so Claude/Codex see "gh + glab installed and authed"
+	// without having to discover it themselves), and MCP wrappers
+	// (gh_run, glab_run, github_pr_create, …) for fast install/auth
+	// preflight. Cached for 10 minutes; install_cmd refreshes after
+	// successful install. Logged here so the boot banner shows the
+	// posture every time, matching how `yaver doctor` reports it.
+	for name, cli := range DetectGitProviderCLIs() {
+		switch {
+		case !cli.Available:
+			log.Printf("  %s CLI: not on PATH — install with `yaver install %s`", name, name)
+		case !cli.Authed:
+			log.Printf("  %s CLI: %s (%s) — NOT authenticated; run `%s auth login`", name, cli.Path, cli.Version, name)
+		default:
+			who := cli.AuthUser
+			if who == "" {
+				who = "(user unknown)"
+			}
+			log.Printf("  %s CLI: %s (%s) — authed as %s on %s", name, cli.Path, cli.Version, who, cli.AuthHost)
+		}
 	}
 
 	// Ensure stable device ID

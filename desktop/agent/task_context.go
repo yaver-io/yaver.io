@@ -260,6 +260,15 @@ func noQuestionsPreamble(vaultHints string) string {
 		sb.WriteString("\nRead one with `yaver vault get <name> [--project <p>]`. Load all of a project's into env with `eval \"$(yaver vault env --project <p>)\"`. The names above are non-secret; the values stay on disk encrypted until you read them.")
 	}
 
+	// gh + glab CLI hint — when present + authenticated, runners
+	// should reach for them directly instead of asking for tokens.
+	// Empty when neither is usable, so the preamble stays clean on
+	// boxes that haven't installed them.
+	if hint := gitProviderCLIPreambleHint(); hint != "" {
+		sb.WriteString("\n\n[Git providers — use these CLIs directly]\n")
+		sb.WriteString(hint)
+	}
+
 	sb.WriteString("\n\nDo not write the strings 'Should I', 'Would you like me to', 'Do you want me to', 'Please confirm', or 'Let me know if' anywhere in your output unless you are quoting documentation. Either act, or call yaver_ask_user.\n")
 	return sb.String()
 }

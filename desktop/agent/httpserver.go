@@ -2260,6 +2260,12 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	project := DetectProjectInfo(s.taskMgr.workDir)
 	info["project"] = project
 
+	// gh + glab CLI posture. Mobile + web surfaces use this to render
+	// "GitHub CLI ready" / "GitLab CLI not authenticated" indicators
+	// without each surface re-probing. Cached at boot + refreshed by
+	// `yaver install` after a successful gh/glab install.
+	info["gitProviderCLIs"] = DetectGitProviderCLIs()
+
 	// Dev server status (for hot-reload awareness)
 	if s.devServerMgr != nil {
 		if devStatus := s.devServerMgr.Status(); devStatus != nil {
@@ -10016,6 +10022,70 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpGitHubStargazers(a.Repo))
+	// --- gh / glab generic + write-op ---
+	case "gh_run":
+		var a struct {
+			Args []string `json:"args"`
+			Dir  string   `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGhRun(a.Dir, a.Args))
+	case "glab_run":
+		var a struct {
+			Args []string `json:"args"`
+			Dir  string   `json:"directory"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGlabRun(a.Dir, a.Args))
+	case "github_pr_create":
+		var a struct {
+			Dir   string `json:"directory"`
+			Title string `json:"title"`
+			Body  string `json:"body"`
+			Base  string `json:"base"`
+			Head  string `json:"head"`
+			Draft bool   `json:"draft"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubPRCreate(a.Dir, a.Title, a.Body, a.Base, a.Head, a.Draft))
+	case "github_issue_create":
+		var a struct {
+			Dir    string   `json:"directory"`
+			Title  string   `json:"title"`
+			Body   string   `json:"body"`
+			Labels []string `json:"labels"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubIssueCreate(a.Dir, a.Title, a.Body, a.Labels))
+	case "github_workflow_run":
+		var a struct {
+			Dir      string            `json:"directory"`
+			Workflow string            `json:"workflow"`
+			Ref      string            `json:"ref"`
+			Inputs   map[string]string `json:"inputs"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitHubWorkflowRun(a.Dir, a.Workflow, a.Ref, a.Inputs))
+	case "gitlab_mr_create":
+		var a struct {
+			Dir          string `json:"directory"`
+			Title        string `json:"title"`
+			Description  string `json:"description"`
+			SourceBranch string `json:"sourceBranch"`
+			TargetBranch string `json:"targetBranch"`
+			Draft        bool   `json:"draft"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabMRCreate(a.Dir, a.Title, a.Description, a.SourceBranch, a.TargetBranch, a.Draft))
+	case "gitlab_issue_create":
+		var a struct {
+			Dir         string   `json:"directory"`
+			Title       string   `json:"title"`
+			Description string   `json:"description"`
+			Labels      []string `json:"labels"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitLabIssueCreate(a.Dir, a.Title, a.Description, a.Labels))
 	// --- PlanetScale ---
 	case "pscale_branches":
 		var a struct {

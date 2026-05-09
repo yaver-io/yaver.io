@@ -75,6 +75,19 @@ var integrations = []installPlan{
 		},
 	},
 	{
+		name:        "glab",
+		description: "GitLab CLI — same role as gh for GitLab repos (MR/issue/CI flows, token autodetect)",
+		macOS:       []string{"brew install glab"},
+		linux: []linuxStep{
+			// Debian / Ubuntu: glab isn't in the default apt repos. Use
+			// the upstream tarball for x86_64 + arm64 (covers Pi, ARM
+			// cloud nodes, the yaver-test-ephemeral box).
+			{"apt-get", "ARCH=$(uname -m); case \"$ARCH\" in x86_64) GLAB_ARCH=amd64 ;; aarch64|arm64) GLAB_ARCH=arm64 ;; *) GLAB_ARCH=amd64 ;; esac; curl -fsSL -o /tmp/glab.tar.gz \"https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases/permalink/latest/downloads/glab_${GLAB_ARCH}_linux.tar.gz\" && sudo tar -xzf /tmp/glab.tar.gz -C /usr/local/bin bin/glab --strip-components=1 && rm -f /tmp/glab.tar.gz"},
+			{"dnf", "sudo dnf install -y glab"},
+			{"pacman", "sudo pacman -S --noconfirm glab"},
+		},
+	},
+	{
 		name:        "uv",
 		description: "uv — fast Python/environment manager for modern dev boxes",
 		macOS:       []string{"brew install uv"},
@@ -519,6 +532,7 @@ func checkInstalled(name string) string {
 	probe := map[string][]string{
 		"git":               {"git"},
 		"gh":                {"gh"},
+		"glab":              {"glab"},
 		"uv":                {"uv"},
 		"docker":            {"docker"},
 		"tailscale":         {"tailscale"},

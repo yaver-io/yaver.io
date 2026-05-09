@@ -411,6 +411,163 @@ func mcpRailwayDeploy(dir string) interface{} {
 	return map[string]interface{}{"ok": true, "output": string(out)}
 }
 
+// ---------------------------------------------------------------------------
+// gh_run / glab_run — generic CLI passthrough so coding agents can
+// invoke any subcommand without us shipping a per-verb wrapper. The
+// agent already has 12+ specific tools (github_prs, github_issues,
+// github_ci_status, gitlab_mrs, …) but those cover read-only cases.
+// Anything write-side (gh repo create, gh workflow run, gh release
+// create, glab snippet create, …) used to require a coding agent
+// to shell out manually, which doesn't work when the runner runs
+// inside a sandbox without the same PATH posture.
+//
+// Both helpers preflight DetectGitProviderCLIs to (a) bail with a
+// useful "install with `yaver install gh`" message if missing and
+// (b) bail fast if installed-but-not-authed, since `gh pr create`
+// against an unauthed gh hangs on a stdin prompt.
+// ---------------------------------------------------------------------------
+
+func mcpGhRun(dir string, args []string) interface{} {
+	clis := DetectGitProviderCLIs()
+	cli, ok := clis["gh"]
+	if !ok || !cli.Available {
+		return map[string]interface{}{"error": "gh CLI not on PATH — install with `yaver install gh` (or brew install gh)"}
+	}
+	if !cli.Authed {
+		return map[string]interface{}{"error": "gh is installed but not authenticated — run `gh auth login` (one-time, opens browser)"}
+	}
+	if len(args) == 0 {
+		return map[string]interface{}{"error": "args is required (gh subcommand + flags)"}
+	}
+	cmd := osexec.Command(cli.Path, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	resp := map[string]interface{}{"output": string(out), "argv": append([]string{"gh"}, args...)}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	return resp
+}
+
+func mcpGlabRun(dir string, args []string) interface{} {
+	clis := DetectGitProviderCLIs()
+	cli, ok := clis["glab"]
+	if !ok || !cli.Available {
+		return map[string]interface{}{"error": "glab CLI not on PATH — install with `yaver install glab` (or brew install glab)"}
+	}
+	if !cli.Authed {
+		return map[string]interface{}{"error": "glab is installed but not authenticated — run `glab auth login` (one-time, opens browser)"}
+	}
+	if len(args) == 0 {
+		return map[string]interface{}{"error": "args is required (glab subcommand + flags)"}
+	}
+	cmd := osexec.Command(cli.Path, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	resp := map[string]interface{}{"output": string(out), "argv": append([]string{"glab"}, args...)}
+	if err != nil {
+		resp["error"] = err.Error()
+	}
+	return resp
+}
+
+// ---------------------------------------------------------------------------
+// Write-op wrappers — opinionated tools so coding agents can DO
+// repo ops with structured input rather than mass-marshaling args.
+// Each is a thin shim over mcpGhRun / mcpGlabRun with input
+// validation + sensible defaults. The plain *_run tools above are
+// the escape hatch for anything not covered here.
+// ---------------------------------------------------------------------------
+
+func mcpGitHubPRCreate(dir, title, body, base, head string, draft bool) interface{} {
+	if strings.TrimSpace(title) == "" {
+		return map[string]interface{}{"error": "title is required"}
+	}
+	args := []string{"pr", "create", "--title", title}
+	if body != "" {
+		args = append(args, "--body", body)
+	} else {
+		args = append(args, "--body", "")
+	}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	if head != "" {
+		args = append(args, "--head", head)
+	}
+	if draft {
+		args = append(args, "--draft")
+	}
+	return mcpGhRun(dir, args)
+}
+
+func mcpGitHubIssueCreate(dir, title, body string, labels []string) interface{} {
+	if strings.TrimSpace(title) == "" {
+		return map[string]interface{}{"error": "title is required"}
+	}
+	args := []string{"issue", "create", "--title", title, "--body", body}
+	for _, l := range labels {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			args = append(args, "--label", l)
+		}
+	}
+	return mcpGhRun(dir, args)
+}
+
+func mcpGitHubWorkflowRun(dir, workflow, ref string, inputs map[string]string) interface{} {
+	if strings.TrimSpace(workflow) == "" {
+		return map[string]interface{}{"error": "workflow is required (filename like ci.yml or workflow display name)"}
+	}
+	args := []string{"workflow", "run", workflow}
+	if ref != "" {
+		args = append(args, "--ref", ref)
+	}
+	for k, v := range inputs {
+		args = append(args, "--field", k+"="+v)
+	}
+	return mcpGhRun(dir, args)
+}
+
+func mcpGitLabMRCreate(dir, title, description, sourceBranch, targetBranch string, draft bool) interface{} {
+	if strings.TrimSpace(title) == "" {
+		return map[string]interface{}{"error": "title is required"}
+	}
+	args := []string{"mr", "create", "--title", title, "--description", description}
+	if sourceBranch != "" {
+		args = append(args, "--source-branch", sourceBranch)
+	}
+	if targetBranch != "" {
+		args = append(args, "--target-branch", targetBranch)
+	}
+	if draft {
+		args = append(args, "--draft")
+	}
+	// glab won't push interactively when a TTY isn't attached; tell
+	// it explicitly so non-interactive callers don't hang.
+	args = append(args, "--yes")
+	return mcpGlabRun(dir, args)
+}
+
+func mcpGitLabIssueCreate(dir, title, description string, labels []string) interface{} {
+	if strings.TrimSpace(title) == "" {
+		return map[string]interface{}{"error": "title is required"}
+	}
+	args := []string{"issue", "create", "--title", title, "--description", description}
+	for _, l := range labels {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			args = append(args, "--label", l)
+		}
+	}
+	args = append(args, "--yes")
+	return mcpGlabRun(dir, args)
+}
+
 // Unused import guard
 var _ = http.StatusOK
 var _ = io.Discard
