@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { agentClient, type MobileWorkerPreviewSession, type TaskStatus } from "@/lib/agent-client";
+import { agentClient, type MobileWorkerPreviewSession, type Runner, type TaskStatus } from "@/lib/agent-client";
 import pkg from "../../package.json";
 
 // Surface the running web bundle version inside the dashboard so
@@ -192,6 +192,12 @@ export default function PreviewPane({
     status: TaskStatus;
     lines: string[];
   } | null>(null);
+  // Runner + model surfacing: the device card already shows
+  // `runner: <name>`, but during a vibing session the user is staring
+  // at this panel, not the device card. Surface the active runner and
+  // its default model here as a small caption so they don't have to
+  // scroll up to see who's executing the prompt.
+  const [runners, setRunners] = useState<Runner[]>([]);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
 
@@ -248,13 +254,15 @@ export default function PreviewPane({
     let alive = true;
     const poll = async () => {
       try {
-        const [status, session] = await Promise.all([
+        const [status, session, runnerRows] = await Promise.all([
           agentClient.getDevServerStatus(),
           agentClient.getMobileWorkerPreviewSession(),
+          agentClient.getRunners().catch(() => [] as Runner[]),
         ]);
         if (!alive) return;
         setDevStatus(status);
         setWorkerSession(session);
+        setRunners(runnerRows || []);
       } catch {}
     };
     poll();
@@ -1477,7 +1485,41 @@ export default function PreviewPane({
         <div className="min-h-0 border-b border-surface-800 bg-surface-950/70 xl:border-b-0 xl:border-r">
           <div className="flex h-full min-h-0 flex-col">
             <div className="border-b border-surface-800 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-widest text-emerald-300">Vibing</div>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="text-[10px] uppercase tracking-widest text-emerald-300">Vibing</div>
+                {(() => {
+                  // Pick the runner the agent will hand the next task to:
+                  // prefer one explicitly marked active, else the default,
+                  // else the first installed+ready one.
+                  const installed = runners.filter((r) => r.installed);
+                  const pick =
+                    installed.find((r) => r.active) ||
+                    installed.find((r) => r.isDefault) ||
+                    installed.find((r) => r.ready) ||
+                    installed[0];
+                  if (!pick) return null;
+                  const runnerLabel = pick.name || pick.id;
+                  const model = (pick.models || []).find((m) => m.isDefault) || (pick.models || [])[0];
+                  return (
+                    <div
+                      className="truncate text-right text-[10px] font-mono text-surface-500"
+                      title={
+                        model
+                          ? `Runner: ${runnerLabel} · Model: ${model.name || model.id}`
+                          : `Runner: ${runnerLabel}`
+                      }
+                    >
+                      <span className="text-surface-400">{runnerLabel}</span>
+                      {model ? (
+                        <>
+                          <span className="text-surface-700"> · </span>
+                          <span className="text-surface-500">{model.name || model.id}</span>
+                        </>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+              </div>
               <div className="mt-1 text-[11px] text-surface-500">
                 {devStatus?.running
                   ? `Send changes directly to ${projectLabel}.`

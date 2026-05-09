@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -10,6 +11,7 @@ import {
   TextInput,
   View,
 } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -1364,22 +1366,23 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     loadProviders();
   }, [loadProviders]);
 
-  // Auto-detect: ask the CLI to find tokens from gh/glab CLI, env vars, etc.
+  // Auto-detect: ask the agent to find tokens from gh/glab CLI, env vars,
+  // and ~/.git-credentials on the *target* machine. When the target is a
+  // remote box, this runs on that box, not on the phone.
   const handleAutoDetect = useCallback(async () => {
     setDetecting(true);
     try {
-      const baseUrl = (quicClient as any).baseUrl;
       const headers = (quicClient as any).authHeaders;
-      const res = await fetch(`${baseUrl}/git/provider/detect`, { headers });
+      const res = await fetch(endpointFor("/git/provider/detect"), { headers });
       const data = await res.json();
       if (data.ok && data.providers?.length > 0) {
         await loadProviders();
         const names = data.providers.map((p: any) => `${p.provider}: ${p.username}`).join("\n");
-        Alert.alert("Found", `Detected from your dev machine:\n${names}`);
+        Alert.alert("Found", `Detected on ${targetLabel}:\n${names}`);
       } else {
         Alert.alert(
           "No credentials found",
-          "Your dev machine doesn't have gh CLI or GitLab CLI logged in.\n\nInstall gh CLI and run 'gh auth login', or enter a token manually below.",
+          `${targetLabel} doesn't have gh CLI or GitLab CLI logged in.\n\nInstall gh CLI on that machine and run 'gh auth login', or enter a token manually below.`,
           [
             { text: "OK" },
             { text: "Enter GitHub token", onPress: () => setShowManualSetup("github") },
@@ -1392,22 +1395,21 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     } finally {
       setDetecting(false);
     }
-  }, [loadProviders]);
+  }, [loadProviders, endpointFor, targetLabel]);
 
   // Manual token entry (fallback when auto-detect fails)
   const handleManualSetup = useCallback(async (provider: "github" | "gitlab") => {
     if (!token.trim()) return;
     setDetecting(true);
     try {
-      const baseUrl = (quicClient as any).baseUrl;
       const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
-      const res = await fetch(`${baseUrl}/git/provider/setup`, {
+      const res = await fetch(endpointFor("/git/provider/setup"), {
         method: "POST", headers,
         body: JSON.stringify({ provider, token: token.trim() }),
       });
       const data = await res.json();
       if (data.ok) {
-        Alert.alert("Connected", `Signed in as ${data.username}`);
+        Alert.alert("Connected", `Signed in as ${data.username} on ${targetLabel}`);
         setToken("");
         setShowManualSetup(null);
         await loadProviders();
@@ -1419,17 +1421,16 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     } finally {
       setDetecting(false);
     }
-  }, [token, loadProviders]);
+  }, [token, loadProviders, endpointFor, targetLabel]);
 
   const handleRemove = useCallback((providerHost: string) => {
-    Alert.alert("Disconnect", `Remove ${providerHost}?`, [
+    Alert.alert("Disconnect", `Remove ${providerHost} from ${targetLabel}?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Remove", style: "destructive", onPress: async () => {
           try {
-            const baseUrl = (quicClient as any).baseUrl;
             const headers = (quicClient as any).authHeaders;
-            await fetch(`${baseUrl}/git/provider/${encodeURIComponent(providerHost)}`, {
+            await fetch(endpointFor(`/git/provider/${encodeURIComponent(providerHost)}`), {
               method: "DELETE", headers,
             });
             await loadProviders();
@@ -1437,7 +1438,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
         },
       },
     ]);
-  }, [loadProviders]);
+  }, [loadProviders, endpointFor, targetLabel]);
 
   const handleBrowseRepos = useCallback(async (providerHost: string) => {
     if (showRepos === providerHost) { setShowRepos(null); return; }
@@ -1445,12 +1446,11 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     setReposLoading(true);
     setRepoSearch("");
     try {
-      const baseUrl = (quicClient as any).baseUrl;
       const headers = (quicClient as any).authHeaders;
       // Server now loads all pages (cap 1000) in one shot — keep
       // per_page large so callers that pin to a single page still
       // get a useful slice.
-      const res = await fetch(`${baseUrl}/git/provider/repos?host=${encodeURIComponent(providerHost)}&per_page=100`, { headers });
+      const res = await fetch(endpointFor(`/git/provider/repos?host=${encodeURIComponent(providerHost)}&per_page=100`), { headers });
       const data = await res.json();
       if (data.ok) setRepos(data.repos || []);
     } catch {
@@ -1458,14 +1458,13 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     } finally {
       setReposLoading(false);
     }
-  }, [showRepos]);
+  }, [showRepos, endpointFor]);
 
   const handleClone = useCallback(async (repo: any) => {
     setCloning(repo.fullName);
     try {
-      const baseUrl = (quicClient as any).baseUrl;
       const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
-      const res = await fetch(`${baseUrl}/repos/clone`, {
+      const res = await fetch(endpointFor("/repos/clone"), {
         method: "POST", headers,
         body: JSON.stringify({ url: repo.sshUrl || repo.cloneUrl, autoInit: true }),
       });
@@ -1504,7 +1503,96 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     } finally {
       setCloning(null);
     }
-  }, []);
+  }, [endpointFor]);
+
+  // Device Flow (RFC 8628). When non-null, an OAuth approval is in
+  // flight on `targetDeviceId` — UI shows the user_code + verification
+  // URL and polls the agent until the state moves out of pending.
+  type DeviceFlowSession = {
+    sessionId: string;
+    provider: "github" | "gitlab";
+    host: string;
+    userCode: string;
+    verificationUri: string;
+    interval: number;
+    state: "pending" | "done" | "error" | "expired" | "unknown";
+    username?: string;
+    error?: string;
+    byoClient?: boolean;
+  };
+  const [deviceFlow, setDeviceFlow] = useState<DeviceFlowSession | null>(null);
+  const [deviceFlowStarting, setDeviceFlowStarting] = useState<"github" | "gitlab" | null>(null);
+
+  const handleStartDeviceFlow = useCallback(async (provider: "github" | "gitlab") => {
+    setDeviceFlowStarting(provider);
+    try {
+      const headers = { ...(quicClient as any).authHeaders, "Content-Type": "application/json" };
+      const res = await fetch(endpointFor("/git/provider/oauth/start"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ provider }),
+      });
+      const data = await res.json();
+      if (!data.ok || !data.session_id || !data.user_code || !data.verification_uri) {
+        Alert.alert(
+          "Could not start Device Flow",
+          data.error || "The agent rejected the request. If you haven't registered an OAuth App yet, set vault entry github-oauth-client-id (project=oauth) on the target machine first.",
+        );
+        return;
+      }
+      setDeviceFlow({
+        sessionId: data.session_id,
+        provider,
+        host: data.host || (provider === "github" ? "github.com" : "gitlab.com"),
+        userCode: data.user_code,
+        verificationUri: data.verification_uri,
+        interval: data.interval || 5,
+        state: "pending",
+        byoClient: !!data.byo_client,
+      });
+    } catch (e) {
+      Alert.alert("Device Flow error", e instanceof Error ? e.message : "Failed to start");
+    } finally {
+      setDeviceFlowStarting(null);
+    }
+  }, [endpointFor]);
+
+  // Poll the active Device Flow session at the agent-prescribed
+  // interval until the state moves out of pending. Restarts cleanly
+  // when the session id, target, or interval changes.
+  useEffect(() => {
+    if (!deviceFlow || deviceFlow.state !== "pending") return;
+    let cancelled = false;
+    const intervalMs = Math.max(2, deviceFlow.interval) * 1000;
+    const timer = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const headers = (quicClient as any).authHeaders;
+        const url = endpointFor(`/git/provider/oauth/status?session=${encodeURIComponent(deviceFlow.sessionId)}`);
+        const res = await fetch(url, { headers });
+        const data = await res.json();
+        if (cancelled) return;
+        if (!data.state || data.state === "pending") return;
+        setDeviceFlow((prev) =>
+          prev && prev.sessionId === deviceFlow.sessionId
+            ? { ...prev, state: data.state, username: data.username, error: data.error }
+            : prev,
+        );
+        if (data.state === "done") {
+          await loadProviders();
+          Alert.alert("Connected", `Linked ${deviceFlow.provider} as ${data.username || "user"} on ${targetLabel}.`);
+        } else if (data.state === "error" || data.state === "expired" || data.state === "unknown") {
+          Alert.alert("Device Flow ended", data.error || `State: ${data.state}`);
+        }
+      } catch {
+        // soft-fail; keep polling
+      }
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [deviceFlow?.sessionId, deviceFlow?.state, deviceFlow?.interval, endpointFor, loadProviders, targetLabel]);
 
   const filteredRepos = repoSearch.trim()
     ? repos.filter((r: any) =>
@@ -1516,14 +1604,190 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
     return <View style={{ padding: 16, alignItems: "center" }}><ActivityIndicator color={c.accent} /></View>;
   }
 
+  // Build the target chip list. "This machine" + every owned, online,
+  // non-self peer. Offline peers filtered out because the peer-proxy
+  // would just time out.
+  const targetOptions: { id: string | null; label: string; sub?: string }[] = [
+    { id: null, label: "This machine" },
+    ...machines
+      .filter((m) => m.isOnline && !m.isLocal)
+      .map((m) => ({ id: m.deviceId, label: m.name || m.deviceId, sub: m.platform })),
+  ];
+
   return (
     <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
+      {/* Target picker — choose which machine receives git creds */}
+      {targetOptions.length > 1 && (
+        <View style={{ marginBottom: 10 }}>
+          <Text style={{ color: c.textMuted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+            Configure on
+          </Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 12 }}>
+            {targetOptions.map((opt) => {
+              const active = (opt.id || null) === (targetDeviceId || null);
+              return (
+                <Pressable
+                  key={opt.id || "__local__"}
+                  onPress={() => {
+                    if ((opt.id || null) === (targetDeviceId || null)) return;
+                    setTargetDeviceId(opt.id);
+                    setProviders([]);
+                    setShowManualSetup(null);
+                    setToken("");
+                    setDeviceFlow(null);
+                  }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 16,
+                    backgroundColor: active ? c.accent : c.bgCard,
+                    borderWidth: 1,
+                    borderColor: active ? c.accent : c.border,
+                  }}
+                >
+                  <Text style={{ color: active ? "#fff" : c.textPrimary, fontSize: 13, fontWeight: "600" }}>{opt.label}</Text>
+                  {opt.sub ? (
+                    <Text style={{ color: active ? "#ffffffaa" : c.textMuted, fontSize: 10, marginTop: 1 }}>{opt.sub}</Text>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Privacy notice */}
       <View style={{ backgroundColor: c.accent + "11", borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: c.accent + "22" }}>
         <Text style={{ color: c.textSecondary, fontSize: 12, lineHeight: 17 }}>
-          All credentials are stored locally on your device and agent. Never sent to Yaver servers. Your code stays private — P2P only.
+          Tokens stay on {targetLabel}'s vault and {targetDeviceId ? "are sent over QUIC/relay" : "never leave this device"}. Yaver servers never see your credentials or repo contents.
         </Text>
       </View>
+
+      {/* Device Flow — Sign in with GitHub / GitLab. Each tap opens a
+          provider Device Flow on the selected target machine; the agent
+          polls until the user approves in any browser. */}
+      {!deviceFlow && (
+        <View style={{ flexDirection: "row", gap: 8, marginBottom: 10 }}>
+          {(["github", "gitlab"] as const).map((p) => (
+            <Pressable
+              key={`oauth-${p}`}
+              onPress={() => handleStartDeviceFlow(p)}
+              disabled={deviceFlowStarting !== null}
+              style={{
+                flex: 1,
+                flexDirection: "row",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                paddingVertical: 12,
+                borderRadius: 10,
+                borderWidth: 1,
+                borderColor: "#10b98166",
+                backgroundColor: "#10b98122",
+                opacity: deviceFlowStarting !== null ? 0.5 : 1,
+              }}
+            >
+              {deviceFlowStarting === p ? (
+                <ActivityIndicator size="small" color="#10b981" />
+              ) : (
+                <Text style={{ color: "#10b981", fontSize: 13, fontWeight: "700" }}>
+                  Sign in with {p === "github" ? "GitHub" : "GitLab"}
+                </Text>
+              )}
+            </Pressable>
+          ))}
+        </View>
+      )}
+
+      {/* Active Device Flow session card — large code + URL + state */}
+      {deviceFlow && (
+        <View
+          style={{
+            marginBottom: 10,
+            padding: 14,
+            borderRadius: 10,
+            borderWidth: 1,
+            borderColor:
+              deviceFlow.state === "done"
+                ? "#10b98166"
+                : deviceFlow.state === "error" || deviceFlow.state === "expired"
+                  ? "#ef444466"
+                  : "#f59e0b66",
+            backgroundColor:
+              deviceFlow.state === "done"
+                ? "#10b98122"
+                : deviceFlow.state === "error" || deviceFlow.state === "expired"
+                  ? "#ef444422"
+                  : "#f59e0b22",
+            gap: 10,
+          }}
+        >
+          <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+            <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.5 }}>
+              {deviceFlow.provider === "github" ? "GitHub" : "GitLab"} · {deviceFlow.state}
+              {deviceFlow.byoClient ? " · BYO" : ""}
+            </Text>
+            <Pressable onPress={() => setDeviceFlow(null)}>
+              <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600" }}>Close</Text>
+            </Pressable>
+          </View>
+          {deviceFlow.state === "pending" ? (
+            <>
+              <Text style={{ color: c.textSecondary, fontSize: 12 }}>Open this URL in any browser:</Text>
+              <Pressable onPress={() => Linking.openURL(deviceFlow.verificationUri)}>
+                <Text style={{ color: c.accent, fontSize: 14, fontWeight: "600" }}>{deviceFlow.verificationUri}</Text>
+              </Pressable>
+              <Text style={{ color: c.textSecondary, fontSize: 12, marginTop: 4 }}>And enter this code:</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                <Text
+                  selectable
+                  style={{
+                    color: c.textPrimary,
+                    fontSize: 22,
+                    fontWeight: "800",
+                    letterSpacing: 4,
+                    backgroundColor: c.bg,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                  }}
+                >
+                  {deviceFlow.userCode}
+                </Text>
+                <Pressable
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(deviceFlow.userCode);
+                    Alert.alert("Copied", "Code copied to clipboard");
+                  }}
+                  style={{
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: c.border,
+                    backgroundColor: c.bgCard,
+                  }}
+                >
+                  <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "600" }}>Copy</Text>
+                </Pressable>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                Token will land on {targetLabel}'s vault. Polling every {deviceFlow.interval}s.
+              </Text>
+            </>
+          ) : deviceFlow.state === "done" ? (
+            <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+              ✓ Linked {deviceFlow.provider} as {deviceFlow.username || "user"} on {targetLabel}.
+            </Text>
+          ) : (
+            <Text style={{ color: c.textPrimary, fontSize: 13 }}>
+              {deviceFlow.error || `Device Flow ended (${deviceFlow.state}). Tap Sign in again to retry.`}
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Connected providers */}
       {providers.map((p) => (
@@ -1678,7 +1942,7 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
             </Pressable>
           </View>
           <Text style={{ color: c.textMuted, fontSize: 10, textAlign: "center" }}>
-            Stored locally on your dev machine. Never sent to Yaver servers.
+            Stored on {targetLabel}'s vault. Never sent to Yaver servers.
           </Text>
         </View>
         );

@@ -159,6 +159,27 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
   const [busy, setBusy] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
 
+  // Device Flow session — when non-null, an OAuth approval is in flight
+  // on `targetDeviceId`. UI shows the user_code + verification URL and
+  // polls until the agent signals done|error|expired. Switching the
+  // target chip aborts the local poll loop (the remote agent keeps its
+  // own session for 30 minutes either way).
+  type DeviceFlowSession = {
+    sessionId: string;
+    provider: "github" | "gitlab";
+    host: string;
+    userCode: string;
+    verificationUri: string;
+    interval: number;
+    expiresAt: number;
+    state: "pending" | "done" | "error" | "expired" | "unknown";
+    username?: string;
+    error?: string;
+    byoClient?: boolean;
+  };
+  const [deviceFlow, setDeviceFlow] = useState<DeviceFlowSession | null>(null);
+  const [deviceFlowStarting, setDeviceFlowStarting] = useState<"github" | "gitlab" | null>(null);
+
   const expandedProject = useMemo(
     () => projects.find((project) => project.path === expandedProjectPath) || null,
     [projects, expandedProjectPath],
@@ -366,6 +387,76 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
     }
     setBusy(`Removed ${host} from ${targetLabel}.`);
   }
+
+  async function startDeviceFlow(provider: "github" | "gitlab") {
+    setDeviceFlowStarting(provider);
+    setBusy(`Starting ${provider} Device Flow on ${targetLabel}…`);
+    try {
+      const start = await agentClient.gitOAuthStart({ provider }, targetDeviceId);
+      if (!start.ok || !start.session_id || !start.user_code || !start.verification_uri) {
+        setBusy(start.error || `Could not start ${provider} Device Flow.`);
+        return;
+      }
+      setDeviceFlow({
+        sessionId: start.session_id,
+        provider,
+        host: start.host || (provider === "github" ? "github.com" : "gitlab.com"),
+        userCode: start.user_code,
+        verificationUri: start.verification_uri,
+        interval: start.interval || 5,
+        expiresAt: start.expires_at || 0,
+        state: "pending",
+        byoClient: !!start.byo_client,
+      });
+      setBusy(`Waiting for approval at ${start.verification_uri}…`);
+    } catch (error) {
+      setBusy(error instanceof Error ? error.message : String(error));
+    } finally {
+      setDeviceFlowStarting(null);
+    }
+  }
+
+  // Poll the active Device Flow session at the agent-prescribed
+  // interval. Stops when state moves out of 'pending' or when the
+  // user closes the card. Restarts cleanly when the user starts a new
+  // session or switches targets — the dependency on targetDeviceId
+  // ensures we don't accidentally poll yesterday's session against
+  // today's machine.
+  useEffect(() => {
+    if (!deviceFlow || deviceFlow.state !== "pending") return;
+    let cancelled = false;
+    const intervalMs = Math.max(2, deviceFlow.interval) * 1000;
+    const timer = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const status = await agentClient.gitOAuthStatus(deviceFlow.sessionId, targetDeviceId);
+        if (cancelled) return;
+        if (!status.state || status.state === "pending") return;
+        setDeviceFlow((prev) =>
+          prev && prev.sessionId === deviceFlow.sessionId
+            ? {
+                ...prev,
+                state: status.state || "unknown",
+                username: status.username,
+                error: status.error,
+              }
+            : prev,
+        );
+        if (status.state === "done") {
+          setBusy(`Connected ${deviceFlow.provider} as ${status.username || "user"} on ${targetLabel}.`);
+          setProviders(await agentClient.gitProviderStatus(targetDeviceId));
+        } else if (status.state === "error" || status.state === "expired" || status.state === "unknown") {
+          setBusy(status.error || `Device Flow ended (${status.state}).`);
+        }
+      } catch {
+        // soft-fail: keep polling
+      }
+    }, intervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [deviceFlow?.sessionId, deviceFlow?.state, deviceFlow?.interval, targetDeviceId, targetLabel]);
 
   async function runGitAction(action: "revert-head") {
     if (!expandedProject) return;
@@ -764,9 +855,96 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
             <div className="rounded-md border border-surface-800 bg-surface-950/70 p-4">
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Step 2 · Populate this machine</div>
               <div className="mt-2 text-sm text-surface-400">
-                Add a GitHub or GitLab token when you want this machine to traverse repos and clone them over HTTPS.
+                Approve a Device Flow login to push an OAuth token onto {targetLabel}, or paste a Personal Access Token if you prefer.
               </div>
             </div>
+
+            <div className="flex flex-wrap gap-2">
+              {(["github", "gitlab"] as const).map((p) => (
+                <button
+                  key={`oauth-${p}`}
+                  onClick={() => void startDeviceFlow(p)}
+                  disabled={deviceFlowStarting !== null || (deviceFlow?.state === "pending" && deviceFlow?.provider === p)}
+                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:border-emerald-500/60 hover:bg-emerald-500/15 disabled:opacity-50"
+                >
+                  <ProviderIcon provider={p} className={`h-4 w-4 ${p === "gitlab" ? "text-warning" : ""}`} />
+                  {deviceFlowStarting === p
+                    ? "Starting…"
+                    : deviceFlow?.state === "pending" && deviceFlow?.provider === p
+                      ? `Waiting for ${p === "github" ? "GitHub" : "GitLab"} approval…`
+                      : `Sign in with ${p === "github" ? "GitHub" : "GitLab"}`}
+                </button>
+              ))}
+            </div>
+
+            {deviceFlow ? (
+              <div
+                className={`rounded-md border p-4 ${
+                  deviceFlow.state === "done"
+                    ? "border-emerald-500/40 bg-emerald-500/10"
+                    : deviceFlow.state === "error" || deviceFlow.state === "expired"
+                      ? "border-rose-500/40 bg-rose-500/10"
+                      : "border-amber-500/40 bg-amber-500/10"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-300">
+                    {deviceFlow.provider === "github" ? "GitHub" : "GitLab"} Device Flow · {deviceFlow.state}
+                    {deviceFlow.byoClient ? " · BYO client" : ""}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDeviceFlow(null)}
+                    className="text-[11px] font-medium text-surface-300 hover:text-surface-100"
+                  >
+                    Close
+                  </button>
+                </div>
+                {deviceFlow.state === "pending" ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-[1fr,auto]">
+                    <div>
+                      <div className="text-xs text-surface-300">Open this URL in any browser:</div>
+                      <a
+                        href={deviceFlow.verificationUri}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 break-all text-sm font-medium text-info hover:text-info-softFg"
+                      >
+                        {deviceFlow.verificationUri}
+                      </a>
+                      <div className="mt-3 text-xs text-surface-300">And enter this code:</div>
+                      <div className="mt-1 flex items-center gap-2">
+                        <code className="rounded-md border border-surface-700 bg-surface-950 px-3 py-1.5 text-lg font-bold tracking-[0.2em] text-surface-100">
+                          {deviceFlow.userCode}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (typeof navigator !== "undefined" && navigator.clipboard) {
+                              void navigator.clipboard.writeText(deviceFlow.userCode);
+                            }
+                          }}
+                          className="rounded-md border border-surface-700 px-2 py-1 text-[11px] text-surface-300 hover:bg-surface-800"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <div className="mt-3 text-[11px] text-surface-500">
+                        Token will land on {targetLabel}'s vault. Polling every {deviceFlow.interval}s.
+                      </div>
+                    </div>
+                  </div>
+                ) : deviceFlow.state === "done" ? (
+                  <div className="mt-2 text-sm text-emerald-100">
+                    ✓ Linked {deviceFlow.provider} as <span className="font-semibold">{deviceFlow.username}</span> on {targetLabel}.
+                  </div>
+                ) : (
+                  <div className="mt-2 text-sm text-rose-100">
+                    {deviceFlow.error || `Device Flow ended (${deviceFlow.state}). Start again to retry.`}
+                  </div>
+                )}
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap gap-2">
               {(["github", "gitlab"] as const).map((p) => {
@@ -782,7 +960,7 @@ export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: P
                     }`}
                   >
                     <ProviderIcon provider={p} className={`h-4 w-4 ${p === "gitlab" ? "text-warning" : ""}`} />
-                    {hasToken ? `Manage ${p === "github" ? "GitHub" : "GitLab"} token` : `Add ${p === "github" ? "GitHub" : "GitLab"} Token`}
+                    {hasToken ? `Manage ${p === "github" ? "GitHub" : "GitLab"} token` : `Or paste ${p === "github" ? "GitHub" : "GitLab"} PAT`}
                   </button>
                 );
               })}

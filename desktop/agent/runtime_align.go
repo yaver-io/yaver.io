@@ -263,6 +263,59 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 	}
 	report.OverridesAfter = merged
 
+	// ── 2.5. Sync root dependencies/devDependencies to match overrides ──
+	// npm 9+ rejects an install with EOVERRIDE when an `overrides.<pkg>` is
+	// pinned to an exact version while the SAME pkg appears as a direct dep
+	// at the same level with a non-identical specifier (range OR a different
+	// exact version). When that fires, npm silently falls back to a broken
+	// install — carrotbet hit this with `dependencies.expo: "~54.0.33"` +
+	// `overrides.expo: "54.0.33"`, which let `apps/web`'s `react: ^18.3.1`
+	// hoist React 18 into the workspace root next to mobile's React 19,
+	// and `expo export -p web` shipped a bundle that crashed at
+	// `null is not an object (evaluating 'H.H.useState')`.
+	//
+	// Whenever we promote an override, also rewrite the same key in the
+	// override-owner's deps/devDeps to the identical version so npm cannot
+	// detect a conflict. We only touch keys that ALREADY exist in those
+	// blocks — never add a dep the project didn't ask for.
+	rootDepsTouched := map[string]map[string]string{}
+	if overridesChanged && len(merged) > 0 {
+		for _, kind := range []string{"dependencies", "devDependencies"} {
+			rawKind, ok := overridesObj[kind]
+			if !ok {
+				continue
+			}
+			var existing map[string]json.RawMessage
+			if err := json.Unmarshal(rawKind, &existing); err != nil {
+				continue
+			}
+			writes := map[string]string{}
+			for name, want := range merged {
+				rawCur, present := existing[name]
+				if !present {
+					continue
+				}
+				var cur string
+				_ = json.Unmarshal(rawCur, &cur)
+				if strings.TrimSpace(cur) == want {
+					continue
+				}
+				b, _ := json.Marshal(want)
+				existing[name] = b
+				writes[name] = want
+			}
+			if len(writes) > 0 {
+				out, err := json.MarshalIndent(orderedRawMap(existing), "  ", "  ")
+				if err != nil {
+					report.Error = fmt.Sprintf("marshal root %s: %v", kind, err)
+					return report
+				}
+				overridesObj[kind] = out
+				rootDepsTouched[kind] = writes
+			}
+		}
+	}
+
 	// ── 3. Strip stale overrides from the workspace child ──
 	// npm ignores overrides outside of the root, so leaving them in mobile/
 	// just confuses humans diffing the file. If we just promoted them to the
@@ -294,7 +347,7 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		}
 	}
 
-	if overridesChanged {
+	if overridesChanged || len(rootDepsTouched) > 0 {
 		out, err := marshalOrderedJSON(overridesObj)
 		if err != nil {
 			report.Error = fmt.Sprintf("marshal overrides target: %v", err)
@@ -304,10 +357,15 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 			report.Error = fmt.Sprintf("write overrides target: %v", err)
 			return report
 		}
-		report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to "+overridesPath+" (host family "+family.ID+")")
+		if overridesChanged {
+			report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to "+overridesPath+" (host family "+family.ID+")")
+		}
+		for kind, writes := range rootDepsTouched {
+			report.Notes = append(report.Notes, fmt.Sprintf("Synced root %s for %s to match overrides (npm EOVERRIDE guard)", kind, strings.Join(sortedKeys(writes), ", ")))
+		}
 	}
 
-	if !overridesChanged && len(depsRewrites) == 0 && !childOverridesStripped {
+	if !overridesChanged && len(depsRewrites) == 0 && !childOverridesStripped && len(rootDepsTouched) == 0 {
 		report.SkippedReason = "package.json already pins host family — only npm install needed"
 	}
 

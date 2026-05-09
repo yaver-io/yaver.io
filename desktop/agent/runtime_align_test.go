@@ -352,6 +352,99 @@ func TestAlignProjectRuntimeWritesOverridesAtWorkspaceRoot(t *testing.T) {
 	}
 }
 
+// TestAlignProjectRuntimeSyncsRootDepsWhenAlsoOverrideTargets locks in
+// the carrotbet failure mode. The workspace root declares
+// `dependencies.react-native: "0.81.5"` AND an override targeting the
+// same key; align bumps the override to the host family (0.81.6) but
+// the unsynced root dep makes npm 9+ throw EOVERRIDE on install,
+// silently leaving a broken node_modules where another workspace
+// member's React 18 hoists into the root next to mobile's React 19.
+// The web bundle then crashes at `null is not an object (evaluating
+// 'H.H.useState')`. The fix is to also rewrite the root direct dep to
+// match the override version. See runtime_align.go § 2.5.
+func TestAlignProjectRuntimeSyncsRootDepsWhenAlsoOverrideTargets(t *testing.T) {
+	root := t.TempDir()
+	// Root package.json mirrors carrotbet: workspace + same package as
+	// both direct dep AND override target, with the dep version not
+	// matching the override (the EOVERRIDE-trigger shape).
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{
+  "name": "backgammon-platform",
+  "private": true,
+  "workspaces": ["apps/*", "mobile"],
+  "dependencies": {
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "expo": "~54.0.33"
+  },
+  "overrides": {
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "expo": "54.0.33"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "mobile")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "package.json"), []byte(`{
+  "name": "mobile",
+  "dependencies": {
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "expo": "54.0.33"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	family := &RuntimeFamily{ID: "family-b", React: "19.1.0", ReactNative: "0.81.6", ExpoVersion: "54.0.33", CompiledIn: true}
+	guest := RuntimeFingerprint{ReactVersion: "19.1.0", ReactNativeVersion: "0.81.5", ExpoVersion: "54.0.33"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectRuntimeIfNeeded(ctx, child, family, guest, true)
+	if !report.Attempted {
+		t.Fatalf("expected Attempted=true, got %#v", report)
+	}
+
+	rootRaw, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rootPkg map[string]json.RawMessage
+	if err := json.Unmarshal(rootRaw, &rootPkg); err != nil {
+		t.Fatal(err)
+	}
+
+	// The override must have been bumped to the host family.
+	var ov map[string]string
+	if err := json.Unmarshal(rootPkg["overrides"], &ov); err != nil {
+		t.Fatalf("workspace root overrides not a string map: %v", err)
+	}
+	if ov["react-native"] != "0.81.6" {
+		t.Fatalf("overrides.react-native = %q, want 0.81.6", ov["react-native"])
+	}
+
+	// The root direct dep must have been synced to match the override —
+	// otherwise npm 9+ throws EOVERRIDE and the install silently fails.
+	var rootDeps map[string]string
+	if err := json.Unmarshal(rootPkg["dependencies"], &rootDeps); err != nil {
+		t.Fatalf("workspace root dependencies not a string map: %v", err)
+	}
+	if rootDeps["react-native"] != "0.81.6" {
+		t.Fatalf("root dependencies.react-native = %q, want 0.81.6 (synced to override)", rootDeps["react-native"])
+	}
+
+	// react and expo were already at the host-family version, so they
+	// should be left alone — only mismatched direct deps get rewritten.
+	if rootDeps["react"] != "19.1.0" {
+		t.Fatalf("root dependencies.react regressed to %q", rootDeps["react"])
+	}
+}
+
 // TestAlignProjectRuntimeStandaloneProjectKeepsOverridesInPlace asserts
 // that for a non-workspace project (e.g. demo/mobile/todo-rn) we still
 // write overrides into the project's own package.json — we must not

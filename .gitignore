@@ -7,6 +7,11 @@ build/
 out/
 .next/
 
+# Throwaway demo scaffolds (e.g. `npx create-expo-app` output kept around
+# for local smoke tests) — these carry their own node_modules + native
+# build dirs and have no source worth versioning.
+demo/AcmeStore/
+
 # Go binaries
 desktop/agent/yaver
 desktop/agent/yaver-agent

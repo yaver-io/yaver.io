@@ -6132,6 +6132,56 @@ export class AgentClient {
     });
     if (!res.ok) throw new Error(`git/provider/${host} ${res.status}`);
   }
+  // Device Flow (RFC 8628) for GitHub/GitLab. The agent runs the
+  // state machine — UI just kicks it off and polls. Both routes are
+  // peer-routable via /peer/<id>/.
+  async gitOAuthStart(
+    params: { provider: "github" | "gitlab"; host?: string },
+    target?: string,
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    session_id?: string;
+    provider?: string;
+    host?: string;
+    user_code?: string;
+    verification_uri?: string;
+    interval?: number;
+    expires_at?: number;
+    byo_client?: boolean;
+  }> {
+    this.assertConnected();
+    const res = await fetch(this.peerOrLocalUrl(target, "/git/provider/oauth/start"), {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+    return res.json().catch(() => ({ ok: false, error: `oauth/start ${res.status}` }));
+  }
+  async gitOAuthStatus(
+    sessionId: string,
+    target?: string,
+  ): Promise<{
+    ok: boolean;
+    error?: string;
+    state?: "pending" | "done" | "error" | "expired" | "unknown";
+    session_id?: string;
+    provider?: string;
+    host?: string;
+    user_code?: string;
+    verification_uri?: string;
+    interval?: number;
+    expires_at?: number;
+    username?: string;
+    byo_client?: boolean;
+  }> {
+    this.assertConnected();
+    const res = await fetch(
+      this.peerOrLocalUrl(target, `/git/provider/oauth/status?session=${encodeURIComponent(sessionId)}`),
+      { headers: this.authHeaders },
+    );
+    return res.json().catch(() => ({ ok: false, state: "unknown", error: `oauth/status ${res.status}` }));
+  }
   async cloneRepo(url: string, target?: string): Promise<any> {
     this.assertConnected();
     const res = await fetch(this.peerOrLocalUrl(target, "/repos/clone"), {
