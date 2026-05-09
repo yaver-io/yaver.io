@@ -105,32 +105,58 @@ export default function AccountsView() {
         agentClient.disconnect();
         return;
       }
-      const cleanup = agentClient.streamLog(streamName, (evt: any) => {
-        if (evt?.type === "machine_remove_step") {
-          setMachineRemoveSteps((prev) => {
-            // Collapse consecutive ok/skipped events for the same step
-            // so the UI shows step lines instead of a noisy duplicate
-            // log. Errors and running events always append.
-            if (prev.length > 0) {
-              const last = prev[prev.length - 1];
-              if (last.step === evt.step && last.status === "ok" && evt.status === "ok") {
-                const next = prev.slice(0, -1);
-                next.push({ step: evt.step, status: evt.status, detail: evt.detail || last.detail, error: evt.error });
-                return next;
+      // Track the high-water mark so we can recognize a successful
+      // uninstall even if the agent process exits before its final
+      // machine_remove_result event flushes through SSE. config_dir=ok
+      // is the last destructive step — past that the box is clean.
+      let configDirCleared = false;
+      let resolved = false;
+      const finish = (status: "ok" | "error", message: string) => {
+        if (resolved) return;
+        resolved = true;
+        setMachineRemoveMessage(message);
+        cleanup();
+        agentClient.disconnect();
+      };
+      const cleanup = agentClient.streamLog(
+        streamName,
+        (evt: any) => {
+          if (evt?.type === "machine_remove_step") {
+            if (evt.step === "config_dir" && evt.status === "ok") configDirCleared = true;
+            setMachineRemoveSteps((prev) => {
+              // Collapse consecutive ok events for the same step so the
+              // UI is one row per phase. Errors and running events
+              // always append.
+              if (prev.length > 0) {
+                const last = prev[prev.length - 1];
+                if (last.step === evt.step && last.status === "ok" && evt.status === "ok") {
+                  const next = prev.slice(0, -1);
+                  next.push({ step: evt.step, status: evt.status, detail: evt.detail || last.detail, error: evt.error });
+                  return next;
+                }
               }
-            }
-            return [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }];
-          });
-        } else if (evt?.type === "machine_remove_result") {
-          setMachineRemoveMessage(
-            evt.status === "error"
-              ? `Removal failed: ${evt.error || "see step list above"}`
-              : `${connectedMachine || "Machine"} entirely removed.`
-          );
-          cleanup();
-          agentClient.disconnect();
-        }
-      });
+              return [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }];
+            });
+          } else if (evt?.type === "machine_remove_result") {
+            finish(
+              evt.status === "error" ? "error" : "ok",
+              evt.status === "error"
+                ? `Removal failed: ${evt.error || "see step list above"}`
+                : `${connectedMachine || "Machine"} entirely removed.`,
+            );
+          }
+        },
+        () => {
+          // Agent process exited (stream closed). Treat as success if
+          // we already saw config_dir=ok; otherwise surface partial-
+          // state so the user knows to refresh and verify.
+          if (configDirCleared) {
+            finish("ok", `${connectedMachine || "Machine"} entirely removed.`);
+          } else {
+            finish("error", "Connection dropped before the agent reported completion. Refresh to verify the device list.");
+          }
+        },
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to remove machine";
       setMachineRemoveMessage(message);

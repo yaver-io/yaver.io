@@ -2135,9 +2135,14 @@ export class AgentClient {
    * Uses fetch-based SSE so the auth header survives (unlike
    * EventSource which can't carry custom headers in the browser).
    */
-  streamLog(streamName: string, onEvent: (ev: any) => void): () => void {
+  streamLog(
+    streamName: string,
+    onEvent: (ev: any) => void,
+    onClose?: () => void,
+  ): () => void {
     const controller = new AbortController();
     const url = `${this.baseUrl}/streams/${encodeURIComponent(streamName)}`;
+    let aborted = false;
     (async () => {
       try {
         const res = await fetch(url, {
@@ -2166,9 +2171,20 @@ export class AgentClient {
         }
       } catch {
         // aborted or network error
+      } finally {
+        // Caller hooks here when the stream ends for ANY reason except
+        // an explicit abort — used by the uninstall flow to detect
+        // "agent exited mid-stream" and decide whether to show success
+        // (last destructive step landed) or error (dropped early).
+        if (!aborted && onClose) {
+          try { onClose(); } catch { /* ignore */ }
+        }
       }
     })();
-    return () => controller.abort();
+    return () => {
+      aborted = true;
+      controller.abort();
+    };
   }
 
   /** GET /autoinit/status?work_dir=… */

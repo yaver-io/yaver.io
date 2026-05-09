@@ -146,6 +146,7 @@ func streamRemoteMachineRemoveProgress(baseURL, token, streamName string) {
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 4096), 1<<20)
+	configDirCleared := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -156,6 +157,11 @@ func streamRemoteMachineRemoveProgress(baseURL, token, streamName string) {
 		var evt map[string]interface{}
 		if err := json.Unmarshal([]byte(payload), &evt); err == nil && evt["type"] != nil {
 			renderRemoteMachineRemoveEvent(evt)
+			if step, _ := evt["step"].(string); step == "config_dir" {
+				if status, _ := evt["status"].(string); status == "ok" {
+					configDirCleared = true
+				}
+			}
 			if t, _ := evt["type"].(string); t == "machine_remove_result" {
 				return
 			}
@@ -166,8 +172,14 @@ func streamRemoteMachineRemoveProgress(baseURL, token, streamName string) {
 			fmt.Printf("  %s\n", payload)
 		}
 	}
-	// Scanner exited (connection dropped) — that's the expected end
-	// state when the remote agent process exits as part of uninstall.
+	// Scanner exited (connection dropped) without a result event —
+	// expected when the remote agent's HTTP server tears down before
+	// the final flush, but it could also mean the network gave up.
+	// Distinguish by whether we saw config_dir land: past that point
+	// the destructive work is done, so silence on the wire is fine.
+	if !configDirCleared {
+		fmt.Fprintln(os.Stderr, "  ⚠ stream dropped before the agent reported completion — verify with `yaver primary` that the device record is gone")
+	}
 }
 
 func renderRemoteMachineRemoveEvent(evt map[string]interface{}) {

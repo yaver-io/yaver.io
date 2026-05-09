@@ -45,6 +45,16 @@ func schedulePermanentMachineRemoval(onShutdown func(), progress machineRemovePr
 		if progress != nil {
 			progress("done", "ok", "agent process exiting", nil)
 		}
+		// SSE clients (web/mobile/CLI) are watching /streams/<machine-remove:...>
+		// in a different goroutine. The AppendEvent above is non-blocking
+		// and lands in the stream's 256-buffered channel, but the SSE
+		// handler still needs to dequeue it, write "data: …" to the
+		// socket, and call flusher.Flush() before the agent's HTTP
+		// server tears down. Without a brief grace period, onShutdown
+		// races the flush and the result event is lost — clients see
+		// the connection drop without ever receiving "done", which
+		// looks like a partial uninstall to the user.
+		time.Sleep(400 * time.Millisecond)
 		if onShutdown != nil {
 			onShutdown()
 		}

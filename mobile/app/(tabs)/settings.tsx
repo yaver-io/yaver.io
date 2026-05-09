@@ -1417,21 +1417,49 @@ export default function SettingsScreen() {
         );
         return;
       }
-      const cleanup = quicClient.streamLog(streamName, (evt: any) => {
-        if (evt?.type === "machine_remove_step") {
-          setMachineRemoveSteps((prev) => [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }]);
-        } else if (evt?.type === "machine_remove_result") {
-          cleanup();
-          disconnect();
-          setTimeout(() => { refreshDevices().catch(() => {}); }, 1500);
-          Alert.alert(
-            evt.status === "error" ? "Removal failed" : "Machine removed",
-            evt.status === "error"
-              ? (evt.error || "See the step list above.")
-              : `Yaver has been entirely removed from ${activeDevice.name}.`,
-          );
-        }
-      });
+      // Track the high-water mark so we can recognize a successful
+      // uninstall even if the agent process exits before its final
+      // `machine_remove_result` event flushes through the SSE buffer.
+      // config_dir=ok is the last destructive step — past that point,
+      // the box is clean even if the result event was lost.
+      let configDirCleared = false;
+      let resolved = false;
+      const finish = (status: "ok" | "error", detail?: string, errStr?: string) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        disconnect();
+        setTimeout(() => { refreshDevices().catch(() => {}); }, 1500);
+        Alert.alert(
+          status === "error" ? "Removal failed" : "Machine removed",
+          status === "error"
+            ? (errStr || detail || "See the step list above.")
+            : `Yaver has been entirely removed from ${activeDevice.name}.`,
+        );
+      };
+      const cleanup = quicClient.streamLog(
+        streamName,
+        (evt: any) => {
+          if (evt?.type === "machine_remove_step") {
+            setMachineRemoveSteps((prev) => [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }]);
+            if (evt.step === "config_dir" && evt.status === "ok") {
+              configDirCleared = true;
+            }
+          } else if (evt?.type === "machine_remove_result") {
+            finish(evt.status === "error" ? "error" : "ok", evt.detail, evt.error);
+          }
+        },
+        () => {
+          // Stream closed (agent process exited). If we already saw
+          // config_dir=ok this is the expected end-state; otherwise
+          // treat as in-flight and let the user retry / refresh.
+          if (configDirCleared) {
+            finish("ok");
+          } else {
+            finish("error", "Connection dropped before the agent reported completion. Refresh device list to verify.");
+          }
+        },
+      );
     } catch (error) {
       Alert.alert("Error", error instanceof Error ? error.message : "Failed to remove machine.");
     } finally {

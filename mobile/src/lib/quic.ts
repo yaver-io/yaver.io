@@ -2011,9 +2011,14 @@ export class QuicClient {
    *   runner_result {runner, status, duration_ms, cost_usd}
    *   line          {text}                    — legacy
    */
-  streamLog(streamName: string, onEvent: (ev: any) => void): () => void {
+  streamLog(
+    streamName: string,
+    onEvent: (ev: any) => void,
+    onClose?: () => void,
+  ): () => void {
     const controller = new AbortController();
     const url = `${this.baseUrl}/streams/${encodeURIComponent(streamName)}`;
+    let aborted = false;
     (async () => {
       try {
         const res = await fetch(url, {
@@ -2042,9 +2047,20 @@ export class QuicClient {
         }
       } catch {
         // aborted or network error
+      } finally {
+        // Notify the caller the stream ended for ANY reason except an
+        // explicit abort — this lets uninstall flows distinguish "user
+        // navigated away" (don't show success) from "agent exited"
+        // (show success when the last destructive step landed).
+        if (!aborted && onClose) {
+          try { onClose(); } catch { /* ignore */ }
+        }
       }
     })();
-    return () => controller.abort();
+    return () => {
+      aborted = true;
+      controller.abort();
+    };
   }
 
   // ── Autoinit + Autoideas (cached project context + idea queue) ──
