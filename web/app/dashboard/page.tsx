@@ -1787,12 +1787,6 @@ export default function DashboardPage() {
   return (
     <div className="dashboard-shell relative flex min-h-[100vh] flex-col md:h-[100vh] md:min-h-0 md:flex-row">
       <div className="pointer-events-none absolute inset-y-0 left-0 hidden w-60 border-r border-white/5 md:block" />
-      {/* Post-login passkey enrollment banner — only renders for users
-          who don't yet have a passkey on this account, on browsers that
-          support WebAuthn, and who haven't dismissed it recently. */}
-      <div className="absolute left-0 right-0 top-0 z-20 md:left-60">
-        <PasskeyEnrollPrompt />
-      </div>
       {/* Mobile top bar — visible only below md */}
       <div className="dashboard-mobilebar md:hidden">
         <div className="flex items-center gap-2 px-3 py-2">
@@ -2226,6 +2220,14 @@ export default function DashboardPage() {
             ) : null}
           </div>
         </div>
+
+        {/* Post-login passkey enrollment banner — only renders for users
+            who don't yet have a passkey on this account, on browsers that
+            support WebAuthn, and who haven't dismissed it recently. Sits
+            in the dashboard-main flow so it pushes content down rather
+            than overlaying it (the previous absolute placement let
+            chat/page content bleed through behind the translucent bg). */}
+        <PasskeyEnrollPrompt />
 
         <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-hidden">
           {!isConnected && activeTab === "chat" ? (
