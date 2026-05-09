@@ -17,6 +17,49 @@ function generateInviteCode(): string {
   return Array.from(buf).map(b => chars[b % chars.length]).join("");
 }
 
+async function deviceSummariesById(ctx: any, deviceIds: string[]) {
+  const seen = new Set<string>();
+  const out: Array<{
+    deviceId: string;
+    name: string;
+    platform: string;
+    lastHeartbeat?: number;
+  }> = [];
+  for (const rawId of deviceIds) {
+    const deviceId = String(rawId || "").trim();
+    if (!deviceId || seen.has(deviceId)) continue;
+    seen.add(deviceId);
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_deviceId", (q: any) => q.eq("deviceId", deviceId))
+      .unique();
+    if (!device) {
+      out.push({ deviceId, name: deviceId, platform: "" });
+      continue;
+    }
+    out.push({
+      deviceId,
+      name: device.name,
+      platform: device.platform,
+      lastHeartbeat: device.lastHeartbeat,
+    });
+  }
+  return out;
+}
+
+async function deviceSummariesForHost(ctx: any, hostUserId: any) {
+  const devices = await ctx.db
+    .query("devices")
+    .withIndex("by_userId", (q: any) => q.eq("userId", hostUserId))
+    .collect();
+  return devices.map((device: any) => ({
+    deviceId: device.deviceId,
+    name: device.name,
+    platform: device.platform,
+    lastHeartbeat: device.lastHeartbeat,
+  }));
+}
+
 // ─── Mutations ──────────────────────────────────────────────────
 
 /**
@@ -696,6 +739,12 @@ export const listGuests = query({
       inviteCode?: string;
       invitedByUserId?: boolean;
       proposedDeviceIds?: string[];
+      proposedDevices?: Array<{
+        deviceId: string;
+        name: string;
+        platform: string;
+        lastHeartbeat?: number;
+      }>;
     }> = [];
 
     for (const inv of invitations) {
@@ -711,6 +760,16 @@ export const listGuests = query({
         fullName = guest?.fullName;
         userIdStr = guest?.userId;
       }
+      const proposedDeviceIds = Array.isArray(inv.proposedDeviceIds) ? inv.proposedDeviceIds : [];
+      let displayDeviceIds = proposedDeviceIds;
+      if (status === "accepted" && inv.guestUserId) {
+        const grant = await getActiveInfraGrant(ctx, hostUserId, inv.guestUserId);
+        if (grant) {
+          displayDeviceIds = grant.shareAllDevices
+            ? (await deviceSummariesForHost(ctx, hostUserId)).map((d: { deviceId: string }) => d.deviceId)
+            : await listGrantedDeviceIdsForGrant(ctx, grant._id);
+        }
+      }
 
       result.push({
         email: inv.guestEmail,
@@ -723,7 +782,8 @@ export const listGuests = query({
         revokedAt: inv.revokedAt,
         inviteCode: status === "pending" ? inv.inviteCode : undefined,
         invitedByUserId: inv.invitedByUserId,
-        proposedDeviceIds: inv.proposedDeviceIds,
+        proposedDeviceIds: displayDeviceIds,
+        proposedDevices: displayDeviceIds.length > 0 ? await deviceSummariesById(ctx, displayDeviceIds) : undefined,
       });
     }
 
@@ -776,6 +836,12 @@ export const listHosts = query({
       expiresAt: number;
       invitedByUserId?: boolean;
       proposedDeviceIds?: string[];
+      proposedDevices?: Array<{
+        deviceId: string;
+        name: string;
+        platform: string;
+        lastHeartbeat?: number;
+      }>;
     }> = [];
 
     for (const inv of pendingInvitations) {
@@ -793,6 +859,9 @@ export const listHosts = query({
         expiresAt: inv.expiresAt,
         invitedByUserId: inv.invitedByUserId,
         proposedDeviceIds: inv.proposedDeviceIds,
+        proposedDevices: Array.isArray(inv.proposedDeviceIds) && inv.proposedDeviceIds.length > 0
+          ? await deviceSummariesById(ctx, inv.proposedDeviceIds)
+          : undefined,
       });
     }
 
@@ -808,16 +877,31 @@ export const listHosts = query({
       hostName: string;
       hostEmail: string;
       grantedAt: number;
+      devices?: Array<{
+        deviceId: string;
+        name: string;
+        platform: string;
+        lastHeartbeat?: number;
+      }>;
     }> = [];
 
     for (const access of accessRecords) {
       const host = await ctx.db.get(access.hostUserId);
       if (!host) continue;
+      const grant = await getActiveInfraGrant(ctx, access.hostUserId, guestUserId);
+      const devices = grant
+        ? (
+            grant.shareAllDevices
+              ? await deviceSummariesForHost(ctx, access.hostUserId)
+              : await deviceSummariesById(ctx, await listGrantedDeviceIdsForGrant(ctx, grant._id))
+          )
+        : await deviceSummariesForHost(ctx, access.hostUserId);
       active.push({
         hostUserId: access.hostUserId,
         hostName: host.fullName,
         hostEmail: host.email,
         grantedAt: access.grantedAt,
+        devices,
       });
     }
 

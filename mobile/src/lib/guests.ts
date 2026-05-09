@@ -24,6 +24,7 @@ export interface GuestInvitation {
   invitedByUserId?: boolean;
   /** Device ids the host pre-scoped; empty / undefined means "all host devices". */
   proposedDeviceIds?: string[];
+  proposedDevices?: GuestMachineSummary[];
 }
 
 export interface InvitationHostDevice {
@@ -58,6 +59,7 @@ export interface ActiveHost {
   hostName: string;
   hostEmail: string;
   grantedAt: number;
+  devices?: GuestMachineSummary[];
 }
 
 export interface GuestHostsResponse {
@@ -85,6 +87,14 @@ export interface GuestInfo {
   invitedByUserId?: boolean;
   /** Host-proposed device scope (empty/undefined means "all host devices"). */
   proposedDeviceIds?: string[];
+  proposedDevices?: GuestMachineSummary[];
+}
+
+export interface GuestMachineSummary {
+  deviceId: string;
+  name: string;
+  platform: string;
+  lastHeartbeat?: number;
 }
 
 export interface GuestConfigEntry {

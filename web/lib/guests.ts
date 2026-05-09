@@ -12,6 +12,7 @@ export interface GuestInvitation {
   expiresAt: number;
   invitedByUserId?: boolean;
   proposedDeviceIds?: string[];
+  proposedDevices?: GuestMachineSummary[];
 }
 
 export interface InvitationHostDevice {
@@ -46,6 +47,7 @@ export interface ActiveHost {
   hostName: string;
   hostEmail: string;
   grantedAt: number;
+  devices?: GuestMachineSummary[];
 }
 
 export interface GuestHostsResponse {
@@ -66,6 +68,14 @@ export interface GuestInfo {
   inviteCode?: string;
   invitedByUserId?: boolean;
   proposedDeviceIds?: string[];
+  proposedDevices?: GuestMachineSummary[];
+}
+
+export interface GuestMachineSummary {
+  deviceId: string;
+  name: string;
+  platform: string;
+  lastHeartbeat?: number;
 }
 
 async function parseError(res: Response, fallback: string) {

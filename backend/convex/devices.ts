@@ -148,12 +148,12 @@ function normalizeDeviceHost(host: string | undefined): string {
 }
 
 function listedDeviceIdentityKey(device: ListedDevice): string {
-  if (device.hardwareId) return `hwid:${device.hardwareId}`;
-  if (device.publicKey) return `pub:${device.publicKey}`;
   if (device.isGuest) {
     const scope = device.hostEmail || device.hostName || "guest";
     return `guest:${scope}:${device.deviceId || device.name}`;
   }
+  if (device.hardwareId) return `hwid:${device.hardwareId}`;
+  if (device.publicKey) return `pub:${device.publicKey}`;
   const normalizedName = normalizeDeviceName(device.name);
   const normalizedPlatform = String(device.platform || "").trim().toLowerCase();
   if (normalizedName && normalizedPlatform) return `host:${normalizedPlatform}:${normalizedName}`;

@@ -398,6 +398,10 @@ function deviceEndpointKey(device: Pick<Device, "host" | "port" | "isGuest">): s
 }
 
 function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "name" | "os" | "isGuest" | "hostEmail" | "hostName">): string {
+  if (device.isGuest) {
+    const hostScope = device.hostEmail || device.hostName || "guest";
+    return `guest:${hostScope}:${device.id || device.name}`;
+  }
   // Stable cryptographic identity wins. Without hwid or publicKey a
   // non-guest row is a "ghost": (platform, name) used to be the
   // fallback but it collided across fleets that share hostnames and
@@ -405,10 +409,6 @@ function deviceIdentityKey(device: Pick<Device, "id" | "hwid" | "publicKey" | "n
   // entry so reconnect can refuse to act on them.
   if (device.hwid) return `hwid:${device.hwid}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
-  if (device.isGuest) {
-    const hostScope = device.hostEmail || device.hostName || "guest";
-    return `guest:${hostScope}:${device.id || device.name}`;
-  }
   if (device.id) return `id:${device.id}`;
   return `name:${device.name}`;
 }

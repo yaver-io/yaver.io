@@ -211,15 +211,15 @@ function normalizedHost(host: string | undefined): string {
 }
 
 function deviceIdentityKey(device: Device): string {
+  if (device.isGuest) {
+    const scope = device.hostEmail || device.hostName || "guest";
+    return `guest:${scope}:${device.id || device.name}`;
+  }
   // Stable cryptographic identity wins. hardwareId is the most stable
   // (survives renames and reinstalls); publicKey survives renames but
   // rotates on factory reset.
   if (device.hardwareId) return `hwid:${device.hardwareId}`;
   if (device.publicKey) return `pub:${device.publicKey}`;
-  if (device.isGuest) {
-    const scope = device.hostEmail || device.hostName || "guest";
-    return `guest:${scope}:${device.id || device.name}`;
-  }
   // No stable identity. The previous fallback to `host:platform:name`
   // was a footgun: it merged unrelated boxes that happened to share a
   // hostname (common in fleets) and split a single box across renames.

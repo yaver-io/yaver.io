@@ -2238,7 +2238,7 @@ export default function DashboardPage() {
                 <button onClick={async () => {
                   if (guestCode.trim().length < 4) return;
                   try {
-                    const res = await fetch(`${CONVEX_URL}/guests/accept-code`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ inviteCode: guestCode.trim() }) });
+                    const res = await fetch(`${CONVEX_URL}/guests/accept-code`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ code: guestCode.trim() }) });
                     const data = await res.json();
                     if (data.ok || data.hostName) { alert(`Joined ${data.hostName || "host"}'s machine!`); setGuestCode(""); refreshDevices(); }
                     else alert(data.error || "Invalid code");

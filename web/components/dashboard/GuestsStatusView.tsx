@@ -16,6 +16,7 @@ import {
   type ActiveHost,
   type GuestInfo,
   type GuestInvitation,
+  type GuestMachineSummary,
   type InvitationPreview,
   type PublicUserLookup,
 } from "@/lib/guests";
@@ -100,6 +101,20 @@ function machineStatusLine(opts: {
   }
   if (opts.host) bits.push(opts.host);
   return bits.join(" · ");
+}
+
+function machineScopeLabel(ids?: string[], machines?: GuestMachineSummary[]) {
+  const names = (machines || [])
+    .map((machine) => String(machine.name || machine.deviceId || "").trim())
+    .filter(Boolean);
+  if (names.length > 0) {
+    const visible = names.slice(0, 3).join(", ");
+    const extra = names.length > 3 ? ` +${names.length - 3} more` : "";
+    return `${visible}${extra}`;
+  }
+  const count = ids?.length || 0;
+  if (count > 0) return `${count} machine${count === 1 ? "" : "s"}`;
+  return "";
 }
 
 function tunnelUrlsForDevice(device: { publicEndpoints?: string[]; tunnelUrl?: string }) {
@@ -795,8 +810,8 @@ export default function GuestsStatusView() {
                         : g.createdAt
                           ? "invited " + new Date(g.createdAt).toLocaleDateString()
                           : ""}
-                      {g.proposedDeviceIds && g.proposedDeviceIds.length > 0
-                        ? ` · scoped to ${g.proposedDeviceIds.length} machine${g.proposedDeviceIds.length === 1 ? "" : "s"}`
+                      {machineScopeLabel(g.proposedDeviceIds, g.proposedDevices)
+                        ? ` · scoped to ${machineScopeLabel(g.proposedDeviceIds, g.proposedDevices)}`
                         : ""}
                     </div>
                   </div>
@@ -924,7 +939,7 @@ export default function GuestsStatusView() {
                     Invited {new Date(h.createdAt).toLocaleDateString()} · expires{" "}
                     {new Date(h.expiresAt).toLocaleDateString()}
                     {h.proposedDeviceIds && h.proposedDeviceIds.length > 0
-                      ? ` · scope: ${h.proposedDeviceIds.length} machine${h.proposedDeviceIds.length === 1 ? "" : "s"}`
+                      ? ` · scope: ${machineScopeLabel(h.proposedDeviceIds, h.proposedDevices)}`
                       : ""}
                   </div>
                 </div>
@@ -950,6 +965,9 @@ export default function GuestsStatusView() {
                   </div>
                   <div className="mt-1 text-xs text-surface-500">
                     Since {new Date(h.grantedAt).toLocaleDateString()}
+                    {machineScopeLabel(undefined, h.devices)
+                      ? ` · scope: ${machineScopeLabel(undefined, h.devices)}`
+                      : ""}
                   </div>
                 </div>
               </li>
