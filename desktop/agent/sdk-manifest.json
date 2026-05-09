@@ -95,7 +95,6 @@
     "expo-web-browser": "15.0.10",
     "lottie-react-native": "7.3.6",
     "react-native-audio-api": "0.11.7",
-    "react-native-background-actions": "4.1.0",
     "react-native-ble-plx": "3.5.1",
     "react-native-device-info": "15.0.2",
     "react-native-gesture-handler": "2.28.0",
@@ -107,11 +106,11 @@
     "react-native-nitro-image": "0.13.1",
     "react-native-nitro-modules": "0.35.3",
     "react-native-pager-view": "6.9.1",
+    "react-native-passkey": "3.3.3",
     "react-native-pdf": "7.0.4",
     "react-native-permissions": "5.5.1",
     "react-native-purchases": "10.0.1",
     "react-native-reanimated": "4.1.7",
-    "react-native-record-screen": "0.6.2",
     "react-native-safe-area-context": "5.6.2",
     "react-native-screens": "4.16.0",
     "react-native-share": "12.2.6",
@@ -573,13 +572,6 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
-    "react-native-background-actions": {
-      "version": "4.1.0",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
     "react-native-ble-plx": {
       "version": "3.5.1",
       "hostApp": true,
@@ -657,6 +649,13 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     },
+    "react-native-passkey": {
+      "version": "3.3.3",
+      "hostApp": true,
+      "cliPush": true,
+      "agentOpenInYaver": true,
+      "pluginEnabled": false
+    },
     "react-native-pdf": {
       "version": "7.0.4",
       "hostApp": true,
@@ -680,13 +679,6 @@
     },
     "react-native-reanimated": {
       "version": "4.1.7",
-      "hostApp": true,
-      "cliPush": true,
-      "agentOpenInYaver": true,
-      "pluginEnabled": false
-    },
-    "react-native-record-screen": {
-      "version": "0.6.2",
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
