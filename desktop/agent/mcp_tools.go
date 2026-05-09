@@ -43,6 +43,10 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 						"enum":        []string{"browser", "sim-ios", "sim-android", "phone"},
 						"description": "Override the auto-detected recorder. Empty = let the agent infer from the task's workDir (e.g. RN/Expo with ios/ → sim-ios; web → browser).",
 					},
+					"ask_freely": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Default false. When true, the new task is exempt from yaver's no-questions preamble + soft-question fallback — the runner may emit clarifying questions in prose. Only enable for audits or risky-change reviews where the user wants explicit confirmation. When false, the runner is told to pick sensible defaults and stop only via the yaver_ask_user MCP tool.",
+					},
 				},
 			},
 		},
@@ -96,6 +100,40 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"input": map[string]interface{}{
 						"type":        "string",
 						"description": "Follow-up instructions for the task",
+					},
+				},
+			},
+		},
+		{
+			"name": "yaver_ask_user",
+			"description": "Ask the human running this Yaver task for input when a decision genuinely cannot be defaulted. The question is delivered to whichever Yaver surface the user is on (mobile app, web dashboard, CLI), they answer, and the answer string is returned to you as the tool result. Blocks until answered or until 5 min timeout (configurable via timeout_sec, max 30 min). USE SPARINGLY: prefer picking a sensible default and stating your assumption. Only call this for irreversible actions, value judgements, or production / billing / customer-visible state. Never call it for things you could look up (vault, project files, git log). Result on timeout / cancel: {cancelled:true} — handle it by picking the safest default and proceeding. Requires the agent to be running inside a Yaver task (YAVER_TASK_ID env var must be set by the spawning daemon).",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"prompt"},
+				"properties": map[string]interface{}{
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "The question to show the user. Be specific and brief — the user is on a phone or laptop and may have walked away. Include the consequences of each option if asking for a choice.",
+					},
+					"kind": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"text", "choice", "secret"},
+						"description": "How to render the input on the user's surface. 'text' = free-form text input (default). 'choice' = picker over the choices array. 'secret' = password-style input; the answer is NOT echoed in any SSE event so neighbouring devices can't see it. The runner still receives it in the tool result.",
+					},
+					"choices": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Required when kind=choice. Each entry is one option label. Keep to 2-5 short options.",
+					},
+					"vault_hint": map[string]interface{}{
+						"type":        "string",
+						"description": "When asking for a credential, set to the vault entry name you'd ideally read instead. The mobile/web sheet renders a 'Use stored value' shortcut so the user doesn't have to retype. Combine with kind=secret.",
+					},
+					"timeout_sec": map[string]interface{}{
+						"type":        "integer",
+						"minimum":     30,
+						"maximum":     1800,
+						"description": "Seconds to wait for an answer before the tool returns {cancelled:true}. Default 300, max 1800.",
 					},
 				},
 			},

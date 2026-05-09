@@ -746,6 +746,15 @@ type TaskCreateOptions struct {
 	// "sim-android", "phone". See Task.VideoSource for semantics.
 	VideoEnabled bool
 	VideoSource  string
+
+	// AskFreely opts the new task OUT of yaver's no-questions preamble
+	// AND the soft-question fallback detector. Default false: yaver
+	// instructs the runner to pick sensible defaults and only stop via
+	// the yaver_ask_user MCP tool. Set true for audits, risky-change
+	// reviews, or any task where the user wants the runner to confirm
+	// decisions in prose. Guests can never set this — it's stripped in
+	// the createTask handler.
+	AskFreely bool
 }
 
 type TaskResumeOptions struct {
@@ -819,11 +828,26 @@ type Task struct {
 	VideoClipID  string `json:"videoClipId,omitempty"`
 	VideoStatus  string `json:"videoStatus,omitempty"` // queued|recording|ready|failed
 
+	// AskFreely opts out of the no-questions preamble (and the
+	// soft-question fallback detector). See TaskCreateOptions.AskFreely
+	// for the full rule.
+	AskFreely bool `json:"askFreely,omitempty"`
+
 	runner     RunnerConfig // the runner config used for this task (not persisted)
 	cmd        *exec.Cmd
 	cancel     context.CancelFunc
 	stdin      io.WriteCloser
 	outputCh   chan string
+	// eventCh carries structured (non-text) events for this task —
+	// agent_question, agent_answered, agent_question_cancelled, …
+	// The SSE writer in handleTaskByID/streamOutput selects on this
+	// alongside outputCh and forwards each event verbatim. Old
+	// clients that only know `{type:"output"}` and `{type:"done"}`
+	// silently ignore unknown types, so adding new event kinds is
+	// backwards-compatible. Buffered so a transient SSE backpressure
+	// on a phone doesn't block the agent_question registration; the
+	// emitter (emitTaskEvent) drops on full rather than stalling.
+	eventCh    chan map[string]interface{}
 	doneCh     chan struct{}
 	retryCount int // Number of auto-restart attempts so far
 }
@@ -899,6 +923,7 @@ type TaskInfo struct {
 	VideoStatus    string             `json:"videoStatus,omitempty"`
 	VideoClipURL   string             `json:"videoClipUrl,omitempty"`
 	VideoPosterURL string             `json:"videoPosterUrl,omitempty"`
+	AskFreely      bool               `json:"askFreely,omitempty"`
 }
 
 // TaskManager manages the lifecycle of tasks.
@@ -1323,6 +1348,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		runner:                      taskRunner,
 		CreatedAt:                   now,
 		outputCh:                    make(chan string, 512),
+		eventCh:                     make(chan map[string]interface{}, 32),
 		doneCh:                      make(chan struct{}),
 		WorkDir:                     strings.TrimSpace(opts.WorkDir),
 		SliceContract:               opts.SliceContract,
@@ -1335,6 +1361,7 @@ func (tm *TaskManager) CreateTaskWithOptions(title, description, model, source, 
 		GuestSharedStorageMounts:    append([]string{}, opts.GuestSharedStorageMounts...),
 		VideoEnabled:                opts.VideoEnabled,
 		VideoSource:                 opts.VideoSource,
+		AskFreely:                   opts.AskFreely,
 		Turns: []ConversationTurn{
 			{Role: "user", Content: initialTurnContent, Timestamp: now},
 		},
@@ -1398,6 +1425,14 @@ func taskEnv(task *Task) []string {
 	env = append(env, "PATH="+expandedPath())
 	if task != nil {
 		env = append(env, "YAVER_TASK_SOURCE="+strings.TrimSpace(task.Source))
+		// Stdio MCP children read YAVER_TASK_ID to know which task to
+		// associate `yaver_ask_user` calls with. Empty when there is no
+		// task in flight (e.g. a CLI MCP probe), in which case the tool
+		// returns a clean error rather than registering an orphan
+		// question.
+		if strings.TrimSpace(task.ID) != "" {
+			env = append(env, "YAVER_TASK_ID="+task.ID)
+		}
 		switch task.Source {
 		case terminalLocalTaskSource, "attach", "cli":
 			env = append(env, "YAVER_SESSION_MODE=terminal", "YAVER_SOURCE_SURFACE=terminal", "YAVER_WORKSPACE_LOCATION=local")
@@ -1901,6 +1936,16 @@ func (tm *TaskManager) startProcess(task *Task) error {
 		contextDir = task.WorkDir
 	}
 
+	// No-questions decision policy + vault-name hints. Default ON; opt-out
+	// per task via Task.AskFreely (audit / risky-change reviews). Inserted
+	// AFTER taskSourcePromptSuffix so the source-specific framing is read
+	// first, then the policy clarifies "and don't ask in prose."
+	if !task.AskFreely {
+		project := DetectProjectInfo(contextDir).Name
+		hints := renderVaultHintsForTask(currentRuntimeVaultStore(), project)
+		prompt += noQuestionsPreamble(hints)
+	}
+
 	// "mobile-code" is the mobile UI's "yaver code mode" toggle: same
 	// /tasks endpoint, same TaskManager, but the runner sees the
 	// terminal-style prompt prefix (no markdown headings by default,
@@ -2268,6 +2313,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 
 					// Re-create channels for the new process
 					task.outputCh = make(chan string, 512)
+					task.eventCh = make(chan map[string]interface{}, 32)
 					task.doneCh = make(chan struct{})
 
 					if restartErr := tm.startProcess(task); restartErr != nil {
@@ -2486,6 +2532,15 @@ func (tm *TaskManager) emit(task *Task, output *strings.Builder, text string) {
 	select {
 	case task.outputCh <- text:
 	default:
+	}
+	// Fallback question detection: when the runner ignores the
+	// yaver_ask_user MCP tool and asks in prose anyway, this catches
+	// the question and re-presents it through the same Q&A surface
+	// the MCP path uses. AskFreely-tagged tasks are exempt — the user
+	// explicitly opted into prose questions and would not want them
+	// hijacked into a structured sheet.
+	if !task.AskFreely {
+		tm.maybeDetectSoftQuestion(task, text)
 	}
 }
 
@@ -2736,6 +2791,15 @@ func (tm *TaskManager) StopTask(id string) error {
 	}
 	tm.mu.Unlock()
 
+	// Unpark any agent_question that's waiting on a human; the
+	// /tasks/{id}/question handler returns immediately and the
+	// runner's MCP tool call gets a cancellation result instead of
+	// hanging until the question's TTL expires. Drop the soft-
+	// question scratchpad too so a re-launched task with the same
+	// ID starts fresh.
+	globalQuestionRegistry.CancelTask(id)
+	dropSoftQuestionState(id)
+
 	if task.cancel != nil {
 		task.cancel()
 	}
@@ -2946,6 +3010,7 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 
 	// Re-create channels for the new run
 	task.outputCh = make(chan string, 512)
+	task.eventCh = make(chan map[string]interface{}, 32)
 	task.doneCh = make(chan struct{})
 
 	tm.persist()
@@ -3299,6 +3364,7 @@ func (tm *TaskManager) CreateChainedTasks(tasks []ChainedTaskInput, model, sourc
 			runner:       taskRunner,
 			CreatedAt:    now,
 			outputCh:     make(chan string, 512),
+			eventCh:      make(chan map[string]interface{}, 32),
 			doneCh:       make(chan struct{}),
 			ChainID:      chainID,
 			ChainOrder:   i,
@@ -3462,6 +3528,7 @@ func (tm *TaskManager) autoRetryTask(task *Task) bool {
 	task.Status = TaskStatusQueued
 	task.FinishedAt = nil
 	task.outputCh = make(chan string, 512)
+	task.eventCh = make(chan map[string]interface{}, 32)
 	task.doneCh = make(chan struct{})
 
 	// Update the prompt for this retry

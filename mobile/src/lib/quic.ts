@@ -1951,8 +1951,30 @@ export class QuicClient {
 
   // ── SSE Task Stream ──────────────────────────────────────────────
 
-  /** Stream task output via SSE. Returns an abort function. */
-  streamTaskOutput(taskId: string, onData: (text: string) => void, onDone?: (status: string) => void): () => void {
+  /**
+   * Stream task output via SSE. Returns an abort function.
+   *
+   * Event types currently emitted by the daemon (handleTaskByID/streamOutput):
+   *   - {type:"output", text} — text chunk; routed to onData
+   *   - {type:"done", status} — terminal state; routed to onDone
+   *   - {type:"agent_question", question} — runner is asking the human;
+   *     routed to onEvent. The UI should render a sheet and POST the
+   *     answer to /tasks/{id}/answer (see answerTaskQuestion below).
+   *   - {type:"agent_answered", questionId, answer} — another device on
+   *     the same account answered first; routed to onEvent so this UI
+   *     can close its sheet without sending a duplicate.
+   *   - {type:"agent_question_cancelled", questionId, reason} — task
+   *     stopped or question expired; close the sheet.
+   *
+   * Unknown event types are silently dropped — the daemon may emit
+   * new ones in the future without a client bump.
+   */
+  streamTaskOutput(
+    taskId: string,
+    onData: (text: string) => void,
+    onDone?: (status: string) => void,
+    onEvent?: (event: { type: string; [k: string]: unknown }) => void,
+  ): () => void {
     const controller = new AbortController();
     const url = `${this.baseUrl}/tasks/${taskId}/output`;
 
@@ -1984,6 +2006,8 @@ export class QuicClient {
                 onData(evt.text);
               } else if (evt.type === "done" && onDone) {
                 onDone(evt.status);
+              } else if (onEvent) {
+                onEvent(evt);
               }
             } catch {}
           }
@@ -1994,6 +2018,65 @@ export class QuicClient {
     })();
 
     return () => controller.abort();
+  }
+
+  /**
+   * Answer the currently-pending agent_question for a task. The
+   * daemon resolves the parked /tasks/{id}/question handler so the
+   * runner's MCP `yaver_ask_user` call returns with this answer.
+   * Returns {ok:true} on success, {ok:false, error} on failure
+   * (e.g. the question already expired or was answered by another
+   * device). Idempotent: a second call with the same questionId
+   * returns ok:false with a 404-style error.
+   */
+  async answerTaskQuestion(
+    taskId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/tasks/${taskId}/answer`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId, answer }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        return { ok: false, error: txt || `HTTP ${res.status}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Fetch the currently-pending agent_question for a task, if any.
+   * Used by a late-joining UI that opened the task page after the
+   * SSE event already fired. Returns null on 404 (no pending) or
+   * on transport error.
+   */
+  async getPendingTaskQuestion(taskId: string): Promise<{
+    id: string;
+    taskId: string;
+    prompt: string;
+    kind: "text" | "choice" | "secret";
+    choices?: string[];
+    vaultHint?: string;
+    createdAtMs: number;
+    timeoutSec: number;
+  } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/tasks/${taskId}/question`, {
+        method: "GET",
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body?.question ?? null;
+    } catch {
+      return null;
+    }
   }
 
   // ── SSE Log Stream (autodev / loop chat events) ─────────────────

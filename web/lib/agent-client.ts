@@ -2078,7 +2078,27 @@ export class AgentClient {
 
   // ── SSE Task Output Stream ───────────────────────────────────────
 
-  streamTaskOutput(taskId: string, onLine: (line: string) => void): () => void {
+  /**
+   * Stream task output via SSE.
+   *
+   * Event types currently emitted by the daemon:
+   *   - {type:"output", text} — text chunk; routed to onLine
+   *   - {type:"done", status} — terminal status; surfaced to onEvent
+   *   - {type:"agent_question", question} — runner is asking the
+   *     human via the yaver_ask_user MCP tool. Routed to onEvent.
+   *     Reply with answerTaskQuestion(taskId, question.id, answer).
+   *   - {type:"agent_answered", questionId, answer} — another device
+   *     answered first; close any open sheet.
+   *   - {type:"agent_question_cancelled", questionId, reason}
+   *
+   * Unknown event types are ignored. Old callers that only pass
+   * onLine continue to work unchanged.
+   */
+  streamTaskOutput(
+    taskId: string,
+    onLine: (line: string) => void,
+    onEvent?: (event: { type: string; [k: string]: unknown }) => void,
+  ): () => void {
     const controller = new AbortController();
     const url = `${this.baseUrl}/tasks/${taskId}/output`;
     (async () => {
@@ -2107,7 +2127,11 @@ export class AgentClient {
             if (dataLines.length === 0) continue;
             try {
               const event = JSON.parse(dataLines.join("\n"));
-              if (event?.type === "output" && event.text) onLine(String(event.text));
+              if (event?.type === "output" && event.text) {
+                onLine(String(event.text));
+              } else if (onEvent) {
+                onEvent(event);
+              }
             } catch {
               // Ignore malformed frames.
             }
@@ -2118,6 +2142,61 @@ export class AgentClient {
       }
     })();
     return () => controller.abort();
+  }
+
+  /**
+   * POST the human's answer for a pending agent_question. The daemon
+   * resolves the parked /tasks/{id}/question handler so the runner's
+   * `yaver_ask_user` MCP call returns. Idempotent (a second call with
+   * the same questionId returns ok:false).
+   */
+  async answerTaskQuestion(
+    taskId: string,
+    questionId: string,
+    answer: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/tasks/${taskId}/answer`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId, answer }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        return { ok: false, error: txt || `HTTP ${res.status}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * GET /tasks/{id}/question — peek the currently-pending question
+   * for a task without re-subscribing to SSE. Returns null when none
+   * is in flight.
+   */
+  async getPendingTaskQuestion(taskId: string): Promise<{
+    id: string;
+    taskId: string;
+    prompt: string;
+    kind: "text" | "choice" | "secret";
+    choices?: string[];
+    vaultHint?: string;
+    createdAtMs: number;
+    timeoutSec: number;
+  } | null> {
+    try {
+      const res = await fetch(`${this.baseUrl}/tasks/${taskId}/question`, {
+        method: "GET",
+        headers: this.authHeaders,
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return body?.question ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /**

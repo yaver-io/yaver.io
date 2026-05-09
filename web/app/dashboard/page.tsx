@@ -694,6 +694,23 @@ export default function DashboardPage() {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
+  // Pending agent_question pulled from the SSE stream. When non-null
+  // the dashboard renders an inline answer card above the composer;
+  // submitting POSTs to /tasks/{id}/answer (via answerTaskQuestion),
+  // the daemon resolves the parked /question handler, and the runner's
+  // yaver_ask_user MCP call returns. agent_answered /
+  // agent_question_cancelled SSE events also clear it so a phone
+  // answering first doesn't leave the card orphaned.
+  const [agentQuestion, setAgentQuestion] = useState<{
+    id: string;
+    taskId: string;
+    prompt: string;
+    kind: "text" | "choice" | "secret";
+    choices?: string[];
+    vaultHint?: string;
+  } | null>(null);
+  const [agentAnswerText, setAgentAnswerText] = useState("");
+  const [submittingAgentAnswer, setSubmittingAgentAnswer] = useState(false);
   const [outputLines, setOutputLines] = useState<string[]>([]);
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [runners, setRunners] = useState<Runner[]>([]);
@@ -1058,8 +1075,44 @@ export default function DashboardPage() {
     }
     const tid = activeTask.id;
     sseActiveTaskRef.current = tid;
-    const stop = agentClient.streamTaskOutput(tid, (chunk) => {
-      appendAssistantChunk(tid, chunk);
+    const stop = agentClient.streamTaskOutput(
+      tid,
+      (chunk) => {
+        appendAssistantChunk(tid, chunk);
+      },
+      (evt) => {
+        if (!evt || typeof evt.type !== "string") return;
+        if (evt.type === "agent_question" && evt.question) {
+          const q = evt.question as {
+            id: string;
+            taskId: string;
+            prompt: string;
+            kind: "text" | "choice" | "secret";
+            choices?: string[];
+            vaultHint?: string;
+          };
+          setAgentQuestion(q);
+          setAgentAnswerText("");
+        } else if (evt.type === "agent_answered" || evt.type === "agent_question_cancelled") {
+          const qid = (evt as { questionId?: string }).questionId;
+          setAgentQuestion((cur) => (cur && (!qid || cur.id === qid) ? null : cur));
+        } else if (evt.type === "done") {
+          // Task finished: any open question can no longer be
+          // consumed (registry was cancelled by StopTask); close
+          // the card.
+          setAgentQuestion(null);
+        }
+      },
+    );
+    // Late-join replay: if the agent already asked while no client
+    // was subscribed, the SSE writer replays on connect — but also
+    // poll once so the card shows the moment the user opens the task
+    // tab without waiting for the next SSE flush.
+    void agentClient.getPendingTaskQuestion(tid).then((q) => {
+      if (q && q.taskId === tid) {
+        setAgentQuestion(q);
+        setAgentAnswerText("");
+      }
     });
     return () => {
       stop();
@@ -3053,6 +3106,96 @@ export default function DashboardPage() {
                     <div className="flex flex-wrap items-center gap-2 rounded-xl border border-fuchsia-500/20 bg-fuchsia-500/5 px-3 py-2 text-[11px] text-fuchsia-100">
                       <span className="font-semibold uppercase tracking-[0.18em] text-fuchsia-200/80">Repo</span>
                       <span className="font-mono text-fuchsia-50">{preferredSurfaceProjectPath}</span>
+                    </div>
+                  ) : null}
+                  {agentQuestion && agentQuestion.taskId === activeTask?.id ? (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-200/80">
+                        Agent needs your input
+                      </div>
+                      <div className="mt-2 text-sm text-surface-100 whitespace-pre-wrap">
+                        {agentQuestion.prompt}
+                      </div>
+                      {agentQuestion.kind === "choice" && (agentQuestion.choices || []).length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {(agentQuestion.choices || []).map((choice) => (
+                            <button
+                              key={choice}
+                              type="button"
+                              disabled={submittingAgentAnswer}
+                              onClick={async () => {
+                                if (!agentQuestion) return;
+                                setSubmittingAgentAnswer(true);
+                                const res = await agentClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, choice);
+                                setSubmittingAgentAnswer(false);
+                                if (!res.ok) {
+                                  alert("Could not deliver answer: " + (res.error || "Unknown error"));
+                                  return;
+                                }
+                                setAgentQuestion(null);
+                              }}
+                              className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-xs text-amber-50 hover:bg-amber-400/20 disabled:opacity-50"
+                            >
+                              {choice}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex items-end gap-2">
+                          <input
+                            type={agentQuestion.kind === "secret" ? "password" : "text"}
+                            value={agentAnswerText}
+                            onChange={(e) => setAgentAnswerText(e.target.value)}
+                            onKeyDown={async (e) => {
+                              if (e.key !== "Enter" || !agentAnswerText.trim() || submittingAgentAnswer) return;
+                              e.preventDefault();
+                              setSubmittingAgentAnswer(true);
+                              const res = await agentClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, agentAnswerText);
+                              setSubmittingAgentAnswer(false);
+                              if (!res.ok) {
+                                alert("Could not deliver answer: " + (res.error || "Unknown error"));
+                                return;
+                              }
+                              setAgentQuestion(null);
+                              setAgentAnswerText("");
+                            }}
+                            autoFocus
+                            placeholder={agentQuestion.kind === "secret" ? "Secret value (not echoed to other devices)" : "Type your answer…"}
+                            className="flex-1 rounded-lg border border-amber-400/30 bg-surface-950 px-3 py-2 text-sm text-surface-100 placeholder-amber-200/40 outline-none focus:border-amber-400/60"
+                          />
+                          <button
+                            type="button"
+                            disabled={submittingAgentAnswer || !agentAnswerText.trim()}
+                            onClick={async () => {
+                              if (!agentQuestion) return;
+                              setSubmittingAgentAnswer(true);
+                              const res = await agentClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, agentAnswerText);
+                              setSubmittingAgentAnswer(false);
+                              if (!res.ok) {
+                                alert("Could not deliver answer: " + (res.error || "Unknown error"));
+                                return;
+                              }
+                              setAgentQuestion(null);
+                              setAgentAnswerText("");
+                            }}
+                            className="rounded-lg bg-amber-400/80 px-3 py-2 text-xs font-medium text-amber-950 hover:bg-amber-400 disabled:opacity-50"
+                          >
+                            {submittingAgentAnswer ? "Sending…" : "Send"}
+                          </button>
+                        </div>
+                      )}
+                      {agentQuestion.vaultHint ? (
+                        <div className="mt-2 text-[11px] text-amber-200/70">
+                          Hint: agent suggests vault entry <code className="font-mono">{agentQuestion.vaultHint}</code>. Look it up with <code className="font-mono">yaver vault get {agentQuestion.vaultHint}</code>.
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => setAgentQuestion(null)}
+                        className="mt-2 text-[11px] text-amber-200/60 hover:text-amber-100"
+                      >
+                        Dismiss (the agent will time out and pick a default)
+                      </button>
                     </div>
                   ) : null}
                   <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">

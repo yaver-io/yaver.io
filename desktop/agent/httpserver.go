@@ -3142,6 +3142,7 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		VideoSource:    task.VideoSource,
 		VideoClipID:    task.VideoClipID,
 		VideoStatus:    task.VideoStatus,
+		AskFreely:      task.AskFreely,
 	}
 	s.enrichTaskInfoVideo(&info, r)
 	return info
@@ -3207,6 +3208,10 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		// auto-detect from the task's workDir.
 		VideoEnabled bool   `json:"videoEnabled,omitempty"`
 		VideoSource  string `json:"videoSource,omitempty"`
+		// AskFreely opts the task OUT of yaver's no-questions
+		// preamble + soft-question fallback so the runner may emit
+		// clarifying questions in prose. Default false.
+		AskFreely bool `json:"askFreely,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -3345,6 +3350,13 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 	// recorder when status flips to completed.
 	taskOpts.VideoEnabled = body.VideoEnabled
 	taskOpts.VideoSource = strings.TrimSpace(body.VideoSource)
+	// Guests can never opt out of the no-questions preamble — they
+	// shouldn't be able to elicit free-form clarifying prose from the
+	// runner (the host's review of the task assumes the preamble is
+	// in force).
+	if guestUID == "" {
+		taskOpts.AskFreely = body.AskFreely
+	}
 
 	var verbosityCtx *TaskVerbosity
 	if body.Verbosity != nil {
@@ -3442,6 +3454,17 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		// new runner/model/mode + bounded recent-context handoff. See
 		// task_fork.go and CODING_AGENT_CHANGE_FROM_MOBILE_APP_CHAT.md.
 		s.handleTaskFork(w, r, taskID)
+	case "question":
+		// POST: stdio MCP child registers a yaver_ask_user call,
+		// blocks until the user answers via /tasks/{id}/answer.
+		// GET: late-joining UI fetches the currently-pending question
+		// (if any) without re-subscribing to SSE.
+		s.handleTaskQuestion(w, r, taskID)
+	case "answer":
+		// POST {questionId, answer}: mobile / web / CLI delivers the
+		// human's answer. Resolves the parked /question handler so the
+		// runner's MCP tool call returns.
+		s.handleTaskAnswer(w, r, taskID)
 	default:
 		jsonError(w, http.StatusNotFound, "unknown action")
 	}
@@ -3513,11 +3536,29 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 		return
 	}
 
+	// If a question is already pending for this task (the agent
+	// asked while no client was subscribed), replay it immediately
+	// on subscribe so a late-joining mobile/web client doesn't sit
+	// blank waiting for the next event.
+	if pending, ok := globalQuestionRegistry.Pending(id); ok {
+		fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
+			"type":     "agent_question",
+			"question": pending,
+		}))
+		flusher.Flush()
+	}
+
 	// Stream live output from the channel.
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case ev := <-task.eventCh:
+			if ev == nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", jsonString(ev))
+			flusher.Flush()
 		case text, ok := <-task.outputCh:
 			if !ok {
 				// Channel closed — the stdout reader is done, but the task's
@@ -4620,6 +4661,9 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			// recorder. VideoSource overrides the auto-detected recorder.
 			VideoEnabled bool   `json:"video_enabled"`
 			VideoSource  string `json:"video_source"`
+			// AskFreely opts the new task out of yaver's no-questions
+			// preamble + soft-question fallback (default false).
+			AskFreely bool `json:"ask_freely"`
 		}
 		json.Unmarshal(call.Arguments, &args)
 		if args.Prompt == "" {
@@ -4633,6 +4677,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			Mode:         strings.TrimSpace(args.Mode),
 			VideoEnabled: args.VideoEnabled,
 			VideoSource:  strings.TrimSpace(args.VideoSource),
+			AskFreely:    args.AskFreely,
 		}
 		task, err := s.taskMgr.CreateTaskWithOptions(args.Prompt, "", strings.TrimSpace(args.Model), "mcp", strings.TrimSpace(args.Runner), "", nil, taskOpts, vc)
 		if err != nil {
@@ -4688,6 +4733,17 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		log.Printf("[MCP] Task resumed: %s (session=%s)", args.TaskID, task.SessionID)
 		return mcpToolResult(fmt.Sprintf("Task resumed. Task ID: %s", task.ID))
+
+	case "yaver_ask_user":
+		// Two-mode handler:
+		//   - HTTP MCP (daemon): we ARE the daemon, so register
+		//     directly with globalQuestionRegistry and block on the
+		//     answer channel.
+		//   - stdio MCP (child of runner): we have a sibling daemon
+		//     listening on 127.0.0.1:18080 — POST to its
+		//     /tasks/{id}/question and let it long-poll for the
+		//     answer. forwardYaverAskUser() handles both.
+		return forwardYaverAskUser(call.Arguments)
 
 	case "wire_detect":
 		// List USB-attached phones on the agent's host. See mcp_wire_tools.go.

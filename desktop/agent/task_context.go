@@ -220,6 +220,92 @@ Remote visual feedback:
 `, workspaceLocation, workDir)
 }
 
+// noQuestionsPreamble is the standing instruction we splice into every task
+// prompt (unless task.AskFreely is set) telling the runner to *act* on
+// reasonable defaults instead of stopping mid-task with "should I…?" prose.
+//
+// Two escape hatches the agent still has:
+//
+//  1. Call the MCP tool `yaver_ask_user` if a decision genuinely needs a
+//     human. The tool blocks the agent's turn until the human answers via
+//     mobile/web/CLI, then returns the answer as the tool result. Use only
+//     for irreversible or value-judgement decisions.
+//
+//  2. Look up secrets in the vault before asking. The vault names available
+//     to this task are listed inline. The agent should `yaver vault get
+//     <name>` (or the env-style `yaver vault env --project <p>`) instead
+//     of asking the user to paste a credential.
+//
+// vaultHints is the rendered vault-names block (may be empty when the vault
+// is locked or empty). It's a string rather than a slice so the caller can
+// pass "" when vault is unavailable.
+func noQuestionsPreamble(vaultHints string) string {
+	var sb strings.Builder
+	sb.WriteString("\n\n[Yaver — decision policy]\n")
+	sb.WriteString("Operate autonomously. Do not stop the run to ask the user clarifying questions in prose. The user is on a mobile / web / CLI surface and may have walked away.\n\n")
+	sb.WriteString("When a choice is ambiguous, pick the most reasonable default and proceed:\n")
+	sb.WriteString("- Package manager: pnpm > npm > yarn > bun, unless a lockfile pins one.\n")
+	sb.WriteString("- Framework / language: detect from the project files. If still ambiguous, prefer the option that minimizes new dependencies.\n")
+	sb.WriteString("- API / library version: prefer the version already in the project; if absent, prefer the latest stable release.\n")
+	sb.WriteString("- File location: follow the existing convention in the same directory.\n")
+	sb.WriteString("- Naming: follow the closest existing identifier in the file or module.\n")
+	sb.WriteString("- Reversibility: if the change is reversible (single-file edit, can be reverted with one git command), just do it. State the assumption briefly in the result.\n\n")
+	sb.WriteString("Two real escape hatches if a decision *cannot* be defaulted:\n")
+	sb.WriteString("1. Call the MCP tool `yaver_ask_user` ({prompt, kind?: \"text\"|\"choice\"|\"secret\", choices?: [...], vault_hint?: \"name\"}). The user answers from their phone or laptop and the tool returns their answer string. Use ONLY when the decision is irreversible, value-judgement, or affects production / billing / customer-visible state.\n")
+	sb.WriteString("2. If you need a secret (API token, signing key, deploy credential), DO NOT ask the user to paste it. Look in the vault first.")
+
+	if strings.TrimSpace(vaultHints) != "" {
+		sb.WriteString("\n\n[Vault — secrets you can read directly, do not ask the user for these]\n")
+		sb.WriteString(vaultHints)
+		sb.WriteString("\nRead one with `yaver vault get <name> [--project <p>]`. Load all of a project's into env with `eval \"$(yaver vault env --project <p>)\"`. The names above are non-secret; the values stay on disk encrypted until you read them.")
+	}
+
+	sb.WriteString("\n\nDo not write the strings 'Should I', 'Would you like me to', 'Do you want me to', 'Please confirm', or 'Let me know if' anywhere in your output unless you are quoting documentation. Either act, or call yaver_ask_user.\n")
+	return sb.String()
+}
+
+// renderVaultHintsForTask returns a multi-line list of vault entry names
+// (global + project-scoped) the running task should know it can read. Values
+// are NEVER included. Returns "" when the vault is unavailable, empty, or
+// the caller passed nil. The project parameter scopes which project's
+// entries to surface; "" surfaces only global; "*" surfaces all.
+//
+// Output shape (one entry per line):
+//
+//	  github-token            (global, category=git-credential)
+//	  APP_STORE_KEY_ISSUER    (project=yaver, category=signing-key)
+func renderVaultHintsForTask(vs *VaultStore, project string) string {
+	if vs == nil {
+		return ""
+	}
+	wanted := project
+	if wanted == "" {
+		wanted = "*"
+	}
+	entries := vs.List(wanted)
+	if len(entries) == 0 {
+		return ""
+	}
+	const maxEntries = 60
+	var sb strings.Builder
+	for i, e := range entries {
+		if i >= maxEntries {
+			fmt.Fprintf(&sb, "  …%d more (run `yaver vault list` to see all)\n", len(entries)-maxEntries)
+			break
+		}
+		scope := "global"
+		if e.Project != "" {
+			scope = "project=" + e.Project
+		}
+		category := strings.TrimSpace(e.Category)
+		if category == "" {
+			category = "custom"
+		}
+		fmt.Fprintf(&sb, "  %s\t(%s, category=%s)\n", e.Name, scope, category)
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
 // autopilotContext returns instructions injected into task prompts when autopilot is on.
 func autopilotContext() string {
 	return `

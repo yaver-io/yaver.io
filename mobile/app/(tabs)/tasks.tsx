@@ -1385,6 +1385,22 @@ export default function TasksScreen() {
   const [followUpText, setFollowUpText] = useState("");
   const [isSendingFollowUp, setIsSendingFollowUp] = useState(false);
   const [followUpExpanded, setFollowUpExpanded] = useState(false);
+  // Pending agent_question pulled from the SSE stream. When non-null
+  // the question sheet is open; the user types/picks an answer, the
+  // sheet POSTs to /tasks/{id}/answer (via answerTaskQuestion), and
+  // we clear this state. The daemon also broadcasts agent_answered
+  // when another device on the same account answers first — we clear
+  // on that event too so neither sheet stays orphaned.
+  const [agentQuestion, setAgentQuestion] = useState<{
+    id: string;
+    taskId: string;
+    prompt: string;
+    kind: "text" | "choice" | "secret";
+    choices?: string[];
+    vaultHint?: string;
+  } | null>(null);
+  const [agentAnswerText, setAgentAnswerText] = useState("");
+  const [submittingAgentAnswer, setSubmittingAgentAnswer] = useState(false);
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -1845,11 +1861,51 @@ export default function TasksScreen() {
           setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, status: status as TaskStatus } : t));
           setSelectedTask((prev) => prev?.id === selectedTask.id ? { ...prev, status: status as TaskStatus } : prev);
         }
-        // Task finished via SSE — refresh to get final state
+        // Task finished via SSE — refresh to get final state. Also
+        // close any open agent_question sheet: a finished task
+        // cannot consume an answer, and the daemon already cancelled
+        // the registry entry on stop.
+        setAgentQuestion(null);
         fetchTasks();
-      }
+      },
+      (evt) => {
+        // Structured non-text events. The daemon emits agent_question
+        // when the runner calls yaver_ask_user, agent_answered when
+        // any device on the same account answers, and
+        // agent_question_cancelled on timeout / task stop.
+        if (!evt || typeof evt.type !== "string") return;
+        if (evt.type === "agent_question" && evt.question) {
+          const q = evt.question as {
+            id: string;
+            taskId: string;
+            prompt: string;
+            kind: "text" | "choice" | "secret";
+            choices?: string[];
+            vaultHint?: string;
+          };
+          setAgentQuestion(q);
+          setAgentAnswerText("");
+        } else if (evt.type === "agent_answered" || evt.type === "agent_question_cancelled") {
+          const qid = (evt as { questionId?: string }).questionId;
+          setAgentQuestion((cur) => (cur && (!qid || cur.id === qid) ? null : cur));
+        }
+      },
     );
     sseAbortRef.current = abort;
+
+    // Late-join replay: if the agent already asked while no client
+    // was subscribed, the SSE writer will replay on connect. But the
+    // streamTaskOutput callback fires asynchronously; for the
+    // currently-selected task we also poll once so the sheet shows
+    // immediately on tap-into-task without waiting for the next
+    // server-buffered SSE flush.
+    void quicClient.getPendingTaskQuestion(selectedTask.id).then((q) => {
+      if (q && q.taskId === selectedTask.id) {
+        setAgentQuestion(q);
+        setAgentAnswerText("");
+      }
+    });
+
     return () => abort();
   }, [selectedTask?.id, selectedTask?.status]);
 
@@ -3449,6 +3505,162 @@ export default function TasksScreen() {
             ) : (
               <Text style={{ color: "#888" }}>Loading…</Text>
             )}
+          </View>
+        </Modal>
+
+        {/* Agent question sheet — opens when the runner calls the
+            yaver_ask_user MCP tool while this task is selected. The
+            user types/picks an answer, we POST to /tasks/{id}/answer
+            (via answerTaskQuestion), the daemon resolves the parked
+            /question handler, and the runner's tool call returns
+            with the answer. agent_answered / agent_question_cancelled
+            SSE events also clear agentQuestion so a second device
+            answering doesn't leave this sheet orphaned. */}
+        <Modal
+          visible={!!agentQuestion}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setAgentQuestion(null)}
+        >
+          <View style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.55)", justifyContent: "flex-end" }}>
+            <View style={{ backgroundColor: c.bg, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 36 }}>
+              <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 8 }}>
+                Agent needs your input
+              </Text>
+              <Text style={{ color: c.textPrimary, fontSize: 16, lineHeight: 22, marginBottom: 16 }}>
+                {agentQuestion?.prompt}
+              </Text>
+
+              {agentQuestion?.kind === "choice" && (agentQuestion?.choices || []).length > 0 ? (
+                <View style={{ gap: 8 }}>
+                  {(agentQuestion?.choices || []).map((choice) => (
+                    <Pressable
+                      key={choice}
+                      disabled={submittingAgentAnswer}
+                      onPress={async () => {
+                        if (!agentQuestion) return;
+                        setSubmittingAgentAnswer(true);
+                        const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, choice);
+                        setSubmittingAgentAnswer(false);
+                        if (!res.ok) {
+                          Alert.alert("Could not deliver answer", res.error || "Unknown error");
+                          return;
+                        }
+                        setAgentQuestion(null);
+                      }}
+                      style={{
+                        backgroundColor: c.surface,
+                        borderRadius: 12,
+                        paddingVertical: 14,
+                        paddingHorizontal: 16,
+                        borderWidth: 1,
+                        borderColor: c.border,
+                      }}
+                    >
+                      <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "500" }}>{choice}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : (
+                <View>
+                  <TextInput
+                    value={agentAnswerText}
+                    onChangeText={setAgentAnswerText}
+                    placeholder={agentQuestion?.kind === "secret" ? "Secret value (not echoed to other devices)" : "Type your answer…"}
+                    placeholderTextColor={c.textMuted}
+                    secureTextEntry={agentQuestion?.kind === "secret"}
+                    autoFocus
+                    multiline={agentQuestion?.kind !== "secret"}
+                    style={{
+                      backgroundColor: c.surface,
+                      color: c.textPrimary,
+                      borderRadius: 12,
+                      paddingHorizontal: 14,
+                      paddingVertical: 12,
+                      fontSize: 15,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      minHeight: agentQuestion?.kind === "secret" ? 48 : 80,
+                      textAlignVertical: "top",
+                    }}
+                  />
+                  {agentQuestion?.vaultHint ? (
+                    <Pressable
+                      disabled={submittingAgentAnswer}
+                      onPress={async () => {
+                        if (!agentQuestion?.vaultHint) return;
+                        // Resolve the vault entry server-side and submit
+                        // its value as the answer in one round trip; the
+                        // value never lives in JS memory beyond this
+                        // function. quicClient.getVaultValue is the
+                        // existing read endpoint; if it's missing on this
+                        // build, fall back to telling the user to paste.
+                        try {
+                          const v = await (quicClient as unknown as { getVaultValue?: (n: string) => Promise<string | null> }).getVaultValue?.(
+                            agentQuestion.vaultHint,
+                          );
+                          if (typeof v === "string" && v) {
+                            setSubmittingAgentAnswer(true);
+                            const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, v);
+                            setSubmittingAgentAnswer(false);
+                            if (!res.ok) {
+                              Alert.alert("Could not deliver answer", res.error || "Unknown error");
+                              return;
+                            }
+                            setAgentQuestion(null);
+                            return;
+                          }
+                        } catch {
+                          /* fall through to manual paste hint */
+                        }
+                        Alert.alert(
+                          "Vault lookup unavailable",
+                          `The agent suggested using the vault entry "${agentQuestion.vaultHint}". This client can't read the vault directly — paste the value manually.`,
+                        );
+                      }}
+                      style={{ marginTop: 10, alignSelf: "flex-start" }}
+                    >
+                      <Text style={{ color: c.accent, fontSize: 13, fontWeight: "500" }}>
+                        Use vault entry: {agentQuestion.vaultHint}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              )}
+
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 18 }}>
+                <Pressable disabled={submittingAgentAnswer} onPress={() => setAgentQuestion(null)} style={{ paddingVertical: 12, paddingHorizontal: 18 }}>
+                  <Text style={{ color: c.textMuted, fontSize: 15 }}>Dismiss</Text>
+                </Pressable>
+                {agentQuestion?.kind !== "choice" ? (
+                  <Pressable
+                    disabled={submittingAgentAnswer || !agentAnswerText.trim()}
+                    onPress={async () => {
+                      if (!agentQuestion) return;
+                      setSubmittingAgentAnswer(true);
+                      const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, agentAnswerText);
+                      setSubmittingAgentAnswer(false);
+                      if (!res.ok) {
+                        Alert.alert("Could not deliver answer", res.error || "Unknown error");
+                        return;
+                      }
+                      setAgentQuestion(null);
+                      setAgentAnswerText("");
+                    }}
+                    style={{
+                      backgroundColor: !agentAnswerText.trim() || submittingAgentAnswer ? c.surface : c.accent,
+                      paddingVertical: 12,
+                      paddingHorizontal: 22,
+                      borderRadius: 10,
+                    }}
+                  >
+                    <Text style={{ color: !agentAnswerText.trim() || submittingAgentAnswer ? c.textMuted : "#fff", fontSize: 15, fontWeight: "600" }}>
+                      {submittingAgentAnswer ? "Sending…" : "Send"}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
           </View>
         </Modal>
 
