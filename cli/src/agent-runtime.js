@@ -36,6 +36,25 @@ async function ensureAgentBinary({ quiet = false } = {}) {
     const asset = await resolveAsset();
     const localAgentPath = resolveLocalAgentBinary(asset);
     if (localAgentPath) return localAgentPath;
+    // Defense in depth: if the cache holds a HIGHER version than
+    // what GH resolved, prefer it. Two failure modes this catches:
+    //   1. Older wrappers with the namespaced-tag-strip bug resolve
+    //      to a stale legacy `v*` release even when newer `cli/v*`
+    //      tags exist. Cache snapshot wins until npm catches up.
+    //   2. A new release publishes its tag but skips the platform
+    //      asset (e.g. macOS notarize fails); falling back to a
+    //      previously-cached newer build is better than running
+    //      the older one.
+    const higherCached = findHigherCachedThan(asset.version);
+    if (higherCached) {
+      if (!quiet) {
+        console.error(
+          `[yaver] cache holds a newer agent (${higherCached.version}) than the resolved release ` +
+          `(${asset.version}); preferring cached binary.`,
+        );
+      }
+      return higherCached.path;
+    }
     const installDir = path.join(CACHE_ROOT, asset.version, asset.cacheKey);
     const binaryPath = path.join(installDir, asset.binaryName);
     if (fs.existsSync(binaryPath)) {
@@ -60,6 +79,33 @@ async function ensureAgentBinary({ quiet = false } = {}) {
     }
     throw err;
   }
+}
+
+/** Walk CACHE_ROOT and return the path + version of any cached
+ *  binary newer than `version` that matches this platform. Returns
+ *  null when nothing higher is cached. Used as a "prefer-newer"
+ *  override on top of the GH-resolved version. */
+function findHigherCachedThan(version) {
+  if (!fs.existsSync(CACHE_ROOT)) return null;
+  if (!semver.valid(version)) return null;
+  const platform = process.platform;
+  const arch = process.arch;
+  const goArch = arch === 'x64' ? 'amd64' : arch === 'arm64' ? 'arm64' : arch;
+  const cacheKey = `${platform}-${goArch}`;
+  const binaryName = platform === 'win32' ? 'yaver.exe' : 'yaver';
+  const versions = fs.readdirSync(CACHE_ROOT).filter((v) => semver.valid(v));
+  versions.sort(semver.rcompare);
+  for (const v of versions) {
+    if (semver.lte(v, version)) break; // sorted desc; nothing higher remains
+    const p = path.join(CACHE_ROOT, v, cacheKey, binaryName);
+    if (fs.existsSync(p)) {
+      if (process.platform !== 'win32') {
+        try { fs.chmodSync(p, 0o755); } catch (_) {}
+      }
+      return { path: p, version: v };
+    }
+  }
+  return null;
 }
 
 /** Walk CACHE_ROOT and return the path to the newest yaver binary

@@ -340,6 +340,7 @@ func (vs *VaultStore) Get(project, name string) (*VaultEntry, error) {
 		return nil, fmt.Errorf("vault entry %q not found", label)
 	}
 	out := e
+	out.Value = expandHomeRef(out.Value)
 	return &out, nil
 }
 
@@ -359,6 +360,12 @@ func (vs *VaultStore) Set(entry VaultEntry) error {
 	if entry.Category == "" {
 		entry.Category = "custom"
 	}
+	// Portable path storage: if the value is an absolute path under
+	// the writer's HOME, rewrite to `~/...` so the same vault entry
+	// resolves correctly on every machine the user signs into. Read
+	// paths (Get / EnvExport) expand `~/` and `$HOME/` back to the
+	// runtime HOME. Non-path values pass through untouched.
+	entry.Value = normalizeHomeRefForStorage(entry.Value)
 
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
@@ -537,7 +544,7 @@ func (vs *VaultStore) EnvExport(project string, includeGlobal bool) string {
 	sort.Strings(names)
 	var sb strings.Builder
 	for _, n := range names {
-		v := picked[n].Value
+		v := expandHomeRef(picked[n].Value)
 		sb.WriteString("export ")
 		sb.WriteString(n)
 		sb.WriteString("='")
@@ -545,6 +552,50 @@ func (vs *VaultStore) EnvExport(project string, includeGlobal bool) string {
 		sb.WriteString("'\n")
 	}
 	return sb.String()
+}
+
+// normalizeHomeRefForStorage rewrites absolute paths under the writer's
+// HOME to `~/...` so the entry is portable across every machine the
+// user signs into. Leaves already-portable paths (`~/`, `$HOME/`),
+// non-path values, and absolute paths NOT under HOME untouched.
+func normalizeHomeRefForStorage(value string) string {
+	if value == "" {
+		return value
+	}
+	// Already portable — pass through.
+	if strings.HasPrefix(value, "~/") || strings.HasPrefix(value, "$HOME/") {
+		return value
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return value
+	}
+	home = strings.TrimRight(home, "/")
+	if strings.HasPrefix(value, home+"/") {
+		return "~/" + value[len(home)+1:]
+	}
+	return value
+}
+
+// expandHomeRef resolves `~/` or `$HOME/` prefixes against the runtime
+// HOME so consumers receive a usable absolute path. Other values pass
+// through unchanged.
+func expandHomeRef(value string) string {
+	if value == "" {
+		return value
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return value
+	}
+	home = strings.TrimRight(home, "/")
+	if strings.HasPrefix(value, "~/") {
+		return home + "/" + value[2:]
+	}
+	if strings.HasPrefix(value, "$HOME/") {
+		return home + "/" + value[6:]
+	}
+	return value
 }
 
 // persist encrypts and atomically writes the vault to disk, taking an

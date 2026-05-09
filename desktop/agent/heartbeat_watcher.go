@@ -318,12 +318,17 @@ func pollPeerHeartbeats() {
 						nm("peer-heartbeat", hostname, msg, 0)
 					}
 				}
-				// Auto-recovery: only on the online→offline edge,
-				// only for the user's primary device, only when
-				// the user has opted in via env var. Runs in a
-				// goroutine so the poll loop doesn't block on
-				// SSH timeouts.
-				if fellOffline && isPrimary && watchdogEnabled {
+				// Auto-recovery: any owned peer that just fell
+				// offline, when the user has opted in via env
+				// var. Symmetric — every box configured as a
+				// watchdog can heal any other owned box, no
+				// hardcoded pairings. The recovery script is
+				// idempotent, so simultaneous attempts from
+				// multiple watchdogs are safe (last writer
+				// wins on the systemctl/launchctl restart).
+				// Runs in a goroutine so the poll loop doesn't
+				// block on SSH timeouts.
+				if fellOffline && watchdogEnabled {
 					go attemptPeerRecovery(p.DeviceID, p.Hostname)
 				}
 			}

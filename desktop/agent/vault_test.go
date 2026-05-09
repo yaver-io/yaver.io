@@ -257,6 +257,105 @@ func TestVaultEnvExport(t *testing.T) {
 	}
 }
 
+// TestVaultHomePathPortability verifies that absolute paths under
+// the writer's HOME are stored as `~/...` and re-expanded against
+// the runtime HOME on read — so a vault entry set on machine A
+// resolves correctly on machine B with a different home directory.
+func TestVaultHomePathPortability(t *testing.T) {
+	writerHome := t.TempDir()
+	t.Setenv("HOME", writerHome)
+	os.MkdirAll(filepath.Join(writerHome, ".yaver"), 0700)
+	vs, err := NewVaultStore("p")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		input   string
+		stored  string // expected on-disk representation
+		readout string // expected Get/EnvExport output (matches input under writerHome)
+	}{
+		{
+			name:    "absolute path under home is normalized to ~/",
+			input:   filepath.Join(writerHome, ".appstoreconnect", "AuthKey.p8"),
+			stored:  "~/.appstoreconnect/AuthKey.p8",
+			readout: filepath.Join(writerHome, ".appstoreconnect", "AuthKey.p8"),
+		},
+		{
+			name:    "explicit ~/ stays portable",
+			input:   "~/Workspace/keys/sa.json",
+			stored:  "~/Workspace/keys/sa.json",
+			readout: filepath.Join(writerHome, "Workspace", "keys", "sa.json"),
+		},
+		{
+			name:    "$HOME/ stays portable, expanded on read",
+			input:   "$HOME/secrets/key",
+			stored:  "$HOME/secrets/key",
+			readout: filepath.Join(writerHome, "secrets", "key"),
+		},
+		{
+			name:    "path outside home is NOT rewritten",
+			input:   "/opt/shared/cert.pem",
+			stored:  "/opt/shared/cert.pem",
+			readout: "/opt/shared/cert.pem",
+		},
+		{
+			name:    "non-path values pass through",
+			input:   "secret-token-abc123",
+			stored:  "secret-token-abc123",
+			readout: "secret-token-abc123",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := vs.Set(VaultEntry{Name: "K", Project: "p", Value: tc.input}); err != nil {
+				t.Fatalf("Set: %v", err)
+			}
+			// Stored form: read raw entry under the lock-bypass map so we
+			// see the on-disk representation, not the expanded one.
+			vs.mu.RLock()
+			raw := vs.entries[vaultKey("p", "K")].Value
+			vs.mu.RUnlock()
+			if raw != tc.stored {
+				t.Errorf("stored value = %q, want %q", raw, tc.stored)
+			}
+			// Get returns expanded value.
+			got, err := vs.Get("p", "K")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if got.Value != tc.readout {
+				t.Errorf("Get value = %q, want %q", got.Value, tc.readout)
+			}
+		})
+	}
+
+	// Cross-machine simulation: set a path with one HOME, read with
+	// a different HOME — same vault entry should resolve to the
+	// reader's home, not the writer's.
+	_ = vs.Set(VaultEntry{Name: "PORTABLE_PATH", Project: "p", Value: filepath.Join(writerHome, "foo", "bar")})
+
+	readerHome := t.TempDir()
+	t.Setenv("HOME", readerHome)
+
+	got, err := vs.Get("p", "PORTABLE_PATH")
+	if err != nil {
+		t.Fatalf("Get on reader machine: %v", err)
+	}
+	want := filepath.Join(readerHome, "foo", "bar")
+	if got.Value != want {
+		t.Errorf("portable read = %q, want %q (writer home leaked into reader)", got.Value, want)
+	}
+
+	// EnvExport emits the reader-expanded form too.
+	env := vs.EnvExport("p", false)
+	if !strings.Contains(env, "export PORTABLE_PATH='"+want+"'") {
+		t.Errorf("EnvExport missing reader-expanded path; got:\n%s", env)
+	}
+}
+
 func TestVaultDigestAndNewerThan(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HOME", tmpDir)
