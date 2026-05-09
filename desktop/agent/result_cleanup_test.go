@@ -314,6 +314,141 @@ func TestStripPromptEcho_TokensUsedBetweenDuplicates(t *testing.T) {
 	mustNotContain(t, got, "tokens used")
 }
 
+// Production capture lifted from the mobile screenshots (yaver-test-
+// ephemeral, opencode 0.x, "run ls" against /root). opencode_stream.go
+// has already rewritten the live `$ ls` shell line to `**$ ls**` and
+// scrubbed ANSI; what arrives here is the post-stream-filter content.
+// Without dedupeOpencodeEchoes the bare rows AFTER the marker survive
+// alongside the fenced answer, so the mobile bubble's collapsed view
+// picks "bootstrap.sh" as the summary line and the expanded view shows
+// the listing twice.
+func TestStripPromptEcho_OpencodeEchoes(t *testing.T) {
+	raw := linesOf(
+		"",
+		"**$ ls**",
+		"bootstrap.sh",
+		"carrotbet",
+		"go",
+		"snap",
+		"Workspace",
+		"yaver-1.99.22",
+		"yaver-1.99.25",
+		"yaver-devfix",
+		"yaver-new",
+		"yaver-old-1777021488",
+		"yaver-old-1777021550",
+		"yaver-old-restart-1777022465",
+		"yaver-pre-devfix-1777027258",
+		"yaver-pre-rundownfix-1777037122",
+		"yaver-pre-runnerfix-1777035336",
+		"yaver-pre-scope-1777038232",
+		"yaver-rundownfix",
+		"yaver-runnerfix",
+		"yaver-scope",
+		"yaver-scope2",
+		"",
+		"18 items in the current directory:",
+		"",
+		"```text",
+		"bootstrap.sh",
+		"carrotbet",
+		"go",
+		"snap",
+		"Workspace",
+		"yaver-1.99.22",
+		"yaver-1.99.25",
+		"yaver-devfix",
+		"yaver-new",
+		"yaver-old-1777021488",
+		"yaver-old-1777021550",
+		"yaver-old-restart-1777022465",
+		"yaver-pre-devfix-1777027258",
+		"yaver-pre-rundownfix-1777037122",
+		"yaver-pre-runnerfix-1777035336",
+		"yaver-pre-scope-1777038232",
+		"yaver-rundownfix",
+		"yaver-runnerfix",
+		"yaver-scope",
+		"yaver-scope2",
+		"```",
+	)
+	got := stripPromptEcho(raw)
+	// Each filename should appear exactly once now — inside the fence.
+	if c := strings.Count(got, "yaver-scope2"); c != 1 {
+		t.Fatalf("expected `yaver-scope2` exactly once, got %d.\nfull output:\n%s", c, got)
+	}
+	if c := strings.Count(got, "yaver-pre-devfix-1777027258"); c != 1 {
+		t.Fatalf("expected `yaver-pre-devfix-1777027258` exactly once, got %d.\nfull output:\n%s", c, got)
+	}
+	// Marker, prose answer, and fence kept.
+	mustContain(t, got, "**$ ls**")
+	mustContain(t, got, "18 items in the current directory:")
+	mustContain(t, got, "```text")
+	// First non-`$ ` line of the cleaned output must be the prose answer,
+	// NOT a stray filename — that's what the mobile collapsed view picks
+	// as its summary.
+	firstNonShellLine := ""
+	for _, line := range strings.Split(got, "\n") {
+		t := strings.TrimSpace(line)
+		if t == "" || strings.HasPrefix(t, "**$ ") {
+			continue
+		}
+		firstNonShellLine = t
+		break
+	}
+	if firstNonShellLine != "18 items in the current directory:" {
+		t.Fatalf("expected first prose line to be the answer, got %q.\nfull output:\n%s",
+			firstNonShellLine, got)
+	}
+}
+
+// Negative case: when the rows after `**$ <cmd>**` do NOT match a
+// fenced block (different command, no fence), they must be preserved.
+// Otherwise we'd silently drop the only copy of the tool output for
+// commands like `cat foo` or `grep -r bar`.
+func TestStripPromptEcho_OpencodeKeepsUniqueRows(t *testing.T) {
+	raw := linesOf(
+		"**$ cat /etc/hostname**",
+		"yaver-test-ephemeral",
+		"",
+		"The hostname is `yaver-test-ephemeral`.",
+	)
+	got := stripPromptEcho(raw)
+	mustContain(t, got, "yaver-test-ephemeral")
+	mustContain(t, got, "**$ cat /etc/hostname**")
+}
+
+// Negative case: rows partially overlap a fence (3 of 5 match) but
+// below the 70% threshold — keep them. Avoids deleting genuinely
+// distinct stdout that happens to share a few lines with a later
+// example block.
+func TestStripPromptEcho_OpencodePartialOverlapKeeps(t *testing.T) {
+	raw := linesOf(
+		"**$ ls**",
+		"a",
+		"b",
+		"c",
+		"d",
+		"e",
+		"",
+		"Some of those overlap with the example below:",
+		"",
+		"```text",
+		"a",
+		"b",
+		"c",
+		"```",
+	)
+	got := stripPromptEcho(raw)
+	// Below threshold — original stdout rows must survive.
+	if c := strings.Count(got, "\nd\n"); c != 1 {
+		t.Fatalf("expected unique row `d` to survive once, got %d.\nfull output:\n%s", c, got)
+	}
+	if c := strings.Count(got, "\ne\n"); c != 1 {
+		t.Fatalf("expected unique row `e` to survive once, got %d.\nfull output:\n%s", c, got)
+	}
+}
+
 func linesOf(lines ...string) string {
 	return strings.Join(lines, "\n")
 }

@@ -71,6 +71,7 @@ func stripPromptEcho(content string) string {
 	out = tokensUsedFooterRE.ReplaceAllString(out, "\n\n")
 
 	out = dedupeCodexEchoes(out)
+	out = dedupeOpencodeEchoes(out)
 
 	return strings.TrimSpace(out)
 }
@@ -124,7 +125,123 @@ var (
 	)
 	codexSectionMarkerRE = regexp.MustCompile(`(^|\n)codex\n`)
 	fencedBlockRE        = regexp.MustCompile("(?s)```[^\\n]*\\n.*?\\n```")
+	// opencode emits a tool-call as `**$ <cmd>**` (sentinel injected by
+	// opencode_stream.go). The bash tool's stdout follows on the next
+	// lines, then the assistant's prose answer + a fenced markdown block
+	// that re-renders the same rows. We capture the marker so we can
+	// scan the rows that follow it.
+	opencodeShellMarkerRE = regexp.MustCompile(`\n\*\*\$\s+[^\n]+\*\*\n`)
 )
+
+// dedupeOpencodeEchoes strips the raw bash-tool stdout that follows a
+// `**$ <cmd>**` marker when the same rows are also echoed inside a
+// fenced block later in the message. opencode + glm-4.7 routinely
+// answer "run ls" by (a) printing the listing as bash-tool output,
+// then (b) re-rendering the same listing inside a ```text fence as the
+// formatted answer — the bare rows in (a) are pure noise once (b) is
+// in the buffer.
+//
+// Heuristic:
+//
+//   - Find every `**$ <cmd>**` marker.
+//   - Read the rows that follow it (until the next blank line or fence).
+//   - If ≥70% of those rows (and at least 3 of them) appear inside any
+//     fenced block in the message, drop them. Otherwise keep them — the
+//     rows might be the only copy of the tool output.
+//
+// Mirrored in mobile/app/(tabs)/tasks.tsx — keep both in sync.
+func dedupeOpencodeEchoes(s string) string {
+	fenceContents := extractFenceLineSets(s)
+	if len(fenceContents) == 0 {
+		return s
+	}
+	markers := opencodeShellMarkerRE.FindAllStringIndex(s, -1)
+	if len(markers) == 0 {
+		return s
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range markers {
+		// Append everything up to and including the marker line.
+		b.WriteString(s[last:m[1]])
+		last = m[1]
+
+		// Find the row block: from cursor to next blank line, fence, or
+		// end-of-string.
+		rest := s[last:]
+		end := len(rest)
+		if i := strings.Index(rest, "\n\n"); i >= 0 && i < end {
+			end = i
+		}
+		if i := strings.Index(rest, "\n```"); i >= 0 && i < end {
+			end = i
+		}
+		if end <= 0 {
+			continue
+		}
+		rowBlock := rest[:end]
+
+		var rowLines []string
+		for _, line := range strings.Split(rowBlock, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				rowLines = append(rowLines, t)
+			}
+		}
+		if len(rowLines) < 3 {
+			continue
+		}
+
+		threshold := len(rowLines) * 7 / 10
+		if threshold < 3 {
+			threshold = 3
+		}
+		if !rowsOverlapAnyFence(rowLines, fenceContents, threshold) {
+			continue
+		}
+		// Drop the row block by advancing `last` past it.
+		last += end
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+func extractFenceLineSets(s string) []map[string]struct{} {
+	var sets []map[string]struct{}
+	for _, loc := range fencedBlockRE.FindAllStringIndex(s, -1) {
+		block := s[loc[0]:loc[1]]
+		first := strings.IndexByte(block, '\n')
+		last := strings.LastIndex(block, "\n```")
+		if first < 0 || last <= first {
+			continue
+		}
+		body := block[first+1 : last]
+		set := make(map[string]struct{})
+		for _, line := range strings.Split(body, "\n") {
+			if t := strings.TrimSpace(line); t != "" {
+				set[t] = struct{}{}
+			}
+		}
+		if len(set) > 0 {
+			sets = append(sets, set)
+		}
+	}
+	return sets
+}
+
+func rowsOverlapAnyFence(rows []string, fences []map[string]struct{}, threshold int) bool {
+	for _, fence := range fences {
+		hit := 0
+		for _, row := range rows {
+			if _, ok := fence[row]; ok {
+				hit++
+			}
+		}
+		if hit >= threshold {
+			return true
+		}
+	}
+	return false
+}
 
 // collapseConsecutiveFences finds adjacent identical fenced code blocks
 // (separated only by whitespace) and drops every duplicate after the

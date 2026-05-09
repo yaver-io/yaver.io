@@ -387,6 +387,76 @@ const SYSTEM_CONTEXT_END_MARKERS = [
 // `$ <cmd>` header (mirroring Claude's stream_json `**$ <cmd>**`
 // pattern) so users still see *what was run* without the raw output
 // duplicating the fenced block below it.
+// dedupeOpencodeEchoes strips bare bash-tool stdout that follows a
+// `**$ <cmd>**` marker when the same rows are also re-rendered inside
+// a fenced block elsewhere in the message. opencode + glm-4.7 routinely
+// answer "run ls" by (a) printing the listing as the bash tool's raw
+// output, then (b) re-rendering the same listing inside a ```text fence
+// as the formatted answer — the bare rows in (a) are pure noise once
+// (b) lands. Without this, the mobile collapsed view picks the first
+// stdout row ("bootstrap.sh") as its summary and the bubble looks
+// broken (image: bottom screenshot in the WhatsApp dump).
+//
+// Mirrors dedupeOpencodeEchoes in desktop/agent/result_cleanup.go —
+// keep both in sync.
+function dedupeOpencodeEchoes(s: string): string {
+  const fenceContents: Set<string>[] = [];
+  const fenceRE = /```[^\n]*\n([\s\S]*?)\n```/g;
+  let fm: RegExpExecArray | null;
+  while ((fm = fenceRE.exec(s)) !== null) {
+    const set = new Set<string>();
+    for (const line of fm[1].split("\n")) {
+      const t = line.trim();
+      if (t) set.add(t);
+    }
+    if (set.size > 0) fenceContents.push(set);
+  }
+  if (fenceContents.length === 0) return s;
+
+  const markerRE = /\n\*\*\$\s+[^\n]+\*\*\n/g;
+  let result = "";
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = markerRE.exec(s)) !== null) {
+    const markerEnd = m.index + m[0].length;
+    result += s.slice(last, markerEnd);
+    last = markerEnd;
+
+    const rest = s.slice(last);
+    let end = rest.length;
+    const blank = rest.indexOf("\n\n");
+    if (blank >= 0 && blank < end) end = blank;
+    const fenceStart = rest.indexOf("\n```");
+    if (fenceStart >= 0 && fenceStart < end) end = fenceStart;
+    if (end <= 0) continue;
+
+    const rowLines = rest
+      .slice(0, end)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (rowLines.length < 3) continue;
+
+    const threshold = Math.max(3, Math.floor((rowLines.length * 7) / 10));
+    let dropped = false;
+    for (const fence of fenceContents) {
+      let hit = 0;
+      for (const row of rowLines) {
+        if (fence.has(row)) hit++;
+      }
+      if (hit >= threshold) {
+        dropped = true;
+        break;
+      }
+    }
+    if (dropped) {
+      last += end;
+    }
+  }
+  result += s.slice(last);
+  return result;
+}
+
 function dedupeCodexEchoes(s: string): string {
   // (1) Replace `exec\n<cmd>\n succeeded in Xms:\n<rows>` blocks with
   // a `**$ <cmd>**` line, dropping the raw rows. The rows are almost
@@ -457,6 +527,7 @@ function stripPromptEcho(content: string): string {
   out = out.replace(/\n*\s*tokens used\s*\n?\s*[\d,]+\s*/gi, "\n\n");
 
   out = dedupeCodexEchoes(out);
+  out = dedupeOpencodeEchoes(out);
 
   return out.trim();
 }
@@ -482,15 +553,23 @@ function buildAssistantPreview(content: string): {
   const summary = firstLine.length > 140 ? firstLine.slice(0, 137) + "…" : firstLine;
   const activity = extractAssistantActivity(cleaned);
   const hasHiddenNoise = content.length > cleaned.length + 40;
-  // shouldCollapse = there's more meaningful content beyond the summary,
-  // OR the bubble is hiding raw noise that the user can opt into seeing.
+  // shouldCollapse = the cleaned content is genuinely long and the summary
+  // is a useful compression of it. For short, structured answers (e.g.
+  // `ls` → `**$ ls**` + "18 items..." + fence) the fence IS the answer,
+  // and collapsing to a one-line summary + activity bullet hides what the
+  // user actually asked for. We only collapse when the cleaned content
+  // exceeds ~30 non-empty lines OR ~2500 chars — past that, scrolling cost
+  // outweighs the loss of seeing the full answer inline.
+  //
+  // (Previously this triggered on `cleaned.includes("```")` alone, which
+  // forced every tool-output answer behind a "Show details" tap. Image #3
+  // in the WhatsApp dump shows the failure mode: bare "bootstrap.sh" +
+  // "$ ls" as the entire bubble.)
+  const cleanedNonEmptyLines = cleaned
+    .split("\n")
+    .filter((line) => line.trim()).length;
   const hasMore =
-    summaryLines.length > 1 ||
-    activity.length > 0 ||
-    cleaned.length > summary.length + 40 ||
-    cleaned.includes("```") ||
-    cleaned.includes("|") ||
-    hasHiddenNoise;
+    cleanedNonEmptyLines > 30 || cleaned.length > 2500;
 
   return {
     summary: summary || "Working...",
