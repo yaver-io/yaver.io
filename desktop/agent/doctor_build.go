@@ -56,7 +56,11 @@ var buildTargets = map[string]buildTarget{
 		Tools: []buildTool{
 			{Name: "node", VersionFlag: "--version", Required: true, InstallHint: "brew install node"},
 			{Name: "npm", VersionFlag: "--version", Required: true, InstallHint: "bundled with node"},
-			{Name: "wrangler", VersionFlag: "--version", Required: true, InstallHint: "npm i -g wrangler"},
+			// wrangler isn't required globally — `npm run deploy`
+			// resolves it from web/node_modules. Surface as optional
+			// so a vanilla node-only host still reports CanDeploy=true
+			// for the cloudflare target when secrets are present.
+			{Name: "wrangler", VersionFlag: "--version", Required: false, InstallHint: "(optional — `npm run deploy` uses the workspace-local copy)"},
 		},
 		Secrets: []string{"CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"},
 	},
@@ -68,7 +72,11 @@ var buildTargets = map[string]buildTarget{
 			{Name: "node", VersionFlag: "--version", Required: true},
 			{Name: "npm", VersionFlag: "--version", Required: true},
 		},
-		Secrets: []string{"CONVEX_DEPLOY_KEY", "CONVEX_URL"},
+		// CONVEX_DEPLOY_KEY_2 is the canonical name the deploy
+		// script promotes into npx convex's expected
+		// CONVEX_DEPLOY_KEY env var. CONVEX_URL is informational —
+		// the deploy key already encodes the deployment target.
+		Secrets: []string{"CONVEX_DEPLOY_KEY_2"},
 	},
 	"playstore": {
 		Name:        "playstore",

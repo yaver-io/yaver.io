@@ -196,6 +196,57 @@ func persistRotatedAuthToken(cfg *Config, newToken string) error {
 	return SetAuthToken(fresh, newToken)
 }
 
+// tryOpenAgentVault is the agent boot mirror of openVaultE — same
+// three-tier resolution (manual passphrase → current auth-token →
+// previous auth-token) but stamps the deviceID into writes so sync
+// attribution stays correct, and silently auto-rekeys + clears
+// PreviousAuthToken on a successful previous-token unlock.
+//
+// Called from BOTH early boot (before any token validation /
+// refresh) AND late boot (after the HTTPServer materialises). The
+// early call is what makes rotations during boot recoverable: with
+// the runtime store seeded under T_disk, every subsequent
+// SetAuthToken can rekey the in-memory store + disk in lockstep so
+// the vault key chain never lags the token chain.
+func tryOpenAgentVault(cfg *Config, vaultPassFlag string) (*VaultStore, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("nil config")
+	}
+	if pass := strings.TrimSpace(vaultPassFlag); pass != "" {
+		return NewVaultStoreWithDevice(pass, cfg.DeviceID)
+	}
+	if pass := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE")); pass != "" {
+		return NewVaultStoreWithDevice(pass, cfg.DeviceID)
+	}
+	if strings.TrimSpace(cfg.AuthToken) != "" {
+		currentPass := DerivePassphraseFromToken(cfg.AuthToken)
+		if vs, err := NewVaultStoreWithDevice(currentPass, cfg.DeviceID); err == nil {
+			return vs, nil
+		} else if !strings.Contains(err.Error(), "wrong passphrase") {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(cfg.PreviousAuthToken) != "" && strings.TrimSpace(cfg.AuthToken) != "" {
+		prevPass := DerivePassphraseFromToken(cfg.PreviousAuthToken)
+		vsPrev, err := NewVaultStoreWithDevice(prevPass, cfg.DeviceID)
+		if err != nil {
+			return nil, err
+		}
+		currentPass := DerivePassphraseFromToken(cfg.AuthToken)
+		if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {
+			log.Printf("Warning: vault rekey on boot failed: %v — runtime store still usable; will retry on next rotation.", rkErr)
+			return vsPrev, nil
+		}
+		cfg.PreviousAuthToken = ""
+		if sErr := SaveConfig(cfg); sErr != nil {
+			log.Printf("Warning: clear PreviousAuthToken after boot rekey failed: %v", sErr)
+		}
+		log.Printf("Vault auto-rekeyed on boot using previous auth token.")
+		return vsPrev, nil
+	}
+	return nil, fmt.Errorf("vault still locked — no fallback token available")
+}
+
 func relayHTTPURLsMatch(a, b string) bool {
 	a = normalizeRelayHTTPURL(a)
 	b = normalizeRelayHTTPURL(b)
@@ -1968,6 +2019,23 @@ func runServe(args []string) {
 		log.Fatalf("invalid --recovery-policy=%q (expected open or private)", *recoveryPolicy)
 	}
 
+	// Open the encrypted vault NOW, before anything that can rotate
+	// cfg.AuthToken (RefreshToken below, RegisterDevice in
+	// post-bootstrap, MCP authLogin, etc.). The on-disk vault is
+	// keyed off whichever token was current the LAST time the vault
+	// was successfully written; if we let the token rotate first,
+	// the disk encryption key (T_disk) stops matching cfg.AuthToken
+	// (T_new) and we lose the only token chain that could have
+	// recovered the vault. Loading early lands the runtime store +
+	// rekeyVaultBetweenTokens fix at the right moment: every later
+	// SetAuthToken in this process can rekey the live store in place.
+	if vs, err := tryOpenAgentVault(cfg, *vaultPass); err != nil {
+		log.Printf("Warning: vault unavailable on early boot: %v — will retry after token validation", err)
+	} else {
+		setRuntimeVaultStore(vs)
+		log.Printf("Vault unlocked early (%d entries) — runtime store now tracks rotations.", len(vs.List("*")))
+	}
+
 	// Check for auto-update before forking
 	checkAutoUpdate(cfg)
 
@@ -2819,20 +2887,24 @@ func runServe(args []string) {
 		}
 	}
 
-	// Initialize vault (P2P encrypted key store)
-	vaultPassphrase := *vaultPass
-	if vaultPassphrase == "" {
-		vaultPassphrase = os.Getenv("YAVER_VAULT_PASSPHRASE")
-	}
-	if vaultPassphrase == "" {
-		vaultPassphrase = DerivePassphraseFromToken(cfg.AuthToken)
-	}
-	if vs, err := NewVaultStoreWithDevice(vaultPassphrase, cfg.DeviceID); err != nil {
+	// Initialize vault (P2P encrypted key store). The early-boot path
+	// above (right after mustLoadAuthConfig) already populated the
+	// runtime store under whatever token was current before token
+	// validation / refresh. Reuse it here so the HTTPServer ends up
+	// pointing at the SAME unlocked instance. If the early load
+	// failed (offline first boot, brand-new install, etc.), retry
+	// here against whatever cfg now looks like — the rotations
+	// completed during boot may have repopulated PreviousAuthToken
+	// in a way that lets the fallback decrypt this time.
+	if vs := currentRuntimeVaultStore(); vs != nil {
+		httpServer.vaultStore = vs
+		log.Printf("Vault attached (%d entries) from early-boot runtime store.", len(vs.List("*")))
+	} else if vs, err := tryOpenAgentVault(cfg, *vaultPass); err != nil {
 		log.Printf("Warning: vault unavailable: %v", err)
 	} else {
 		httpServer.vaultStore = vs
 		setRuntimeVaultStore(vs)
-		log.Printf("Vault unlocked (%d entries)", len(vs.List("*")))
+		log.Printf("Vault unlocked late (%d entries) — runtime store now tracks rotations.", len(vs.List("*")))
 	}
 	globalEmailMgr = emailMgr // enable email notifications
 

@@ -20,6 +20,46 @@ import (
 	"strings"
 )
 
+// DeployCapabilityTool is the per-tool detail line surfaced to UIs so
+// they can render "xcodebuild: 16.0 found at /Applications/Xcode.app",
+// "gradle: missing — sudo gem install cocoapods" etc. instead of a
+// flat name array. Found / Path / Version come straight from the
+// existing BuildDoctorReport.Tools probe.
+type DeployCapabilityTool struct {
+	Name        string `json:"name"`
+	Required    bool   `json:"required"`
+	Found       bool   `json:"found"`
+	Path        string `json:"path,omitempty"`
+	Version     string `json:"version,omitempty"`
+	InstallHint string `json:"install_hint,omitempty"`
+	// DeepValid mirrors BuildToolResult.DeepValid — the deep probe
+	// for tools that have one (xcodebuild = real Xcode vs CLT stub,
+	// java = major version >= 17). nil when no deep check applies.
+	DeepValid *bool  `json:"deep_valid,omitempty"`
+	DeepError string `json:"deep_error,omitempty"`
+	// PlatformSkipped — the tool's Platforms list excluded this
+	// host. UI surfaces this as a row reason ("xcodebuild only on
+	// macOS; this device runs Linux") so the user understands why
+	// the tool wasn't even probed.
+	PlatformSkipped bool   `json:"platform_skipped,omitempty"`
+	SkipReason      string `json:"skip_reason,omitempty"`
+}
+
+// DeployCapabilitySecret is the per-secret detail line. Source tells
+// the UI where the value lives (vault project / global / env) so the
+// "fix this" button knows which vault project to write into. PathValid
+// + PathError surface filesystem checks for path-shaped secrets
+// (APP_STORE_KEY_PATH, PLAY_STORE_KEY_FILE) — a non-existent file is
+// just as deploy-blocking as a missing vault entry.
+type DeployCapabilitySecret struct {
+	Name      string `json:"name"`
+	Found     bool   `json:"found"`
+	Source    string `json:"source,omitempty"`  // "vault:project" / "vault:global" / "env"
+	Project   string `json:"project,omitempty"` // vault project name when Source starts vault:
+	PathValid *bool  `json:"path_valid,omitempty"`
+	PathError string `json:"path_error,omitempty"`
+}
+
 // DeployCapability is the per-target verdict for a single device.
 //
 //	CanDeploy        — host can attempt the deploy right now (tools
@@ -30,29 +70,46 @@ import (
 //	                    box should see "macOS only — pick another
 //	                    device or run via CI" before it sees the
 //	                    long missing-tools list.
-//	MissingTools     — required tools whose probe failed (subset of
-//	                    BuildDoctorReport).
-//	MissingSecrets   — vault entries the deploy script will read that
-//	                    aren't set.
-//	Warnings         — non-fatal hints (stale archive, deep-probe
-//	                    quirks, etc.) the UI shows in a less-prominent
-//	                    spot so the user can still attempt the deploy.
+//	Tools / Secrets  — full per-item detail (see DeployCapabilityTool /
+//	                    DeployCapabilitySecret). The UI renders rows
+//	                    against these — e.g. "Xcode: not installed",
+//	                    "APP_STORE_KEY_PATH: file missing at /Users/…"
+//	                    so the user knows exactly which thing is
+//	                    blocking and what to do about it.
+//	MissingTools     — convenience flat list (subset of Tools). Same
+//	                    truth as iterating Tools where Required &&
+//	                    !Found && !PlatformSkipped — kept because old
+//	                    UIs may already render off the flat array.
+//	MissingSecrets   — convenience flat list (subset of Secrets).
+//	Warnings         — non-fatal hints (deep-probe quirks, stale
+//	                    archive, etc.) the UI shows below the headline.
+//	                    Empty strings are filtered out so a probe that
+//	                    couldn't surface a reason doesn't render as a
+//	                    blank line.
 //	Reason           — one-line headline shown when CanDeploy=false.
-//	                    Picked in priority order: platform-lock first,
-//	                    then missing tools, then missing secrets.
+//	                    Priority: platform-lock → missing tools →
+//	                    missing secrets.
 //	CIAlternative    — the GH Actions workflow that can do this deploy
 //	                    instead, when the local device can't (empty
 //	                    string when there is no CI alternative).
+//	VaultProject     — the vault project the resolver looked under
+//	                    (after the target-default fallback applied).
+//	                    UIs reuse this when offering "save secret" or
+//	                    "sync from peer" so the fix lands in the same
+//	                    project the resolver expected.
 type DeployCapability struct {
-	Target         string   `json:"target"`
-	Stack          string   `json:"stack,omitempty"`
-	CanDeploy      bool     `json:"can_deploy"`
-	PlatformLock   string   `json:"platform_lock,omitempty"`
-	MissingTools   []string `json:"missing_tools,omitempty"`
-	MissingSecrets []string `json:"missing_secrets,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	CIAlternative  string   `json:"ci_alternative,omitempty"`
+	Target         string                   `json:"target"`
+	Stack          string                   `json:"stack,omitempty"`
+	CanDeploy      bool                     `json:"can_deploy"`
+	PlatformLock   string                   `json:"platform_lock,omitempty"`
+	Tools          []DeployCapabilityTool   `json:"tools,omitempty"`
+	Secrets        []DeployCapabilitySecret `json:"secrets,omitempty"`
+	MissingTools   []string                 `json:"missing_tools,omitempty"`
+	MissingSecrets []string                 `json:"missing_secrets,omitempty"`
+	Warnings       []string                 `json:"warnings,omitempty"`
+	Reason         string                   `json:"reason,omitempty"`
+	CIAlternative  string                   `json:"ci_alternative,omitempty"`
+	VaultProject   string                   `json:"vault_project,omitempty"`
 }
 
 // DeployCapabilitiesReport is the full per-device response.
@@ -65,11 +122,11 @@ type DeployCapability struct {
 // envelope with the real responder's deviceID so the UI never has to
 // trust a self-reported value inside the body.
 type DeployCapabilitiesReport struct {
-	DeviceID  string             `json:"device_id"`
-	Platform  string             `json:"platform"`
-	Arch      string             `json:"arch"`
-	IsWSL     bool               `json:"is_wsl"`
-	Targets   []DeployCapability `json:"targets"`
+	DeviceID string             `json:"device_id"`
+	Platform string             `json:"platform"`
+	Arch     string             `json:"arch"`
+	IsWSL    bool               `json:"is_wsl"`
+	Targets  []DeployCapability `json:"targets"`
 }
 
 // targetCIWorkflow maps a deploy target to the GH Actions workflow
@@ -85,6 +142,20 @@ var targetCIWorkflow = map[string]string{
 	"playstore":  "release-mobile.yml workflow_dispatch (upload_playstore=true)",
 	"convex":     "release-web.yml on web/* tag (also runs convex deploy)",
 	"cloudflare": "release-web.yml on web/* tag",
+}
+
+// targetDefaultVaultProject is the vault project a target's secrets
+// canonically live under. The mobile UI passes a phone-project slug
+// (e.g. "myapp") as the project query param; if that slug doesn't
+// have the secrets, we fall back to the target's default project so
+// shared signing materials stored once in `mobile`/`backend`/`web`
+// continue to satisfy capability checks across every phone-project
+// the user creates.
+var targetDefaultVaultProject = map[string]string{
+	"testflight": "mobile",
+	"playstore":  "mobile",
+	"convex":     "backend",
+	"cloudflare": "web",
 }
 
 // targetPlatformLock returns the GOOS the target is locked to (single
@@ -107,6 +178,33 @@ func targetPlatformLock(target string) string {
 		return strings.Join(tool.Platforms, "/")
 	}
 	return ""
+}
+
+// resolveVaultProject picks the project the BuildDoctor probe should
+// consult. Order: caller's explicit project (if it has any of the
+// target's secrets) → target's default project → empty (global only).
+// Saves the UI from having to know the per-target naming convention.
+func resolveVaultProject(target, callerProject string, vs *VaultStore) string {
+	if vs == nil {
+		return strings.TrimSpace(callerProject)
+	}
+	bt, ok := buildTargets[target]
+	if !ok {
+		return strings.TrimSpace(callerProject)
+	}
+	if cp := strings.TrimSpace(callerProject); cp != "" {
+		// Trust the caller's project if it actually contains any of
+		// the target's secrets; otherwise fall through to default.
+		for _, name := range bt.Secrets {
+			if e, err := vs.Get(cp, name); err == nil && e != nil && e.Value != "" {
+				return cp
+			}
+		}
+	}
+	if def, ok := targetDefaultVaultProject[target]; ok {
+		return def
+	}
+	return strings.TrimSpace(callerProject)
 }
 
 // ComputeDeployCapability synthesises the per-target verdict for the
@@ -139,37 +237,78 @@ func ComputeDeployCapability(target, project string, vs *VaultStore) DeployCapab
 		}
 	}
 
-	rep, err := RunBuildDoctor(target, project, vs)
+	// Pick the vault project to consult. Caller's slug wins if it has
+	// the target's secrets; otherwise we fall back to the canonical
+	// `mobile` / `backend` / `web` project so shared signing materials
+	// stay reachable from any per-app deploy UI.
+	resolvedProject := resolveVaultProject(target, project, vs)
+	cap.VaultProject = resolvedProject
+
+	rep, err := RunBuildDoctor(target, resolvedProject, vs)
 	if err != nil {
 		cap.Reason = err.Error()
 		return cap
 	}
 	for _, tool := range rep.Tools {
+		row := DeployCapabilityTool{
+			Name:            tool.Name,
+			Required:        tool.Required,
+			Found:           tool.Found,
+			Path:            tool.Path,
+			Version:         tool.Version,
+			InstallHint:     tool.InstallHint,
+			DeepValid:       tool.DeepValid,
+			DeepError:       tool.DeepError,
+			PlatformSkipped: tool.Skipped,
+			SkipReason:      tool.SkipReason,
+		}
+		cap.Tools = append(cap.Tools, row)
 		if tool.Skipped {
-			// Platform mismatch already surfaced via PlatformLock above.
 			continue
 		}
 		if tool.Required && !tool.Found {
 			cap.MissingTools = append(cap.MissingTools, tool.Name)
 		}
-		if tool.DeepValid != nil && !*tool.DeepValid {
+		if tool.DeepValid != nil && !*tool.DeepValid && tool.DeepError != "" {
 			cap.Warnings = append(cap.Warnings, tool.Name+": "+tool.DeepError)
 		}
 	}
 	for _, sec := range rep.Secrets {
+		row := DeployCapabilitySecret{
+			Name:      sec.Name,
+			Found:     sec.Found,
+			Source:    sec.Source,
+			Project:   sec.Project,
+			PathValid: sec.PathValid,
+			PathError: sec.PathError,
+		}
+		cap.Secrets = append(cap.Secrets, row)
 		if !sec.Found {
 			cap.MissingSecrets = append(cap.MissingSecrets, sec.Name)
 		}
-		if sec.PathValid != nil && !*sec.PathValid {
+		if sec.PathValid != nil && !*sec.PathValid && sec.PathError != "" {
 			cap.Warnings = append(cap.Warnings, sec.Name+": "+sec.PathError)
 		}
 	}
 
+	// CanDeploy needs every required tool + every secret + no path
+	// validation failures. A path-secret with PathValid=false counts
+	// as missing — the script will read the path and fail at first
+	// open even though the vault entry exists.
+	pathBroken := false
+	for _, sec := range cap.Secrets {
+		if sec.PathValid != nil && !*sec.PathValid {
+			pathBroken = true
+			break
+		}
+	}
 	switch {
 	case len(cap.MissingTools) > 0:
 		cap.Reason = "missing tools: " + strings.Join(cap.MissingTools, ", ")
 	case len(cap.MissingSecrets) > 0:
 		cap.Reason = "missing vault entries: " + strings.Join(cap.MissingSecrets, ", ")
+	case pathBroken:
+		cap.Reason = "secret references a file that doesn't exist on this host"
 	default:
 		cap.CanDeploy = true
 	}

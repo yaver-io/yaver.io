@@ -2288,6 +2288,7 @@ http.route({
       keyStorage: body.keyStorage,
       // Client sends null to clear the preference, undefined to leave untouched.
       primaryDeviceId: body.primaryDeviceId,
+      secondaryDeviceId: body.secondaryDeviceId,
       // Per-device coding agent — forwarded to the mutation's
       // primaryRunnerByDevice merge logic. Without this forward the
       // field was silently dropped at the HTTP boundary, every

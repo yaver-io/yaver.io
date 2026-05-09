@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -99,4 +101,105 @@ func TestTargetCIWorkflow_AllTargetsCovered(t *testing.T) {
 			t.Errorf("target %q has no targetCIWorkflow entry — add one or document why it's truly local-only", name)
 		}
 	}
+}
+
+// TestTargetDefaultVaultProject_AllTargetsCovered: every catalogued
+// target has a canonical vault project (`mobile` / `backend` / `web`)
+// where shared deploy materials live. Without this fallback the
+// mobile UI's per-phone-project deploy flow can't find creds the user
+// stored once — the gating UI would show "missing secrets" forever
+// even though the values are sitting in the right vault.
+func TestTargetDefaultVaultProject_AllTargetsCovered(t *testing.T) {
+	for _, name := range BuildTargetNames() {
+		if _, ok := targetDefaultVaultProject[name]; !ok {
+			t.Errorf("target %q has no targetDefaultVaultProject entry — UIs can't fall back from a phone-project slug to the canonical vault scope without it", name)
+		}
+	}
+}
+
+// TestResolveVaultProject_FallsBackToTargetDefault: when the caller's
+// project doesn't have any of the target's secrets, the resolver
+// must drop to the canonical default. Otherwise a phone-project
+// deploy UI passing project=myapp would never see signing materials
+// stored under project=mobile.
+func TestResolveVaultProject_FallsBackToTargetDefault(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := mkVaultDir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	vs, err := NewVaultStore("test-pass")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	// Seed under "mobile" — the target's default project. Caller
+	// will pass an unrelated slug, expects fallback to find this.
+	if err := vs.Set(VaultEntry{Name: "APP_STORE_KEY_ID", Project: "mobile", Value: "ABCD123"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	resolved := resolveVaultProject("testflight", "myapp", vs)
+	if resolved != "mobile" {
+		t.Fatalf("expected fallback to 'mobile' (target default), got %q", resolved)
+	}
+}
+
+// TestResolveVaultProject_RespectsCallerWhenMatched: when the caller's
+// project DOES have one of the target's secrets, that wins over the
+// default. Lets a power user override the canonical scope on a
+// per-app basis (rare but supported).
+func TestResolveVaultProject_RespectsCallerWhenMatched(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := mkVaultDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := NewVaultStore("test-pass")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	if err := vs.Set(VaultEntry{Name: "APP_STORE_KEY_ID", Project: "myapp", Value: "AppOverride"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	resolved := resolveVaultProject("testflight", "myapp", vs)
+	if resolved != "myapp" {
+		t.Fatalf("expected caller project 'myapp' to win, got %q", resolved)
+	}
+}
+
+// TestComputeDeployCapability_SecretRowsExposed: the per-secret
+// detail rows must appear in the response so the UI can render
+// "APP_STORE_KEY_PATH: ✓ in vault (mobile)" with sourcing info, not
+// just a "missing/not missing" boolean. Validates the shape mobile
+// expects to render the deploy-tokens fix screen.
+func TestComputeDeployCapability_SecretRowsExposed(t *testing.T) {
+	cap := ComputeDeployCapability("convex", "", nil)
+	if len(cap.Secrets) == 0 {
+		t.Fatal("expected per-secret rows in capability response")
+	}
+	for _, s := range cap.Secrets {
+		if s.Name == "" {
+			t.Fatalf("secret row missing Name: %+v", s)
+		}
+	}
+}
+
+// TestComputeDeployCapability_VaultProjectSurfaced: the resolver's
+// chosen vault project must round-trip in the response so the UI's
+// "save secret" / "sync from peer" actions can target the right
+// scope without re-implementing the fallback logic client-side.
+func TestComputeDeployCapability_VaultProjectSurfaced(t *testing.T) {
+	cap := ComputeDeployCapability("testflight", "myapp", nil)
+	if cap.VaultProject == "" {
+		t.Fatal("expected VaultProject to be populated")
+	}
+	// vs is nil → resolveVaultProject returns the caller string;
+	// this just asserts the field is wired through.
+}
+
+// mkVaultDir is a test helper that creates ~/.yaver under the temp
+// HOME so NewVaultStore's VaultPath resolves to a writable path.
+func mkVaultDir(home string) error {
+	return os.MkdirAll(filepath.Join(home, ".yaver"), 0o700)
 }

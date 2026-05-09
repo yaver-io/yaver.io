@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
+	"time"
 )
 
 // handleVaultList returns vault entry summaries (never values).
@@ -262,5 +265,120 @@ func (s *HTTPServer) handleVaultPush(w http.ResponseWriter, r *http.Request) {
 		resp["errors"] = errs
 	}
 	jsonReply(w, http.StatusOK, resp)
+}
+
+// handleVaultPeerSync triggers an OUTBOUND vault sync from this agent
+// against the user's other devices — mirrors `yaver vault sync` CLI
+// over HTTP so mobile + web "Try syncing from peer" buttons can run
+// it without shelling out to a terminal. Body (all optional):
+//
+//	{ "from": "<deviceId>" }   // sync only against this peer
+//
+// Response: structured per-peer report so the UI can show "pulled 4
+// new secrets from Mobiles-Mac-mini.local" etc.
+//
+//	{
+//	  "peers": ["..."],
+//	  "results": [{"peer":"229aeb03","pulled":4,"pushed":0,"rejected":0,
+//	                "duration_ms":1240,"error":""}, ...],
+//	  "totals": {"pulled":4,"pushed":0,"rejected":0,"superseded_local":0}
+//	}
+func (s *HTTPServer) handleVaultPeerSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonReply(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if s.vaultStore == nil {
+		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "vault not available"})
+		return
+	}
+	var body struct {
+		From string `json:"from"`
+	}
+	// Empty body is fine — sync against every known peer.
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "agent not authenticated"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+
+	peers := []string{}
+	if strings.TrimSpace(body.From) != "" {
+		peers = append(peers, strings.TrimSpace(body.From))
+	} else {
+		convex := cfg.ConvexSiteURL
+		if convex == "" {
+			convex = defaultConvexSiteURL
+		}
+		devices, err := primaryListDevices(ctx, cfg.AuthToken, convex)
+		if err != nil {
+			jsonReply(w, http.StatusBadGateway, map[string]string{"error": "list devices: " + err.Error()})
+			return
+		}
+		for _, d := range devices {
+			if d.DeviceID != "" && d.DeviceID != cfg.DeviceID {
+				peers = append(peers, d.DeviceID)
+			}
+		}
+	}
+	if len(peers) == 0 {
+		jsonReply(w, http.StatusOK, map[string]interface{}{
+			"peers":   []string{},
+			"results": []map[string]interface{}{},
+			"totals":  map[string]int{"pulled": 0, "pushed": 0, "rejected": 0, "superseded_local": 0},
+			"note":    "no peer devices found — sync needs at least two devices on the same account",
+		})
+		return
+	}
+
+	type peerResult struct {
+		Peer            string `json:"peer"`
+		Pulled          int    `json:"pulled"`
+		SupersededLocal int    `json:"superseded_local"`
+		Pushed          int    `json:"pushed"`
+		Rejected        int    `json:"rejected"`
+		DurationMs      int64  `json:"duration_ms"`
+		Error           string `json:"error,omitempty"`
+	}
+	results := make([]peerResult, 0, len(peers))
+	totals := struct {
+		Pulled, Pushed, Rejected, SupersededLocal int
+	}{}
+
+	for _, p := range peers {
+		rpt, err := vaultSyncWithPeer(ctx, s.vaultStore, p)
+		pr := peerResult{
+			Peer:            p,
+			Pulled:          rpt.Pulled,
+			SupersededLocal: rpt.SupersededLocal,
+			Pushed:          rpt.Pushed,
+			Rejected:        rpt.Rejected,
+			DurationMs:      rpt.DurationMs,
+		}
+		if err != nil {
+			pr.Error = err.Error()
+		}
+		results = append(results, pr)
+		totals.Pulled += rpt.Pulled
+		totals.Pushed += rpt.Pushed
+		totals.Rejected += rpt.Rejected
+		totals.SupersededLocal += rpt.SupersededLocal
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"peers":   peers,
+		"results": results,
+		"totals": map[string]int{
+			"pulled":           totals.Pulled,
+			"pushed":           totals.Pushed,
+			"rejected":         totals.Rejected,
+			"superseded_local": totals.SupersededLocal,
+		},
+	})
 }
 
