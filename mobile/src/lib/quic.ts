@@ -4107,11 +4107,32 @@ export class QuicClient {
       stack?: string;
       canDeploy: boolean;
       platformLock?: string;
+      tools?: Array<{
+        name: string;
+        required: boolean;
+        found: boolean;
+        path?: string;
+        version?: string;
+        installHint?: string;
+        deepValid?: boolean;
+        deepError?: string;
+        platformSkipped?: boolean;
+        skipReason?: string;
+      }>;
+      secrets?: Array<{
+        name: string;
+        found: boolean;
+        source?: string;
+        project?: string;
+        pathValid?: boolean;
+        pathError?: string;
+      }>;
       missingTools?: string[];
       missingSecrets?: string[];
       warnings?: string[];
       reason?: string;
       ciAlternative?: string;
+      vaultProject?: string;
     }>;
   }> {
     this.assertConnected();
@@ -4138,12 +4159,88 @@ export class QuicClient {
         stack: t?.stack ? String(t.stack) : undefined,
         canDeploy: !!t?.can_deploy,
         platformLock: t?.platform_lock ? String(t.platform_lock) : undefined,
+        tools: Array.isArray(t?.tools)
+          ? t.tools.map((tool: any) => ({
+              name: String(tool?.name ?? ''),
+              required: !!tool?.required,
+              found: !!tool?.found,
+              path: tool?.path ? String(tool.path) : undefined,
+              version: tool?.version ? String(tool.version) : undefined,
+              installHint: tool?.install_hint ? String(tool.install_hint) : undefined,
+              deepValid: typeof tool?.deep_valid === 'boolean' ? tool.deep_valid : undefined,
+              deepError: tool?.deep_error ? String(tool.deep_error) : undefined,
+              platformSkipped: !!tool?.platform_skipped,
+              skipReason: tool?.skip_reason ? String(tool.skip_reason) : undefined,
+            }))
+          : undefined,
+        secrets: Array.isArray(t?.secrets)
+          ? t.secrets.map((s: any) => ({
+              name: String(s?.name ?? ''),
+              found: !!s?.found,
+              source: s?.source ? String(s.source) : undefined,
+              project: s?.project ? String(s.project) : undefined,
+              pathValid: typeof s?.path_valid === 'boolean' ? s.path_valid : undefined,
+              pathError: s?.path_error ? String(s.path_error) : undefined,
+            }))
+          : undefined,
         missingTools: Array.isArray(t?.missing_tools) ? t.missing_tools.map(String) : undefined,
         missingSecrets: Array.isArray(t?.missing_secrets) ? t.missing_secrets.map(String) : undefined,
         warnings: Array.isArray(t?.warnings) ? t.warnings.map(String) : undefined,
         reason: t?.reason ? String(t.reason) : undefined,
         ciAlternative: t?.ci_alternative ? String(t.ci_alternative) : undefined,
+        vaultProject: t?.vault_project ? String(t.vault_project) : undefined,
       })),
+    };
+  }
+
+  /** Trigger an outbound P2P vault sync against another device the
+   *  user owns. Surfaces "Try syncing from peer" buttons on the
+   *  deploy-tokens / capabilities UIs without shelling out to a
+   *  terminal. Pass `from` to sync against a single peer; omit to
+   *  fan out across every online peer. Returns per-peer counts so
+   *  the UI can show "pulled 4 secrets from your Mac mini". */
+  async vaultPeerSync(args?: { from?: string }): Promise<{
+    peers: string[];
+    results: Array<{
+      peer: string;
+      pulled: number;
+      supersededLocal: number;
+      pushed: number;
+      rejected: number;
+      durationMs: number;
+      error?: string;
+    }>;
+    totals: { pulled: number; pushed: number; rejected: number; supersededLocal: number };
+    note?: string;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/peer-sync`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: args?.from ?? '' }),
+    });
+    if (!res.ok) throw new Error(`vaultPeerSync ${res.status}`);
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const totals = data?.totals ?? {};
+    return {
+      peers: Array.isArray(data?.peers) ? data.peers.map(String) : [],
+      results: results.map((r: any) => ({
+        peer: String(r?.peer ?? ''),
+        pulled: Number(r?.pulled ?? 0),
+        supersededLocal: Number(r?.superseded_local ?? 0),
+        pushed: Number(r?.pushed ?? 0),
+        rejected: Number(r?.rejected ?? 0),
+        durationMs: Number(r?.duration_ms ?? 0),
+        error: r?.error ? String(r.error) : undefined,
+      })),
+      totals: {
+        pulled: Number(totals?.pulled ?? 0),
+        pushed: Number(totals?.pushed ?? 0),
+        rejected: Number(totals?.rejected ?? 0),
+        supersededLocal: Number(totals?.superseded_local ?? 0),
+      },
+      note: data?.note ? String(data.note) : undefined,
     };
   }
 

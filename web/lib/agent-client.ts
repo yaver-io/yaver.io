@@ -915,6 +915,73 @@ export interface CapabilitySnapshot {
   targets: Record<string, CapabilityTargetReadiness>;
 }
 
+// Per-target deploy capability — yes/no + structured Reason +
+// per-tool / per-secret detail rows. Mirrors the agent's
+// DeployCapability struct in desktop/agent/deploy_capabilities.go.
+// Used by the dashboard to render disabled buttons with precise
+// "missing xcodebuild" / "APP_STORE_KEY_PATH file not found"
+// rationale instead of letting the user click and silently fail.
+export interface DeployCapabilityTool {
+  name: string;
+  required: boolean;
+  found: boolean;
+  path?: string;
+  version?: string;
+  installHint?: string;
+  deepValid?: boolean;
+  deepError?: string;
+  platformSkipped?: boolean;
+  skipReason?: string;
+}
+export interface DeployCapabilitySecret {
+  name: string;
+  found: boolean;
+  source?: string;
+  project?: string;
+  pathValid?: boolean;
+  pathError?: string;
+}
+export interface DeployCapability {
+  target: string;
+  stack?: string;
+  canDeploy: boolean;
+  platformLock?: string;
+  tools?: DeployCapabilityTool[];
+  secrets?: DeployCapabilitySecret[];
+  missingTools?: string[];
+  missingSecrets?: string[];
+  warnings?: string[];
+  reason?: string;
+  ciAlternative?: string;
+  vaultProject?: string;
+}
+export interface DeployCapabilitiesReport {
+  deviceId: string;
+  platform: string;
+  arch: string;
+  isWsl: boolean;
+  targets: DeployCapability[];
+}
+
+// Outbound P2P vault sync result. The agent walks the user's
+// device list and pulls newer entries from each online peer; the
+// dashboard's "Try syncing from peer" button surfaces the per-peer
+// counts so the user sees which device contributed which secrets.
+export interface VaultPeerSyncResult {
+  peers: string[];
+  results: Array<{
+    peer: string;
+    pulled: number;
+    supersededLocal: number;
+    pushed: number;
+    rejected: number;
+    durationMs: number;
+    error?: string;
+  }>;
+  totals: { pulled: number; pushed: number; rejected: number; supersededLocal: number };
+  note?: string;
+}
+
 export interface SandboxStatus {
   ok: boolean;
   enabledMode?: "off" | "guests" | "host";
@@ -4897,6 +4964,103 @@ export class AgentClient {
     const res = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders });
     const data = await res.json();
     return data.snapshot as CapabilitySnapshot;
+  }
+
+  /** Per-target deploy capability — yes/no + structured Reason + the
+   *  per-tool / per-secret detail rows the dashboard needs to render
+   *  "Deploy to TestFlight" with the right disabled state.
+   *  Mirrors mobile's quicClient.deployCapabilities — keeping the
+   *  shape identical means the same UI component can render against
+   *  either client. */
+  async deployCapabilities(args?: { target?: string; project?: string }): Promise<DeployCapabilitiesReport> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (args?.target) params.set("target", args.target);
+    if (args?.project) params.set("project", args.project);
+    const qs = params.toString();
+    const res = await fetch(
+      `${this.baseUrl}/deploy/capabilities${qs ? `?${qs}` : ""}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`deployCapabilities ${res.status}`);
+    const data = await res.json();
+    const targets = Array.isArray(data?.targets) ? data.targets : [];
+    return {
+      deviceId: String(data?.device_id ?? ""),
+      platform: String(data?.platform ?? ""),
+      arch: String(data?.arch ?? ""),
+      isWsl: !!data?.is_wsl,
+      targets: targets.map((t: any) => ({
+        target: String(t?.target ?? ""),
+        stack: t?.stack ? String(t.stack) : undefined,
+        canDeploy: !!t?.can_deploy,
+        platformLock: t?.platform_lock ? String(t.platform_lock) : undefined,
+        tools: Array.isArray(t?.tools)
+          ? t.tools.map((tool: any) => ({
+              name: String(tool?.name ?? ""),
+              required: !!tool?.required,
+              found: !!tool?.found,
+              path: tool?.path ? String(tool.path) : undefined,
+              version: tool?.version ? String(tool.version) : undefined,
+              installHint: tool?.install_hint ? String(tool.install_hint) : undefined,
+              deepValid: typeof tool?.deep_valid === "boolean" ? tool.deep_valid : undefined,
+              deepError: tool?.deep_error ? String(tool.deep_error) : undefined,
+              platformSkipped: !!tool?.platform_skipped,
+              skipReason: tool?.skip_reason ? String(tool.skip_reason) : undefined,
+            }))
+          : undefined,
+        secrets: Array.isArray(t?.secrets)
+          ? t.secrets.map((s: any) => ({
+              name: String(s?.name ?? ""),
+              found: !!s?.found,
+              source: s?.source ? String(s.source) : undefined,
+              project: s?.project ? String(s.project) : undefined,
+              pathValid: typeof s?.path_valid === "boolean" ? s.path_valid : undefined,
+              pathError: s?.path_error ? String(s.path_error) : undefined,
+            }))
+          : undefined,
+        missingTools: Array.isArray(t?.missing_tools) ? t.missing_tools.map(String) : undefined,
+        missingSecrets: Array.isArray(t?.missing_secrets) ? t.missing_secrets.map(String) : undefined,
+        warnings: Array.isArray(t?.warnings) ? t.warnings.map(String) : undefined,
+        reason: t?.reason ? String(t.reason) : undefined,
+        ciAlternative: t?.ci_alternative ? String(t.ci_alternative) : undefined,
+        vaultProject: t?.vault_project ? String(t.vault_project) : undefined,
+      })),
+    };
+  }
+
+  /** Outbound P2P vault sync. Counterpart of mobile's
+   *  vaultPeerSync — wired to /vault/peer-sync on the agent. */
+  async vaultPeerSync(args?: { from?: string }): Promise<VaultPeerSyncResult> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/vault/peer-sync`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: args?.from ?? "" }),
+    });
+    if (!res.ok) throw new Error(`vaultPeerSync ${res.status}`);
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    const totals = data?.totals ?? {};
+    return {
+      peers: Array.isArray(data?.peers) ? data.peers.map(String) : [],
+      results: results.map((r: any) => ({
+        peer: String(r?.peer ?? ""),
+        pulled: Number(r?.pulled ?? 0),
+        supersededLocal: Number(r?.superseded_local ?? 0),
+        pushed: Number(r?.pushed ?? 0),
+        rejected: Number(r?.rejected ?? 0),
+        durationMs: Number(r?.duration_ms ?? 0),
+        error: r?.error ? String(r.error) : undefined,
+      })),
+      totals: {
+        pulled: Number(totals?.pulled ?? 0),
+        pushed: Number(totals?.pushed ?? 0),
+        rejected: Number(totals?.rejected ?? 0),
+        supersededLocal: Number(totals?.superseded_local ?? 0),
+      },
+      note: data?.note ? String(data.note) : undefined,
+    };
   }
 
   async incidents(opts: {

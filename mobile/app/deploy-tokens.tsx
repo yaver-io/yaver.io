@@ -61,10 +61,32 @@ type CapabilityTarget = {
   target: string;
   canDeploy: boolean;
   platformLock?: string;
+  tools?: Array<{
+    name: string;
+    required: boolean;
+    found: boolean;
+    path?: string;
+    version?: string;
+    installHint?: string;
+    deepValid?: boolean;
+    deepError?: string;
+    platformSkipped?: boolean;
+    skipReason?: string;
+  }>;
+  secrets?: Array<{
+    name: string;
+    found: boolean;
+    source?: string;
+    project?: string;
+    pathValid?: boolean;
+    pathError?: string;
+  }>;
   missingTools?: string[];
   missingSecrets?: string[];
+  warnings?: string[];
   reason?: string;
   ciAlternative?: string;
+  vaultProject?: string;
 };
 
 export default function DeployTokensScreen() {
@@ -128,6 +150,40 @@ export default function DeployTokensScreen() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, connected]);
+
+  // Trigger an outbound P2P vault sync against every other device the
+  // user owns. The agent walks the user's device list, opens a sync
+  // handshake to each online peer, and pulls anything newer. After
+  // the call we re-fetch capabilities so any newly-pulled secrets
+  // flip the affected target's row from "MISSING" to "READY".
+  const trySyncFromPeers = async () => {
+    if (!connected) return;
+    setBusyTarget("__peer-sync__");
+    try {
+      const result = await quicClient.vaultPeerSync();
+      const totals = result.totals;
+      const peerLines = result.results
+        .map((r) =>
+          r.error
+            ? `  ${r.peer.slice(0, 8)}: ${r.error}`
+            : `  ${r.peer.slice(0, 8)}: pulled ${r.pulled}, pushed ${r.pushed}`,
+        )
+        .join("\n");
+      Alert.alert(
+        "P2P vault sync",
+        result.peers.length === 0
+          ? result.note ?? "No peer devices found."
+          : `Across ${result.peers.length} peers:\n  pulled ${totals.pulled}, pushed ${totals.pushed}\n${peerLines}`,
+      );
+      // Re-fetch the catalogue/status/caps so any pulled secret
+      // immediately reflects in the deploy-target rows below.
+      await refresh();
+    } catch (err: any) {
+      Alert.alert("P2P vault sync", err?.message ?? "Failed.");
+    } finally {
+      setBusyTarget(null);
+    }
+  };
 
   const headerTitle = useMemo(
     () => (project ? `Deploy tokens · ${project}` : "Deploy tokens"),
@@ -305,6 +361,74 @@ export default function DeployTokensScreen() {
                         <Text style={{ color: c.textMuted, fontSize: 12 }}>
                           {cap?.reason ?? "Capability check failed."}
                         </Text>
+                        {/*
+                         * Per-tool detail rows. xcodebuild missing? Java
+                         * 17 not found? Render row-per-tool so the user
+                         * can fix the right thing instead of guessing
+                         * from a single comma-separated reason string.
+                         */}
+                        {(cap?.tools ?? [])
+                          .filter((tool) => tool.required && !tool.found && !tool.platformSkipped)
+                          .map((tool) => (
+                            <Text key={`tool-${tool.name}`} style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
+                              ✗ {tool.name}: not found
+                              {tool.installHint ? ` — ${tool.installHint}` : ""}
+                            </Text>
+                          ))}
+                        {(cap?.tools ?? [])
+                          .filter((tool) => tool.deepValid === false && tool.deepError)
+                          .map((tool) => (
+                            <Text key={`tool-deep-${tool.name}`} style={{ color: "#f59e0b", fontSize: 11, marginTop: 6 }}>
+                              ⚠ {tool.name}: {tool.deepError}
+                            </Text>
+                          ))}
+                        {/* Per-secret detail. Show "missing in vault"
+                         * + invalid-path-for-this-host warnings; the
+                         * latter is the case where APP_STORE_KEY_PATH
+                         * resolves to a /Users/<other-user> directory
+                         * because the value was synced from another
+                         * machine and didn't use ~/ portable form. */}
+                        {(cap?.secrets ?? [])
+                          .filter((sec) => !sec.found || sec.pathValid === false)
+                          .map((sec) => (
+                            <Text
+                              key={`sec-${sec.name}`}
+                              style={{
+                                color: !sec.found ? c.textMuted : "#f59e0b",
+                                fontSize: 11,
+                                marginTop: 6,
+                              }}
+                            >
+                              {!sec.found
+                                ? `✗ ${sec.name}: not in vault`
+                                : `⚠ ${sec.name}: ${sec.pathError ?? "path invalid"}`}
+                            </Text>
+                          ))}
+                        {/* Try syncing missing secrets from another
+                         * device. Only show when the failure is
+                         * fixable via vault sync (missing entries) —
+                         * platform-locked / missing-tools failures
+                         * can't be fixed by syncing more secrets. */}
+                        {!platformBlocked && (cap?.missingSecrets?.length ?? 0) > 0 ? (
+                          <Pressable
+                            onPress={trySyncFromPeers}
+                            disabled={busyTarget === "__peer-sync__"}
+                            style={{
+                              marginTop: 10,
+                              paddingVertical: 8,
+                              paddingHorizontal: 12,
+                              borderRadius: 8,
+                              borderWidth: 1,
+                              borderColor: c.accent,
+                              alignItems: "center",
+                              opacity: busyTarget === "__peer-sync__" ? 0.6 : 1,
+                            }}
+                          >
+                            <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>
+                              {busyTarget === "__peer-sync__" ? "Syncing…" : "Try syncing from another device"}
+                            </Text>
+                          </Pressable>
+                        ) : null}
                         {cap?.ciAlternative ? (
                           <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
                             CI fallback: {cap.ciAlternative}

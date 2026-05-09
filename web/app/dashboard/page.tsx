@@ -12,6 +12,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import ProjectsView from "@/components/dashboard/ProjectsView";
 import TodosView from "@/components/dashboard/TodosView";
 import BuildsView from "@/components/dashboard/BuildsView";
+import { DeployCapabilitiesView } from "@/components/dashboard/DeployCapabilitiesView";
 import HealthView from "@/components/dashboard/HealthView";
 import QualityView from "@/components/dashboard/QualityView";
 import ConvexView from "@/components/dashboard/ConvexView";
@@ -38,7 +39,8 @@ import PhoneProjectsView from "@/components/dashboard/PhoneProjectsView";
 import VibePreviewView from "@/components/dashboard/VibePreviewView";
 import ExecView from "@/components/dashboard/ExecView";
 import DomainsView from "@/components/dashboard/DomainsView";
-import VibeCodingView from "@/components/dashboard/VibeCodingView";
+import VibeCodingView, { ASSISTANT_MARKDOWN_COMPONENTS, stripAnsi } from "@/components/dashboard/VibeCodingView";
+import ReactMarkdown from "react-markdown";
 import PendingClaimsSection from "@/components/dashboard/PendingClaimsSection";
 import WebviewView from "@/components/dashboard/WebviewView";
 import GitView from "@/components/dashboard/GitView";
@@ -55,7 +57,7 @@ function statusColor(s: string) {
   return "text-surface-400";
 }
 
-type ChatMsg = { role: "user" | "assistant"; text: string };
+type ChatMsg = { role: "user" | "assistant"; text: string; queued?: boolean };
 type OpenCodeAgentRow = { name: string; model?: string; isBuiltin?: boolean };
 
 // Tasks created from the mobile "Open App" / "Run" flow carry a full
@@ -436,12 +438,15 @@ function DeviceAliasChip({
 function DeviceConnectCard({
   device,
   isPrimary,
+  isSecondary = false,
   isSelected,
   isConnecting,
   connectionError,
   onConnect,
   onTogglePrimary,
   canTogglePrimary,
+  onToggleSecondary,
+  canToggleSecondary,
   onAliasSaved,
   onOpenShell,
   token,
@@ -449,12 +454,15 @@ function DeviceConnectCard({
 }: {
   device: Device;
   isPrimary: boolean;
+  isSecondary?: boolean;
   isSelected: boolean;
   isConnecting: boolean;
   connectionError?: string | null;
   onConnect: () => void;
   onTogglePrimary?: () => void;
   canTogglePrimary?: boolean;
+  onToggleSecondary?: () => void;
+  canToggleSecondary?: boolean;
   onAliasSaved?: () => void;
   onOpenShell?: () => void;
   token?: string | null;
@@ -671,6 +679,15 @@ function DeviceConnectCard({
             {isPrimary ? "Unset Primary" : "Make Primary"}
           </button>
         ) : null}
+        {canToggleSecondary && onToggleSecondary && !isPrimary ? (
+          <button
+            onClick={onToggleSecondary}
+            className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-3 py-1.5 text-xs font-semibold text-violet-200 hover:bg-violet-500/15"
+            title={isSecondary ? "Clear secondary slot" : "Mark this device as your fallback secondary machine"}
+          >
+            {isSecondary ? "Unset Secondary" : "Make Secondary"}
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -746,6 +763,15 @@ export default function DashboardPage() {
   }, [chatPickerExpanded]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  // Local queue of follow-up prompts the user typed while the active
+  // task was still running. The Yaver agent rejects POST
+  // /tasks/<id>/continue with 500 until the prior turn finishes (see
+  // handleSend's `continuing` comment), and the runner CLIs we wrap
+  // (claude `-p`, codex `exec`, opencode `run`) are one-shot per
+  // invocation — no native back-channel to inject a follow-up
+  // mid-stream. So we mirror what claude-code / codex / opencode do
+  // interactively: keep typing, queue up, dispatch on completion.
+  const [pendingFollowUps, setPendingFollowUps] = useState<string[]>([]);
   const [guestCode, setGuestCode] = useState("");
   const [pendingInvites, setPendingInvites] = useState<GuestInvitation[]>([]);
   const [invitesBusy, setInvitesBusy] = useState<string | null>(null);
@@ -775,6 +801,9 @@ export default function DashboardPage() {
   // user has more than one online. Also mirrored onto mobile and CLI via
   // the /settings endpoint so every surface picks the same default.
   const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
+  // Optional secondary slot — auto-connect fallback when primary is
+  // offline. Loaded from /settings alongside primaryDeviceId.
+  const [secondaryDeviceId, setSecondaryDeviceId] = useState<string | null>(null);
 
   const repairRelay = useCallback(async () => {
     if (!token) throw new Error("Not signed in");
@@ -844,10 +873,40 @@ export default function DashboardPage() {
     if (ready?.runnerId) return ready.runnerId;
     return null;
   })();
-  const chatRunnerChoices = useMemo(
-    () => runners.filter((runner) => runner.installed && RUNNER_WHITELIST_SET.has(runner.id)),
-    [runners],
-  );
+  // Mirror mobile's trust model: prefer the live `/agent/runners`
+  // response, but if it's empty (silent fetch error, brief 401 during
+  // token refresh, etc.) fall back to the Convex heartbeat snapshot in
+  // `connectedDevice.runners`. The agent reports both sets via the same
+  // `osexec.LookPath`, so when the heartbeat says OpenCode is there the
+  // live answer would have agreed if we'd fetched it cleanly. Without
+  // this, web flags "No AI runner installed" while mobile (which reads
+  // the heartbeat snapshot) happily executes the same task.
+  const chatRunnerChoices = useMemo<Runner[]>(() => {
+    const live = runners.filter((runner) => runner.installed && RUNNER_WHITELIST_SET.has(runner.id));
+    if (live.length > 0) return live;
+    const cached = (connectedDevice?.runners || []) as Array<{ runnerId?: string; authConfigured?: boolean; needsAuth?: boolean; status?: string }>;
+    const seen = new Set<string>();
+    const synthetic: Runner[] = [];
+    for (const row of cached) {
+      const id = row?.runnerId ? String(row.runnerId) : "";
+      if (!id || !RUNNER_WHITELIST_SET.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      synthetic.push({
+        id,
+        name: id,
+        installed: true,
+        active: false,
+        // `ready` is intentionally omitted (treated as undefined ≈ true)
+        // so handleSend's `runnerAuthIssue` check doesn't block — mobile
+        // proves the runner works; if it doesn't, the task surface will
+        // bubble the real error back.
+        supportsBrowserAuth: id === "claude" || id === "codex",
+        supportsModelSelection: false,
+        models: [],
+      });
+    }
+    return synthetic;
+  }, [runners, connectedDevice]);
 
   // When the primary runner changes (broadcast from another tab/view),
   // also kick a device refresh so the sidebar's `runners` array
@@ -893,7 +952,10 @@ export default function DashboardPage() {
               const sd = await sr.json();
               const pw = sd.settings?.relayPassword || sd.relayPassword;
               if (pw) { relays = relays.map((r: any) => ({ ...r, password: pw })); }
-              if (!cancelled) setPrimaryDeviceId(sd.settings?.primaryDeviceId ?? null);
+              if (!cancelled) {
+                setPrimaryDeviceId(sd.settings?.primaryDeviceId ?? null);
+                setSecondaryDeviceId(sd.settings?.secondaryDeviceId ?? null);
+              }
             }
           } catch {}
         }
@@ -1150,7 +1212,7 @@ export default function DashboardPage() {
   // disappears (e.g. on reconnect to a different host where the runner
   // isn't installed).
   useEffect(() => {
-    const installed = runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id));
+    const installed = chatRunnerChoices;
     if (installed.length === 0) { setSelectedRunner(""); return; }
     const explicitRunner = connectedDevice ? primaryRunnerByDevice[connectedDevice.id] : "";
     if (explicitRunner && installed.some((runner) => runner.id === explicitRunner) && selectedRunner !== explicitRunner) {
@@ -1574,7 +1636,7 @@ export default function DashboardPage() {
     }
   };
 
-  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setSelectedModel(""); setConnectError(null); };
+  const disconnect = () => { agentClient.disconnect(); setConnectedDevice(null); setAgentInfo(null); setTasks([]); setActiveTask(null); setOutputLines([]); setChatMsgs([]); setRunners([]); setSelectedRunner(""); setSelectedModel(""); setConnectError(null); setPendingFollowUps([]); };
 
   const refreshConnectedRunners = async () => {
     if (!isConnected) return;
@@ -1586,6 +1648,15 @@ export default function DashboardPage() {
   const handleSend = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const text = input.trim(); if (!text || sending) return;
+    // Task already running → enqueue the follow-up locally and clear
+    // the input so the user can keep typing. Dispatch happens in the
+    // effect below when activeTask.status leaves running/queued.
+    if (activeTask && (activeTask.status === "running" || activeTask.status === "queued")) {
+      setPendingFollowUps((prev) => [...prev, text]);
+      setChatMsgs((prev) => [...prev, { role: "user", text, queued: true }]);
+      setInput("");
+      return;
+    }
     const targetRunner = runners.find((r) => r.id === (activeTask?.runnerId || selectedRunner)) || runners.find((r) => r.id === selectedRunner) || null;
     const authIssue = runnerAuthIssue(targetRunner);
     if (authIssue) {
@@ -1657,9 +1728,59 @@ export default function DashboardPage() {
     }
   };
 
+  // Dispatch queued follow-ups when the active task transitions out
+  // of running/queued. Drains one per transition: continueTask kicks
+  // the task back into "running", which re-arms this effect for the
+  // next item once that turn lands.
+  useEffect(() => {
+    if (!activeTask) return;
+    if (activeTask.status === "running" || activeTask.status === "queued") return;
+    if (sending) return;
+    if (pendingFollowUps.length === 0) return;
+    const [next, ...rest] = pendingFollowUps;
+    setPendingFollowUps(rest);
+    // Promote the matching queued bubble to a normal user bubble + push
+    // an empty assistant placeholder so the next streamed chunk lands
+    // in a fresh response (mirrors handleSend's optimistic echo).
+    setChatMsgs((prev) => {
+      const out: ChatMsg[] = [];
+      let promoted = false;
+      for (const m of prev) {
+        if (!promoted && m.queued && m.role === "user" && m.text === next) {
+          out.push({ role: "user", text: m.text });
+          promoted = true;
+        } else {
+          out.push(m);
+        }
+      }
+      out.push({ role: "assistant", text: "" });
+      return out;
+    });
+    setSending(true);
+    void (async () => {
+      try {
+        await agentClient.continueTask(activeTask.id, next);
+      } catch (err: any) {
+        setConnectError(err?.message || "Failed to send queued follow-up");
+        // Drop the empty assistant placeholder we pushed; keep the
+        // user bubble so they can see what was attempted.
+        setChatMsgs((prev) => {
+          const last = prev[prev.length - 1];
+          if (last && last.role === "assistant" && !last.text) return prev.slice(0, -1);
+          return prev;
+        });
+      } finally {
+        setSending(false);
+      }
+    })();
+  }, [activeTask, pendingFollowUps, sending]);
+
   const selectTask = (t: Task) => {
     setActiveTask(t);
     setOutputLines(t.output || []);
+    // Switching tasks abandons any queue tied to the previous task —
+    // those follow-ups were intended for the old conversation.
+    setPendingFollowUps([]);
     // Prefer the task's recorded turns (every user continue + agent reply)
     // so multi-turn history survives a sidebar navigation. Fall back to
     // [initial prompt, flattened output] when the agent didn't expose turns.
@@ -2387,6 +2508,7 @@ export default function DashboardPage() {
                           key={d.id}
                           device={d}
                           isPrimary={primaryDeviceId === d.id}
+                          isSecondary={secondaryDeviceId === d.id}
                           isSelected={false}
                           isConnecting={false}
                           token={token}
@@ -2410,6 +2532,23 @@ export default function DashboardPage() {
                             }
                           } : undefined}
                           canTogglePrimary={!d.isGuest && !!token}
+                          onToggleSecondary={!d.isGuest && token ? async () => {
+                            const nextId = secondaryDeviceId === d.id ? null : d.id;
+                            const prev = secondaryDeviceId;
+                            setSecondaryDeviceId(nextId);
+                            try {
+                              const res = await fetch(`${CONVEX_URL}/settings`, {
+                                method: "POST",
+                                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ secondaryDeviceId: nextId }),
+                              });
+                              if (!res.ok) throw new Error(`status ${res.status}`);
+                            } catch (e: any) {
+                              setSecondaryDeviceId(prev);
+                              alert(`Could not update secondary: ${e?.message ?? e}`);
+                            }
+                          } : undefined}
+                          canToggleSecondary={!d.isGuest && !!token && primaryDeviceId !== d.id}
                         />
                       ))}
                     </div>
@@ -2445,7 +2584,20 @@ export default function DashboardPage() {
           ) : activeTab === "todos" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><TodosView onTaskCreated={onTaskCreated} /></div>
           ) : activeTab === "builds" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full"><BuildsView onTaskCreated={onTaskCreated} preferredProjectPath={preferredSurfaceProjectPath} /></div>
+            <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full space-y-6">
+              <BuildsView onTaskCreated={onTaskCreated} preferredProjectPath={preferredSurfaceProjectPath} />
+              {/* Per-target deploy capability matrix — rendered
+               * below the builds list so the user can see at a
+               * glance whether the connected device can actually
+               * ship to TestFlight / Play Store / Convex / CF
+               * before clicking a deploy button. */}
+              <div>
+                <h3 className="mb-3 text-sm font-semibold text-surface-200 dark:text-surface-100">
+                  Deploy capabilities
+                </h3>
+                <DeployCapabilitiesView />
+              </div>
+            </div>
           ) : activeTab === "webview" || activeTab === "preview" || activeTab === "web-reload" ? (
             <div className="flex-1 min-h-0 overflow-hidden">
               <WebviewView
@@ -2630,22 +2782,43 @@ export default function DashboardPage() {
                             {chatMsgs.map((m, i) => (
                               m.role === "user" ? (
                                 <div key={i} className="flex justify-end">
-                                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-indigo-500 px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm">
+                                  <div className={`max-w-[80%] rounded-2xl rounded-br-sm px-3.5 py-2 text-[13px] text-white whitespace-pre-wrap break-words shadow-sm ${m.queued ? "bg-indigo-500/40 italic ring-1 ring-indigo-300/30" : "bg-indigo-500"}`}>
+                                    {m.queued ? <span className="mr-1.5 text-[10px] uppercase tracking-wide text-indigo-100/80">queued</span> : null}
                                     {m.text}
                                   </div>
                                 </div>
                               ) : (
                                 <div key={i} className="flex justify-start">
-                                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-surface-800 px-3.5 py-2 font-mono text-[12px] leading-5 text-surface-100 whitespace-pre-wrap break-words shadow-sm">
-                                    {m.text || (activeTask.status === "running" ? (
-                                      <span className="inline-flex items-center gap-1 text-surface-400">
-                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400" />
-                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:150ms]" />
-                                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-surface-400 [animation-delay:300ms]" />
+                                  <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-surface-800 px-3.5 py-2 text-[12px] leading-5 text-surface-100 break-words shadow-sm">
+                                    {m.text ? (
+                                      // Render assistant prose as markdown so
+                                      // `**$ <cmd>**` shell pills + ```fenced```
+                                      // tool output land as readable cards
+                                      // (mirrors mobile/app/(tabs)/tasks.tsx
+                                      // and web/components/dashboard/
+                                      // VibeCodingView.tsx's ChatBubble).
+                                      <div className="prose-invert break-words [&_pre]:whitespace-pre-wrap">
+                                        <ReactMarkdown components={ASSISTANT_MARKDOWN_COMPONENTS}>
+                                          {stripAnsi(m.text)}
+                                        </ReactMarkdown>
+                                        {activeTask.status === "running" && i === chatMsgs.length - 1 ? (
+                                          <span className="ml-0.5 inline-block h-3 w-1.5 translate-y-[2px] animate-pulse bg-surface-300" aria-hidden />
+                                        ) : null}
+                                      </div>
+                                    ) : activeTask.status === "running" ? (
+                                      <span className="inline-flex items-center gap-2 text-surface-400">
+                                        <span className="inline-flex items-center gap-1">
+                                          <span className="h-2 w-2 animate-pulse rounded-full bg-surface-400" />
+                                          <span className="h-2 w-2 animate-pulse rounded-full bg-surface-400 [animation-delay:200ms]" />
+                                          <span className="h-2 w-2 animate-pulse rounded-full bg-surface-400 [animation-delay:400ms]" />
+                                        </span>
+                                        <span className="text-[11px] tracking-wide">
+                                          {runnerLabel(activeTask.runnerId || selectedRunner)} is thinking…
+                                        </span>
                                       </span>
                                     ) : (
                                       <span className="text-surface-500">({activeTask.status || "no response"})</span>
-                                    ))}
+                                    )}
                                   </div>
                                 </div>
                               )
@@ -2662,7 +2835,7 @@ export default function DashboardPage() {
               <div className="border-t border-surface-800 bg-surface-900/50 px-4 py-3">
                 <div className="mx-auto flex max-w-5xl flex-col gap-3">
                   {(() => {
-                    const installed = runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id));
+                    const installed = chatRunnerChoices;
                     const selectedRunnerRow = installed.find((r) => r.id === selectedRunner) || null;
                     const selectedRunnerModels = Array.isArray(selectedRunnerRow?.models) ? selectedRunnerRow.models : [];
                     if (installed.length === 0) {
@@ -3194,10 +3367,13 @@ export default function DashboardPage() {
                   <form onSubmit={handleSend} className="grid gap-2 md:grid-cols-[minmax(0,1fr),auto] md:items-end">
                     {(() => {
                       const taskRunning = activeTask?.status === "running" || activeTask?.status === "queued";
+                      const queuedCount = pendingFollowUps.length;
                       const placeholder = activeRunnerAuthIssue
                         ? `Sign in to ${runnerLabel(activeRunnerId)} to continue on ${connectedDevice?.name || "this machine"}...`
                         : taskRunning
-                          ? "Task is running — wait for the response, then add a follow-up…"
+                          ? queuedCount > 0
+                            ? `Queued ${queuedCount} — type to queue another…`
+                            : "Type to queue a follow-up — sent when this turn finishes…"
                           : activeTask
                             ? "Add a task update or refinement..."
                             : preferredSurfaceProjectPath
@@ -3206,21 +3382,22 @@ export default function DashboardPage() {
                       const buttonLabel = sending
                         ? "..."
                         : taskRunning
-                          ? "Working…"
+                          ? queuedCount > 0
+                            ? `Queue (+${queuedCount})`
+                            : "Queue"
                           : activeTask
                             ? "Update task"
                             : "Start task";
                       const disabled = !input.trim()
                         || sending
-                        || taskRunning
-                        || runners.filter(r => r.installed && RUNNER_WHITELIST_SET.has(r.id)).length === 0
+                        || chatRunnerChoices.length === 0
                         || Boolean(activeRunnerAuthIssue);
                       return (
                         <>
                           <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
                             placeholder={placeholder} rows={1}
-                            disabled={Boolean(activeRunnerAuthIssue) || taskRunning}
+                            disabled={Boolean(activeRunnerAuthIssue)}
                             className="max-h-32 w-full resize-none rounded-xl border border-surface-700 bg-surface-950 px-4 py-3 text-sm text-surface-100 placeholder-surface-600 outline-none focus:border-surface-500 disabled:cursor-not-allowed disabled:opacity-60" style={{ minHeight: "48px" }} />
                           <button type="submit" disabled={disabled}
                             className="h-12 shrink-0 rounded-xl bg-surface-100 px-5 text-sm font-medium text-surface-900 hover:bg-surface-50 disabled:opacity-30">
