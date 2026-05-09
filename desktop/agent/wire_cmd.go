@@ -712,6 +712,21 @@ func wirePushNativeIOS(ctx context.Context, root string, dev wireDevice, opts wi
 		"-allowProvisioningUpdates",
 		"build",
 	}
+	// App Store Connect API key, when present, lets xcodebuild auto-
+	// register new capabilities (e.g. Associated Domains) on the App ID
+	// and regenerate the provisioning profile without an interactive
+	// Xcode session. Mirrors what scripts/deploy-testflight.sh does for
+	// the archive path. Reads from env first, falls back to yaver vault
+	// (project=mobile). Skips silently when the key is missing — keeps
+	// the existing "no credentials, fail loud at xcodebuild" behavior
+	// intact rather than introducing a new dependency.
+	if authPath, authID, authIssuer := resolveAppStoreConnectKey(); authPath != "" && authID != "" && authIssuer != "" {
+		buildArgs = append(buildArgs,
+			"-authenticationKeyPath", authPath,
+			"-authenticationKeyID", authID,
+			"-authenticationKeyIssuerID", authIssuer,
+		)
+	}
 	if ws != "" {
 		buildArgs = append([]string{"-workspace", ws}, buildArgs...)
 	} else if proj != "" {
@@ -840,6 +855,67 @@ func readAndroidPackageFromGradle(androidDir string) string {
 		}
 	}
 	return ""
+}
+
+// resolveAppStoreConnectKey returns the (path, keyID, issuerID) tuple
+// for the local App Store Connect API key, or empty strings when any
+// piece is missing. Source-of-truth order:
+//  1. Direct env vars (APP_STORE_KEY_PATH/ID/ISSUER) — set by the user,
+//     by `yaver vault env --project mobile`, or by CI.
+//  2. yaver vault (project=mobile) — fetched via `yaver vault env`.
+//  3. Heuristic: $HOME/.appstoreconnect/private_keys/AuthKey_<ID>.p8
+//     when only APP_STORE_KEY_ID is known, since that's where the
+//     manual-install instructions in CLAUDE.md drop the .p8 file.
+func resolveAppStoreConnectKey() (path, keyID, issuerID string) {
+	path = strings.TrimSpace(os.Getenv("APP_STORE_KEY_PATH"))
+	keyID = strings.TrimSpace(os.Getenv("APP_STORE_KEY_ID"))
+	issuerID = strings.TrimSpace(os.Getenv("APP_STORE_KEY_ISSUER"))
+
+	if path == "" || keyID == "" || issuerID == "" {
+		// Try yaver vault — vault env emits "KEY=value" lines we eval.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		out, err := exec.CommandContext(ctx, "yaver", "vault", "env", "--project", "mobile").Output()
+		if err == nil {
+			for _, line := range strings.Split(string(out), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "export ") {
+					line = strings.TrimPrefix(line, "export ")
+				}
+				kv := strings.SplitN(line, "=", 2)
+				if len(kv) != 2 {
+					continue
+				}
+				val := strings.Trim(kv[1], `"' `)
+				switch kv[0] {
+				case "APP_STORE_KEY_PATH":
+					if path == "" {
+						path = val
+					}
+				case "APP_STORE_KEY_ID":
+					if keyID == "" {
+						keyID = val
+					}
+				case "APP_STORE_KEY_ISSUER":
+					if issuerID == "" {
+						issuerID = val
+					}
+				}
+			}
+		}
+	}
+
+	// Heuristic .p8 location — `~/.appstoreconnect/private_keys/AuthKey_<ID>.p8`.
+	// Surfaces the key when only APP_STORE_KEY_ID is provided.
+	if path == "" && keyID != "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			candidate := filepath.Join(home, ".appstoreconnect", "private_keys", "AuthKey_"+keyID+".p8")
+			if _, err := os.Stat(candidate); err == nil {
+				path = candidate
+			}
+		}
+	}
+	return path, keyID, issuerID
 }
 
 func runStreaming(ctx context.Context, dir, bin string, args []string, env []string) error {
