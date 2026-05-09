@@ -94,8 +94,16 @@ async function findUserForOAuth(
   ctx: QueryCtx | MutationCtx,
   provider: OAuthProvider,
   providerId: string,
-  email: string,
+  _email: string,
 ) {
+  // Resolution is strictly by linking, never by email. The email
+  // fallback that used to live here auto-merged accounts whose
+  // emails happened to match across providers — surprising semantics
+  // when a user has different addresses per identity (Apple iCloud
+  // vs Gmail vs work Microsoft) and a real risk if a verified email
+  // collided across distinct humans. authIdentities is the source of
+  // truth; users.by_provider is the legacy compatibility lookup for
+  // accounts created before the authIdentities table existed.
   const identity = await ctx.db
     .query("authIdentities")
     .withIndex("by_provider", (q) => q.eq("provider", provider).eq("providerId", providerId))
@@ -109,13 +117,7 @@ async function findUserForOAuth(
     .query("users")
     .withIndex("by_provider", (q) => q.eq("provider", provider).eq("providerId", providerId))
     .unique();
-  if (byProvider) return byProvider;
-
-  const byEmail = await ctx.db
-    .query("users")
-    .withIndex("by_email", (q) => q.eq("email", email))
-    .unique();
-  return byEmail;
+  return byProvider ?? null;
 }
 
 // ── Shared helpers for destructive auth flows ──────────────────────
@@ -571,10 +573,21 @@ export const createOrUpdateUser = mutation({
   handler: async (ctx, args) => {
     const existing = await findUserForOAuth(ctx, args.provider, args.providerId, args.email);
     if (existing) {
+      // Don't overwrite users.email on every sign-in. Each provider has
+      // its own address (Apple relay vs Gmail vs work Microsoft), and
+      // the per-identity email lives on authIdentities. Patching the
+      // user-row email each time made the displayed account email
+      // flip between providers depending on which surface signed in
+      // most recently — confusing and made Apple Hide-My-Email relays
+      // briefly mask the real Gmail. Only seed it the first time a
+      // resolved user has no email yet, and let unlinkAuthIdentity
+      // re-promote when the primary provider is removed.
       const patch: Record<string, string | undefined | boolean> = {
-        email: args.email,
         avatarUrl: args.avatarUrl,
       };
+      if (!existing.email && args.email) {
+        patch.email = args.email;
+      }
       if (args.fullName && (!existing.fullName || existing.fullName === existing.email)) {
         patch.fullName = args.fullName;
       }
