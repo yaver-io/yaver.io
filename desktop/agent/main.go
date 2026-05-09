@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.161"
+const version = "1.99.162"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -7258,48 +7258,58 @@ func summarizeRunnerAuthState(row runnerAuthStatusRow) string {
 // ---------------------------------------------------------------------------
 
 func runUninstall() {
+	yes := false
+	for _, a := range os.Args[2:] {
+		switch a {
+		case "--yes", "-y":
+			yes = true
+		case "--help", "-h":
+			fmt.Println("yaver uninstall — entirely remove Yaver from this machine.")
+			fmt.Println()
+			fmt.Println("Removes ~/.yaver (auth token, vault, logs, blobs), the systemd /")
+			fmt.Println("launchd unit, the shell-rc PATH block from .bashrc/.zshrc/.profile,")
+			fmt.Println("yaver-bootstrap entries from ~/.ssh/authorized_keys, and deletes")
+			fmt.Println("this device from the public Yaver Convex backend (cascading to")
+			fmt.Println("its sdkTokens, projects, services, and primary-device pointer).")
+			fmt.Println()
+			fmt.Println("Flags:")
+			fmt.Println("  --yes, -y    skip the 'delete my machine' confirmation prompt")
+			return
+		}
+	}
+
+	if !yes {
+		fmt.Println("This will entirely remove Yaver from this machine and delete this")
+		fmt.Println("device's record on the public Yaver backend. Cannot be undone.")
+		fmt.Println()
+		fmt.Print("Type 'delete my machine' to confirm: ")
+		var resp string
+		_, _ = fmt.Scanln(&resp)
+		if !machineRemovalPhraseValid(resp) {
+			fmt.Println("Aborted.")
+			os.Exit(1)
+		}
+	}
+
 	fmt.Println("Uninstalling Yaver...")
 
-	// Try to mark device offline and sign out
-	cfg, err := LoadConfig()
-	if err == nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
-		if cfg.DeviceID != "" {
-			if err := MarkOffline(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); err != nil {
-				fmt.Printf("  Warning: could not mark device offline: %v\n", err)
-			} else {
-				fmt.Println("  Marked device offline.")
-			}
-		}
+	// Single canonical cleanup path — same code that runs when web /
+	// mobile trigger remote uninstall via POST /machine/remove.
+	// Convex device-row deletion + sdkTokens + primary-pointer cascade
+	// happens inside RemoveDeviceShutdown → backend removeDevice
+	// mutation. Local artifacts (systemd / launchd, ~/.yaver) are
+	// removed by removeInstalledYaverServices + os.RemoveAll on the
+	// config dir.
+	if err := performPermanentMachineRemoval(); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
+	} else {
+		fmt.Println("  Convex device record + ~/.yaver + service unit removed.")
 	}
 
-	// Stop system services
-	fmt.Println("  Stopping agent service...")
-	switch runtime.GOOS {
-	case "darwin":
-		plistPath := filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", "io.yaver.agent.plist")
-		osexec.Command("launchctl", "unload", plistPath).Run()
-		os.Remove(plistPath)
-		fmt.Println("  Removed launchd service.")
-	case "linux":
-		osexec.Command("systemctl", "--user", "stop", "yaver-agent").Run()
-		osexec.Command("systemctl", "--user", "disable", "yaver-agent").Run()
-		unitPath := filepath.Join(os.Getenv("HOME"), ".config", "systemd", "user", "yaver-agent.service")
-		os.Remove(unitPath)
-		osexec.Command("systemctl", "--user", "daemon-reload").Run()
-		fmt.Println("  Removed systemd service.")
-	case "windows":
-		removeAutoStart()
-		fmt.Println("  Removed scheduled task.")
-	}
-
-	// Remove config directory (~/.yaver)
-	configDir, err := ConfigDir()
-	if err == nil {
-		if err := os.RemoveAll(configDir); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: could not remove %s: %v\n", configDir, err)
-		} else {
-			fmt.Printf("  Removed %s\n", configDir)
-		}
+	// Cleanups outside ~/.yaver: shell rc PATH, ssh authorized_keys
+	// yaver-bootstrap lines, linger flag.
+	for _, line := range uninstallExtraCleanup() {
+		fmt.Printf("  %s\n", line)
 	}
 
 	if removed, note := uninstallPackageWrapper(); note != "" {
@@ -7311,7 +7321,7 @@ func runUninstall() {
 	fmt.Println()
 	fmt.Println("Yaver has been uninstalled.")
 	fmt.Println()
-	fmt.Println("To remove the binary:")
+	fmt.Println("If the binary itself remains (rare — npm/brew handle it):")
 	fmt.Println("  brew uninstall yaver          # if installed via Homebrew")
 	fmt.Println("  npm uninstall -g yaver-cli    # if installed via npm")
 	fmt.Printf("  rm %s   # if installed manually\n", os.Args[0])

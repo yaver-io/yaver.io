@@ -58,6 +58,15 @@ func performPermanentMachineRemoval() error {
 		errs = append(errs, "remove services: "+err.Error())
 	}
 
+	// Strip authorized_keys before nuking ~/.yaver — once the agent's
+	// home is gone the OS user might still log in, but any pubkey the
+	// previous bootstrap pushed should be gone with the rest of the
+	// install. Done here (not after RemoveAll) so even a config-dir
+	// resolution failure doesn't strand the ssh entries.
+	for _, line := range uninstallExtraCleanup() {
+		log.Printf("[machine/remove] %s", line)
+	}
+
 	if configDir, err := ConfigDir(); err == nil {
 		if err := os.RemoveAll(configDir); err != nil {
 			errs = append(errs, "remove ~/.yaver: "+err.Error())

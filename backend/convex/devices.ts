@@ -1245,6 +1245,61 @@ export const removeDevice = mutation({
       }
     }
 
+    // Cascade — every Convex row that names this deviceId becomes
+    // dangling the moment we delete the device. The orphaned sdkTokens
+    // are the security-critical case (long-lived tokens still validate
+    // for /info, /tasks, etc. until natural expiry); userProjects /
+    // userServices / userDeployments are functional dangling pointers
+    // (the dashboard still rows them as "live on <deviceId>"); the
+    // primaryDeviceId pointer breaks `yaver ssh primary` everywhere.
+    //
+    // Each cascade query is gated by the same userId match used for
+    // the device row above, so this mutation can never wipe rows the
+    // caller doesn't own (defense-in-depth — every table also has
+    // its own userId column we filter on).
+
+    const sdkTokensForDevice = await ctx.db
+      .query("sdkTokens")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .collect();
+    for (const tok of sdkTokensForDevice) {
+      if (tok.targetDeviceId === args.deviceId) {
+        await ctx.db.delete(tok._id);
+      }
+    }
+
+    const projectsForDevice = await ctx.db
+      .query("userProjects")
+      .withIndex("by_device", (q) => q.eq("deviceId", args.deviceId))
+      .collect();
+    for (const p of projectsForDevice) {
+      if (p.userId === session.user._id) {
+        await ctx.db.delete(p._id);
+      }
+    }
+
+    const servicesForDevice = await ctx.db
+      .query("userServices")
+      .withIndex("by_device", (q) => q.eq("deviceId", args.deviceId))
+      .collect();
+    for (const svc of servicesForDevice) {
+      if (svc.userId === session.user._id) {
+        await ctx.db.delete(svc._id);
+      }
+    }
+
+    // userSettings.primaryDeviceId — clear it if it points at the
+    // device we're about to delete. Patch (not delete) the settings
+    // row so the user's other prefs (runner choice, relay creds,
+    // verbosity) survive.
+    const settings = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", session.user._id))
+      .unique();
+    if (settings && settings.primaryDeviceId === args.deviceId) {
+      await ctx.db.patch(settings._id, { primaryDeviceId: undefined });
+    }
+
     await ctx.db.delete(device._id);
   },
 });
