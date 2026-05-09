@@ -692,8 +692,13 @@ export function WebReloadView({
     setStaticBundleTransport(null);
     setStaticBundleInfo(null);
     staticBundleStartRef.current = Date.now();
-    const projectName = activeProject?.name || selectedApp || undefined;
-    const projectPath = activeProject?.path || selectedProjectPath || undefined;
+    // selectedProject wins over activeProject — Expo static bundles don't
+    // update devStatus.workDir, so activeProject stays on whatever was
+    // running before the switch. Mismatched name+path also resolves to
+    // the wrong project on the agent (resolveProjectRef looks up name in
+    // the workspace manifest before honoring path).
+    const projectName = selectedProject?.name || activeProject?.name || selectedApp || undefined;
+    const projectPath = selectedProject?.path || activeProject?.path || selectedProjectPath || undefined;
     try {
       const r = await agentClient.buildWebJSBundle({ projectName, projectPath });
       if (!r.ok) {
@@ -707,7 +712,7 @@ export function WebReloadView({
       setStaticBundleState("failed");
       setStaticBundleError(e instanceof Error ? e.message : String(e));
     }
-  }, [activeProject?.name, activeProject?.path, selectedApp, selectedProjectPath]);
+  }, [activeProject?.name, activeProject?.path, selectedApp, selectedProject?.name, selectedProject?.path, selectedProjectPath]);
 
   // Auto-detect a pre-existing built bundle on mount + every 5s while
   // idle. Catches the case where the bundle is built out-of-band (curl,
