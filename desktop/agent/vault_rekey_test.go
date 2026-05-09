@@ -234,3 +234,58 @@ func TestOpenVaultE_NoFallbackWhenWrongCurrentAndNoPrevious(t *testing.T) {
 		t.Fatal("expected openVaultE to fail without a fallback token")
 	}
 }
+
+// TestSetAuthToken_RekeysRuntimeStoreInPlace: when the agent has a
+// long-lived VaultStore registered (HTTPServer.vaultStore — used by
+// /vault/sync, /vault/push, etc.), SetAuthToken must rekey THAT
+// store, not a fresh disk-opened copy. Writes that race with token
+// rotation (sync inbound while heartbeat rotates) would otherwise
+// persist under the OLD key, regress vault.enc, and brick the next
+// rotation when even the PreviousAuthToken fallback no longer
+// matches what's on disk.
+func TestSetAuthToken_RekeysRuntimeStoreInPlace(t *testing.T) {
+	vaultDirForTest(t)
+
+	cfg := &Config{AuthToken: "token-A"}
+	runtimeVS, err := NewVaultStore(DerivePassphraseFromToken(cfg.AuthToken))
+	if err != nil {
+		t.Fatalf("seed vault: %v", err)
+	}
+	if err := runtimeVS.Set(VaultEntry{Name: "boot", Value: "1"}); err != nil {
+		t.Fatalf("seed entry: %v", err)
+	}
+
+	setRuntimeVaultStore(runtimeVS)
+	t.Cleanup(func() { setRuntimeVaultStore(nil) })
+
+	if err := SetAuthToken(cfg, "token-B"); err != nil {
+		t.Fatalf("rotation A→B: %v", err)
+	}
+
+	// Simulates an inbound /vault/push hitting the live runtime
+	// store right after rotation. Without the in-place rekey this
+	// write encrypts under the OLD key — silently regressing
+	// vault.enc — and the next rotation has no recovery path.
+	if err := runtimeVS.Set(VaultEntry{Name: "post-rotate", Value: "2"}); err != nil {
+		t.Fatalf("write after rotation: %v", err)
+	}
+
+	// Second rotation: with the previous fix the on-disk vault is
+	// still encrypted under token-B (the runtime store was rekeyed
+	// in place), so the standard rekey path can hop B→C cleanly.
+	if err := SetAuthToken(cfg, "token-C"); err != nil {
+		t.Fatalf("rotation B→C: %v", err)
+	}
+
+	// Both entries readable via a fresh open under the current token.
+	fresh, err := NewVaultStore(DerivePassphraseFromToken("token-C"))
+	if err != nil {
+		t.Fatalf("open under current token: %v", err)
+	}
+	if got, err := fresh.Get("", "boot"); err != nil || got == nil || got.Value != "1" {
+		t.Fatalf("boot entry lost across two rotations: %+v err=%v", got, err)
+	}
+	if got, err := fresh.Get("", "post-rotate"); err != nil || got == nil || got.Value != "2" {
+		t.Fatalf("post-rotation entry lost: %+v err=%v", got, err)
+	}
+}

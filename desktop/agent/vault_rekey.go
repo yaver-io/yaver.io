@@ -79,8 +79,25 @@ func SetAuthToken(cfg *Config, newToken string) error {
 //     rotations.
 //   - rekey write fails → log + continue. The PreviousAuthToken
 //     fallback covers us.
+//
+// When the agent has a live runtime VaultStore (the long-lived one
+// held by HTTPServer for /vault/sync, /vault/push, etc.), rekey it
+// in place rather than opening a fresh copy from disk. Opening a
+// fresh copy + RekeyTo would update vault.enc but leave the live
+// store still encrypting writes under the OLD key — so any sync /
+// push handler that runs after rotation would silently regress
+// vault.enc back to the old key, and the next rotation would lose
+// the trail (current and previous tokens no longer match what's on
+// disk → "wrong passphrase or corrupted vault" until the user
+// supplies YAVER_VAULT_PASSPHRASE manually).
 func rekeyVaultBetweenTokens(oldToken, newToken string) {
 	if strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE")) != "" {
+		return
+	}
+	if vs := currentRuntimeVaultStore(); vs != nil {
+		if err := vs.RekeyTo(DerivePassphraseFromToken(newToken)); err != nil {
+			log.Printf("[vault] rekey runtime store to new token failed: %v", err)
+		}
 		return
 	}
 	path, err := VaultPath()
