@@ -25,20 +25,15 @@ const nextConfig: NextConfig = {
       { source: "/ai", destination: "/llms.txt", permanent: true },
     ];
   },
-  // Force application/json on the WebAuthn / passkey association
-  // files. Apple's CDN cache and Google's Asset Links validator both
-  // refuse to parse these unless served with the JSON content type;
-  // Next.js's static-asset serve detects the empty extension on AASA
-  // as application/octet-stream by default.
-  async headers() {
+  // Apple App Site Association lives under /.well-known/ but the
+  // dotted segment can't be a folder in app/. Rewrite the canonical
+  // URL to a regular route handler that returns the JSON with the
+  // application/json content-type Apple requires.
+  async rewrites() {
     return [
       {
         source: "/.well-known/apple-app-site-association",
-        headers: [{ key: "Content-Type", value: "application/json" }],
-      },
-      {
-        source: "/.well-known/assetlinks.json",
-        headers: [{ key: "Content-Type", value: "application/json" }],
+        destination: "/api/apple-app-site-association",
       },
     ];
   },
