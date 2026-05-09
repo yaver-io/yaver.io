@@ -20,6 +20,7 @@ package main
 // device name — same ergonomics as `yaver guests remove <email>`.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -28,8 +29,11 @@ import (
 	"net/http"
 	"os"
 	osexec "os/exec"
+	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func runPrimary(args []string) {
@@ -73,6 +77,8 @@ func runPrimary(args []string) {
 		runPrimaryShow(ctx)
 	case "set":
 		runPrimarySet(ctx, args[1:])
+	case "pick", "choose", "select":
+		runPrimaryPick(ctx)
 	case "clear", "unset", "remove":
 		runPrimaryClear(ctx)
 	case "help", "-h", "--help":
@@ -851,6 +857,75 @@ func runPrimarySet(ctx context.Context, args []string) {
 		fmt.Fprintln(os.Stderr, "Cannot mark a shared (guest) device as primary — the host can revoke it at any time.")
 		os.Exit(1)
 	}
+	if err := primarySaveRaw(ctx, token, convex, chosen.DeviceID, false); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to set primary: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Primary device set to %s (%s).\n", chosen.Name, chosen.DeviceID[:min(8, len(chosen.DeviceID))])
+}
+
+// runPrimaryPick is the interactive companion to `yaver primary set`.
+// Lists owned devices in a numbered prompt, reads a selection from
+// stdin, then writes userSettings.primaryDeviceId. Refuses to run
+// without a TTY so script callers don't get stuck on an unanswered
+// prompt — those should pass an explicit deviceId to `set`.
+func runPrimaryPick(ctx context.Context) {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr, "yaver primary pick: stdin is not a TTY — pass `<deviceId>` to `yaver primary set` instead.")
+		os.Exit(1)
+	}
+	token, convex, err := primaryLoadAuth()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	devices, err := primaryListDevices(ctx, token, convex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to list devices: %v\n", err)
+		os.Exit(1)
+	}
+	owned := make([]primaryDevice, 0, len(devices))
+	for _, d := range devices {
+		if !d.IsGuest {
+			owned = append(owned, d)
+		}
+	}
+	if len(owned) == 0 {
+		fmt.Fprintln(os.Stderr, "No registered owner devices — run `yaver serve` on a machine to register it.")
+		os.Exit(1)
+	}
+	current, _ := primaryGetCurrent(ctx, token, convex)
+	current = strings.TrimSpace(current)
+	fmt.Println("Pick a primary device:")
+	for i, d := range owned {
+		marker := "  "
+		if d.DeviceID == current {
+			marker = "★ "
+		}
+		status := "bootstrap"
+		if d.IsOnline {
+			status = "online"
+		}
+		fmt.Printf("  %s%d) %s — %s — %s — %s\n", marker, i+1, d.Name, status, d.Platform, d.DeviceID[:min(8, len(d.DeviceID))])
+	}
+	fmt.Print("\nNumber (or q to abort): ")
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "\naborted")
+		os.Exit(1)
+	}
+	choice := strings.TrimSpace(line)
+	if choice == "" || strings.EqualFold(choice, "q") || strings.EqualFold(choice, "quit") {
+		fmt.Println("Aborted.")
+		return
+	}
+	idx, err := strconv.Atoi(choice)
+	if err != nil || idx < 1 || idx > len(owned) {
+		fmt.Fprintf(os.Stderr, "invalid selection %q — expected 1..%d\n", choice, len(owned))
+		os.Exit(1)
+	}
+	chosen := owned[idx-1]
 	if err := primarySaveRaw(ctx, token, convex, chosen.DeviceID, false); err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to set primary: %v\n", err)
 		os.Exit(1)

@@ -31,9 +31,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
 	"golang.org/x/mod/semver"
+	"golang.org/x/term"
 )
 
-const version = "1.99.159"
+const version = "1.99.160"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -6626,20 +6627,158 @@ func runSSHWrap(args []string) {
 		os.Exit(1)
 	}
 
+	exitCode, errSummary := runSSHCapturingAuthFailure(sshPath, dest, passthrough)
+	if exitCode == 0 {
+		return
+	}
+	// Auto-bootstrap path: the SSH child told us "Permission denied
+	// (publickey)" against a device we have a Yaver-side handle on.
+	// Push the local pubkey via the remote agent's same-Convex-user
+	// trust channel, then retry once. If the bootstrap is skipped or
+	// fails, fall through to the original ssh exit.
+	if exitCode == 255 && errSummary == sshFailAuth && resolvedDevice != nil {
+		fmt.Fprintln(os.Stderr, "→ no SSH access yet — bootstrapping via yaver auth (same-user verified)")
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		boot, bootErr := sshBootstrapDevice(ctx, resolvedDevice.DeviceID)
+		cancel()
+		if bootErr != nil {
+			fmt.Fprintf(os.Stderr, "  bootstrap failed: %v\n", bootErr)
+			os.Exit(exitCode)
+		}
+		if boot == nil || boot.SkipReason != "" {
+			reason := "unavailable"
+			if boot != nil && boot.SkipReason != "" {
+				reason = boot.SkipReason
+			}
+			fmt.Fprintf(os.Stderr, "  bootstrap skipped: %s\n", reason)
+			os.Exit(exitCode)
+		}
+		switch {
+		case boot.Pushed:
+			fmt.Fprintf(os.Stderr, "  pushed pubkey to %s (%s)\n", boot.RemoteName, boot.Fingerprint)
+		case boot.AlreadyPresent:
+			fmt.Fprintf(os.Stderr, "  pubkey already on %s (%s) — retrying\n", boot.RemoteName, boot.Fingerprint)
+		}
+		// If the user typed a bare hostname (no `user@`) and the
+		// bootstrap learned the agent's actual OS user, pivot the
+		// retry to that user — the pubkey lives in THAT user's
+		// authorized_keys, not necessarily root's. Caller-supplied
+		// `user@host` is left alone (their explicit choice wins).
+		if user == "" && strings.TrimSpace(boot.RemoteOSUser) != "" {
+			pivoted := boot.RemoteOSUser + "@" + host
+			if pivoted != dest {
+				fmt.Fprintf(os.Stderr, "  ssh user → %s (agent runs as %s)\n", boot.RemoteOSUser, boot.RemoteOSUser)
+				dest = pivoted
+			}
+		}
+		fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
+		cmd := osexec.Command(sshPath, append([]string{dest}, passthrough...)...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			if ee, ok := err.(*osexec.ExitError); ok {
+				os.Exit(ee.ExitCode())
+			}
+			fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	os.Exit(exitCode)
+}
+
+// sshFailAuth is the sentinel returned by runSSHCapturingAuthFailure
+// when the OpenSSH client exited with "Permission denied (publickey)".
+// Distinguishing it from other 255-code failures (DNS, refused, host
+// key mismatch) lets the bootstrap branch fire only when adding a
+// pubkey would actually help.
+const sshFailAuth = "auth"
+
+// runSSHCapturingAuthFailure spawns ssh, streams stdout/stderr to the
+// user verbatim, and returns (exitCode, summary). summary is
+// sshFailAuth when stderr matched the publickey-denied marker; empty
+// otherwise. exitCode 0 means success — the caller is done.
+func runSSHCapturingAuthFailure(sshPath, dest string, passthrough []string) (int, string) {
 	fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
 	cmd := osexec.Command(sshPath, append([]string{dest}, passthrough...)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		// Surface ssh's own exit code so shell scripts can branch on it.
-		if ee, ok := err.(*osexec.ExitError); ok {
-			os.Exit(ee.ExitCode())
+	// Tee stderr through a small ring buffer so we can detect the
+	// publickey-denied line without losing the user-visible output.
+	pr, pw, perr := osPipe()
+	if perr != nil {
+		// Fallback: no capture, behave like before.
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			if ee, ok := err.(*osexec.ExitError); ok {
+				return ee.ExitCode(), ""
+			}
+			fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
+			return 1, ""
 		}
-		fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
-		os.Exit(1)
+		return 0, ""
+	}
+	cmd.Stderr = pw
+	tail := &lastLinesBuffer{max: 4096}
+	doneRelay := make(chan struct{})
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := pr.Read(buf)
+			if n > 0 {
+				_, _ = os.Stderr.Write(buf[:n])
+				tail.append(buf[:n])
+			}
+			if err != nil {
+				break
+			}
+		}
+		close(doneRelay)
+	}()
+	runErr := cmd.Run()
+	_ = pw.Close()
+	<-doneRelay
+	_ = pr.Close()
+
+	exitCode := 0
+	if runErr != nil {
+		if ee, ok := runErr.(*osexec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else {
+			fmt.Fprintf(os.Stderr, "ssh: %v\n", runErr)
+			exitCode = 1
+		}
+	}
+	if exitCode != 0 {
+		stderrTail := tail.String()
+		if strings.Contains(stderrTail, "Permission denied (publickey") ||
+			strings.Contains(stderrTail, "Permission denied (publickey,") {
+			return exitCode, sshFailAuth
+		}
+	}
+	return exitCode, ""
+}
+
+// lastLinesBuffer keeps the last N bytes of stderr so we can sniff
+// for known failure patterns without buffering the whole stream.
+type lastLinesBuffer struct {
+	buf []byte
+	max int
+}
+
+func (b *lastLinesBuffer) append(p []byte) {
+	b.buf = append(b.buf, p...)
+	if len(b.buf) > b.max {
+		b.buf = b.buf[len(b.buf)-b.max:]
 	}
 }
+
+func (b *lastLinesBuffer) String() string { return string(b.buf) }
+
+// osPipe wraps os.Pipe so the function above can be unit-tested with
+// a fake pipe. Production path is just os.Pipe().
+func osPipe() (*os.File, *os.File, error) { return os.Pipe() }
 
 // resolveSSHPrimary returns the best handle to pass into the ssh
 // resolution pipeline for `yaver ssh primary` / bare `yaver ssh`.
@@ -6699,7 +6838,26 @@ func resolveSSHPrimary() (string, error) {
 		return "", fmt.Errorf("no registered owner devices — run 'yaver serve' on a machine to register it")
 	}
 	if len(owned) > 1 {
-		return "", fmt.Errorf("no primary device set and you have %d devices — run 'yaver primary set' first", len(owned))
+		// More than one owned device + no primary chosen yet: if we have
+		// a real terminal, run the picker right here so the user doesn't
+		// hit a dead-end error. Non-TTY (scripts, CI) gets the original
+		// error so automation surfaces it.
+		if term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+			fmt.Fprintln(os.Stderr, "→ no primary device set — picking one now")
+			runPrimaryPick(context.Background())
+			// runPrimaryPick already wrote primaryDeviceId to Convex on
+			// success; re-resolve so the rest of the function sees it.
+			primaryID, _ = primaryGetCurrent(ctx, cfg.AuthToken, convex)
+			primaryID = strings.TrimSpace(primaryID)
+			if primaryID != "" {
+				for _, d := range devices {
+					if d.DeviceID == primaryID {
+						return pickHandle(d), nil
+					}
+				}
+			}
+		}
+		return "", fmt.Errorf("no primary device set and you have %d devices — run 'yaver primary pick' first", len(owned))
 	}
 	return pickHandle(owned[0]), nil
 }
@@ -6872,12 +7030,46 @@ func inferSSHUser(host string, dev DeviceInfo) string {
 	if !strings.Contains(host, ".") {
 		return ""
 	}
+	// Source of truth: the remote agent's /info.osUser. Reachable over
+	// the same Convex-bearer-token channel ping uses. If the agent
+	// reports it, trust it — that's the user whose authorized_keys
+	// the bootstrap path writes to and whose home dir owns the
+	// session. Best-effort: a 3-second probe; on any failure we fall
+	// through to the legacy heuristic.
+	if u := remoteAgentOSUser(dev.DeviceID, 3*time.Second); u != "" {
+		return u
+	}
 	currentUser := strings.TrimSpace(os.Getenv("USER"))
 	if currentUser != "" && probeSSHUser(host, currentUser) {
 		return currentUser
 	}
 	if probeSSHUser(host, "root") {
 		return "root"
+	}
+	return ""
+}
+
+// remoteAgentOSUser returns the OS user the remote agent reports it
+// is running as, by hitting /info via the existing transport-fallback
+// path. Empty string on any error so the caller can fall back to the
+// legacy probe-based heuristic without leaking a misleading user.
+func remoteAgentOSUser(deviceID string, timeout time.Duration) string {
+	if strings.TrimSpace(deviceID) == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	report, err := fetchRemoteAgentStatusByDeviceID(ctx, deviceID)
+	if err != nil || report == nil || report.Info == nil {
+		return ""
+	}
+	if v, ok := report.Info["osUser"].(string); ok {
+		v = strings.TrimSpace(v)
+		// Reject the numeric uid fallback — a literal "uid:0" is
+		// meaningless to ssh and would just stall the dial.
+		if v != "" && !strings.HasPrefix(v, "uid:") {
+			return v
+		}
 	}
 	return ""
 }

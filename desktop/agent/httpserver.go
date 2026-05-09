@@ -270,6 +270,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/runners/test", s.auth(s.handleRunnerTest))
 	mux.HandleFunc("/runner-auth/status", s.auth(s.handleRunnerAuthStatus))
 	mux.HandleFunc("/runner-auth/set", s.auth(s.handleRunnerAuthSet))
+	// Same-Convex-user SSH bootstrap: append the caller's pubkey to
+	// ~/.ssh/authorized_keys so `yaver ssh primary` from a freshly
+	// signed-in box works without ssh-copy-id. See auth_ssh_http.go.
+	mux.HandleFunc("/auth/ssh/authorized-keys", s.auth(s.handleSSHAuthorizedKeys))
 	mux.HandleFunc("/runner-auth/setup", s.authSDK(s.handleRunnerAuthSetup))
 	mux.HandleFunc("/runner/opencode/config", s.auth(s.handleOpenCodeConfig))
 	// Browser/device-auth sub-family is also reachable by SDK tokens that
@@ -2218,6 +2222,13 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 			runnerProvider = pref.Provider
 		}
 	}
+	// Agent's runtime OS user — single source of truth for "who do I
+	// SSH as to land in the same authorized_keys this agent writes to?"
+	// Resolved from /etc/passwd via os/user; falls back to a numeric
+	// uid string if the lookup fails (rare, but possible inside very
+	// stripped containers). Home dir surfaced too so the CLI can
+	// double-check before pushing keys.
+	osUserName, osHome := agentRuntimeUserInfo()
 	info := map[string]interface{}{
 		"ok":             true,
 		"hostname":       hostname,
@@ -2227,6 +2238,8 @@ func (s *HTTPServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"hardware":       cachedHardwareProfile(),
 		"lifecycleState": lifecycle.State,
 		"lifecycle":      lifecycle,
+		"osUser":         osUserName,
+		"homeDir":        osHome,
 		"runner": map[string]interface{}{
 			"id":       runnerID,
 			"name":     runnerName,
