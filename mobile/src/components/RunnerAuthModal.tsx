@@ -21,6 +21,8 @@ import {
   TextInput,
   ActivityIndicator,
   ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import * as WebBrowser from "expo-web-browser";
 import * as Clipboard from "expo-clipboard";
@@ -275,7 +277,10 @@ export default function RunnerAuthModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={cancel}>
-      <View style={styles.backdrop}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.backdrop}
+      >
         <View style={styles.card}>
           <View style={styles.headerRow}>
             <View style={{ flex: 1 }}>
@@ -418,7 +423,7 @@ export default function RunnerAuthModal({
             )}
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

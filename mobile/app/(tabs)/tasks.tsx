@@ -5127,10 +5127,17 @@ function markdownStyles(c: ReturnType<typeof useColors>) {
     bullet_list: { marginBottom: 6 },
     ordered_list: { marginBottom: 6 },
     list_item: { flexDirection: "row" as const, marginBottom: 3 },
-    code_inline: { backgroundColor: c.bgCardElevated || "#1e1e2e", color: "#e879f9", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
-    // Bordered code block — matches the "ls output" frame in the mockup.
-    fence: { backgroundColor: c.bg || "#0a0a14", borderColor: c.border || "#2a2a3a", borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginVertical: 8 },
-    code_block: { color: c.textPrimary || "#e6e6f0", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, lineHeight: 18 },
+    // Code blocks always render terminal-style (dark slab, light text)
+    // regardless of the active theme. In light mode the previous
+    // `c.bg`-as-fence-background gave a near-white slab that, combined
+    // with downstream text-color cascades from RN markdown, sometimes
+    // surfaced white-on-near-white codex output. Hardcoding a dark
+    // slab + explicit light text matches the conventional code-block
+    // treatment (GitHub, VS Code) and removes the contrast-dependency
+    // on theme tokens entirely.
+    code_inline: { backgroundColor: "#1F1F26", color: "#E879F9", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 13, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
+    fence: { backgroundColor: "#0F0F14", color: "#E6E6F0", borderColor: "#2A2A35", borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, marginVertical: 8, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, lineHeight: 18 },
+    code_block: { backgroundColor: "#0F0F14", color: "#E6E6F0", fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", fontSize: 12, lineHeight: 18, padding: 10, borderRadius: 10, marginVertical: 8 },
     blockquote: { borderLeftWidth: 3, borderLeftColor: c.accent || "#6366f1", paddingLeft: 12, marginVertical: 6, opacity: 0.85 },
     link: { color: c.accent || "#6366f1" },
     hr: { backgroundColor: c.border || "#1e1e2e", height: 1, marginVertical: 10 },
