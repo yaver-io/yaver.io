@@ -27,6 +27,7 @@ import (
 	"time"
 
 	osexec "os/exec"
+	osuser "os/user"
 
 	"github.com/google/uuid"
 	"github.com/quic-go/quic-go"
@@ -34,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.160"
+const version = "1.99.161"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1779,6 +1780,28 @@ WantedBy=default.target
 		}
 	}
 
+	// Enable linger so the user-mode systemd manager keeps running
+	// after the user logs out (or never logs in at all — headless
+	// servers, SSH-only boxes). Without this the agent dies on
+	// session end and `yaver primary status` reports "offline" the
+	// next time someone connects. Best-effort: linger usually needs
+	// root to enable for OTHER users, but a user can always enable
+	// it for themselves; failure surfaces as a clear hint instead of
+	// a silent regression.
+	user := strings.TrimSpace(os.Getenv("USER"))
+	if user == "" {
+		if u, err := osuser.Current(); err == nil {
+			user = strings.TrimSpace(u.Username)
+		}
+	}
+	lingerOK := false
+	if user != "" {
+		lingerCmd := osexec.Command("loginctl", "enable-linger", user)
+		if err := lingerCmd.Run(); err == nil {
+			lingerOK = true
+		}
+	}
+
 	fmt.Println()
 	fmt.Println("Yaver agent installed as systemd user service.")
 	fmt.Println("  Status:  systemctl --user status yaver")
@@ -1786,7 +1809,11 @@ WantedBy=default.target
 	fmt.Println("  Stop:    systemctl --user stop yaver")
 	fmt.Println("  Disable: systemctl --user disable yaver")
 	fmt.Println()
-	fmt.Println("The agent starts automatically on login and survives reboots.")
+	if lingerOK {
+		fmt.Println("Linger enabled — the agent survives logout and reboots automatically.")
+	} else if user != "" {
+		fmt.Printf("Could not enable linger automatically. Run once to keep the agent up after logout:\n  sudo loginctl enable-linger %s\n", user)
+	}
 	fmt.Println("Auth token is persisted in ~/.yaver/config.json (run 'yaver auth' once).")
 }
 
