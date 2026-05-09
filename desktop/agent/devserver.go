@@ -2377,6 +2377,10 @@ func (v *ViteDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 		v.port = 5173
 	}
 
+	if err := ensureNodeDepsStreamed(ctx, opts.WorkDir, v.emitFn, v.name); err != nil {
+		return err
+	}
+
 	// Vite's --host doesn't accept Expo's "lan" keyword — pass 0.0.0.0
 	// to bind on every interface (LAN + loopback) so the relay tunnel
 	// + LAN preview both reach it. The yaver agent fronts /dev/* so
@@ -2416,6 +2420,10 @@ func (n *NextDevServer) Start(ctx context.Context, opts DevServerOpts) error {
 	n.port = opts.Port
 	if n.port == 0 {
 		n.port = 3000
+	}
+
+	if err := ensureNodeDepsStreamed(ctx, opts.WorkDir, n.emitFn, n.name); err != nil {
+		return err
 	}
 
 	args := []string{"next", "dev",

@@ -15,8 +15,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -91,7 +89,13 @@ func isOnlyNodeMissing(missing []string) bool {
 // ensureNodeDepsStreamed is the shared preflight for every JS-based
 // dev server (Expo, React Native, Vite, Next). It:
 //
-//  1. Returns immediately if node_modules exists.
+//  1. Returns immediately when detectProjectPreparation reports deps
+//     are already in place. For npm/yarn/pnpm workspaces this checks
+//     the workspace ROOT's node_modules — a leaf-only install (e.g.
+//     `npm install` inside apps/web) doesn't create the
+//     workspace-link symlinks Vite/Metro need to resolve sibling
+//     packages, so the leaf-only short-circuit we used to do here
+//     silently skipped a real install.
 //  2. Detects the project's package manager and what's installed.
 //  3. If only Node itself is missing, downloads Node LTS sudo-free
 //     into ~/.yaver/runtimes/node via installNodeRuntime.
@@ -99,12 +103,12 @@ func isOnlyNodeMissing(missing []string) bool {
 //     tee'd to the SSE emitter so the mobile card shows every line
 //     live instead of a silent spinner.
 func ensureNodeDepsStreamed(ctx context.Context, workDir string, emit func(DevServerEvent), framework string) error {
-	if _, err := os.Stat(filepath.Join(workDir, "node_modules")); err == nil {
+	manifest, _ := readProjectPackageManifest(workDir)
+	prep := detectProjectPreparation(workDir, manifest)
+	if !prep.NeedsDependencyInstall {
 		return nil
 	}
 	installWriter := newEmitterLogWriter(emit, "[install]", framework)
-	manifest, _ := readProjectPackageManifest(workDir)
-	prep := detectProjectPreparation(workDir, manifest)
 	if !prep.CanAutoInstallDependencies && isOnlyNodeMissing(prep.MissingTools) {
 		if installWriter != nil {
 			fmt.Fprintln(installWriter, "Node missing — installing LTS into ~/.yaver/runtimes/node (sudo-free)...")
