@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 import { useDevices } from "@/lib/use-devices";
+import { PasskeysCard } from "./PasskeyEnrollPrompt";
 import pkg from "../../package.json";
 
 const WEB_VERSION = (pkg as { version?: string }).version ?? "unknown";
@@ -388,6 +389,8 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
 
   return (
     <>
+      <PasskeysCard />
+
       <div className="card mb-6">
         <h3 className="mb-3 text-sm font-medium uppercase tracking-wider text-surface-400">
           Sign-In Methods

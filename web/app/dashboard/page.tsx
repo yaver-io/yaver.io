@@ -3,7 +3,6 @@
 import { useAuth } from "@/lib/use-auth";
 import { useDevices, usePendingClaims, setDeviceAlias, type Device } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
-import { PasskeyEnrollPrompt } from "@/components/dashboard/PasskeyEnrollPrompt";
 import { agentClient, type Task, type ConnectionState, type Runner, type AgentInfo, type ConnectAttemptDiagnostic, type DeviceStatusProbe } from "@/lib/agent-client";
 import { CONVEX_URL } from "@/lib/constants";
 import { fetchGuestHosts, acceptGuestInvitation, type GuestInvitation } from "@/lib/guests";
@@ -2220,14 +2219,6 @@ export default function DashboardPage() {
             ) : null}
           </div>
         </div>
-
-        {/* Post-login passkey enrollment banner — only renders for users
-            who don't yet have a passkey on this account, on browsers that
-            support WebAuthn, and who haven't dismissed it recently. Sits
-            in the dashboard-main flow so it pushes content down rather
-            than overlaying it (the previous absolute placement let
-            chat/page content bleed through behind the translucent bg). */}
-        <PasskeyEnrollPrompt />
 
         <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-hidden">
           {!isConnected && activeTab === "chat" ? (

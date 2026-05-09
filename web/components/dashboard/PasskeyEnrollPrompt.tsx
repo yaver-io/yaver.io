@@ -1,26 +1,28 @@
 "use client";
 
-// Post-login passkey enrollment banner.
+// Passkey management card — lives inside Settings.
 //
-// Shown only when:
-//  1. The browser supports WebAuthn.
-//  2. The user is signed in (auth token present).
-//  3. The user has zero passkeys registered (queried from
-//     /auth/passkey/list).
-//  4. They haven't dismissed the prompt within the last 14 days
-//     (localStorage key `yaver_passkey_prompt_dismissed`).
+// Renders only when the browser supports WebAuthn. Always visible to
+// signed-in users (no dismiss / TTL): users opt in by clicking "Add
+// passkey," and can remove existing passkeys per-row. This used to be
+// a dismissible banner pinned to the dashboard top; it's now a
+// regular Settings card so it never overlays other tabs.
 //
-// Dismissal is silent — the user can always come back via the Settings
-// view (future). The button calls /auth/passkey/register/{start,finish}
-// and writes a new credential to their existing users row. It does NOT
-// touch their existing OAuth/email login — passkeys are purely additive.
+// Backed by /auth/passkey/{list,register/start,register/finish,remove}
+// — all signed in as the current user via Authorization: Bearer.
 
 import { useEffect, useState } from "react";
 import { startRegistration, browserSupportsWebAuthn } from "@simplewebauthn/browser";
 import { CONVEX_URL } from "@/lib/constants";
 
-const DISMISS_KEY = "yaver_passkey_prompt_dismissed";
-const DISMISS_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+type PasskeyRow = {
+  _id: string;
+  credentialId: string;
+  deviceLabel: string | null;
+  backedUp: boolean | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
 
 function getAuthToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -31,56 +33,49 @@ function getAuthToken(): string | null {
   }
 }
 
-function recentlyDismissed(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    const raw = window.localStorage.getItem(DISMISS_KEY);
-    if (!raw) return false;
-    const ts = parseInt(raw, 10);
-    if (Number.isNaN(ts)) return false;
-    return Date.now() - ts < DISMISS_TTL_MS;
-  } catch {
-    return false;
-  }
+function formatRelative(ts: number | null): string {
+  if (!ts) return "never";
+  const diff = Date.now() - ts;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 30 * 86_400_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return new Date(ts).toLocaleDateString();
 }
 
-export function PasskeyEnrollPrompt() {
-  const [visible, setVisible] = useState(false);
+export function PasskeysCard() {
+  const [supported, setSupported] = useState(false);
+  const [passkeys, setPasskeys] = useState<PasskeyRow[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    if (!browserSupportsWebAuthn()) return;
-    if (recentlyDismissed()) return;
-    const token = getAuthToken();
-    if (!token) return;
-    (async () => {
-      try {
-        const res = await fetch(`${CONVEX_URL}/auth/passkey/list`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const count = Array.isArray(data?.passkeys) ? data.passkeys.length : 0;
-        if (!cancelled && count === 0) setVisible(true);
-      } catch {
-        // Silently skip — banner is optional. The user can still sign
-        // in normally via OAuth/email next time.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setSupported(browserSupportsWebAuthn());
   }, []);
 
-  const dismiss = () => {
+  const refresh = async () => {
+    const token = getAuthToken();
+    if (!token) return;
     try {
-      window.localStorage.setItem(DISMISS_KEY, String(Date.now()));
-    } catch {}
-    setVisible(false);
+      const res = await fetch(`${CONVEX_URL}/auth/passkey/list`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        setPasskeys([]);
+        return;
+      }
+      const data = await res.json();
+      setPasskeys(Array.isArray(data?.passkeys) ? data.passkeys : []);
+    } catch {
+      setPasskeys([]);
+    }
   };
+
+  useEffect(() => {
+    if (!supported) return;
+    void refresh();
+  }, [supported]);
 
   const enrol = async () => {
     setError(null);
@@ -101,8 +96,7 @@ export function PasskeyEnrollPrompt() {
         body: "{}",
       });
       if (!startRes.ok) {
-        const text = await startRes.text();
-        setError(text || "Could not start passkey registration.");
+        setError((await startRes.text()) || "Could not start passkey registration.");
         setBusy(false);
         return;
       }
@@ -113,10 +107,8 @@ export function PasskeyEnrollPrompt() {
         attResp = await startRegistration({ optionsJSON: options });
       } catch (err: any) {
         if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
-          // User cancelled the OS prompt. Don't treat as an error;
-          // just hide the banner so they aren't asked again this
-          // session.
-          dismiss();
+          // User cancelled the OS prompt — silent.
+          setBusy(false);
           return;
         }
         setError(err?.message || "Passkey registration cancelled.");
@@ -133,57 +125,102 @@ export function PasskeyEnrollPrompt() {
         body: JSON.stringify({ response: attResp }),
       });
       if (!finishRes.ok) {
-        const text = await finishRes.text();
-        setError(text || "Could not save passkey.");
+        setError((await finishRes.text()) || "Could not save passkey.");
         setBusy(false);
         return;
       }
-      setDone(true);
       setBusy(false);
-      // Auto-collapse after 4s — banner has done its job.
-      setTimeout(() => setVisible(false), 4000);
+      await refresh();
     } catch {
       setError("Network error. Please try again.");
       setBusy(false);
     }
   };
 
-  if (!visible) return null;
+  const remove = async (credentialId: string) => {
+    setError(null);
+    setRemovingId(credentialId);
+    const token = getAuthToken();
+    if (!token) {
+      setRemovingId(null);
+      return;
+    }
+    try {
+      const res = await fetch(`${CONVEX_URL}/auth/passkey/remove`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ credentialId }),
+      });
+      if (!res.ok) {
+        setError((await res.text()) || "Could not remove passkey.");
+      } else {
+        await refresh();
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  if (!supported) return null;
 
   return (
-    <div className="mx-3 mt-3 flex flex-wrap items-center gap-3 rounded-2xl border border-cyan-400/30 bg-cyan-400/5 px-4 py-3 text-[13px] text-cyan-100 md:mx-4">
-      <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="11" width="18" height="11" rx="2" />
-        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-        <circle cx="12" cy="16" r="1.5" />
-      </svg>
-      {done ? (
-        <span className="flex-1 text-emerald-200">
-          Passkey saved. Next time you can sign in with Touch ID, Face ID, or Windows Hello.
-        </span>
+    <div className="card mb-6">
+      <h3 className="mb-3 flex items-center gap-2 text-sm font-medium uppercase tracking-wider text-surface-400">
+        <span aria-hidden>🔑</span> Passkeys
+      </h3>
+      <p className="mb-4 text-xs text-surface-500">
+        One-tap sign-in via Touch ID, Face ID, or Windows Hello. iCloud
+        Keychain / Google Password Manager sync them across your devices.
+        Your existing OAuth / email sign-in keeps working as a fallback.
+      </p>
+
+      {passkeys === null ? (
+        <p className="text-xs text-surface-500">Loading…</p>
+      ) : passkeys.length === 0 ? (
+        <p className="mb-4 text-xs text-surface-500">No passkeys yet on this account.</p>
       ) : (
-        <>
-          <span className="flex-1 leading-snug">
-            Add a passkey on this device for one-tap sign-in next time. iCloud Keychain / Google Password Manager will sync it across your devices automatically. Your existing sign-in keeps working as a fallback.
-          </span>
-          <button
-            type="button"
-            onClick={enrol}
-            disabled={busy}
-            className="rounded-xl border border-cyan-400/50 bg-cyan-400/10 px-3 py-1.5 text-[12px] font-semibold text-cyan-50 hover:bg-cyan-400/20 disabled:opacity-50"
-          >
-            {busy ? "Saving..." : "Add passkey"}
-          </button>
-          <button
-            type="button"
-            onClick={dismiss}
-            className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-1.5 text-[12px] text-surface-300 hover:border-surface-500"
-          >
-            Not now
-          </button>
-        </>
+        <div className="mb-4 space-y-2">
+          {passkeys.map((pk) => (
+            <div
+              key={pk._id}
+              className="flex items-center justify-between rounded-lg border border-surface-800 bg-surface-900/60 px-3 py-2"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-sm text-surface-200">
+                  {pk.deviceLabel || "Unnamed passkey"}
+                </div>
+                <div className="text-[11px] text-surface-500">
+                  Added {formatRelative(pk.createdAt)} · last used {formatRelative(pk.lastUsedAt)}
+                  {pk.backedUp ? " · synced" : " · device-bound"}
+                </div>
+              </div>
+              <button
+                onClick={() => void remove(pk.credentialId)}
+                disabled={removingId === pk.credentialId}
+                className="ml-3 shrink-0 rounded-full border border-surface-700 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-surface-300 transition-colors hover:border-red-500/40 hover:text-red-300 disabled:opacity-30"
+              >
+                {removingId === pk.credentialId ? "…" : "Remove"}
+              </button>
+            </div>
+          ))}
+        </div>
       )}
-      {error ? <span className="basis-full text-[12px] text-amber-200">{error}</span> : null}
+
+      {error && <p className="mb-3 text-xs text-amber-300">{error}</p>}
+
+      <button
+        type="button"
+        onClick={enrol}
+        disabled={busy}
+        className="w-full rounded-lg border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 text-sm font-medium text-cyan-200 transition-colors hover:bg-cyan-500/10 disabled:opacity-50"
+      >
+        {busy ? "Saving…" : "Add passkey"}
+      </button>
     </div>
   );
 }
