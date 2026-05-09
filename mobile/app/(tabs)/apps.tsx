@@ -261,24 +261,56 @@ export default function AppsScreen() {
   const [buildStatus, setBuildStatus] = useState<string | null>(null);
   const [quickActionStatus, setQuickActionStatus] = useState<string | null>(null);
   const [capabilitySnapshot, setCapabilitySnapshot] = useState<CapabilitySnapshot | null>(null);
+  // New per-target live-probe map keyed by target id. Sourced from
+  // /deploy/capabilities so we surface the real "wrong OS / missing
+  // tools / missing secrets / file-not-found-at-path" reason instead
+  // of the cached + stale CapabilitySnapshot booleans. Reasons can
+  // include path-validity warnings the snapshot endpoint never had.
+  const [liveDeployCaps, setLiveDeployCaps] = useState<
+    Record<string, { canDeploy: boolean; reason?: string; platformLock?: string }>
+  >({});
 
   useEffect(() => {
     if (!isConnected) {
       setCapabilitySnapshot(null);
+      setLiveDeployCaps({});
       return;
     }
     quicClient.capabilitySnapshot()
       .then(setCapabilitySnapshot)
       .catch(() => setCapabilitySnapshot(null));
+    // Fire-and-forget; older agents 404 and we just fall through to
+    // the snapshot-based blocker below.
+    quicClient.deployCapabilities()
+      .then((report) => {
+        const map: Record<string, { canDeploy: boolean; reason?: string; platformLock?: string }> = {};
+        report.targets.forEach((t) => {
+          map[t.target] = {
+            canDeploy: t.canDeploy,
+            reason: t.reason,
+            platformLock: t.platformLock,
+          };
+        });
+        setLiveDeployCaps(map);
+      })
+      .catch(() => setLiveDeployCaps({}));
   }, [isConnected, activeDevice?.id]);
 
   const deployBlocker = useCallback((target: "testflight" | "playstore", machineOs?: string): string | null => {
+    // Live probe wins when it's available — it's freshly computed
+    // from the host's tools+vault state. Fall back to the stale
+    // snapshot, then to the static OS-based heuristic so older
+    // agents (pre-/deploy/capabilities) still gate something.
+    const live = liveDeployCaps[target];
+    if (live && !live.canDeploy) {
+      return live.reason || devMachineDeployBlocker(target, machineOs);
+    }
     const readiness = capabilitySnapshot?.targets?.[target];
     if (readiness && readiness.enabled === false) {
       return readiness.reason || readiness.suggestedAction || devMachineDeployBlocker(target, machineOs);
     }
     return devMachineDeployBlocker(target, machineOs);
-  }, [capabilitySnapshot]);
+  }, [capabilitySnapshot, liveDeployCaps]);
 
   // sendTaskOrWarn replaces the old `.catch(() => {})` pattern on user-
   // initiated taps. Every call either succeeds and navigates the user to the

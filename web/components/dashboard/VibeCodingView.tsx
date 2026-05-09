@@ -972,10 +972,61 @@ export default function VibeCodingView({
     };
   }, [connectedMachine]);
 
-  const deployQuickActions = useMemo(
-    () => buildDeployQuickActions(selectedProject, connectedMachine, deployTargets),
-    [selectedProject, connectedMachine, deployTargets],
-  );
+  // Live, structured deploy-readiness from the new
+  // /deploy/capabilities endpoint. Overrides the snapshot-based
+  // booleans below so the buttons reflect the agent's actual
+  // tools+secrets+path probe instead of the cached MachineInfo —
+  // a stale snapshot is the most common reason a "ready" button
+  // fails halfway through xcodebuild.
+  const [liveDeployCaps, setLiveDeployCaps] = useState<Record<
+    string,
+    { canDeploy: boolean; reason?: string }
+  >>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const report = await agentClient.deployCapabilities({});
+        if (cancelled) return;
+        const map: Record<string, { canDeploy: boolean; reason?: string }> = {};
+        report.targets.forEach((t) => {
+          map[t.target] = { canDeploy: t.canDeploy, reason: t.reason };
+        });
+        setLiveDeployCaps(map);
+      } catch {
+        // older agent without /deploy/capabilities — fall through
+        // to the snapshot-based readiness we already had.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connectedMachine?.deviceId, refreshNonce]);
+
+  const deployQuickActions = useMemo(() => {
+    const base = buildDeployQuickActions(selectedProject, connectedMachine, deployTargets);
+    // Map the UI's deploy-action kinds onto the agent's catalogue
+    // target names. EAS isn't in the agent catalogue today — leave
+    // its enabled flag to the framework-based fallback.
+    const kindToTarget: Record<DeployActionKind, string | null> = {
+      testflight: "testflight",
+      "play-internal": "playstore",
+      eas: null,
+    };
+    return base.map((action) => {
+      const target = kindToTarget[action.kind];
+      if (!target) return action;
+      const live = liveDeployCaps[target];
+      if (!live) return action;
+      return {
+        ...action,
+        enabled: live.canDeploy,
+        readiness: live.canDeploy
+          ? `Live probe: ${target} is deploy-ready on this host.`
+          : `Live probe blocked: ${live.reason ?? "host can't ship to " + target + " right now."}`,
+      };
+    });
+  }, [selectedProject, connectedMachine, deployTargets, liveDeployCaps]);
 
   // Resolve the clip URL once when the user hits "▶ Watch demo".
   // We can't put the auth token in <video src> directly (browser
@@ -1397,8 +1448,9 @@ export default function VibeCodingView({
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         onClick={() => void launchDeployTask(action.kind)}
-                        disabled={!selectedProject}
-                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40"
+                        disabled={!selectedProject || !action.enabled}
+                        title={!action.enabled ? action.readiness : undefined}
+                        className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-100 hover:bg-emerald-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Run with agent
                       </button>
