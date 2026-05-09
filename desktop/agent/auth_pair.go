@@ -668,11 +668,10 @@ func runAuthPair(args []string) {
 		cfg = &Config{}
 	}
 	if replace || cfg.AuthToken == "" {
-		cfg.AuthToken = session.ReceivedToken
 		if session.ReceivedURL != "" {
 			cfg.ConvexSiteURL = session.ReceivedURL
 		}
-		if err := SaveConfig(cfg); err != nil {
+		if err := SetAuthToken(cfg, session.ReceivedToken); err != nil {
 			fmt.Fprintf(os.Stderr, "save config: %v\n", err)
 			os.Exit(1)
 		}

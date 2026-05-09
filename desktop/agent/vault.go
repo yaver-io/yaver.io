@@ -617,6 +617,28 @@ func (vs *VaultStore) save(salt []byte) error {
 	return nil
 }
 
+// RekeyTo re-encrypts the in-memory entries under a new passphrase
+// using a fresh salt + nonce, then atomically replaces vault.enc.
+//
+// Called from SetAuthToken on every auth-token rotation so the vault
+// stays openable under the new token without forcing the user to
+// re-enter YAVER_VAULT_PASSPHRASE. The vault must already be
+// unlocked — the caller is expected to have opened it under the
+// previous passphrase.
+func (vs *VaultStore) RekeyTo(newPassphrase string) error {
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if !vs.unlocked {
+		return fmt.Errorf("vault is locked — open it first")
+	}
+	salt := make([]byte, saltLen)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return fmt.Errorf("generate salt: %w", err)
+	}
+	vs.key = deriveKey([]byte(newPassphrase), salt)
+	return vs.save(salt)
+}
+
 // ExportPlaintext exports all vault entries as plaintext JSON. Use with
 // caution — this is unencrypted.
 func (vs *VaultStore) ExportPlaintext() ([]byte, error) {

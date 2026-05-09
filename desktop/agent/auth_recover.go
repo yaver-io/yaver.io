@@ -146,9 +146,8 @@ func applyRecoveredAuthToken(token, convexURL string, s *HTTPServer) {
 		return
 	}
 
-	cfg.AuthToken = token
 	cfg.ConvexSiteURL = resolvedConvex
-	_ = SaveConfig(cfg)
+	_ = SetAuthToken(cfg, token)
 
 	if s != nil {
 		s.token = token

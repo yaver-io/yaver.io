@@ -413,7 +413,6 @@ func saveBootstrapToken(session *pairingSession) error {
 	if err != nil || cfg == nil {
 		cfg = &Config{}
 	}
-	cfg.AuthToken = session.ReceivedToken
 	if session.ReceivedURL != "" {
 		cfg.ConvexSiteURL = session.ReceivedURL
 	}
@@ -423,7 +422,7 @@ func saveBootstrapToken(session *pairingSession) error {
 	if cfg.DeviceID == "" {
 		cfg.DeviceID = uuid.New().String()
 	}
-	return SaveConfig(cfg)
+	return SetAuthToken(cfg, session.ReceivedToken)
 }
 
 // reexecAsServe replaces the current bootstrap process with a

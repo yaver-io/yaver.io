@@ -85,34 +85,76 @@ your auth token by default; override with:
 `)
 }
 
-// openVault loads the vault using auth token or custom passphrase.
+// openVault is the CLI-facing wrapper. Logic lives in openVaultE so
+// it can be unit-tested without exit-on-error semantics.
 func openVault() *VaultStore {
-	passphrase := os.Getenv("YAVER_VAULT_PASSPHRASE")
-	if passphrase == "" {
-		cfg, err := LoadConfig()
-		if err != nil || cfg.AuthToken == "" {
-			fmt.Fprintf(os.Stderr, "Not authenticated. Run 'yaver auth' first.\n")
-			os.Exit(1)
-		}
-		passphrase = DerivePassphraseFromToken(cfg.AuthToken)
-	}
-
-	cfg, _ := LoadConfig()
-	deviceID := ""
-	if cfg != nil {
-		deviceID = cfg.DeviceID
-	}
-	vs, err := NewVaultStoreWithDevice(passphrase, deviceID)
+	vs, err := openVaultE()
 	if err != nil {
-		if strings.Contains(err.Error(), "wrong passphrase") {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			fmt.Fprintf(os.Stderr, "If you changed your auth token, set YAVER_VAULT_PASSPHRASE to your previous passphrase.\n")
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "Error opening vault: %v\n", err)
+		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 	return vs
+}
+
+// openVaultE loads the vault using auth token or custom passphrase.
+//
+// Order of attempts:
+//
+//  1. YAVER_VAULT_PASSPHRASE env var (manual override; no fallback,
+//     no rekey — user picked a stable passphrase decoupled from auth).
+//  2. Current cfg.AuthToken via DerivePassphraseFromToken.
+//  3. cfg.PreviousAuthToken via the same derivation. On success,
+//     auto-rekey the vault under the current token + clear
+//     PreviousAuthToken. This is the recovery path for when
+//     SetAuthToken couldn't rekey at rotation time (older agent on
+//     disk had already written AuthToken, partial write, etc.).
+//
+// If all three fail with a "wrong passphrase" we return an error
+// with the same guidance message as before so the user can supply
+// YAVER_VAULT_PASSPHRASE manually.
+func openVaultE() (*VaultStore, error) {
+	if pass := os.Getenv("YAVER_VAULT_PASSPHRASE"); pass != "" {
+		vs, err := NewVaultStoreWithDevice(pass, "")
+		if err != nil {
+			return nil, fmt.Errorf("Error opening vault: %v", err)
+		}
+		return vs, nil
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || cfg.AuthToken == "" {
+		return nil, fmt.Errorf("Not authenticated. Run 'yaver auth' first.")
+	}
+
+	currentPass := DerivePassphraseFromToken(cfg.AuthToken)
+	vs, err := NewVaultStoreWithDevice(currentPass, cfg.DeviceID)
+	if err == nil {
+		return vs, nil
+	}
+	if !strings.Contains(err.Error(), "wrong passphrase") {
+		return nil, fmt.Errorf("Error opening vault: %v", err)
+	}
+
+	// Current token didn't decrypt — try the most-recently-rotated
+	// previous token. Auto-rekey on success so we only ever fall
+	// through this path once per rotation.
+	if cfg.PreviousAuthToken != "" {
+		prevPass := DerivePassphraseFromToken(cfg.PreviousAuthToken)
+		if vsPrev, prevErr := NewVaultStoreWithDevice(prevPass, cfg.DeviceID); prevErr == nil {
+			if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: auto-rekey failed (%v) — vault still readable; will retry next call.\n", rkErr)
+				return vsPrev, nil
+			}
+			cfg.PreviousAuthToken = ""
+			if sErr := SaveConfig(cfg); sErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not clear previous-auth-token from config: %v\n", sErr)
+			}
+			fmt.Fprintf(os.Stderr, "Vault rekeyed automatically using previous auth token.\n")
+			return vsPrev, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Error: %v\nIf you changed your auth token before this build shipped, set YAVER_VAULT_PASSPHRASE to the previous token (or its passphrase).", err)
 }
 
 // splitArgs pulls flag-ish args to the front so flag.Parse handles them

@@ -343,7 +343,6 @@ func authFinalizeToken(convexURL, token string) (AuthPollResult, error) {
 	if err != nil || cfg == nil {
 		cfg = &Config{}
 	}
-	cfg.AuthToken = strings.TrimSpace(token)
 	cfg.ConvexSiteURL = convexURL
 	if strings.TrimSpace(cfg.DeviceID) == "" {
 		cfg.DeviceID = uuid.New().String()
@@ -352,7 +351,7 @@ func authFinalizeToken(convexURL, token string) (AuthPollResult, error) {
 	// relay config takes effect — matches the existing `yaver auth` CLI path.
 	cfg.RelayServers = nil
 	cfg.RelayPassword = ""
-	if err := SaveConfig(cfg); err != nil {
+	if err := SetAuthToken(cfg, strings.TrimSpace(token)); err != nil {
 		return AuthPollResult{
 			Status:  "authorized",
 			Message: "token received but saving config failed: " + err.Error(),
@@ -410,6 +409,7 @@ func authLogout() (AuthLogoutResult, error) {
 		return AuthLogoutResult{LoggedOut: false, Message: "no token on disk — already logged out"}, nil
 	}
 	cfg.AuthToken = ""
+	cfg.PreviousAuthToken = ""
 	if err := SaveConfigClearingAuth(cfg); err != nil {
 		return AuthLogoutResult{}, fmt.Errorf("save config: %w", err)
 	}

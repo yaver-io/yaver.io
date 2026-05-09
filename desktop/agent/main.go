@@ -190,8 +190,10 @@ func persistRotatedAuthToken(cfg *Config, newToken string) error {
 	if fresh.AuthToken == newToken {
 		return nil
 	}
-	fresh.AuthToken = newToken
-	return SaveConfig(fresh)
+	// SetAuthToken stashes the prev token + rekeys vault.enc so the
+	// new token can read existing entries. Without this, every
+	// /auth/refresh ?rotate=1 cycle locks the vault.
+	return SetAuthToken(fresh, newToken)
 }
 
 func relayHTTPURLsMatch(a, b string) bool {
@@ -922,9 +924,10 @@ func runAuth(args []string) {
 		srv1.Close()
 		srv2.Close()
 		fmt.Printf("  Token received (%d chars)\n", len(t))
-		cfg.AuthToken = t
 		cfg.ConvexSiteURL = *convexURL
-		// Retry validation — session may not be committed in Convex yet.
+		// Retry validation against Convex with the candidate token
+		// before we commit anything to disk — session may not be
+		// fully written through yet on the backend.
 		var validationErr error
 		for attempt := 0; attempt < 8; attempt++ {
 			if attempt > 0 {
@@ -932,7 +935,7 @@ func runAuth(args []string) {
 				fmt.Printf("  Retrying validation (attempt %d/8, wait %s)...\n", attempt+1, delay)
 				time.Sleep(delay)
 			}
-			validationErr = ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken)
+			validationErr = ValidateToken(cfg.ConvexSiteURL, t)
 			if validationErr == nil {
 				break
 			}
@@ -950,7 +953,7 @@ func runAuth(args []string) {
 		// Clear any manually configured relay — use per-user relay from backend
 		cfg.RelayServers = nil
 		cfg.RelayPassword = ""
-		if err := SaveConfig(cfg); err != nil {
+		if err := SetAuthToken(cfg, t); err != nil {
 			log.Fatalf("save config: %v", err)
 		}
 		fmt.Println()
@@ -995,6 +998,10 @@ func runSignout() {
 	}
 
 	cfg.AuthToken = ""
+	// Drop the vault-recovery breadcrumb on explicit sign-out — leaving
+	// it would let any future re-auth on the same machine silently
+	// inherit the previous user's vault.
+	cfg.PreviousAuthToken = ""
 	// Keep DeviceID so the bootstrap agent can re-register with Convex
 	// + relay with a stable identity. The mobile app and web UI show
 	// the device in the list with a "NEEDS AUTH" badge and auto-pair
@@ -1408,9 +1415,8 @@ func logFilePath() string {
 }
 
 func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, printHeadlessSteps bool) error {
-	cfg.AuthToken = token
 	cfg.ConvexSiteURL = convexURL
-	if err := ValidateToken(cfg.ConvexSiteURL, cfg.AuthToken); err != nil {
+	if err := ValidateToken(cfg.ConvexSiteURL, token); err != nil {
 		return fmt.Errorf("token validation failed: %w", err)
 	}
 	if cfg.DeviceID == "" {
@@ -1420,7 +1426,7 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 	cfg.RelayServers = nil
 	cfg.RelayPassword = ""
 	applyDefaultHeadlessKeepAwake(cfg)
-	if err := SaveConfig(cfg); err != nil {
+	if err := SetAuthToken(cfg, token); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 	// If a daemon is already running locally, nudge it to re-read the
@@ -2193,8 +2199,7 @@ func runServe(args []string) {
 					log.Printf("Warning: device registration failed: %v", err2)
 					offlineMode = true
 				} else if rotatedToken2 != "" && rotatedToken2 != cfg.AuthToken {
-					cfg.AuthToken = rotatedToken2
-					if saveErr := SaveConfig(cfg); saveErr != nil {
+					if saveErr := SetAuthToken(cfg, rotatedToken2); saveErr != nil {
 						log.Printf("Warning: could not persist dedicated device session: %v", saveErr)
 					}
 				}
@@ -2203,8 +2208,7 @@ func runServe(args []string) {
 				offlineMode = true
 			}
 		} else if rotatedToken != "" && rotatedToken != cfg.AuthToken {
-			cfg.AuthToken = rotatedToken
-			if saveErr := SaveConfig(cfg); saveErr != nil {
+			if saveErr := SetAuthToken(cfg, rotatedToken); saveErr != nil {
 				log.Printf("Warning: could not persist dedicated device session: %v", saveErr)
 			}
 		}

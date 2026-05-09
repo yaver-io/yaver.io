@@ -13,7 +13,15 @@ const configDirName = ".yaver"
 
 // Config holds persisted agent configuration.
 type Config struct {
-	AuthToken         string              `json:"auth_token,omitempty"`
+	AuthToken string `json:"auth_token,omitempty"`
+	// PreviousAuthToken is the most-recently-superseded AuthToken, kept
+	// only as a vault-decryption fallback. The vault key is derived from
+	// AuthToken via DerivePassphraseFromToken; on every token rotation
+	// SetAuthToken tries to rekey the vault under the new token, but if
+	// that step is skipped (older code path, partial write, no vault on
+	// disk yet) openVault uses this field to recover and trigger a
+	// rekey. Cleared as soon as the rekey succeeds.
+	PreviousAuthToken string              `json:"previous_auth_token,omitempty"`
 	DeviceID          string              `json:"device_id,omitempty"`
 	ConvexSiteURL     string              `json:"convex_site_url,omitempty"`
 	WebBaseURL        string              `json:"web_base_url,omitempty"`
