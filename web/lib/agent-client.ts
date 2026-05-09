@@ -6011,6 +6011,34 @@ export class AgentClient {
     return res.json();
   }
 
+  // Single-shot commit + push (+ auto-rebase if the remote moved). The
+  // server stages everything (git add -A), commits, pushes, and on a
+  // non-fast-forward push tries `git fetch` + `git rebase origin/<branch>`
+  // before pushing again. If the rebase introduces conflicts the server
+  // aborts it and returns requiresAgent=true with the conflicted files —
+  // the caller is expected to delegate to a coding agent at that point.
+  async gitCommitPush(opts: { workDir: string; message?: string; allowAutoRebase?: boolean }): Promise<{
+    ok: boolean;
+    branch?: string;
+    hash?: string;
+    actions?: string[];
+    pushed?: boolean;
+    nothingToCommit?: boolean;
+    rebased?: boolean;
+    requiresAgent?: boolean;
+    conflicts?: string[];
+    error?: string;
+    output?: string;
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/git/commit-push`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    });
+    return res.json();
+  }
+
   async gitStash(workDir: string): Promise<GitActionResult> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/git/stash?workDir=${encodeURIComponent(workDir)}`, {

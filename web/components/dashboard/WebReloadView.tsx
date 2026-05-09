@@ -134,6 +134,13 @@ export function WebReloadView({
   // doesn't ack, the same way mobile/src/lib/quic.ts does.
   const [reloading, setReloading] = useState(false);
   const [reloadStatus, setReloadStatus] = useState<string | null>(null);
+  // Commit & Push UX — deterministic stage+commit+push+auto-rebase via
+  // /git/commit-push. On rebase conflict the agent returns
+  // requiresAgent=true; if a runner is signed in we kick a vibe task
+  // with the conflict-resolution prompt and the rest of the commit/push
+  // sequence is handed to the runner end-to-end.
+  const [committing, setCommitting] = useState(false);
+  const [commitStatus, setCommitStatus] = useState<string | null>(null);
   const [activeTaskStream, setActiveTaskStream] = useState<{
     id: string;
     title: string;
@@ -881,6 +888,107 @@ export function WebReloadView({
       setSending(false);
     }
   }, [activeProject, apps, composer, devStatus?.workDir, selectedApp, selectedProject, sending, stopActiveTaskStream]);
+
+  // Commit & Push: try the deterministic Go path first (stage + commit
+  // + push, fetch+rebase on non-fast-forward). If the server reports
+  // requiresAgent (rebase has conflicts) and a coding agent is signed
+  // in, hand the rest of the work to the runner via createTask with a
+  // resolution prompt — same task-stream UX vibes use, so progress
+  // shows in the Vibing panel.
+  const handleCommitPush = useCallback(async () => {
+    const workDir =
+      selectedProject?.path ||
+      activeProject?.path ||
+      selectedProjectPath ||
+      devStatus?.workDir;
+    if (!workDir) {
+      setCommitStatus("Pick a project first.");
+      return;
+    }
+    setCommitting(true);
+    setCommitStatus("Committing…");
+    try {
+      const r = await agentClient.gitCommitPush({ workDir });
+      if (r.ok) {
+        if (r.nothingToCommit && r.pushed) {
+          setCommitStatus("Nothing to commit. Pushed any pending commits.");
+        } else if (r.nothingToCommit) {
+          setCommitStatus("Nothing to commit. Nothing to push.");
+        } else if (r.rebased) {
+          setCommitStatus(`Rebased onto origin/${r.branch} and pushed ${r.hash || ""}.`);
+        } else {
+          setCommitStatus(`Pushed ${r.hash || ""} to origin/${r.branch}.`);
+        }
+        return;
+      }
+      if (r.requiresAgent) {
+        // Conflict — delegate to the runner if one's signed in. Otherwise
+        // tell the user to sign one in (the Vibing panel already surfaces
+        // a Sign in CTA when runnerNeedsAuth flips).
+        if (runnerNeedsAuth || !runnerAuthState?.runnerId) {
+          setCommitStatus(
+            `Merge conflict on ${r.conflicts?.join(", ") || "the working tree"} — sign in a coding agent to delegate the resolve+push.`,
+          );
+          return;
+        }
+        const conflictsList = (r.conflicts && r.conflicts.length > 0)
+          ? r.conflicts.map((p) => `- ${p}`).join("\n")
+          : "(see git status)";
+        const prompt = [
+          "I tried to commit + push the working tree but the rebase against origin produced merge conflicts.",
+          "",
+          `Branch: ${r.branch || "HEAD"}`,
+          "Conflicted files:",
+          conflictsList,
+          "",
+          "Please:",
+          "1. `git status` to see the current state.",
+          "2. Resolve every conflict carefully — preserve both local intent and the remote changes; don't drop work.",
+          "3. `git add` the resolved files and continue the rebase (or restart from a clean state if it's already aborted).",
+          "4. `git push` once the tree is clean and ahead of origin. Use --set-upstream if the branch is new.",
+          "5. Report the final commit hash.",
+        ].join("\n");
+        setCommitStatus(`Merge conflict on ${r.conflicts?.length || "?"} file(s) — handing off to ${runnerAuthLabel || "the runner"}.`);
+        try {
+          stopActiveTaskStream();
+          const task = await agentClient.createTask({
+            title: "Resolve merge conflict + push",
+            description: prompt,
+            userPrompt: prompt,
+            projectName: activeProject?.name || selectedProject?.name,
+            workDir,
+          });
+          setActiveTaskStream({ id: task.id, title: task.title, status: task.status, lines: [] });
+          taskStreamStopRef.current = agentClient.streamTaskOutput(task.id, (line) => {
+            const trimmed = String(line || "").trimEnd();
+            if (!trimmed) return;
+            setActiveTaskStream((prev) => {
+              if (!prev || prev.id !== task.id) return prev;
+              const next = [...prev.lines, trimmed];
+              return { ...prev, status: "running", lines: next.length > 200 ? next.slice(-200) : next };
+            });
+          });
+        } catch (taskErr) {
+          setCommitStatus(`Couldn't start runner task: ${taskErr instanceof Error ? taskErr.message : String(taskErr)}`);
+        }
+        return;
+      }
+      setCommitStatus(`Failed: ${r.error || r.output || "git push rejected"}`);
+    } catch (err) {
+      setCommitStatus(`Failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setCommitting(false);
+    }
+  }, [
+    activeProject,
+    selectedProject,
+    selectedProjectPath,
+    devStatus?.workDir,
+    runnerNeedsAuth,
+    runnerAuthState,
+    runnerAuthLabel,
+    stopActiveTaskStream,
+  ]);
 
   // Reconnect & Fix — same robust recovery the Hot Reload tab runs.
   // Ping → repair relay password (if relevant) → stop → git-pull →
@@ -1722,6 +1830,25 @@ export function WebReloadView({
                     {selectedProject?.name || selectedApp || activeProject?.name || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => void handleCommitPush()}
+                      disabled={committing || (!selectedProject && !activeProject && !selectedProjectPath && !devStatus?.workDir)}
+                      className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-wait"
+                      title={
+                        runnerNeedsAuth || !runnerAuthState?.runnerId
+                          ? "Stage + commit + push. On rebase conflict, sign in a coding agent first to delegate."
+                          : `Stage + commit + push. On rebase conflict, hand off to ${runnerAuthLabel} to resolve.`
+                      }
+                    >
+                      {committing ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="h-3 w-3 animate-spin rounded-full border border-emerald-300/40 border-t-emerald-200" />
+                          Committing…
+                        </span>
+                      ) : (
+                        "Commit & Push"
+                      )}
+                    </button>
                     {(isRunning || staticBundleState === "ready" || staticBundleState === "building") ? (
                       <button
                         onClick={() => void handleReload()}
@@ -1755,6 +1882,7 @@ export function WebReloadView({
                     </button>
                   </div>
                 </div>
+                {commitStatus ? <div className="mt-2 text-[11px] text-surface-400">{commitStatus}</div> : null}
                 {reloadStatus ? <div className="mt-2 text-[11px] text-surface-400">{reloadStatus}</div> : null}
                 {sendStatus ? <div className="mt-2 text-[11px] text-surface-400">{sendStatus}</div> : null}
               </>
