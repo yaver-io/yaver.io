@@ -2708,6 +2708,7 @@ export default function DashboardPage() {
             </div>
           ) : activeTab === "git" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-[1600px] mx-auto w-full"><GitView
+              devices={devices}
               onOpenSurface={(surface, projectPath) => {
                 setPreferredSurfaceProjectPath(projectPath);
                 if (surface === "preview") {

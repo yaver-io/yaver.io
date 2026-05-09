@@ -6081,15 +6081,23 @@ export class AgentClient {
     });
     return res.json();
   }
-  async gitProviderStatus(): Promise<GitProviderStatusRow[]> {
+  // Build an agent endpoint URL, peer-proxying when `target` is a remote
+  // deviceId. Mirrors machineOnboardingApply's pattern (line ~2001) and
+  // relies on the agent's generic /peer/<id>/<path> handler so the
+  // git/provider/* endpoints don't need their own peer awareness.
+  private peerOrLocalUrl(target: string | undefined, path: string): string {
+    if (!target) return `${this.baseUrl}${path}`;
+    return `${this.baseUrl}/peer/${encodeURIComponent(target)}${path}`;
+  }
+  async gitProviderStatus(target?: string): Promise<GitProviderStatusRow[]> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/git/provider/status`, { headers: this.authHeaders });
+    const res = await fetch(this.peerOrLocalUrl(target, "/git/provider/status"), { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));
     return Array.isArray(data?.providers) ? data.providers : [];
   }
-  async gitProviderDetect(): Promise<GitProviderStatusRow[]> {
+  async gitProviderDetect(target?: string): Promise<GitProviderStatusRow[]> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/git/provider/detect`, { headers: this.authHeaders });
+    const res = await fetch(this.peerOrLocalUrl(target, "/git/provider/detect"), { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `git/provider/detect ${res.status}`);
     return Array.isArray(data?.providers) ? data.providers : [];
@@ -6097,35 +6105,36 @@ export class AgentClient {
   async gitProviderSetup(params: {
     provider: "github" | "gitlab";
     token: string;
-  }): Promise<{ ok: boolean; username?: string; host?: string; provider?: string; error?: string }> {
+  }, target?: string): Promise<{ ok: boolean; username?: string; host?: string; provider?: string; error?: string }> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/git/provider/setup`, {
+    const res = await fetch(this.peerOrLocalUrl(target, "/git/provider/setup"), {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
     return res.json();
   }
-  async gitProviderRepos(host: string): Promise<GitRemoteRepo[]> {
+  async gitProviderRepos(host: string, target?: string): Promise<GitRemoteRepo[]> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/git/provider/repos?host=${encodeURIComponent(host)}&per_page=100`, {
-      headers: this.authHeaders,
-    });
+    const res = await fetch(
+      this.peerOrLocalUrl(target, `/git/provider/repos?host=${encodeURIComponent(host)}&per_page=100`),
+      { headers: this.authHeaders },
+    );
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.error || `git/provider/repos ${res.status}`);
     return Array.isArray(data?.repos) ? data.repos : [];
   }
-  async gitProviderRemove(host: string): Promise<void> {
+  async gitProviderRemove(host: string, target?: string): Promise<void> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/git/provider/${encodeURIComponent(host)}`, {
+    const res = await fetch(this.peerOrLocalUrl(target, `/git/provider/${encodeURIComponent(host)}`), {
       method: "DELETE",
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`git/provider/${host} ${res.status}`);
   }
-  async cloneRepo(url: string): Promise<any> {
+  async cloneRepo(url: string, target?: string): Promise<any> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/repos/clone`, {
+    const res = await fetch(this.peerOrLocalUrl(target, "/repos/clone"), {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
       body: JSON.stringify({ url, autoInit: true }),

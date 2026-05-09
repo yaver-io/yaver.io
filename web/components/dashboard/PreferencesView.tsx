@@ -11,6 +11,7 @@ interface UserSettings {
   speechProvider?: string;
   speechApiKey?: string;
   ttsEnabled?: boolean;
+  ttsProvider?: string;
   verbosity?: number;
   keyStorage?: string;
   runnerId?: string;
@@ -19,9 +20,14 @@ interface UserSettings {
 
 const SPEECH_PROVIDERS: Record<string, { name: string; description: string }> = {
   "on-device": { name: "On-device (Whisper)", description: "Local transcription, no API key needed" },
-  openai: { name: "OpenAI Whisper", description: "Cloud transcription via OpenAI API" },
+  openai: { name: "OpenAI", description: "Cloud transcription and speech via OpenAI API" },
   deepgram: { name: "Deepgram", description: "Cloud transcription via Deepgram API" },
   assemblyai: { name: "AssemblyAI", description: "Cloud transcription via AssemblyAI API" },
+};
+
+const TTS_PROVIDERS: Record<string, { name: string; description: string }> = {
+  device: { name: "Local device voice", description: "Uses the device browser or OS voice" },
+  openai: { name: "OpenAI voice", description: "Uses OpenAI text-to-speech" },
 };
 
 function maskKey(key: string): string {
@@ -39,6 +45,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
   const [speechApiKey, setSpeechApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState("device");
   const [verbosity, setVerbosity] = useState(10);
   const [keyStorage, setKeyStorage] = useState("local");
 
@@ -58,6 +65,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
         setSpeechProvider(s.speechProvider || "");
         setSpeechApiKey(s.speechApiKey || "");
         setTtsEnabled(s.ttsEnabled || false);
+        setTtsProvider(s.ttsProvider || "device");
         setVerbosity(s.verbosity ?? 10);
         setKeyStorage(s.keyStorage || "local");
       }
@@ -87,6 +95,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
           speechProvider: speechProvider || undefined,
           speechApiKey: speechApiKey || undefined,
           ttsEnabled,
+          ttsProvider,
           verbosity,
           keyStorage,
         }),
@@ -98,6 +107,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
           speechProvider,
           speechApiKey,
           ttsEnabled,
+          ttsProvider,
           verbosity,
           keyStorage,
         });
@@ -194,7 +204,9 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs font-medium text-surface-400">Text-to-Speech</p>
-              <p className="mt-0.5 text-sm text-surface-200">{settings.ttsEnabled ? "Enabled" : "Disabled"}</p>
+              <p className="mt-0.5 text-sm text-surface-200">
+                {settings.ttsEnabled ? (TTS_PROVIDERS[settings.ttsProvider || "device"]?.name || "Enabled") : "Disabled"}
+              </p>
             </div>
             <span className={`inline-block h-2 w-2 rounded-full ${settings.ttsEnabled ? "bg-green-400" : "bg-surface-600"}`} />
           </div>
@@ -234,6 +246,37 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
       ) : (
         /* ── Edit view ── */
         <div className="space-y-4">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-surface-400">Voice Engine</label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: "local", label: "Local", sub: "Free", stt: "on-device", tts: "device" },
+                { id: "openai", label: "OpenAI", sub: "API key", stt: "openai", tts: "openai" },
+              ].map((engine) => {
+                const selected = speechProvider === engine.stt && ttsProvider === engine.tts;
+                return (
+                  <button
+                    key={engine.id}
+                    type="button"
+                    onClick={() => {
+                      setSpeechProvider(engine.stt);
+                      setTtsProvider(engine.tts);
+                      if (engine.tts === "openai") setTtsEnabled(true);
+                    }}
+                    className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                      selected
+                        ? "border-surface-500 bg-surface-800 text-surface-50"
+                        : "border-surface-700 text-surface-400 hover:border-surface-600"
+                    }`}
+                  >
+                    <span className="block font-medium">{engine.label}</span>
+                    <span className="mt-0.5 block text-[10px] opacity-60">{engine.sub}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Speech Provider */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-surface-400">Speech Provider</label>
@@ -253,7 +296,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
           </div>
 
           {/* API Key */}
-          {speechProvider && speechProvider !== "on-device" && (
+          {((speechProvider && speechProvider !== "on-device") || ttsProvider === "openai") && (
             <div>
               <label className="mb-1.5 block text-xs font-medium text-surface-400">API Key</label>
               <div className="relative">
@@ -332,6 +375,29 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
             </button>
           </div>
 
+          {ttsEnabled && (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-surface-400">Text-to-Speech Provider</label>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(TTS_PROVIDERS).map(([key, info]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setTtsProvider(key)}
+                    className={`rounded-lg border px-3 py-2 text-left text-xs transition-colors ${
+                      ttsProvider === key
+                        ? "border-surface-500 bg-surface-800 text-surface-50"
+                        : "border-surface-700 text-surface-400 hover:border-surface-600"
+                    }`}
+                  >
+                    <span className="block font-medium">{info.name}</span>
+                    <span className="mt-0.5 block text-[10px] opacity-60">{info.description}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Verbosity slider */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-surface-400">
@@ -375,6 +441,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
                 setSpeechProvider(settings.speechProvider || "");
                 setSpeechApiKey(settings.speechApiKey || "");
                 setTtsEnabled(settings.ttsEnabled || false);
+                setTtsProvider(settings.ttsProvider || "device");
                 setVerbosity(settings.verbosity ?? 10);
                 setKeyStorage(settings.keyStorage || "local");
               }}

@@ -11,6 +11,7 @@ import {
   type GitRemoteRepo,
   type GitStatusRow,
 } from "@/lib/agent-client";
+import type { Device } from "@/lib/use-devices";
 
 type Project = {
   name: string;
@@ -39,6 +40,12 @@ type Props = {
    *  action so the user gets a one-click rebase via the Vibing flow
    *  without having to type the prompt themselves. */
   onVibePrompt?: (projectPath: string, prompt: string) => void;
+  /** Paired devices — used to populate the "Configure on" picker so the
+   *  user can push GitHub/GitLab creds onto any owned online machine
+   *  (Hetzner runner, managed cloud, …) without first reconnecting to
+   *  it as primary. When absent the view targets only the connected
+   *  agent. */
+  devices?: Device[];
 };
 
 const MOBILE_FRAMEWORKS = ["expo", "react-native", "flutter", "swift", "kotlin"];
@@ -111,8 +118,28 @@ function ProviderIcon({ provider, className = "h-4 w-4" }: { provider: "github" 
   );
 }
 
-export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
+export default function GitView({ onOpenSurface, onVibePrompt, devices = [] }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
+  // Target = which machine receives git creds and clones. null/undefined
+  // means "this machine" (the connected agent). Anything else is an
+  // owned peer the agent forwards to via /peer/<id>/. The picker only
+  // affects provider state + repo browse + clone; project listing /
+  // status / branches still query the connected agent because they
+  // operate on the local filesystem the dashboard already shows.
+  const [targetDeviceId, setTargetDeviceId] = useState<string | undefined>(undefined);
+  const peerTargets = useMemo(
+    () =>
+      devices
+        .filter((d) => d.online && d.deviceClass !== "edge-mobile")
+        .map((d) => ({ id: d.id, name: d.name })),
+    [devices],
+  );
+  const targetOptions = useMemo(
+    () => [{ id: undefined as string | undefined, name: "This machine" }, ...peerTargets],
+    [peerTargets],
+  );
+  const targetLabel =
+    targetOptions.find((option) => option.id === targetDeviceId)?.name || "This machine";
   const [expandedProjectPath, setExpandedProjectPath] = useState("");
   const [gitStatus, setGitStatus] = useState<GitStatusRow | null>(null);
   const [gitBranches, setGitBranches] = useState<GitBranchRow[]>([]);
@@ -183,7 +210,7 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
       try {
         const [projectRows, gitProviders] = await Promise.all([
           agentClient.listProjects().catch(() => []),
-          agentClient.gitProviderStatus().catch(() => []),
+          agentClient.gitProviderStatus(targetDeviceId).catch(() => []),
         ]);
         if (cancelled) return;
         setProjects(projectRows);
@@ -197,7 +224,7 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [expandedProjectPath, refreshNonce]);
+  }, [expandedProjectPath, refreshNonce, targetDeviceId]);
 
   useEffect(() => {
     if (!expandedProjectPath) {
@@ -232,24 +259,27 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
   }, [expandedProjectPath, refreshNonce]);
 
   async function autoDetectProviders() {
-    setBusy("Detecting git providers from the remote machine…");
-    const detected = await agentClient.gitProviderDetect();
-    setProviders(await agentClient.gitProviderStatus());
-    setBusy(detected.length > 0 ? `Detected ${detected.map((item) => item.provider).join(", ")}.` : "No git providers detected.");
+    setBusy(`Detecting git providers on ${targetLabel}…`);
+    const detected = await agentClient.gitProviderDetect(targetDeviceId);
+    setProviders(await agentClient.gitProviderStatus(targetDeviceId));
+    setBusy(detected.length > 0 ? `Detected ${detected.map((item) => item.provider).join(", ")} on ${targetLabel}.` : `No git providers detected on ${targetLabel}.`);
   }
 
   async function saveProviderToken() {
     if (!manualProvider || !providerToken.trim()) return;
-    setBusy(`Saving ${manualProvider} token to the remote machine vault…`);
-    const result = await agentClient.gitProviderSetup({ provider: manualProvider, token: providerToken.trim() });
+    setBusy(`Saving ${manualProvider} token to ${targetLabel}'s vault…`);
+    const result = await agentClient.gitProviderSetup(
+      { provider: manualProvider, token: providerToken.trim() },
+      targetDeviceId,
+    );
     if (!result.ok) {
       setBusy(result.error || "Could not save provider token.");
       return;
     }
     setProviderToken("");
     setManualProvider(null);
-    setProviders(await agentClient.gitProviderStatus());
-    setBusy(`Connected ${result.provider || manualProvider} as ${result.username || "user"}.`);
+    setProviders(await agentClient.gitProviderStatus(targetDeviceId));
+    setBusy(`Connected ${result.provider || manualProvider} as ${result.username || "user"} on ${targetLabel}.`);
   }
 
   async function startGitAccountLink(provider: "github" | "gitlab") {
@@ -298,8 +328,8 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
       return;
     }
     setRepoBrowserHost(host);
-    setBusy(`Loading repos from ${host}…`);
-    const repos = await agentClient.gitProviderRepos(host);
+    setBusy(`Loading repos from ${host} on ${targetLabel}…`);
+    const repos = await agentClient.gitProviderRepos(host, targetDeviceId);
     setProviderRepos(repos);
     setBusy(`Loaded ${repos.length} repos from ${host}.`);
   }
@@ -307,29 +337,34 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
   async function cloneRemoteRepo(repo: GitRemoteRepo) {
     const url = repo.sshUrl || repo.cloneUrl;
     if (!url) return;
-    setBusy(`Cloning ${repo.fullName} on the remote machine…`);
-    const result = await agentClient.cloneRepo(url);
+    setBusy(`Cloning ${repo.fullName} on ${targetLabel}…`);
+    const result = await agentClient.cloneRepo(url, targetDeviceId);
     if (!result?.ok) {
       setBusy(result?.error || `Could not clone ${repo.fullName}.`);
       return;
     }
+    // Project listing always reflects the connected agent, not the
+    // remote target — listProjects has no peer-target plumbing yet,
+    // and cloning to a peer doesn't show up in this dashboard's
+    // project list anyway. Still nudge a refresh so a local clone
+    // appears immediately.
     const nextProjects = await agentClient.listProjects().catch(() => []);
     setProjects(nextProjects);
     if (result.path && nextProjects.some((project: Project) => project.path === result.path)) {
       setExpandedProjectPath(result.path);
     }
     setRefreshNonce((value) => value + 1);
-    setBusy(`Cloned ${repo.fullName}${result.path ? ` → ${result.path}` : ""}.`);
+    setBusy(`Cloned ${repo.fullName}${result.path ? ` → ${result.path}` : ""} on ${targetLabel}.`);
   }
 
   async function removeProvider(host: string) {
-    await agentClient.gitProviderRemove(host);
-    setProviders(await agentClient.gitProviderStatus());
+    await agentClient.gitProviderRemove(host, targetDeviceId);
+    setProviders(await agentClient.gitProviderStatus(targetDeviceId));
     if (repoBrowserHost === host) {
       setRepoBrowserHost(null);
       setProviderRepos([]);
     }
-    setBusy(`Removed ${host}.`);
+    setBusy(`Removed ${host} from ${targetLabel}.`);
   }
 
   async function runGitAction(action: "revert-head") {
@@ -641,13 +676,54 @@ export default function GitView({ onOpenSurface, onVibePrompt }: Props) {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-surface-500">Clone From Remotes</div>
-                <div className="mt-1 text-xs text-surface-500">Link GitHub or GitLab when you want to browse remote repos and clone them onto this machine.</div>
+                <div className="mt-1 text-xs text-surface-500">
+                  Link GitHub or GitLab when you want to browse remote repos and clone them onto {targetLabel}.
+                </div>
               </div>
               <span className="rounded-full border border-surface-700 px-2 py-1 text-[10px] text-surface-400">
-                {providers.length} linked
+                {providers.length} linked on {targetLabel}
               </span>
             </div>
           </summary>
+
+          {peerTargets.length > 0 ? (
+            <div className="mt-4 rounded-md border border-surface-800 bg-surface-950/70 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-surface-500">Configure on</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {targetOptions.map((option) => {
+                  const active = (option.id || undefined) === (targetDeviceId || undefined);
+                  return (
+                    <button
+                      key={option.id || "__local__"}
+                      type="button"
+                      onClick={() => {
+                        if ((option.id || undefined) === (targetDeviceId || undefined)) return;
+                        setTargetDeviceId(option.id);
+                        // Clear stale provider/repo state so we never
+                        // show another machine's data on the chip
+                        // switch.
+                        setProviders([]);
+                        setProviderRepos([]);
+                        setRepoBrowserHost(null);
+                        setManualProvider(null);
+                        setProviderToken("");
+                      }}
+                      className={`rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                        active
+                          ? "border-brand bg-brand text-white"
+                          : "border-surface-700 bg-surface-900 text-surface-300 hover:border-surface-600 hover:text-surface-100"
+                      }`}
+                    >
+                      {option.name}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-2 text-[11px] text-surface-500">
+                Tokens stored here go to <span className="text-surface-300">{targetLabel}</span>'s vault and never reach Yaver servers. Remote calls travel over QUIC/relay.
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-4 space-y-3">
             <div className="rounded-md border border-surface-800 bg-surface-950/70 p-4">

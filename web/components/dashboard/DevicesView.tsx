@@ -856,6 +856,101 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
   return { info, error, loading };
 }
 
+interface AgentWireDevice {
+  udid: string;
+  name?: string;
+  platform: "ios" | "android";
+  os?: string;
+}
+interface AgentWireDevicesResponse {
+  devices: AgentWireDevice[];
+  count: number;
+  hint?: string;
+}
+
+// useAgentWirelessDevices polls the paired agent's GET /wireless/devices
+// endpoint and returns the list of WiFi-paired iPhones/iPads/Androids it
+// can currently see. Mirrors the candidate-URL ordering of
+// useDeviceRuntimeInfo (publicEndpoints → relay → direct LAN) so the
+// dashboard never falls back to a 502-spamming direct-LAN fetch when an
+// HTTPS path is available. Per the privacy contract this data lives only
+// on the agent — we never persist serials or LAN IPs to Convex.
+function useAgentWirelessDevices(device: Device, enabled: boolean, token: string | null | undefined) {
+  const [data, setData] = useState<AgentWireDevicesResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!enabled || !token || (!device.online && !device.workspaceLive)) {
+      setData(null);
+      setError(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    const candidates: string[] = [];
+    const eps = (device.publicEndpoints || []).filter(Boolean).filter(isUsablePublicEndpoint);
+    const yaverEp = eps.find((e) => /^https:\/\/[^/]+\.yaver\.io(\/|$)/i.test(e));
+    if (yaverEp) candidates.push(yaverEp);
+    for (const ep of eps) {
+      if (ep === yaverEp) continue;
+      if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
+    }
+    if (agentClient.activeRelayUrl && device.id) {
+      candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
+    }
+    if (typeof window !== "undefined" && window.location.protocol !== "https:") {
+      candidates.push(`http://${device.host}:${device.port}`);
+    }
+    if (candidates.length === 0) {
+      setError("no reachable URL");
+      setLoading(false);
+      return;
+    }
+    (async () => {
+      let lastErr = "no candidates";
+      for (const base of candidates) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`${base}/wireless/devices`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!res.ok) {
+            // 404 means an older agent without this endpoint — surface
+            // it once instead of error-spamming.
+            if (res.status === 404) {
+              if (!cancelled) {
+                setError("agent does not yet expose /wireless/devices (update the agent on this machine)");
+                setLoading(false);
+              }
+              return;
+            }
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const body = (await res.json()) as AgentWireDevicesResponse;
+          if (cancelled) return;
+          setData(body);
+          setError(null);
+          setLoading(false);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : "fetch failed";
+        }
+      }
+      if (!cancelled) {
+        setError(lastErr);
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive]);
+
+  return { data, error, loading };
+}
+
 function useDeviceAgentUpdate(device: Device, enabled: boolean, token: string | null | undefined) {
   const [status, setStatus] = useState<AgentUpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -3133,6 +3228,12 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
   const { status: updateStatus, error: updateError, loading: updateLoading, updating, trigger: triggerUpdate } =
     useDeviceAgentUpdate(device, true, token);
+  // Phones (iOS + Android) reachable from this agent over WiFi via xcrun
+  // devicectl + adb. Lives entirely on the agent; not persisted to Convex.
+  // Only relevant for desktop / mobile-dev machines, but cheap enough to
+  // probe on every device — the agent returns count=0 for servers.
+  const { data: wirelessPhones, error: wirelessPhonesError, loading: wirelessPhonesLoading } =
+    useAgentWirelessDevices(device, true, token);
   const effectiveInfo = (info || device.probeInfo || null) as DeviceRuntimeInfo | null;
   const { pingState, ping } = useDevicePing(device, token);
   // Guests list /projects under a host-shared-scope allowlist but we
@@ -3434,6 +3535,39 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
           )}
         </div>
       ) : null}
+      <div className="mt-3">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-surface-500">
+          WiFi-paired phones
+        </div>
+        {wirelessPhonesLoading && !wirelessPhones ? (
+          <p className="text-[11px] text-surface-500">Probing this machine for WiFi-paired iPhones / Androids…</p>
+        ) : wirelessPhones && wirelessPhones.devices.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {wirelessPhones.devices.map((d) => (
+              <span
+                key={`wp:${device.id}:${d.udid}`}
+                className="inline-flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] tracking-wider text-emerald-200"
+                title={`${d.platform === "ios" ? "iPhone/iPad (xcrun devicectl)" : "Android (adb)"}\n${d.udid}${d.os ? `\nOS ${d.os}` : ""}`}
+              >
+                <span className="font-semibold uppercase">{d.platform}</span>
+                <span className="text-emerald-100">{d.name || "(unknown)"}</span>
+                <span className="font-mono text-[9px] text-emerald-300/70">
+                  {d.udid.length > 16 ? `${d.udid.slice(0, 14)}…` : d.udid}
+                </span>
+              </span>
+            ))}
+          </div>
+        ) : wirelessPhones && wirelessPhones.devices.length === 0 ? (
+          <p className="text-[11px] text-surface-600">
+            No WiFi-paired phones detected{wirelessPhones.hint ? ` — ${wirelessPhones.hint}` : ""}.
+            {" "}Pair one with <span className="font-mono">yaver wireless detect</span> on this machine.
+          </p>
+        ) : wirelessPhonesError ? (
+          <p className="text-[11px] text-surface-600">
+            Phone list unavailable — {wirelessPhonesError}.
+          </p>
+        ) : null}
+      </div>
       {loading ? (
         <p className="mt-3 text-[11px] text-surface-500">Loading runtime info from agent…</p>
       ) : null}
