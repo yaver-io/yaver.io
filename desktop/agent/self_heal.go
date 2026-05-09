@@ -85,6 +85,7 @@ type YaverInstall struct {
 	IsRunningBinary bool   `json:"isRunningBinary"`
 	IsManaged       bool   `json:"isManaged"`
 	SameAsRunning   bool   `json:"sameAsRunning"`
+	IsNPMWrapper    bool   `json:"isNpmWrapper,omitempty"`
 	ProbeError      string `json:"probeError,omitempty"`
 }
 
@@ -204,7 +205,39 @@ func inspectYaverBinary(path string, isRunning bool, runningHash string) YaverIn
 	} else {
 		bi.ProbeError = "sha256: " + err.Error()
 	}
+	bi.IsNPMWrapper = looksLikeNPMWrapperScript(path, bi.Size)
 	return bi
+}
+
+// looksLikeNPMWrapperScript returns true when `path` is the
+// `bin/yaver` Node entry-point shipped by the yaver-cli npm package
+// (typically a 100-200 byte file starting with `#!/usr/bin/env node`),
+// not a stale or hand-copied compiled Go binary. We have to recognise
+// this explicitly because the wrapper sits on PATH at
+// `~/.local/bin/yaver` (npm) or `/usr/local/bin/yaver` (npm symlink),
+// and an unaware reconciler would happily overwrite the 100-byte
+// launcher with the 41 MB Go agent — bricking the npm install.
+func looksLikeNPMWrapperScript(path string, size int64) bool {
+	// The real wrapper is currently ~105 bytes; cap generously at 4 KB
+	// so a future expansion of the JS shim still matches.
+	if size <= 0 || size > 4096 {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	head := make([]byte, 64)
+	n, _ := f.Read(head)
+	if n < 2 {
+		return false
+	}
+	prefix := strings.ToLower(string(head[:n]))
+	return strings.HasPrefix(prefix, "#!/usr/bin/env node") ||
+		strings.HasPrefix(prefix, "#!/usr/bin/node") ||
+		strings.HasPrefix(prefix, "#!/usr/local/bin/node") ||
+		strings.HasPrefix(prefix, "#!/usr/bin/env -s node")
 }
 
 func sha256File(path string) (string, error) {
@@ -309,6 +342,10 @@ func driftLines(installs []YaverInstall, canonical YaverInstall, latest string) 
 		if inst.Path == canonical.Path {
 			continue
 		}
+		if inst.IsNPMWrapper {
+			// npm wrapper Node script is the legitimate launcher, not drift.
+			continue
+		}
 		switch {
 		case inst.SHA256 == "":
 			out = append(out, fmt.Sprintf("%s — unreadable (%s)", inst.Path, inst.ProbeError))
@@ -406,6 +443,13 @@ func ApplySelfHeal(ctx context.Context, rep *SelfHealReport, opts SelfHealOption
 			continue
 		}
 		if inst.SameAsRunning {
+			continue
+		}
+		if inst.IsNPMWrapper {
+			// Skip the Node wrapper script — overwriting it with Go-binary
+			// bytes would brick `npm install -g yaver-cli`. The wrapper is
+			// the legitimate single entry point; the canonical Go binary
+			// lives under ~/.yaver/bin/<v>/<plat>/ and the wrapper execs it.
 			continue
 		}
 		if !inst.Writable {
@@ -643,9 +687,18 @@ func runSelfHealCommand(args []string) {
 }
 
 // runSelfHealOnStartup is fired non-blocking from `yaver serve`. It
-// builds the report and logs drift warnings — never modifies the
-// filesystem on its own. Operators get a heads-up in the agent log
-// without surprise overwrites.
+// builds the report, logs drift warnings, and — for safe cases —
+// auto-reconciles them so the operator doesn't end up with multiple
+// drifting yaver binaries on the same box. "Safe" here is restricted
+// to writable, non-managed, non-wrapper sibling installs whose bytes
+// disagree with the canonical (running) binary; everything else is
+// reported only and left for `yaver self heal --apply` to handle
+// explicitly. Why: pre-fix users routinely accumulated stale copies at
+// /usr/local/bin, ~/.local/bin, etc., and cached agent dirs whose
+// directory name lied about the binary inside (1.99.149/ holding the
+// 1.99.150 bytes). With one canonical install path, multiple copies
+// are always a bug, so closing the loop at startup keeps the box
+// honest without surprising anyone with overwrites of brew/apt paths.
 func runSelfHealOnStartup() {
 	go func() {
 		// Wait a bit so this doesn't compete with the auto-update tick
@@ -664,7 +717,46 @@ func runSelfHealOnStartup() {
 		if rep.NeedsSelfPull {
 			log.Printf("[self-heal]   - GitHub has v%s; canonical is v%s. Run `yaver self heal --apply --self-update`.", rep.LatestRelease, rep.Canonical.Version)
 		}
+
+		// Auto-reconcile. Restricted to siblings that are: writable, not
+		// managed (apt/brew would just revert us on next upgrade), not
+		// the npm wrapper (would brick the launcher), and actually drift
+		// (different bytes from canonical). If none qualify, the report-
+		// only log above is the whole story for this boot.
+		if !hasReconcilableDrift(rep) {
+			return
+		}
+		ApplySelfHeal(ctx, rep, SelfHealOptions{Apply: true, IncludeManaged: false, AllowSelfUpdate: false, Quiet: true})
+		for _, applied := range rep.Applied {
+			log.Printf("[self-heal] reconciled: %s", applied)
+		}
+		for _, errMsg := range rep.ApplyErrors {
+			log.Printf("[self-heal] could not reconcile: %s", errMsg)
+		}
 	}()
+}
+
+// hasReconcilableDrift returns true when at least one sibling install
+// matches the auto-apply criteria. Mirrors the per-install gate inside
+// ApplySelfHeal so the startup hook can decide whether the apply call
+// is worth making.
+func hasReconcilableDrift(rep *SelfHealReport) bool {
+	if rep == nil || rep.Canonical.Path == "" {
+		return false
+	}
+	for _, inst := range rep.Installs {
+		if inst.Path == rep.Canonical.Path {
+			continue
+		}
+		if inst.SameAsRunning || inst.IsNPMWrapper || inst.IsManaged {
+			continue
+		}
+		if !inst.Writable || inst.SHA256 == "" {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // HTTP surface (registered in httpserver.go).

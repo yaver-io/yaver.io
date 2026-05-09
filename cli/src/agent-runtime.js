@@ -497,13 +497,13 @@ async function fetchRemoteAsset(platform, goArch) {
       downloadName: asset.name,
       archiveType: 'exe',
       url: asset.browser_download_url,
-      version: release.tag_name.replace(/^v/, ''),
+      version: stripCliTagPrefix(release.tag_name),
     };
   }
 
   if (platform === 'darwin' || platform === 'linux') {
     const release = await fetchLatestRelease(DEFAULT_REPO);
-    const version = release.tag_name.replace(/^v/, '');
+    const version = stripCliTagPrefix(release.tag_name);
     const asset = findReleaseAsset(release, [
       `yaver-v${version}-${platform}-${goArch}.tar.gz`,
       `yaver-${platform}-${goArch}.tar.gz`,
@@ -523,6 +523,19 @@ async function fetchRemoteAsset(platform, goArch) {
   }
 
   throw new Error(`unsupported platform for npm bootstrap: ${platform}`);
+}
+
+// Strip the CLI release tag prefix and return the bare semver — or
+// null if this isn't a CLI release at all. Tags now live in per-surface
+// namespaces: `cli/v1.99.167`, `mobile/v1.18.91`, `web/v1.1.131`, etc.
+// Pre-1.99.124 releases were just `v1.99.149`. Only those two shapes
+// belong to the CLI; mobile/web/relay tags must NOT pass through, or
+// `findReleaseAsset` will look for a yaver-linux-arm64 tarball on a
+// mobile release and silently fail. Returning null here lets
+// `semver.valid(stripCliTagPrefix(...))` filter non-CLI tags out.
+function stripCliTagPrefix(tag) {
+  const match = String(tag || '').match(/^(?:cli\/)?v(.+)$/);
+  return match ? match[1] : null;
 }
 
 async function fetchLatestRelease(repo) {
@@ -545,7 +558,7 @@ async function fetchLatestRelease(repo) {
   }
 
   const latest = Array.isArray(releases)
-    ? releases.find((release) => !release.draft && !release.prerelease && semver.valid(String(release.tag_name || '').replace(/^v/, '')))
+    ? releases.find((release) => !release.draft && !release.prerelease && semver.valid(stripCliTagPrefix(String(release.tag_name || ''))))
     : null;
 
   if (!latest || !latest.tag_name) {
