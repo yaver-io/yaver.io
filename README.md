@@ -261,6 +261,48 @@ from CI (and currently from the same Mac via `scripts/deploy-playstore.sh`)
 since the keystore lives in the gitignored `keys/` dir / GH `ANDROID_KEYSTORE`
 secret rather than being device-account-bound.
 
+### Cross-machine Android signing via vault
+
+The Android upload keystore lives in the gitignored `keys/` dir on the
+machine that originally generated it. To build signed AABs from any of
+your other PCs without copying the keystore over USB / iCloud, stash
+the signing creds in your Yaver vault and let `yaver vault sync` do
+the distribution:
+
+**One-time, on the source machine** (the one that already has the
+keystore):
+```bash
+yaver vault add ANDROID_KEYSTORE_BASE64   --project mobile --category signing-key
+yaver vault add ANDROID_KEYSTORE_PASSWORD --project mobile --category signing-key
+yaver vault add ANDROID_KEY_ALIAS         --project mobile --category signing-key
+yaver vault add ANDROID_KEY_PASSWORD      --project mobile --category signing-key
+# `add` prompts for the value if you don't pass --value.
+# For the keystore itself, pass: --value "$(base64 < keys/yaver-upload.keystore | tr -d '\n')"
+```
+
+**On any new PC you want to ship from:**
+```bash
+npm install -g yaver-cli
+yaver auth                              # OAuth (any provider)
+yaver vault sync                        # P2P pull from your other devices
+./scripts/bootstrap-android-signing.sh  # decodes vault → materializes keys/ + keystore.properties
+./scripts/deploy-playstore.sh           # builds + uploads AAB
+```
+
+`yaver vault sync` is P2P over QUIC with **last-write-wins by
+`UpdatedAt`** — whichever machine wrote the entry most recently wins
+on conflict. Vault values never touch Convex; the privacy contract
+keeps signing material out of the central backend
+(`desktop/agent/convex_privacy_test.go` enforces this). Both
+materialized files (`keys/yaver-upload.keystore` and
+`mobile/android/keystore.properties`) are gitignored, and the
+bootstrap script refuses to write either if it isn't ignored.
+
+The vault also has a Bitwarden-style web UI
+(`web/components/dashboard/VaultView.tsx`) and a mobile screen
+(`mobile/app/vault.tsx`) for browsing / adding / revealing entries
+without dropping to the CLI.
+
 ## Unity
 
 Yaver now also has a Unity lane.
