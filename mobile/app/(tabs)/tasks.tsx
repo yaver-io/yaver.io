@@ -96,6 +96,7 @@ function capOutput(lines: string[]): string[] {
 const STATUS_COLORS: Record<TaskStatus, string> = {
   queued: "#eab308",
   running: "#3b82f6",
+  review: "#8b5cf6",
   completed: "#22c55e",
   failed: "#ef4444",
   stopped: "#a1a1aa",
@@ -1333,7 +1334,7 @@ function buildAgentContextRows(
     rows.push({ label: "Transport", value: connMode, mono: false });
   }
   rows.push({
-    label: task.status === "failed" || task.status === "completed" || task.status === "stopped"
+    label: task.status === "failed" || task.status === "review" || task.status === "completed" || task.status === "stopped"
       ? "Ran for"
       : "Running for",
     value: elapsedLabel,
@@ -1425,7 +1426,7 @@ export default function TasksScreen() {
     return onLogsChanged(() => setLogs(getLogEntries()));
   }, []);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [statusFilter, setStatusFilter] = useState<"running" | "completed" | "failed" | "all">("running");
+  const [statusFilter, setStatusFilter] = useState<"running" | "review" | "completed" | "failed" | "all">("running");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
   const [newTaskText, setNewTaskText] = useState("");
@@ -1866,7 +1867,8 @@ export default function TasksScreen() {
   const hasRunningTask = tasks.some(t => t.status === "running" || t.status === "queued");
   const effectiveFilter = statusFilter;
   const displayTasks = effectiveFilter === "all" ? tasks
-    : effectiveFilter === "running" ? tasks.filter(t => t.status === "running" || t.status === "queued")
+    : effectiveFilter === "running" ? tasks.filter(t => t.status === "running" || t.status === "queued" || t.status === "review")
+    : effectiveFilter === "review" ? tasks.filter(t => t.status === "review")
     : effectiveFilter === "completed" ? tasks.filter(t => t.status === "completed")
     : tasks.filter(t => t.status === "failed" || t.status === "stopped");
   useEffect(() => {
@@ -1907,7 +1909,7 @@ export default function TasksScreen() {
         }
       },
       (status) => {
-        if (status === "completed" || status === "failed" || status === "stopped") {
+        if (status === "completed" || status === "review" || status === "failed" || status === "stopped") {
           setTasks((prev) => prev.map((t) => t.id === selectedTask.id ? { ...t, status: status as TaskStatus } : t));
           setSelectedTask((prev) => prev?.id === selectedTask.id ? { ...prev, status: status as TaskStatus } : prev);
         }
@@ -2528,13 +2530,9 @@ export default function TasksScreen() {
             }));
           } catch { /* analytics is best-effort */ }
         } else {
-          // Same runner: regular continue. Stop a still-running parent
-          // first so its state machine accepts the new input.
-          const isTaskRunning = selectedTask.status === "running" || selectedTask.status === "queued";
-          if (isTaskRunning) {
-            await quicClient.stopTask(selectedTask.id);
-            await new Promise((r) => setTimeout(r, 500));
-          }
+          // Same runner: regular continue. The agent now accepts
+          // follow-ups while a task is still streaming and queues them
+          // onto the same session instead of requiring a stop first.
           await quicClient.continueTask(selectedTask.id, followUpText.trim(), followUpImages.length > 0 ? followUpImages : undefined);
         }
       }
@@ -2574,6 +2572,17 @@ export default function TasksScreen() {
     } catch (e) {
       // Ignore errors — task is already removed locally and marked as deleted
       console.warn("[Tasks] Delete failed (kept local deletion):", e);
+    }
+  };
+
+  const handleCompleteTask = async (taskId: string) => {
+    try {
+      await quicClient.completeTask(taskId);
+      setTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: "completed" as TaskStatus } : t));
+      setSelectedTask(prev => prev?.id === taskId ? { ...prev, status: "completed" as TaskStatus } : prev);
+      await fetchTasks();
+    } catch {
+      Alert.alert("Complete Failed", "Could not mark this task complete.");
     }
   };
 
@@ -3117,7 +3126,8 @@ export default function TasksScreen() {
           <View style={[s.actionBar, { borderBottomColor: c.border }]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingLeft: 2, paddingRight: 8 }}>
               {([
-                { key: "running" as const, label: "Running", color: c.accent, count: tasks.filter(t => t.status === "running" || t.status === "queued").length },
+                { key: "running" as const, label: "Active", color: c.accent, count: tasks.filter(t => t.status === "running" || t.status === "queued" || t.status === "review").length },
+                { key: "review" as const, label: "Review", color: "#8b5cf6", count: tasks.filter(t => t.status === "review").length },
                 { key: "completed" as const, label: "Completed", color: "#22c55e", count: tasks.filter(t => t.status === "completed").length },
                 { key: "failed" as const, label: "Failed", color: "#ef4444", count: tasks.filter(t => t.status === "failed" || t.status === "stopped").length },
                 { key: "all" as const, label: "All", color: c.textSecondary, count: tasks.length },
@@ -4159,10 +4169,12 @@ export default function TasksScreen() {
                   onOpenLogs={() => setShowLogs(true)}
                   primaryAction={
                     selectedTask.status === "failed" ? "retry"
+                      : selectedTask.status === "review" ? "complete"
                       : isRunning && selectedTask.isAdopted ? "detach"
                       : isRunning ? "stop"
                       : "none"
                   }
+                  onComplete={() => handleCompleteTask(selectedTask.id)}
                   onStop={() => {
                     taskHaptics.stop();
                     Alert.alert(
@@ -4415,7 +4427,7 @@ export default function TasksScreen() {
                     </View>
                     <TextInput
                       style={[s.input, s.inputMultiline, { backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary }]}
-                      placeholder={isRunning ? "Agent is working…" : "Follow up — or send another command"}
+                      placeholder={isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                       placeholderTextColor={c.textMuted}
                       value={followUpText}
                       onChangeText={(t) => { setFollowUpText(t); setInputFromSpeech(false); }}
@@ -4491,19 +4503,13 @@ export default function TasksScreen() {
                   </View>
                 ) : (
                   <View style={[s.chatInputBar, { borderTopColor: c.border, backgroundColor: c.bgCard, flexDirection: "row", alignItems: "center", gap: 8 }]}>
-                    {/* During RUNNING the input is disabled and the
-                        right-side button becomes Stop. No queueing
-                        in the agent today — making the input look
-                        tappable was misleading. See spec section
-                        B6 + X4 (copy strings). */}
                     <Pressable
                       style={{ flex: 1 }}
                       onPress={() => setFollowUpExpanded(true)}
-                      disabled={isRunning}
                     >
-                      <View style={[s.chatInput, { backgroundColor: isRunning ? c.surfaceMuted : c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44, opacity: isRunning ? 0.7 : 1 }]}>
+                      <View style={[s.chatInput, { backgroundColor: c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44 }]}>
                         <Text style={{ color: c.textMuted, fontSize: 15 }}>
-                          {isRunning ? "Agent is working…" : "Follow up — or send another command"}
+                          {isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                         </Text>
                       </View>
                     </Pressable>

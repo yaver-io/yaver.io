@@ -12,8 +12,8 @@ import { spacing } from "../theme/tokens";
 // three rows and duplicated the first user message in the title.
 // Keeping the title slot empty (the user's first command becomes
 // the chat bubble) is intentional and one of the spec's main calls.
-export type TaskHeaderStatus = "queued" | "running" | "completed" | "failed" | "stopped";
-export type PrimaryAction = "stop" | "retry" | "detach" | "none";
+export type TaskHeaderStatus = "queued" | "running" | "review" | "completed" | "failed" | "stopped";
+export type PrimaryAction = "stop" | "retry" | "detach" | "complete" | "none";
 
 export interface TaskHeaderProps {
   status: TaskHeaderStatus;
@@ -35,6 +35,7 @@ export interface TaskHeaderProps {
   onForceKill?: () => void;
   onRetry?: () => void;
   onDetach?: () => void;
+  onComplete?: () => void;
 }
 
 export function TaskHeader({
@@ -49,6 +50,7 @@ export function TaskHeader({
   onForceKill,
   onRetry,
   onDetach,
+  onComplete,
 }: TaskHeaderProps) {
   const c = useColors();
   const palette = statusPalette(c, status);
@@ -131,6 +133,20 @@ export function TaskHeader({
           >
             <Text style={styles.detachGlyph}>{"⏏"}</Text>
             <Text style={styles.detachText}>Detach</Text>
+          </Pressable>
+        ) : primaryAction === "complete" && onComplete ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.completeBtn,
+              { backgroundColor: c.success },
+              pressed && { opacity: 0.85, transform: [{ scale: 0.97 }] },
+            ]}
+            onPress={onComplete}
+            accessibilityRole="button"
+            accessibilityLabel="Mark task complete"
+          >
+            <Ionicons name="checkmark" size={15} color="#FFFFFF" style={styles.retryIcon} />
+            <Text style={styles.completeText}>Complete</Text>
           </Pressable>
         ) : (
           <View style={styles.spacer} />
@@ -224,6 +240,8 @@ function statusPalette(
       return { dot: c.info, fg: c.info };
     case "completed":
       return { dot: c.success, fg: c.success };
+    case "review":
+      return { dot: "#8b5cf6", fg: "#8b5cf6" };
     case "failed":
       return { dot: c.error, fg: c.error };
     case "stopped":
@@ -292,6 +310,15 @@ const styles = StyleSheet.create({
   },
   detachGlyph: { fontSize: 14, color: "#8b5cf6" },
   detachText: { fontSize: 13, fontWeight: "600", color: "#8b5cf6" },
+  completeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  completeText: { color: "#FFFFFF", fontSize: 13, fontWeight: "600" },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -21,7 +21,7 @@ import type { BuildInfo, BuildSummary } from "./builds";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export type TaskStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type TaskStatus = "queued" | "running" | "review" | "completed" | "failed" | "stopped";
 
 // ── Vault + API key types (mirrors desktop/agent/vault.go + apikeys.go) ──
 export type VaultCategory = "api-key" | "signing-key" | "ssh-key" | "git-credential" | "custom";
@@ -1793,6 +1793,16 @@ export class QuicClient {
       headers: this.authHeaders,
     });
     if (!res.ok) throw new Error(`Failed to stop task: ${res.status}`);
+  }
+
+  /** Mark a reviewed task complete. */
+  async completeTask(taskId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/complete`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to complete task: ${res.status}`);
   }
 
   /** Gracefully exit a running task by sending the runner's exit command (e.g. /exit for Claude). */

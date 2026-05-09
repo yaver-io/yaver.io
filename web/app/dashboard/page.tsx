@@ -53,6 +53,7 @@ const WEB_VERSION = (webPkg as { version?: string }).version ?? "unknown";
 
 function statusColor(s: string) {
   if (s === "running") return "text-amber-400";
+  if (s === "review") return "text-violet-400";
   if (s === "completed") return "text-emerald-400";
   return "text-surface-400";
 }
@@ -1680,17 +1681,7 @@ export default function DashboardPage() {
       return;
     }
     setInput(""); setSending(true);
-    // continuing = "resume the existing task's runner session". The
-    // agent's POST /tasks/<id>/continue path REJECTS with 500 when the
-    // task is still running ("task is already running") — that endpoint
-    // is for AFTER the prior turn finished. Earlier this flag was
-    // `activeTask?.status === "running"` (inverted), which 500'd every
-    // Update-task click during streaming AND created a brand new task
-    // for completed ones, dropping the user out of the conversation.
-    // Now: an active completed/failed/stopped task continues; a running
-    // task is blocked at the button (disabled below) before we get
-    // here; absent activeTask creates a new task.
-    const continuing = !!activeTask && activeTask.status !== "running" && activeTask.status !== "queued";
+    const continuing = !!activeTask;
     // Optimistic user echo — always push the user bubble + empty assistant placeholder
     // so the next streamed line flows into the assistant bubble, not into the last
     // run's response.
@@ -2751,9 +2742,23 @@ export default function DashboardPage() {
                   {activeTask ? (
                     <>
                       <div className="flex items-center gap-3 border-b border-surface-800 px-4 py-2">
-                        <span className={`h-1.5 w-1.5 rounded-full ${activeTask.status === "running" ? "animate-pulse bg-amber-400" : activeTask.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />
+                        <span className={`h-1.5 w-1.5 rounded-full ${activeTask.status === "running" || activeTask.status === "queued" ? "animate-pulse bg-amber-400" : activeTask.status === "review" ? "bg-violet-400" : activeTask.status === "completed" ? "bg-emerald-400" : "bg-surface-600"}`} />
                         <span className="truncate text-sm font-medium text-surface-200">{displayTaskTitle(activeTask.title)}</span>
                         <span className={`text-[10px] ${statusColor(activeTask.status)}`}>{activeTask.status}</span>
+                        {activeTask.status === "review" ? (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await agentClient.completeTask(activeTask.id);
+                              const fresh = { ...activeTask, status: "completed" as const };
+                              setActiveTask(fresh);
+                              setTasks((prev) => prev.map((t) => t.id === fresh.id ? fresh : t));
+                            }}
+                            className="rounded-lg border border-emerald-400/30 bg-emerald-400/10 px-2 py-1 text-[10px] font-semibold text-emerald-300 hover:bg-emerald-400/15"
+                          >
+                            Complete
+                          </button>
+                        ) : null}
                         {activeTask.costUsd != null && <span className="text-[10px] text-surface-600">${activeTask.costUsd.toFixed(3)}</span>}
                       </div>
                       <div ref={outputRef} className="flex-1 overflow-y-auto bg-surface-950 px-4 py-5">
@@ -2774,8 +2779,8 @@ export default function DashboardPage() {
                         ) : null}
                         {chatMsgs.length === 0 ? (
                           <div className="flex h-full items-center justify-center gap-2 text-[12px] text-surface-600">
-                            {activeTask.status === "running" && <span className="h-3 w-3 animate-spin rounded-full border border-surface-500 border-t-transparent" />}
-                            {activeTask.status === "running" ? "Working..." : "No messages yet"}
+                            {(activeTask.status === "running" || activeTask.status === "queued") && <span className="h-3 w-3 animate-spin rounded-full border border-surface-500 border-t-transparent" />}
+                            {activeTask.status === "running" || activeTask.status === "queued" ? "Working..." : "No messages yet"}
                           </div>
                         ) : (
                           <div className="mx-auto flex max-w-3xl flex-col gap-3">
@@ -2805,7 +2810,7 @@ export default function DashboardPage() {
                                           <span className="ml-0.5 inline-block h-3 w-1.5 translate-y-[2px] animate-pulse bg-surface-300" aria-hidden />
                                         ) : null}
                                       </div>
-                                    ) : activeTask.status === "running" ? (
+                                    ) : activeTask.status === "running" || activeTask.status === "queued" ? (
                                       <span className="inline-flex items-center gap-2 text-surface-400">
                                         <span className="inline-flex items-center gap-1">
                                           <span className="h-2 w-2 animate-pulse rounded-full bg-surface-400" />

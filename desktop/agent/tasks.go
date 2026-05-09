@@ -65,6 +65,7 @@ type TaskStatus string
 const (
 	TaskStatusQueued   TaskStatus = "queued"
 	TaskStatusRunning  TaskStatus = "running"
+	TaskStatusReview   TaskStatus = "review"
 	TaskStatusStopped  TaskStatus = "stopped"
 	TaskStatusFinished TaskStatus = "completed"
 	TaskStatusFailed   TaskStatus = "failed"
@@ -151,7 +152,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// chosen model wins. Hardcoding "sonnet" here would shadow
 		// --implementer claude:opus (sees --model twice, last one
 		// wins, depends on CLI parsing — flaky).
-		Args:        []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--skip-git-repo-check", "--permission-mode", "bypassPermissions"},
+		Args: []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--skip-git-repo-check", "--permission-mode", "bypassPermissions"},
 		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
 		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
 		// lockstep so a feedback task arriving with task.Model="" lands on
@@ -176,7 +177,7 @@ var builtinRunners = map[string]RunnerConfig{
 		// correctly. Verified: this same prompt that previously failed
 		// patched app/index.tsx (#0f172a → #22c55e) on yaver-test-
 		// ephemeral once the flag was removed.
-		Args:     []string{"exec", "--full-auto", "{prompt}"},
+		Args: []string{"exec", "--full-auto", "{prompt}"},
 		// Codex CLI's own default is `o3-mini`, which fails immediately
 		// for users on a ChatGPT-account login with:
 		//   "The 'o3-mini' model is not supported when using Codex with
@@ -758,9 +759,15 @@ type TaskCreateOptions struct {
 }
 
 type TaskResumeOptions struct {
-	RunnerID string
-	Model    string
-	Mode     string
+	RunnerID string `json:"runnerId,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+}
+
+type PendingFollowUp struct {
+	Input   string            `json:"input"`
+	Images  []ImageAttachment `json:"images,omitempty"`
+	Options TaskResumeOptions `json:"options,omitempty"`
 }
 
 type Task struct {
@@ -833,11 +840,13 @@ type Task struct {
 	// for the full rule.
 	AskFreely bool `json:"askFreely,omitempty"`
 
-	runner     RunnerConfig // the runner config used for this task (not persisted)
-	cmd        *exec.Cmd
-	cancel     context.CancelFunc
-	stdin      io.WriteCloser
-	outputCh   chan string
+	PendingFollowUps []PendingFollowUp `json:"pendingFollowUps,omitempty"`
+
+	runner   RunnerConfig // the runner config used for this task (not persisted)
+	cmd      *exec.Cmd
+	cancel   context.CancelFunc
+	stdin    io.WriteCloser
+	outputCh chan string
 	// eventCh carries structured (non-text) events for this task —
 	// agent_question, agent_answered, agent_question_cancelled, …
 	// The SSE writer in handleTaskByID/streamOutput selects on this
@@ -890,6 +899,25 @@ func formatTaskSliceContract(contract *TaskSliceContract) string {
 		"Do not assume write access to sibling slices or the developer's main worktree.",
 		"Prefer producing coherent commits or diffs within this slice so the orchestrator can merge safely.")
 	return strings.Join(lines, "\n")
+}
+
+func taskAwaitsManualCompletion(task *Task) bool {
+	if task == nil {
+		return false
+	}
+	switch strings.TrimSpace(task.Source) {
+	case "mobile", "mobile-code":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskSuccessStatus(task *Task) TaskStatus {
+	if taskAwaitsManualCompletion(task) {
+		return TaskStatusReview
+	}
+	return TaskStatusFinished
 }
 
 // TaskInfo is the JSON-safe subset returned in listings.
@@ -1644,7 +1672,7 @@ func (tm *TaskManager) runDummyTask(task *Task) {
 
 	finishNow := time.Now()
 	tm.mu.Lock()
-	task.Status = TaskStatusFinished
+	task.Status = taskSuccessStatus(task)
 	task.FinishedAt = &finishNow
 	task.ResultText = output.String()
 	task.Turns = append(task.Turns, ConversationTurn{
@@ -2348,7 +2376,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 				// expectation: "the run worked, the answer is there, why is
 				// the row screaming red".
 				if isSoftRunnerFailure(task.runner.RunnerID, task.Output, err) {
-					task.Status = TaskStatusFinished
+					task.Status = taskSuccessStatus(task)
 					log.Printf("[task %s] %s soft failure (exit: %v, output_len=%d) — marking finished", task.ID, task.runner.Name, err, outputLen)
 				} else {
 					// Real failure — mark runner as down in Convex
@@ -2364,7 +2392,7 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					log.Printf("[task %s] %s process failed: %v", task.ID, task.runner.Name, err)
 				}
 			} else {
-				task.Status = TaskStatusFinished
+				task.Status = taskSuccessStatus(task)
 				log.Printf("[task %s] %s process finished successfully (output_len=%d)", task.ID, task.runner.Name, len(task.Output))
 				// Task succeeded on the first try — if the device was
 				// previously stuck in runnerDown=true from an old failure
@@ -2388,6 +2416,57 @@ func (tm *TaskManager) startProcess(task *Task) error {
 					Content:   task.ResultText,
 					Timestamp: finishNow,
 				})
+			}
+			if task.Status == TaskStatusReview && len(task.PendingFollowUps) > 0 {
+				next := task.PendingFollowUps[0]
+				task.PendingFollowUps = task.PendingFollowUps[1:]
+				oldDoneCh := task.doneCh
+				task.Turns = append(task.Turns, ConversationTurn{Role: "user", Content: next.Input, Timestamp: time.Now()})
+				if len(next.Images) > 0 {
+					newPaths := saveImages(task.ID, next.Images)
+					task.ImagePaths = append(task.ImagePaths, newPaths...)
+				}
+				if runnerID := normalizeRunnerID(next.Options.RunnerID); runnerID != "" {
+					prevRunner := normalizeRunnerID(task.RunnerID)
+					runner := GetRunnerConfig(runnerID)
+					task.runner = runner
+					task.RunnerID = runner.RunnerID
+					if runner.RunnerID != prevRunner {
+						task.SessionID = ""
+					}
+				}
+				if model := strings.TrimSpace(next.Options.Model); model != "" {
+					task.Model = model
+				}
+				if mode := strings.TrimSpace(next.Options.Mode); mode != "" {
+					runner := task.runner
+					if runner.Command == "" {
+						runner = tm.runner
+					}
+					runner.Mode = mode
+					task.runner = runner
+				}
+				task.Output = ""
+				task.ResultText = ""
+				task.FinishedAt = nil
+				task.Status = TaskStatusQueued
+				task.outputCh = make(chan string, 512)
+				task.eventCh = make(chan map[string]interface{}, 32)
+				task.doneCh = make(chan struct{})
+				tm.persist()
+				tm.mu.Unlock()
+				close(oldDoneCh)
+				if err := tm.startResume(task, next.Input); err != nil {
+					tm.mu.Lock()
+					task.Status = TaskStatusFailed
+					now := time.Now()
+					task.FinishedAt = &now
+					tm.persist()
+					tm.fireTaskDone(task)
+					tm.mu.Unlock()
+					close(task.doneCh)
+				}
+				return
 			}
 		}
 		// Report runner usage to Convex (non-blocking)
@@ -2964,8 +3043,25 @@ func (tm *TaskManager) ResumeTaskWithOptions(id, input string, images []ImageAtt
 		return nil, fmt.Errorf("task %s not found", id)
 	}
 	if task.Status == TaskStatusRunning || task.Status == TaskStatusQueued {
+		if !taskAwaitsManualCompletion(task) {
+			tm.mu.Unlock()
+			return nil, fmt.Errorf("task %s is already running", id)
+		}
+		task.PendingFollowUps = append(task.PendingFollowUps, PendingFollowUp{
+			Input:   strings.TrimSpace(input),
+			Images:  append([]ImageAttachment{}, images...),
+			Options: opts,
+		})
+		task.Output += "\n[Mobile follow-up queued; it will run after the current response finishes.]\n"
+		if task.outputCh != nil {
+			select {
+			case task.outputCh <- "\n[Mobile follow-up queued; it will run after the current response finishes.]\n":
+			default:
+			}
+		}
+		tm.persist()
 		tm.mu.Unlock()
-		return nil, fmt.Errorf("task %s is already running", id)
+		return task, nil
 	}
 
 	// Append follow-up to conversation history
@@ -3140,7 +3236,7 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 			if err != nil {
 				task.Status = TaskStatusFailed
 			} else {
-				task.Status = TaskStatusFinished
+				task.Status = taskSuccessStatus(task)
 			}
 			now := time.Now()
 			task.FinishedAt = &now
@@ -3151,6 +3247,37 @@ func (tm *TaskManager) startResume(task *Task, prompt string) error {
 					Content:   task.ResultText,
 					Timestamp: now,
 				})
+			}
+			if task.Status == TaskStatusReview && len(task.PendingFollowUps) > 0 {
+				next := task.PendingFollowUps[0]
+				task.PendingFollowUps = task.PendingFollowUps[1:]
+				oldDoneCh := task.doneCh
+				task.Turns = append(task.Turns, ConversationTurn{Role: "user", Content: next.Input, Timestamp: time.Now()})
+				if len(next.Images) > 0 {
+					newPaths := saveImages(task.ID, next.Images)
+					task.ImagePaths = append(task.ImagePaths, newPaths...)
+				}
+				task.Output = ""
+				task.ResultText = ""
+				task.FinishedAt = nil
+				task.Status = TaskStatusQueued
+				task.outputCh = make(chan string, 512)
+				task.eventCh = make(chan map[string]interface{}, 32)
+				task.doneCh = make(chan struct{})
+				tm.persist()
+				tm.mu.Unlock()
+				close(oldDoneCh)
+				if err := tm.startResume(task, next.Input); err != nil {
+					tm.mu.Lock()
+					task.Status = TaskStatusFailed
+					now := time.Now()
+					task.FinishedAt = &now
+					tm.persist()
+					tm.fireTaskDone(task)
+					tm.mu.Unlock()
+					close(task.doneCh)
+				}
+				return
 			}
 		}
 		tm.persist()
@@ -3262,6 +3389,7 @@ func (tm *TaskManager) ListTasks() []TaskInfo {
 			VideoSource:    t.VideoSource,
 			VideoClipID:    t.VideoClipID,
 			VideoStatus:    t.VideoStatus,
+			AskFreely:      t.AskFreely,
 		})
 	}
 	return result
@@ -3289,6 +3417,25 @@ func (tm *TaskManager) SetTaskVideoState(id, clipID, status string) {
 		task.VideoStatus = strings.TrimSpace(status)
 	}
 	tm.persist()
+}
+
+func (tm *TaskManager) CompleteTask(id string) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	task, ok := tm.tasks[id]
+	if !ok {
+		return fmt.Errorf("task %s not found", id)
+	}
+	if task.Status == TaskStatusRunning || task.Status == TaskStatusQueued {
+		return fmt.Errorf("task %s is still running", id)
+	}
+	now := time.Now()
+	task.Status = TaskStatusFinished
+	if task.FinishedAt == nil {
+		task.FinishedAt = &now
+	}
+	tm.persist()
+	return nil
 }
 
 // BroadcastControlSignal injects a control signal JSON line into all running tasks' output.

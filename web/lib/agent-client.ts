@@ -18,7 +18,7 @@ const YAVER_CALLER_ID = `web-dashboard/${(webPkg as { version?: string }).versio
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export type TaskStatus = "queued" | "running" | "completed" | "failed" | "stopped";
+export type TaskStatus = "queued" | "running" | "review" | "completed" | "failed" | "stopped";
 
 export interface ConversationTurn {
   role: "user" | "assistant";
@@ -1433,6 +1433,15 @@ export class AgentClient {
       body: JSON.stringify({ input }),
     });
     if (!res.ok) throw new Error(`Failed to continue task: ${res.status}`);
+  }
+
+  async completeTask(taskId: string): Promise<void> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/tasks/${taskId}/complete`, {
+      method: "POST",
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to complete task: ${res.status}`);
   }
 
   /**

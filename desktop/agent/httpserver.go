@@ -3456,6 +3456,8 @@ func (s *HTTPServer) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		s.exitTask(w, r, taskID)
 	case "continue":
 		s.continueTask(w, r, taskID)
+	case "complete":
+		s.completeTask(w, r, taskID)
 	case "fork":
 		// Runtime agent switch: keep parent immutable, spawn child with
 		// new runner/model/mode + bounded recent-context handoff. See
@@ -3534,7 +3536,7 @@ func (s *HTTPServer) streamOutput(w http.ResponseWriter, r *http.Request, id str
 	}
 
 	// If already finished, send done event and return.
-	if currentStatus == TaskStatusFinished || currentStatus == TaskStatusFailed || currentStatus == TaskStatusStopped {
+	if currentStatus == TaskStatusFinished || currentStatus == TaskStatusReview || currentStatus == TaskStatusFailed || currentStatus == TaskStatusStopped {
 		fmt.Fprintf(w, "data: %s\n\n", jsonString(map[string]interface{}{
 			"type":   "done",
 			"status": currentStatus,
@@ -3630,6 +3632,25 @@ func (s *HTTPServer) stopTask(w http.ResponseWriter, r *http.Request, id string)
 		"ok":     true,
 		"taskId": id,
 		"status": TaskStatusStopped,
+	})
+}
+
+func (s *HTTPServer) completeTask(w http.ResponseWriter, r *http.Request, id string) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+
+	if err := s.taskMgr.CompleteTask(id); err != nil {
+		jsonError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	log.Printf("[HTTP] Task completed by user: %s", id)
+	jsonReply(w, http.StatusOK, map[string]interface{}{
+		"ok":     true,
+		"taskId": id,
+		"status": TaskStatusFinished,
 	})
 }
 
