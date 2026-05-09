@@ -124,6 +124,7 @@ var defaultRunner = RunnerConfig{
 }
 
 // exitCommands maps runner IDs to their graceful exit commands.
+// Keys are the agent-internal canonical ids (post-normalizeRunnerID).
 var exitCommands = map[string]string{
 	"claude":   "/exit",
 	"codex":    "exit",

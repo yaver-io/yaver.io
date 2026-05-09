@@ -212,6 +212,11 @@ func runnerDoctorDetail(runner RunnerConfig, workDir, binaryPath, version string
 	}
 }
 
+// normalizeRunnerID maps a user-facing runner id to the agent's
+// internal canonical id. User-facing ("claude-code") collapses onto
+// the internal id ("claude") so the agent's spawn / case tables don't
+// need to be re-threaded. Switch this if the internal canonical ever
+// flips — the rest of the agent reads through this single function.
 func normalizeRunnerID(id string) string {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "claude-code":
