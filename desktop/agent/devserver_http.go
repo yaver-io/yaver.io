@@ -2472,6 +2472,13 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		ConsumerCurrentFamilyID  string          `json:"consumerCurrentRuntimeFamilyId,omitempty"`
 		ConsumerDefaultFamilyID  string          `json:"consumerDefaultRuntimeFamilyId,omitempty"`
 		ConsumerRuntimeFamilies  []RuntimeFamily `json:"consumerRuntimeFamilies,omitempty"`
+		// ConsumerNativeModules: dynamic handshake — the mobile app
+		// reports its actually-bundled native modules at request time
+		// (read from the mobile's bundled sdk-manifest.json on
+		// iOS/Android). Agent unions this with the embedded manifest so
+		// new modules added to the host don't require an agent rebuild
+		// to clear the compat check. Empty = fall back to embedded only.
+		ConsumerNativeModules map[string]string `json:"consumerNativeModules,omitempty"`
 		// AutoAlignRuntime asks the agent to rewrite the project's
 		// package.json overrides to match the closest compiledIn host
 		// runtime family (and run npm install once) before bundling. This
@@ -2775,7 +2782,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// family before bundle/compile so logs and UI can explain the target
 	// contract upfront, even when the final load is blocked later.
 	var compatReport *CompatReport
-	if report, err := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); err == nil {
+	if report, err := BuildNativeModuleCompatReportWith(workDir, req.ConsumerRuntimeFamilies, req.ConsumerNativeModules); err == nil {
 		compatReport = report
 		if report.RuntimeFamily != nil {
 			sel := report.RuntimeFamily
@@ -2874,7 +2881,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				))
 				// Re-run the compat probe so subsequent stages see the
 				// post-align fingerprint, not the pre-align one.
-				if rebuilt, rerr := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); rerr == nil {
+				if rebuilt, rerr := BuildNativeModuleCompatReportWith(workDir, req.ConsumerRuntimeFamilies, req.ConsumerNativeModules); rerr == nil {
 					compatReport = rebuilt
 				}
 			} else if strings.TrimSpace(alignReport.SkippedReason) != "" {
@@ -2905,7 +2912,7 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 					"Aligned %d native module(s) to host (%s) (npm install %dms)",
 					len(names), strings.Join(names, ", "), nmReport.NPMInstallMs,
 				))
-				if rebuilt, rerr := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); rerr == nil {
+				if rebuilt, rerr := BuildNativeModuleCompatReportWith(workDir, req.ConsumerRuntimeFamilies, req.ConsumerNativeModules); rerr == nil {
 					compatReport = rebuilt
 				}
 			} else if strings.TrimSpace(nmReport.SkippedReason) != "" {

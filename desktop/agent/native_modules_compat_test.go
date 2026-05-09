@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -559,5 +560,81 @@ func TestIsLikelyNativeModule_FalsePositiveGuards(t *testing.T) {
 		if got != c.want {
 			t.Errorf("isLikelyNativeModule(%q) = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// TestBuildNativeModuleCompatReportWith_HostOverlayUnblocksMissingModule
+// locks in the dynamic-handshake contract: when the mobile reports a
+// native module via consumerNativeModules that the agent's embedded
+// manifest hasn't picked up yet, the compat check treats it as
+// available. Without this the embedded manifest dictates compat for
+// every agent install in the wild and a fresh mobile module breaks
+// self-load until the agent npm bumps and reaches every box.
+func TestBuildNativeModuleCompatReportWith_HostOverlayUnblocksMissingModule(t *testing.T) {
+	dir := t.TempDir()
+	// Pick a native module that's vanishingly unlikely to ever ship in
+	// the embedded manifest — a fictional name keeps this test stable
+	// even if mobile/sdk-manifest.json grows over time.
+	moduleName := "react-native-yaver-overlay-test-fixture"
+	pkg := fmt.Sprintf(`{
+  "name": "overlay-test",
+  "dependencies": {
+    "expo": "54.0.33",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "%s": "1.0.0"
+  }
+}`, moduleName)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	// Drop a marker file under node_modules/<name> so isLikelyNativeModule
+	// considers the dep native; otherwise it's filtered out as JS-only.
+	nm := filepath.Join(dir, "node_modules", moduleName, "ios")
+	if err := os.MkdirAll(nm, 0o755); err != nil {
+		t.Fatalf("mkdir nm: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(nm), "package.json"), []byte(`{"name":"`+moduleName+`","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatalf("write nm package.json: %v", err)
+	}
+	// Drop a podspec so the heuristic flags it native.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(nm), moduleName+".podspec"), []byte("# stub"), 0o644); err != nil {
+		t.Fatalf("write podspec: %v", err)
+	}
+
+	// Without overlay → module is missing.
+	bare, err := BuildNativeModuleCompatReportWith(dir, nil, nil)
+	if err != nil {
+		t.Fatalf("compat without overlay: %v", err)
+	}
+	foundMissing := false
+	for _, m := range bare.Incompatible {
+		if m == moduleName {
+			foundMissing = true
+		}
+	}
+	if !foundMissing {
+		t.Fatalf("baseline expected %s in Incompatible, got %#v (matched=%#v)", moduleName, bare.Incompatible, bare.Matched)
+	}
+
+	// With overlay → module is matched.
+	overlay := map[string]string{moduleName: "1.0.0"}
+	withOverlay, err := BuildNativeModuleCompatReportWith(dir, nil, overlay)
+	if err != nil {
+		t.Fatalf("compat with overlay: %v", err)
+	}
+	for _, m := range withOverlay.Incompatible {
+		if m == moduleName {
+			t.Fatalf("overlay should have unblocked %s, still in Incompatible: %#v", moduleName, withOverlay.Incompatible)
+		}
+	}
+	matchedHasModule := false
+	for _, m := range withOverlay.Matched {
+		if m == moduleName {
+			matchedHasModule = true
+		}
+	}
+	if !matchedHasModule {
+		t.Fatalf("overlay should have moved %s to Matched, got %#v", moduleName, withOverlay.Matched)
 	}
 }

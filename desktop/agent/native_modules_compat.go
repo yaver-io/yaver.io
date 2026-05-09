@@ -279,11 +279,44 @@ func BuildNativeModuleCompatReport(workDir string) (*CompatReport, error) {
 }
 
 func BuildNativeModuleCompatReportWithFamilies(workDir string, supportedFamilies []RuntimeFamily) (*CompatReport, error) {
+	return BuildNativeModuleCompatReportWith(workDir, supportedFamilies, nil)
+}
+
+// BuildNativeModuleCompatReportWith accepts a dynamic overlay of native
+// modules the live host actually has — built from the mobile's
+// runtime-reported sdk-manifest.json (consumerNativeModules in the
+// /dev/build-native body). When the overlay is non-empty it is unioned
+// with the embedded manifest so newly-added host modules clear compat
+// even on agents whose embedded copy hasn't caught up. Empty overlay
+// behaves exactly like the legacy embedded-only path.
+func BuildNativeModuleCompatReportWith(workDir string, supportedFamilies []RuntimeFamily, hostOverlay map[string]string) (*CompatReport, error) {
 	host, err := loadHostSDKManifest()
 	if err != nil {
 		return nil, err
 	}
 	hostNames, _ := HostSupportedNativeModules()
+	if len(hostOverlay) > 0 {
+		// Clone so we don't mutate the cached map. Overlay wins over the
+		// embedded copy on version reads (used by detectNativeModuleVersionMismatch).
+		merged := make(map[string]string, len(host.NativeModules)+len(hostOverlay))
+		for k, v := range host.NativeModules {
+			merged[k] = v
+		}
+		hostNamesCopy := make(map[string]bool, len(hostNames)+len(hostOverlay))
+		for k, v := range hostNames {
+			hostNamesCopy[k] = v
+		}
+		for k, v := range hostOverlay {
+			merged[k] = v
+			hostNamesCopy[k] = true
+		}
+		// Replace the local view; loadHostSDKManifest's cache is left
+		// untouched so legacy callers don't see drift.
+		hostCopy := *host
+		hostCopy.NativeModules = merged
+		host = &hostCopy
+		hostNames = hostNamesCopy
+	}
 	pkgPath := filepath.Join(workDir, "package.json")
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {

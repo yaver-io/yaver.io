@@ -1,3 +1,9 @@
+// Bundled host manifest. Loaded via require so Metro inlines it at
+// build time — guarantees the JS side reports exactly what the iOS /
+// Android binary linked, without a native bridge hop. Source of truth
+// is mobile/sdk-manifest.json (TestSDKManifestInSync gates drift).
+import sdkManifestJSON from "../../sdk-manifest.json";
+
 export type NativeBuildConsumerContract = {
   consumerVersion?: string;
   consumerBuild?: string;
@@ -8,10 +14,20 @@ export type NativeBuildConsumerContract = {
   consumerRuntimeFamilies?: Array<Record<string, unknown>>;
 };
 
+// hostNativeModulesFromBundledManifest extracts the {name: version}
+// map from the bundled sdk-manifest.json. Used as the dynamic
+// handshake payload (consumerNativeModules) so the agent's compat
+// check sees what THIS host actually links — not a stale agent copy.
+export function hostNativeModulesFromBundledManifest(): Record<string, string> {
+  const m = (sdkManifestJSON as { nativeModules?: Record<string, string> })?.nativeModules;
+  return m && typeof m === "object" ? m : {};
+}
+
 export function buildNativeBuildRequest(
   platform: "ios" | "android",
   contract?: NativeBuildConsumerContract,
 ) {
+  const nativeModules = hostNativeModulesFromBundledManifest();
   return {
     platform,
     ...(contract?.consumerVersion ? { consumerVersion: contract.consumerVersion } : {}),
@@ -24,6 +40,9 @@ export function buildNativeBuildRequest(
     ...(contract?.consumerDefaultRuntimeFamilyId ? { consumerDefaultRuntimeFamilyId: contract.consumerDefaultRuntimeFamilyId } : {}),
     ...(Array.isArray(contract?.consumerRuntimeFamilies) && contract.consumerRuntimeFamilies.length > 0
       ? { consumerRuntimeFamilies: contract.consumerRuntimeFamilies }
+      : {}),
+    ...(Object.keys(nativeModules).length > 0
+      ? { consumerNativeModules: nativeModules }
       : {}),
   };
 }
