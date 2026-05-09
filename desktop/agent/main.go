@@ -4774,6 +4774,12 @@ func runStatus() {
 	}
 	fmt.Printf("Backend:  %s\n", cfg.ConvexSiteURL)
 
+	// Git identity + GH/GitLab credential readiness. Independent of agent
+	// state, so we surface it here whether the agent is running or not —
+	// users hit "fatal: empty ident name" when the local config is missing
+	// long before any task fails.
+	renderGitStatusBlock(os.Stdout, collectGitStatusSummary(), "")
+
 	// Validate token with a short timeout (3s) — don't block the user
 	statusClient := &http.Client{Timeout: 3 * time.Second}
 	req, reqErr := newBearerRequest("GET", cfg.ConvexSiteURL+"/auth/validate", cfg.AuthToken, nil)

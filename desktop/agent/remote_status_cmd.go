@@ -66,6 +66,8 @@ type remoteAgentStatusReport struct {
 	Info             map[string]interface{} `json:"info,omitempty"`
 	HTTPStatusInfo   int                    `json:"httpStatusInfo,omitempty"`
 	HTTPStatusRunner int                    `json:"httpStatusRunners,omitempty"`
+	Git              *gitStatusSummary      `json:"git,omitempty"`
+	HTTPStatusGit    int                    `json:"httpStatusGit,omitempty"`
 }
 
 func fetchRemoteAgentStatusByHint(ctx context.Context, deviceHint string) (*remoteAgentStatusReport, error) {
@@ -268,6 +270,32 @@ func fetchRemoteAgentStatus(ctx context.Context, candidates []RemoteAgentCandida
 			report.Runners = resp.Runners
 		}
 	}
+
+	// Pull git identity + GH/GitLab credential readiness from the same
+	// /machine/onboarding/status endpoint the mobile/web onboarding screens
+	// already use. Failure is non-fatal — older agent builds (<1.99.x)
+	// without gitConfig in the response just leave the section empty.
+	gitCtx, gitCancel := context.WithTimeout(ctx, 8*time.Second)
+	_, gstatus, graw, gerr := doRemoteAgentRequest(gitCtx, candidates, token, http.MethodGet, "/machine/onboarding/status", nil, 6*time.Second)
+	gitCancel()
+	report.HTTPStatusGit = gstatus
+	if gerr == nil && gstatus >= 200 && gstatus < 300 && len(graw) > 0 {
+		var resp struct {
+			Providers []machineOnboardingProviderStatus `json:"providers"`
+			GitConfig gitUserConfig                     `json:"gitConfig"`
+		}
+		if err := json.Unmarshal(graw, &resp); err == nil {
+			summary := gitStatusSummary{Config: resp.GitConfig}
+			for _, p := range resp.Providers {
+				if p.ID == "github" || p.ID == "gitlab" {
+					summary.Providers = append(summary.Providers, p)
+				}
+			}
+			if summary.Config.UserName != "" || summary.Config.UserEmail != "" || len(summary.Providers) > 0 {
+				report.Git = &summary
+			}
+		}
+	}
 	return report, nil
 }
 
@@ -375,6 +403,9 @@ func renderRemoteAgentStatus(report *remoteAgentStatusReport, asJSON bool) {
 	}
 	if report.TodoTotal != nil {
 		fmt.Printf("  todo:           pending=%v total=%v\n", report.TodoCount, report.TodoTotal)
+	}
+	if report.Git != nil {
+		renderGitStatusBlock(os.Stdout, *report.Git, "  ")
 	}
 	if len(report.Runners) > 0 {
 		fmt.Println("  runners:")

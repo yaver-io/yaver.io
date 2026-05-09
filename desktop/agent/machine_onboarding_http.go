@@ -14,6 +14,7 @@ func (s *HTTPServer) handleMachineOnboardingStatus(w http.ResponseWriter, r *htt
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":        true,
 		"providers": status.Providers,
+		"gitConfig": collectGitUserConfig(),
 	})
 }
 
