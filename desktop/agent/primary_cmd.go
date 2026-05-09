@@ -67,6 +67,9 @@ func runPrimary(args []string) {
 	case "stop":
 		runPrimaryStop(ctx, args[1:])
 		return
+	case "uninstall":
+		runPrimaryUninstall(ctx, args[1:])
+		return
 	}
 	if runner := normalizePrimaryRunnerQuickArg(args[0]); runner != "" {
 		runPrimaryRunnerQuickFlow(ctx, runner, args[1:])
@@ -862,6 +865,29 @@ func runPrimarySet(ctx context.Context, args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Primary device set to %s (%s).\n", chosen.Name, chosen.DeviceID[:min(8, len(chosen.DeviceID))])
+}
+
+// runPrimaryUninstall sugar for `yaver uninstall <primaryAlias>`.
+// Resolves the current primary device and triggers the streaming
+// remote-uninstall flow against it.
+func runPrimaryUninstall(ctx context.Context, args []string) {
+	yes := false
+	for _, a := range args {
+		switch a {
+		case "--yes", "-y":
+			yes = true
+		}
+	}
+	_, _, target, err := resolvePrimaryDeviceForRemote(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "primary uninstall: %v\n", err)
+		os.Exit(1)
+	}
+	hint := strings.TrimSpace(target.Alias)
+	if hint == "" {
+		hint = target.DeviceID
+	}
+	runRemoteUninstall(hint, yes)
 }
 
 // runPrimaryPick is the interactive companion to `yaver primary set`.

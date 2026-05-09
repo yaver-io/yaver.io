@@ -34,6 +34,13 @@ export default function AccountsView() {
   const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
   const [removingMachine, setRemovingMachine] = useState(false);
   const [machineRemoveMessage, setMachineRemoveMessage] = useState<string | null>(null);
+  // Streaming uninstall progress: each entry is one step the remote
+  // agent emits via /streams/<machine-remove:...>. Rendered live until
+  // the machine_remove_result event arrives or the connection drops
+  // (the agent process has exited).
+  const [machineRemoveSteps, setMachineRemoveSteps] = useState<
+    { step: string; status: string; detail: string; error?: string }[]
+  >([]);
 
   useEffect(() => { refresh(); }, []);
 
@@ -81,15 +88,49 @@ export default function AccountsView() {
     if (machineDeleteConfirm !== "delete my machine") return;
     setRemovingMachine(true);
     setMachineRemoveMessage(null);
+    setMachineRemoveSteps([]);
     try {
       const res = await agentClient.machineRemove(machineDeleteConfirm);
       if (!res?.ok) {
         throw new Error(res?.error || "Failed to remove machine");
       }
-      const manualSteps = Array.isArray(res?.manualSteps) ? ` Manual cleanup if needed: ${res.manualSteps.join(" | ")}` : "";
-      setMachineRemoveMessage(`Removal started for ${connectedMachine || "this machine"}.${manualSteps}`);
       setMachineDeleteConfirm("");
-      agentClient.disconnect();
+      // The agent returns a stream name we can subscribe to for live
+      // step-by-step progress. Old agents (pre-1.99.163) won't include
+      // it; in that case we keep the old "scheduled" toast behavior.
+      const streamName: string | undefined = res?.stream;
+      if (!streamName) {
+        const manualSteps = Array.isArray(res?.manualSteps) ? ` Manual cleanup if needed: ${res.manualSteps.join(" | ")}` : "";
+        setMachineRemoveMessage(`Removal started for ${connectedMachine || "this machine"}.${manualSteps}`);
+        agentClient.disconnect();
+        return;
+      }
+      const cleanup = agentClient.streamLog(streamName, (evt: any) => {
+        if (evt?.type === "machine_remove_step") {
+          setMachineRemoveSteps((prev) => {
+            // Collapse consecutive ok/skipped events for the same step
+            // so the UI shows step lines instead of a noisy duplicate
+            // log. Errors and running events always append.
+            if (prev.length > 0) {
+              const last = prev[prev.length - 1];
+              if (last.step === evt.step && last.status === "ok" && evt.status === "ok") {
+                const next = prev.slice(0, -1);
+                next.push({ step: evt.step, status: evt.status, detail: evt.detail || last.detail, error: evt.error });
+                return next;
+              }
+            }
+            return [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }];
+          });
+        } else if (evt?.type === "machine_remove_result") {
+          setMachineRemoveMessage(
+            evt.status === "error"
+              ? `Removal failed: ${evt.error || "see step list above"}`
+              : `${connectedMachine || "Machine"} entirely removed.`
+          );
+          cleanup();
+          agentClient.disconnect();
+        }
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to remove machine";
       setMachineRemoveMessage(message);
@@ -151,6 +192,26 @@ export default function AccountsView() {
           disabled={removingMachine || !agentClient.isConnected}
           className="mt-3 w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200 outline-none focus:border-red-500/50 disabled:opacity-50"
         />
+        {machineRemoveSteps.length > 0 ? (
+          <div className="mt-3 rounded-lg border border-surface-800 bg-surface-950/60 p-3 max-h-64 overflow-auto font-mono text-xs space-y-1">
+            {machineRemoveSteps.map((s, i) => (
+              <div key={i} className="flex gap-2">
+                <span className={
+                  s.status === "ok" ? "text-emerald-400 w-3" :
+                  s.status === "error" ? "text-red-400 w-3" :
+                  s.status === "skipped" ? "text-surface-500 w-3" :
+                  "text-amber-300 w-3"
+                }>
+                  {s.status === "ok" ? "✓" : s.status === "error" ? "✗" : s.status === "skipped" ? "—" : "›"}
+                </span>
+                <span className="text-surface-400 min-w-[7rem]">{s.step}</span>
+                <span className={s.status === "error" ? "text-red-300 flex-1" : "text-surface-300 flex-1"}>
+                  {s.error ? s.error : s.detail}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {machineRemoveMessage ? (
           <p className="mt-3 text-xs text-surface-400">{machineRemoveMessage}</p>
         ) : null}

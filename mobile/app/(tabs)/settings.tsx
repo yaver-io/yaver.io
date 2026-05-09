@@ -123,6 +123,12 @@ export default function SettingsScreen() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [machineDeleteConfirm, setMachineDeleteConfirm] = useState("");
   const [removingMachine, setRemovingMachine] = useState(false);
+  // Streaming uninstall progress: mirrors the web AccountsView. Each
+  // entry is one step the remote agent emits via /streams/<machine-remove:...>.
+  // Cleared when the user starts a fresh removal.
+  const [machineRemoveSteps, setMachineRemoveSteps] = useState<
+    { step: string; status: string; detail: string; error?: string }[]
+  >([]);
   const [identities, setIdentities] = useState<AuthIdentity[]>([]);
   const [linkingProvider, setLinkingProvider] = useState<OAuthProvider | null>(null);
   const [unlinkingProvider, setUnlinkingProvider] = useState<AuthIdentity["provider"] | null>(null);
@@ -1388,23 +1394,44 @@ export default function SettingsScreen() {
       return;
     }
     setRemovingMachine(true);
+    setMachineRemoveSteps([]);
     try {
       const res = await quicClient.machineRemove(machineDeleteConfirm);
       if (!res?.ok) {
         throw new Error(res?.error || "Failed to remove machine");
       }
-      disconnect();
       setMachineDeleteConfirm("");
-      setTimeout(() => {
-        refreshDevices().catch(() => {});
-      }, 1500);
-      const manualSteps = Array.isArray(res?.manualSteps) ? res.manualSteps.join("\n") : "";
-      Alert.alert(
-        "Machine removal started",
-        manualSteps
-          ? `Yaver is being removed from ${activeDevice.name}.\n\nManual package cleanup if needed:\n${manualSteps}`
-          : `Yaver is being removed from ${activeDevice.name}.`,
-      );
+      // Subscribe to the stream the agent returns so the user sees
+      // each step land in real time. Old agents (pre-1.99.163) won't
+      // include a stream — fall back to the old Alert behavior.
+      const streamName: string | undefined = res?.stream;
+      if (!streamName) {
+        disconnect();
+        setTimeout(() => { refreshDevices().catch(() => {}); }, 1500);
+        const manualSteps = Array.isArray(res?.manualSteps) ? res.manualSteps.join("\n") : "";
+        Alert.alert(
+          "Machine removal started",
+          manualSteps
+            ? `Yaver is being removed from ${activeDevice.name}.\n\nManual package cleanup if needed:\n${manualSteps}`
+            : `Yaver is being removed from ${activeDevice.name}.`,
+        );
+        return;
+      }
+      const cleanup = quicClient.streamLog(streamName, (evt: any) => {
+        if (evt?.type === "machine_remove_step") {
+          setMachineRemoveSteps((prev) => [...prev, { step: evt.step, status: evt.status, detail: evt.detail || "", error: evt.error }]);
+        } else if (evt?.type === "machine_remove_result") {
+          cleanup();
+          disconnect();
+          setTimeout(() => { refreshDevices().catch(() => {}); }, 1500);
+          Alert.alert(
+            evt.status === "error" ? "Removal failed" : "Machine removed",
+            evt.status === "error"
+              ? (evt.error || "See the step list above.")
+              : `Yaver has been entirely removed from ${activeDevice.name}.`,
+          );
+        }
+      });
     } catch (error) {
       Alert.alert("Error", error instanceof Error ? error.message : "Failed to remove machine.");
     } finally {
@@ -4681,6 +4708,21 @@ export default function SettingsScreen() {
                 {removingMachine ? "Removing..." : activeDevice?.isGuest ? "Owner machine required" : "Remove Yaver From This Host"}
               </Text>
             </Pressable>
+            {machineRemoveSteps.length > 0 ? (
+              <View style={{ marginTop: 12, padding: 8, borderRadius: 8, backgroundColor: c.bgCardElevated, borderWidth: 1, borderColor: c.border }}>
+                {machineRemoveSteps.map((s, i) => (
+                  <View key={i} style={{ flexDirection: "row", gap: 6, paddingVertical: 2 }}>
+                    <Text style={{ width: 14, fontFamily: "monospace", fontSize: 11, color: s.status === "ok" ? "#10b981" : s.status === "error" ? c.error : s.status === "skipped" ? c.textMuted : "#f59e0b" }}>
+                      {s.status === "ok" ? "✓" : s.status === "error" ? "✗" : s.status === "skipped" ? "—" : "›"}
+                    </Text>
+                    <Text style={{ minWidth: 96, fontFamily: "monospace", fontSize: 11, color: c.textMuted }}>{s.step}</Text>
+                    <Text style={{ flex: 1, fontFamily: "monospace", fontSize: 11, color: s.status === "error" ? c.error : c.textSecondary }}>
+                      {s.error ? s.error : s.detail}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.error + "30" }]}>
             <Text style={[styles.dangerDescription, { color: c.textMuted }]}>

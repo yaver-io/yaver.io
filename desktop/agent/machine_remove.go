@@ -26,11 +26,24 @@ func machineRemovalManualSteps() []string {
 	}
 }
 
-func schedulePermanentMachineRemoval(onShutdown func()) {
+// machineRemoveProgress is the callback invoked between every stage
+// of performPermanentMachineRemoval. step is a stable identifier
+// (convex_dereg, systemd_stop, shell_rc, ssh_keys, linger, config_dir).
+// status ∈ {"running","ok","skipped","error"}. detail is a one-line
+// human-readable message; err is non-nil only on "error".
+//
+// nil progress is allowed — old call-sites pre-1.99.163 still work
+// without modification.
+type machineRemoveProgress func(step, status, detail string, err error)
+
+func schedulePermanentMachineRemoval(onShutdown func(), progress machineRemoveProgress) {
 	go func() {
 		time.Sleep(350 * time.Millisecond)
-		if err := performPermanentMachineRemoval(); err != nil {
+		if err := performPermanentMachineRemoval(progress); err != nil {
 			log.Printf("[machine/remove] permanent removal failed: %v", err)
+		}
+		if progress != nil {
+			progress("done", "ok", "agent process exiting", nil)
 		}
 		if onShutdown != nil {
 			onShutdown()
@@ -38,41 +51,65 @@ func schedulePermanentMachineRemoval(onShutdown func()) {
 	}()
 }
 
-func performPermanentMachineRemoval() error {
+func performPermanentMachineRemoval(progress machineRemoveProgress) error {
+	emit := func(step, status, detail string, err error) {
+		if progress != nil {
+			progress(step, status, detail, err)
+		}
+	}
 	var errs []string
 
+	emit("convex_dereg", "running", "deleting device row + cascading sdkTokens / projects / primary pointer", nil)
 	if cfg, err := LoadConfig(); err == nil {
 		if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" && cfg.DeviceID != "" {
 			if err := RemoveDeviceShutdown(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); err != nil {
 				errs = append(errs, "convex unregister: "+err.Error())
+				emit("convex_dereg", "error", "remote dereg failed; falling back to mark-offline", err)
 				if markErr := MarkOffline(cfg.ConvexSiteURL, cfg.AuthToken, cfg.DeviceID); markErr != nil {
 					errs = append(errs, "mark offline: "+markErr.Error())
+					emit("convex_dereg", "error", "mark-offline fallback also failed (network?)", markErr)
+				} else {
+					emit("convex_dereg", "ok", "marked offline (Convex will purge via heartbeat staleness)", nil)
 				}
+			} else {
+				emit("convex_dereg", "ok", "device + sdkTokens + projects + primaryDeviceId cleared", nil)
 			}
+		} else {
+			emit("convex_dereg", "skipped", "no auth token / device id — nothing to dereg", nil)
 		}
 	} else {
 		errs = append(errs, "load config: "+err.Error())
+		emit("convex_dereg", "error", "could not load config", err)
 	}
 
+	emit("services", "running", "stopping + removing systemd / launchd unit", nil)
 	if err := removeInstalledYaverServices(); err != nil {
 		errs = append(errs, "remove services: "+err.Error())
+		emit("services", "error", "service removal partial", err)
+	} else {
+		emit("services", "ok", "agent service stopped + unit file removed", nil)
 	}
 
-	// Strip authorized_keys before nuking ~/.yaver — once the agent's
-	// home is gone the OS user might still log in, but any pubkey the
-	// previous bootstrap pushed should be gone with the rest of the
-	// install. Done here (not after RemoveAll) so even a config-dir
-	// resolution failure doesn't strand the ssh entries.
+	// Cleanups outside ~/.yaver: shell rc PATH block, ssh
+	// authorized_keys yaver-bootstrap entries, linger flag.
+	emit("extra_cleanup", "running", "shell rc + ssh authorized_keys + linger", nil)
 	for _, line := range uninstallExtraCleanup() {
 		log.Printf("[machine/remove] %s", line)
+		emit("extra_cleanup", "ok", line, nil)
 	}
+	emit("extra_cleanup", "ok", "shell rc + ssh keys + linger cleared", nil)
 
+	emit("config_dir", "running", "removing ~/.yaver", nil)
 	if configDir, err := ConfigDir(); err == nil {
 		if err := os.RemoveAll(configDir); err != nil {
 			errs = append(errs, "remove ~/.yaver: "+err.Error())
+			emit("config_dir", "error", "~/.yaver removal failed", err)
+		} else {
+			emit("config_dir", "ok", "~/.yaver removed (auth token, vault, logs, blobs)", nil)
 		}
 	} else {
 		errs = append(errs, "resolve config dir: "+err.Error())
+		emit("config_dir", "error", "could not resolve ~/.yaver path", err)
 	}
 
 	if len(errs) > 0 {

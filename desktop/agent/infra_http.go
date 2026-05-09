@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 type InfraNetworkInterface struct {
@@ -367,13 +368,56 @@ func (s *HTTPServer) handleMachineRemove(w http.ResponseWriter, r *http.Request)
 		jsonError(w, http.StatusBadRequest, fmt.Sprintf("phrase must equal %q", machineRemovalPhrase))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	// Stream every step of the uninstall to a named log stream so the
+	// caller (web/mobile/CLI) can subscribe via GET /streams/{name}
+	// and watch each phase land in real time. Pattern matches
+	// /install/<tool>: 202 Accepted with {stream: "<name>"}, structured
+	// events on the stream, final {type:"result"} before the agent exits.
+	streamName := fmt.Sprintf("machine-remove:%d", time.Now().UnixNano())
+	progress := newMachineRemoveStreamProgress(s, streamName)
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"ok":          true,
 		"action":      "machine_remove",
 		"phase":       "scheduled",
+		"stream":      streamName,
 		"manualSteps": machineRemovalManualSteps(),
 	})
-	schedulePermanentMachineRemoval(s.onShutdown)
+	schedulePermanentMachineRemoval(s.onShutdown, progress)
+}
+
+// newMachineRemoveStreamProgress wires a machineRemoveProgress
+// callback to the named log stream. Each step becomes one structured
+// event { type:"machine_remove_step", step, status, detail, error? }
+// plus a final { type:"machine_remove_result" } emitted by the
+// schedulePermanentMachineRemoval goroutine itself when it sees the
+// "done" sentinel. Returns nil if streams are disabled on this agent
+// (so the call-site falls back to silent runs).
+func newMachineRemoveStreamProgress(s *HTTPServer, streamName string) machineRemoveProgress {
+	if s == nil || s.streams == nil {
+		return nil
+	}
+	stream := s.streams.Get(streamName)
+	stream.Append("Starting machine removal — this agent will stream every step until it exits.")
+	return func(step, status, detail string, err error) {
+		evt := map[string]interface{}{
+			"type":   "machine_remove_step",
+			"step":   step,
+			"status": status,
+		}
+		if detail != "" {
+			evt["detail"] = detail
+		}
+		if err != nil {
+			evt["error"] = err.Error()
+		}
+		// Sentinel: the goroutine emits ("done","ok",...) right before
+		// onShutdown. Promote it to a result event so subscribers can
+		// distinguish "I am about to exit" from individual steps.
+		if step == "done" {
+			evt["type"] = "machine_remove_result"
+		}
+		stream.AppendEvent(evt)
+	}
 }
 
 func infraHostReboot() (string, error) {

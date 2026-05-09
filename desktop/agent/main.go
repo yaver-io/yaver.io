@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.162"
+const version = "1.99.163"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -1443,6 +1443,16 @@ func finalizeAuthConfig(cfg *Config, convexURL, token string, printSuccess, prin
 			fmt.Println("  Headless keep-awake: enabled while `yaver serve` is running")
 		}
 		fmt.Println()
+		// Browser-OAuth callers don't go through printHeadlessNextSteps,
+		// so add a short next-steps line so a fresh user knows what to
+		// run. Headless flow already prints its own (richer) variant.
+		if !printHeadlessSteps {
+			fmt.Println("Next:")
+			fmt.Println("  yaver primary       see your devices, pick a primary")
+			fmt.Println("  yaver code          terminal UI for AI-driven dev on this machine")
+			fmt.Println("  yaver ssh primary   SSH to your primary (auto-bootstraps keys)")
+			fmt.Println()
+		}
 	}
 	// Register reboot persistence (systemd user unit on Linux, launchd
 	// LaunchAgent on macOS, Scheduled Task on Windows) before forking
@@ -7259,23 +7269,38 @@ func summarizeRunnerAuthState(row runnerAuthStatusRow) string {
 
 func runUninstall() {
 	yes := false
+	target := ""
 	for _, a := range os.Args[2:] {
 		switch a {
 		case "--yes", "-y":
 			yes = true
 		case "--help", "-h":
-			fmt.Println("yaver uninstall — entirely remove Yaver from this machine.")
+			fmt.Println("yaver uninstall [<alias|deviceId>] — entirely remove Yaver.")
+			fmt.Println()
+			fmt.Println("Without arguments, uninstalls THIS machine. With a target,")
+			fmt.Println("triggers /machine/remove on the named remote box and streams")
+			fmt.Println("each step (Convex dereg, systemd stop, shell rc + ssh keys")
+			fmt.Println("cleanup, ~/.yaver removal) until the remote agent exits.")
 			fmt.Println()
 			fmt.Println("Removes ~/.yaver (auth token, vault, logs, blobs), the systemd /")
 			fmt.Println("launchd unit, the shell-rc PATH block from .bashrc/.zshrc/.profile,")
 			fmt.Println("yaver-bootstrap entries from ~/.ssh/authorized_keys, and deletes")
-			fmt.Println("this device from the public Yaver Convex backend (cascading to")
+			fmt.Println("the device from the public Yaver Convex backend (cascading to")
 			fmt.Println("its sdkTokens, projects, services, and primary-device pointer).")
 			fmt.Println()
 			fmt.Println("Flags:")
 			fmt.Println("  --yes, -y    skip the 'delete my machine' confirmation prompt")
 			return
+		default:
+			if !strings.HasPrefix(a, "-") && target == "" {
+				target = a
+			}
 		}
+	}
+
+	if target != "" {
+		runRemoteUninstall(target, yes)
+		return
 	}
 
 	if !yes {
@@ -7294,22 +7319,30 @@ func runUninstall() {
 	fmt.Println("Uninstalling Yaver...")
 
 	// Single canonical cleanup path — same code that runs when web /
-	// mobile trigger remote uninstall via POST /machine/remove.
-	// Convex device-row deletion + sdkTokens + primary-pointer cascade
-	// happens inside RemoveDeviceShutdown → backend removeDevice
-	// mutation. Local artifacts (systemd / launchd, ~/.yaver) are
-	// removed by removeInstalledYaverServices + os.RemoveAll on the
-	// config dir.
-	if err := performPermanentMachineRemoval(); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
-	} else {
-		fmt.Println("  Convex device record + ~/.yaver + service unit removed.")
+	// mobile trigger remote uninstall via POST /machine/remove. The
+	// progress callback prints each step as it happens so the user
+	// has the same real-time visibility the streaming endpoint gives
+	// to remote callers.
+	progress := func(step, status, detail string, err error) {
+		switch status {
+		case "running":
+			fmt.Printf("  [%s] %s\n", step, detail)
+		case "ok":
+			if detail != "" {
+				fmt.Printf("    ✓ %s\n", detail)
+			}
+		case "skipped":
+			fmt.Printf("    — %s (skipped)\n", detail)
+		case "error":
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "    ✗ %s: %v\n", step, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "    ✗ %s: %s\n", step, detail)
+			}
+		}
 	}
-
-	// Cleanups outside ~/.yaver: shell rc PATH, ssh authorized_keys
-	// yaver-bootstrap lines, linger flag.
-	for _, line := range uninstallExtraCleanup() {
-		fmt.Printf("  %s\n", line)
+	if err := performPermanentMachineRemoval(progress); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: %v\n", err)
 	}
 
 	if removed, note := uninstallPackageWrapper(); note != "" {

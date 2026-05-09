@@ -6536,11 +6536,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if !machineRemovalPhraseValid(args.Phrase) {
 			return mcpToolError(fmt.Sprintf("phrase must equal %q", machineRemovalPhrase))
 		}
-		schedulePermanentMachineRemoval(s.onShutdown)
+		streamName := fmt.Sprintf("machine-remove:%d", time.Now().UnixNano())
+		progress := newMachineRemoveStreamProgress(s, streamName)
+		schedulePermanentMachineRemoval(s.onShutdown, progress)
 		return mcpToolJSON(map[string]interface{}{
 			"ok":          true,
 			"action":      "machine_remove",
 			"phase":       "scheduled",
+			"stream":      streamName,
 			"manualSteps": machineRemovalManualSteps(),
 		})
 
