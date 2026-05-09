@@ -1367,6 +1367,58 @@ export function usePrimaryRunnerByDevice(token: string | null | undefined): {
   };
 }
 
+/**
+ * For each device whose Convex row says runnerId="opencode" but has no
+ * provider/model recorded, fetch the live opencode.json over the relay
+ * and surface its `model` field (e.g. "zai/glm-4.7") so the dropdowns
+ * can display the user's actual config instead of falling back to
+ * OPENCODE_PROVIDER_CATALOGUE[0] (Anthropic / Sonnet 4.6).
+ *
+ * Half-populated Convex rows happen when a user taps the "opencode"
+ * default-runner pill on mobile without going through OpenCodeConfigModal,
+ * which writes only `runnerId` and (worse) clears any prior model.
+ * Mobile is being patched in parallel; this hook covers existing rows.
+ */
+function useLiveOpenCodeByDevice(
+  devices: Device[],
+  runnerByDevice: Record<string, string>,
+  providerByDevice: Record<string, string>,
+  modelByDevice: Record<string, string>,
+  agentConnected: boolean,
+): Record<string, { provider: string; model: string }> {
+  const [live, setLive] = useState<Record<string, { provider: string; model: string }>>({});
+  const fetchedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!agentConnected) return;
+    let cancelled = false;
+    (async () => {
+      for (const d of devices) {
+        if (runnerByDevice[d.id] !== "opencode") continue;
+        if (providerByDevice[d.id] || modelByDevice[d.id]) continue;
+        if (fetchedRef.current.has(d.id)) continue;
+        fetchedRef.current.add(d.id);
+        try {
+          const cfg = await agentClient.openCodeConfig(d.id);
+          if (cancelled) return;
+          const m = (cfg?.model || "").trim();
+          if (!m) continue;
+          const slash = m.indexOf("/");
+          const provider = slash > 0 ? m.slice(0, slash) : "";
+          setLive((prev) => ({ ...prev, [d.id]: { provider, model: m } }));
+        } catch {
+          // Device unreachable / opencode not installed — leave the
+          // catalogue fallback in place. Allow a retry on next change.
+          fetchedRef.current.delete(d.id);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [devices, runnerByDevice, providerByDevice, modelByDevice, agentConnected]);
+
+  return live;
+}
+
 // Default model per runner when the user hasn't picked one yet.
 // Applied when the user selects a primary runner and has no prior
 // model choice, so `claude` seeds `opus-4-7` (user's explicit ask
@@ -1633,6 +1685,17 @@ export default function DevicesView({
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
+  // Backfill provider/model for opencode devices whose Convex row is
+  // half-populated (runnerId only). Reads opencode.json over the relay
+  // so the dropdowns show the device's actual model (e.g. zai/glm-4.7)
+  // instead of the static catalogue's first entry.
+  const liveOpenCodeByDevice = useLiveOpenCodeByDevice(
+    devices,
+    primaryRunnerByDevice,
+    primaryProviderByDevice,
+    primaryModelByDevice,
+    agentConnectionState === "connected",
+  );
   // Latest released agent version from GitHub. Drives the per-device
   // "✓ latest" / "update available" badge + the remote-update button.
   const latestAgentVersion = useLatestAgentVersion();
@@ -2180,8 +2243,9 @@ export default function DevicesView({
                             </select>
                           ) : null}
                           {primaryId === "opencode" ? (() => {
-                            const savedProvider = primaryProviderByDevice[device.id] || "";
-                            const savedModelFull = primaryModelByDevice[device.id] || "";
+                            const liveCfg = liveOpenCodeByDevice[device.id];
+                            const savedProvider = primaryProviderByDevice[device.id] || liveCfg?.provider || "";
+                            const savedModelFull = primaryModelByDevice[device.id] || liveCfg?.model || "";
                             const inferredProviderId = savedProvider
                               || (savedModelFull.includes("/") ? savedModelFull.split("/")[0] : "")
                               || OPENCODE_PROVIDER_CATALOGUE[0].id;

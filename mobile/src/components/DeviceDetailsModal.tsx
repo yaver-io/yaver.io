@@ -754,7 +754,28 @@ function CodingAgentsSection({ device }: { device: Device }) {
               onPress={async () => {
                 setDefaultBusy(id);
                 try {
-                  await setPrimaryRunnerForDevice(device.id, id);
+                  // For opencode the real model + provider live in
+                  // opencode.json on the agent, not in the static
+                  // CODING_AGENTS map. Fetch them so Convex stores the
+                  // user's actual config (e.g. zai / glm-4.7) instead
+                  // of leaving model+provider empty — which would make
+                  // every other surface (web devices view, sidebar)
+                  // fall back to its own first-catalogue guess.
+                  if (id === "opencode") {
+                    const cfg = await quicClient.getOpenCodeConfig(target);
+                    const m = (cfg?.model || "").trim();
+                    const slash = m.indexOf("/");
+                    const providerHint = slash > 0 ? m.slice(0, slash) : "";
+                    await setPrimaryRunnerForDevice(
+                      device.id,
+                      id,
+                      m || null,
+                      null,
+                      providerHint || null,
+                    );
+                  } else {
+                    await setPrimaryRunnerForDevice(device.id, id);
+                  }
                 } catch (err: any) {
                   Alert.alert("Failed", err?.message || "Could not save default runner");
                 } finally {

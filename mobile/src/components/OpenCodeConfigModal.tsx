@@ -113,11 +113,19 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
     }
     if (res.config) setConfig(res.config);
     if (activeDevice) {
+      // opencode model strings are "<provider>/<model>" (e.g.
+      // "zai/glm-4.7"). Surface the provider half to Convex too —
+      // without it, web's DevicesView can't infer which catalogue
+      // entry to highlight and falls back to OPENCODE_PROVIDER_CATALOGUE[0].
+      const m = (res.config?.model || "").trim();
+      const slash = m.indexOf("/");
+      const providerHint = slash > 0 ? m.slice(0, slash) : "";
       void setPrimaryRunnerForDevice(
         activeDevice.id,
         "opencode",
-        res.config?.model || null,
+        m || null,
         res.config?.defaultAgent || null,
+        providerHint || null,
       ).catch(() => {});
     }
     Alert.alert("Saved", "OpenCode config updated.");

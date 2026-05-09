@@ -1320,12 +1320,13 @@ export class QuicClient {
   // connected device. All fields are optional in the patch body —
   // omit a key to leave it unchanged.
 
-  async getOpenCodeConfig(): Promise<OpenCodeConfigSummary | null> {
+  async getOpenCodeConfig(target?: string): Promise<OpenCodeConfigSummary | null> {
     if (!this.isConnected && !this.hasConnectionInfo) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/runner/opencode/config`, {
-        headers: this.authHeaders,
-      });
+      const url = target
+        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner/opencode/config`
+        : `${this.baseUrl}/runner/opencode/config`;
+      const res = await fetch(url, { headers: this.authHeaders });
       if (!res.ok) return null;
       const data = await res.json();
       return (data?.config || null) as OpenCodeConfigSummary | null;

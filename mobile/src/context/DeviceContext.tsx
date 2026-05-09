@@ -1570,6 +1570,51 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     })();
   }, [token, TUNNELS_KEY]);
 
+  // Backfill provider+model for opencode devices whose Convex row is
+  // half-populated (runnerId only — happens when a user taps the
+  // opencode runner pill before configuring it via OpenCodeConfigModal).
+  // Reads opencode.json over the relay so the YaverInfo native mirror
+  // (and any UI consumer) sees the device's actual model (e.g.
+  // "zai/glm-4.7") instead of an empty string. The mirror at line ~1330
+  // pushes the resolved model into iOS UserDefaults; without this
+  // backfill the shake-feedback flow falls back to Claude on devices
+  // where the user has actually configured opencode + GLM.
+  const liveOpenCodeFetchedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!quicClient.isConnected) return;
+    let cancelled = false;
+    (async () => {
+      for (const [deviceId, runnerId] of Object.entries(primaryRunnerByDevice)) {
+        if (runnerId !== "opencode") continue;
+        if (primaryProviderByDevice[deviceId] || primaryModelByDevice[deviceId]) continue;
+        if (liveOpenCodeFetchedRef.current.has(deviceId)) continue;
+        liveOpenCodeFetchedRef.current.add(deviceId);
+        try {
+          const target = activeDevice?.id === deviceId ? undefined : deviceId;
+          const cfg = await quicClient.getOpenCodeConfig(target);
+          if (cancelled) return;
+          const m = (cfg?.model || "").trim();
+          if (!m) continue;
+          const slash = m.indexOf("/");
+          const provider = slash > 0 ? m.slice(0, slash) : "";
+          setPrimaryModelByDeviceState((prev) =>
+            prev[deviceId] === m ? prev : { ...prev, [deviceId]: m },
+          );
+          if (provider) {
+            setPrimaryProviderByDeviceState((prev) =>
+              prev[deviceId] === provider ? prev : { ...prev, [deviceId]: provider },
+            );
+          }
+        } catch {
+          // Device unreachable / opencode not installed — allow retry
+          // on the next change tick.
+          liveOpenCodeFetchedRef.current.delete(deviceId);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [primaryRunnerByDevice, primaryProviderByDevice, primaryModelByDevice, activeDevice?.id]);
+
   // One-time relay onboarding alert after first login
   const onboardingChecked = useRef(false);
   useEffect(() => {
