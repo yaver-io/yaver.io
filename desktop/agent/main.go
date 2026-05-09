@@ -422,7 +422,7 @@ func main() {
 		// detected GitHub/GitLab tokens to one or more owned remote
 		// machines via the same /machine/onboarding/apply flow the
 		// dashboard uses. See git_push_creds_cmd.go.
-		runGit(os.Args[2:])
+		runGitCLI(os.Args[2:])
 	case "pipeline":
 		runPipeline(os.Args[2:])
 	case "loop":

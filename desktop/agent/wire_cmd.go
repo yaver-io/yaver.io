@@ -311,6 +311,28 @@ func iosDevicesFromXctrace(ctx context.Context) []wireDevice {
 }
 
 func listAndroidWireDevices(ctx context.Context) []wireDevice {
+	return androidDevicesFromAdb(ctx, false)
+}
+
+// listAndroidWirelessDevices returns Android devices currently reachable
+// over WiFi via `adb connect`. adb reports wireless-paired devices with
+// an IP:port serial (e.g. `192.168.1.42:5555`) — that's what we filter on.
+//
+// Pre-condition (one-time per device):
+//   - Android 11+: enable Wireless Debugging in Developer Options, run
+//     `yaver wireless pair-android <ip>:<port> <code>` to pair.
+//   - Older Android: cable + `adb tcpip 5555`, then `adb connect <ip>:5555`.
+//
+// Once paired, subsequent reboots usually re-attach automatically as long
+// as the phone is on the same WiFi.
+func listAndroidWirelessDevices(ctx context.Context) []wireDevice {
+	return androidDevicesFromAdb(ctx, true)
+}
+
+// androidDevicesFromAdb shells out to `adb devices -l` and returns either
+// the wired (USB) entries or the wireless (IP:port) entries. Emulators
+// (`emulator-*`) are always dropped.
+func androidDevicesFromAdb(ctx context.Context, wireless bool) []wireDevice {
 	if _, err := exec.LookPath("adb"); err != nil {
 		return nil
 	}
@@ -329,8 +351,11 @@ func listAndroidWireDevices(ctx context.Context) []wireDevice {
 			continue
 		}
 		serial := fields[0]
-		// Skip emulators — wire is for cable-attached only.
 		if strings.HasPrefix(serial, "emulator-") {
+			continue
+		}
+		isWireless := isAdbWirelessSerial(serial)
+		if wireless != isWireless {
 			continue
 		}
 		name := ""
@@ -347,6 +372,40 @@ func listAndroidWireDevices(ctx context.Context) []wireDevice {
 		})
 	}
 	return devs
+}
+
+// isAdbWirelessSerial reports whether an adb serial looks like a
+// wireless-paired device (IP:port). True positives:
+//   - 192.168.1.42:5555
+//   - 10.0.0.5:37123
+//   - [fe80::1%en0]:5555  (rare IPv6 case)
+//
+// False positives we explicitly avoid: `adb-XXXXXX-YYY._adb-tls-connect.`
+// mDNS hostnames returned by some adb versions on Android 11+ also
+// represent wireless devices, so treat those as wireless too.
+func isAdbWirelessSerial(serial string) bool {
+	if strings.Contains(serial, "._adb-tls-connect.") || strings.Contains(serial, "._adb-tls-pairing.") {
+		return true
+	}
+	// IPv6 form: [...]:port
+	if strings.HasPrefix(serial, "[") && strings.Contains(serial, "]:") {
+		return true
+	}
+	// IPv4 form: must contain at least one dot AND end with :<digits>.
+	colon := strings.LastIndex(serial, ":")
+	if colon <= 0 || colon == len(serial)-1 {
+		return false
+	}
+	host, port := serial[:colon], serial[colon+1:]
+	if !strings.Contains(host, ".") {
+		return false
+	}
+	for _, r := range port {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------- push ----------

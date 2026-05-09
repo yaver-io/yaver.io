@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -839,6 +840,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/git/provider/setup", s.auth(s.handleGitProviderSetup))
 	mux.HandleFunc("/git/provider/status", s.auth(s.handleGitProviderStatus))
 	mux.HandleFunc("/git/provider/repos", s.auth(s.handleGitProviderRepos))
+	// Device Flow (RFC 8628) — start a GitHub/GitLab device-code
+	// authorization on the agent and poll until the user approves it
+	// in any browser. Returns the user_code + verification_uri the
+	// caller should display, plus a session_id to poll. Token never
+	// reaches Convex; persistence shape matches /git/provider/setup.
+	// Specific routes registered before the catch-all /git/provider/
+	// remove handler below so they take precedence.
+	mux.HandleFunc("/git/provider/oauth/start", s.auth(s.handleGitProviderOAuthStart))
+	mux.HandleFunc("/git/provider/oauth/status", s.auth(s.handleGitProviderOAuthStatus))
 	// New repo creation — used by the mobile sandbox wizard's
 	// "Configure now" git step. Owner-only (uses the user's stored
 	// PAT to call the provider API on their behalf + commit a
@@ -1122,6 +1132,14 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/deploy/runs", s.auth(s.handleDeployRuns))
 	mux.HandleFunc("/deploy/runs/", s.auth(s.handleDeployRunDetail))
 	mux.HandleFunc("/deploy/diagnose", s.auth(s.handleDeployDiagnose))
+
+	// Cable + WiFi phone discovery — surfaces the same data as
+	// `yaver wire detect` / `yaver wireless detect` so the web dashboard
+	// and mobile app can list reachable phones per agent. Owner-auth only;
+	// nothing is persisted to Convex (privacy contract: device serials and
+	// IPs stay local to the agent).
+	mux.HandleFunc("/wire/devices", s.auth(s.handleWireDevices))
+	mux.HandleFunc("/wireless/devices", s.auth(s.handleWirelessDevices))
 
 	// Unified Runner surface (RUNNER_DEV.md Phase 1 + Phase 2). Owner-auth on
 	// every path; guest tiers (RunnerView / RunnerSubmit) defined in
@@ -9787,6 +9805,79 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolJSON(mcpMachineOnboardingRemoveMulti(a.DeviceIDs, req))
 		}
 		return mcpToolJSON(mcpMachineOnboardingRemove(a.DeviceID, req))
+	case "git_push_creds":
+		var a gitPushCredsMCPArgs
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpGitPushCreds(a))
+	case "git_oauth_start":
+		var a struct {
+			Provider string `json:"provider"`
+			Host     string `json:"host"`
+			DeviceID string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.DeviceID) != "" {
+			payload, _ := json.Marshal(map[string]string{"provider": a.Provider, "host": a.Host})
+			status, body, err := proxyToDevice(context.Background(), "git_oauth_start", strings.TrimSpace(a.DeviceID), http.MethodPost, "/git/provider/oauth/start", payload)
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			if status/100 != 2 {
+				return mcpToolError(string(body))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		sess, err := startGitOAuthDevice(context.Background(), a.Provider, a.Host)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(map[string]any{
+			"session_id":       sess.ID,
+			"provider":         sess.Provider,
+			"host":             sess.Host,
+			"user_code":        sess.UserCode,
+			"verification_uri": sess.VerificationURI,
+			"interval":         sess.Interval,
+			"expires_at":       sess.ExpiresAt.Unix(),
+			"byo_client":       sess.BYOClient,
+		})
+	case "git_oauth_status":
+		var a struct {
+			SessionID string `json:"session_id"`
+			DeviceID  string `json:"device_id"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		if strings.TrimSpace(a.SessionID) == "" {
+			return mcpToolError("session_id is required")
+		}
+		if strings.TrimSpace(a.DeviceID) != "" {
+			path := "/git/provider/oauth/status?session=" + url.QueryEscape(a.SessionID)
+			status, body, err := proxyToDevice(context.Background(), "git_oauth_status", strings.TrimSpace(a.DeviceID), http.MethodGet, path, nil)
+			if err != nil {
+				return mcpToolError(err.Error())
+			}
+			if status/100 != 2 {
+				return mcpToolError(string(body))
+			}
+			return mcpToolJSON(json.RawMessage(body))
+		}
+		sess, ok := getGitOAuthSession(a.SessionID)
+		if !ok {
+			return mcpToolJSON(map[string]any{"state": "unknown", "error": "session not found"})
+		}
+		return mcpToolJSON(map[string]any{
+			"session_id":       sess.ID,
+			"provider":         sess.Provider,
+			"host":             sess.Host,
+			"user_code":        sess.UserCode,
+			"verification_uri": sess.VerificationURI,
+			"interval":         sess.Interval,
+			"expires_at":       sess.ExpiresAt.Unix(),
+			"state":            sess.State,
+			"username":         sess.Username,
+			"error":            sess.Error,
+			"byo_client":       sess.BYOClient,
+		})
 	case "yaver_auth_unlink":
 		var a struct {
 			Provider string `json:"provider"`
