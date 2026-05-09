@@ -522,6 +522,7 @@ export interface UserSettings {
   tunnelUrl?: string;
   speechProvider?: SpeechProvider;
   speechApiKey?: string;
+  ttsProvider?: TtsProvider;
   openAiApiKey?: string;
   glmApiKey?: string;
   anthropicApiKey?: string;
@@ -611,6 +612,7 @@ export async function saveKeyStoragePreference(pref: KeyStorage): Promise<void> 
 }
 
 export type SpeechProvider = "on-device" | "openai" | "deepgram" | "assemblyai";
+export type TtsProvider = "device" | "openai";
 
 export interface AiRunner {
   runnerId: string;

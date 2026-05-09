@@ -28,8 +28,8 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
-import { SPEECH_PROVIDERS } from "../../src/lib/speech";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
+import { SPEECH_PROVIDERS, TTS_PROVIDERS } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
@@ -182,6 +182,7 @@ export default function SettingsScreen() {
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const [mobileCodingProvider, setMobileCodingProvider] = useState<"openai" | "glm">("openai");
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
   const [verbosity, setVerbosity] = useState(10);
   const [showSpeechConfig, setShowSpeechConfig] = useState(false);
   const [isSavingSpeech, setIsSavingSpeech] = useState(false);
@@ -669,6 +670,7 @@ export default function SettingsScreen() {
       if (s.customRunnerCommand) setCustomRunnerCommand(s.customRunnerCommand);
       if (s.speechProvider) setSpeechProvider(s.speechProvider);
       if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);
+      if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
       if (s.verbosity !== undefined) setVerbosity(s.verbosity);
       // Load speech API key — prefer local, fall back to cloud
       const localSpeechKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
@@ -678,8 +680,13 @@ export default function SettingsScreen() {
         setSpeechApiKey(s.speechApiKey);
       }
       const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
-      if (localOpenAi) setOpenAiApiKey(localOpenAi);
-      else if (typeof s.openAiApiKey === "string") setOpenAiApiKey(s.openAiApiKey);
+      if (localOpenAi) {
+        setOpenAiApiKey(localOpenAi);
+        if (!localSpeechKey && !s.speechApiKey && s.ttsProvider === "openai") setSpeechApiKey(localOpenAi);
+      } else if (typeof s.openAiApiKey === "string") {
+        setOpenAiApiKey(s.openAiApiKey);
+        if (!localSpeechKey && !s.speechApiKey && s.ttsProvider === "openai") setSpeechApiKey(s.openAiApiKey);
+      }
       const localGlm = await getLocalSecret(LOCAL_KEYS.glmApiKey);
       if (localGlm) setGlmApiKey(localGlm);
       else if (typeof s.glmApiKey === "string") setGlmApiKey(s.glmApiKey);
@@ -1782,7 +1789,257 @@ export default function SettingsScreen() {
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
-        {/* Profile section */}
+        {/* Machine + voice controls */}
+        {/* Per-machine coding agent preference lives before toolchain sync:
+            choose the default runner for the connected box and drive remote
+            auth for Claude/Codex from the same compact surface. */}
+        {connectionStatus === "connected" && activeDevice && !activeDevice.isGuest ? (
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>
+              Coding agent - {activeDevice.name}
+            </Text>
+            <CodingAgentsSection device={activeDevice} />
+          </View>
+        ) : null}
+
+        {/* Voice Input & TTS */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Voice</Text>
+          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <Pressable
+              style={styles.aboutRow}
+              onPress={() => setShowSpeechConfig(!showSpeechConfig)}
+            >
+              <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Speech-to-Text</Text>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>
+                {speechProvider ? SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.name ?? speechProvider : "Not configured"}
+                {" \u25BE"}
+              </Text>
+            </Pressable>
+
+            {showSpeechConfig && (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
+                <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 4, marginBottom: 8 }]}>Voice Engine</Text>
+                <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                  {([
+                    { id: "local", title: "Local", sub: "Free", stt: "on-device" as SpeechProvider, tts: "device" as TtsProvider },
+                    { id: "openai", title: "OpenAI", sub: "API key", stt: "openai" as SpeechProvider, tts: "openai" as TtsProvider },
+                  ] as const).map((engine) => {
+                    const selected = speechProvider === engine.stt && ttsProvider === engine.tts;
+                    return (
+                      <Pressable
+                        key={engine.id}
+                        onPress={() => {
+                          setSpeechProvider(engine.stt);
+                          setTtsProvider(engine.tts);
+                          if (engine.tts === "openai") setTtsEnabled(true);
+                        }}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 10,
+                          paddingHorizontal: 12,
+                          borderRadius: 8,
+                          borderWidth: 1,
+                          backgroundColor: selected ? c.accent : c.bg,
+                          borderColor: selected ? c.accent : c.border,
+                        }}
+                      >
+                        <Text style={{ color: selected ? "#fff" : c.textPrimary, fontWeight: "600", fontSize: 13 }}>{engine.title}</Text>
+                        <Text style={{ color: selected ? "rgba(255,255,255,0.72)" : c.textMuted, fontSize: 11, marginTop: 2 }}>{engine.sub}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                {SPEECH_PROVIDERS.map((provider) => {
+                  const selected = speechProvider === provider.id;
+                  return (
+                    <Pressable
+                      key={provider.id}
+                      style={({ pressed }) => [
+                        {
+                          paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
+                          marginTop: 6, borderWidth: 1,
+                          backgroundColor: selected ? c.accent : c.bg,
+                          borderColor: selected ? c.accent : c.border,
+                        },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => setSpeechProvider(provider.id)}
+                    >
+                      <Text style={{ color: selected ? "#fff" : c.textPrimary, fontWeight: "500", fontSize: 14 }}>
+                        {provider.name}
+                      </Text>
+                      <Text style={{ color: selected ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 11, marginTop: 2 }}>
+                        {provider.description}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    {
+                      paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
+                      marginTop: 6, borderWidth: 1,
+                      backgroundColor: !speechProvider ? c.accent : c.bg,
+                      borderColor: !speechProvider ? c.accent : c.border,
+                    },
+                    pressed && { opacity: 0.7 },
+                  ]}
+                  onPress={() => setSpeechProvider(null)}
+                >
+                  <Text style={{ color: !speechProvider ? "#fff" : c.textPrimary, fontWeight: "500", fontSize: 14 }}>
+                    Disabled
+                  </Text>
+                  <Text style={{ color: !speechProvider ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 11, marginTop: 2 }}>
+                    No voice input - type only
+                  </Text>
+                </Pressable>
+
+                {(speechProvider && SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.requiresKey) || ttsProvider === "openai" ? (
+                  <TextInput
+                    style={[{
+                      borderWidth: 1, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12,
+                      fontSize: 14, marginTop: 10,
+                      backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary,
+                    }]}
+                    placeholder={ttsProvider === "openai" && speechProvider !== "openai" ? "OpenAI API key" : SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.keyPlaceholder ?? "API Key"}
+                    placeholderTextColor={c.textMuted}
+                    value={speechApiKey}
+                    onChangeText={setSpeechApiKey}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry
+                  />
+                ) : null}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    {
+                      marginTop: 12, paddingVertical: 10, borderRadius: 8,
+                      backgroundColor: c.accent, alignItems: "center",
+                    },
+                    pressed && { opacity: 0.7 },
+                    isSavingSpeech && { opacity: 0.5 },
+                  ]}
+                  onPress={async () => {
+                    if (!token) return;
+                    setIsSavingSpeech(true);
+                    try {
+                      const cloudSettings: Record<string, any> = {
+                        speechProvider: speechProvider ?? undefined,
+                        ttsEnabled,
+                        ttsProvider,
+                        verbosity,
+                      };
+                      if (keyStorage === "cloud" && speechApiKey) {
+                        cloudSettings.speechApiKey = speechApiKey;
+                        await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
+                      } else {
+                        if (speechApiKey) await saveLocalSecret(LOCAL_KEYS.speechApiKey, speechApiKey);
+                        else await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
+                        cloudSettings.speechApiKey = "";
+                      }
+                      await saveUserSettings(token, cloudSettings);
+                      setShowSpeechConfig(false);
+                    } catch {}
+                    setIsSavingSpeech(false);
+                  }}
+                  disabled={isSavingSpeech}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
+                    {isSavingSpeech ? "Saving..." : "Save"}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+
+            <View style={[styles.aboutRow, { justifyContent: "space-between" }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Read responses aloud</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>{ttsProvider === "openai" ? "Uses OpenAI text-to-speech" : "Uses local device text-to-speech"}</Text>
+              </View>
+              <Switch
+                value={ttsEnabled}
+                onValueChange={async (val) => {
+                  setTtsEnabled(val);
+                  if (token) saveUserSettings(token, { ttsEnabled: val, ttsProvider }).catch(() => {});
+                }}
+                trackColor={{ false: c.border, true: c.accent }}
+              />
+            </View>
+
+            {ttsEnabled && (
+              <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 16, paddingBottom: 12 }}>
+                {TTS_PROVIDERS.map((provider) => {
+                  const selected = ttsProvider === provider.id;
+                  return (
+                    <Pressable
+                      key={provider.id}
+                      onPress={() => {
+                        setTtsProvider(provider.id);
+                        if (token) saveUserSettings(token, { ttsProvider: provider.id, ttsEnabled: true }).catch(() => {});
+                      }}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 8,
+                        paddingHorizontal: 10,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        backgroundColor: selected ? c.accent + "30" : c.bgInput,
+                        borderColor: selected ? c.accent : c.border,
+                      }}
+                    >
+                      <Text style={{ color: selected ? c.accent : c.textSecondary, fontSize: 12, fontWeight: "600" }}>{provider.name}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+
+            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Response detail</Text>
+                <Text style={{ color: c.accent, fontWeight: "600", fontSize: 14 }}>{verbosity}/10</Text>
+              </View>
+              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2, marginBottom: 10 }}>
+                {verbosity <= 2 ? "Minimal - just confirm what was done"
+                  : verbosity <= 4 ? "Brief - summarize in a few sentences"
+                  : verbosity <= 6 ? "Moderate - key changes and reasoning"
+                  : verbosity <= 8 ? "Detailed - code changes and explanations"
+                  : "Full - everything: diffs, reasoning, alternatives"}
+              </Text>
+              <View style={{ flexDirection: "row", gap: 3 }}>
+                {Array.from({ length: 11 }).map((_, i) => (
+                  <Pressable
+                    key={i}
+                    onPress={async () => {
+                      setVerbosity(i);
+                      if (token) saveUserSettings(token, { verbosity: i }).catch(() => {});
+                    }}
+                    style={{
+                      flex: 1, height: 24, borderRadius: 4,
+                      backgroundColor: i <= verbosity ? c.accent : c.bg,
+                      borderWidth: 1,
+                      borderColor: i <= verbosity ? c.accent : c.border,
+                      alignItems: "center", justifyContent: "center",
+                    }}
+                  >
+                    {i === verbosity && (
+                      <Text style={{ color: "#fff", fontSize: 8, fontWeight: "700" }}>{i}</Text>
+                    )}
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Account</Text>
           <View style={[styles.profileCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
@@ -2527,7 +2784,7 @@ export default function SettingsScreen() {
                   onValueChange={async (val) => {
                     setFeedbackEnabled(val);
                     const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                    const cfg = { enabled: val, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                    const cfg = { enabled: val, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice, speechProvider, ttsProvider };
                     await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
                   }}
                   trackColor={{ true: c.accent }}
@@ -2544,7 +2801,7 @@ export default function SettingsScreen() {
                         onPress={async () => {
                           setFeedbackTrigger(t);
                           const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                          const cfg = { enabled: feedbackEnabled, trigger: t, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                          const cfg = { enabled: feedbackEnabled, trigger: t, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice, speechProvider, ttsProvider };
                           await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
                         }}
                         style={{
@@ -2568,7 +2825,7 @@ export default function SettingsScreen() {
                         onPress={async () => {
                           setFeedbackMode(m);
                           const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                          const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode: m, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice };
+                          const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode: m, blackBox: blackBoxEnabled, voiceEnabled: feedbackVoice, speechProvider, ttsProvider };
                           await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
                         }}
                         style={{
@@ -2594,7 +2851,7 @@ export default function SettingsScreen() {
                       onValueChange={async (val) => {
                         setBlackBoxEnabled(val);
                         const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: val, voiceEnabled: feedbackVoice };
+                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: val, voiceEnabled: feedbackVoice, speechProvider, ttsProvider };
                         await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
                       }}
                       trackColor={{ true: c.accent }}
@@ -2602,13 +2859,18 @@ export default function SettingsScreen() {
                   </View>
 
                   <View style={[styles.themeRow, { marginBottom: 8 }]}>
-                    <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Voice Input</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Voice Input</Text>
+                      <Text style={{ fontSize: 11, color: c.textMuted, marginTop: 2 }}>
+                        Uses Settings Voice engine: {speechProvider === "openai" || ttsProvider === "openai" ? "OpenAI" : "Local"}
+                      </Text>
+                    </View>
                     <Switch
                       value={feedbackVoice}
                       onValueChange={async (val) => {
                         setFeedbackVoice(val);
                         const fbKey = user?.id ? `@yaver/u/${user.id}/feedback_config` : "@yaver/feedback_config";
-                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: val };
+                        const cfg = { enabled: feedbackEnabled, trigger: feedbackTrigger, feedbackMode, blackBox: blackBoxEnabled, voiceEnabled: val, speechProvider, ttsProvider };
                         await AsyncStorage.setItem(fbKey, JSON.stringify(cfg));
                       }}
                       trackColor={{ true: c.accent }}
@@ -2786,20 +3048,6 @@ export default function SettingsScreen() {
             </View>
           </View>
         )}
-
-        {/* Per-device coding agent — mirrors the picker in
-            DeviceDetailsModal but accessible directly from Settings, so
-            users don't have to long-press the device card to set the
-            default runner. Scoped to the active device; shows nothing
-            until the user is connected to one. */}
-        {connectionStatus === "connected" && activeDevice && !activeDevice.isGuest ? (
-          <View style={styles.section}>
-            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>
-              Coding agent — {activeDevice.name}
-            </Text>
-            <CodingAgentsSection device={activeDevice} />
-          </View>
-        ) : null}
 
         {/* AI Runner */}
         <View style={styles.section}>
@@ -3753,194 +4001,6 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        {/* Voice Input & TTS */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Voice</Text>
-          <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            {/* Provider selection */}
-            <Pressable
-              style={styles.aboutRow}
-              onPress={() => setShowSpeechConfig(!showSpeechConfig)}
-            >
-              <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Speech-to-Text</Text>
-              <Text style={[styles.aboutValue, { color: c.accent }]}>
-                {speechProvider ? SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.name ?? speechProvider : "Not configured"}
-                {" \u25BE"}
-              </Text>
-            </Pressable>
-
-            {showSpeechConfig && (
-              <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
-                {SPEECH_PROVIDERS.map((provider) => {
-                  const selected = speechProvider === provider.id;
-                  return (
-                    <Pressable
-                      key={provider.id}
-                      style={({ pressed }) => [
-                        {
-                          paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
-                          marginTop: 6, borderWidth: 1,
-                          backgroundColor: selected ? c.accent : c.bg,
-                          borderColor: selected ? c.accent : c.border,
-                        },
-                        pressed && { opacity: 0.7 },
-                      ]}
-                      onPress={() => setSpeechProvider(provider.id)}
-                    >
-                      <Text style={{ color: selected ? "#fff" : c.textPrimary, fontWeight: "500", fontSize: 14 }}>
-                        {provider.name}
-                      </Text>
-                      <Text style={{ color: selected ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 11, marginTop: 2 }}>
-                        {provider.description}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-
-                {/* No provider option */}
-                <Pressable
-                  style={({ pressed }) => [
-                    {
-                      paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
-                      marginTop: 6, borderWidth: 1,
-                      backgroundColor: !speechProvider ? c.accent : c.bg,
-                      borderColor: !speechProvider ? c.accent : c.border,
-                    },
-                    pressed && { opacity: 0.7 },
-                  ]}
-                  onPress={() => setSpeechProvider(null)}
-                >
-                  <Text style={{ color: !speechProvider ? "#fff" : c.textPrimary, fontWeight: "500", fontSize: 14 }}>
-                    Disabled
-                  </Text>
-                  <Text style={{ color: !speechProvider ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 11, marginTop: 2 }}>
-                    No voice input — type only
-                  </Text>
-                </Pressable>
-
-                {/* API Key input for cloud providers */}
-                {speechProvider && SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.requiresKey && (
-                  <TextInput
-                    style={[{
-                      borderWidth: 1, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12,
-                      fontSize: 14, marginTop: 10,
-                      backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary,
-                    }]}
-                    placeholder={SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.keyPlaceholder ?? "API Key"}
-                    placeholderTextColor={c.textMuted}
-                    value={speechApiKey}
-                    onChangeText={setSpeechApiKey}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    secureTextEntry
-                  />
-                )}
-
-                {/* Save button */}
-                <Pressable
-                  style={({ pressed }) => [
-                    {
-                      marginTop: 12, paddingVertical: 10, borderRadius: 8,
-                      backgroundColor: c.accent, alignItems: "center",
-                    },
-                    pressed && { opacity: 0.7 },
-                    isSavingSpeech && { opacity: 0.5 },
-                  ]}
-                  onPress={async () => {
-                    if (!token) return;
-                    setIsSavingSpeech(true);
-                    try {
-                      const cloudSettings: Record<string, any> = {
-                        speechProvider: speechProvider ?? undefined,
-                        ttsEnabled,
-                        verbosity,
-                      };
-                      if (keyStorage === "cloud" && speechApiKey) {
-                        cloudSettings.speechApiKey = speechApiKey;
-                        await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
-                      } else {
-                        // Store key locally, clear from cloud
-                        if (speechApiKey) await saveLocalSecret(LOCAL_KEYS.speechApiKey, speechApiKey);
-                        else await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
-                        cloudSettings.speechApiKey = ""; // clear from Convex
-                      }
-                      await saveUserSettings(token, cloudSettings);
-                      setShowSpeechConfig(false);
-                    } catch {}
-                    setIsSavingSpeech(false);
-                  }}
-                  disabled={isSavingSpeech}
-                >
-                  <Text style={{ color: "#fff", fontWeight: "600", fontSize: 14 }}>
-                    {isSavingSpeech ? "Saving..." : "Save"}
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-
-            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
-
-            {/* TTS toggle */}
-            <View style={[styles.aboutRow, { justifyContent: "space-between" }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Read responses aloud</Text>
-                <Text style={{ color: c.textMuted, fontSize: 11 }}>Uses device text-to-speech</Text>
-              </View>
-              <Switch
-                value={ttsEnabled}
-                onValueChange={async (val) => {
-                  setTtsEnabled(val);
-                  if (token) {
-                    saveUserSettings(token, { ttsEnabled: val }).catch(() => {});
-                  }
-                }}
-                trackColor={{ false: c.border, true: c.accent }}
-              />
-            </View>
-
-            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
-
-            {/* Verbosity slider */}
-            <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Response detail</Text>
-                <Text style={{ color: c.accent, fontWeight: "600", fontSize: 14 }}>{verbosity}/10</Text>
-              </View>
-              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2, marginBottom: 10 }}>
-                {verbosity <= 2 ? "Minimal — just confirm what was done"
-                  : verbosity <= 4 ? "Brief — summarize in a few sentences"
-                  : verbosity <= 6 ? "Moderate — key changes and reasoning"
-                  : verbosity <= 8 ? "Detailed — code changes and explanations"
-                  : "Full — everything: diffs, reasoning, alternatives"}
-              </Text>
-              <View style={{ flexDirection: "row", gap: 3 }}>
-                {Array.from({ length: 11 }).map((_, i) => (
-                  <Pressable
-                    key={i}
-                    onPress={async () => {
-                      setVerbosity(i);
-                      if (token) {
-                        saveUserSettings(token, { verbosity: i }).catch(() => {});
-                      }
-                    }}
-                    style={{
-                      flex: 1, height: 24, borderRadius: 4,
-                      backgroundColor: i <= verbosity ? c.accent : c.bg,
-                      borderWidth: 1,
-                      borderColor: i <= verbosity ? c.accent : c.border,
-                      alignItems: "center", justifyContent: "center",
-                    }}
-                  >
-                    {i === verbosity && (
-                      <Text style={{ color: "#fff", fontSize: 8, fontWeight: "700" }}>{i}</Text>
-                    )}
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </View>
-        </View>
-
         {/* Key Storage */}
         {!LEAN_SETTINGS_SURFACE && <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Security</Text>
@@ -4775,6 +4835,7 @@ export default function SettingsScreen() {
                             glmApiKey: undefined,
                             mobileCodingProvider: undefined,
                             ttsEnabled: undefined,
+                            ttsProvider: undefined,
                             verbosity: undefined,
                             runnerId: undefined,
                             customRunnerCommand: undefined,

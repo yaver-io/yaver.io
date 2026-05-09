@@ -1304,22 +1304,65 @@ export function GitProviderSection({ c }: { c: ReturnType<typeof useColors> }) {
   // Fallback: manual token entry (only if auto-detect fails)
   const [showManualSetup, setShowManualSetup] = useState<"github" | "gitlab" | null>(null);
   const [token, setToken] = useState("");
+  // Target = which machine receives git creds. null means "this machine"
+  // (the agent the phone is currently connected to). Anything else routes
+  // through /peer/<deviceId>/... which the agent forwards via QUIC/relay.
+  const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
+  const [machines, setMachines] = useState<MachineInfo[]>([]);
 
-  const loadProviders = useCallback(async () => {
-    try {
+  const targetMachine = targetDeviceId
+    ? machines.find((m) => m.deviceId === targetDeviceId)
+    : null;
+  const targetLabel = targetMachine?.name || targetMachine?.deviceId || "This machine";
+
+  // Build the URL for an agent endpoint, peer-proxying when a remote
+  // target is selected. The agent's /peer/<id>/... handler re-signs +
+  // forwards verbatim, so individual git/provider/* endpoints don't
+  // need to know about peers.
+  const endpointFor = useCallback(
+    (path: string) => {
       const baseUrl = (quicClient as any).baseUrl;
-      const headers = (quicClient as any).authHeaders;
-      const res = await fetch(`${baseUrl}/git/provider/status`, { headers });
-      const data = await res.json();
-      if (data.ok) setProviders(data.providers || []);
+      if (!targetDeviceId) return `${baseUrl}${path}`;
+      return `${baseUrl}/peer/${encodeURIComponent(targetDeviceId)}${path}`;
+    },
+    [targetDeviceId],
+  );
+
+  const loadMachines = useCallback(async () => {
+    try {
+      const result = await quicClient.consoleMachines();
+      const owned = (result.machines || []).filter((m) => !m.isShared);
+      setMachines(owned);
     } catch {
-      // silent
-    } finally {
-      setLoading(false);
+      // silent — without a machine list the picker just shows "This machine"
     }
   }, []);
 
-  useEffect(() => { loadProviders(); }, [loadProviders]);
+  const loadProviders = useCallback(async () => {
+    setLoading(true);
+    try {
+      const headers = (quicClient as any).authHeaders;
+      const res = await fetch(endpointFor("/git/provider/status"), { headers });
+      const data = await res.json();
+      if (data.ok) setProviders(data.providers || []);
+      else setProviders([]);
+    } catch {
+      setProviders([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [endpointFor]);
+
+  useEffect(() => { loadMachines(); }, [loadMachines]);
+
+  // Re-load providers whenever the target changes; clear stale browse
+  // state so we never show repos from a different machine.
+  useEffect(() => {
+    setShowRepos(null);
+    setRepos([]);
+    setRepoSearch("");
+    loadProviders();
+  }, [loadProviders]);
 
   // Auto-detect: ask the CLI to find tokens from gh/glab CLI, env vars, etc.
   const handleAutoDetect = useCallback(async () => {

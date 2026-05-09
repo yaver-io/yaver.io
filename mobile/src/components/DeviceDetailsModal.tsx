@@ -971,6 +971,127 @@ function isHardwareProfileIncomplete(hardware: Device["hardwareProfile"]): boole
   return !(hasCpu && hasRam && hasCores && hasArch);
 }
 
+// WiFi-paired phone listing — what `yaver wireless detect` would show on
+// this machine. Per the privacy contract this list never goes to Convex;
+// it's fetched live from the agent's /wireless/devices endpoint each time
+// the modal opens. Surfaces up to N devices reachable via xcrun devicectl
+// (iOS) and `adb devices` IP:port serials (Android 11+ wireless debug).
+interface AgentWireDevice {
+  udid: string;
+  name?: string;
+  platform: "ios" | "android";
+  os?: string;
+}
+
+function WirelessPhonesSection({ device }: { device: Device }) {
+  const c = useColors();
+  const { token } = useDevice() as any;
+  const [phones, setPhones] = useState<AgentWireDevice[] | null>(null);
+  const [hint, setHint] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    (async () => {
+      const relay = quicClient.getRelayServers()[0];
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      const candidates: string[] = [];
+      if (relay?.httpUrl) {
+        if (relay.password) headers["X-Relay-Password"] = relay.password;
+        candidates.push(`${relay.httpUrl}/d/${encodeURIComponent(device.id)}`);
+      }
+      // Direct LAN fallback (works only when the phone is on the same
+      // WiFi as the agent — same trade-off as the rest of the modal).
+      candidates.push(`http://${device.host}:${device.port}`);
+      let lastErr = "no candidates";
+      for (const base of candidates) {
+        if (cancelled) return;
+        try {
+          const res = await fetch(`${base}/wireless/devices`, {
+            headers,
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) {
+            if (res.status === 404) {
+              if (!cancelled) {
+                setError("agent does not yet expose /wireless/devices (update the agent on this machine)");
+                setLoading(false);
+              }
+              return;
+            }
+            lastErr = `HTTP ${res.status}`;
+            continue;
+          }
+          const body = (await res.json()) as { devices?: AgentWireDevice[]; hint?: string };
+          if (cancelled) return;
+          setPhones(Array.isArray(body.devices) ? body.devices : []);
+          setHint(typeof body.hint === "string" ? body.hint : "");
+          setError(null);
+          setLoading(false);
+          return;
+        } catch (err) {
+          lastErr = err instanceof Error ? err.message : "fetch failed";
+        }
+      }
+      if (!cancelled) {
+        setError(lastErr);
+        setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [device.id, device.host, device.port, token]);
+
+  return (
+    <View style={{
+      borderWidth: 1, borderColor: c.border, borderRadius: 8,
+      backgroundColor: c.bgCard, padding: 12, marginBottom: 12,
+    }}>
+      <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
+        WIFI-PAIRED PHONES
+      </Text>
+      {loading && !phones ? (
+        <Text style={{ color: c.textMuted, fontSize: 12 }}>Probing this machine for WiFi-paired iPhones / Androids…</Text>
+      ) : phones && phones.length > 0 ? (
+        <View style={{ gap: 6 }}>
+          {phones.map((d) => (
+            <View
+              key={`wp:${device.id}:${d.udid}`}
+              style={{
+                flexDirection: "row", alignItems: "center", gap: 8,
+                paddingVertical: 4, paddingHorizontal: 8,
+                borderWidth: 1, borderColor: c.border, borderRadius: 6,
+                backgroundColor: c.bg,
+              }}
+            >
+              <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "700", textTransform: "uppercase" }}>
+                {d.platform}
+              </Text>
+              <Text style={{ color: c.textPrimary, fontSize: 12, flex: 1 }} numberOfLines={1}>
+                {d.name || "(unknown)"}
+              </Text>
+              <Text style={{ color: c.textMuted, fontSize: 10, fontFamily: "Courier" }} numberOfLines={1}>
+                {d.udid.length > 14 ? `${d.udid.slice(0, 12)}…` : d.udid}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : phones && phones.length === 0 ? (
+        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+          No WiFi-paired phones detected{hint ? ` — ${hint}` : ""}.
+        </Text>
+      ) : error ? (
+        <Text style={{ color: c.textMuted, fontSize: 12 }}>
+          Phone list unavailable — {error}.
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function HardwareCapabilitiesSection({ device }: { device: Device }) {
   const c = useColors();
   const hardware = device.hardwareProfile;
@@ -1297,6 +1418,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
               "is claude/codex/opencode signed in on this box?" view. */}
           <CodingAgentsSection device={device} />
           <HardwareCapabilitiesSection device={device} />
+          <WirelessPhonesSection device={device} />
 
           {/* Active task runners — only shown if there are any. */}
           {(device.runners || []).filter((r) => r.pid).length > 0 ? (

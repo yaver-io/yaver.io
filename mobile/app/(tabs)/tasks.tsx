@@ -46,8 +46,8 @@ import {
 } from "../../src/lib/quic";
 import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
 import { useAuth } from "../../src/context/AuthContext";
-import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider } from "../../src/lib/auth";
-import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS } from "../../src/lib/speech";
+import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
+import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS, speakText as speakConfiguredText } from "../../src/lib/speech";
 import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
@@ -1533,6 +1533,7 @@ export default function TasksScreen() {
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
   const [speechApiKey, setSpeechApiKey] = useState<string | undefined>();
   const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
   const [verbosity, setVerbosity] = useState(10);
   const [inputFromSpeech, setInputFromSpeech] = useState(false);
   // Persisted task preference from Settings. When enabled, the agent
@@ -1576,11 +1577,17 @@ export default function TasksScreen() {
     getUserSettings(token).then(async (s) => {
       if (s.speechProvider) setSpeechProvider(s.speechProvider);
       if (s.ttsEnabled) setTtsEnabled(s.ttsEnabled);
+      if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
       if (s.verbosity !== undefined) setVerbosity(s.verbosity);
       // Load speech API key — prefer local Keychain, fall back to cloud
       const localKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
       if (localKey) setSpeechApiKey(localKey);
       else if (s.speechApiKey) setSpeechApiKey(s.speechApiKey);
+      else if (s.ttsProvider === "openai") {
+        const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
+        if (localOpenAi) setSpeechApiKey(localOpenAi);
+        else if (s.openAiApiKey) setSpeechApiKey(s.openAiApiKey);
+      }
     }).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("[speech] getUserSettings failed:", msg);
@@ -2081,9 +2088,9 @@ export default function TasksScreen() {
   useEffect(() => {
     if (ttsEnabled && selectedTask?.status === "completed" && selectedTask?.resultText && lastSpokenTaskRef.current !== selectedTask.id) {
       lastSpokenTaskRef.current = selectedTask.id;
-      speakText(selectedTask.resultText);
+      speakTaskResult(selectedTask.resultText);
     }
-  }, [selectedTask?.status, selectedTask?.resultText, ttsEnabled]);
+  }, [selectedTask?.status, selectedTask?.resultText, ttsEnabled, ttsProvider, speechApiKey]);
 
   // Haptic notification on task transition: fire success on
   // completed, error on failed. Single ref tracks the last status
@@ -2350,14 +2357,11 @@ export default function TasksScreen() {
 
   // ── TTS ────────────────────────────────────────────────────────────
 
-  const speakText = (text: string) => {
+  const speakTaskResult = (text: string) => {
     if (!ttsEnabled) return;
-    try {
-      const Speech = require("expo-speech");
-      // Strip markdown for cleaner speech
-      const plain = text.replace(/[#*`_~\[\]()>|\\-]/g, "").replace(/\n+/g, ". ");
-      Speech.speak(plain, { language: "en" });
-    } catch {}
+    speakConfiguredText(text, { provider: ttsProvider, apiKey: speechApiKey }).catch((err: unknown) => {
+      console.warn("[speech] TTS failed:", err instanceof Error ? err.message : String(err));
+    });
   };
 
   const handleCreateTask = async () => {
@@ -2386,7 +2390,7 @@ export default function TasksScreen() {
         inputFromSpeech,
         sttProvider: speechProvider ?? undefined,
         ttsEnabled,
-        ttsProvider: "device",
+        ttsProvider,
         verbosity,
       } : undefined;
       const title = initialTitle || newTaskText.trim();

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   Keyboard,
@@ -18,6 +19,8 @@ import { useAuth } from "../context/AuthContext";
 import { useDevice } from "../context/DeviceContext";
 import { quicClient } from "../lib/quic";
 import { subscribeFeedbackLaunch } from "../lib/feedbackTrigger";
+import { getLocalSecret, getUserSettings, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../lib/auth";
+import { transcribe, initWhisper, speakText as speakConfiguredText } from "../lib/speech";
 
 const BUTTON_SIZE = 46;
 const PANEL_WIDTH = 300;
@@ -142,6 +145,13 @@ export function FeedbackOverlay() {
   const { activeDevice, connectionStatus } = useDevice();
   const [enabled, setEnabled] = useState(false);
   const [buttonColor, setButtonColor] = useState("#6366f1");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
+  const [speechApiKey, setSpeechApiKey] = useState<string | undefined>();
+  const [ttsEnabled, setTtsEnabled] = useState(false);
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
+  const [recordingVoice, setRecordingVoice] = useState(false);
+  const [transcribingVoice, setTranscribingVoice] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
@@ -152,6 +162,7 @@ export function FeedbackOverlay() {
   const [fullSize, setFullSize] = useState(false);
   const isDragging = useRef(false);
   const buttonPosX = useRef(0);
+  const voiceRecordingRef = useRef<any>(null);
   // Source of the latest subscribeFeedbackLaunch event. When this is
   // "native-guest-shake" we route handleSend to /vibing/execute (with
   // bundleId + projectName from the loaded guest) instead of the
@@ -206,6 +217,13 @@ export function FeedbackOverlay() {
         }
         setEnabled(newEnabled);
         if (cfg.buttonColor) setButtonColor(cfg.buttonColor);
+        setVoiceEnabled(cfg.voiceEnabled !== false);
+        if (cfg.speechProvider === "on-device" || cfg.speechProvider === "openai" || cfg.speechProvider === "deepgram" || cfg.speechProvider === "assemblyai") {
+          setSpeechProvider(cfg.speechProvider);
+        }
+        if (cfg.ttsProvider === "openai" || cfg.ttsProvider === "device") {
+          setTtsProvider(cfg.ttsProvider);
+        }
       } catch {}
     };
     load();
@@ -240,10 +258,69 @@ export function FeedbackOverlay() {
   const agentUrl = connectionStatus === "connected" ? quicClient.baseUrl : null;
   const isConnected = connectionStatus === "connected" && !!agentUrl;
 
+  useEffect(() => {
+    if (!token) return;
+    getUserSettings(token).then(async (s) => {
+      if (s.speechProvider) setSpeechProvider(s.speechProvider);
+      if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);
+      if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
+      const localSpeechKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
+      if (localSpeechKey) setSpeechApiKey(localSpeechKey);
+      else if (s.speechApiKey) setSpeechApiKey(s.speechApiKey);
+      else if (s.ttsProvider === "openai") {
+        const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
+        if (localOpenAi) setSpeechApiKey(localOpenAi);
+        else if (s.openAiApiKey) setSpeechApiKey(s.openAiApiKey);
+      }
+    }).catch(() => {});
+  }, [token]);
+
   const handleTap = useCallback(() => {
     if (isDragging.current) return;
     setChatOpen((prev) => !prev);
   }, []);
+
+  const toggleVoiceInput = useCallback(async () => {
+    if (recordingVoice) {
+      setRecordingVoice(false);
+      setTranscribingVoice(true);
+      try {
+        const recording = voiceRecordingRef.current;
+        voiceRecordingRef.current = null;
+        if (!recording) return;
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        if (!uri) throw new Error("No recording URI");
+        if (!speechProvider) throw new Error("Voice input is disabled in Settings.");
+        const result = await transcribe(uri, { provider: speechProvider, apiKey: speechApiKey });
+        if (result.text) setMessage((prev) => (prev ? `${prev} ${result.text}` : result.text));
+      } catch (err) {
+        Alert.alert("Transcription failed", err instanceof Error ? err.message : String(err));
+      } finally {
+        setTranscribingVoice(false);
+      }
+      return;
+    }
+
+    try {
+      if (!speechProvider) throw new Error("Voice input is disabled in Settings.");
+      if (speechProvider === "on-device") await initWhisper();
+      const { Audio } = require("expo-av");
+      const perm = await Audio.requestPermissionsAsync();
+      if (perm.status !== "granted") throw new Error("Microphone permission is required.");
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      voiceRecordingRef.current = recording;
+      setRecordingVoice(true);
+    } catch (err) {
+      Alert.alert("Voice unavailable", err instanceof Error ? err.message : String(err));
+    }
+  }, [recordingVoice, speechProvider, speechApiKey]);
+
+  const speakFeedbackResult = useCallback((text: string) => {
+    if (!ttsEnabled || !text.trim()) return;
+    speakConfiguredText(text, { provider: ttsProvider, apiKey: speechApiKey }).catch(() => {});
+  }, [ttsEnabled, ttsProvider, speechApiKey]);
 
   // Send message → create task → poll for output. When the chat was
   // launched from `native-guest-shake` (user shook while a guest
@@ -314,6 +391,7 @@ export function FeedbackOverlay() {
 
           if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
             setTaskStatusLine(t.status === "completed" ? "Done." : t.status === "failed" ? "Could not finish." : "Stopped.");
+            if (t.status === "completed") speakFeedbackResult(String(t.resultText || combined || ""));
             clearInterval(poll);
             setSending(false);
           } else if (attempts >= 15) {
@@ -330,7 +408,7 @@ export function FeedbackOverlay() {
       addOutput(`fail: ${String(e).slice(0, 40)}`);
       setSending(false);
     }
-  }, [message, agentUrl, token, addOutput]);
+  }, [message, agentUrl, token, addOutput, speakFeedbackResult]);
 
   // Generic: send a prefixed task to agent and poll output
   const runAgentAction = useCallback(async (label: string, prompt: string) => {
@@ -371,6 +449,7 @@ export function FeedbackOverlay() {
           }
           if (t.status === "completed" || t.status === "failed" || t.status === "stopped") {
             setTaskStatusLine(t.status === "completed" ? "Done." : t.status === "failed" ? "Could not finish." : "Stopped.");
+            if (t.status === "completed") speakFeedbackResult(String(t.resultText || combined || ""));
             clearInterval(poll); setSending(false);
           } else if (attempts >= 30) {
             setTaskStatusLine("Still working…");
@@ -382,7 +461,7 @@ export function FeedbackOverlay() {
       addOutput(`fail: ${String(e).slice(0, 40)}`);
       setSending(false);
     }
-  }, [agentUrl, token, addOutput]);
+  }, [agentUrl, token, addOutput, speakFeedbackResult]);
 
   const isDevBuild = __DEV__;
 
@@ -534,6 +613,21 @@ export function FeedbackOverlay() {
               returnKeyType="send"
               multiline={fullSize}
             />
+            {voiceEnabled ? (
+              <TouchableOpacity
+                style={[
+                  styles.micBtn,
+                  { borderColor: recordingVoice ? "#ef4444" : "#222" },
+                  (sending || transcribingVoice) && styles.dim,
+                ]}
+                onPress={toggleVoiceInput}
+                disabled={sending || transcribingVoice}
+              >
+                <Text style={[styles.micBtnText, { color: recordingVoice ? "#ef4444" : buttonColor }]}>
+                  {transcribingVoice ? "..." : recordingVoice ? "Stop" : "Mic"}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
             <TouchableOpacity
               style={[styles.goBtn, { backgroundColor: buttonColor }, (sending || !message.trim()) && styles.dim]}
               onPress={handleSend}
@@ -737,6 +831,14 @@ const styles = StyleSheet.create({
   },
   goBtn: { borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
   goBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  micBtn: {
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    backgroundColor: "#111",
+    borderWidth: 1,
+  },
+  micBtnText: { fontSize: 12, fontWeight: "700" },
   dim: { opacity: 0.3 },
   // Actions
   cardRow: { flexDirection: "row", gap: 6, marginBottom: 6 },

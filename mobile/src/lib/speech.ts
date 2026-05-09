@@ -9,7 +9,7 @@
  */
 
 import { Platform } from "react-native";
-import type { SpeechProvider } from "./auth";
+import type { SpeechProvider, TtsProvider } from "./auth";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -20,6 +20,11 @@ export interface TranscriptionResult {
 
 export interface SpeechConfig {
   provider: SpeechProvider;
+  apiKey?: string;
+}
+
+export interface TextToSpeechConfig {
+  provider: TtsProvider;
   apiKey?: string;
 }
 
@@ -319,7 +324,7 @@ export const SPEECH_PROVIDERS: SpeechProviderInfo[] = [
   {
     id: "on-device",
     name: "On-Device (Free)",
-    description: "Runs locally using Whisper. No API key needed. ~75MB model download.",
+    description: "Runs locally using bundled Whisper. No API key needed.",
     requiresKey: false,
   },
   {
@@ -347,3 +352,86 @@ export const SPEECH_PROVIDERS: SpeechProviderInfo[] = [
     keyHint: "Get your key at assemblyai.com/dashboard",
   },
 ];
+
+export interface TtsProviderInfo {
+  id: TtsProvider;
+  name: string;
+  description: string;
+  requiresKey: boolean;
+}
+
+export const TTS_PROVIDERS: TtsProviderInfo[] = [
+  {
+    id: "device",
+    name: "Local Device Voice",
+    description: "Uses iOS or Android text-to-speech. Free and local.",
+    requiresKey: false,
+  },
+  {
+    id: "openai",
+    name: "OpenAI Voice",
+    description: "Uses OpenAI text-to-speech with your API key.",
+    requiresKey: true,
+  },
+];
+
+function stripSpeechMarkdown(text: string): string {
+  return text.replace(/[#*`_~\[\]()>|\\-]/g, "").replace(/\n+/g, ". ").trim();
+}
+
+async function speakWithOpenAI(text: string, apiKey: string): Promise<void> {
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "gpt-4o-mini-tts",
+      voice: "alloy",
+      input: stripSpeechMarkdown(text).slice(0, 4000),
+      response_format: "mp3",
+    }),
+  });
+  if (!response.ok) {
+    const err = await response.text().catch(() => "Unknown error");
+    throw new Error(`OpenAI TTS failed (${response.status}): ${err}`);
+  }
+
+  const FileSystem = require("expo-file-system/legacy");
+  const { Audio } = require("expo-av");
+  const blob = await response.blob();
+  const reader = new FileReader();
+  const base64 = await new Promise<string>((resolve, reject) => {
+    reader.onerror = () => reject(new Error("Failed to read OpenAI speech audio."));
+    reader.onloadend = () => {
+      const result = String(reader.result || "");
+      resolve(result.includes(",") ? result.split(",")[1] : result);
+    };
+    reader.readAsDataURL(blob);
+  });
+  const uri = `${FileSystem.cacheDirectory}yaver-openai-tts-${Date.now()}.mp3`;
+  await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+  const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true });
+  sound.setOnPlaybackStatusUpdate((status: any) => {
+    if (status?.didJustFinish) {
+      sound.unloadAsync().catch(() => {});
+      FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    }
+  });
+}
+
+export async function speakText(
+  text: string,
+  config: TextToSpeechConfig = { provider: "device" },
+): Promise<void> {
+  const plain = stripSpeechMarkdown(text);
+  if (!plain) return;
+  if (config.provider === "openai") {
+    if (!config.apiKey) throw new Error("OpenAI API key required");
+    await speakWithOpenAI(plain, config.apiKey);
+    return;
+  }
+  const Speech = require("expo-speech");
+  Speech.speak(plain, { language: "en" });
+}
