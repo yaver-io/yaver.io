@@ -477,6 +477,7 @@ export default defineSchema({
     speechProvider: v.optional(v.string()),      // "on-device" | "openai" | "deepgram" | "assemblyai"
     speechApiKey: v.optional(v.string()),         // API key for cloud providers
     ttsEnabled: v.optional(v.boolean()),          // read responses aloud
+    ttsProvider: v.optional(v.string()),          // "device" | "openai"
     verbosity: v.optional(v.number()),            // 0-10: response detail level (0=summary, 10=full detail)
     keyStorage: v.optional(v.string()),            // "local" | "cloud" — where API keys are stored
     // Preferred device for auto-connect when the user has more than one

@@ -2284,6 +2284,7 @@ http.route({
       speechProvider: body.speechProvider,
       speechApiKey: body.speechApiKey,
       ttsEnabled: body.ttsEnabled,
+      ttsProvider: body.ttsProvider,
       verbosity: body.verbosity,
       keyStorage: body.keyStorage,
       // Client sends null to clear the preference, undefined to leave untouched.

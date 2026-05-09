@@ -111,6 +111,7 @@ export const importUserBundle = mutation({
       speechProvider: v.optional(v.string()),
       speechApiKey: v.optional(v.string()),
       ttsEnabled: v.optional(v.boolean()),
+      ttsProvider: v.optional(v.string()),
       verbosity: v.optional(v.number()),
       keyStorage: v.optional(v.string()),
     })),
