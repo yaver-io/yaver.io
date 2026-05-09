@@ -390,6 +390,8 @@ func main() {
 		runHostShare(os.Args[2:])
 	case "primary":
 		runPrimary(os.Args[2:])
+	case "secondary":
+		runSecondary(os.Args[2:])
 	case "ops":
 		runOps(os.Args[2:])
 	case "workspace":
@@ -6582,15 +6584,20 @@ func runAlias(args []string) {
 func runSSHWrap(args []string) {
 	// Bare `yaver ssh` (no target) and `yaver ssh primary` both resolve
 	// to userSettings.primaryDeviceId (the same value `yaver primary`
-	// surfaces). Empty default lets `yaver ssh -L 5432:...` work too —
+	// surfaces). `yaver ssh secondary` resolves the secondary slot the
+	// same way. Empty default lets `yaver ssh -L 5432:...` work too —
 	// passthrough flags after the implicit primary target.
-	if len(args) == 0 || strings.EqualFold(strings.TrimSpace(args[0]), "primary") {
-		resolved, err := resolveSSHPrimary()
+	if len(args) == 0 || strings.EqualFold(strings.TrimSpace(args[0]), "primary") || strings.EqualFold(strings.TrimSpace(args[0]), "secondary") {
+		slot := "primary"
+		if len(args) > 0 && strings.EqualFold(strings.TrimSpace(args[0]), "secondary") {
+			slot = "secondary"
+		}
+		resolved, err := resolveSSHSlot(slot)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err.Error())
 			os.Exit(1)
 		}
-		// Replace the primary token (or prepend, if there was none) with
+		// Replace the slot token (or prepend, if there was none) with
 		// the resolved device handle so the rest of the function flows
 		// the normal alias/deviceId/name path.
 		if len(args) == 0 {
