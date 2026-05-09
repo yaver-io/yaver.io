@@ -594,28 +594,37 @@ export function WebReloadView({
   // the bytecode and push to the phone — Metro's HTTP /reload doesn't
   // refresh on-device. If we guess "dev" and Metro is stalled or
   // missing, fall back to bundle so the user still gets a reload.
+  // When the iframe is showing a static web bundle (no live dev server),
+  // "reload" means re-exporting the bundle via handleBuildStaticBundle —
+  // otherwise the post-vibe Reload click would 404 on /dev/reload.
   const handleReload = async () => {
     setReloading(true);
     setReloadStatus("Reloading…");
     try {
-      const fw = (
-        devStatus?.framework ||
-        activeProject?.framework ||
-        selectedProject?.framework ||
-        ""
-      ).toLowerCase();
-      const isHermes = /^(expo|react-?native)$/.test(fw);
-      const primaryMode: "dev" | "bundle" = isHermes ? "bundle" : "dev";
-      try {
-        await agentClient.reloadDevServer({ mode: primaryMode });
-      } catch (err) {
-        if (primaryMode === "dev") {
-          // Metro/Vite/Next /reload didn't ack. Try a bundle rebuild —
-          // works for Expo Web exports and recovers stalled Metro.
-          await agentClient.reloadDevServer({ mode: "bundle" });
-        } else {
-          throw err;
+      if (devStatus?.running) {
+        const fw = (
+          devStatus?.framework ||
+          activeProject?.framework ||
+          selectedProject?.framework ||
+          ""
+        ).toLowerCase();
+        const isHermes = /^(expo|react-?native)$/.test(fw);
+        const primaryMode: "dev" | "bundle" = isHermes ? "bundle" : "dev";
+        try {
+          await agentClient.reloadDevServer({ mode: primaryMode });
+        } catch (err) {
+          if (primaryMode === "dev") {
+            await agentClient.reloadDevServer({ mode: "bundle" });
+          } else {
+            throw err;
+          }
         }
+      } else if (staticBundleState === "ready" || staticBundleState === "building") {
+        await handleBuildStaticBundle();
+      } else {
+        throw new Error(
+          "Nothing to reload — start a project (top-right) or build a static bundle first.",
+        );
       }
       const target =
         activeProject?.name ||
@@ -1713,18 +1722,20 @@ export function WebReloadView({
                     {selectedProject?.name || selectedApp || activeProject?.name || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
                   </div>
                   <div className="flex items-center gap-2">
-                    {isRunning ? (
+                    {(isRunning || staticBundleState === "ready" || staticBundleState === "building") ? (
                       <button
                         onClick={() => void handleReload()}
-                        disabled={reloading}
+                        disabled={reloading || staticBundleState === "building"}
                         className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-semibold text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-wait"
                         title={
-                          /^(expo|react-?native)$/.test((devStatus?.framework || "").toLowerCase())
-                            ? "Rebuild Hermes bundle and push to paired phones — see the vibe's changes live"
-                            : "Hot reload Metro/Vite/Next; falls back to bundle rebuild if it stalls"
+                          !isRunning
+                            ? "Re-export the static web bundle and re-render the iframe"
+                            : /^(expo|react-?native)$/.test((devStatus?.framework || "").toLowerCase())
+                              ? "Rebuild Hermes bundle and push to paired phones — see the vibe's changes live"
+                              : "Hot reload Metro/Vite/Next; falls back to bundle rebuild if it stalls"
                         }
                       >
-                        {reloading ? (
+                        {(reloading || staticBundleState === "building") ? (
                           <span className="inline-flex items-center gap-1.5">
                             <span className="h-3 w-3 animate-spin rounded-full border border-surface-400/40 border-t-surface-200" />
                             Reloading…
