@@ -536,6 +536,312 @@ func tailBytes(b []byte, max int) string {
 	return "…" + string(b[len(b)-max:])
 }
 
+// NativeModulesAlignmentReport summarises an attempt to pin per-native-module
+// versions in a guest project to whatever Yaver's mobile host has compiled
+// in. Sibling to RuntimeAlignmentReport but driven by the post-bundle compat
+// report's flagged mismatches (e.g. expo-mail-composer 15.0.8 → host 55.0.13)
+// rather than the runtime-family triple.
+type NativeModulesAlignmentReport struct {
+	Attempted        bool              `json:"attempted"`
+	Applied          bool              `json:"applied"`
+	SkippedReason    string            `json:"skippedReason,omitempty"`
+	Pins             map[string]string `json:"pins,omitempty"`
+	NPMInstallRan    bool              `json:"npmInstallRan"`
+	NPMInstallMs     int64             `json:"npmInstallMs,omitempty"`
+	WorkspaceRoot    string            `json:"workspaceRoot,omitempty"`
+	WorkspaceMember  string            `json:"workspaceMember,omitempty"`
+	OverridesWritten string            `json:"overridesWritten,omitempty"`
+	Notes            []string          `json:"notes,omitempty"`
+	Error            string            `json:"error,omitempty"`
+}
+
+// alignProjectNativeModulesIfNeeded pins each project dep listed in
+// `mismatches` to the corresponding host version. The framework align
+// (alignProjectRuntimeIfNeeded) handles React/RN/Expo; this function
+// handles every other host-registered native module that drifted across
+// a likely-breaking boundary (major / 0.x-minor). Without it, a project
+// that was last `npm install`ed against an older Expo SDK keeps an old
+// sub-module version (e.g. expo-mail-composer 15.0.8) and the Hermes
+// load is blocked with NATIVE_MODULE_VERSION_MISMATCH even though the
+// runtime family otherwise matches.
+//
+// Same workspace-aware mechanism as alignProjectRuntimeIfNeeded:
+// overrides go to the workspace ROOT package.json (npm ignores them
+// elsewhere), `dependencies` get rewritten in the project itself, and
+// the install runs with `--save-exact <pkg>@<version>` so the lockfile
+// + node_modules actually update.
+//
+// Idempotent: repeat calls with the same pins skip the package.json
+// edit and only run `npm install` (which exits in a few seconds when
+// the lockfile already matches).
+//
+// Skipped when:
+//   - autoAlign is false
+//   - mismatches is empty (no host versions to enforce)
+//   - none of the named modules are direct deps in the project (we
+//     never inject deps the project doesn't already declare).
+func alignProjectNativeModulesIfNeeded(ctx context.Context, workDir string, mismatches []NativeModuleMismatch, autoAlign bool) NativeModulesAlignmentReport {
+	report := NativeModulesAlignmentReport{Attempted: false}
+	if !autoAlign {
+		report.SkippedReason = "autoAlignRuntime=false"
+		return report
+	}
+	if len(mismatches) == 0 {
+		report.SkippedReason = "no native module mismatches"
+		return report
+	}
+
+	pins := map[string]string{}
+	for _, m := range mismatches {
+		host := strings.TrimSpace(m.HostVersion)
+		name := strings.TrimSpace(m.Name)
+		if host == "" || name == "" {
+			continue
+		}
+		pins[name] = host
+	}
+	if len(pins) == 0 {
+		report.SkippedReason = "no host versions to enforce"
+		return report
+	}
+
+	wsRoot, wsMember := detectNpmWorkspaceRoot(workDir)
+	report.WorkspaceRoot = wsRoot
+	report.WorkspaceMember = wsMember
+
+	pkgPath := filepath.Join(workDir, "package.json")
+	raw, err := os.ReadFile(pkgPath)
+	if err != nil {
+		report.Error = fmt.Sprintf("read package.json: %v", err)
+		return report
+	}
+	var pkgObj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &pkgObj); err != nil {
+		report.Error = fmt.Sprintf("parse package.json: %v", err)
+		return report
+	}
+
+	overridesPath := pkgPath
+	overridesObj := pkgObj
+	if wsRoot != "" && wsRoot != workDir {
+		overridesPath = filepath.Join(wsRoot, "package.json")
+		rawRoot, rerr := os.ReadFile(overridesPath)
+		if rerr != nil {
+			report.Error = fmt.Sprintf("read workspace root package.json: %v", rerr)
+			return report
+		}
+		var rootObj map[string]json.RawMessage
+		if jerr := json.Unmarshal(rawRoot, &rootObj); jerr != nil {
+			report.Error = fmt.Sprintf("parse workspace root package.json: %v", jerr)
+			return report
+		}
+		overridesObj = rootObj
+	}
+	report.OverridesWritten = overridesPath
+
+	currentOverrides := map[string]string{}
+	if rawOv, ok := overridesObj["overrides"]; ok {
+		var existing map[string]json.RawMessage
+		if err := json.Unmarshal(rawOv, &existing); err == nil {
+			for k, v := range existing {
+				var s string
+				if err := json.Unmarshal(v, &s); err == nil {
+					currentOverrides[k] = s
+				}
+			}
+		}
+	}
+
+	// Patch dependencies / devDependencies — only rewrite keys the project
+	// already declares so we never inject a dep the project did not opt
+	// into. This is the load-bearing change npm honours when resolving the
+	// install plan for top-level packages.
+	depsRewrites := map[string]string{}
+	depKindsTouched := map[string]map[string]string{}
+	declaredAnywhere := map[string]bool{}
+	for _, kind := range []string{"dependencies", "devDependencies"} {
+		raw, ok := pkgObj[kind]
+		if !ok {
+			continue
+		}
+		var existing map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &existing); err != nil {
+			continue
+		}
+		writes := map[string]string{}
+		for name, want := range pins {
+			rawCur, present := existing[name]
+			if !present {
+				continue
+			}
+			declaredAnywhere[name] = true
+			var cur string
+			_ = json.Unmarshal(rawCur, &cur)
+			if strings.TrimSpace(cur) == want {
+				continue
+			}
+			b, _ := json.Marshal(want)
+			existing[name] = b
+			writes[name] = want
+			depsRewrites[name] = want
+		}
+		if len(writes) > 0 {
+			ordered := orderedRawMap(existing)
+			out, err := json.MarshalIndent(ordered, "  ", "  ")
+			if err != nil {
+				report.Error = fmt.Sprintf("marshal %s: %v", kind, err)
+				return report
+			}
+			pkgObj[kind] = out
+			depKindsTouched[kind] = writes
+		}
+	}
+
+	if len(declaredAnywhere) == 0 {
+		// Nothing to pin — the mismatches concern packages that aren't
+		// direct deps of this project. Probably a transitive misreport;
+		// don't touch anything.
+		report.SkippedReason = "no flagged modules are direct deps of this project"
+		return report
+	}
+
+	// Patch overrides at the right level (workspace root in a workspace,
+	// project itself otherwise). Overrides matter because npm install with
+	// explicit specs only pins the named pkg; transitive deps that pull a
+	// different version of one of these packages still need the override.
+	merged := cloneStringMap(currentOverrides)
+	overridesChanged := false
+	for k, v := range pins {
+		if !declaredAnywhere[k] {
+			// Skip overrides for packages the project doesn't declare;
+			// adding them would be noise and could force a transitive
+			// downgrade we never asked for.
+			continue
+		}
+		if existing, ok := merged[k]; ok && existing == v {
+			continue
+		}
+		merged[k] = v
+		overridesChanged = true
+	}
+
+	if overridesChanged {
+		var ovValue map[string]json.RawMessage
+		if rawOv, ok := overridesObj["overrides"]; ok {
+			_ = json.Unmarshal(rawOv, &ovValue)
+		}
+		if ovValue == nil {
+			ovValue = map[string]json.RawMessage{}
+		}
+		for k, v := range merged {
+			b, _ := json.Marshal(v)
+			ovValue[k] = b
+		}
+		ovBytes, err := json.MarshalIndent(orderedRawMap(ovValue), "  ", "  ")
+		if err != nil {
+			report.Error = fmt.Sprintf("marshal overrides: %v", err)
+			return report
+		}
+		overridesObj["overrides"] = ovBytes
+	}
+
+	report.Pins = depsRewrites
+	report.Attempted = true
+
+	// Write back the project package.json (the framework align may have
+	// already stripped child overrides; mirror that behaviour here so the
+	// two passes compose without leaving stale data).
+	childOverridesStripped := false
+	if wsRoot != "" && wsRoot != workDir {
+		if _, ok := pkgObj["overrides"]; ok {
+			delete(pkgObj, "overrides")
+			childOverridesStripped = true
+		}
+	}
+	if len(depsRewrites) > 0 || childOverridesStripped {
+		out, err := marshalOrderedJSON(pkgObj)
+		if err != nil {
+			report.Error = fmt.Sprintf("marshal package.json: %v", err)
+			return report
+		}
+		if err := atomicWrite(pkgPath, out, 0o644); err != nil {
+			report.Error = fmt.Sprintf("write package.json: %v", err)
+			return report
+		}
+		for kind, writes := range depKindsTouched {
+			report.Notes = append(report.Notes, fmt.Sprintf("Pinned %s for %s to host versions", kind, strings.Join(sortedKeys(writes), ", ")))
+		}
+		if childOverridesStripped {
+			report.Notes = append(report.Notes, "Removed stale overrides from workspace child")
+		}
+	}
+	if overridesChanged {
+		out, err := marshalOrderedJSON(overridesObj)
+		if err != nil {
+			report.Error = fmt.Sprintf("marshal overrides target: %v", err)
+			return report
+		}
+		if err := atomicWrite(overridesPath, out, 0o644); err != nil {
+			report.Error = fmt.Sprintf("write overrides target: %v", err)
+			return report
+		}
+		report.Notes = append(report.Notes, "Wrote npm overrides for native-module pins to "+overridesPath)
+	}
+
+	if !overridesChanged && len(depsRewrites) == 0 {
+		report.SkippedReason = "package.json already pins host native modules — only npm install needed"
+	}
+
+	npmCwd := workDir
+	args := []string{"install", "--legacy-peer-deps"}
+	if wsRoot != "" && wsRoot != workDir {
+		npmCwd = wsRoot
+		if wsMember != "" {
+			args = append(args, "-w", wsMember)
+		}
+	}
+	if len(depsRewrites) > 0 {
+		args = append(args, "--save-exact")
+		for _, name := range sortedKeys(depsRewrites) {
+			args = append(args, fmt.Sprintf("%s@%s", name, depsRewrites[name]))
+		}
+	}
+	npmCmd := exec.CommandContext(ctx, "npm", args...)
+	npmCmd.Dir = npmCwd
+	start := time.Now()
+	out, err := npmCmd.CombinedOutput()
+	report.NPMInstallRan = true
+	report.NPMInstallMs = time.Since(start).Milliseconds()
+	if err != nil {
+		report.Error = fmt.Sprintf("npm install failed: %v: %s", err, tailBytes(out, 1200))
+		return report
+	}
+
+	// Verify each pin landed in node_modules — same fallback to workspace
+	// root for hoisted installs as the framework path.
+	var verifyDrift []string
+	for name, want := range depsRewrites {
+		installed, rerr := readInstalledPackageVersion(workDir, name)
+		if rerr != nil && wsRoot != "" && wsRoot != workDir {
+			installed, rerr = readInstalledPackageVersion(wsRoot, name)
+		}
+		if rerr != nil {
+			continue
+		}
+		if !runtimeVersionEquals(installed, want) {
+			verifyDrift = append(verifyDrift, fmt.Sprintf("%s installed=%s want=%s", name, installed, want))
+		}
+	}
+	if len(verifyDrift) > 0 {
+		report.Error = "post-install version drift: " + strings.Join(verifyDrift, ", ")
+		return report
+	}
+
+	report.Applied = true
+	report.Notes = append(report.Notes, fmt.Sprintf("npm install completed in %dms", report.NPMInstallMs))
+	return report
+}
+
 // alignmentSignature is a stable hash of (workDir, family.id, react, rn,
 // expo). When the same set is requested twice in a row, the agent can skip
 // the npm install round-trip because nothing relevant changed. Reserved

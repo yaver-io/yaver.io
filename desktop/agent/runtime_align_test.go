@@ -399,6 +399,215 @@ func TestAlignProjectRuntimeStandaloneProjectKeepsOverridesInPlace(t *testing.T)
 	}
 }
 
+// TestAlignProjectNativeModulesPinsMismatchedDirectDep locks in the
+// macmini-vs-yaver-test-ephemeral failure mode: project declares
+// expo-mail-composer 15.0.8, host has 55.0.13. The framework align
+// (React/RN/Expo) leaves this alone because mail-composer is not in the
+// runtime family triple — but the post-build compat check blocks the
+// Hermes load on it. The native-module align must rewrite the direct
+// dep AND record a pin so npm install --save-exact runs with the right
+// spec.
+func TestAlignProjectNativeModulesPinsMismatchedDirectDep(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+  "name": "sfmg",
+  "dependencies": {
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "expo": "54.0.33",
+    "expo-mail-composer": "^15.0.8"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mismatches := []NativeModuleMismatch{
+		{Name: "expo-mail-composer", ProjectVersion: "15.0.8", HostVersion: "55.0.13", Reason: "major version differs"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectNativeModulesIfNeeded(ctx, dir, mismatches, true)
+	if !report.Attempted {
+		t.Fatalf("expected Attempted=true, got %#v", report)
+	}
+	if report.Pins["expo-mail-composer"] != "55.0.13" {
+		t.Fatalf("Pins[expo-mail-composer] = %q, want 55.0.13", report.Pins["expo-mail-composer"])
+	}
+
+	pkgRaw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkg map[string]json.RawMessage
+	if err := json.Unmarshal(pkgRaw, &pkg); err != nil {
+		t.Fatalf("post-align package.json unparseable: %v", err)
+	}
+	var deps map[string]string
+	if err := json.Unmarshal(pkg["dependencies"], &deps); err != nil {
+		t.Fatal(err)
+	}
+	if deps["expo-mail-composer"] != "55.0.13" {
+		t.Fatalf("dependencies.expo-mail-composer = %q, want 55.0.13 — native-module align must rewrite the direct dep, not just overrides", deps["expo-mail-composer"])
+	}
+	var ov map[string]string
+	if err := json.Unmarshal(pkg["overrides"], &ov); err != nil {
+		t.Fatalf("post-align overrides missing or wrong shape: %v", err)
+	}
+	if ov["expo-mail-composer"] != "55.0.13" {
+		t.Fatalf("overrides.expo-mail-composer = %q, want 55.0.13", ov["expo-mail-composer"])
+	}
+}
+
+// TestAlignProjectNativeModulesNoMismatchIsNoop ensures the function does
+// nothing when the compat report has no mismatches — this is the
+// yaver-test-ephemeral fast path. We MUST NOT regress hosts where the
+// project already happens to be aligned.
+func TestAlignProjectNativeModulesNoMismatchIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	original := []byte(`{
+  "name": "guest",
+  "dependencies": {
+    "expo-mail-composer": "55.0.13"
+  }
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	report := alignProjectNativeModulesIfNeeded(ctx, dir, nil, true)
+	if report.Attempted {
+		t.Fatalf("expected Attempted=false on empty mismatches, got %#v", report)
+	}
+	if report.SkippedReason == "" {
+		t.Fatalf("expected SkippedReason on empty mismatches, got %#v", report)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("package.json was mutated when there were no mismatches:\n--- original ---\n%s\n--- got ---\n%s", original, got)
+	}
+}
+
+// TestAlignProjectNativeModulesSkipsTransitive guards against pinning a
+// package the project doesn't declare directly. The compat report can
+// surface mismatches for packages we walked through node_modules (e.g.
+// from a dep-of-a-dep) — we must not inject those into the project's
+// package.json.
+func TestAlignProjectNativeModulesSkipsTransitive(t *testing.T) {
+	dir := t.TempDir()
+	original := []byte(`{
+  "name": "guest",
+  "dependencies": {
+    "react-native": "0.81.5"
+  }
+}
+`)
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mismatches := []NativeModuleMismatch{
+		{Name: "expo-mail-composer", ProjectVersion: "15.0.8", HostVersion: "55.0.13", Reason: "major"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	report := alignProjectNativeModulesIfNeeded(ctx, dir, mismatches, true)
+	if report.Attempted {
+		t.Fatalf("expected Attempted=false (no direct dep matches), got %#v", report)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("package.json was mutated even though no direct dep matched the pins")
+	}
+}
+
+// TestAlignProjectNativeModulesWorkspaceRoot mirrors the carrotbet
+// workspace fix from the framework align: pins for packages declared in
+// the workspace child must land as overrides in the workspace ROOT (npm
+// ignores them otherwise) AND as a direct-dep rewrite in the child.
+func TestAlignProjectNativeModulesWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{
+  "name": "carrotbet",
+  "private": true,
+  "workspaces": ["mobile"]
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "mobile")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "package.json"), []byte(`{
+  "name": "mobile",
+  "dependencies": {
+    "expo-mail-composer": "15.0.8"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mismatches := []NativeModuleMismatch{
+		{Name: "expo-mail-composer", ProjectVersion: "15.0.8", HostVersion: "55.0.13", Reason: "major"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectNativeModulesIfNeeded(ctx, child, mismatches, true)
+	if !report.Attempted {
+		t.Fatalf("expected Attempted=true, got %#v", report)
+	}
+	if report.WorkspaceRoot != root {
+		t.Fatalf("WorkspaceRoot = %q, want %q", report.WorkspaceRoot, root)
+	}
+	if report.OverridesWritten != filepath.Join(root, "package.json") {
+		t.Fatalf("OverridesWritten = %q, want workspace-root package.json", report.OverridesWritten)
+	}
+
+	rootRaw, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rootPkg map[string]json.RawMessage
+	if err := json.Unmarshal(rootRaw, &rootPkg); err != nil {
+		t.Fatal(err)
+	}
+	var ov map[string]string
+	if err := json.Unmarshal(rootPkg["overrides"], &ov); err != nil {
+		t.Fatalf("workspace root missing overrides: %v", err)
+	}
+	if ov["expo-mail-composer"] != "55.0.13" {
+		t.Fatalf("workspace-root overrides.expo-mail-composer = %q, want 55.0.13", ov["expo-mail-composer"])
+	}
+
+	childRaw, err := os.ReadFile(filepath.Join(child, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var childPkg map[string]json.RawMessage
+	if err := json.Unmarshal(childRaw, &childPkg); err != nil {
+		t.Fatal(err)
+	}
+	var deps map[string]string
+	if err := json.Unmarshal(childPkg["dependencies"], &deps); err != nil {
+		t.Fatal(err)
+	}
+	if deps["expo-mail-composer"] != "55.0.13" {
+		t.Fatalf("workspace-child dependencies.expo-mail-composer = %q, want 55.0.13", deps["expo-mail-composer"])
+	}
+}
+
 // TestDetectNpmWorkspaceRootGlobMember covers the apps/* glob case so
 // monorepos that put their RN app at apps/mobile (sfmg-style turbo layout)
 // also resolve correctly.

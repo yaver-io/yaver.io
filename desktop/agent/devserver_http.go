@@ -2881,6 +2881,37 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 				log.Printf("[runtime-align] skipped: %s", alignReport.SkippedReason)
 			}
 		}
+
+		// ── Auto-align per-native-module versions ──
+		// The framework align fixed React/RN/Expo. The post-bundle compat
+		// check ALSO blocks on individual host-registered native modules
+		// drifting across a likely-breaking boundary (e.g. project ships
+		// expo-mail-composer 15.0.8 against host 55.0.13). Same workspace
+		// + overrides + npm install dance, scoped to whatever the just-
+		// rebuilt compat report flagged. No-op when no mismatches were
+		// detected, so hosts that already happen to be aligned (the
+		// yaver-test-ephemeral case) take the fast path.
+		if compatReport != nil && len(compatReport.VersionMismatches) > 0 {
+			nmCtx, nmCancel := context.WithTimeout(r.Context(), 4*time.Minute)
+			nmReport := alignProjectNativeModulesIfNeeded(nmCtx, workDir, compatReport.VersionMismatches, true)
+			nmCancel()
+			if nmReport.Error != "" {
+				log.Printf("[native-module-align] error: %s", nmReport.Error)
+				s.devServerMgr.EmitLog("Native-module auto-align failed: " + nmReport.Error)
+			} else if nmReport.Applied {
+				names := sortedKeys(nmReport.Pins)
+				log.Printf("[native-module-align] applied pins=%v", nmReport.Pins)
+				s.devServerMgr.EmitLog(fmt.Sprintf(
+					"Aligned %d native module(s) to host (%s) (npm install %dms)",
+					len(names), strings.Join(names, ", "), nmReport.NPMInstallMs,
+				))
+				if rebuilt, rerr := BuildNativeModuleCompatReportWithFamilies(workDir, req.ConsumerRuntimeFamilies); rerr == nil {
+					compatReport = rebuilt
+				}
+			} else if strings.TrimSpace(nmReport.SkippedReason) != "" {
+				log.Printf("[native-module-align] skipped: %s", nmReport.SkippedReason)
+			}
+		}
 	}
 
 	// ── Detect project type ──
