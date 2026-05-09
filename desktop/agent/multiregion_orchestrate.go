@@ -111,42 +111,56 @@ func bootstrapRemoteHost(ip, rootPassword, projectDir, gitRepo string) ([]string
 	}
 	steps = append(steps, "ssh reachable")
 
-	// Install Docker + dependencies (apt-get).
+	// Install Docker + dependencies, plus a non-root `yaver` user so the agent
+	// and project tree don't squat under /root.
 	bootstrap := `
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
-		apt-get install -y -qq ca-certificates curl git
+		apt-get install -y -qq ca-certificates curl git sudo
+		id yaver >/dev/null 2>&1 || useradd --create-home --shell /bin/bash yaver
+		install -d -m 0755 -o yaver -g yaver /home/yaver/project
+		install -m 0440 /dev/stdin /etc/sudoers.d/90-yaver <<'SUDOERS'
+yaver ALL=(ALL) NOPASSWD: ALL
+SUDOERS
 		curl -fsSL https://get.docker.com | sh
 		systemctl enable docker && systemctl start docker
+		usermod -aG docker yaver || true
 		curl -fsSL https://yaver.io/install.sh | bash
 		echo 'BOOTSTRAP_OK'
 	`
 	if out, err := runSSH(ip, rootPassword, bootstrap); err != nil {
 		return append(steps, "bootstrap failed: "+out), fmt.Errorf("bootstrap: %w", err)
 	}
-	steps = append(steps, "docker + yaver-agent installed")
+	steps = append(steps, "docker + yaver-agent installed (non-root yaver user)")
 
-	// Clone the project repo to ~/project so `yaver serve` has something to work on.
+	// Clone the project repo to /home/yaver/project so `yaver serve` has something
+	// to work on. Run as the yaver user so file ownership matches the agent.
 	if gitRepo != "" {
-		cmd := fmt.Sprintf("cd /root && rm -rf project && git clone %s project", bashSingleQuote(gitRepo))
+		cmd := fmt.Sprintf("sudo -iu yaver bash -c %s",
+			bashSingleQuote(fmt.Sprintf("cd /home/yaver && rm -rf project && git clone %s project", bashSingleQuote(gitRepo))))
 		if out, err := runSSH(ip, rootPassword, cmd); err != nil {
 			return append(steps, "git clone failed: "+out), fmt.Errorf("clone: %w", err)
 		}
 		steps = append(steps, "cloned "+gitRepo)
 	} else if projectDir != "" {
-		// No git repo — rsync the local project tree over.
+		// No git repo — rsync the local project tree over. --chown remaps the
+		// rsync target to yaver:yaver regardless of source uid/gid (Macs ship
+		// uid 501 / gid staff which would otherwise leak through and break
+		// bwrap'd codex runs).
 		rsync := exec.Command("sshpass", "-p", rootPassword,
-			"rsync", "-az", "-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
+			"rsync", "-az", "--chown=yaver:yaver",
+			"-e", "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null",
 			"--exclude=node_modules", "--exclude=.next", "--exclude=.yaver/snapshots",
-			projectDir+"/", fmt.Sprintf("root@%s:/root/project/", ip))
+			projectDir+"/", fmt.Sprintf("root@%s:/home/yaver/project/", ip))
 		if out, err := rsync.CombinedOutput(); err != nil {
 			return append(steps, "rsync failed: "+string(out)), fmt.Errorf("rsync: %w", err)
 		}
 		steps = append(steps, "rsynced project tree")
 	}
 
-	// Start services via the yaver agent that was just installed.
-	startCmd := `cd /root/project && yaver services start || true`
+	// Start services via the yaver agent. Run as the yaver user so the agent
+	// inherits the right HOME / config paths.
+	startCmd := `sudo -iu yaver bash -c 'cd /home/yaver/project && yaver services start || true'`
 	if out, err := runSSH(ip, rootPassword, startCmd); err != nil {
 		steps = append(steps, "services start returned: "+out)
 	} else {

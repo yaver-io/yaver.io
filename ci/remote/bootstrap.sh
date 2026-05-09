@@ -53,7 +53,23 @@ apt-get install -y --no-install-recommends \
   build-essential pkg-config \
   python3 python3-venv python3-pip pipx \
   software-properties-common lsb-release \
-  ufw iproute2 net-tools bubblewrap uidmap
+  ufw iproute2 net-tools bubblewrap uidmap \
+  sudo
+
+log "yaver user — non-root home for Workspace + agent"
+# Everything user-facing (cloned repos, the agent itself, opencode/codex/aider
+# configs) belongs under /home/yaver, NOT /root. The box may be cloned from a
+# snapshot where this user already exists; useradd's --comment "" flag plus
+# the existence check keeps it idempotent.
+if ! id yaver >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash --comment "Yaver agent" yaver
+fi
+install -d -m 0755 -o yaver -g yaver /home/yaver/Workspace
+# Passwordless sudo for installs the agent triggers itself (apt, systemctl
+# restart yaver-agent, etc). Scoped to yaver only — other users untouched.
+install -m 0440 /dev/stdin /etc/sudoers.d/90-yaver <<'EOF'
+yaver ALL=(ALL) NOPASSWD: ALL
+EOF
 
 log "codex/runner sandbox prerequisites"
 cat >/etc/sysctl.d/99-yaver-runner-sandbox.conf <<'EOF'
@@ -285,11 +301,12 @@ fi
 
 log "opencode"
 if ! command -v opencode >/dev/null 2>&1; then
-  # Official installer puts binary in ~/.opencode/bin
-  curl -fsSL https://opencode.ai/install | bash
-  # Symlink into PATH for non-interactive shells
-  if [ -x /root/.opencode/bin/opencode ]; then
-    ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode
+  # Official installer puts binary in ~/.opencode/bin. Run it as the yaver
+  # user so its config + bin land under /home/yaver/.opencode, then symlink
+  # into PATH for non-interactive shells.
+  sudo -iu yaver bash -c 'curl -fsSL https://opencode.ai/install | bash'
+  if [ -x /home/yaver/.opencode/bin/opencode ]; then
+    ln -sf /home/yaver/.opencode/bin/opencode /usr/local/bin/opencode
   fi
 fi
 
@@ -363,16 +380,25 @@ if systemctl is-active --quiet yaver-agent.service 2>/dev/null; then
   systemctl restart yaver-agent.service || true
 fi
 
-log "normalize ownership under /root/Workspace"
-# Anything rsync'd in via `rsync -az` from a Mac (uid 501, gid staff)
-# keeps its source uid:gid because rsync preserves ownership by default.
-# That breaks codex's bwrap sandbox: bwrap drops CAP_DAC_OVERRIDE before
-# spawning, so even root inside the sandbox is treated as unprivileged
-# against the host DAC, and `codex exec` hard-fails with
-#   bwrap: Can't create file at /root/Workspace/<proj>/.codex: Permission denied
-# Idempotent + harmless if /root/Workspace doesn't exist yet.
-if [ -d /root/Workspace ]; then
-  chown -R root:root /root/Workspace || true
+log "normalize ownership under /home/yaver/Workspace"
+# Anything rsync'd in via `rsync -az` from a Mac (uid 501, gid staff) keeps
+# its source uid:gid because rsync preserves ownership by default. That
+# breaks codex's bwrap sandbox: bwrap drops CAP_DAC_OVERRIDE before spawning,
+# so even root inside the sandbox is treated as unprivileged against the host
+# DAC, and `codex exec` hard-fails with
+#   bwrap: Can't create file at <proj>/.codex: Permission denied
+# Idempotent + harmless if /home/yaver/Workspace doesn't exist yet.
+if [ -d /home/yaver/Workspace ]; then
+  chown -R yaver:yaver /home/yaver/Workspace || true
+fi
+# Legacy migration: a snapshot from before the yaver-user split may still
+# carry /root/Workspace. Move it once, then drop the old dir. Skip silently
+# on first-run boxes where it never existed.
+if [ -d /root/Workspace ] && [ ! -L /root/Workspace ]; then
+  log "migrating /root/Workspace -> /home/yaver/Workspace"
+  rsync -aHAX --remove-source-files /root/Workspace/ /home/yaver/Workspace/ || true
+  find /root/Workspace -depth -type d -empty -delete || true
+  chown -R yaver:yaver /home/yaver/Workspace || true
 fi
 
 log "done"
