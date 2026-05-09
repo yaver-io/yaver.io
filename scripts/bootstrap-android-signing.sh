@@ -6,10 +6,15 @@
 # Run once per fresh machine after `yaver auth`. Idempotent.
 #
 # Vault entries it expects under project=mobile:
-#   ANDROID_KEYSTORE_BASE64  — base64 of keys/yaver-upload.keystore
+#   ANDROID_KEYSTORE_BASE64  (or ANDROID_KEYSTORE) — base64 of the
+#                                                    upload keystore
 #   ANDROID_KEYSTORE_PASSWORD
 #   ANDROID_KEY_ALIAS
 #   ANDROID_KEY_PASSWORD
+#
+# ANDROID_KEYSTORE is the historical GitHub-Actions secret name
+# (kept as-is in some vault syncs); ANDROID_KEYSTORE_BASE64 is the
+# explicit name some scripts adopted later. Either works.
 #
 # Materializes:
 #   keys/yaver-upload.keystore       (gitignored)
@@ -39,7 +44,18 @@ require_entry() {
   }
 }
 
-require_entry ANDROID_KEYSTORE_BASE64
+# Accept either ANDROID_KEYSTORE_BASE64 (explicit) or ANDROID_KEYSTORE
+# (matches the GitHub-Actions secret name). Pick whichever exists.
+KEYSTORE_ENTRY="ANDROID_KEYSTORE_BASE64"
+if ! yaver vault get ANDROID_KEYSTORE_BASE64 --project mobile >/dev/null 2>&1; then
+  if yaver vault get ANDROID_KEYSTORE --project mobile >/dev/null 2>&1; then
+    KEYSTORE_ENTRY="ANDROID_KEYSTORE"
+  else
+    echo "ERROR: neither mobile/ANDROID_KEYSTORE_BASE64 nor mobile/ANDROID_KEYSTORE is in the vault." >&2
+    echo "  Add it on a machine that has it, then 'yaver vault sync' from this one." >&2
+    exit 2
+  fi
+fi
 require_entry ANDROID_KEYSTORE_PASSWORD
 require_entry ANDROID_KEY_ALIAS
 require_entry ANDROID_KEY_PASSWORD
@@ -48,8 +64,8 @@ mkdir -p keys
 KEYSTORE_PATH="keys/yaver-upload.keystore"
 PROPERTIES_PATH="mobile/android/keystore.properties"
 
-echo "Materializing $KEYSTORE_PATH ..."
-yaver vault get ANDROID_KEYSTORE_BASE64 --project mobile | base64 -d > "$KEYSTORE_PATH"
+echo "Materializing $KEYSTORE_PATH (from $KEYSTORE_ENTRY) ..."
+yaver vault get "$KEYSTORE_ENTRY" --project mobile | base64 -d > "$KEYSTORE_PATH"
 chmod 600 "$KEYSTORE_PATH"
 
 # Sanity check: keytool can read it
@@ -71,9 +87,27 @@ mkdir -p "$(dirname "$PROPERTIES_PATH")"
 } > "$PROPERTIES_PATH"
 chmod 600 "$PROPERTIES_PATH"
 
-# Confirm both are gitignored before we exit (paranoia — these must never
+# Materialize the Play Store service-account JSON file the upload
+# script needs. Vault carries the JSON content under
+# PLAY_STORE_SERVICE_ACCOUNT_JSON; the upload script's PLAY_STORE_KEY_FILE
+# env var must be a path to a JSON file on disk.
+PLAY_KEY_PATH="keys/google-play-service-account.json"
+if yaver vault get PLAY_STORE_SERVICE_ACCOUNT_JSON --project mobile >/dev/null 2>&1; then
+  echo "Materializing $PLAY_KEY_PATH ..."
+  yaver vault get PLAY_STORE_SERVICE_ACCOUNT_JSON --project mobile > "$PLAY_KEY_PATH"
+  chmod 600 "$PLAY_KEY_PATH"
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$PLAY_KEY_PATH" >/dev/null 2>&1; then
+    echo "ERROR: $PLAY_KEY_PATH is not valid JSON — vault entry corrupted?" >&2
+    exit 4
+  fi
+else
+  echo "(skipping $PLAY_KEY_PATH — PLAY_STORE_SERVICE_ACCOUNT_JSON not in vault)"
+fi
+
+# Confirm gitignored before we exit (paranoia — these must never
 # end up in a commit)
-for f in "$KEYSTORE_PATH" "$PROPERTIES_PATH"; do
+for f in "$KEYSTORE_PATH" "$PROPERTIES_PATH" "$PLAY_KEY_PATH"; do
+  [ -e "$f" ] || continue
   if ! git check-ignore -q "$f" 2>/dev/null; then
     echo "WARNING: $f is NOT gitignored. Add to .gitignore before committing." >&2
   fi
@@ -84,3 +118,6 @@ echo "Done. You can now run:"
 echo "  cd mobile/android && ./gradlew bundleRelease"
 echo "or:"
 echo "  ./scripts/deploy-playstore.sh"
+echo
+echo "After build, upload to Play Store internal track:"
+echo "  PLAY_STORE_KEY_FILE=$PLAY_KEY_PATH python3 scripts/upload-playstore.py"
