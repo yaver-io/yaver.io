@@ -3955,29 +3955,36 @@ export default function TasksScreen() {
               </Text>
             )}
             {availableRunners.length > 0 && (() => {
-              // Only surface the three first-class coding agents in the
-              // mobile picker. Aider / Ollama are still installable from
-              // the CLI + reachable through OpenCode as a provider, but
-              // they don't get their own chip here. Keep the currently-
-              // selected runner visible even if it's outside the
-              // whitelist, so a long-lived task doesn't silently drop
-              // its chip when a user opens the picker.
-              const RUNNER_WL = new Set(["claude", "codex", "opencode"]);
-              const installed = availableRunners.filter(
-                (r) => (r.installed && RUNNER_WL.has(r.id)) || r.id === selectedRunner,
-              );
-              if (installed.length === 0) {
-                return (
-                  <>
-                    <Text style={[s.agentPickerSection, { color: c.textMuted }]}>AGENT</Text>
-                    <Text style={{ color: c.textMuted, fontSize: 12, paddingHorizontal: 16, paddingBottom: 12 }}>
-                      No coding agents installed on this dev machine. Install one with{"\n"}
-                      <Text style={{ fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace", color: c.textSecondary }}>
-                        yaver install claude | codex | opencode
-                      </Text>
-                    </Text>
-                  </>
-                );
+              // Always surface the three first-class coding agents — the
+              // user should be able to pick claude-code / opencode even
+              // when only codex is installed today, and we'll prompt
+              // sign-in / install as needed when they tap. Previously
+              // this filtered by `r.installed`, which silently hid two
+              // chips on a fresh box and made it look like Codex was the
+              // only option.
+              const RUNNER_WL = new Set(["claude", "claude-code", "codex", "opencode"]);
+              const byId = new Map(availableRunners.map((r) => [r.id, r]));
+              const installed = (["claude-code", "codex", "opencode"] as const).map((id) => {
+                const existing = byId.get(id) ?? (id === "claude-code" ? byId.get("claude") : undefined);
+                if (existing) return { ...existing, id };
+                // Synthesize a stub row for runners the agent didn't
+                // report — same chip UX, "needs install" affordance
+                // surfaces via runnerAuthIssue / ready=false.
+                return {
+                  id,
+                  name: id === "claude-code" ? "Claude Code" : id === "codex" ? "OpenAI Codex" : "OpenCode",
+                  installed: false,
+                  ready: false,
+                  supportsBrowserAuth: id !== "opencode",
+                } as typeof availableRunners[number];
+              });
+              // Keep the currently-selected runner visible even if it's
+              // outside the whitelist (e.g. a custom command from a long-
+              // lived task) so opening the picker doesn't silently drop
+              // its chip.
+              if (selectedRunner && !RUNNER_WL.has(selectedRunner) && selectedRunner !== "custom") {
+                const cur = byId.get(selectedRunner);
+                if (cur) installed.push(cur);
               }
               return (
                 <>
