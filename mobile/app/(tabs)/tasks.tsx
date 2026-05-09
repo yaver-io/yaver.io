@@ -1253,12 +1253,29 @@ function extractTaskErrorMessage(task: Task): string {
 // fields are best-effort — we render whatever we have access to from
 // the local state. Branch and full workDir aren't on the Task type
 // today, so they're sourced from the screen's projectDir param when
-// present.
+// present. Runner / Model mirror the TaskHeader chip — same fallback
+// chain so e.g. opencode tasks surface "glm-4.7" in both places.
+interface AgentContextExtras {
+  /** Currently picked model id from the in-screen picker. */
+  selectedModelId?: string;
+  /** Active device descriptor (full object, not just name) for the
+   *  preferredDefaultModelForRunner fallback when Task lacks model. */
+  activeDevice?: { id?: string; name?: string | null; hostName?: string | null; os?: string | null };
+  /** Signed-in user email — feeds the kivanc-account fallback inside
+   *  preferredDefaultModelForRunner. Honest pass-through: any user. */
+  userEmail?: string | null;
+  /** Per-device mode preference map (opencode build/plan, etc). */
+  modeByDevice?: Record<string, string>;
+  /** Per-device provider preference map (opencode provider routing). */
+  providerByDevice?: Record<string, string>;
+}
+
 function buildAgentContextRows(
   task: Task,
   deviceName: string | undefined,
   connMode: ConnectionMode,
   models: ModelInfo[],
+  extras: AgentContextExtras = {},
 ): AgentContextRow[] {
   const rows: AgentContextRow[] = [];
   const elapsedSec = Math.max(0, Math.round((Date.now() - task.createdAt) / 1000));
@@ -1272,12 +1289,45 @@ function buildAgentContextRows(
     rows.push({ label: "Device", value: deviceName.replace(/\.local$/, ""), mono: false });
   }
   if (task.runnerId) {
-    const modelMatch = models.find((m) => m.id === task.runnerId);
     rows.push({
       label: "Runner",
-      value: modelMatch?.name || task.runnerId,
+      value: displayRunnerLabel(task.runnerId),
       mono: false,
     });
+
+    // Model: same resolution as TaskHeader chip — match by selected
+    // picker id first, then fall back to the runner's preferred
+    // default model on this device. Surfaces glm-4.7 (opencode),
+    // gpt-5.4 (codex), claude-opus-4-7 (claude) etc.
+    let modelLabel: string | undefined;
+    if (extras.selectedModelId) {
+      modelLabel = models.find((m) => m.id === extras.selectedModelId)?.name || extras.selectedModelId;
+    }
+    if (!modelLabel) {
+      const fallbackId = preferredDefaultModelForRunner(
+        task.runnerId,
+        extras.activeDevice ?? {},
+        extras.userEmail,
+      );
+      if (fallbackId) {
+        modelLabel = models.find((m) => m.id === fallbackId)?.name || fallbackId;
+      }
+    }
+    if (modelLabel) {
+      rows.push({ label: "Model", value: modelLabel, mono: false });
+    }
+
+    // Mode + provider: opencode-flavoured details that the picker
+    // sets per-device. Codex / Claude usually don't write these so
+    // the rows stay hidden when empty — non-opencode tasks render
+    // the same compact panel as before.
+    const deviceId = extras.activeDevice?.id;
+    if (deviceId) {
+      const mode = extras.modeByDevice?.[deviceId];
+      if (mode) rows.push({ label: "Mode", value: mode, mono: false });
+      const provider = extras.providerByDevice?.[deviceId];
+      if (provider) rows.push({ label: "Provider", value: provider, mono: false });
+    }
   }
   if (connMode) {
     rows.push({ label: "Transport", value: connMode, mono: false });
@@ -1363,7 +1413,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -4305,7 +4355,13 @@ export default function TasksScreen() {
                           );
                         })()}
                         <AgentContextPanel
-                          rows={buildAgentContextRows(selectedTask, activeDevice?.name, connMode, availableModels)}
+                          rows={buildAgentContextRows(selectedTask, activeDevice?.name, connMode, availableModels, {
+                            selectedModelId: selectedModel,
+                            activeDevice: activeDevice ?? undefined,
+                            userEmail: user?.email,
+                            modeByDevice: primaryModeByDevice,
+                            providerByDevice: primaryProviderByDevice,
+                          })}
                           defaultExpanded={selectedTask.status === "failed"}
                         />
                         <DebugSection task={selectedTask} connMode={connMode} c={c} />
