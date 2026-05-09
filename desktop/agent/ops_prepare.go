@@ -256,6 +256,22 @@ func opsPrepareHandler(c OpsContext, payload json.RawMessage) OpsResult {
 			serveStep.Reason = "framework=" + framework
 			serveStep.Command = devCommandFor(framework)
 		}
+		// Port-conflict detection — common gotcha when switching
+		// projects without a clean Stop, or when another tool on the
+		// box (a stray `next dev`, vscode preview, etc.) has grabbed
+		// the framework's default port. The dev server's own startup
+		// would error with EADDRINUSE; surfacing it in prepare lets
+		// the caller resolve it (call /dev/stop first, or pick a
+		// different port) before the click.
+		if framework != "" {
+			if port := defaultPortFor(framework); port > 0 && isPortInUse(port) {
+				issues = append(issues, prepareIssue{
+					Severity: "warning",
+					Message:  fmt.Sprintf("port %d is already bound on this host — the %s dev server can't start there", port, framework),
+					Fix:      "POST /dev/stop on the previous project first, OR pass `port` to /dev/start to pick a different one.",
+				})
+			}
+		}
 		plan = append(plan, serveStep)
 	}
 
@@ -381,6 +397,23 @@ func devCommandFor(fw string) string {
 		return "flutter run"
 	}
 	return "(framework-dependent)"
+}
+
+// defaultPortFor mirrors the per-framework default port that
+// DevServerManager.Start picks when opts.Port is 0 (devserver.go:520).
+// Used by prepare to flag port conflicts before the click.
+func defaultPortFor(fw string) int {
+	switch fw {
+	case "expo", "react-native":
+		return 8081
+	case "vite":
+		return 5173
+	case "nextjs":
+		return 3000
+	case "flutter":
+		return 9100
+	}
+	return 0
 }
 
 func orDash(s string) string {

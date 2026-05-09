@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,43 @@ func TestOpsPrepare_RejectsBadInput(t *testing.T) {
 				t.Fatalf("error %q must mention %q", res.Error, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestOpsPrepare_PortConflictSurfacedAsIssue covers the project-switch
+// gotcha where a previous /dev/start left its port bound (or another
+// tool on the box grabbed it). prepare should warn before /dev/start
+// fires, so the dashboard can point the user at /dev/stop on the prior
+// project instead of dumping an EADDRINUSE trace from vite/next.
+func TestOpsPrepare_PortConflictSurfacedAsIssue(t *testing.T) {
+	dir := t.TempDir()
+	mustMkViteProject(t, dir)
+
+	// Bind vite's default port (5173) on the same interface set
+	// isPortInUse probes (":5173" → 0.0.0.0). Binding to 127.0.0.1
+	// alone doesn't always conflict with 0.0.0.0 on macOS.
+	ln, err := net.Listen("tcp", ":5173")
+	if err != nil {
+		t.Skipf("can't bind :5173 on this host (probably already in use): %v", err)
+	}
+	defer ln.Close()
+
+	res := callPrepare(t, prepareReq{WorkDir: dir, Intent: "webview"})
+	if !res.OK {
+		t.Fatalf("prepare returned not-ok: %s", res.Error)
+	}
+	out := res.Initial.(map[string]interface{})
+	issues := out["issues"].([]prepareIssue)
+
+	matched := false
+	for _, iss := range issues {
+		if strings.Contains(iss.Message, "5173") && strings.Contains(iss.Fix, "/dev/stop") {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Fatalf("expected an actionable port-conflict issue for :5173; got %+v", issues)
 	}
 }
 
