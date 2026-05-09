@@ -303,15 +303,18 @@ func pollPeerHeartbeats() {
 				return
 			}
 
-			primaryID := lookupPrimaryDeviceID()
+			primaryID, secondaryID := lookupElevatedDeviceIDs()
 			watchdogEnabled := os.Getenv("YAVER_PEER_WATCHDOG") == "1"
 			for _, p := range peers {
 				if p.DeviceID == selfID {
 					continue
 				}
 				lastHB := time.UnixMilli(p.LastSeenAt).UTC().Format(time.RFC3339)
-				isPrimary := p.DeviceID == primaryID && primaryID != ""
-				msg, fellOffline := watcher.observe(p.DeviceID, p.Hostname, lastHB, isPrimary)
+				// Both elevated slots get the tight 90s threshold.
+				// Either being dark is the loudest possible signal.
+				isElevated := (primaryID != "" && p.DeviceID == primaryID) ||
+					(secondaryID != "" && p.DeviceID == secondaryID)
+				msg, fellOffline := watcher.observe(p.DeviceID, p.Hostname, lastHB, isElevated)
 				if msg != "" {
 					fmt.Fprintf(os.Stderr, "[heartbeat] %s\n", msg)
 					if nm := globalMonitorNotifier; nm != nil {
@@ -343,21 +346,23 @@ func pollPeerHeartbeats() {
 	convexBootstrapPeers(hostname, watcher)
 }
 
-// lookupPrimaryDeviceID returns the user's primary device ID, or
-// empty string if it's unset / Convex is unreachable. Best-effort:
-// the watcher will fall back to the loose threshold when in doubt.
-func lookupPrimaryDeviceID() string {
+// lookupElevatedDeviceIDs returns the user's primary + secondary device
+// IDs (either may be empty). Best-effort: on Convex error, both come
+// back empty and the watcher falls through to the loose threshold.
+func lookupElevatedDeviceIDs() (primaryID, secondaryID string) {
 	cfg, err := LoadConfig()
 	if err != nil || cfg == nil || cfg.AuthToken == "" || cfg.ConvexSiteURL == "" {
-		return ""
+		return "", ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id, err := primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
-	if err != nil {
-		return ""
+	if id, err := primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL); err == nil {
+		primaryID = id
 	}
-	return id
+	if id, err := secondaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL); err == nil {
+		secondaryID = id
+	}
+	return primaryID, secondaryID
 }
 
 // attemptPeerRecovery SSHes into a peer that just fell offline and
@@ -499,13 +504,14 @@ func convexBootstrapPeers(hostname string, watcher *peerWatcher) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return
 	}
-	primaryID := lookupPrimaryDeviceID()
+	primaryID, secondaryID := lookupElevatedDeviceIDs()
 	for _, d := range payload.Devices {
 		if d.DeviceID == cfg.DeviceID {
 			continue
 		}
-		isPrimary := d.DeviceID == primaryID && primaryID != ""
-		msg, _ := watcher.observe(d.DeviceID, d.Name, d.LastHeartbeat, isPrimary)
+		isElevated := (primaryID != "" && d.DeviceID == primaryID) ||
+			(secondaryID != "" && d.DeviceID == secondaryID)
+		msg, _ := watcher.observe(d.DeviceID, d.Name, d.LastHeartbeat, isElevated)
 		if msg != "" {
 			fmt.Fprintf(os.Stderr, "[heartbeat] %s\n", msg)
 			if nm := globalMonitorNotifier; nm != nil {

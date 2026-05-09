@@ -40,24 +40,25 @@ function mergeManagedPatch(
   return Object.keys(merged).length === 0 ? undefined : merged;
 }
 
-// normalizePrimaryDeviceId enforces the backend invariant for the
-// user's primary machine selection:
-//   - exactly zero or one primary device per user
-//   - any non-empty primaryDeviceId must point at a device row owned by
+// normalizeOwnedDeviceId enforces the backend invariant for any
+// elevated-slot device pointer (primary, secondary):
+//   - exactly zero or one slot value per user
+//   - any non-empty slot value must point at a device row owned by
 //     that same user
 //
-// The "only one primary" part is structural because userSettings stores
-// a single scalar field, not a per-device flag. This helper exists so
-// every mutation path validates ownership the same way before writing.
-async function normalizePrimaryDeviceId(
+// The "only one" part is structural because userSettings stores a
+// single scalar per slot, not a per-device flag. The slot label feeds
+// the error message so callers can tell which field tripped.
+async function normalizeOwnedDeviceId(
   ctx: any,
   userId: string,
-  primaryDeviceId: string | null | undefined,
+  deviceId: string | null | undefined,
+  slot: "primaryDeviceId" | "secondaryDeviceId",
 ): Promise<string | undefined> {
-  if (primaryDeviceId === undefined) {
+  if (deviceId === undefined) {
     return undefined;
   }
-  const next = primaryDeviceId ?? undefined;
+  const next = deviceId ?? undefined;
   if (!next) {
     return undefined;
   }
@@ -66,7 +67,7 @@ async function normalizePrimaryDeviceId(
     .withIndex("by_deviceId", (q: any) => q.eq("deviceId", next))
     .first();
   if (!device || device.userId !== userId) {
-    throw new Error("primaryDeviceId must refer to one of the caller's devices");
+    throw new Error(`${slot} must refer to one of the caller's devices`);
   }
   return next;
 }
@@ -110,6 +111,7 @@ export const set = mutation({
     keyStorage: v.optional(v.string()),
     // null sentinel = clear the preference; undefined = leave untouched.
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
     // Set or clear the primary runner for a single device. The whole
     // primaryRunnerByDevice list lives on the userSettings row, but
     // mutations only ever touch one entry at a time so the wire shape
@@ -137,10 +139,17 @@ export const set = mutation({
     managed: v.optional(managedPatchValidator),
   },
   handler: async (ctx, args) => {
-    const normalizedPrimaryDeviceId = await normalizePrimaryDeviceId(
+    const normalizedPrimaryDeviceId = await normalizeOwnedDeviceId(
       ctx,
       args.userId,
       args.primaryDeviceId,
+      "primaryDeviceId",
+    );
+    const normalizedSecondaryDeviceId = await normalizeOwnedDeviceId(
+      ctx,
+      args.userId,
+      args.secondaryDeviceId,
+      "secondaryDeviceId",
     );
     const existing = await ctx.db
       .query("userSettings")
@@ -162,6 +171,9 @@ export const set = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
+    }
+    if (args.secondaryDeviceId !== undefined) {
+      patch.secondaryDeviceId = normalizedSecondaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
       const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>;
@@ -241,6 +253,7 @@ export const setByToken = mutation({
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
+    secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
     primaryRunnerForDevice: v.optional(
       v.object({
         deviceId: v.string(),
@@ -258,10 +271,17 @@ export const setByToken = mutation({
     const session = await validateSessionInternal(ctx, args.tokenHash);
     if (!session) throw new Error("Unauthorized");
     const userId = session.user._id;
-    const normalizedPrimaryDeviceId = await normalizePrimaryDeviceId(
+    const normalizedPrimaryDeviceId = await normalizeOwnedDeviceId(
       ctx,
       userId,
       args.primaryDeviceId,
+      "primaryDeviceId",
+    );
+    const normalizedSecondaryDeviceId = await normalizeOwnedDeviceId(
+      ctx,
+      userId,
+      args.secondaryDeviceId,
+      "secondaryDeviceId",
     );
     const existing = await ctx.db
       .query("userSettings")
@@ -283,6 +303,9 @@ export const setByToken = mutation({
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
+    }
+    if (args.secondaryDeviceId !== undefined) {
+      patch.secondaryDeviceId = normalizedSecondaryDeviceId;
     }
     if (args.primaryRunnerForDevice !== undefined) {
       const cur = (existing?.primaryRunnerByDevice ?? []) as Array<{ deviceId: string; runnerId: string; model?: string; mode?: string; provider?: string }>;

@@ -245,6 +245,26 @@ func resolveRemoteAgentCandidates(deviceHint string) ([]RemoteAgentCandidate, st
 		return nil, "", fmt.Errorf("missing convex site url")
 	}
 
+	// Resolve "primary" / "secondary" aliases against userSettings BEFORE
+	// the device-list match. Lets every caller (yaver ping primary, ops
+	// machine=secondary, etc.) use the slot names without each having to
+	// re-implement the lookup.
+	if alias := strings.ToLower(strings.TrimSpace(deviceHint)); alias == "primary" || alias == "secondary" {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		var slotID string
+		if alias == "secondary" {
+			slotID, _ = secondaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		} else {
+			slotID, _ = primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		}
+		slotID = strings.TrimSpace(slotID)
+		if slotID == "" {
+			return nil, "", fmt.Errorf("no %s device set — run `yaver %s set <deviceId>` first", alias, alias)
+		}
+		deviceHint = slotID
+	}
+
 	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
 	if err != nil {
 		return nil, "", fmt.Errorf("list devices: %w", err)

@@ -232,6 +232,7 @@ function DeviceCard({
   authExpired,
   isStale,
   isPrimary,
+  isSecondary,
   defaultRunner,
   onSelect,
   onLongPress,
@@ -248,6 +249,9 @@ function DeviceCard({
   // button instead of the old green/red flicker.
   isStale: boolean;
   isPrimary: boolean;
+  // Optional secondary slot. Same elevated treatment as primary
+  // for the watchdog + auto-connect. Renders ☆ instead of ★.
+  isSecondary?: boolean;
   // Runner the user picked as the default for this device in
   // DeviceDetailsModal. Empty string means none picked. Surfaced as a
   // small badge on the card so the user can see which agent runs
@@ -561,6 +565,7 @@ function DeviceCard({
             <Text style={[styles.deviceName, { color: c.textPrimary }]}>{device.name}</Text>
             {device.isGuest ? <StatusChip tone="blue" label="SHARED" isDark={isDark} /> : null}
             {isPrimary ? <StatusChip tone="indigo" label="PRIMARY ★" isDark={isDark} /> : null}
+            {!isPrimary && isSecondary ? <StatusChip tone="violet" label="SECONDARY ☆" isDark={isDark} /> : null}
             {defaultRunner ? <StatusChip tone="violet" label={`★ ${labelForRunnerId(defaultRunner)}`} isDark={isDark} /> : null}
             {recovering ? (
               <StatusChip tone="amber" label="RECOVERING…" isDark={isDark} />
@@ -816,6 +821,8 @@ export default function DevicesScreen() {
     unreachableDeviceIds,
     primaryDeviceId,
     setPrimaryDevice,
+    secondaryDeviceId,
+    setSecondaryDevice,
     primaryRunnerByDevice,
     pendingClaims,
     refreshPendingClaims,
@@ -1142,6 +1149,7 @@ export default function DevicesScreen() {
               connectionStatus={connectionStatus}
               isStale={unreachableDeviceIds.includes(item.id)}
               isPrimary={primaryDeviceId === item.id}
+              isSecondary={secondaryDeviceId === item.id}
               defaultRunner={primaryRunnerByDevice[item.id] || ""}
               onSelect={() => selectDevice(item)}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
@@ -1151,8 +1159,9 @@ export default function DevicesScreen() {
                 const message = item.isGuest
                   ? "Remove this shared machine from your list? It will reappear if the host shares it again."
                   : "Remove this device from your account? The node will need to re-register before it shows up again.";
-                // Guest machines can't be the primary — they can vanish on host revocation.
+                // Guest machines can't be elevated — they can vanish on host revocation.
                 const isThisPrimary = primaryDeviceId === item.id;
+                const isThisSecondary = secondaryDeviceId === item.id;
                 const primaryAction = item.isGuest
                   ? null
                   : isThisPrimary
@@ -1162,8 +1171,18 @@ export default function DevicesScreen() {
                     : { text: "Set as primary", onPress: async () => {
                         try { await setPrimaryDevice(item.id); } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
                       } };
+                const secondaryAction = item.isGuest || isThisPrimary
+                  ? null
+                  : isThisSecondary
+                    ? { text: "Unset secondary", onPress: async () => {
+                        try { await setSecondaryDevice(null); } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
+                      } }
+                    : { text: "Set as secondary", onPress: async () => {
+                        try { await setSecondaryDevice(item.id); } catch (e: any) { Alert.alert("Error", e?.message || "Failed"); }
+                      } };
                 const buttons: any[] = [{ text: "Cancel", style: "cancel" }];
                 if (primaryAction) buttons.push(primaryAction);
+                if (secondaryAction) buttons.push(secondaryAction);
                 buttons.push({
                   text: actionLabel,
                   style: "destructive",

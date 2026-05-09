@@ -487,6 +487,12 @@ export default defineSchema({
     // Value is devices.deviceId (uuid), not an Id<"devices">, so the
     // pref survives a device record being deleted and re-created.
     primaryDeviceId: v.optional(v.string()),
+    // Optional second elevated device. Surfaced via `yaver secondary
+    // {set,unset,status}`, `yaver ssh secondary`, the mobile + web
+    // pickers, and the watchdog (gets the same tight 90s staleness
+    // threshold as primary). Same validation as primary: must be one
+    // of the caller's owned devices. Most users will leave this unset.
+    secondaryDeviceId: v.optional(v.string()),
     // Per-device primary coding agent preference. The dashboard reads
     // this when it connects to a device and pre-selects the named
     // runner so the user doesn't have to pick "codex" every time on

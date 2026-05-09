@@ -632,6 +632,14 @@ interface DeviceState {
   /** Persist the preferred device. Pass null to clear. Syncs to Convex so
    *  other surfaces (web, desktop, MCP) honor the same choice. */
   setPrimaryDevice: (deviceId: string | null) => Promise<void>;
+  /** Optional second elevated device. When primary is offline, the
+   *  mobile auto-connect falls back to this one before showing the
+   *  picker. `yaver ssh secondary` and the watchdog's tight 90s
+   *  staleness threshold also apply. */
+  secondaryDeviceId: string | null;
+  /** Persist the secondary device. Pass null to clear. Same sync
+   *  semantics as setPrimaryDevice. */
+  setSecondaryDevice: (deviceId: string | null) => Promise<void>;
   /** Per-device primary coding agent. e.g. {"<deviceId>": "codex"}. The
    *  chat / task surfaces read this when opening a workspace and pre-
    *  select the runner so the user doesn't have to chase the pill on
@@ -737,6 +745,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // than one device. Undefined = no preference set → force manual pick for
   // multi-device users. Loaded from Convex on mount, persisted on change.
   const [primaryDeviceId, setPrimaryDeviceIdState] = useState<string | null>(null);
+  // Optional secondary slot. Auto-connect falls back here when primary
+  // is offline; otherwise functions identically to primary (yaver ssh
+  // secondary, tight watchdog threshold, etc).
+  const [secondaryDeviceId, setSecondaryDeviceIdState] = useState<string | null>(null);
   // Per-device primary coding agent. Keyed by deviceId → runnerId.
   // Loaded from userSettings.primaryRunnerByDevice on mount, persisted
   // through saveUserSettings({primaryRunnerForDevice: …}). Empty for
@@ -1023,6 +1035,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // Roll back so the user sees the real state.
       appLog("error", `[settings] setPrimaryDevice failed: ${e}`);
       setPrimaryDeviceIdState((prev) => prev);
+      throw e;
+    }
+  }, [token]);
+
+  const setSecondaryDevice = useCallback(async (deviceId: string | null) => {
+    if (!token) throw new Error("Not signed in");
+    setSecondaryDeviceIdState(deviceId);
+    try {
+      await saveUserSettings(token, { secondaryDeviceId: deviceId });
+    } catch (e) {
+      appLog("error", `[settings] setSecondaryDevice failed: ${e}`);
+      setSecondaryDeviceIdState((prev) => prev);
       throw e;
     }
   }, [token]);
@@ -1509,6 +1533,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (settings.primaryDeviceId !== undefined) {
           setPrimaryDeviceIdState(settings.primaryDeviceId ?? null);
           appLog("info", `[settings] primaryDeviceId=${settings.primaryDeviceId ?? "(none)"}`);
+        }
+        if (settings.secondaryDeviceId !== undefined) {
+          setSecondaryDeviceIdState(settings.secondaryDeviceId ?? null);
+          appLog("info", `[settings] secondaryDeviceId=${settings.secondaryDeviceId ?? "(none)"}`);
         }
 
         // Apply per-device primary coding agent preference. Stored on
@@ -2449,9 +2477,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   }, [token, refreshDevices]);
 
   // Auto-connect rule (applies once, after login / relaysReady):
-  //   1. Exactly one online device                 → auto-connect
-  //   2. Multiple online, primaryDeviceId is one   → auto-connect the primary
-  //   3. Multiple online, no (matching) primary    → force user to pick
+  //   1. Exactly one online device                       → auto-connect
+  //   2. Multiple online, primaryDeviceId is online      → auto-connect primary
+  //   3. Multiple online, primary offline, secondary on  → auto-connect secondary
+  //   4. Multiple online, no matching elevated device    → force user to pick
   // The user-disconnect flag always wins so a manual "Stop" isn't overridden
   // by the auto-connect effect firing again.
   useEffect(() => {
@@ -2461,7 +2490,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     if (recentDevices.length === 0) return;
 
     let target: Device | null = null;
-    let reason: "single" | "primary" = "single";
+    let reason: "single" | "primary" | "secondary" = "single";
     if (recentDevices.length === 1) {
       target = recentDevices[0];
     } else if (primaryDeviceId) {
@@ -2469,6 +2498,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (primary) {
         target = primary;
         reason = "primary";
+      } else if (secondaryDeviceId) {
+        // Primary is set but offline — try secondary before bailing.
+        const secondary = recentDevices.find((d) => d.id === secondaryDeviceId);
+        if (secondary) {
+          target = secondary;
+          reason = "secondary";
+        }
+      }
+    } else if (secondaryDeviceId) {
+      // No primary configured but secondary is — honour it.
+      const secondary = recentDevices.find((d) => d.id === secondaryDeviceId);
+      if (secondary) {
+        target = secondary;
+        reason = "secondary";
       }
     }
 
@@ -2492,8 +2535,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         });
       }
     }
-    // Multiple devices + no primary (or primary offline) → do nothing; UI asks the user to pick.
-  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, selectDevice, setPrimaryDevice]);
+    // Multiple devices + neither primary nor secondary online → do nothing; UI asks the user to pick.
+  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
 
   // Trigger immediate reconnection on network change (WiFi↔cellular roaming,
   // Wi-Fi → Wi-Fi roam between APs (same SSID, new IP), VPN/Tailscale toggle).
@@ -2613,13 +2656,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       inviteGuest,
       primaryDeviceId,
       setPrimaryDevice,
+      secondaryDeviceId,
+      setSecondaryDevice,
       primaryRunnerByDevice,
       primaryModelByDevice,
       primaryModeByDevice,
       primaryProviderByDevice,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

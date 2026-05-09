@@ -533,6 +533,10 @@ export interface UserSettings {
    * Send `null` to clear; omit to leave untouched. Single-device users
    * auto-connect regardless of this field. */
   primaryDeviceId?: string | null;
+  /** Optional secondary elevated device. When primary is offline, the
+   * mobile auto-connect falls back to secondary before showing the
+   * picker. Same semantics as primaryDeviceId on the wire. */
+  secondaryDeviceId?: string | null;
   /** Per-device primary coding agent + optional model hint. The full
    * list is stored on the server as primaryRunnerByDevice; mutations
    * send a single-entry patch via this field so we never round-trip

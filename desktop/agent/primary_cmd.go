@@ -679,6 +679,21 @@ func primaryListDevices(ctx context.Context, token, convexURL string) ([]primary
 }
 
 func primaryGetCurrent(ctx context.Context, token, convexURL string) (string, error) {
+	return slotGetCurrent(ctx, token, convexURL, "primaryDeviceId")
+}
+
+// secondaryGetCurrent reads userSettings.secondaryDeviceId for the
+// caller. Returns "" if unset. Mirrors primaryGetCurrent — the
+// secondary slot is just a second elevated-device pointer with the
+// same wire shape.
+func secondaryGetCurrent(ctx context.Context, token, convexURL string) (string, error) {
+	return slotGetCurrent(ctx, token, convexURL, "secondaryDeviceId")
+}
+
+// slotGetCurrent reads one of the elevated-slot device pointers
+// (primaryDeviceId, secondaryDeviceId) from userSettings. Centralises
+// the HTTP shape so adding a future slot is a one-liner wrapper.
+func slotGetCurrent(ctx context.Context, token, convexURL, field string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", convexURL+"/settings", nil)
 	if err != nil {
 		return "", err
@@ -693,14 +708,15 @@ func primaryGetCurrent(ctx context.Context, token, convexURL string) (string, er
 		return "", fmt.Errorf("settings: %d", resp.StatusCode)
 	}
 	var parsed struct {
-		Settings struct {
-			PrimaryDeviceID string `json:"primaryDeviceId"`
-		} `json:"settings"`
+		Settings map[string]interface{} `json:"settings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return "", err
 	}
-	return parsed.Settings.PrimaryDeviceID, nil
+	if v, ok := parsed.Settings[field].(string); ok {
+		return v, nil
+	}
+	return "", nil
 }
 
 // primarySaveRaw posts the primaryDeviceId field to /settings. Pass an empty
@@ -708,11 +724,21 @@ func primaryGetCurrent(ctx context.Context, token, convexURL string) (string, er
 // null as "clear" and undefined as "leave untouched"; the explicit `clear`
 // flag controls which one we send.
 func primarySaveRaw(ctx context.Context, token, convexURL, deviceID string, clear bool) error {
+	return slotSaveRaw(ctx, token, convexURL, "primaryDeviceId", deviceID, clear)
+}
+
+// secondarySaveRaw mirrors primarySaveRaw for the secondary slot.
+func secondarySaveRaw(ctx context.Context, token, convexURL, deviceID string, clear bool) error {
+	return slotSaveRaw(ctx, token, convexURL, "secondaryDeviceId", deviceID, clear)
+}
+
+// slotSaveRaw is the shared writer behind primarySaveRaw / secondarySaveRaw.
+func slotSaveRaw(ctx context.Context, token, convexURL, field, deviceID string, clear bool) error {
 	payload := map[string]interface{}{}
 	if clear {
-		payload["primaryDeviceId"] = nil
+		payload[field] = nil
 	} else {
-		payload["primaryDeviceId"] = deviceID
+		payload[field] = deviceID
 	}
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, "POST", convexURL+"/settings", bytes.NewReader(body))

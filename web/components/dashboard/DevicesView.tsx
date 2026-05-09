@@ -1081,16 +1081,19 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
 }
 
 /**
- * Loads the user's current primaryDeviceId from Convex and exposes a setter
- * that POSTs back to /settings. Shared between the dashboard's device cards
- * so only one settings round-trip is made on mount. Null state ("no primary")
- * is the default for fresh accounts and for anyone who hasn't opted in.
+ * Loads the user's current primary + secondary device IDs from Convex
+ * and exposes setters that POST back to /settings. Shared between the
+ * dashboard's device cards so only one settings round-trip is made on
+ * mount. Null state ("no elevated device") is the default.
  */
 function usePrimaryDeviceId(token: string | null | undefined): {
   primaryDeviceId: string | null;
   setPrimaryDevice: (id: string | null) => Promise<void>;
+  secondaryDeviceId: string | null;
+  setSecondaryDevice: (id: string | null) => Promise<void>;
 } {
   const [primaryDeviceId, setPrimaryDeviceId] = useState<string | null>(null);
+  const [secondaryDeviceId, setSecondaryDeviceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -1104,6 +1107,7 @@ function usePrimaryDeviceId(token: string | null | undefined): {
         const data = await res.json();
         if (!cancelled) {
           setPrimaryDeviceId(data?.settings?.primaryDeviceId ?? null);
+          setSecondaryDeviceId(data?.settings?.secondaryDeviceId ?? null);
         }
       } catch {
         // best-effort — UI falls back to "no primary"
@@ -1130,7 +1134,24 @@ function usePrimaryDeviceId(token: string | null | undefined): {
     }
   }, [token, primaryDeviceId]);
 
-  return { primaryDeviceId, setPrimaryDevice };
+  const setSecondaryDevice = useCallback(async (id: string | null) => {
+    if (!token) return;
+    const previous = secondaryDeviceId;
+    setSecondaryDeviceId(id);
+    try {
+      const res = await fetch(`${CONVEX_URL}/settings`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ secondaryDeviceId: id }),
+      });
+      if (!res.ok) throw new Error(`status ${res.status}`);
+    } catch (e) {
+      setSecondaryDeviceId(previous);
+      throw e;
+    }
+  }, [token, secondaryDeviceId]);
+
+  return { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice };
 }
 
 /**
@@ -1683,7 +1704,7 @@ export default function DevicesView({
   hiddenCount = 0,
 }: DevicesViewProps) {
   const agentConnectionState = useAgentConnectionState();
-  const { primaryDeviceId, setPrimaryDevice } = usePrimaryDeviceId(token);
+  const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Backfill provider/model for opencode devices whose Convex row is
   // half-populated (runnerId only). Reads opencode.json over the relay
@@ -1923,6 +1944,28 @@ export default function DevicesView({
                           <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
                         </svg>
                         {primaryDeviceId === device.id ? "Primary" : "Set Primary"}
+                      </button>
+                    ) : null}
+                    {!device.isGuest && token && primaryDeviceId !== device.id ? (
+                      <button
+                        onClick={async () => {
+                          try {
+                            await setSecondaryDevice(secondaryDeviceId === device.id ? null : device.id);
+                          } catch (e: any) {
+                            alert(`Failed to update secondary: ${e?.message ?? e}`);
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+                          secondaryDeviceId === device.id
+                            ? "border-violet-400/50 bg-violet-100 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/10 dark:text-violet-300"
+                            : "border-slate-300 bg-white text-slate-700 hover:border-violet-400/40 hover:text-violet-600 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-violet-400/40 dark:hover:text-violet-300"
+                        }`}
+                        title={secondaryDeviceId === device.id ? "This is your secondary device" : "Mark this device as your fallback secondary machine"}
+                      >
+                        <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} aria-hidden>
+                          <path d="m12 2.75 2.33 4.72 5.21.76-3.77 3.67.89 5.19L12 14.6l-4.66 2.49.89-5.19-3.77-3.67 5.21-.76L12 2.75Z" />
+                        </svg>
+                        {secondaryDeviceId === device.id ? "Secondary" : "Set Secondary"}
                       </button>
                     ) : null}
                     {!device.isGuest ? (
