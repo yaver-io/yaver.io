@@ -128,6 +128,12 @@ export function WebReloadView({
   const [composer, setComposer] = useState("");
   const [sending, setSending] = useState(false);
   const [sendStatus, setSendStatus] = useState<string | null>(null);
+  // Reload UX — mirrors the mobile Hot Reload tab's framework-aware
+  // reload (dev-mode HTTP reload for Metro/Vite/Next, Hermes bundle
+  // rebuild for Expo/RN). Falls back from dev → bundle if /dev/reload
+  // doesn't ack, the same way mobile/src/lib/quic.ts does.
+  const [reloading, setReloading] = useState(false);
+  const [reloadStatus, setReloadStatus] = useState<string | null>(null);
   const [activeTaskStream, setActiveTaskStream] = useState<{
     id: string;
     title: string;
@@ -582,11 +588,47 @@ export function WebReloadView({
   // currently running. Drives the Switch button label/visibility.
   // (Recomputed below after `isRunning` is in scope.)
 
+  // Framework-aware reload with dev → bundle fallback. Web frameworks
+  // (Next/Vite/Flutter web/Expo Web) ride /dev/reload (HMR poke). Hermes
+  // frameworks (Expo/RN) need /dev/reload-app?mode=bundle to rebuild
+  // the bytecode and push to the phone — Metro's HTTP /reload doesn't
+  // refresh on-device. If we guess "dev" and Metro is stalled or
+  // missing, fall back to bundle so the user still gets a reload.
   const handleReload = async () => {
+    setReloading(true);
+    setReloadStatus("Reloading…");
     try {
-      await agentClient.reloadDevServer({ mode: "dev" });
+      const fw = (
+        devStatus?.framework ||
+        activeProject?.framework ||
+        selectedProject?.framework ||
+        ""
+      ).toLowerCase();
+      const isHermes = /^(expo|react-?native)$/.test(fw);
+      const primaryMode: "dev" | "bundle" = isHermes ? "bundle" : "dev";
+      try {
+        await agentClient.reloadDevServer({ mode: primaryMode });
+      } catch (err) {
+        if (primaryMode === "dev") {
+          // Metro/Vite/Next /reload didn't ack. Try a bundle rebuild —
+          // works for Expo Web exports and recovers stalled Metro.
+          await agentClient.reloadDevServer({ mode: "bundle" });
+        } else {
+          throw err;
+        }
+      }
+      const target =
+        activeProject?.name ||
+        selectedProject?.name ||
+        devStatus?.workDir?.split("/").filter(Boolean).slice(-1)[0] ||
+        "app";
+      setReloadStatus(`Reloaded ${target}.`);
     } catch (err) {
-      setStartError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setReloadStatus(`Reload failed: ${msg}`);
+      setStartError(msg);
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -1126,10 +1168,23 @@ export function WebReloadView({
           {isRunning ? (
             <>
               <button
-                onClick={handleReload}
-                className="rounded border border-surface-700 px-2.5 py-1 text-[11px] text-surface-200 hover:bg-surface-800"
+                onClick={() => void handleReload()}
+                disabled={reloading}
+                className="rounded border border-surface-700 px-2.5 py-1 text-[11px] text-surface-200 hover:bg-surface-800 disabled:opacity-50 disabled:cursor-wait"
+                title={
+                  /^(expo|react-?native)$/.test((devStatus?.framework || "").toLowerCase())
+                    ? "Rebuild Hermes bundle and push to paired phones"
+                    : "Hot reload Metro/Vite/Next; falls back to bundle rebuild if it stalls"
+                }
               >
-                Hard reload
+                {reloading ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 animate-spin rounded-full border border-surface-400/40 border-t-surface-200" />
+                    Reloading…
+                  </span>
+                ) : (
+                  "Hard reload"
+                )}
               </button>
               {switchPending && selectedProject && (
                 <button
@@ -1657,15 +1712,39 @@ export function WebReloadView({
                   <div className="text-[11px] text-surface-500">
                     {selectedProject?.name || selectedApp || activeProject?.name || activeApp || "Pick an app first"} on {connectedDevice?.name || "this machine"}
                   </div>
-                  <button
-                    onClick={() => void handleSendPrompt()}
-                    disabled={!composer.trim() || sending || runnerNeedsAuth || (!selectedProject && !selectedProjectPath && !selectedApp && !activeProject && !activeApp && !devStatus?.workDir)}
-                    className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
-                    title={runnerNeedsAuth ? `Sign in to ${runnerAuthLabel} first — without auth the runner crashes on spawn.` : undefined}
-                  >
-                    {sending ? "Sending…" : "Send"}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {isRunning ? (
+                      <button
+                        onClick={() => void handleReload()}
+                        disabled={reloading}
+                        className="rounded-xl border border-surface-700 bg-surface-900 px-3 py-2 text-sm font-semibold text-surface-200 hover:bg-surface-800 disabled:opacity-40 disabled:cursor-wait"
+                        title={
+                          /^(expo|react-?native)$/.test((devStatus?.framework || "").toLowerCase())
+                            ? "Rebuild Hermes bundle and push to paired phones — see the vibe's changes live"
+                            : "Hot reload Metro/Vite/Next; falls back to bundle rebuild if it stalls"
+                        }
+                      >
+                        {reloading ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-3 w-3 animate-spin rounded-full border border-surface-400/40 border-t-surface-200" />
+                            Reloading…
+                          </span>
+                        ) : (
+                          "Reload"
+                        )}
+                      </button>
+                    ) : null}
+                    <button
+                      onClick={() => void handleSendPrompt()}
+                      disabled={!composer.trim() || sending || runnerNeedsAuth || (!selectedProject && !selectedProjectPath && !selectedApp && !activeProject && !activeApp && !devStatus?.workDir)}
+                      className="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-400 disabled:opacity-40"
+                      title={runnerNeedsAuth ? `Sign in to ${runnerAuthLabel} first — without auth the runner crashes on spawn.` : undefined}
+                    >
+                      {sending ? "Sending…" : "Send"}
+                    </button>
+                  </div>
                 </div>
+                {reloadStatus ? <div className="mt-2 text-[11px] text-surface-400">{reloadStatus}</div> : null}
                 {sendStatus ? <div className="mt-2 text-[11px] text-surface-400">{sendStatus}</div> : null}
               </>
             ) : null}
