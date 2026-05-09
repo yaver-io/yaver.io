@@ -245,3 +245,185 @@ func TestAlignProjectRuntimeDoesNotAddMissingDirectDependency(t *testing.T) {
 		t.Fatalf("auto-align injected react-dom into a project that did not depend on it: %v", deps)
 	}
 }
+
+// TestAlignProjectRuntimeWritesOverridesAtWorkspaceRoot locks in the
+// carrotbet failure mode: workspace root at /root/carrotbet declares
+// `"workspaces": ["mobile", ...]`. The mobile child has
+// `dependencies.react-native: "^0.81.5"` which npm resolves to 0.81.6, and
+// host family wants 0.81.5. npm only honours `overrides` declared in the
+// workspace ROOT package.json — the prior align run wrote them in
+// mobile/package.json where npm silently ignored them, so the install kept
+// resolving 0.81.6 and Hermes reload was blocked. This test checks that
+// align (1) writes overrides at the workspace root, (2) pins
+// dependencies.react-native to the exact host version in the child, and
+// (3) strips the stale child-level overrides block.
+func TestAlignProjectRuntimeWritesOverridesAtWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{
+  "name": "backgammon-platform",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*", "mobile"]
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "mobile")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "package.json"), []byte(`{
+  "name": "mobile",
+  "dependencies": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.6",
+    "expo": "54.0.33"
+  },
+  "overrides": {
+    "react-native": "0.81.5"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	family := &RuntimeFamily{ID: "family-a", React: "19.1.0", ReactNative: "0.81.5", ExpoVersion: "54.0.33", CompiledIn: true}
+	guest := RuntimeFingerprint{ReactVersion: "19.1.0", ReactNativeVersion: "0.81.6", ExpoVersion: "54.0.33"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectRuntimeIfNeeded(ctx, child, family, guest, true)
+	if !report.Attempted {
+		t.Fatalf("expected Attempted=true, got %#v", report)
+	}
+	if report.WorkspaceRoot != root {
+		t.Fatalf("WorkspaceRoot = %q, want %q", report.WorkspaceRoot, root)
+	}
+	if report.WorkspaceMember != "mobile" {
+		t.Fatalf("WorkspaceMember = %q, want \"mobile\"", report.WorkspaceMember)
+	}
+	if report.OverridesWritten != filepath.Join(root, "package.json") {
+		t.Fatalf("OverridesWritten = %q, want workspace root package.json", report.OverridesWritten)
+	}
+
+	// Workspace root must carry the host-family overrides.
+	rootRaw, err := os.ReadFile(filepath.Join(root, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rootPkg map[string]json.RawMessage
+	if err := json.Unmarshal(rootRaw, &rootPkg); err != nil {
+		t.Fatalf("workspace root package.json unparseable: %v", err)
+	}
+	rawOv, ok := rootPkg["overrides"]
+	if !ok {
+		t.Fatalf("expected overrides in workspace root package.json, got %s", string(rootRaw))
+	}
+	var ov map[string]string
+	if err := json.Unmarshal(rawOv, &ov); err != nil {
+		t.Fatalf("workspace root overrides not a string map: %v", err)
+	}
+	if ov["react-native"] != "0.81.5" {
+		t.Fatalf("workspace root overrides.react-native = %q, want 0.81.5 — npm only honours overrides at the workspace root", ov["react-native"])
+	}
+	if ov["react"] != "19.1.0" || ov["expo"] != "54.0.33" {
+		t.Fatalf("workspace root overrides missing react/expo: %v", ov)
+	}
+
+	// Child must have its direct dep pinned and the now-redundant
+	// child-level overrides stripped (they were silently ignored by npm
+	// and just confused diffs).
+	childRaw, err := os.ReadFile(filepath.Join(child, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var childPkg map[string]json.RawMessage
+	if err := json.Unmarshal(childRaw, &childPkg); err != nil {
+		t.Fatalf("workspace child package.json unparseable: %v", err)
+	}
+	var childDeps map[string]string
+	if err := json.Unmarshal(childPkg["dependencies"], &childDeps); err != nil {
+		t.Fatalf("workspace child dependencies not a string map: %v", err)
+	}
+	if childDeps["react-native"] != "0.81.5" {
+		t.Fatalf("workspace child dependencies.react-native = %q, want 0.81.5", childDeps["react-native"])
+	}
+	if _, ok := childPkg["overrides"]; ok {
+		t.Fatalf("workspace child still has overrides; should have been stripped to avoid confusion")
+	}
+}
+
+// TestAlignProjectRuntimeStandaloneProjectKeepsOverridesInPlace asserts
+// that for a non-workspace project (e.g. demo/mobile/todo-rn) we still
+// write overrides into the project's own package.json — we must not
+// regress the working case while fixing the workspace case.
+func TestAlignProjectRuntimeStandaloneProjectKeepsOverridesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+  "name": "todo-rn",
+  "dependencies": {
+    "react": "^19.2.5",
+    "react-native": "0.81.5",
+    "expo": "54.0.33"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	family := &RuntimeFamily{ID: "family-a", React: "19.1.0", ReactNative: "0.81.5", ExpoVersion: "54.0.33", CompiledIn: true}
+	guest := RuntimeFingerprint{ReactVersion: "19.2.5", ReactNativeVersion: "0.81.5", ExpoVersion: "54.0.33"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectRuntimeIfNeeded(ctx, dir, family, guest, true)
+	if report.WorkspaceRoot != "" {
+		t.Fatalf("expected no workspace, got WorkspaceRoot=%q", report.WorkspaceRoot)
+	}
+	if report.OverridesWritten != filepath.Join(dir, "package.json") {
+		t.Fatalf("OverridesWritten = %q, want project's own package.json", report.OverridesWritten)
+	}
+
+	pkgRaw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkg map[string]json.RawMessage
+	if err := json.Unmarshal(pkgRaw, &pkg); err != nil {
+		t.Fatal(err)
+	}
+	var ov map[string]string
+	if err := json.Unmarshal(pkg["overrides"], &ov); err != nil {
+		t.Fatalf("standalone project missing overrides: %v", err)
+	}
+	if ov["react"] != "19.1.0" {
+		t.Fatalf("standalone overrides.react = %q, want 19.1.0", ov["react"])
+	}
+}
+
+// TestDetectNpmWorkspaceRootGlobMember covers the apps/* glob case so
+// monorepos that put their RN app at apps/mobile (sfmg-style turbo layout)
+// also resolve correctly.
+func TestDetectNpmWorkspaceRootGlobMember(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(`{
+  "name": "monorepo",
+  "workspaces": ["apps/*", "packages/*"]
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(root, "apps", "mobile")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(child, "package.json"), []byte(`{"name": "@monorepo/mobile"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotRoot, gotMember := detectNpmWorkspaceRoot(child)
+	if gotRoot != root {
+		t.Fatalf("detectNpmWorkspaceRoot root = %q, want %q", gotRoot, root)
+	}
+	if gotMember != "@monorepo/mobile" {
+		t.Fatalf("detectNpmWorkspaceRoot member = %q, want @monorepo/mobile", gotMember)
+	}
+}

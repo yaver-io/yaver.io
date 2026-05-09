@@ -21,17 +21,20 @@ import (
 // with the device — this is what previously required the user to manually
 // edit package.json on the test box and re-run npm install.
 type RuntimeAlignmentReport struct {
-	Attempted       bool              `json:"attempted"`
-	Applied         bool              `json:"applied"`
-	SkippedReason   string            `json:"skippedReason,omitempty"`
-	TargetFamilyID  string            `json:"targetFamilyId,omitempty"`
-	TargetFamily    *RuntimeFamily    `json:"targetFamily,omitempty"`
-	OverridesBefore map[string]string `json:"overridesBefore,omitempty"`
-	OverridesAfter  map[string]string `json:"overridesAfter,omitempty"`
-	NPMInstallRan   bool              `json:"npmInstallRan"`
-	NPMInstallMs    int64             `json:"npmInstallMs,omitempty"`
-	Notes           []string          `json:"notes,omitempty"`
-	Error           string            `json:"error,omitempty"`
+	Attempted        bool              `json:"attempted"`
+	Applied          bool              `json:"applied"`
+	SkippedReason    string            `json:"skippedReason,omitempty"`
+	TargetFamilyID   string            `json:"targetFamilyId,omitempty"`
+	TargetFamily     *RuntimeFamily    `json:"targetFamily,omitempty"`
+	OverridesBefore  map[string]string `json:"overridesBefore,omitempty"`
+	OverridesAfter   map[string]string `json:"overridesAfter,omitempty"`
+	NPMInstallRan    bool              `json:"npmInstallRan"`
+	NPMInstallMs     int64             `json:"npmInstallMs,omitempty"`
+	WorkspaceRoot    string            `json:"workspaceRoot,omitempty"`
+	WorkspaceMember  string            `json:"workspaceMember,omitempty"`
+	OverridesWritten string            `json:"overridesWritten,omitempty"`
+	Notes            []string          `json:"notes,omitempty"`
+	Error            string            `json:"error,omitempty"`
 }
 
 // pickCompiledInRuntimeFamily walks a list of host-advertised families and
@@ -108,25 +111,51 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 	report.TargetFamilyID = family.ID
 	report.TargetFamily = family
 
+	// Detect npm workspace. carrotbet ships /root/carrotbet/package.json with
+	// `"workspaces": ["mobile", ...]` and the guest project lives in
+	// /root/carrotbet/mobile. npm only honours `overrides` declared in the
+	// **workspace root** package.json — overrides written into a child are
+	// silently ignored, which is exactly why the prior align run on carrotbet
+	// produced `mobile/package.json` with `dependencies.react-native:0.81.6`
+	// AND `overrides.react-native:0.81.5`, then npm install picked 0.81.6.
+	wsRoot, wsMember := detectNpmWorkspaceRoot(workDir)
+	report.WorkspaceRoot = wsRoot
+	report.WorkspaceMember = wsMember
+
 	pkgPath := filepath.Join(workDir, "package.json")
 	raw, err := os.ReadFile(pkgPath)
 	if err != nil {
 		report.Error = fmt.Sprintf("read package.json: %v", err)
 		return report
 	}
-	// Use a sorted-key map decode so we can preserve all sibling fields when
-	// writing back. json.Unmarshal into json.RawMessage keeps the rest
-	// untouched.
 	var pkgObj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &pkgObj); err != nil {
 		report.Error = fmt.Sprintf("parse package.json: %v", err)
 		return report
 	}
 
+	// Pick the package.json that actually owns `overrides` for npm. In a
+	// workspace this is the root; otherwise the project itself.
+	overridesPath := pkgPath
+	overridesObj := pkgObj
+	if wsRoot != "" && wsRoot != workDir {
+		overridesPath = filepath.Join(wsRoot, "package.json")
+		rawRoot, rerr := os.ReadFile(overridesPath)
+		if rerr != nil {
+			report.Error = fmt.Sprintf("read workspace root package.json: %v", rerr)
+			return report
+		}
+		var rootObj map[string]json.RawMessage
+		if jerr := json.Unmarshal(rawRoot, &rootObj); jerr != nil {
+			report.Error = fmt.Sprintf("parse workspace root package.json: %v", jerr)
+			return report
+		}
+		overridesObj = rootObj
+	}
+	report.OverridesWritten = overridesPath
+
 	currentOverrides := map[string]string{}
-	if rawOv, ok := pkgObj["overrides"]; ok {
-		// Best-effort decode — overrides values can be strings or nested
-		// objects; we only manage string-valued entries we care about.
+	if rawOv, ok := overridesObj["overrides"]; ok {
 		var existing map[string]json.RawMessage
 		if err := json.Unmarshal(rawOv, &existing); err == nil {
 			for k, v := range existing {
@@ -151,7 +180,7 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		desired["expo"] = wantExpo
 	}
 
-	// ── 1. Patch overrides ──
+	// ── 1. Patch overrides (in the workspace root when present) ──
 	// Overrides handle TRANSITIVE deps that pull a different React/RN/Expo
 	// (e.g. some plugin that peer-deps on a newer React). They do NOT
 	// downgrade a top-level direct dep — npm refuses to override what the
@@ -169,7 +198,7 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		overridesChanged = true
 	}
 
-	// ── 2. Patch dependencies (and devDependencies) ──
+	// ── 2. Patch dependencies (and devDependencies) in workDir/package.json ──
 	// Only rewrite keys that ALREADY exist in the project so we don't add
 	// react-dom / expo to projects that genuinely don't depend on them.
 	// This is what npm actually honours when resolving the install plan
@@ -213,10 +242,9 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		}
 	}
 
-	pkgChanged := overridesChanged || len(depsRewrites) > 0
 	if overridesChanged {
 		var ovValue map[string]json.RawMessage
-		if rawOv, ok := pkgObj["overrides"]; ok {
+		if rawOv, ok := overridesObj["overrides"]; ok {
 			_ = json.Unmarshal(rawOv, &ovValue)
 		}
 		if ovValue == nil {
@@ -231,11 +259,24 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 			report.Error = fmt.Sprintf("marshal overrides: %v", err)
 			return report
 		}
-		pkgObj["overrides"] = ovBytes
+		overridesObj["overrides"] = ovBytes
 	}
 	report.OverridesAfter = merged
 
-	if pkgChanged {
+	// ── 3. Strip stale overrides from the workspace child ──
+	// npm ignores overrides outside of the root, so leaving them in mobile/
+	// just confuses humans diffing the file. If we just promoted them to the
+	// root, drop the child copy in the same write pass.
+	childOverridesStripped := false
+	if wsRoot != "" && wsRoot != workDir {
+		if _, ok := pkgObj["overrides"]; ok {
+			delete(pkgObj, "overrides")
+			childOverridesStripped = true
+		}
+	}
+
+	// ── 4. Write back ──
+	if len(depsRewrites) > 0 || childOverridesStripped {
 		out, err := marshalOrderedJSON(pkgObj)
 		if err != nil {
 			report.Error = fmt.Sprintf("marshal package.json: %v", err)
@@ -245,17 +286,36 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 			report.Error = fmt.Sprintf("write package.json: %v", err)
 			return report
 		}
-		if overridesChanged {
-			report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to align with host family "+family.ID)
-		}
 		for kind, writes := range depKindsTouched {
 			report.Notes = append(report.Notes, fmt.Sprintf("Pinned %s for %s to host family %s", kind, strings.Join(sortedKeys(writes), ", "), family.ID))
 		}
-	} else {
+		if childOverridesStripped {
+			report.Notes = append(report.Notes, "Removed stale overrides from workspace child (npm only honours overrides at the workspace root)")
+		}
+	}
+
+	if overridesChanged {
+		out, err := marshalOrderedJSON(overridesObj)
+		if err != nil {
+			report.Error = fmt.Sprintf("marshal overrides target: %v", err)
+			return report
+		}
+		if err := atomicWrite(overridesPath, out, 0o644); err != nil {
+			report.Error = fmt.Sprintf("write overrides target: %v", err)
+			return report
+		}
+		report.Notes = append(report.Notes, "Wrote npm overrides for "+strings.Join(sortedKeys(merged), ", ")+" to "+overridesPath+" (host family "+family.ID+")")
+	}
+
+	if !overridesChanged && len(depsRewrites) == 0 && !childOverridesStripped {
 		report.SkippedReason = "package.json already pins host family — only npm install needed"
 	}
 
-	// ── 3. Run npm install ──
+	// ── 5. Run npm install ──
+	// In a workspace, run from the workspace root with `-w <member>` so npm
+	// resolves the whole tree using the root's overrides. Outside a
+	// workspace, install from the project itself.
+	//
 	// Build explicit `<pkg>@<version>` specs for every package we just pinned
 	// in dependencies, and pass --save-exact so the lockfile + node_modules
 	// match the new pin in one pass. Plain `npm install --legacy-peer-deps`
@@ -264,7 +324,14 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 	// caused the "auto-align ran, package.json says react 19.1.0, but
 	// node_modules/react/package.json still reads 19.2.5" failure mode and
 	// the consequent RUNTIME_FAMILY_MISMATCH at the post-align re-probe.
+	npmCwd := workDir
 	args := []string{"install", "--legacy-peer-deps"}
+	if wsRoot != "" && wsRoot != workDir {
+		npmCwd = wsRoot
+		if wsMember != "" {
+			args = append(args, "-w", wsMember)
+		}
+	}
 	if len(depsRewrites) > 0 {
 		args = append(args, "--save-exact")
 		for _, name := range sortedKeys(depsRewrites) {
@@ -272,7 +339,7 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		}
 	}
 	npmCmd := exec.CommandContext(ctx, "npm", args...)
-	npmCmd.Dir = workDir
+	npmCmd.Dir = npmCwd
 	start := time.Now()
 	out, err := npmCmd.CombinedOutput()
 	report.NPMInstallRan = true
@@ -282,14 +349,18 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 		return report
 	}
 
-	// ── 4. Verify the install actually downgraded what we asked for ──
+	// ── 6. Verify the install actually downgraded what we asked for ──
 	// If `node_modules/<pkg>/package.json` still doesn't match after the
 	// install, the alignment effectively failed. Surface that in the report
 	// so devserver_http's RUNTIME_FAMILY_MISMATCH is explained instead of
-	// silently re-firing.
+	// silently re-firing. In a workspace setup the package may be hoisted
+	// to the workspace root, so check both locations.
 	var verifyDrift []string
 	for name, want := range desired {
 		installed, rerr := readInstalledPackageVersion(workDir, name)
+		if rerr != nil && wsRoot != "" && wsRoot != workDir {
+			installed, rerr = readInstalledPackageVersion(wsRoot, name)
+		}
 		if rerr != nil {
 			continue
 		}
@@ -305,6 +376,89 @@ func alignProjectRuntimeIfNeeded(ctx context.Context, workDir string, family *Ru
 	report.Applied = true
 	report.Notes = append(report.Notes, fmt.Sprintf("npm install completed in %dms", report.NPMInstallMs))
 	return report
+}
+
+// detectNpmWorkspaceRoot walks up from workDir looking for a parent
+// package.json whose `workspaces` (array form or {packages: array}) declares
+// a glob/literal that matches the relative path from that parent to workDir.
+// Returns ("", "") when not in a workspace. The second return value is the
+// workspace member's package.json `name`, used by `npm install -w <name>`.
+func detectNpmWorkspaceRoot(workDir string) (string, string) {
+	abs, err := filepath.Abs(workDir)
+	if err != nil {
+		abs = workDir
+	}
+	abs = filepath.Clean(abs)
+
+	// Read the workspace child's name once; we may need it for `-w <name>`.
+	memberName := ""
+	if data, err := os.ReadFile(filepath.Join(abs, "package.json")); err == nil {
+		var p struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(data, &p) == nil {
+			memberName = strings.TrimSpace(p.Name)
+		}
+	}
+
+	parent := filepath.Dir(abs)
+	for parent != abs {
+		pkgPath := filepath.Join(parent, "package.json")
+		if data, err := os.ReadFile(pkgPath); err == nil {
+			rel, relErr := filepath.Rel(parent, abs)
+			if relErr == nil {
+				rel = filepath.ToSlash(rel)
+				if matchesAnyWorkspacePattern(data, rel) {
+					return parent, memberName
+				}
+			}
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			break
+		}
+		parent = next
+	}
+	return "", ""
+}
+
+// matchesAnyWorkspacePattern returns true when package.json data declares a
+// `workspaces` field (either []string or {packages: []string}) and at least
+// one entry matches the candidate relative path under it.
+func matchesAnyWorkspacePattern(pkgJSON []byte, rel string) bool {
+	var probe struct {
+		Workspaces json.RawMessage `json:"workspaces"`
+	}
+	if err := json.Unmarshal(pkgJSON, &probe); err != nil {
+		return false
+	}
+	if len(probe.Workspaces) == 0 {
+		return false
+	}
+	var patterns []string
+	if err := json.Unmarshal(probe.Workspaces, &patterns); err != nil {
+		var obj struct {
+			Packages []string `json:"packages"`
+		}
+		if jerr := json.Unmarshal(probe.Workspaces, &obj); jerr != nil {
+			return false
+		}
+		patterns = obj.Packages
+	}
+	for _, raw := range patterns {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+		pattern = strings.TrimPrefix(pattern, "./")
+		if pattern == rel {
+			return true
+		}
+		if ok, _ := filepath.Match(pattern, rel); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
