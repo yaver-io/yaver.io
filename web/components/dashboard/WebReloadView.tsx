@@ -27,6 +27,12 @@ interface ProjectRow {
   framework?: string;
   branch?: string;
   tags?: string[];
+  executionMode?: string;
+  primarySurface?: string;
+  webCapable?: boolean;
+  mobileCapable?: boolean;
+  monorepoRoot?: string;
+  monorepoApp?: string;
 }
 
 interface Props {
@@ -211,6 +217,41 @@ export function WebReloadView({
     : "the runner";
   const workspaceRootHint = preferredProjectPath || undefined;
 
+  const loadWebPreviewProjects = useCallback(async (): Promise<ProjectRow[]> => {
+    const webCapable = await agentClient.listProjectsByCapability("web");
+    if (webCapable.length > 0) {
+      return webCapable.map((project) => {
+        const tags = new Set<string>();
+        if (project.framework) tags.add(project.framework);
+        if (project.primarySurface) tags.add(project.primarySurface);
+        if (project.executionMode) tags.add(project.executionMode);
+        if (project.webCapable) tags.add("web");
+        if (project.mobileCapable) tags.add("mobile");
+        if (project.monorepoApp) tags.add(project.monorepoApp);
+        return {
+          name: project.name,
+          path: project.path,
+          framework: project.framework,
+          branch: project.branch,
+          tags: Array.from(tags),
+          executionMode: project.executionMode,
+          primarySurface: project.primarySurface,
+          webCapable: project.webCapable,
+          mobileCapable: project.mobileCapable,
+          monorepoRoot: project.monorepoRoot,
+          monorepoApp: project.monorepoApp,
+        };
+      });
+    }
+
+    // Older agents and a cold capability scanner may not have /projects/web
+    // ready yet. Keep the legacy repo list as a fallback, but prefer the
+    // capability rows whenever available because they point at nested web apps
+    // inside monorepos instead of the monorepo root.
+    const scanned = await agentClient.listProjects();
+    return scanned.filter(isWebReloadProject);
+  }, []);
+
   // Load workspace apps on connect and whenever device changes. This
   // also serves as an early transport/auth probe so we can surface
   // preview errors before the user starts a web app.
@@ -229,14 +270,14 @@ export function WebReloadView({
       try {
         const [list, scanned] = await Promise.all([
           agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
-          agentClient.listProjects(),
+          loadWebPreviewProjects(),
         ]);
         if (cancelled) return;
         setApps(list);
-        setProjects(scanned.filter(isWebReloadProject));
+        setProjects(scanned);
         if (list.length === 0) {
           setWorkspaceError(
-            scanned.filter(isWebReloadProject).length > 0
+            scanned.length > 0
               ? "No yaver.workspace.yaml found on the connected machine. Showing discovered projects instead."
               : "No yaver.workspace.yaml found on the connected machine.",
           );
@@ -246,8 +287,8 @@ export function WebReloadView({
         const msg = err instanceof Error ? err.message : String(err);
         setWorkspaceError(msg);
         try {
-          const scanned = await agentClient.listProjects();
-          if (!cancelled) setProjects(scanned.filter(isWebReloadProject));
+          const scanned = await loadWebPreviewProjects();
+          if (!cancelled) setProjects(scanned);
         } catch {
           if (!cancelled) setProjects([]);
         }
@@ -264,7 +305,7 @@ export function WebReloadView({
     return () => { cancelled = true; };
     // repairRelayThenReconnect is stable in this component.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, connectedDevice?.id, preferredProjectPath]);
+  }, [isConnected, connectedDevice?.id, preferredProjectPath, loadWebPreviewProjects]);
 
   const repairRelayThenReconnect = async (mode: "auto" | "manual") => {
     if (!onRepairRelay) return;
@@ -282,13 +323,13 @@ export function WebReloadView({
         try {
           const [list, scanned] = await Promise.all([
             agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
-            agentClient.listProjects(),
+            loadWebPreviewProjects(),
           ]);
           setApps(list);
-          setProjects(scanned.filter(isWebReloadProject));
+          setProjects(scanned);
           setWorkspaceError(
             list.length === 0
-              ? (scanned.filter(isWebReloadProject).length > 0
+              ? (scanned.length > 0
                 ? "No yaver.workspace.yaml found on the connected machine. Showing discovered projects instead."
                 : "No yaver.workspace.yaml found on the connected machine.")
               : null,
