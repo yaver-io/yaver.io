@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.174"
+const version = "1.99.178"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"

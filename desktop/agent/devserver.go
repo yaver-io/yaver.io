@@ -610,6 +610,31 @@ func (m *DevServerManager) Start(framework, workDir, platform string, port int, 
 	// Launch start in background — don't block the HTTP response
 	go func() {
 		if err := ds.Start(ctx, opts); err != nil {
+			// Distinguish a deliberate cancellation (project switch,
+			// /dev/stop, Hermes-bytecode mode tearing down Metro after
+			// the bundle was written) from a real start failure. The
+			// parent ctx is context.Background() with explicit cancel,
+			// so ctx.Err() == context.Canceled iff something on our
+			// side called cancel(). In that case the mobile UI was
+			// previously rendering "Start failed: exec npx: context
+			// canceled" as a red banner even though the underlying
+			// build/load succeeded — a false-positive after Hermes
+			// reload. Treat as a clean stop instead.
+			if ctx.Err() == context.Canceled {
+				log.Printf("[dev] %s start canceled (deliberate stop / project switch): %v", ds.Name(), err)
+				m.mu.Lock()
+				if m.active != nil && m.active.server == ds {
+					m.active.failed = false
+				}
+				m.mu.Unlock()
+				m.emit(DevServerEvent{
+					Type:      "stopped",
+					Framework: ds.Name(),
+					Message:   fmt.Sprintf("%s dev server stopped before becoming ready.", ds.Name()),
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+				})
+				return
+			}
 			log.Printf("[dev] %s failed to start: %v", ds.Name(), err)
 			// Keep the session around so /dev/status still reports
 			// something the mobile client can render as a failure
