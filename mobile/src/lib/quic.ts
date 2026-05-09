@@ -2270,6 +2270,38 @@ export class QuicClient {
     };
   }
 
+  /** List repo-level projects (monorepo roots + standalone repos) so the
+   *  mobile UI can offer full-stack vibe-coding scoped to /Workspace/<repo>
+   *  rather than a per-framework subdir. /projects/mobile returns mobile
+   *  sub-apps only — for monorepos like yaver.io that means tasks always
+   *  scope to mobile/ and never the Go agent / web / cli code.
+   *  Distinct from listRepos() (further below) which is the git status
+   *  enumerator over /repos/list.
+   */
+  async listWorkspaceRepos(): Promise<{
+    repos: { name: string; path: string; branch?: string; framework?: string; gitRemote?: string; tags?: string[]; isMonorepo?: boolean; subframeworks?: string[] }[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/projects`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Failed to list repos: ${res.status}`);
+    const data = await res.json();
+    const projects = Array.isArray(data.projects) ? data.projects : [];
+    return {
+      repos: projects.map((p: any) => ({
+        name: p?.name ?? "",
+        path: p?.path ?? "",
+        branch: p?.branch,
+        framework: p?.framework,
+        gitRemote: p?.gitRemote,
+        tags: Array.isArray(p?.tags) ? p.tags : [],
+        isMonorepo: !!p?.isMonorepo || p?.framework === "monorepo",
+        subframeworks: Array.isArray(p?.subframeworks) ? p.subframeworks : [],
+      })),
+    };
+  }
+
   /** List mobile-capable projects discovered by the agent's framework-aware scanner. */
   async listMobileProjectsDetailed(): Promise<{
     projects: { name: string; path: string; branch?: string; framework?: string; executionMode?: string; primarySurface?: string; tags?: string[] }[];

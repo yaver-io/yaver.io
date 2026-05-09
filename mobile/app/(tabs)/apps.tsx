@@ -43,6 +43,21 @@ interface ProjectItem {
   tags?: string[];
 }
 
+// Repo-level entry — monorepo root or standalone repo. Surfaced in the
+// "Repos" row above the per-framework apps list so vibe-coding can be
+// scoped to the whole repo (Go agent + web + mobile + cli) instead of
+// a single mobile/ subdir of a monorepo.
+interface RepoItem {
+  name: string;
+  path: string;
+  branch?: string;
+  framework?: string;
+  gitRemote?: string;
+  tags?: string[];
+  isMonorepo?: boolean;
+  subframeworks?: string[];
+}
+
 // Branded vector icons via mobile/src/components/FrameworkIcon.tsx \u2014 see
 // that file for the per-framework MaterialCommunityIcon + brand-color
 // mapping. Kept in sync with hotreload.tsx so the two surfaces render
@@ -389,6 +404,7 @@ export default function AppsScreen() {
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
   const [workerSession, setWorkerSession] = useState<MobileWorkerPreviewSession | null>(null);
   const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [repos, setRepos] = useState<RepoItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   const [showWebView, setShowWebView] = useState(false);
@@ -441,10 +457,14 @@ export default function AppsScreen() {
 
     const fetchProjects = async () => {
       try {
-        const data = await quicClient.listMobileProjectsDetailed();
+        const [projectsData, reposData] = await Promise.all([
+          quicClient.listMobileProjectsDetailed(),
+          quicClient.listWorkspaceRepos().catch(() => ({ repos: [] })),
+        ]);
         if (!mounted) return;
-        setProjects(data.projects);
-        setProjectsDiscovering(!!data.discovery?.discovering);
+        setProjects(projectsData.projects);
+        setProjectsDiscovering(!!projectsData.discovery?.discovering);
+        setRepos(reposData.repos);
       } catch {}
     };
 
@@ -1644,6 +1664,45 @@ export default function AppsScreen() {
           </View>
         )}
 
+        {/* Repos — monorepo roots and standalone repos. Tapping one
+            opens the project screen scoped to the repo root, where
+            Chat → tasks tab inherits workDir=repo-root so codex/claude
+            can edit the WHOLE repo (Go agent + web + mobile + cli),
+            not just a per-framework subdir. */}
+        {repos.length > 0 && (
+          <View style={s.reposSection}>
+            <Text style={[s.reposHeader, { color: c.textMuted }]}>
+              Repos · {repos.length}
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={s.reposRow}
+            >
+              {repos.map((repo) => (
+                <Pressable
+                  key={repo.path}
+                  style={[s.repoCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                  onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
+                >
+                  <View style={s.repoCardRow}>
+                    <Ionicons name="git-branch-outline" size={16} color={c.accent} />
+                    <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
+                      {repo.name}
+                    </Text>
+                  </View>
+                  {repo.branch ? (
+                    <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
+                      {repo.branch}
+                      {repo.isMonorepo ? " · monorepo" : ""}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
         {/* Search + Projects list */}
         <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: "transparent" }]}>
           <Ionicons name="search" size={16} color={c.textMuted} />
@@ -2211,6 +2270,30 @@ export default function AppsScreen() {
 const s = StyleSheet.create({
   safe: { flex: 1 },
   container: { flex: 1 },
+
+  // Repos row (monorepo roots + standalone repos)
+  reposSection: { marginTop: 12, marginBottom: 4 },
+  reposHeader: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    marginHorizontal: 16,
+    marginBottom: 6,
+  },
+  reposRow: { paddingHorizontal: 16, paddingBottom: 4, gap: 8 },
+  repoCard: {
+    minWidth: 140,
+    maxWidth: 220,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    gap: 4,
+  },
+  repoCardRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  repoCardName: { fontSize: 13, fontWeight: "600", flex: 1 },
+  repoCardBranch: { fontSize: 11, fontFamily: "Menlo" },
 
   // Search
   searchRow: {
