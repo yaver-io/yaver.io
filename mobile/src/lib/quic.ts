@@ -4085,6 +4085,68 @@ export class QuicClient {
     return { targets: Array.isArray(data?.targets) ? data.targets : [] };
   }
 
+  /** Per-device, per-target deploy capability snapshot from the agent.
+   *  Composes the platform lock (e.g. TestFlight is darwin-only) with
+   *  RunBuildDoctor's tools+vault-secrets readiness probe — gives the
+   *  UI a single yes/no per target plus a structured Reason for the
+   *  greyed-out case. The mobile deploy-tokens screen + phone-project
+   *  Ship picker call this on the agent the user has selected, so a
+   *  Linux box can't be offered "Deploy to TestFlight" only to fail
+   *  inside xcodebuild.
+   *  Pass `target` to scope to one; omit for the full matrix. */
+  async deployCapabilities(args?: {
+    target?: string;
+    project?: string;
+  }): Promise<{
+    deviceId: string;
+    platform: string;
+    arch: string;
+    isWsl: boolean;
+    targets: Array<{
+      target: string;
+      stack?: string;
+      canDeploy: boolean;
+      platformLock?: string;
+      missingTools?: string[];
+      missingSecrets?: string[];
+      warnings?: string[];
+      reason?: string;
+      ciAlternative?: string;
+    }>;
+  }> {
+    this.assertConnected();
+    const params = new URLSearchParams();
+    if (args?.target) params.set('target', args.target);
+    if (args?.project) params.set('project', args.project);
+    const qs = params.toString();
+    const res = await fetch(
+      `${this.baseUrl}/deploy/capabilities${qs ? `?${qs}` : ''}`,
+      { headers: this.authHeaders },
+    );
+    if (!res.ok) throw new Error(`deployCapabilities ${res.status}`);
+    const data = await res.json();
+    // Server emits snake_case; normalise to camel for the UI without
+    // pulling in a runtime case-conversion library.
+    const targets = Array.isArray(data?.targets) ? data.targets : [];
+    return {
+      deviceId: String(data?.device_id ?? ''),
+      platform: String(data?.platform ?? ''),
+      arch: String(data?.arch ?? ''),
+      isWsl: !!data?.is_wsl,
+      targets: targets.map((t: any) => ({
+        target: String(t?.target ?? ''),
+        stack: t?.stack ? String(t.stack) : undefined,
+        canDeploy: !!t?.can_deploy,
+        platformLock: t?.platform_lock ? String(t.platform_lock) : undefined,
+        missingTools: Array.isArray(t?.missing_tools) ? t.missing_tools.map(String) : undefined,
+        missingSecrets: Array.isArray(t?.missing_secrets) ? t.missing_secrets.map(String) : undefined,
+        warnings: Array.isArray(t?.warnings) ? t.warnings.map(String) : undefined,
+        reason: t?.reason ? String(t.reason) : undefined,
+        ciAlternative: t?.ci_alternative ? String(t.ci_alternative) : undefined,
+      })),
+    };
+  }
+
   /** Per-project status: which deploy-token fields are filled in
    *  the agent's vault. Never returns the values themselves —
    *  only `set: bool` + `updatedAt` per field. */

@@ -1115,6 +1115,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// the handler itself.
 	mux.HandleFunc("/doctor/build", s.auth(s.handleDoctorBuild))
 	mux.HandleFunc("/deploy/templates", s.auth(s.handleDeployTemplates))
+	mux.HandleFunc("/deploy/capabilities", s.auth(s.handleDeployCapabilities))
 	mux.HandleFunc("/deploy/generate", s.auth(s.handleDeployGenerate))
 	mux.HandleFunc("/fleet/deploy-options", s.auth(s.handleFleetDeployOptions))
 	mux.HandleFunc("/deploy/ship", s.auth(s.handleDeployShip))
