@@ -939,14 +939,23 @@ func installProjectDependenciesTo(workDir string, prep projectPreparationStatus,
 	// when system Node is missing, so a fresh Linux box can install
 	// project deps after a phone-driven /install/mobile.
 	cmd.Env = augmentEnv(nil)
+	// Capture a bounded tail of stdout+stderr in addition to the
+	// streaming tee, so a failure can return a useful error message
+	// instead of `exit status 254`. classifyInstallFailure looks for
+	// EINTEGRITY / ENOENT / EACCES / ERESOLVE patterns that we know
+	// how to advise on.
+	diag := newInstallDiag()
 	if extraOut != nil {
-		cmd.Stdout = io.MultiWriter(os.Stdout, extraOut)
-		cmd.Stderr = io.MultiWriter(os.Stderr, extraOut)
+		cmd.Stdout = io.MultiWriter(os.Stdout, extraOut, diag)
+		cmd.Stderr = io.MultiWriter(os.Stderr, extraOut, diag)
 	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdout = io.MultiWriter(os.Stdout, diag)
+		cmd.Stderr = io.MultiWriter(os.Stderr, diag)
 	}
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s", installFailureMessage(prep.PackageManager, err, diag.Tail()))
+	}
+	return nil
 }
 
 func readProjectPackageManifest(workDir string) (*projectPackageManifest, error) {
