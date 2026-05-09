@@ -2,6 +2,7 @@ import { Ionicons, FontAwesome } from "@expo/vector-icons";
 import * as AppleAuthentication from "expo-apple-authentication";
 import Constants from "expo-constants";
 import * as Linking from "expo-linking";
+import * as ExpoLinking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -52,6 +53,10 @@ export default function LoginScreen() {
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const passkeySupported = isPasskeySupported();
 
+  // Belt-and-braces fallback: if the OAuth deep link arrives while
+  // LoginScreen is still mounted (cold-start race winner), consume
+  // the token here. The canonical handler is app/oauth-callback.tsx,
+  // which expo-router routes to whether or not this listener fires.
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
       const url = event.url;
@@ -62,7 +67,6 @@ export default function LoginScreen() {
       if (token) {
         try {
           await login(token);
-          // Navigation handled by index.tsx based on survey status
           router.replace("/");
         } catch {
           // Token validation failed
@@ -139,11 +143,28 @@ export default function LoginScreen() {
     }
   };
 
+  // openAuthSessionAsync returns the final redirect URL via the
+  // awaited promise, so the OAuth token can't be lost to a deep-link
+  // / route-mount race the way openBrowserAsync allowed. (Settings
+  // already uses the same API for the link flow.)
   const handleOAuth = async (provider: OAuthProvider) => {
     const url = getOAuthUrl(provider);
-    await WebBrowser.openBrowserAsync(url, {
-      showInRecents: true,
-    });
+    const returnUrl = ExpoLinking.createURL("/oauth-callback");
+    setIsLoading(true);
+    try {
+      const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
+      if (result.type !== "success" || !result.url) return;
+      const parsed = ExpoLinking.parse(result.url);
+      const token = parsed.queryParams?.token as string | undefined;
+      if (!token) return;
+      await login(token);
+      router.replace("/");
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : "Sign-in failed";
+      Alert.alert("Sign In Failed", message);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleAppleSignIn = async () => {

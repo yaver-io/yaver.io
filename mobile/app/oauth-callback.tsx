@@ -1,44 +1,54 @@
 import React, { useEffect, useRef } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { useLocalSearchParams, router } from "expo-router";
+import { useAuth } from "../src/context/AuthContext";
 
 // OAuth deep-link landing page.
 //
-// When the user links a provider from the web UI, the callback
-// redirects to `yaver://oauth-callback?linkedProvider=…&linked=1`.
-// On iOS + Android the OS hands that to Expo Router, which used to
-// show the default "Unmatched Route" screen because no file served
-// the path. The listeners inside (tabs)/settings.tsx and login.tsx
-// still fire when the URL lands *while* those screens are mounted,
-// but a cold launch (Safari → Yaver) routes here first and the
-// router kept winning.
+// When the OAuth callback redirects to `yaver://oauth-callback?…`,
+// expo-router claims the URL and mounts THIS screen, which unmounts
+// whichever screen previously held a `Linking.addEventListener`
+// (LoginScreen for sign-in, Settings for link). That used to drop
+// the token on the floor for fresh-tablet sign-ins because the
+// listener never fired. So this screen now does the work itself:
 //
-// So this screen exists purely to catch the deep link, forward the
-// success into the Settings tab, and navigate there. It stays on
-// screen for a beat with a spinner so the user gets a clean
-// "returning to Yaver…" feel instead of a 404-looking page.
+//   • If `?token=…` is present → call login(token) and go to "/".
+//   • If `?linked=1&linkedProvider=…` is present → forward to
+//     Settings so the existing focus-effect can re-fetch identities.
+//
+// Either form gets handled here, regardless of whether other
+// screens are mounted. This is the canonical handler.
 
 export default function OAuthCallbackScreen() {
   const params = useLocalSearchParams();
+  const { login } = useAuth();
   const navigated = useRef(false);
 
   useEffect(() => {
     if (navigated.current) return;
     navigated.current = true;
 
+    const token = typeof params.token === "string" ? params.token : undefined;
     const linkedProvider = typeof params.linkedProvider === "string" ? params.linkedProvider : undefined;
     const intent = typeof params.intent === "string" ? params.intent : undefined;
 
-    // Navigate to settings with query params preserved so the
-    // Settings screen's focus effect can recognise this as a just-
-    // completed link and refresh identities.
+    if (token) {
+      (async () => {
+        try {
+          await login(token);
+          router.replace("/");
+        } catch {
+          router.replace("/login");
+        }
+      })();
+      return;
+    }
+
     const target =
       intent === "link" || linkedProvider
         ? { pathname: "/(tabs)/settings", params: { linkedProvider: linkedProvider || "" } }
         : "/(tabs)/settings";
 
-    // Small delay so the Linking subscribers in other screens that
-    // are already mounted (login, settings) also see the URL event.
     const timer = setTimeout(() => {
       try {
         router.replace(target as any);
@@ -47,7 +57,7 @@ export default function OAuthCallbackScreen() {
       }
     }, 200);
     return () => clearTimeout(timer);
-  }, [params]);
+  }, [params, login]);
 
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#000" }}>
