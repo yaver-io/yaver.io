@@ -17,7 +17,7 @@ import { preferredDefaultModelForRunner, preferredDefaultRunnerForDevice, usePri
 // per turn render, not per token.
 const ANSI_ESC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[()][0AB]|\x1b[=>NOM78cDEHM]|\x07/g;
 const BARE_CSI_RE = /\[\d+(?:;\d+)*m/g;
-function stripAnsi(s: string): string {
+export function stripAnsi(s: string): string {
   if (!s) return s;
   return s.replace(ANSI_ESC_RE, "").replace(BARE_CSI_RE, "");
 }
@@ -32,7 +32,7 @@ function stripAnsi(s: string): string {
 // shell calls; the `strong` override pulls those out as a slightly
 // styled pill so the eye can scan a long agent run for tool calls
 // without parsing prose.
-const ASSISTANT_MARKDOWN_COMPONENTS = {
+export const ASSISTANT_MARKDOWN_COMPONENTS = {
   a: ({ href, children }: { href?: string; children?: ReactNode }) => (
     <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-[#818cf8] hover:text-[#a5b4fc]">
       {children}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { agentClient, type MobileWorkerPreviewSession } from "@/lib/agent-client";
+import { agentClient, type MobileWorkerPreviewSession, type TaskStatus } from "@/lib/agent-client";
 import pkg from "../../package.json";
 
 // Surface the running web bundle version inside the dashboard so
@@ -189,7 +189,7 @@ export default function PreviewPane({
   const [activeTaskStream, setActiveTaskStream] = useState<{
     id: string;
     title: string;
-    status: "queued" | "running" | "completed" | "failed" | "stopped";
+    status: TaskStatus;
     lines: string[];
   } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);

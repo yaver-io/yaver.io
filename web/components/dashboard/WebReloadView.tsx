@@ -16,7 +16,7 @@
 //   └──────────────────────────────────────────────────────────────┘
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { agentClient, type Runner, type WorkspaceAppView } from "@/lib/agent-client";
+import { agentClient, type Runner, type TaskStatus, type WorkspaceAppView } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
 import { WebAppSelector } from "./WebAppSelector";
 import { WebPreviewFrame, WEB_PREVIEW_VIEWPORTS, type ViewportId } from "./WebPreviewFrame";
@@ -131,7 +131,7 @@ export function WebReloadView({
   const [activeTaskStream, setActiveTaskStream] = useState<{
     id: string;
     title: string;
-    status: "queued" | "running" | "completed" | "failed" | "stopped";
+    status: TaskStatus;
     lines: string[];
   } | null>(null);
   const taskStreamStopRef = useRef<(() => void) | null>(null);
