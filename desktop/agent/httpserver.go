@@ -426,6 +426,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/auth/browser-session", s.auth(s.handleBrowserSession))
 	mux.HandleFunc("/machine/health", s.auth(s.handleMachineHealth))
 	mux.HandleFunc("/machine/peers", s.auth(s.handlePeerHealth))
+	mux.HandleFunc("/machine/peers/recover", s.auth(s.handlePeerRecover))
 	mux.HandleFunc("/tunnel/forward/", s.auth(s.handleTunnelForward))
 	mux.HandleFunc("/machine/tailscale", s.auth(s.handleTailscaleStatus))
 	// Unauthenticated recovery endpoint — bootstrap-secret gated,
@@ -1151,8 +1152,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	handler := s.ipAllowlist(withCORS(mux))
 
 	s.server = &http.Server{
-		Addr:    fmt.Sprintf("0.0.0.0:%d", s.port),
-		Handler: handler,
+		Addr:              fmt.Sprintf("0.0.0.0:%d", s.port),
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {
@@ -1172,9 +1175,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 			MinVersion:   tls.VersionTLS12,
 		}
 		s.tlsServer = &http.Server{
-			Addr:      fmt.Sprintf("0.0.0.0:%d", s.tlsPort),
-			Handler:   handler,
-			TLSConfig: tlsCfg,
+			Addr:              fmt.Sprintf("0.0.0.0:%d", s.tlsPort),
+			Handler:           handler,
+			TLSConfig:         tlsCfg,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		}
 		go func() {
 			fpPreview := s.tlsFingerprint

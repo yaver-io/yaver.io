@@ -641,6 +641,8 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 			// Fall through to normal mux routing
 			mux.ServeHTTP(w, r)
 		})),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	go func() {

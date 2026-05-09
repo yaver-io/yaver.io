@@ -4832,11 +4832,13 @@ export class QuicClient {
       return;
     }
 
-    // Exponential backoff indexed by the attempt that just failed (1, 2, 4, 8… capped).
-    const delay = Math.min(
+    // Exponential backoff indexed by the attempt that just failed (1, 2, 4, 8… capped),
+    // plus 0-500ms jitter to avoid thundering-herd reconnects when the relay flaps.
+    const baseDelay = Math.min(
       this.baseBackoffMs * Math.pow(2, this._reconnectAttempt - 1),
       30_000
     );
+    const delay = baseDelay + Math.floor(Math.random() * 500);
 
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -6676,6 +6678,40 @@ export class QuicClient {
       }
     }
     return { ok: false, error: lastError };
+  }
+
+  /** Ask the currently-active agent (watchdog) to SSH-recover another
+   *  owned device that's gone dark. Routes through the live baseUrl —
+   *  no relay enumeration — because we're addressing the watchdog
+   *  itself, not the wedged target. The watchdog runs idempotent
+   *  service-restart commands (systemctl / launchctl / nohup) and
+   *  returns a one-line outcome. Owner-token auth on the watchdog
+   *  side; guests get 403.
+   */
+  async recoverPeer(
+    targetDeviceId: string,
+  ): Promise<{ ok: true; outcome: string } | { ok: false; error: string }> {
+    if (!this.token) return { ok: false, error: "not signed in" };
+    if (!targetDeviceId) return { ok: false, error: "missing target deviceId" };
+    if (!this.baseUrl) return { ok: false, error: "no active connection — pick a watchdog device first" };
+    try {
+      const res = await this.fetchWithTimeout(`${this.baseUrl}/machine/peers/recover`, {
+        method: "POST",
+        headers: {
+          ...this.authHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deviceId: targetDeviceId }),
+      }, 130000); // 2-min recovery script + 10s wiggle
+      let body: any = null;
+      try { body = await res.json(); } catch {}
+      if (!res.ok) {
+        return { ok: false, error: body?.outcome || body?.error || `HTTP ${res.status}` };
+      }
+      return { ok: true, outcome: body?.outcome || "ok" };
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   /** Ask a remote device's agent to re-detect its hardware profile and push

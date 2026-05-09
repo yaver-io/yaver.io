@@ -2646,17 +2646,17 @@ func runServe(args []string) {
 	globalLeader = NewLeaderTracker(cfg.DeviceID)
 	globalLeader.WireTo(b)
 
-	// Connect the first available relay as a Tier-2 transport.
-	// Non-fatal if the relay is unreachable — the bus still works
-	// for local pub/sub, and other transports will cover remote
-	// delivery.
-	if len(cfg.RelayServers) > 0 {
-		primary := cfg.RelayServers[0]
-		if primary.HttpURL != "" {
-			rt := NewRelayBusTransport(primary.HttpURL, primary.Password, cfg.AuthToken, b)
-			rt.Start(ctx)
-			b.RegisterTransport(rt)
+	// Connect every configured relay as a Tier-2 transport. The bus
+	// dedupes cross-relay deliveries, so multiple subscriptions are
+	// safe and let peer presence survive a single-relay flap.
+	// Non-fatal if individual relays are unreachable.
+	for _, relay := range cfg.RelayServers {
+		if relay.HttpURL == "" {
+			continue
 		}
+		rt := NewRelayBusTransport(relay.HttpURL, relay.Password, cfg.AuthToken, b)
+		rt.Start(ctx)
+		b.RegisterTransport(rt)
 	}
 
 	// Tier-1 LAN transport — UDP broadcast on :19838. Non-fatal on
@@ -6713,7 +6713,7 @@ func runSSHWrap(args []string) {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
-		cmd := osexec.Command(sshPath, append([]string{dest}, passthrough...)...)
+		cmd := osexec.Command(sshPath, sshArgsWithSurvivability(dest, passthrough)...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -6729,6 +6729,23 @@ func runSSHWrap(args []string) {
 	os.Exit(exitCode)
 }
 
+// sshArgsWithSurvivability prepends keepalive + ControlMaster flags so
+// `yaver ssh` survives short network blips (ServerAlive*) and reuses
+// one TCP socket across rapid back-to-back invocations (10-min persist).
+// `%C` is the hashed-connection token, kept short to stay under the
+// 104-char Unix-socket-path limit even with long aliases.
+func sshArgsWithSurvivability(dest string, passthrough []string) []string {
+	args := []string{
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=3",
+		"-o", "ControlMaster=auto",
+		"-o", "ControlPath=~/.ssh/cm-%C",
+		"-o", "ControlPersist=10m",
+		dest,
+	}
+	return append(args, passthrough...)
+}
+
 // sshFailAuth is the sentinel returned by runSSHCapturingAuthFailure
 // when the OpenSSH client exited with "Permission denied (publickey)".
 // Distinguishing it from other 255-code failures (DNS, refused, host
@@ -6742,7 +6759,7 @@ const sshFailAuth = "auth"
 // otherwise. exitCode 0 means success — the caller is done.
 func runSSHCapturingAuthFailure(sshPath, dest string, passthrough []string) (int, string) {
 	fmt.Fprintf(os.Stderr, "→ ssh %s\n", dest)
-	cmd := osexec.Command(sshPath, append([]string{dest}, passthrough...)...)
+	cmd := osexec.Command(sshPath, sshArgsWithSurvivability(dest, passthrough)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	// Tee stderr through a small ring buffer so we can detect the

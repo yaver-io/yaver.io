@@ -608,6 +608,79 @@ function PingRow({ device }: { device: Device }) {
   );
 }
 
+// WatchdogRecoverRow asks the currently-active agent to SSH-recover
+// THIS device (the one being viewed in the modal). Only shown when:
+//   - we're connected to a different device (the watchdog candidate)
+//   - this device is the offline/wedged target
+// The flow: phone → watchdog (relay/direct) → SSH → wedged target.
+// Idempotent: systemctl restart / launchctl kickstart / nohup fallback.
+function WatchdogRecoverRow({ device }: { device: Device }) {
+  const c = useColors();
+  const { activeDevice, connectionStatus } = useDevice();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<null | { ok: boolean; line: string }>(null);
+
+  const watchdog =
+    activeDevice && connectionStatus === "connected" && activeDevice.id !== device.id
+      ? activeDevice
+      : null;
+
+  if (!watchdog) {
+    return (
+      <Text style={{ color: c.textMuted, fontSize: 11, fontStyle: "italic" }}>
+        Connect to another device first — that device acts as the watchdog and SSHes into this one to restart its agent.
+      </Text>
+    );
+  }
+
+  const onPress = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await quicClient.recoverPeer(device.id);
+      if (res.ok) {
+        setResult({ ok: true, line: res.outcome });
+      } else {
+        setResult({ ok: false, line: res.error });
+      }
+    } catch (e: any) {
+      setResult({ ok: false, line: e?.message || String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View>
+      <Pressable
+        onPress={onPress}
+        disabled={busy}
+        style={{
+          alignSelf: "flex-start",
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 8,
+          backgroundColor: "rgba(245,158,11,0.12)",
+          borderWidth: 1,
+          borderColor: "rgba(245,158,11,0.45)",
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        <Text style={{ color: "#fcd34d", fontSize: 12, fontWeight: "700" }}>
+          {busy ? `Recovering via ${watchdog.name}...` : `Recover via ${watchdog.name}`}
+        </Text>
+      </Pressable>
+      {result ? (
+        <View style={{ marginTop: 8 }}>
+          <Text style={{ fontSize: 12, fontWeight: "600", color: result.ok ? "#a7f3d0" : "#fecdd3" }}>
+            {result.ok ? "✓ " : "✗ "}{result.line}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 // Coding agents auth + default-runner picker. Same agent surface (claude /
 // codex / opencode) on every device, so we render the rows from a constant
 // instead of relying on whatever the agent reports — that way "agent
@@ -1196,6 +1269,15 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
                       : "Convex hasn't seen a heartbeat from this box recently. If the agent is still up on its public endpoint, this opens a one-time browser sign-in that re-authorizes it without SSH and without wiping the machine. If the box is fully down, reach for `yaver primary auth` from your laptop or `yaver ssh primary` first."}
                   </Text>
                   <OwnerClaimAuthRow device={device} />
+                  <View style={{ height: 14 }} />
+
+                  <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
+                    Recover via watchdog
+                  </Text>
+                  <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
+                    Ask another device you&apos;re signed into to SSH this one and restart its agent service. Useful when the agent process crashed but the box is still up — no OTP, no browser. Tries systemd, launchd, then a nohup fallback.
+                  </Text>
+                  <WatchdogRecoverRow device={device} />
                   <View style={{ height: 14 }} />
                 </>
               ) : null}

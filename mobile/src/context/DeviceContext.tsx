@@ -2495,18 +2495,30 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // Multiple devices + no primary (or primary offline) → do nothing; UI asks the user to pick.
   }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, selectDevice, setPrimaryDevice]);
 
-  // Trigger immediate reconnection on network change (WiFi↔cellular roaming)
+  // Trigger immediate reconnection on network change (WiFi↔cellular roaming,
+  // Wi-Fi → Wi-Fi roam between APs (same SSID, new IP), VPN/Tailscale toggle).
   useEffect(() => {
     let lastType: string | null = null;
+    let lastIp: string | null = null;
     const unsubscribe = NetInfo.addEventListener((state) => {
       const currentType = state.type; // "wifi", "cellular", "none", etc.
+      // NetInfo.details has ipAddress on iOS/Android for wifi+cellular; falsy for "none"/"unknown".
+      const currentIp =
+        state.details && typeof (state.details as { ipAddress?: string }).ipAddress === "string"
+          ? (state.details as { ipAddress: string }).ipAddress
+          : null;
 
       if (state.isConnected && activeDevice) {
-        // Trigger full reconnect on network type change (WiFi → cellular, cellular → WiFi)
-        // This clears stale relay URLs and re-probes all paths from scratch
+        // Type change (WiFi → cellular, cellular → WiFi) — full re-probe.
         if (lastType && lastType !== currentType) {
           console.log(`[DeviceContext] Network changed: ${lastType} → ${currentType}`);
           sendTelemetry(token, "network-change", `${lastType} → ${currentType}`);
+          quicClient.fullReconnect();
+        } else if (lastType && lastType === currentType && lastIp && currentIp && lastIp !== currentIp) {
+          // Same type but IP changed — Wi-Fi roam, VPN toggle, DHCP renew.
+          // Stale tunnel will hang on the old route; reprobe.
+          console.log(`[DeviceContext] IP changed (${currentType}): ${lastIp} → ${currentIp}`);
+          sendTelemetry(token, "network-ip-change", `${currentType} ${lastIp}→${currentIp}`);
           quicClient.fullReconnect();
         } else if (!lastType) {
           // First event after mount or reconnection — just probe to be safe
@@ -2514,6 +2526,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
       }
       lastType = currentType;
+      lastIp = currentIp;
     });
     return () => unsubscribe();
   }, [activeDevice, token]);
