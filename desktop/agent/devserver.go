@@ -1438,12 +1438,28 @@ func (b *baseDevServer) Stop() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.cmd != nil && b.cmd.Process != nil {
-		b.cmd.Process.Signal(os.Interrupt)
+		// Dev servers are usually invoked as `sh -c "vite ..."` or
+		// `npm run dev` which forks a node child (and esbuild
+		// grandchildren). Sending SIGINT only to the shell PID exits
+		// the shell but orphans node, leaving the dev port bound and
+		// blocking the next /dev/start. Kill the whole process group
+		// (created via setProcGroup in startProcess) so all descendants
+		// die together.
+		pid := b.cmd.Process.Pid
+		if err := killProcessGroup(pid, "INT"); err != nil {
+			// Group kill might fail if the leader already exited;
+			// fall back to per-process signal so we still try.
+			b.cmd.Process.Signal(os.Interrupt)
+		}
 		done := make(chan error, 1)
 		go func() { done <- b.cmd.Wait() }()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
+			// Escalate to SIGKILL on the whole group, then on the
+			// leader, so we don't leak vite/esbuild after a hung
+			// graceful-stop window.
+			killProcessGroup(pid, "KILL")
 			b.cmd.Process.Kill()
 		}
 	}
@@ -1463,6 +1479,10 @@ func (b *baseDevServer) startProcess(ctx context.Context, name string, args []st
 	// `npx` / `node` invocations resolve to the agent-managed Node
 	// runtime on a fresh Linux box that never had system Node.
 	cmd.Env = append(augmentEnv(nil), env...)
+	// Put the dev server in its own process group so Stop() can take down
+	// all child processes (vite/next fork node + esbuild; killing only the
+	// shell PID leaks them and the dev port stays bound until reboot).
+	setProcGroup(cmd)
 
 	// Pipe output to log with [dev] prefix, stream to SSE subscribers,
 	// AND feed the structured-progress trackers so they can extract
@@ -1880,6 +1900,10 @@ func (e *ExpoDevServer) StartWebPreview(parent context.Context, workDir string) 
 		"CI=1",
 	}
 	cmd.Env = append(augmentEnv(nil), extraEnv...)
+	// Same group-kill rationale as baseDevServer.startProcess: the npx
+	// shell forks node + metro children — without Setpgid, StopWebPreview
+	// only reaps the shell and leaves the metro process bound to its port.
+	setProcGroup(cmd)
 
 	logWriter := &devLogWriter{prefix: "[dev:expo:web]"}
 	if e.emitFn != nil {
@@ -1942,12 +1966,16 @@ func (e *ExpoDevServer) StopWebPreview() error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	cmd.Process.Signal(os.Interrupt)
+	pid := cmd.Process.Pid
+	if err := killProcessGroup(pid, "INT"); err != nil {
+		cmd.Process.Signal(os.Interrupt)
+	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
+		killProcessGroup(pid, "KILL")
 		cmd.Process.Kill()
 	}
 	e.webMu.Lock()
@@ -2291,6 +2319,10 @@ func (f *FlutterDevServer) startProcessWithStdin(ctx context.Context, name strin
 	// `npx` / `node` invocations resolve to the agent-managed Node
 	// runtime on a fresh Linux box that never had system Node.
 	cmd.Env = append(augmentEnv(nil), env...)
+	// Put the dev server in its own process group so Stop() can take down
+	// all child processes (vite/next fork node + esbuild; killing only the
+	// shell PID leaks them and the dev port stays bound until reboot).
+	setProcGroup(cmd)
 
 	logWriter := &devLogWriter{prefix: fmt.Sprintf("[dev:%s]", f.name)}
 	cmd.Stdout = logWriter
