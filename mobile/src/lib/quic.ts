@@ -2133,49 +2133,76 @@ export class QuicClient {
     onDone?: (status: string) => void,
     onEvent?: (event: { type: string; [k: string]: unknown }) => void,
   ): () => void {
-    const controller = new AbortController();
+    // XMLHttpRequest with onprogress instead of fetch().body.getReader()
+    // because RN-iOS's fetch streams response bodies live (NSURLSession)
+    // but RN-Android's fetch buffers the entire body before delivering
+    // it. For an SSE stream that never closes, the Android side would
+    // sit forever with no output — which is exactly what happens for
+    // claude-code "Hello" tasks on the Samsung tablet today. XHR's
+    // onprogress callback fires as data arrives on both platforms.
+    // Same workaround that settings.tsx already uses for `yaver logs -f`.
     const url = `${this.baseUrl}/tasks/${taskId}/output`;
+    const xhr = new XMLHttpRequest();
+    let lastIndex = 0;
+    let aborted = false;
 
-    (async () => {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: this.authHeaders,
-          signal: controller.signal,
-        });
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            try {
-              const evt = JSON.parse(line.slice(6));
-              if (evt.type === "output" && evt.text) {
-                onData(evt.text);
-              } else if (evt.type === "done" && onDone) {
-                onDone(evt.status);
-              } else if (onEvent) {
-                onEvent(evt);
-              }
-            } catch {}
+    const flushBuffer = (chunk: string) => {
+      const lines = chunk.split("\n");
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === "output" && evt.text) {
+            onData(evt.text);
+          } else if (evt.type === "done" && onDone) {
+            onDone(evt.status);
+          } else if (onEvent) {
+            onEvent(evt);
           }
+        } catch {
+          // ignore malformed chunk
         }
-      } catch {
-        // Aborted or network error
       }
-    })();
+    };
 
-    return () => controller.abort();
+    xhr.open("POST", url, true);
+    for (const [k, v] of Object.entries(this.authHeaders)) {
+      xhr.setRequestHeader(k, v as string);
+    }
+    xhr.onprogress = () => {
+      if (aborted) return;
+      const text = xhr.responseText || "";
+      // Carry an incomplete final line forward — split only at the last
+      // \n so a chunk that ends mid-event doesn't drop the leftover.
+      const lastNewline = text.lastIndexOf("\n", text.length - 1);
+      if (lastNewline <= lastIndex) return;
+      const ready = text.slice(lastIndex, lastNewline);
+      lastIndex = lastNewline + 1;
+      flushBuffer(ready);
+    };
+    xhr.onerror = () => {
+      // network error or abort — silent (matches the previous behavior)
+    };
+    xhr.onloadend = () => {
+      if (aborted) return;
+      // Drain any trailing buffer that arrived without a terminating \n.
+      const tail = (xhr.responseText || "").slice(lastIndex);
+      if (tail) flushBuffer(tail);
+    };
+    try {
+      xhr.send();
+    } catch {
+      // ignore — onerror will fire if the send itself was rejected
+    }
+
+    return () => {
+      aborted = true;
+      try {
+        xhr.abort();
+      } catch {
+        // ignore
+      }
+    };
   }
 
   /**
