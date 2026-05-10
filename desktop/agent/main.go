@@ -6986,12 +6986,25 @@ func printSSHResolutionDiagnostic(input, attempted string, dev *DeviceInfo) {
 		return
 	}
 	tsUp := localTailscaleUp()
+
+	// Pull the user portion off `attempted` so we can compare it to
+	// what the remote agent reports. ssh-tried-as can come from an
+	// explicit user@host, the inferred /info.osUser, or just the
+	// process's $USER fallback.
+	triedUser, triedHost := splitDestUserHost(attempted)
+	if triedUser == "" {
+		triedUser = strings.TrimSpace(os.Getenv("USER"))
+	}
+
 	fmt.Fprintf(os.Stderr, "\nyaver ssh: %s did not connect.\n", attempted)
 	fmt.Fprintf(os.Stderr, "  device:  %s", strings.TrimSpace(dev.Name))
 	if alias := strings.TrimSpace(dev.Alias); alias != "" {
 		fmt.Fprintf(os.Stderr, " (alias %s)", alias)
 	}
 	fmt.Fprintf(os.Stderr, " — %s\n", dev.DeviceID)
+	if strings.TrimSpace(dev.Platform) != "" {
+		fmt.Fprintf(os.Stderr, "  platform: %s\n", dev.Platform)
+	}
 	if len(dev.LocalIps) > 0 {
 		fmt.Fprintf(os.Stderr, "  IPs:     %s\n", strings.Join(dev.LocalIps, ", "))
 	}
@@ -7002,6 +7015,20 @@ func printSSHResolutionDiagnostic(input, attempted string, dev *DeviceInfo) {
 		fmt.Fprintf(os.Stderr, "  quic:    %s\n", dev.QuicHost)
 	}
 	fmt.Fprintf(os.Stderr, "  tailscale: %s\n", tailscaleStateLabel(tsUp))
+
+	// "Connection closed by … port 22" almost always means we hit
+	// sshd as a user the remote box doesn't accept. If the remote
+	// agent reports a different osUser than what we just tried,
+	// surface it inline — saves the user from having to run
+	// `yaver primary status` to discover it.
+	if osUser := remoteAgentOSUser(dev.DeviceID, 2*time.Second); osUser != "" && triedUser != "" && !strings.EqualFold(osUser, triedUser) {
+		host := triedHost
+		if host == "" {
+			host = attempted
+		}
+		fmt.Fprintf(os.Stderr, "  ssh tried as: %s — agent reports osUser=%s\n", triedUser, osUser)
+		fmt.Fprintf(os.Stderr, "  hint: try `ssh %s@%s` (or `yaver ssh %s@%s`)\n", osUser, host, osUser, host)
+	}
 	if !tsUp {
 		// Most-common cause of a Yaver-resolved address timing out:
 		// device row carries a 100.x address for an overlay that's
@@ -7019,6 +7046,16 @@ func printSSHResolutionDiagnostic(input, attempted string, dev *DeviceInfo) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "  hint: `yaver devices` lists every endpoint, or `ssh <user>@<other-ip>` directly.")
+}
+
+// splitDestUserHost pulls the last user@host pair out of dest. Empty
+// triedUser when no `@` is present.
+func splitDestUserHost(dest string) (user, host string) {
+	at := strings.LastIndex(dest, "@")
+	if at <= 0 {
+		return "", strings.TrimSpace(dest)
+	}
+	return strings.TrimSpace(dest[:at]), strings.TrimSpace(dest[at+1:])
 }
 
 func tailscaleStateLabel(up bool) string {
@@ -7425,20 +7462,28 @@ func inferSSHUser(host string, dev DeviceInfo) string {
 	if strings.TrimSpace(host) == "" {
 		return ""
 	}
+	// Source of truth: the remote agent's /info.osUser. Reachable over
+	// the same Convex-bearer-token channel ping uses, on every
+	// platform. If the agent reports it, trust it — that's the user
+	// whose authorized_keys the bootstrap path writes to and whose
+	// home dir owns the session. The previous Linux-only gate caused
+	// `yaver ssh <macos-box>` to ssh as the LOCAL user (e.g.
+	// kivanccakmak) into a remote where that account doesn't exist
+	// (e.g. pokayoke), producing "Connection closed by host port 22"
+	// well before any auth-bootstrap path could help.
+	if u := remoteAgentOSUser(dev.DeviceID, 3*time.Second); u != "" {
+		return u
+	}
+	// Fallback heuristic only for Linux boxes — historical Yaver
+	// targets where root-ssh / current-user-ssh probes are useful.
+	// For other platforms without /info.osUser we'd rather return ""
+	// (ssh uses the local user; the failure diagnostic explains how
+	// to override with `ssh <user>@<host>`) than guess wrong.
 	if !strings.EqualFold(strings.TrimSpace(dev.Platform), "linux") {
 		return ""
 	}
 	if !strings.Contains(host, ".") {
 		return ""
-	}
-	// Source of truth: the remote agent's /info.osUser. Reachable over
-	// the same Convex-bearer-token channel ping uses. If the agent
-	// reports it, trust it — that's the user whose authorized_keys
-	// the bootstrap path writes to and whose home dir owns the
-	// session. Best-effort: a 3-second probe; on any failure we fall
-	// through to the legacy heuristic.
-	if u := remoteAgentOSUser(dev.DeviceID, 3*time.Second); u != "" {
-		return u
 	}
 	currentUser := strings.TrimSpace(os.Getenv("USER"))
 	if currentUser != "" && probeSSHUser(host, currentUser) {

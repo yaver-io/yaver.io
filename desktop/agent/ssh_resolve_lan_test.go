@@ -157,3 +157,29 @@ func TestTailscaleStateLabel(t *testing.T) {
 		t.Fatalf("tailscaleStateLabel(false) returned empty label")
 	}
 }
+
+func TestSplitDestUserHost(t *testing.T) {
+	cases := []struct {
+		dest     string
+		wantUser string
+		wantHost string
+	}{
+		{"pokayoke@192.168.111.25", "pokayoke", "192.168.111.25"},
+		{"root@example.com", "root", "example.com"},
+		{"192.168.111.25", "", "192.168.111.25"},
+		{"", "", ""},
+		// Edge: leading `@` (no user). LastIndex returns 0 → not >0
+		// → treated as bare host.
+		{"@example.com", "", "@example.com"},
+		// Edge: multiple `@` (e.g., `user@host@something` would be
+		// odd but we take the last one as the separator).
+		{"user@host.example@oddtag", "user@host.example", "oddtag"},
+	}
+	for _, tc := range cases {
+		gotUser, gotHost := splitDestUserHost(tc.dest)
+		if gotUser != tc.wantUser || gotHost != tc.wantHost {
+			t.Errorf("splitDestUserHost(%q) = (%q,%q); want (%q,%q)",
+				tc.dest, gotUser, gotHost, tc.wantUser, tc.wantHost)
+		}
+	}
+}
