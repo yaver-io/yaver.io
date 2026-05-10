@@ -17,6 +17,7 @@
 
 import React from "react";
 import {
+  Alert,
   Modal,
   View,
   Text,
@@ -174,6 +175,15 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   const [pane, setPane] = React.useState<Pane>("unified");
   const [pickedDevice, setPickedDevice] = React.useState<Device | null>(null);
   const [pickedRunner, setPickedRunner] = React.useState<TaskTarget["runner"] | null>(null);
+  // Ping results per device. The card subtitle reads as
+  // "Connected · 87ms" when fresh, "Connected · pinging…" while
+  // probing, "Live · last ping failed" when the pool client says
+  // connected but a recent ping timed out — that mismatch is what
+  // the user means by "make yaver ping show connected etc".
+  // null = not pinged yet, undefined = in flight.
+  const [pingByDevice, setPingByDevice] = React.useState<
+    Record<string, { rttMs: number; ok: boolean; at: number } | null>
+  >({});
   // null = audit attempted but failed (network/peer-proxy/etc) — UI must
   // render "Couldn't audit" rather than masquerading as "not installed".
   // [] = audit succeeded but agent reported no rows.
@@ -198,6 +208,8 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     deviceName: string;
     runner: "claude" | "codex" | "opencode";
   } | null>(null);
+  const [runnerSetupBusyKey, setRunnerSetupBusyKey] = React.useState<string | null>(null);
+  const [runnerActionErrorByKey, setRunnerActionErrorByKey] = React.useState<Record<string, string>>({});
   const [switchError, setSwitchError] = React.useState<string | null>(null);
 
   // Reset everything on close.
@@ -214,6 +226,8 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     setPickedModel(null);
     setRecoveryConfirm(null);
     setRunnerAuthFor(null);
+    setRunnerSetupBusyKey(null);
+    setRunnerActionErrorByKey({});
     setSwitchError(null);
   }, [visible]);
 
@@ -258,26 +272,31 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     }
   }, []);
 
-  // Single-device shortcut: if there's exactly one machine in the
-  // wizard's eligible list, auto-pick it on open. Inline agent
-  // picker handles the rest — no pane swap. Aligned with
-  // eligibleDevices (not the raw online filter) so the auto-pick
-  // fires whenever the user-visible list collapses to a single row,
-  // not whenever the underlying device count happens to be 1.
-  React.useEffect(() => {
-    if (!visible || pane !== "unified") return;
-    if (eligibleDevices.length === 1) {
-      const only = eligibleDevices[0];
-      if (pickedDevice?.id === only.id) return;
-      setPickedDevice(only);
-      const seed = primaryRunnerByDevice[only.id];
-      if (seed) {
-        const tid = seed === "claude" ? "claude-code" : (seed as TaskTarget["runner"]);
-        setPickedRunner(tid);
-      }
-      void runAudit(only);
+  // Per-device live ping. Confirms the pool's "connected" claim with a
+  // round-trip /health probe — without it, a pool client that lost
+  // tunnel state (relay password rotation, agent restart) would still
+  // render as Connected in the wizard until a task actually failed.
+  // 5-second timeout matches QuicClient.ping.
+  const runPing = React.useCallback(async (device: Device) => {
+    const direct = connectionManager.clientFor(device.id);
+    if (!direct.isConnected) {
+      // No pool client to ping. Wait until the user picks the device
+      // (which connects it) before showing rtt.
+      return;
     }
-  }, [visible, pane, eligibleDevices, pickedDevice?.id, primaryRunnerByDevice, runAudit]);
+    try {
+      const result = await direct.ping();
+      setPingByDevice((p) => ({
+        ...p,
+        [device.id]: { rttMs: result.rttMs, ok: result.ok, at: Date.now() },
+      }));
+    } catch {
+      setPingByDevice((p) => ({
+        ...p,
+        [device.id]: { rttMs: -1, ok: false, at: Date.now() },
+      }));
+    }
+  }, []);
 
   // Keep `pickedModel` in lockstep with `pickedRunner`. When the user
   // toggles between Claude Code and Codex (or the auto-seed flips
@@ -342,6 +361,13 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     const row = auditFor(pickedDevice.id, auditId);
     if (!row || !row.installed) return;
     if (!row.authConfigured) {
+      if (auditId === "opencode") {
+        Alert.alert(
+          "OpenCode needs provider setup",
+          "OpenCode is installed on this machine, but it still needs provider credentials or config on the remote box before it can run tasks.",
+        );
+        return;
+      }
       setRunnerAuthFor({ deviceId: pickedDevice.id, deviceName: pickedDevice.name, runner: auditId });
       return;
     }
@@ -421,6 +447,42 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     }
   };
 
+  const handleInstallRunner = async (
+    device: Device,
+    auditId: "claude" | "codex" | "opencode",
+  ) => {
+    const key = `${device.id}:${auditId}`;
+    setRunnerSetupBusyKey(key);
+    setRunnerActionErrorByKey((prev) => ({ ...prev, [key]: "" }));
+    try {
+      const result = await quicClient.runnerAuthSetup({
+        runner: auditId,
+        installIfMissing: true,
+        allowInstallOnly: true,
+      }, device.id);
+      if (!result.ok) {
+        throw new Error(result.error || `Couldn't install ${auditId}.`);
+      }
+      await runAudit(device);
+      if (result.authConfigured) {
+        const taskId = auditId === "claude" ? "claude-code" : auditId;
+        setPickedDevice(device);
+        setPickedRunner(taskId as TaskTarget["runner"]);
+        return;
+      }
+      if (auditId === "claude" || auditId === "codex") {
+        setRunnerAuthFor({ deviceId: device.id, deviceName: device.name, runner: auditId });
+      }
+    } catch (err: any) {
+      setRunnerActionErrorByKey((prev) => ({
+        ...prev,
+        [key]: err?.message || `Couldn't install ${auditId}.`,
+      }));
+    } finally {
+      setRunnerSetupBusyKey(null);
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────
   // Render
 
@@ -440,7 +502,43 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
       if (aLive !== bLive) return aLive - bLive;
       return a.name.localeCompare(b.name);
     });
-  }, [devices, connectedSet, activeDevice?.id]);
+    }, [devices, connectedSet, activeDevice?.id]);
+
+  // Auto-ping all connected devices when the wizard opens. Without
+  // this, a stale pool client (relay password rotated, agent restarted
+  // after our last connect) would render Connected without ever being
+  // confirmed end-to-end — and the user would only find out via a
+  // failed task. Pinging here surfaces the truth on the card before
+  // they tap Continue.
+  React.useEffect(() => {
+    if (!visible) return;
+    for (const d of eligibleDevices) {
+      if (connectedSet.has(d.id)) {
+        void runPing(d);
+      }
+    }
+  }, [visible, eligibleDevices, connectedSet, runPing]);
+
+  // Single-device shortcut: if there's exactly one machine in the
+  // wizard's eligible list, auto-pick it on open. Inline agent
+  // picker handles the rest — no pane swap. Aligned with
+  // eligibleDevices (not the raw online filter) so the auto-pick
+  // fires whenever the user-visible list collapses to a single row,
+  // not whenever the underlying device count happens to be 1.
+  React.useEffect(() => {
+    if (!visible || pane !== "unified") return;
+    if (eligibleDevices.length === 1) {
+      const only = eligibleDevices[0];
+      if (pickedDevice?.id === only.id) return;
+      setPickedDevice(only);
+      const seed = primaryRunnerByDevice[only.id];
+      if (seed) {
+        const tid = seed === "claude" ? "claude-code" : (seed as TaskTarget["runner"]);
+        setPickedRunner(tid);
+      }
+      void runAudit(only);
+    }
+  }, [visible, pane, eligibleDevices, pickedDevice?.id, primaryRunnerByDevice, runAudit]);
 
   // Unified pane: a single scrolling view that lists every CONNECTED
   // device, expanding the picked one inline to show agents + model.
@@ -523,11 +621,21 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                       {d.alias ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  @{d.alias}</Text> : null}
                     </Text>
                     <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                      {connectedSet.has(d.id)
-                        ? "Connected"
-                        : d.online
-                          ? "Live · tap to connect"
-                          : "Offline"}
+                      {(() => {
+                        const ping = pingByDevice[d.id];
+                        // Status copy is "what's the truest state we
+                        // can tell the user right now". A successful
+                        // ping wins (we know the agent is reachable);
+                        // a failed ping after the pool said connected
+                        // is the most actionable warning, since it
+                        // means the next task probably crashes.
+                        if (connectedSet.has(d.id)) {
+                          if (ping && ping.ok) return `Connected · ${ping.rttMs}ms`;
+                          if (ping && !ping.ok) return "Connected (pool) · ping failed";
+                          return "Connected · pinging…";
+                        }
+                        return d.online ? "Live · tap to connect" : "Offline";
+                      })()}
                       {activeDevice?.id === d.id ? " · Focused" : ""}
                       {versionSuffix && !outdated ? versionSuffix : ""}
                     </Text>
@@ -589,50 +697,130 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
         </View>
       ) : (
         RUNNERS.map(({ taskId, auditId, label }) => {
+          const actionKey = `${d.id}:${auditId}`;
           const row = auditFor(d.id, auditId);
           const failed = auditFailed(d.id);
           const installed = !!row?.installed;
           const authed = !!row?.authConfigured;
           const ready = installed && authed;
           const selected = pickedRunner === taskId;
+          const setupBusy = runnerSetupBusyKey === actionKey;
+          const actionError = runnerActionErrorByKey[actionKey];
           const subtitle = failed
             ? "Couldn't audit this device — tap to retry"
             : !installed
               ? "Not installed on this device"
               : authed
                 ? `Ready${row?.version ? ` · ${row.version}` : ""}`
-                : "Needs auth — tap to set up";
+                : auditId === "opencode"
+                  ? "Needs provider setup on this device"
+                  : "Needs auth — tap to set up";
           return (
-            <Pressable
+            <View
               key={taskId}
-              onPress={() => failed ? runAudit(d) : handlePickRunner(taskId, auditId)}
-              disabled={!failed && !installed}
-              style={({ pressed }) => ({
+              style={{
                 marginBottom: 8,
                 padding: 12,
                 borderRadius: 8,
                 borderWidth: 1,
                 borderColor: selected ? c.accent : c.border,
                 backgroundColor: c.bg,
-                opacity: (!failed && !installed) ? 0.5 : pressed ? 0.85 : 1,
-              })}
+                opacity: setupBusy ? 0.75 : 1,
+              }}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View style={{ flex: 1, paddingRight: 12 }}>
                   <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>{label}</Text>
                   <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>{subtitle}</Text>
+                  {actionError ? (
+                    <Text style={{ color: "#dc2626", fontSize: 11, marginTop: 6 }}>{actionError}</Text>
+                  ) : null}
                 </View>
                 {ready ? (
-                  selected ? (
-                    <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text>
-                  ) : (
-                    <Text style={{ color: c.accent, fontSize: 16 }}>›</Text>
-                  )
-                ) : installed ? (
-                  <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>AUTHENTICATE</Text>
-                ) : null}
+                  <Pressable
+                    onPress={() => handlePickRunner(taskId, auditId)}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      backgroundColor: selected ? c.accent + "22" : c.bgCard,
+                      borderWidth: 1,
+                      borderColor: selected ? c.accent : c.border,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>
+                      {selected ? "SELECTED" : "USE"}
+                    </Text>
+                  </Pressable>
+                ) : failed ? (
+                  <Pressable
+                    onPress={() => void runAudit(d)}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      backgroundColor: c.bgCard,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "700" }}>RETRY</Text>
+                  </Pressable>
+                ) : !installed ? (
+                  <Pressable
+                    onPress={() => void handleInstallRunner(d, auditId)}
+                    disabled={setupBusy}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      backgroundColor: c.accent + "18",
+                      borderWidth: 1,
+                      borderColor: c.accent,
+                      opacity: setupBusy ? 0.6 : pressed ? 0.85 : 1,
+                    })}
+                  >
+                    {setupBusy ? (
+                      <ActivityIndicator size="small" color={c.accent} />
+                    ) : (
+                      <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>INSTALL</Text>
+                    )}
+                  </Pressable>
+                ) : auditId === "opencode" ? (
+                  <Pressable
+                    onPress={() => handlePickRunner(taskId, auditId)}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      backgroundColor: c.bgCard,
+                      borderWidth: 1,
+                      borderColor: c.border,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "700" }}>DETAILS</Text>
+                  </Pressable>
+                ) : (
+                  <Pressable
+                    onPress={() => handlePickRunner(taskId, auditId)}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      borderRadius: 8,
+                      backgroundColor: c.accent + "18",
+                      borderWidth: 1,
+                      borderColor: c.accent,
+                      opacity: pressed ? 0.85 : 1,
+                    })}
+                  >
+                    <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>AUTH</Text>
+                  </Pressable>
+                )}
               </View>
-            </Pressable>
+            </View>
           );
         })
       )}

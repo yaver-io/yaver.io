@@ -45,6 +45,7 @@ import {
   TaskStatus,
   TmuxSession,
 } from "../../src/lib/quic";
+import { connectionManager } from "../../src/lib/connectionManager";
 import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
 import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
@@ -2555,7 +2556,24 @@ export default function TasksScreen() {
       // OpenCode mode comes from the wizard's remote opencode.json
       // probe when present; fall back to the in-modal selectedOpenCodeMode.
       const effectiveOpencodeMode = pendingTarget?.opencodeMode ?? selectedOpenCodeMode;
-      const task = await quicClient.sendTask(
+      // Route the sendTask through the EXACT pool client for the
+      // wizard's chosen device. The legacy `quicClient` Proxy delegates
+      // to whichever client is focused — but the focus shift in the
+      // wizard was racing with React state propagation, so a task
+      // sent right after picking Mobiles-Mac-mini sometimes ended up
+      // on yaver-test-ephemeral (the previously-focused box) with
+      // the wizard's runner/model attached. Going through clientFor
+      // is deterministic: the URL + headers match the device we
+      // genuinely picked.
+      const sendClient = pendingTarget?.deviceId
+        ? connectionManager.clientFor(pendingTarget.deviceId)
+        : quicClient;
+      // Make sure focus follows so any post-send streams (logs, output)
+      // arrive on the same client the new task ran on.
+      if (pendingTarget?.deviceId) {
+        connectionManager.setFocused(pendingTarget.deviceId);
+      }
+      const task = await sendClient.sendTask(
         title, "",
         effectiveRunner === "custom" ? undefined : effectiveModel,
         effectiveRunner === "custom" ? "custom" : effectiveRunner,
