@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Dimensions,
   FlatList,
   Image,
   Keyboard,
@@ -65,6 +66,8 @@ import type { YaverAgentToolContext } from "../../src/lib/yaverAgentTools";
 import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
 import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { taskHaptics } from "../../src/lib/taskHaptics";
 import { MessageBubble } from "../../src/components/MessageBubble";
 import { openTaskBus } from "../../src/lib/runningTasksBus";
@@ -1000,11 +1003,15 @@ function ChatBubbleImpl({
   tokens,
 }: ChatBubbleProps) {
   const isUser = turn.role === "user";
+  // Cap user bubble at 640pt on tablets — see MessageBubble.tsx for
+  // the same reason. Phones never hit the cap.
+  const winWidth = Dimensions.get("window").width;
+  const userBubbleCap = { maxWidth: Math.min(winWidth * 0.8, 640) };
 
   if (isUser) {
     return (
       <View style={s.userRow}>
-        <View style={[s.userBubble, { backgroundColor: c.accent || "#6366f1" }]}>
+        <View style={[s.userBubble, userBubbleCap, { backgroundColor: c.accent || "#6366f1" }]}>
           <Text style={s.userBubbleText}>{turn.content}</Text>
         </View>
       </View>
@@ -1317,12 +1324,18 @@ function buildAgentContextRows(
       mono: false,
     });
 
-    // Model: same resolution as TaskHeader chip — match by selected
-    // picker id first, then fall back to the runner's preferred
-    // default model on this device. Surfaces glm-4.7 (opencode),
-    // gpt-5.4 (codex), claude-opus-4-7 (claude) etc.
+    // Model: prefer the task's own `model` field (set by the agent at
+    // task creation, plumbed via Task.model). Falls back to the
+    // picker's selectedModelId only when the task doesn't carry one,
+    // then to the runner's per-device default. Picker fallback is
+    // wrong for cross-device tasks — was the source of "Claude Code
+    // · GPT-5.4" mislabels users kept reporting.
     let modelLabel: string | undefined;
-    if (extras.selectedModelId) {
+    const taskModelId = (task as any)?.model as string | undefined;
+    if (taskModelId) {
+      modelLabel = models.find((m) => m.id === taskModelId)?.name || taskModelId;
+    }
+    if (!modelLabel && extras.selectedModelId) {
       modelLabel = models.find((m) => m.id === extras.selectedModelId)?.name || extras.selectedModelId;
     }
     if (!modelLabel) {
@@ -1417,6 +1430,14 @@ export default function TasksScreen() {
   const c = useColors();
   const { isDark } = useTheme();
   const taskRouter = useRouter();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("regular");
+  // Tablet landscape: render task detail as a persistent right-pane
+  // panel instead of a slide-up sheet, so the task list stays
+  // visible on the left. The Modal is still used (so keyboard +
+  // focus management work) but its overlay/positioning are
+  // overridden inline.
+  const tabletDualPane = layout.layoutClass === "tablet-landscape";
   // Optional `?dir=/abs/path` scopes chat/tasks to a project directory.
   // When present, we pass it as workDir on new tasks so the runner executes
   // inside the project instead of the agent's global cwd. Used by the
@@ -2573,7 +2594,33 @@ export default function TasksScreen() {
       if (pendingTarget?.deviceId) {
         connectionManager.setFocused(pendingTarget.deviceId);
       }
-      const task = await sendClient.sendTask(
+      // Hard guard: if pendingTarget is set but the chosen sendClient
+      // ended up with a baseUrl that doesn't match the picked device,
+      // refuse to send and surface the discrepancy. This catches the
+      // case the user keeps reproducing where a Mac-mini-targeted task
+      // lands on yaver-test-ephemeral — better to fail loudly than
+      // silently dispatch to the wrong agent.
+      if (pendingTarget?.deviceId) {
+        const targetDeviceId = pendingTarget.deviceId;
+        const clientDeviceId = (sendClient as any).attachedDeviceId ?? null;
+        const clientBaseUrl = (sendClient as any).baseUrl ?? "";
+        if (!sendClient.isConnected) {
+          throw new Error(
+            `Picked ${pendingTarget.deviceName} but its client isn't connected. Re-tap it from the wizard.`,
+          );
+        }
+        if (clientDeviceId && clientDeviceId !== targetDeviceId) {
+          throw new Error(
+            `Routing mismatch: wizard chose ${pendingTarget.deviceName} (${targetDeviceId.slice(0, 8)}…) but the pooled client is bound to ${clientDeviceId.slice(0, 8)}…. Reload the wizard.`,
+          );
+        }
+        // Telemetry to ourselves — surfaces the URL the task POST is
+        // actually using in the task description so post-mortem
+        // screenshots tell us whether routing was correct without
+        // having to read the agent logs.
+        console.log(`[tasks] sendTask → ${pendingTarget.deviceName} via ${clientBaseUrl}`);
+      }
+      const rawTask = await sendClient.sendTask(
         title, "",
         effectiveRunner === "custom" ? undefined : effectiveModel,
         effectiveRunner === "custom" ? "custom" : effectiveRunner,
@@ -2585,6 +2632,16 @@ export default function TasksScreen() {
         videoSummaryEnabled ? { enabled: true } : undefined,
         true,
       );
+      // Stamp the task with the device + model we KNOW we sent it to
+      // (sendTask response doesn't always echo deviceName; with the
+      // pool the legitimate source is whichever client we picked).
+      // Without this, the task card would later label itself with
+      // activeDevice.name even though the work ran on a sibling box.
+      const task: Task = {
+        ...rawTask,
+        deviceName: pendingTarget?.deviceName || rawTask.deviceName,
+        model: rawTask.model || (effectiveRunner !== "custom" ? effectiveModel : undefined),
+      };
       setNewTaskText("");
       setAttachedImages([]);
       setInputFromSpeech(false);
@@ -3665,7 +3722,7 @@ export default function TasksScreen() {
           data={displayTasks}
           keyExtractor={(item) => item.id}
           alwaysBounceVertical
-          contentContainerStyle={[s.listContent, displayTasks.length === 0 && s.listContentEmpty]}
+          contentContainerStyle={[s.listContent, displayTasks.length === 0 && s.listContentEmpty, tabletDualPane ? null : tabletContent]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
           }
@@ -4625,16 +4682,47 @@ export default function TasksScreen() {
           }}
         />
         {/* ── Chat Detail Modal ───────────────────────────────────── */}
-        <Modal visible={!!selectedTask} animationType="slide" transparent onRequestClose={() => setSelectedTask(null)}>
+        <Modal
+          visible={!!selectedTask}
+          animationType={tabletDualPane ? "fade" : "slide"}
+          transparent
+          onRequestClose={() => setSelectedTask(null)}
+        >
           <KeyboardAvoidingView
-            style={s.chatModalOverlay}
+            style={[
+              s.chatModalOverlay,
+              tabletDualPane ? { backgroundColor: "rgba(0,0,0,0.18)", flexDirection: "row" } : null,
+            ]}
             behavior={Platform.OS === "ios" ? "padding" : "height"}
             keyboardVerticalOffset={0}
           >
-            {/* Tap outside to dismiss */}
-            <Pressable style={s.chatModalDismissArea} onPress={() => setSelectedTask(null)} />
+            {/* Phone: tap outside (top strip) to dismiss. Tablet
+                landscape: dismiss area becomes the LEFT half of the
+                screen so the task list behind it can be tapped to
+                pick a different task. */}
+            {tabletDualPane ? (
+              <Pressable
+                style={{ flex: 1 }}
+                onPress={() => setSelectedTask(null)}
+              />
+            ) : (
+              <Pressable style={s.chatModalDismissArea} onPress={() => setSelectedTask(null)} />
+            )}
             {selectedTask && (
-              <View style={[s.chatModal, { backgroundColor: c.bg }]}>
+              <View
+                style={[
+                  s.chatModal,
+                  { backgroundColor: c.bg },
+                  tabletDualPane ? {
+                    width: Math.max(560, layout.width * 0.58),
+                    borderTopLeftRadius: 24,
+                    borderBottomLeftRadius: 24,
+                    borderTopRightRadius: 0,
+                    borderLeftWidth: 1,
+                    borderLeftColor: c.border,
+                  } : null,
+                ]}
+              >
                 {/* TaskHeader collapses the legacy 3-row stack
                     (Back/title/Stop, status/Logs, device) into a
                     2-row design. Title slot is intentionally empty:
@@ -4643,17 +4731,25 @@ export default function TasksScreen() {
                     noise. See spec section B1. */}
                 <TaskHeader
                   status={selectedTask.status}
-                  deviceName={activeDevice?.name}
+                  // Prefer the task's recorded deviceName (set by the
+                  // agent at task creation, plumbed via Task.deviceName).
+                  // activeDevice.name was lying when a task ran on a
+                  // pool-secondary box and the user later focused
+                  // somewhere else.
+                  deviceName={selectedTask.deviceName || activeDevice?.name}
                   runnerLabel={selectedTask.runnerId ? displayRunnerLabel(selectedTask.runnerId) : undefined}
                   modelLabel={(() => {
-                    // Model name with two fallbacks because Task.model
-                    // isn't yet plumbed through quic.ts. (1) match the
-                    // currently-loaded availableModels by id (covers
-                    // most live tasks since the picker state is
-                    // contemporaneous), (2) fall back to the runner's
-                    // device-aware default. Both end up rendering
-                    // "GPT-5.4" / "Claude Opus 4.7" — the same labels
-                    // already shown on the device card.
+                    // Authoritative source: Task.model from the agent
+                    // (now plumbed through quic.ts). Picker fallback
+                    // only kicks in for legacy tasks that don't carry
+                    // the field — without this priority order the
+                    // header would label cross-device tasks with the
+                    // currently-focused box's picker, producing the
+                    // "Claude Code · GPT-5.4" mislabel.
+                    const taskModelId = (selectedTask as any)?.model as string | undefined;
+                    if (taskModelId) {
+                      return availableModels.find((m) => m.id === taskModelId)?.name || taskModelId;
+                    }
                     const explicit = availableModels.find((m) => m.id === selectedModel)?.name;
                     if (explicit) return explicit;
                     const fallbackId = preferredDefaultModelForRunner(
