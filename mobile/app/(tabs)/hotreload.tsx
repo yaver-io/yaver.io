@@ -23,7 +23,7 @@ import {
   type MobileWorkerPreviewSession,
   type OperationState,
 } from "../../src/lib/quic";
-import { loadAppIfChanged } from "../../src/lib/bundleLoader";
+import { loadAppIfChanged, setPhoneFrame, getPhoneFrame } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
@@ -125,6 +125,12 @@ function describeRuntimeFamilySelection(metadata?: Record<string, unknown> | nul
 
 // ── Hot Reload Tab ────────────────────────────────────────────────
 
+// AsyncStorage key for the user's last-picked tablet view mode. Read
+// at picker open so the default answer is sticky; written on confirm.
+// Values: "phone" (frame in iPhone shell + vibe dock), "tablet"
+// (full-width native tablet layout), "" (never picked — show prompt).
+const VIEW_MODE_KEY = "@yaver/tablet/view_mode";
+
 export default function HotReloadScreen() {
   const c = useColors();
   const router = useRouter();
@@ -132,6 +138,38 @@ export default function HotReloadScreen() {
   const tabletContent = useTabletContentStyle("wide");
   const projectCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
   const { activeDevice, connectionStatus, devices } = useDevice();
+
+  // Promise wrapper around Alert.alert so handleOpen / handleStart
+  // can `await` the user's pick. Returns `true` if cancelled (caller
+  // should bail out), `false` if the user picked phone or tablet
+  // (native flag has been written; mount path can proceed). Sticky
+  // default uses the last-picked mode so power users don't re-pick
+  // every reload.
+  const promptViewMode = useCallback((): Promise<boolean> => {
+    return new Promise((resolve) => {
+      (async () => {
+        let last = "";
+        try { last = (await AsyncStorage.getItem(VIEW_MODE_KEY)) || ""; } catch { /* ignore */ }
+        const apply = async (mode: "phone" | "tablet") => {
+          try { await AsyncStorage.setItem(VIEW_MODE_KEY, mode); } catch { /* ignore */ }
+          try { await setPhoneFrame(mode === "phone"); } catch { /* native module unavailable on Android */ }
+          resolve(false);
+        };
+        Alert.alert(
+          "Open as…",
+          last
+            ? `Last time you picked "${last === "phone" ? "Phone view" : "Tablet view"}". Pick again or keep it.`
+            : "Run this guest as a phone-shaped frame with a vibing dock beside it, or full-width for tablet UI testing?",
+          [
+            { text: "Cancel", style: "cancel", onPress: () => resolve(true) },
+            { text: "Tablet view", onPress: () => { void apply("tablet"); } },
+            { text: "Phone view", onPress: () => { void apply("phone"); } },
+          ],
+          { cancelable: true, onDismiss: () => resolve(true) },
+        );
+      })();
+    });
+  }, []);
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
   const [devStatus, setDevStatus] = useState<DevServerStatus | null>(null);
@@ -322,6 +360,16 @@ export default function HotReloadScreen() {
     if (!baseUrl) {
       Alert.alert("Error", "Not connected to agent");
       return;
+    }
+
+    // Tablet: ask whether to mount in a phone-shaped frame (with vibe
+    // dock alongside) or render the guest at full tablet width (for
+    // testing the guest's own tablet layout). The choice persists via
+    // AsyncStorage so the next reload skips the prompt unless the user
+    // wants to switch — see VIEW_MODE_KEY below. Phones bypass entirely.
+    if (layout.isTablet) {
+      const cancelled = await promptViewMode();
+      if (cancelled) return;
     }
 
     setNativeLoading(true);
@@ -537,8 +585,19 @@ export default function HotReloadScreen() {
     });
   }, []);
 
-  // Tap project → start dev server directly using path + framework from scanner
+  // Tap project → start dev server directly using path + framework from scanner.
+  // On tablet, ask the user "phone view or tablet view?" first so the
+  // freshly-loaded guest mounts at the right frame. Picker remembers
+  // the last answer, so a second tap on the same/different project
+  // doesn't keep prompting — only fires when no choice has been made
+  // OR when the user explicitly opens "Change view" from the dock.
   const handleStartProject = useCallback(async (project: ProjectItem) => {
+    if (layout.isTablet && !isNativeRemoteRuntimeProject(project)) {
+      const cancelled = await promptViewMode();
+      if (cancelled) {
+        return;
+      }
+    }
     // Push project context into native UserDefaults so YaverFeedbackPane
     // can prepend "Project: <name> (<path>)" to feedback prompts and
     // pin task.workDir on the agent. The runner-side vibingify pipeline

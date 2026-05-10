@@ -21,4 +21,11 @@ RCT_EXTERN_METHOD(isLoaded:(RCTPromiseResolveBlock)resolve
 RCT_EXTERN_METHOD(getLoadedBundleMd5:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 
+RCT_EXTERN_METHOD(setPhoneFrame:(BOOL)enabled
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
+RCT_EXTERN_METHOD(getPhoneFrame:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+
 @end

@@ -161,8 +161,22 @@ public class AppDelegate: ExpoAppDelegate {
     // The previous code replaced the root view with the placeholder first,
     // then tried to cast that placeholder back to RCTRootView, which meant
     // the old bridge was never invalidated at all.
-    let existingRootView = window?.rootViewController?.view as? RCTRootView
+    //
+    // Phone-frame note: when the host has wrapped the guest in
+    // YaverFramedHost, the rootViewController.view is the framed
+    // chrome — the actual RCTRootView lives inside the phoneArea
+    // child. Walk the hierarchy to find it. Phones / non-framed
+    // tablets fall through to the existing direct cast.
+    let existingRootView = AppDelegate.findRCTRootView(in: window?.rootViewController?.view)
     let existingBridge = existingRootView?.bridge
+
+    // Phone-frame: tear the host off before the placeholder swap so
+    // factory.startReactNative gets a clean rootViewController slot.
+    // We re-apply the frame at the end of initGuestBridge, so the
+    // user-visible UX is unchanged. Doing this before the placeholder
+    // also keeps the placeholder centred on the *whole* window
+    // instead of being trapped inside the framed phone area.
+    if let win = window { YaverFramedHost.removeIfActive(window: win) }
 
     // 2. Show spinner (stops JS rendering)
     let placeholder = UIView(frame: window?.bounds ?? .zero)
@@ -277,6 +291,12 @@ public class AppDelegate: ExpoAppDelegate {
       withModuleName: moduleName,
       in: window,
       launchOptions: nil)
+
+    // Tablet phone-frame: re-parent the guest into a sized container
+    // so on iPad it renders at iPhone dimensions with a vibe dock
+    // alongside, instead of stretching across the tablet. Default
+    // off — gated by UserDefaults.yaverGuestPhoneFrame.
+    YaverFramedHost.applyIfNeeded(window: window)
 
     isReloading = false
     NSLog("[AppDelegate] guest app loaded (New Arch): module=%@", moduleName)
@@ -796,9 +816,22 @@ public class AppDelegate: ExpoAppDelegate {
   }
 
   private func fallbackBridgeReload() {
-    if let rootView = window?.rootViewController?.view as? RCTRootView {
+    if let rootView = AppDelegate.findRCTRootView(in: window?.rootViewController?.view) {
       rootView.bridge.reload()
     }
+  }
+
+  /// Walks the view hierarchy looking for an RCTRootView. Used so the
+  /// bridge-reload path keeps working when YaverFramedHost has put a
+  /// chrome wrapper between the rootViewController and the guest's
+  /// RCTRootView. Falls back to a direct cast on the non-framed path.
+  static func findRCTRootView(in view: UIView?) -> RCTRootView? {
+    guard let view = view else { return nil }
+    if let rct = view as? RCTRootView { return rct }
+    for sub in view.subviews {
+      if let found = findRCTRootView(in: sub) { return found }
+    }
+    return nil
   }
 
   private var reloadSpinner: UIView?
@@ -959,7 +992,7 @@ public class AppDelegate: ExpoAppDelegate {
     UserDefaults.standard.removeObject(forKey: "yaverLoadedModuleName")
     UserDefaults.standard.removeObject(forKey: "yaverCurrentModuleName")
 
-    let existingBridge = (window?.rootViewController?.view as? RCTRootView)?.bridge
+    let existingBridge = AppDelegate.findRCTRootView(in: window?.rootViewController?.view)?.bridge
     existingBridge?.invalidate()
 
     waitForBridgeDeallocation(bridge: existingBridge, timeout: 3.0) { [weak self] in
@@ -973,6 +1006,11 @@ public class AppDelegate: ExpoAppDelegate {
       self.reactNativeDelegate = delegate
       self.reactNativeFactory = factory
       self.bindReactNativeFactory(factory)
+
+      // Restore: pull the guest out of the framed host before
+      // mounting Yaver's own bundle, so Yaver's UI renders full-screen
+      // (it has its own internal tablet layout — no need to frame).
+      YaverFramedHost.removeIfActive(window: window)
 
       factory.startReactNative(
         withModuleName: "main",
@@ -1024,6 +1062,215 @@ class ShakeDetectingWindow: UIWindow {
       }
     }
     super.motionEnded(motion, with: event)
+  }
+}
+
+// MARK: - YaverFramedHost
+//
+// Wraps a guest RCTRootView in an iPhone-shaped frame on iPad,
+// leaving the rest of the screen free for a vibe dock (a small
+// UIKit panel that surfaces the Y feedback trigger). Strict opt-in
+// via UserDefaults("yaverGuestPhoneFrame") — when the flag is
+// false (the default), `applyIfNeeded` returns immediately and the
+// guest mount path stays byte-identical to the pre-tablet flow.
+//
+// Layout policy:
+//   • Phone (UIDevice.userInterfaceIdiom != .pad): never frames.
+//     The picker that drives the flag is hidden on phones, but the
+//     guard here is the load-bearing one — anyone toggling the
+//     flag manually on a phone gets normal behaviour.
+//   • Tablet landscape: phone column on the left, vibe dock right.
+//   • Tablet portrait: phone strip on top, vibe dock below.
+//
+// The vibe dock is intentionally minimal in v1: a centered Y bubble
+// that taps through to YaverFeedbackPane. The pane is the same one
+// that the floating-Y trigger / shake overlay routes to, so the
+// whole feedback experience reuses existing surfaces.
+final class YaverFramedHost: UIViewController {
+
+  private weak var guestVC: UIViewController?
+  private let phoneArea = UIView()
+  private let vibeDock = UIView()
+  private var dockOnRight: Bool = true
+  // Phone preset — iPhone 15 Pro Max footprint. Future versions can
+  // expose a per-guest preset (iPhone SE 375x667, Pixel 6 412x915).
+  private static let phoneWidth: CGFloat = 414
+  private static let phoneHeight: CGFloat = 896
+
+  // Public toggle — what the JS layer reads/writes.
+  static let userDefaultKey = "yaverGuestPhoneFrame"
+
+  static var isEnabled: Bool {
+    return UserDefaults.standard.bool(forKey: userDefaultKey)
+  }
+
+  /// Wrap the current rootViewController if all preconditions hold.
+  /// Idempotent — safe to call multiple times during the bridge
+  /// reload pipeline.
+  static func applyIfNeeded(window: UIWindow) {
+    guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+    guard isEnabled else { return }
+    guard let guest = window.rootViewController, !(guest is YaverFramedHost) else { return }
+    let host = YaverFramedHost()
+    host.embed(guest: guest, in: window)
+    window.rootViewController = host
+    NSLog("[YaverFramedHost] applied; guest=\(type(of: guest))")
+  }
+
+  /// Reverse of `applyIfNeeded` — used by handleBundleRestore so
+  /// Yaver's own bundle goes back to fullscreen when the user exits
+  /// the guest app.
+  static func removeIfActive(window: UIWindow) {
+    guard let host = window.rootViewController as? YaverFramedHost else { return }
+    let detached = host.detachGuest()
+    window.rootViewController = detached
+    NSLog("[YaverFramedHost] removed")
+  }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = UIColor(red: 0.04, green: 0.04, blue: 0.06, alpha: 1.0)
+
+    phoneArea.translatesAutoresizingMaskIntoConstraints = false
+    phoneArea.backgroundColor = .black
+    phoneArea.layer.cornerRadius = 22
+    phoneArea.layer.borderWidth = 1.5
+    phoneArea.layer.borderColor = UIColor(white: 0.18, alpha: 1.0).cgColor
+    phoneArea.clipsToBounds = true
+    view.addSubview(phoneArea)
+
+    vibeDock.translatesAutoresizingMaskIntoConstraints = false
+    vibeDock.backgroundColor = UIColor(red: 0.06, green: 0.06, blue: 0.08, alpha: 1.0)
+    view.addSubview(vibeDock)
+    setupVibeDockContent()
+  }
+
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    layoutPhoneAndDock()
+  }
+
+  override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+    super.viewWillTransition(to: size, with: coordinator)
+    coordinator.animate { _ in
+      self.layoutPhoneAndDock()
+    }
+  }
+
+  private func embed(guest: UIViewController, in window: UIWindow) {
+    self.guestVC = guest
+    self.view.frame = window.bounds
+    addChild(guest)
+    guest.view.translatesAutoresizingMaskIntoConstraints = false
+    phoneArea.addSubview(guest.view)
+    NSLayoutConstraint.activate([
+      guest.view.leadingAnchor.constraint(equalTo: phoneArea.leadingAnchor),
+      guest.view.trailingAnchor.constraint(equalTo: phoneArea.trailingAnchor),
+      guest.view.topAnchor.constraint(equalTo: phoneArea.topAnchor),
+      guest.view.bottomAnchor.constraint(equalTo: phoneArea.bottomAnchor),
+    ])
+    guest.didMove(toParent: self)
+  }
+
+  /// Pull the guest VC back out of this host so it can be re-installed
+  /// as window.rootViewController directly. Returns the detached VC.
+  fileprivate func detachGuest() -> UIViewController {
+    guard let guest = guestVC else {
+      return UIViewController() // shouldn't happen; caller will swap to a fresh main
+    }
+    guest.willMove(toParent: nil)
+    guest.view.removeFromSuperview()
+    guest.removeFromParent()
+    self.guestVC = nil
+    return guest
+  }
+
+  private func layoutPhoneAndDock() {
+    phoneArea.translatesAutoresizingMaskIntoConstraints = true
+    vibeDock.translatesAutoresizingMaskIntoConstraints = true
+
+    let bounds = view.bounds
+    let safeTop = view.safeAreaInsets.top
+    let safeBottom = view.safeAreaInsets.bottom
+    let isLandscape = bounds.width > bounds.height
+
+    if isLandscape {
+      // Phone pinned left, vibe dock right.
+      let phoneW = min(YaverFramedHost.phoneWidth, bounds.width * 0.5)
+      let phoneH = min(YaverFramedHost.phoneHeight, bounds.height - safeTop - safeBottom - 16)
+      let phoneY = safeTop + (bounds.height - safeTop - safeBottom - phoneH) / 2
+      phoneArea.frame = CGRect(x: 16, y: phoneY, width: phoneW, height: phoneH)
+      let dockX = phoneArea.frame.maxX + 12
+      vibeDock.frame = CGRect(
+        x: dockX,
+        y: safeTop + 8,
+        width: max(0, bounds.width - dockX - 16),
+        height: bounds.height - safeTop - safeBottom - 16
+      )
+    } else {
+      // Phone on top, vibe dock at bottom (so vibing reads as
+      // "below the device", matching the simulator UX).
+      let phoneW = min(YaverFramedHost.phoneWidth, bounds.width - 32)
+      let phoneH = min(YaverFramedHost.phoneHeight, bounds.height * 0.62)
+      let phoneX = (bounds.width - phoneW) / 2
+      phoneArea.frame = CGRect(x: phoneX, y: safeTop + 12, width: phoneW, height: phoneH)
+      let dockY = phoneArea.frame.maxY + 12
+      vibeDock.frame = CGRect(
+        x: 16,
+        y: dockY,
+        width: bounds.width - 32,
+        height: max(0, bounds.height - dockY - safeBottom - 12)
+      )
+    }
+  }
+
+  // MARK: vibe dock content
+
+  private func setupVibeDockContent() {
+    let title = UILabel()
+    title.text = "Vibing"
+    title.font = .boldSystemFont(ofSize: 13)
+    title.textColor = UIColor(white: 0.85, alpha: 1.0)
+    title.translatesAutoresizingMaskIntoConstraints = false
+
+    let subtitle = UILabel()
+    subtitle.text = "Tap the Y to chat with your agent — the framed app on the side stays live."
+    subtitle.numberOfLines = 0
+    subtitle.font = .systemFont(ofSize: 12)
+    subtitle.textColor = UIColor(white: 0.55, alpha: 1.0)
+    subtitle.translatesAutoresizingMaskIntoConstraints = false
+
+    let yButton = UIButton(type: .system)
+    yButton.setTitle("Y", for: .normal)
+    yButton.titleLabel?.font = .boldSystemFont(ofSize: 22)
+    yButton.setTitleColor(.white, for: .normal)
+    yButton.backgroundColor = UIColor(red: 0.5, green: 0.55, blue: 0.97, alpha: 1.0)
+    yButton.layer.cornerRadius = 14
+    yButton.translatesAutoresizingMaskIntoConstraints = false
+    yButton.addTarget(self, action: #selector(handleYTap), for: .touchUpInside)
+
+    vibeDock.addSubview(title)
+    vibeDock.addSubview(subtitle)
+    vibeDock.addSubview(yButton)
+    NSLayoutConstraint.activate([
+      title.topAnchor.constraint(equalTo: vibeDock.topAnchor, constant: 16),
+      title.leadingAnchor.constraint(equalTo: vibeDock.leadingAnchor, constant: 14),
+      subtitle.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 6),
+      subtitle.leadingAnchor.constraint(equalTo: vibeDock.leadingAnchor, constant: 14),
+      subtitle.trailingAnchor.constraint(equalTo: vibeDock.trailingAnchor, constant: -14),
+      yButton.topAnchor.constraint(equalTo: subtitle.bottomAnchor, constant: 18),
+      yButton.leadingAnchor.constraint(equalTo: vibeDock.leadingAnchor, constant: 14),
+      yButton.widthAnchor.constraint(equalToConstant: 56),
+      yButton.heightAnchor.constraint(equalToConstant: 56),
+    ])
+  }
+
+  @objc private func handleYTap() {
+    // Same path as the floating Y trigger / shake overlay → routes
+    // to the existing YaverFeedbackPane. Reuses all the auth +
+    // black-box plumbing already wired for those entry points.
+    guard let win = view.window else { return }
+    YaverFeedbackPane.shared.present(in: win)
   }
 }
 

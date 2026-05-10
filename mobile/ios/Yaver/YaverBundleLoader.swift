@@ -334,6 +334,28 @@ class YaverBundleLoader: RCTEventEmitter {
     resolve(UserDefaults.standard.string(forKey: "yaverLoadedBundleMd5") ?? "")
   }
 
+  /// Set the tablet phone-frame flag. When `true`, the next guest
+  /// bundle mount on iPad wraps the guest in an iPhone-shaped frame
+  /// with a vibe dock alongside (right pane in landscape, bottom
+  /// strip in portrait). Default false — phones always ignore this
+  /// flag (see YaverFramedHost.applyIfNeeded for the device-class
+  /// guard). Persisted via UserDefaults so the choice survives bundle
+  /// reloads and app restarts.
+  @objc func setPhoneFrame(_ enabled: Bool,
+                           resolver resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+    UserDefaults.standard.set(enabled, forKey: "yaverGuestPhoneFrame")
+    NSLog("[YaverBundleLoader] yaverGuestPhoneFrame = \(enabled)")
+    resolve(["enabled": enabled])
+  }
+
+  /// Read the current phone-frame flag. Returns `false` when the key
+  /// has never been set, matching `UserDefaults.bool` semantics.
+  @objc func getPhoneFrame(_ resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+    resolve(["enabled": UserDefaults.standard.bool(forKey: "yaverGuestPhoneFrame")])
+  }
+
   /// Static, instance-free, bridge-free counterpart to `loadBundle`.
   /// Callable from any Swift code (native panes, AppDelegate, …)
   /// without needing an `RCTBridge` reference or a `YaverBundleLoader`

@@ -127,3 +127,25 @@ export function onBundleEvent(
   if (!emitter) return { remove: () => {} };
   return emitter.addListener(event, callback);
 }
+
+/**
+ * Tablet phone-frame toggle. When enabled, the next guest bundle
+ * mount on iPad wraps the guest in an iPhone-shaped frame with a
+ * vibe dock alongside (right pane in landscape, bottom strip in
+ * portrait). Default false. The native side gates on iPad-only —
+ * setting `true` from a phone is a no-op visually but still
+ * persists, so toggling on a phone and rotating an iPad later
+ * picks up the user's preference.
+ *
+ * iOS-only in v1; on Android the native module isn't yet wired,
+ * so this resolves silently to `{ enabled: false }`.
+ */
+export async function setPhoneFrame(enabled: boolean): Promise<{ enabled: boolean }> {
+  if (!YaverBundleLoader?.setPhoneFrame) return { enabled: false };
+  return YaverBundleLoader.setPhoneFrame(enabled);
+}
+
+export async function getPhoneFrame(): Promise<{ enabled: boolean }> {
+  if (!YaverBundleLoader?.getPhoneFrame) return { enabled: false };
+  return YaverBundleLoader.getPhoneFrame();
+}
