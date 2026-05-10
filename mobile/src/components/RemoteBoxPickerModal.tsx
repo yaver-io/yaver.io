@@ -130,11 +130,22 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     setSwitching(true);
     setSwitchError(null);
     try {
-      const directClient = connectionManager.clientFor(pickedDevice.id);
-      if (!directClient.isConnected) {
+      // Always route through DeviceContext.selectDevice — even when
+      // the picked box already has a pooled-connected client. The
+      // earlier optimization called connectionManager.setFocused()
+      // directly in that case, which updates the focused pointer
+      // in the pool but does NOT update activeDevice /
+      // connectionStatus in React state. Result: the legacy
+      // quicClient Proxy correctly forwarded to the new device,
+      // but the Reload tab kept reading stale activeDevice +
+      // showed "Not connected" after a successful switch.
+      // selectDevice short-circuits internally when the client is
+      // already connected (see DeviceContext.selectDevice ~line
+      // 1032 — sets connectionStatus straight back to "connected"
+      // after the optimistic "connecting" tick), so calling it
+      // unconditionally is safe and idempotent.
+      if (activeDevice?.id !== pickedDevice.id) {
         await selectDevice(pickedDevice);
-      } else if (activeDevice?.id !== pickedDevice.id) {
-        connectionManager.setFocused(pickedDevice.id);
       }
       if (!connectionManager.clientFor(pickedDevice.id).isConnected) {
         const detail = (lastError || "").trim();
