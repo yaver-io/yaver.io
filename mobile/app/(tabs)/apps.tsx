@@ -447,11 +447,15 @@ export default function AppsScreen() {
   const [projectsDiscovering, setProjectsDiscovering] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
-  // Remote Box switch — clear stale per-box state and kick a fresh
-  // project scan on the new machine. Mirror of the same pattern in
-  // hotreload.tsx; without it switching from yaver-test-ephemeral
-  // (Linux paths) to a Mac mini left the previous box's project
-  // list visible until the 15-second poll tick.
+  // Remote Box switch — clear stale per-box state immediately, then
+  // kick a fresh scan ONCE the new device's QuicClient is actually
+  // connected. The previous one-effect version captured
+  // effectivelyConnected at switch-time — switching to a not-yet-
+  // -connected box meant the kick fired against the OLD client (or
+  // threw assertConnected and was swallowed), so the user saw a
+  // permanent spinner with no scan ever happening on the new box.
+  // Splitting into two effects + a ref tracker fixes both directions.
+  const lastScanKickedDeviceIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeDevice?.id) return;
     setProjects([]);
@@ -464,10 +468,16 @@ export default function AppsScreen() {
     setQuickActionStatus(null);
     setBuildStatus(null);
     setBundlerLine("");
-    if (effectivelyConnected) {
-      void quicClient.refreshMobileProjects().catch(() => {});
-    }
+    // Reset the kick tracker so the next isConnected→true on this
+    // deviceId fires a fresh scan kick.
+    lastScanKickedDeviceIdRef.current = null;
   }, [activeDevice?.id]);
+  useEffect(() => {
+    if (!activeDevice?.id || !isConnected) return;
+    if (lastScanKickedDeviceIdRef.current === activeDevice.id) return;
+    lastScanKickedDeviceIdRef.current = activeDevice.id;
+    void quicClient.refreshMobileProjects().catch(() => {});
+  }, [activeDevice?.id, isConnected]);
 
   // Poll dev server status + all projects
   useEffect(() => {

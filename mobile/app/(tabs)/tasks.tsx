@@ -3329,6 +3329,18 @@ export default function TasksScreen() {
               {isEffectivelyConnected ? modeLabel : ""}
               {activeDevice ? ` \u00b7 ${activeDevice.name}` : ""}
             </Text>
+            {/* Visible Switch \u203a chip \u2014 matches the affordance Reload
+                + Projects gained from the shared RemoteBoxBanner widget.
+                The whole banner is also tappable (onPress on the parent
+                Pressable opens the same picker) so users discover the
+                gesture either way. */}
+            <Pressable
+              onPress={(e) => { e.stopPropagation(); setShowRemoteBoxPicker(true); }}
+              hitSlop={6}
+              style={{ marginLeft: "auto", paddingLeft: 8 }}
+            >
+              <Text style={{ color: banner.text, fontSize: 12, fontWeight: "700" }}>Switch \u203a</Text>
+            </Pressable>
             {showReconnectProgress && (
               <Text style={{ color: banner.text, fontSize: 11, marginLeft: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
                 {displayedAttempt}/{quicClient.maxReconnectAttempts}
