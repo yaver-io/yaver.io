@@ -51,6 +51,19 @@ class ConnectionManager {
   private fallback: QuicClient = createQuicClient();
   private listeners = new Set<ManagerListener>();
 
+  // Manager-level snapshot of the connection prerequisites every per-
+  // device client needs before it can talk to its agent: relay list,
+  // bearer token, forceRelay preference, optional session-scoped
+  // tunnels. The manager is the source of truth so a freshly-created
+  // client (made on first selectDevice for that device) is born with
+  // the same configuration the rest of the pool already has — without
+  // this, the new client had empty relays + null token and Connect
+  // 100%-of-the-time failed silently.
+  private latestRelays: RelayServer[] = [];
+  private latestForceRelay = false;
+  private latestToken: string | null = null;
+  private latestSessionTunnels: TunnelServer[] = [];
+
   /** Returns the QuicClient currently treated as focused, or the fallback
    *  instance when none is set. Callers that don't care about identity
    *  (e.g. anything that just wants the user's "primary" connection)
@@ -79,6 +92,21 @@ class ConnectionManager {
     const existing = this.clients.get(id);
     if (existing) return existing;
     const fresh = createQuicClient();
+    // Hydrate the new client with the manager-level prerequisites so
+    // its very first connect attempt has the same relay candidates,
+    // forceRelay preference, and bearer token every other client in
+    // the pool already has. The order here mirrors how DeviceContext
+    // sets these on a singleton during boot.
+    if (this.latestRelays.length > 0) {
+      try { fresh.setRelayServers(this.latestRelays); } catch {}
+    }
+    try { fresh.setForceRelay(this.latestForceRelay); } catch {}
+    if (this.latestToken) {
+      try { fresh.setToken(this.latestToken); } catch {}
+    }
+    if (this.latestSessionTunnels.length > 0) {
+      try { fresh.setSessionTunnelServers(this.latestSessionTunnels); } catch {}
+    }
     this.clients.set(id, fresh);
     this.notify();
     return fresh;
@@ -199,18 +227,22 @@ class ConnectionManager {
   // singleton — keeps the call-site diff minimal.
 
   setRelayServersOnAll(relays: RelayServer[]): void {
+    this.latestRelays = [...relays];
     this.applyToAll((c) => c.setRelayServers(relays));
   }
 
   setForceRelayOnAll(force: boolean): void {
+    this.latestForceRelay = force;
     this.applyToAll((c) => c.setForceRelay(force));
   }
 
   setTokenOnAll(token: string): void {
+    this.latestToken = token;
     this.applyToAll((c) => c.setToken(token));
   }
 
   setSessionTunnelServersOnAll(tunnels: TunnelServer[]): void {
+    this.latestSessionTunnels = [...tunnels];
     this.applyToAll((c) => c.setSessionTunnelServers(tunnels));
   }
 }
