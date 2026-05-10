@@ -47,6 +47,7 @@ func (s *HTTPServer) buildCapabilitySnapshot(ctx context.Context) CapabilitySnap
 	targets := map[string]CapabilityTargetReadiness{
 		"testflight":      capabilityForDoctorTarget("testflight", workDir, s.vaultStore),
 		"playstore":       capabilityForDoctorTarget("playstore", workDir, s.vaultStore),
+		"mobile-hermes":   capabilityForMobileHermes(),
 		"runner-codex":    capabilityForRunner("codex", workDir),
 		"runner-claude":   capabilityForRunner("claude", workDir),
 		"runner-opencode": capabilityForRunner("opencode", workDir),
@@ -70,6 +71,43 @@ func (s *HTTPServer) buildCapabilitySnapshot(ctx context.Context) CapabilitySnap
 		Infra:        infra,
 		Connectivity: connectivity,
 		Targets:      targets,
+	}
+}
+
+func capabilityForMobileHermes() CapabilityTargetReadiness {
+	nodePath, nodeVersion := detectManagedOrSystemNode()
+	hermesSummary, hermesErr := embeddedHermescSummary()
+	notes := []string{}
+	if nodePath != "" {
+		notes = append(notes, "Node.js runtime: "+nodeVersion)
+	}
+	if hermesErr == nil && hermesSummary != "" {
+		notes = append(notes, "Embedded hermesc: "+hermesSummary)
+	}
+	if nodePath != "" && hermesErr == nil {
+		return CapabilityTargetReadiness{
+			Enabled: true,
+			Notes:   append(notes, "Ready for Hermes bundle reload into Yaver mobile."),
+		}
+	}
+	reason := "This machine is not ready for Hermes reload."
+	switch {
+	case nodePath == "" && hermesErr != nil:
+		reason = "Node.js runtime and embedded hermesc validation are missing."
+	case nodePath == "":
+		reason = "Node.js runtime is missing."
+	case hermesErr != nil:
+		reason = "Embedded hermesc is unavailable on this machine."
+	}
+	if hermesErr != nil {
+		notes = append(notes, hermesErr.Error())
+	}
+	return CapabilityTargetReadiness{
+		Enabled:         false,
+		ReasonCode:      "capability.mobile-hermes.not_ready",
+		Reason:          reason,
+		SuggestedAction: "Run `yaver install mobile` on this machine, then retry Hermes reload.",
+		Notes:           notes,
 	}
 }
 

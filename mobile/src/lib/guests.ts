@@ -5,7 +5,7 @@
  * Guest: sees invitations in mobile app → accepts → host devices appear in device list
  */
 
-import { CONVEX_SITE_URL } from "./constants";
+import { getConvexSiteUrl } from "./auth";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -170,7 +170,7 @@ export interface GuestConfigUpdate {
  * Fetch pending invitations and active host access for the current user (guest perspective).
  */
 export async function fetchGuestHosts(token: string): Promise<GuestHostsResponse> {
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/hosts`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/hosts`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error("Failed to fetch guest hosts");
@@ -185,7 +185,7 @@ export async function acceptGuestInvitation(
   hostUserId: string,
   approvedDeviceIds?: string[]
 ): Promise<void> {
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/accept`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/accept`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -210,7 +210,7 @@ export async function acceptGuestByCode(
   code: string,
   approvedDeviceIds?: string[]
 ): Promise<{ hostName: string; hostEmail: string }> {
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/accept-code`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/accept-code`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -252,7 +252,7 @@ export async function inviteGuest(
           scope: target.scope,
           allowedProjects: target.allowedProjects,
         };
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/invite`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/invite`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -275,7 +275,7 @@ export async function findInviteByCode(
   code: string
 ): Promise<InvitationPreview> {
   const res = await fetch(
-    `${CONVEX_SITE_URL}/guests/find-by-code?code=${encodeURIComponent(code.toUpperCase().trim())}`,
+    `${getConvexSiteUrl()}/guests/find-by-code?code=${encodeURIComponent(code.toUpperCase().trim())}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) {
@@ -294,7 +294,7 @@ export async function lookupPublicUser(
   userId: string
 ): Promise<PublicUserLookup | null> {
   const res = await fetch(
-    `${CONVEX_SITE_URL}/users/lookup?userId=${encodeURIComponent(userId.trim())}`,
+    `${getConvexSiteUrl()}/users/lookup?userId=${encodeURIComponent(userId.trim())}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (res.status === 404) return null;
@@ -315,7 +315,7 @@ export async function revokeGuest(
 ): Promise<void> {
   const body: Record<string, unknown> =
     typeof target === "string" ? { email: target } : { email: target.email, userId: target.userId };
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/revoke`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/revoke`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -333,7 +333,7 @@ export async function revokeGuest(
  * List all guests (host perspective).
  */
 export async function listGuests(token: string): Promise<GuestInfo[]> {
-  const res = await fetch(`${CONVEX_SITE_URL}/guests/list`, {
+  const res = await fetch(`${getConvexSiteUrl()}/guests/list`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error("Failed to fetch guest list");

@@ -1,5 +1,6 @@
 import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getConvexSiteUrlSync, getWebBaseUrlSync } from "./backendConfig";
 
 const TOKEN_KEY = "yaver_auth_token";
 const USER_KEY = "yaver_user";
@@ -192,14 +193,14 @@ export async function refreshToken(token: string): Promise<RefreshResult> {
 }
 
 export function getWebBaseUrl(): string {
-  return "https://yaver.io";
+  return getWebBaseUrlSync();
 }
 
 import { CONVEX_SITE_URL } from "./constants";
 export { CONVEX_SITE_URL };
 
 export function getConvexSiteUrl(): string {
-  return CONVEX_SITE_URL;
+  return getConvexSiteUrlSync();
 }
 
 export interface DeviceMetric {

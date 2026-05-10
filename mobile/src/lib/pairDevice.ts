@@ -12,7 +12,7 @@
 // The passkey is the secret — the endpoint is unauthenticated
 // on purpose while a pairing session is open.
 
-import { CONVEX_SITE_URL } from "./constants";
+import { getConvexSiteUrl } from "./auth";
 
 export interface PairSubmitArgs {
   code: string;
@@ -212,7 +212,7 @@ export async function submitPair(args: PairSubmitArgs): Promise<PairSubmitResult
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token: args.token,
-        convexSiteUrl: CONVEX_SITE_URL,
+        convexSiteUrl: getConvexSiteUrl(),
         userId: args.userId ?? "",
       }),
     });

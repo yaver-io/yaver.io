@@ -17,12 +17,11 @@ import * as WebBrowser from "expo-web-browser";
 import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
 import { connectionManager } from "../lib/connectionManager";
 import { useAuth } from "./AuthContext";
-import { getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
+import { getConvexSiteUrl, getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
 import { appLog } from "../lib/logger";
 import { beaconListener, type DiscoveredDevice } from "../lib/beacon";
 import { fetchPairInfo, submitPair } from "../lib/pairDevice";
 import { submitEncryptedPair } from "../lib/encryptedPair";
-import { CONVEX_SITE_URL } from "../lib/constants";
 import { probeMobileDeviceStatus } from "../lib/deviceStatus";
 import {
   fetchGuestHosts,
@@ -710,7 +709,7 @@ function sendTelemetry(token: string | null, step: string, message: string, deta
   const level = step.includes("fail") ? "error" : "info";
   appLog(level as "info" | "error", `[${step}] ${message}${details ? " | " + details : ""}`);
   if (!_debugLogsEnabled) return;
-  fetch(`${CONVEX_SITE_URL}/mobile/log`, {
+  fetch(`${getConvexSiteUrl()}/mobile/log`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify({
@@ -887,15 +886,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     }
     try {
       // Only fetch device list — settings are loaded once on startup, not every poll
-      const devicesRes = await fetch(`${CONVEX_SITE_URL}/devices/list`, {
+      const convexSiteUrl = getConvexSiteUrl();
+      const devicesRes = await fetch(`${convexSiteUrl}/devices/list`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      appLog("info", `/devices/list status: ${devicesRes.status}`);
+      appLog("info", `/devices/list status: ${devicesRes.status} via ${convexSiteUrl}`);
 
       if (devicesRes.ok) {
         const data = await devicesRes.json();
         const raw = data.devices || data || [];
-        appLog("info", `Found ${raw.length} device(s)`);
+        appLog("info", `Found ${raw.length} device(s) for ${user?.email || user?.id || "unknown-user"}`);
         const connectedDeviceId = quicClient.isConnected ? activeDevice?.id : null;
         const mapped: Device[] = raw.map((d: any) => {
           const deviceId = d.deviceId || d.id;
@@ -984,7 +984,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const finalDevices = await applyRelayPresence(filtered);
         setDevices(finalDevices);
       } else {
-        appLog("warn", `/devices/list failed: ${devicesRes.status}`);
+        appLog("warn", `/devices/list failed: ${devicesRes.status} via ${convexSiteUrl}`);
       }
 
       // Fetch pending guest invitations
@@ -1000,7 +1000,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       hasLoadedOnce.current = true;
       setIsLoadingDevices(false);
     }
-  }, [token]);
+  }, [token, user?.email, user?.id]);
 
   const selectDevice = useCallback(
     async (device: Device) => {
@@ -1305,7 +1305,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     ): Promise<{ ok: true; alias: string | null } | { ok: false; error: string }> => {
       if (!token) return { ok: false, error: "Not signed in" };
       try {
-        const res = await fetch(`${CONVEX_SITE_URL}/devices/alias`, {
+        const res = await fetch(`${getConvexSiteUrl()}/devices/alias`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,
@@ -1337,7 +1337,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       await handleDetachDevice(device);
       return;
     }
-    const res = await fetch(`${CONVEX_SITE_URL}/devices/remove`, {
+    const res = await fetch(`${getConvexSiteUrl()}/devices/remove`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1573,7 +1573,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
       let platformServers: RelayServer[] = [];
       try {
-        const res = await fetch(`${CONVEX_SITE_URL}/config`);
+        const res = await fetch(`${getConvexSiteUrl()}/config`);
         if (res.ok) {
           const data = await res.json();
           platformServers = data.relayServers || [];
@@ -2123,7 +2123,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const refreshPendingClaims = useCallback(async () => {
     if (!token) return;
     try {
-      const res = await fetch(`${CONVEX_SITE_URL}/devices/pending-list`, {
+      const res = await fetch(`${getConvexSiteUrl()}/devices/pending-list`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
@@ -2143,7 +2143,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     async (deviceId: string, name?: string): Promise<{ ok: boolean; error?: string }> => {
       if (!token) return { ok: false, error: "Not signed in" };
       try {
-        const res = await fetch(`${CONVEX_SITE_URL}/devices/pending-claim`, {
+        const res = await fetch(`${getConvexSiteUrl()}/devices/pending-claim`, {
           method: "POST",
           headers: {
             Authorization: `Bearer ${token}`,

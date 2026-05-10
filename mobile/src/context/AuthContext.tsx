@@ -22,6 +22,11 @@ import {
   clearKeychainIfFreshInstall,
   getConvexSiteUrl,
 } from "../lib/auth";
+import {
+  hydrateBackendConfigFromCache,
+  refreshHostedBackendConfig,
+} from "../lib/backendConfig";
+import { appLog } from "../lib/logger";
 import { clearCache } from "../lib/storage";
 
 interface AuthState {
@@ -71,6 +76,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
+        await hydrateBackendConfigFromCache();
+        await refreshHostedBackendConfig();
+        if (cancelled) return;
         // Wipe stale Keychain tokens on fresh install (iOS Keychain survives uninstall)
         await clearKeychainIfFreshInstall();
         if (cancelled) return;
@@ -101,6 +109,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         if (validated) {
+          appLog(
+            "info",
+            `[auth] restored ${validated.email || validated.id} via ${getConvexSiteUrl()}`,
+          );
           setToken(storedToken);
           setUser(validated);
           await saveUser(validated);
@@ -200,10 +212,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [token]);
 
   const login = useCallback(async (newToken: string) => {
+    await hydrateBackendConfigFromCache();
+    await refreshHostedBackendConfig();
     const validatedUser = await validateToken(newToken);
     if (!validatedUser) {
       throw new Error("Invalid token");
     }
+    appLog(
+      "info",
+      `[auth] login resolved ${validatedUser.email || validatedUser.id} via ${getConvexSiteUrl()}`,
+    );
     await saveToken(newToken);
     await saveUser(validatedUser);
     setToken(newToken);

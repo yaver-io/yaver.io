@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.189"
+const version = "1.99.190"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2389,8 +2389,13 @@ func runServe(args []string) {
 	}
 
 	if !offlineMode {
-		publicEndpoints := configuredPublicEndpoints(cfg)
+		publicEndpoints := publicEndpointsWithAutoIP(cfg, *httpPort)
 		recoveryPosture := computeRecoveryTransportPosture(cfg)
+		if len(publicEndpoints) > 0 {
+			log.Printf("[reachability] publishing %d publicEndpoint(s): %v", len(publicEndpoints), publicEndpoints)
+		} else {
+			log.Printf("[reachability] no publicEndpoints — only LAN beacon + relay-assigned URL will be reachable")
+		}
 		log.Printf("Registering device %s (%s) at %s:%d...", hostname, cfg.DeviceID, localIP, *httpPort)
 		if rotatedToken, err := RegisterDevice(cfg.ConvexSiteURL, RegisterDeviceRequest{
 			Token:           cfg.AuthToken,
@@ -8762,7 +8767,11 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 	lastIP := getLocalIP()
 	lastIPs := getLocalIPs()
 	cfgAtStart, _ := LoadConfig()
-	lastPublicEndpoints := configuredPublicEndpoints(cfgAtStart)
+	heartbeatPort := 0
+	if httpServer != nil {
+		heartbeatPort = httpServer.port
+	}
+	lastPublicEndpoints := publicEndpointsWithAutoIP(cfgAtStart, heartbeatPort)
 	authExpiredLogged := false
 
 	// Notify Convex that this device's auth has gone bad mid-session, so
@@ -8815,7 +8824,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		currentIP := getLocalIP()
 		currentIPs := getLocalIPs()
 		cfgNow, _ := LoadConfig()
-		currentPublicEndpoints := configuredPublicEndpoints(cfgNow)
+		currentPublicEndpoints := publicEndpointsWithAutoIP(cfgNow, heartbeatPort)
 		runners := taskMgr.GetRunnerInfos()
 		installedRunnerIDs := collectInstalledRunnerIDs()
 
