@@ -122,6 +122,7 @@ export function WebReloadView({
   // Cleared on the next attempt; populated only on the failure path.
   const [staticBundleOutput, setStaticBundleOutput] = useState<string | null>(null);
   const [staticBundleInfo, setStaticBundleInfo] = useState<{ size: number; fileCount: number } | null>(null);
+  const [staticBundleWorkDir, setStaticBundleWorkDir] = useState<string | null>(null);
   const [staticBundleTransport, setStaticBundleTransport] = useState<{
     phase: string;
     pct: number;
@@ -404,12 +405,51 @@ export function WebReloadView({
     return projects.find((project) => project.path === selectedProjectPath) ?? null;
   }, [projects, selectedProjectPath]);
 
+  const clearStaticBundleState = useCallback(() => {
+    setStaticBundleState("idle");
+    setStaticBundleError(null);
+    setStaticBundleOutput(null);
+    setStaticBundleTransport(null);
+    setStaticBundleInfo(null);
+    setStaticBundleWorkDir(null);
+  }, []);
+
   useEffect(() => {
     if (!preferredProjectPath) return;
     if (!projects.some((project) => project.path === preferredProjectPath)) return;
     setSelectedProjectPath(preferredProjectPath);
     setSelectedApp(null);
   }, [preferredProjectPath, projects]);
+
+  // `/dev/web-bundle/` is a single shared endpoint on the agent. When
+  // the user switches projects, a previously "ready" bundle may still
+  // belong to the old workDir. Re-check the on-disk bundle metadata and
+  // immediately drop stale ready/building state so the iframe doesn't
+  // keep rendering the previous project as if nothing changed.
+  useEffect(() => {
+    if (!isConnected) return;
+    if (!selectedProjectPath) return;
+    let cancelled = false;
+    void (async () => {
+      const info = await agentClient.getWebBundleInfo();
+      if (cancelled) return;
+      const bundleWorkDir = (info.workDir || "").trim() || null;
+      if (bundleWorkDir === selectedProjectPath && info.built) {
+        setStaticBundleWorkDir(bundleWorkDir);
+        setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
+        setStaticBundleError(null);
+        setStaticBundleOutput(null);
+        setStaticBundleState("ready");
+        return;
+      }
+      if (staticBundleState === "ready" || staticBundleState === "building" || staticBundleWorkDir) {
+        clearStaticBundleState();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [clearStaticBundleState, isConnected, selectedProjectPath, staticBundleState, staticBundleWorkDir]);
 
   const hasWorkspaceApps = apps.length > 0;
   const useProjectFallback = !hasWorkspaceApps;
@@ -697,6 +737,7 @@ export function WebReloadView({
     setStaticBundleOutput(null);
     setStaticBundleTransport(null);
     setStaticBundleInfo(null);
+    setStaticBundleWorkDir(null);
     staticBundleStartRef.current = Date.now();
     // selectedProject wins over activeProject — Expo static bundles don't
     // update devStatus.workDir, so activeProject stays on whatever was
@@ -714,6 +755,7 @@ export function WebReloadView({
         return;
       }
       setStaticBundleInfo({ size: r.size, fileCount: r.fileCount });
+      setStaticBundleWorkDir(projectPath || null);
       setStaticBundleState("ready");
     } catch (e) {
       setStaticBundleState("failed");
@@ -752,6 +794,7 @@ export function WebReloadView({
         if (bundleWorkDir && bundleWorkDir !== selectedProjectPath) return;
       }
       setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
+      setStaticBundleWorkDir((info.workDir || "").trim() || null);
       setStaticBundleState("ready");
     };
     void tick();
@@ -1673,9 +1716,7 @@ export function WebReloadView({
                   </span>
                   <button
                     onClick={() => {
-                      setStaticBundleState("idle");
-                      setStaticBundleTransport(null);
-                      setStaticBundleInfo(null);
+                      clearStaticBundleState();
                     }}
                     className="ml-auto rounded border border-surface-700 px-2 py-0.5 text-[10px] text-surface-300 hover:border-surface-500"
                     title="Drop the static bundle and return to the live HMR / dev preview iframe"
