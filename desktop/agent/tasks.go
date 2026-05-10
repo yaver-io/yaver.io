@@ -933,12 +933,26 @@ func taskSuccessStatus(task *Task) TaskStatus {
 
 // TaskInfo is the JSON-safe subset returned in listings.
 type TaskInfo struct {
-	ID             string             `json:"id"`
-	Title          string             `json:"title"`
-	Description    string             `json:"description"`
-	Status         TaskStatus         `json:"status"`
-	RunnerID       string             `json:"runnerId,omitempty"`
-	SessionID      string             `json:"sessionId,omitempty"`
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	Description string     `json:"description"`
+	Status      TaskStatus `json:"status"`
+	RunnerID    string     `json:"runnerId,omitempty"`
+	// Model is the model id the task launched with (claude-opus-4-7,
+	// gpt-5.4, "opus", etc.). Without this on the public Task API
+	// the mobile UI couldn't tell whether a task that's been around
+	// for a while ran with the user's expected model — it had to
+	// guess from whatever picker state was current, which produced
+	// "Claude Code · GPT-5.4" mislabels on cross-device tasks.
+	Model string `json:"model,omitempty"`
+	// DeviceName is the agent's hostname at the time the task was
+	// created. Mobile clients render this on the per-task header and
+	// in the task list card; without it, the focused-device name
+	// leaked into every label and a task that ran on a sibling box
+	// looked like it ran on whichever device the phone was focused
+	// on at view time.
+	DeviceName string             `json:"deviceName,omitempty"`
+	SessionID  string             `json:"sessionId,omitempty"`
 	Output         string             `json:"output,omitempty"`
 	ResultText     string             `json:"resultText,omitempty"`
 	CostUSD        float64            `json:"costUsd,omitempty"`

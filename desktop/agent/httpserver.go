@@ -3157,13 +3157,19 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 	if len(output) > 10000 {
 		output = output[len(output)-10000:]
 	}
+	hostname, _ := os.Hostname()
 	info := TaskInfo{
-		ID:             task.ID,
-		Title:          task.Title,
-		Description:    task.Description,
-		Status:         task.Status,
-		RunnerID:       task.RunnerID,
-		SessionID:      task.SessionID,
+		ID:          task.ID,
+		Title:       task.Title,
+		Description: task.Description,
+		Status:      task.Status,
+		RunnerID:    task.RunnerID,
+		// Echo the model + deviceName so mobile UIs can render the
+		// task's authoritative target instead of inferring from the
+		// focused-device picker state.
+		Model:      task.Model,
+		DeviceName: hostname,
+		SessionID:  task.SessionID,
 		Output:         output,
 		ResultText:     task.ResultText,
 		CostUSD:        task.CostUSD,

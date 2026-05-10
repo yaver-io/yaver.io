@@ -3814,7 +3814,7 @@ export default function TasksScreen() {
                     </View>
                     <View style={s.discoverStepContent}>
                       <Text style={[s.discoverStepTitle, { color: c.textPrimary }]}>Install</Text>
-                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>brew install kivanccakmak/yaver/yaver</Text>
+                      <Text style={[s.discoverStepDesc, { color: c.textMuted }]}>npm install -g yaver-cli</Text>
                     </View>
                   </View>
                   <View style={s.discoverStep}>
