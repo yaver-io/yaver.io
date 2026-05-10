@@ -23,7 +23,7 @@ import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import { useDevice } from "../../src/context/DeviceContext";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
-import { useColors } from "../../src/context/ThemeContext";
+import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
@@ -257,6 +257,7 @@ function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
 
 export default function AppsScreen() {
   const c = useColors();
+  const { isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
@@ -1794,7 +1795,7 @@ export default function AppsScreen() {
         )}
 
         {/* Search + Projects list */}
-        <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: "transparent" }]}>
+        <View style={[s.searchRow, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle, borderWidth: isDark ? 0 : 1 }]}>
           <Ionicons name="search" size={16} color={c.textMuted} />
           <TextInput
             style={[s.searchInput, { color: c.textPrimary }]}
@@ -1822,26 +1823,51 @@ export default function AppsScreen() {
           const categoryOrder = ["mobile", "web", "other"] as const;
           const categoryLabels: Record<string, string> = { mobile: "Mobile", web: "Web", other: "Other" };
           const visibleCategories = categoryOrder.filter((c) => categories.has(c));
-          if (visibleCategories.length <= 1 && projects.length > 0) return null;
+          // No projects yet → suppress the filter row entirely. A
+          // single "All (0)" chip with a zero count was visible
+          // dead UI between the search bar and the empty state.
+          if (!search.trim() && projects.length === 0) return null;
+          if (visibleCategories.length <= 1) return null;
           return (
             <View style={s.filterWrap}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
               <Pressable
-                style={[s.filterChip, { backgroundColor: !activeFilter ? c.accent + "14" : c.bgInput }, !activeFilter && s.filterChipActive]}
+                style={[
+                  s.filterChip,
+                  {
+                    backgroundColor: !activeFilter ? c.accent + "1f" : c.bgInput,
+                    borderColor: !activeFilter ? c.accent + "60" : isDark ? "transparent" : c.borderSubtle,
+                  },
+                ]}
                 onPress={() => setActiveFilter(null)}
               >
-                <Text style={[s.filterChipText, !activeFilter && s.filterChipTextActive]}>All ({projects.length})</Text>
+                <Text style={[s.filterChipText, { color: !activeFilter ? c.accent : c.textSecondary }]}>
+                  All
+                  <Text style={{ color: c.textMuted }}>{` · ${projects.length}`}</Text>
+                </Text>
               </Pressable>
               {visibleCategories.map((cat) => (
-                <Pressable
-                  key={cat}
-                  style={[s.filterChip, { backgroundColor: activeFilter === cat ? c.accent + "14" : c.bgInput }, activeFilter === cat && s.filterChipActive]}
-                  onPress={() => setActiveFilter(activeFilter === cat ? null : cat)}
-                >
-                  <Text style={[s.filterChipText, activeFilter === cat && s.filterChipTextActive]}>
-                    {categoryLabels[cat]} ({categories.get(cat)})
-                  </Text>
-                </Pressable>
+                (() => {
+                  const chipColor = cat === "mobile" ? c.accent : cat === "web" ? c.success : c.textSecondary;
+                  return (
+                    <Pressable
+                      key={cat}
+                      style={[
+                        s.filterChip,
+                        {
+                          backgroundColor: activeFilter === cat ? chipColor + "1f" : c.bgInput,
+                          borderColor: activeFilter === cat ? chipColor + "60" : isDark ? "transparent" : c.borderSubtle,
+                        },
+                      ]}
+                      onPress={() => setActiveFilter(activeFilter === cat ? null : cat)}
+                    >
+                      <Text style={[s.filterChipText, { color: activeFilter === cat ? chipColor : c.textSecondary }]}>
+                        {categoryLabels[cat]}
+                        <Text style={{ color: c.textMuted }}>{` · ${categories.get(cat)}`}</Text>
+                      </Text>
+                    </Pressable>
+                  );
+                })()
               ))}
             </ScrollView>
             <View pointerEvents="none" style={[s.filterFade, { backgroundColor: c.bg }]} />
@@ -1884,7 +1910,8 @@ export default function AppsScreen() {
 
             return (
               <Pressable
-                style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border },
+                style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
+                  !isDark && { shadowColor: c.shadowSm },
                   cols > 1 ? { flex: 1, maxWidth: `${100 / cols}%` } : null,
                   isRunning && { borderColor: c.accent, borderWidth: 1.5 }]}
                 onPress={() => handleTapProject(item)}
@@ -1898,7 +1925,7 @@ export default function AppsScreen() {
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{item.name}</Text>
                     {item.framework && (
                       <View style={s.tagRow}>
-                        <View style={[s.tag, { backgroundColor: c.bgInput }]}>
+                        <View style={[s.tag, { backgroundColor: c.bgInput, borderColor: isDark ? "transparent" : c.borderSubtle }]}>
                           <Text style={[s.tagText, { color: c.textSecondary }]}>{item.framework}</Text>
                         </View>
                       </View>
@@ -1930,25 +1957,61 @@ export default function AppsScreen() {
             );
           }}
           ListEmptyComponent={
-            <View style={s.emptyList}>
-              <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-                {projectsDiscovering
-                  ? "Discovering projects on your machine…"
-                  : "No projects discovered yet.\nThe agent scans your home directory automatically."}
-              </Text>
-              <Pressable
-                style={[s.emptyCta, { borderColor: c.border, backgroundColor: c.bgCard }]}
-                onPress={async () => {
-                  try {
-                    setProjectsDiscovering(true);
-                    await quicClient.refreshMobileProjects();
-                  } catch {}
+            <View style={[s.emptyList, { paddingHorizontal: 24 }]}>
+              <View
+                style={{
+                  alignSelf: "center",
+                  width: "100%",
+                  maxWidth: 360,
+                  alignItems: "center",
+                  padding: 24,
+                  borderRadius: 14,
+                  backgroundColor: c.bgCardElevated,
+                  borderWidth: 1,
+                  borderColor: c.borderSubtle,
                 }}
               >
-                <Text style={[s.emptyCtaText, { color: c.textPrimary }]}>
-                  {projectsDiscovering ? "Discovering..." : "Rediscover"}
+                <Ionicons
+                  name="folder-open-outline"
+                  size={32}
+                  color={c.textMuted}
+                  style={{ marginBottom: 12 }}
+                />
+                <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "600", marginBottom: 6 }}>
+                  {projectsDiscovering ? "Discovering projects…" : "No projects yet"}
                 </Text>
-              </Pressable>
+                <Text
+                  style={{
+                    color: c.textSecondary,
+                    fontSize: 13,
+                    lineHeight: 19,
+                    textAlign: "center",
+                    marginBottom: 16,
+                  }}
+                >
+                  Yaver scans your home directory automatically. This usually takes a few seconds after connecting.
+                </Text>
+                <Pressable
+                  style={{
+                    paddingHorizontal: 18,
+                    paddingVertical: 10,
+                    borderRadius: 10,
+                    backgroundColor: projectsDiscovering ? c.bgInput : c.accent,
+                    minWidth: 160,
+                    alignItems: "center",
+                  }}
+                  onPress={async () => {
+                    try {
+                      setProjectsDiscovering(true);
+                      await quicClient.refreshMobileProjects();
+                    } catch {}
+                  }}
+                >
+                  <Text style={{ color: projectsDiscovering ? c.textSecondary : "#ffffff", fontSize: 14, fontWeight: "600" }}>
+                    {projectsDiscovering ? "Discovering…" : "Rediscover"}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           }
         />
@@ -2410,8 +2473,12 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 12,
-    borderWidth: 0,
+    borderWidth: 1,
     gap: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    elevation: 1,
   },
   searchInput: { ...typography.body, flex: 1, paddingVertical: 0 },
 
@@ -2423,7 +2490,7 @@ const s = StyleSheet.create({
   filterChip: {
     minHeight: 34,
     paddingHorizontal: 14,
-    borderRadius: 6,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: "transparent",
     justifyContent: "center" as const,
@@ -2436,11 +2503,13 @@ const s = StyleSheet.create({
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },
   tag: {
     backgroundColor: "#6366f115",
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
-  tagText: { color: "#818cf8", fontSize: 9, fontWeight: "600" },
+  tagText: { color: "#818cf8", fontSize: 11, fontWeight: "600" },
 
   // Quick actions
   quickActions: { flexDirection: "row", gap: 6, marginTop: 10 },
@@ -2553,7 +2622,7 @@ const s = StyleSheet.create({
 
   // Project cards
   projectCard: { borderWidth: 1 },
-  projectName: { ...typography.cardTitle, fontSize: 17 },
+  projectName: { ...typography.cardTitle, fontSize: 15, fontWeight: "600" },
   projectMeta: { ...typography.caption, marginTop: 3 },
   projectPath: { ...typography.path, marginTop: 3 },
   listContent: { paddingBottom: 40 },
@@ -2563,7 +2632,7 @@ const s = StyleSheet.create({
   emptyIcon: { fontSize: 40, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
-  emptyList: { padding: 40, alignItems: "center" },
+  emptyList: { flexGrow: 1, padding: 40, alignItems: "center", justifyContent: "center" },
   emptyCta: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
   emptyCtaText: { fontSize: 14, fontWeight: "600" },
 

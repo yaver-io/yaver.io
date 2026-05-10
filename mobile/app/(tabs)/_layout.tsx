@@ -32,20 +32,32 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
     Settings: { on: "settings", off: "settings-outline" },
   };
   const glyph = icons[label] ?? { on: "ellipse", off: "ellipse-outline" };
+  // Accent-tinted pill bg behind the focused icon glyph (Material 3 /
+  // Linear pattern). Replaces the prior 24x2 indicator bar floating
+  // above the icon — that read as a stuck artifact on iOS where no
+  // first-party app uses that affordance. Inactive: bare wrapper.
   return (
     <View style={styles.tabIconWrap}>
-      {focused ? <View style={[styles.tabIndicator, { backgroundColor: c.accent }]} /> : <View style={styles.tabIndicatorSpacer} />}
-      <Ionicons
-        name={focused ? glyph.on : glyph.off}
-        size={20}
-        color={focused ? c.tabActive : c.tabInactive}
-      />
-      <Text style={[styles.tabLabel, { color: focused ? c.tabActive : c.tabInactive, fontWeight: focused ? "600" : "400" }]}>
+      <View
+        style={[
+          styles.iconPill,
+          focused
+            ? { backgroundColor: c.accent + "1A" }
+            : null,
+        ]}
+      >
+        <Ionicons
+          name={focused ? glyph.on : glyph.off}
+          size={20}
+          color={focused ? c.accent : c.tabInactive}
+        />
+        {showGreenDot && (
+          <View style={[styles.greenDot, { borderColor: c.bgTabBar }]} />
+        )}
+      </View>
+      <Text style={[styles.tabLabel, { color: focused ? c.accent : c.tabInactive, fontWeight: focused ? "600" : "400" }]}>
         {label}
       </Text>
-      {showGreenDot && (
-        <View style={styles.greenDot} />
-      )}
     </View>
   );
 }
@@ -207,17 +219,17 @@ export default function TabLayout() {
         tabBarStyle: useLeftRail
           ? {
               backgroundColor: c.bgTabBar,
-              borderRightColor: c.border,
+              borderRightColor: c.borderSubtle,
               borderRightWidth: 1,
               borderTopWidth: 0,
-              width: 96,
+              width: 104,
               paddingTop: 12,
             }
           : {
               backgroundColor: c.bgTabBar,
-              borderTopColor: c.border,
-              borderTopWidth: 1,
-              height: 68,
+              borderTopColor: c.borderSubtle,
+              borderTopWidth: StyleSheet.hairlineWidth,
+              height: 64,
               paddingTop: 0,
             },
         tabBarLabel: () => null,
@@ -312,19 +324,26 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 0 },
-  tabIndicator: { width: 24, height: 2, borderRadius: 999, marginBottom: 7 },
-  tabIndicatorSpacer: { width: 24, height: 2, marginBottom: 7 },
+  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 4 },
+  // Pill behind the icon glyph; only painted on focus (background set
+  // inline). 48x28 / radius 14 mirrors the Material 3 active-tab
+  // indicator and works in both themes via accent + low alpha.
+  iconPill: {
+    width: 48,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   tabLabel: { marginTop: 3, fontSize: 12 },
   greenDot: {
     position: "absolute",
-    top: 6,
-    right: 6,
+    top: -2,
+    right: 4,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: "#22c55e",
     borderWidth: 1.5,
-    borderColor: "#ffffff",
   },
 });
