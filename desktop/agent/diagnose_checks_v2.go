@@ -32,14 +32,20 @@ import (
 var extraDiagChecks []diagCheck
 
 func init() {
-	extraDiagChecks = []diagCheck{
+	// Append (don't assign) — other diagnose_check_*.go files also
+	// register into this slice via their own init(). Assigning here
+	// would stomp any check whose source-file name sorts earlier in
+	// the alphabet, since Go runs init() in per-file alphabetic order
+	// within a package and an earlier file's appended entries would
+	// be silently overwritten by this assignment.
+	extraDiagChecks = append(extraDiagChecks, []diagCheck{
 		{Name: "cloudflared", Run: checkCloudflared},
 		{Name: "tailscale", Run: checkTailscale},
 		{Name: "relay", Run: checkRelay},
 		{Name: "vpn", Run: checkVPN},
 		{Name: "convex", Run: checkConvex},
 		{Name: "runners", Run: checkRunners},
-	}
+	}...)
 }
 
 // ─── cloudflared ───────────────────────────────────────────────────
