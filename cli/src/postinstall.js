@@ -272,6 +272,82 @@ function ensurePathOnUnix() {
   }
 }
 
+// Update ~/.yaver/bin/current → versioned dir for the binary just
+// installed. Without this, the symlink can lag behind npm — every time
+// I bumped CLI on the user's Mac mini, `~/.yaver/bin/current` kept
+// pointing at an older version, so `~/.yaver/bin/current/<arch>/yaver`
+// silently ran the wrong binary even though `npm install -g yaver-cli@
+// <new>` had succeeded. The auto-update watchdogs (heartbeat_watcher
+// systemctl/launchctl kickstart paths) trust `current` too — so a
+// stale symlink keeps the old binary running across a "restart"
+// without anyone noticing. This belongs in postinstall, runs every
+// global install, never throws.
+function refreshCurrentSymlink(binaryPath) {
+  try {
+    if (process.platform === "win32") return;
+    if (!binaryPath) return;
+    // binaryPath is like ~/.yaver/bin/<version>/<cacheKey>/yaver — walk
+    // up two levels to the version dir, point `current` at it.
+    const versionDir = path.dirname(path.dirname(binaryPath));
+    if (!versionDir.startsWith(path.join(os.homedir(), ".yaver", "bin") + path.sep)) {
+      return;
+    }
+    if (!fs.existsSync(versionDir)) return;
+    const symlink = path.join(os.homedir(), ".yaver", "bin", "current");
+    let already = "";
+    try { already = fs.readlinkSync(symlink); } catch (_) {}
+    if (already === versionDir) return;
+    try { fs.unlinkSync(symlink); } catch (_) {}
+    fs.symlinkSync(versionDir, symlink);
+    log(`Repointed ~/.yaver/bin/current → ${path.basename(versionDir)}`);
+  } catch (err) {
+    log(`Skipping current symlink refresh: ${err.message}`);
+  }
+}
+
+// Restart whichever service supervisor the user has registered. Without
+// this, a fresh `npm install -g yaver-cli@latest` updates the binary on
+// disk but leaves the still-running agent process on the OLD binary
+// until the user manually `yaver restart`s. Every supervisor variant
+// is safe-to-call when not present — failures just no-op so we never
+// block npm install.
+function bounceRunningAgent() {
+  if (process.platform === "win32") return;
+  try {
+    if (process.platform === "darwin") {
+      // Per-user LaunchAgent — kickstart -k restarts in-place. We don't
+      // touch LaunchDaemon (system-wide) — that requires sudo and is
+      // out of scope for an unprivileged npm postinstall.
+      execSync(
+        `launchctl print "gui/$(id -u)/io.yaver.agent" >/dev/null 2>&1 && ` +
+          `launchctl kickstart -k "gui/$(id -u)/io.yaver.agent"`,
+        { stdio: "ignore", shell: "/bin/sh" },
+      );
+      log("Bounced launchd LaunchAgent so the new binary is live.");
+      return;
+    }
+    // Linux: try systemd user unit first, then system unit.
+    try {
+      execSync(
+        `systemctl --user is-active yaver >/dev/null 2>&1 && systemctl --user restart yaver`,
+        { stdio: "ignore", shell: "/bin/sh" },
+      );
+      log("Restarted yaver.service (systemd user unit).");
+      return;
+    } catch (_) {}
+    try {
+      execSync(
+        `systemctl is-active yaver-agent >/dev/null 2>&1 && systemctl restart yaver-agent`,
+        { stdio: "ignore", shell: "/bin/sh" },
+      );
+      log("Restarted yaver-agent.service (systemd system unit).");
+      return;
+    } catch (_) {}
+  } catch (err) {
+    // Best-effort.
+  }
+}
+
 async function main() {
   if (envEnabled("YAVER_SKIP_POSTINSTALL") || envEnabled("YAVER_SKIP_POSTINSTALL_BOOTSTRAP")) {
     return;
@@ -280,12 +356,18 @@ async function main() {
     return;
   }
 
+  let installedBinary = null;
   try {
-    await ensureAgentBinary({ quiet: true });
+    installedBinary = await ensureAgentBinary({ quiet: true });
   } catch (error) {
     log(`Skipping agent prefetch: ${error.message}`);
     return;
   }
+  // Repoint the canonical `current` symlink + bounce any registered
+  // service so a fresh `npm install -g yaver-cli@latest` actually
+  // takes effect without a manual `yaver restart`.
+  refreshCurrentSymlink(installedBinary);
+  bounceRunningAgent();
 
   // Platform-aware hermesc provisioning. Downloads the binary matching
   // this host from the react-native npm tarball, caches it under the
