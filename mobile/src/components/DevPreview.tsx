@@ -502,6 +502,7 @@ export function DevPreview() {
                 disabled={!!status.building || nativeLoading}
                 style={({ pressed }) => [
                   styles.bannerPrimaryBtn,
+                  layout.isPhone ? styles.bannerActionRowGrow : null,
                   { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.8 : 1 },
                 ]}
               >
@@ -522,6 +523,7 @@ export function DevPreview() {
                 disabled={!!status.building}
                 style={({ pressed }) => [
                   styles.bannerStopBtn,
+                  layout.isPhone ? styles.bannerActionRowGrow : null,
                   {
                     borderColor: c.errorBorder,
                     backgroundColor: c.errorBg,
@@ -817,24 +819,38 @@ const styles = StyleSheet.create({
   bannerRightInline: {
     width: 220,
     flexDirection: "column",
+    // Center the button stack vertically within the row so it
+    // doesn't visually crash into the card border when the
+    // bannerLeft text column is taller than the buttons' natural
+    // size. Without this + with flex:1 on the buttons, each button
+    // stretched to half the row height — on a tablet where path +
+    // meta + log line + title made the left column 90+pt, the
+    // green/red buttons grew to ~45pt each AND sat flush against
+    // the card's borderWidth:1 frame, reading as "overlapping the
+    // boundary lines".
+    justifyContent: "center",
   },
   bannerRightStacked: {
     flexDirection: "row",
   },
   bannerPrimaryBtn: {
-    flex: 1,
+    // No flex here — bannerRightInline (tablet column) keeps the
+    // button at its natural minHeight so it doesn't stretch into
+    // the card padding. bannerRightStacked (phone row) re-applies
+    // flex:1 inline at render time via `bannerActionRowGrow` so the
+    // phone side-by-side layout still splits width evenly.
     minHeight: 44,
     borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 16,
+    alignSelf: "stretch",
   },
   bannerPrimaryText: {
     fontSize: 14,
     fontWeight: "800",
   },
   bannerStopBtn: {
-    flex: 1,
     minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,
@@ -842,7 +858,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    alignSelf: "stretch",
   },
+  // Phone row layout splits the two buttons evenly via flex:1;
+  // injected only when bannerRightStacked is in use.
+  bannerActionRowGrow: { flex: 1 },
   bannerStopText: {
     fontSize: 12,
     fontWeight: "700",

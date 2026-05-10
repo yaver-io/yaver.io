@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Accelerometer } from "expo-sensors";
-import { AppState, type AppStateStatus, NativeModules } from "react-native";
+import { AppState, type AppStateStatus, NativeEventEmitter, NativeModules, Platform } from "react-native";
 import { quicClient } from "./quic";
 
 type FeedbackLaunchSource = "shake" | "native-guest-shake" | "remote-runtime";
@@ -115,8 +115,29 @@ export function startFeedbackShakeBridge(userId?: string | null): () => void {
     }
   })();
 
+  // Android: subscribe to YaverShakeDetector's native event.
+  // iOS's ShakeDetectingWindow (AppDelegate.swift:71) handles shake
+  // at the UIWindow level and reaches JS through a different path;
+  // on Android we wire the SensorManager-based detector here so the
+  // gesture works even when the user's settings.feedback.trigger is
+  // "floating-button" (the default). Routing through
+  // "native-guest-shake" hits the unconditional branch at lines
+  // 47-58 so shake always opens the overlay — matching iOS.
+  let nativeShakeSub: { remove: () => void } | null = null;
+  if (Platform.OS === "android") {
+    const detector = (NativeModules as any)?.YaverShakeDetector;
+    if (detector) {
+      const emitter = new NativeEventEmitter(detector);
+      nativeShakeSub = emitter.addListener("YaverShakeDetected", () => {
+        if (appState !== "active") return;
+        void maybeLaunchFeedbackFromShake("native-guest-shake", userId);
+      });
+    }
+  }
+
   return () => {
     accelSub.remove();
     appStateSub.remove();
+    nativeShakeSub?.remove();
   };
 }

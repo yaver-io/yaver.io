@@ -28,6 +28,7 @@ class MainApplication : Application(), ReactApplication {
               // add(MyReactNativePackage())
               add(YaverInfoPackage())
               add(YaverBundleLoaderPackage())
+              add(YaverShakeDetectorPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"
