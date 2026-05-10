@@ -1238,22 +1238,21 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
     </View>
   );
 
-  // Body wrapper: either <Modal>…</Modal> on phones / portrait
-  // tablets, or a plain <View flex 1> when the screen renders this
-  // inline as a master-detail right pane on tablet landscape.
+  // CRITICAL: do NOT declare a `Wrap` component here. The previous
+  // version defined a wrapping component inside the render — React
+  // treats every render as a new component type, unmounts and
+  // remounts the Modal on every parent re-render, and during the
+  // remount window the user sees a blank white pageSheet with no
+  // children (heartbeats fire several times per minute, so a
+  // rapid-tap puts the user squarely on a remount cycle). The body
+  // is now built once below and conditionally placed inside a Modal
+  // (phone / portrait tablet) or a plain View (master-detail inline
+  // mode on tablet landscape). Same render output, zero remount
+  // churn.
   if (inline && !visible) return null;
-  const Wrap: React.FC<{ children: React.ReactNode }> = ({ children }) =>
-    inline ? (
-      <View style={{ flex: 1, backgroundColor: c.bg }}>{children}</View>
-    ) : (
-      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-        <View style={{ flex: 1, backgroundColor: c.bg }}>{children}</View>
-      </Modal>
-    );
 
-  return (
-    <Wrap>
-      <>
+  const body = (
+    <>
         <View style={{
           flexDirection: "row", justifyContent: "space-between", alignItems: "center",
           paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12,
@@ -1454,7 +1453,15 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             </View>
           ) : null}
         </ScrollView>
-      </>
-    </Wrap>
+    </>
+  );
+
+  if (inline) {
+    return <View style={{ flex: 1, backgroundColor: c.bg }}>{body}</View>;
+  }
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: c.bg }}>{body}</View>
+    </Modal>
   );
 }
