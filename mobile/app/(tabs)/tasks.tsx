@@ -1434,7 +1434,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode, connectedDeviceIds } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -3108,8 +3108,18 @@ export default function TasksScreen() {
   // (otherwise both compete for vertical space inside the flex column,
   // and the task FlatList's own ListEmptyComponent would render a
   // duplicate "Not connected" frame).
+  // Picker is suppressed when ANY pool client is live — the multi-device
+  // manager keeps secondary connections warm, so even when this tab's
+  // own focused-device state has slipped to "disconnected" (e.g. the
+  // user just bounced focus to a different box), tasks routed by the
+  // wizard can still target a connected peer. Without this gate,
+  // landing on the Tasks tab right after a focus shift would briefly
+  // flash "Not connected · Pick one of your N devices" even though
+  // the Devices tab simultaneously shows green CONNECTED chips.
+  const hasAnyPooledConnection = connectedDeviceIds.length > 0;
   const showDevicePicker =
     !isEffectivelyConnected &&
+    !hasAnyPooledConnection &&
     !isLoadingDevices &&
     devices.length >= 1 &&
     !(devices.length === 1 && connectionStatus === "connecting");
@@ -3832,7 +3842,7 @@ export default function TasksScreen() {
             pointerEvents="box-none") regressed the second-open path —
             after a Cancel/backdrop dismiss, taps on the + would silently
             fall through on Android. Keep this simple. */}
-        {isEffectivelyConnected && (
+        {(isEffectivelyConnected || hasAnyPooledConnection) && (
           <Pressable
             hitSlop={12}
             style={({ pressed }) => [s.fab, { backgroundColor: c.accent }, pressed && s.fabPressed]}
@@ -3843,12 +3853,61 @@ export default function TasksScreen() {
               setAttachedImages([]);
               setInputFromSpeech(false);
               pendingOpenTaskRef.current = null;
-              if (multiTargetMode) {
-                setPendingTarget(null);
-                setShowTargetWizard(true);
-              } else {
-                setShowNewTask(true);
+              // Multi-target mode used to ALWAYS open the wizard, even
+              // when the user was already connected to a device with
+              // a known primary runner. That made the common case
+              // ("send another task to the box I'm already on") two
+              // taps slower for no reason. Now: if we have an active
+              // connection, ask first — keep the existing target by
+              // default, only fall through to the wizard when the user
+              // wants to switch device or agent.
+              const fallthrough = () => {
+                if (multiTargetMode) {
+                  setPendingTarget(null);
+                  setShowTargetWizard(true);
+                } else {
+                  setShowNewTask(true);
+                }
+              };
+              if (multiTargetMode && activeDevice && isEffectivelyConnected) {
+                const primaryRunnerId = primaryRunnerByDevice[activeDevice.id] || "";
+                const agentLabel = primaryRunnerId
+                  ? (primaryRunnerId === "claude" || primaryRunnerId === "claude-code"
+                      ? "Claude Code"
+                      : primaryRunnerId === "codex"
+                        ? "Codex"
+                        : primaryRunnerId === "opencode"
+                          ? "OpenCode"
+                          : primaryRunnerId)
+                  : "the active agent";
+                Alert.alert(
+                  "New task",
+                  `Continue on ${activeDevice.name} with ${agentLabel}?`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Use this",
+                      onPress: () => {
+                        // Skip the wizard — open the regular compose modal
+                        // bound to the already-connected device + its
+                        // saved primary runner. setPendingTarget(null)
+                        // tells the compose path to use activeDevice.
+                        setPendingTarget(null);
+                        setShowNewTask(true);
+                      },
+                    },
+                    {
+                      text: "Choose another…",
+                      onPress: () => {
+                        setPendingTarget(null);
+                        setShowTargetWizard(true);
+                      },
+                    },
+                  ],
+                );
+                return;
               }
+              fallthrough();
             }}
           >
             <Ionicons name="add" size={28} color="#ffffff" />
