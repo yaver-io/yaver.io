@@ -36,22 +36,38 @@ QUIC_PORT=4433
 HTTP_PORT=8080
 EMAIL="admin@$(hostname -f 2>/dev/null || echo 'localhost')"
 SKIP_SSL=false
+EXPOSE_DOMAIN=""
+CF_TOKEN="${CF_TOKEN:-}"
+CF_ZONE=""
 
 usage() {
   echo "Usage: $0 --domain <domain> --password <password> [options]"
   echo ""
   echo "Required:"
-  echo "  --domain      Domain name pointing to this server (e.g. relay.example.com)"
-  echo "  --password    Relay password (agents use this to connect)"
+  echo "  --domain         Domain name pointing to this server (e.g. relay.example.com)"
+  echo "  --password       Relay password (agents use this to connect)"
   echo ""
-  echo "Optional:"
-  echo "  --email       Email for Let's Encrypt (default: admin@hostname)"
-  echo "  --quic-port   QUIC tunnel port (default: 4433)"
-  echo "  --http-port   Internal HTTP port (default: 8080)"
-  echo "  --skip-ssl    Skip SSL setup (use if behind another proxy)"
+  echo "Optional — single-host setup:"
+  echo "  --email          Email for Let's Encrypt (default: admin@hostname)"
+  echo "  --quic-port      QUIC tunnel port (default: 4433)"
+  echo "  --http-port      Internal HTTP port (default: 8080)"
+  echo "  --skip-ssl       Skip SSL setup (use if behind another proxy)"
   echo ""
-  echo "Example:"
+  echo "Optional — wildcard auto-subdomain feature:"
+  echo "  --expose-domain  Wildcard subdomain root (e.g. dev.example.com)."
+  echo "                   When set, every connected agent gets auto-assigned"
+  echo "                   https://<deviceId>.<expose-domain> and publishes"
+  echo "                   it as publicUrl. Requires Cloudflare-managed DNS."
+  echo "  --cf-token       Cloudflare API token (Zone:DNS:Edit on the target"
+  echo "                   zone). Required when --expose-domain is set; falls"
+  echo "                   back to env CF_TOKEN."
+  echo "  --cf-zone        Cloudflare zone name. Defaults to last two labels"
+  echo "                   of --expose-domain (dev.example.com → example.com)."
+  echo ""
+  echo "Examples:"
   echo "  $0 --domain relay.mycompany.com --password super-secret-123"
+  echo "  $0 --domain relay.mycompany.com --password super-secret-123 \\"
+  echo "     --expose-domain dev.mycompany.com --cf-token \$CF_TOKEN"
   exit 1
 }
 
@@ -63,6 +79,9 @@ while [[ $# -gt 0 ]]; do
     --quic-port) QUIC_PORT="$2"; shift 2 ;;
     --http-port) HTTP_PORT="$2"; shift 2 ;;
     --skip-ssl) SKIP_SSL=true; shift ;;
+    --expose-domain) EXPOSE_DOMAIN="$2"; shift 2 ;;
+    --cf-token) CF_TOKEN="$2"; shift 2 ;;
+    --cf-zone) CF_ZONE="$2"; shift 2 ;;
     --help|-h) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
@@ -72,6 +91,12 @@ if [ -z "$DOMAIN" ] || [ -z "$PASSWORD" ]; then
   echo "Error: --domain and --password are required."
   echo ""
   usage
+fi
+
+if [ -n "$EXPOSE_DOMAIN" ] && [ -z "$CF_TOKEN" ]; then
+  echo "Error: --expose-domain requires --cf-token (or env CF_TOKEN)."
+  echo "  Wildcard certs require DNS-01 challenge against Cloudflare."
+  exit 1
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -256,6 +281,41 @@ else
   ok "No firewall detected (make sure ports 80, 443, ${QUIC_PORT}/udp are open)"
 fi
 
+# ── Step 6 (optional): Wildcard auto-subdomain feature ─────────────
+
+if [ -n "$EXPOSE_DOMAIN" ]; then
+  echo ""
+  log "Step 6/6: Configuring wildcard auto-subdomain (*.${EXPOSE_DOMAIN})"
+
+  # The wildcard setup is a separate, idempotent script so existing
+  # relays can opt in later via the same command.
+  WILDCARD_SCRIPT="$(dirname "$0")/setup-relay-wildcard.sh"
+  if [ ! -f "$WILDCARD_SCRIPT" ]; then
+    # Curl-pipe install path: download the companion script.
+    WILDCARD_TMP=$(mktemp)
+    curl -fsSL "https://yaver.io/setup-relay-wildcard.sh" -o "$WILDCARD_TMP" \
+      || err "Could not download setup-relay-wildcard.sh"
+    chmod +x "$WILDCARD_TMP"
+    WILDCARD_SCRIPT="$WILDCARD_TMP"
+  fi
+
+  WILDCARD_ARGS=(
+    --expose-domain "$EXPOSE_DOMAIN"
+    --cf-token "$CF_TOKEN"
+    --relay-http-port "$HTTP_PORT"
+    --email "$EMAIL"
+    --restart-mode docker
+  )
+  [ -n "$CF_ZONE" ] && WILDCARD_ARGS+=(--cf-zone "$CF_ZONE")
+
+  if "$WILDCARD_SCRIPT" "${WILDCARD_ARGS[@]}"; then
+    ok "Wildcard auto-subdomain configured for *.${EXPOSE_DOMAIN}"
+  else
+    warn "Wildcard setup failed — single-host relay still works."
+    warn "Re-run manually: $WILDCARD_SCRIPT --expose-domain $EXPOSE_DOMAIN --cf-token <token>"
+  fi
+fi
+
 # ── Done ───────────────────────────────────────────────────────────
 
 echo ""
@@ -267,6 +327,9 @@ echo "  HTTPS:     https://${DOMAIN}"
 echo "  QUIC:      $(curl -sf ifconfig.me 2>/dev/null || echo '<your-ip>'):${QUIC_PORT}"
 echo "  Password:  ${PASSWORD}"
 echo "  Health:    https://${DOMAIN}/health"
+if [ -n "$EXPOSE_DOMAIN" ]; then
+  echo "  Wildcard:  *.${EXPOSE_DOMAIN} (per-device auto-subdomain)"
+fi
 echo ""
 echo "  Configure in Yaver CLI:"
 echo "    yaver relay add https://${DOMAIN} --password ${PASSWORD}"
