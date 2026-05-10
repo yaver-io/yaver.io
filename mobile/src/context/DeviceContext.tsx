@@ -1043,15 +1043,17 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         // Race connect against a 20s timeout. Pass every reachable IP the
         // agent has reported in heartbeat (Wi-Fi LAN, Tailscale 100.x,
         // Ethernet) so the client can race them in parallel against the
-        // beacon and Convex-stored primary host.
-        const connectPromise = client.connect(
-          device.host,
-          device.port,
+        // beacon and Convex-stored primary host. Goes through
+        // ensureConnected so a parallel boot-time warm-up attempt
+        // and this user-driven attempt share one QuicClient.connect
+        // call instead of trampling each other's relay/attempt state.
+        const connectPromise = connectionManager.ensureConnected(device.id, {
+          host: device.host,
+          port: device.port,
           token,
-          device.id,
-          device.lanIps,
-          tunnelServersForDevice(device),
-        );
+          lanIps: device.lanIps,
+          sessionTunnels: tunnelServersForDevice(device),
+        });
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
         );
@@ -2726,17 +2728,20 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       for (const device of candidates) {
         if (cancelled) return;
-        const client = connectionManager.clientFor(device.id);
-        if (client.isConnected) continue;
         try {
-          await client.connect(
-            device.host,
-            device.port,
+          // ensureConnected dedupes against a parallel user-driven
+          // selectDevice — without it, the warm-up's connect and the
+          // user's connect would both call QuicClient.connect() and
+          // trample each other's primeTarget state, which surfaced as
+          // "Couldn't switch · Could not reach this device" on the
+          // wizard's switch path even when the box was actually live.
+          await connectionManager.ensureConnected(device.id, {
+            host: device.host,
+            port: device.port,
             token,
-            device.id,
-            device.lanIps,
-            tunnelServersForDevice(device),
-          );
+            lanIps: device.lanIps,
+            sessionTunnels: tunnelServersForDevice(device),
+          });
         } catch {
           // Silent. The sibling stays unpooled; user can tap it
           // explicitly from Devices tab if they need it later.

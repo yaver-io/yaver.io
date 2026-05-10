@@ -163,6 +163,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     primaryModelByDevice,
     latestCliVersion,
     connectedDeviceIds,
+    lastError,
   } = useDevice();
   // Quick lookup for "is there already a warm pooled connection to this
   // device?" — separate from activeDevice (the focused one). With the
@@ -370,12 +371,35 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     setPane("switching");
     setSwitchError(null);
     try {
-      // Skip the connection switch when we're already on this device.
-      if (activeDevice?.id !== pickedDevice.id) {
+      // Skip the connection switch when the picked device's pool
+      // client is already live — that's the multi-device fast path.
+      // Without this, even a sibling box with a warm pool connection
+      // got fed through selectDevice (which would race the warm-up
+      // and sometimes flip the connection to "disconnected" in the
+      // process). Now we only call selectDevice when the client
+      // genuinely isn't connected yet.
+      const directClient = connectionManager.clientFor(pickedDevice.id);
+      if (!directClient.isConnected) {
         await selectDevice(pickedDevice);
+      } else if (activeDevice?.id !== pickedDevice.id) {
+        // Already pooled — just shift focus to it without re-connecting.
+        connectionManager.setFocused(pickedDevice.id);
       }
-      if (!quicClient.isConnected) {
-        throw new Error("Could not reach this device.");
+      // Re-check the picked device's client directly (instead of going
+      // through the focused-client Proxy). The Proxy's isConnected
+      // depends on focus, which can race during the switch; the
+      // per-device isConnected is the source of truth.
+      if (!connectionManager.clientFor(pickedDevice.id).isConnected) {
+        // Surface the underlying connect error when DeviceContext
+        // captured one — generic "Could not reach this device" was
+        // hiding the real reason (e.g. relay password mismatch,
+        // device.host stale after DHCP renewal, agent down).
+        const detail = (lastError || "").trim();
+        throw new Error(
+          detail
+            ? `Couldn't reach ${pickedDevice.name}: ${detail}`
+            : `Couldn't reach ${pickedDevice.name}.`,
+        );
       }
       // Only forward the model when it's actually compatible with the
       // runner the user just picked — peace of mind belt over the

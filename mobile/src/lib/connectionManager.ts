@@ -64,6 +64,19 @@ class ConnectionManager {
   private latestToken: string | null = null;
   private latestSessionTunnels: TunnelServer[] = [];
 
+  // In-flight connect-attempt tracker. The user reported "Couldn't
+  // switch · Could not reach this device" when picking a secondary
+  // box from the wizard, which traced to a race between the
+  // background pool-warm effect and the user-driven selectDevice both
+  // calling client.connect() on the same QuicClient instance.
+  // QuicClient.connect mutates internal state (resets relay/attempt
+  // counters via primeTarget) — two parallel calls trample each
+  // other and the second one races against the first's listener
+  // setup. We dedupe by remembering the in-flight Promise here;
+  // selectDevice and the warm-up effect both go through
+  // ensureConnected() instead of raw client.connect.
+  private inflightConnects = new Map<string, Promise<void>>();
+
   /** Returns the QuicClient currently treated as focused, or the fallback
    *  instance when none is set. Callers that don't care about identity
    *  (e.g. anything that just wants the user's "primary" connection)
@@ -122,6 +135,40 @@ class ConnectionManager {
     if (next === this.focusedId) return;
     this.focusedId = next;
     this.notify();
+  }
+
+  /** Connect (or join an in-flight connect) for the given device.
+   *  Returns a Promise that resolves when the per-device QuicClient is
+   *  in the "connected" state, or rejects with the underlying connect
+   *  error. Concurrent callers (the boot-time warm-up + a user-driven
+   *  selectDevice) all await the same Promise so QuicClient.connect()
+   *  is never called twice in parallel for the same id. */
+  async ensureConnected(
+    deviceId: string,
+    params: {
+      host: string;
+      port: number;
+      token: string;
+      lanIps?: string[];
+      sessionTunnels?: TunnelServer[];
+    },
+  ): Promise<void> {
+    const id = deviceId.trim();
+    if (!id) throw new Error("ensureConnected: missing deviceId");
+    const client = this.clientFor(id);
+    if (client.isConnected) return;
+    const existing = this.inflightConnects.get(id);
+    if (existing) return existing;
+    const promise = client
+      .connect(params.host, params.port, params.token, id, params.lanIps, params.sessionTunnels)
+      .finally(() => {
+        // Drop the entry whether the connect resolved or rejected so
+        // the next attempt starts fresh — leaving a rejected Promise
+        // pinned would make every retry fail with the original error.
+        this.inflightConnects.delete(id);
+      });
+    this.inflightConnects.set(id, promise);
+    return promise;
   }
 
   /** Stop and remove a single client. Called when the user explicitly
