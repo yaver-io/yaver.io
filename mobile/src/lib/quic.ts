@@ -38,6 +38,66 @@ export interface VaultEntry extends VaultEntrySummary {
   value: string;
 }
 
+// ── Yaver Agent (control-plane LLM) types — mirrors yaver_agent_config.go ─
+
+export type YaverAgentProviderId = "glm" | "anthropic" | "openai" | "openrouter";
+
+export interface YaverAgentConfig {
+  provider: YaverAgentProviderId | "";
+  model: string;
+  baseUrl?: string;
+  hasApiKey: boolean;
+  updatedAt?: number;
+}
+
+export interface YaverAgentProviderDefault {
+  provider: YaverAgentProviderId;
+  model: string;
+  baseUrl?: string;
+  label: string;
+  note?: string;
+}
+
+export interface YaverAgentSetRequest {
+  provider: YaverAgentProviderId;
+  model?: string;
+  baseUrl?: string;
+  /** "" clears the stored key; omit to leave existing untouched. */
+  apiKey?: string;
+}
+
+// /yaver-agent/audit response — mirrors yaver_agent_tools.go.
+
+export interface YaverAgentRunnerAudit {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+}
+
+export interface YaverAgentRecommendation {
+  kind: "yaver_auth_required" | "runner_auth_required" | "configured";
+  target?: string;
+  severity: "info" | "warn" | "error";
+  title: string;
+  body: string;
+  /** Tool name the embedded LLM should call to act on this recommendation. */
+  action?: string;
+}
+
+export interface YaverAgentDeviceAudit {
+  deviceId?: string;
+  lifecycleState: string; // bootstrap | yaver-auth-expired | ready-to-connect
+  usable: boolean;
+  needsAuth: boolean;
+  runners: YaverAgentRunnerAudit[];
+  recommendations: YaverAgentRecommendation[];
+}
+
 export interface APIKeyRecord {
   tokenHash: string;
   label: string;
@@ -3667,6 +3727,52 @@ export class QuicClient {
       { method: 'DELETE', headers: this.authHeaders },
     );
     if (!res.ok) throw new Error(`vault delete: HTTP ${res.status}`);
+  }
+
+  // ── Yaver Agent (mobile-embedded control-plane LLM) provider config ──
+
+  async yaverAgentConfigGet(): Promise<{
+    config: YaverAgentConfig;
+    providers: YaverAgentProviderId[];
+    defaults: YaverAgentProviderDefault[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/yaver-agent/config`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`yaver-agent config get: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async yaverAgentConfigSet(req: YaverAgentSetRequest): Promise<{
+    config: YaverAgentConfig;
+    providers: YaverAgentProviderId[];
+    defaults: YaverAgentProviderDefault[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/yaver-agent/config`, {
+      method: 'POST',
+      headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error || `yaver-agent config set: HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /**
+   * GET /yaver-agent/audit on the connected device. Returns aggregated
+   * lifecycle + per-runner auth state + ordered recommendations the
+   * embedded LLM can act on without making N round trips itself.
+   */
+  async yaverAgentAudit(opts?: { workDir?: string }): Promise<YaverAgentDeviceAudit> {
+    this.assertConnected();
+    const qs = opts?.workDir ? `?workDir=${encodeURIComponent(opts.workDir)}` : '';
+    const res = await fetch(`${this.baseUrl}/yaver-agent/audit${qs}`, {
+      headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`yaver-agent audit: HTTP ${res.status}`);
+    return res.json();
   }
 
   async syncList<T = any>(kind: string, since = 0): Promise<{ items: SyncItem<T>[]; latestAt: number }> {

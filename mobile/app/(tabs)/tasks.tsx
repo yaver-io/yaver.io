@@ -27,6 +27,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
+import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette, type ChipTone } from "../../src/lib/chipPalette";
 import { appTag } from "../../src/lib/appVersion";
@@ -53,6 +54,13 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import { Badge } from "../../src/components/Badge";
 import RunnerAuthModal from "../../src/components/RunnerAuthModal";
+import { YaverAgentTasksHint } from "../../src/components/YaverAgentTasksHint";
+import {
+  runYaverAgent,
+  loadYaverAgentLocalConfig,
+  type YaverAgentHistoryTurn,
+} from "../../src/lib/yaverAgentRunner";
+import type { YaverAgentToolContext } from "../../src/lib/yaverAgentTools";
 import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
 import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
@@ -1426,7 +1434,7 @@ export default function TasksScreen() {
   const shouldOpenNew =
     typeof taskParams.openNew === "string" &&
     (taskParams.openNew === "1" || taskParams.openNew === "true");
-  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice } = useDevice();
+  const { connectionStatus, activeDevice, devices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, selectDevice, disconnect, isLoadingDevices, refreshDevices, unreachableDeviceIds, stopReconnectAndBounce, primaryDeviceId, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice, multiTargetMode } = useDevice();
   const unreachableSet = useMemo(() => new Set(unreachableDeviceIds), [unreachableDeviceIds]);
   const [deviceProbeMap, setDeviceProbeMap] = useState<Record<string, MobileDeviceStatusProbe>>({});
   const [showLogs, setShowLogs] = useState(false);
@@ -1441,6 +1449,12 @@ export default function TasksScreen() {
   const [statusFilter, setStatusFilter] = useState<"running" | "review" | "completed" | "failed" | "all">("running");
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [showNewTask, setShowNewTask] = useState(false);
+  // Multi-target wizard state. Only used when DeviceContext.multiTargetMode
+  // is true: the FAB opens the wizard first, the wizard sets pendingTarget
+  // (and switches the QUIC client to that device via selectDevice), then
+  // the compose modal opens with the runner + model locked to pendingTarget.
+  const [showTargetWizard, setShowTargetWizard] = useState(false);
+  const [pendingTarget, setPendingTarget] = useState<TaskTarget | null>(null);
   const [newTaskText, setNewTaskText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedModel, setSelectedModel] = useState<string>("sonnet");
@@ -1517,6 +1531,10 @@ export default function TasksScreen() {
   const [isAdopting, setIsAdopting] = useState<string | null>(null); // session name being adopted
   const chatScrollRef = useRef<FlatList>(null);
   const pendingOpenTaskRef = useRef<Task | null>(null);
+  /** AbortController per in-flight yaver-agent run, keyed by synthetic
+   *  task id. handleStopTask aborts the matching controller; the
+   *  runner unwinds via AbortError and the task ends up "stopped". */
+  const yaverAgentAbortersRef = useRef<Map<string, AbortController>>(new Map());
   const didApplyRouteSeedRef = useRef(false);
 
   // Project + Todo state
@@ -2366,6 +2384,129 @@ export default function TasksScreen() {
 
   const handleCreateTask = async () => {
     if (!newTaskText.trim() && attachedImages.length === 0) return;
+
+    // Yaver-Agent fallback: when no host runner is connected, route the
+    // prompt through the embedded control-plane LLM instead of failing
+    // with "agent not ready". Streams the assistant's text + tool calls
+    // into the task as they happen so users see progress before the
+    // final reply lands. Cancellable via Stop on the task card.
+    if (!isEffectivelyConnected) {
+      const localCfg = await loadYaverAgentLocalConfig();
+      if (!localCfg) {
+        Alert.alert(
+          "Configure Yaver Agent first",
+          "No host device is connected. To run control-plane prompts (auth, status, primary management) without a host, save a provider + API key in Settings → Yaver Agent.",
+        );
+        return;
+      }
+      const promptText = newTaskText.trim();
+      if (!promptText) return;
+      Keyboard.dismiss();
+      setIsSubmitting(true);
+
+      const taskId = `yaver-agent-${Date.now()}`;
+      const startedAt = Date.now();
+      const startedAtIso = new Date(startedAt).toISOString();
+      const initialTask: Task = {
+        id: taskId,
+        title: promptText,
+        description: "",
+        status: "running" as TaskStatus,
+        runnerId: "yaver-agent",
+        output: [],
+        resultText: "",
+        turns: [{ role: "user", content: promptText, timestamp: startedAtIso }],
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        deviceName: "Yaver Agent",
+      };
+      setTasks((prev) => [initialTask, ...prev]);
+      pendingOpenTaskRef.current = initialTask;
+      setShowNewTask(false);
+      setNewTaskText("");
+      setAttachedImages([]);
+      setInputFromSpeech(false);
+
+      const updateTask = (mut: (t: Task) => Task) => {
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? mut(t) : t)));
+        setSelectedTask((prev) => (prev && prev.id === taskId ? mut(prev) : prev));
+      };
+
+      const controller = new AbortController();
+      yaverAgentAbortersRef.current.set(taskId, controller);
+
+      try {
+        const ctx: YaverAgentToolContext = {
+          devices: () => devices,
+          primaryDeviceId: () => primaryDeviceId,
+          secondaryDeviceId: () => null,
+          selectDevice: async (deviceId) => {
+            const d = devices.find((x) => x.id === deviceId);
+            if (d) await selectDevice(d);
+          },
+        };
+        const result = await runYaverAgent({
+          prompt: promptText,
+          ctx,
+          maxSteps: 6,
+          signal: controller.signal,
+          onProgress: (event) => {
+            updateTask((t) => {
+              if (event.kind === "model_text") {
+                return {
+                  ...t,
+                  resultText: event.text,
+                  output: [...t.output, event.text],
+                  updatedAt: Date.now(),
+                };
+              }
+              if (event.kind === "tool_call") {
+                const summary = event.call.error
+                  ? `↳ ${event.call.name} failed: ${event.call.error}`
+                  : `↳ ${event.call.name} ✓`;
+                return { ...t, output: [...t.output, summary], updatedAt: Date.now() };
+              }
+              return t;
+            });
+          },
+        });
+        const replyText = result.finalText.trim() || "(no reply)";
+        const finishedAt = Date.now();
+        updateTask((t) => ({
+          ...t,
+          status: "completed" as TaskStatus,
+          resultText: replyText,
+          turns: [
+            ...t.turns!.slice(0, 1),
+            { role: "assistant", content: replyText, timestamp: new Date(finishedAt).toISOString() },
+          ],
+          updatedAt: finishedAt,
+        }));
+      } catch (e) {
+        const aborted = e instanceof Error && e.name === "AbortError";
+        const msg = aborted
+          ? "Stopped."
+          : e instanceof Error
+          ? e.message
+          : String(e);
+        const finishedAt = Date.now();
+        updateTask((t) => ({
+          ...t,
+          status: aborted ? ("stopped" as TaskStatus) : ("failed" as TaskStatus),
+          resultText: msg,
+          turns: [
+            ...t.turns!.slice(0, 1),
+            { role: "assistant", content: msg, timestamp: new Date(finishedAt).toISOString() },
+          ],
+          updatedAt: finishedAt,
+        }));
+      } finally {
+        yaverAgentAbortersRef.current.delete(taskId);
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     if (selectedRunnerRow?.ready === false) {
       const detail =
         selectedRunnerAuthIssue ||
@@ -2394,21 +2535,33 @@ export default function TasksScreen() {
         verbosity,
       } : undefined;
       const title = initialTitle || newTaskText.trim();
+      // pendingTarget — set by TaskTargetWizard when multi-target mode
+      // is on — overrides the in-modal runner/model picker for this
+      // single submission. The wizard already switched the QUIC client
+      // to pendingTarget.deviceId via selectDevice, so quicClient
+      // baseUrl is correct without any per-call routing here.
+      const effectiveRunner = pendingTarget?.runner
+        ?? (selectedRunner === "custom" ? "custom" : (selectedRunner || undefined));
+      const effectiveModel = pendingTarget?.model ?? (selectedModel || undefined);
+      // OpenCode mode comes from the wizard's remote opencode.json
+      // probe when present; fall back to the in-modal selectedOpenCodeMode.
+      const effectiveOpencodeMode = pendingTarget?.opencodeMode ?? selectedOpenCodeMode;
       const task = await quicClient.sendTask(
         title, "",
-        selectedRunner === "custom" ? undefined : (selectedModel || undefined),
-        selectedRunner === "custom" ? "custom" : (selectedRunner || undefined),
-        selectedRunner === "custom" ? customCommand.trim() || undefined : undefined,
+        effectiveRunner === "custom" ? undefined : effectiveModel,
+        effectiveRunner === "custom" ? "custom" : effectiveRunner,
+        effectiveRunner === "custom" ? customCommand.trim() || undefined : undefined,
         speechCtx,
         attachedImages.length > 0 ? attachedImages : undefined,
         projectDir || undefined,
-        selectedRunner === "opencode" && selectedOpenCodeMode ? selectedOpenCodeMode : undefined,
+        effectiveRunner === "opencode" && effectiveOpencodeMode ? effectiveOpencodeMode : undefined,
         videoSummaryEnabled ? { enabled: true } : undefined,
         true,
       );
       setNewTaskText("");
       setAttachedImages([]);
       setInputFromSpeech(false);
+      setPendingTarget(null);
       setTasks((prev) => [task, ...prev]);
       // Stage the task; iOS onDismiss (line 3299) and Android effect
       // (line 2155) hand it to setSelectedTask once the compose
@@ -2445,6 +2598,14 @@ export default function TasksScreen() {
   }, [showNewTask]);
 
   const handleStopTask = async (taskId: string) => {
+    // Yaver-agent tasks live entirely on the phone — no server to call,
+    // just abort the local runner. The runner's finally block flips
+    // the task status, so we don't optimistic-update here.
+    const localAborter = yaverAgentAbortersRef.current.get(taskId);
+    if (localAborter) {
+      localAborter.abort();
+      return;
+    }
     try {
       await quicClient.stopTask(taskId);
       // ACK received — immediately update UI
@@ -2477,6 +2638,100 @@ export default function TasksScreen() {
     }
     Keyboard.dismiss();
     setIsSendingFollowUp(true);
+
+    // Yaver-agent follow-up: continue the embedded LLM conversation
+    // using prior turns as history. Same streaming + cancel rig as the
+    // initial run.
+    if (selectedTask.runnerId === "yaver-agent") {
+      const promptText = followUpText.trim();
+      if (!promptText) {
+        setIsSendingFollowUp(false);
+        return;
+      }
+      const taskId = selectedTask.id;
+      const turnAt = Date.now();
+      const turnIso = new Date(turnAt).toISOString();
+      const priorTurns = selectedTask.turns ?? [];
+      const history: YaverAgentHistoryTurn[] = priorTurns
+        .filter((t) => t.content?.trim())
+        .map((t) => ({ role: t.role, text: t.content }));
+
+      const updateTask = (mut: (t: Task) => Task) => {
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? mut(t) : t)));
+        setSelectedTask((prev) => (prev && prev.id === taskId ? mut(prev) : prev));
+      };
+
+      // Append the user turn immediately so the chat detail reflects it.
+      updateTask((t) => ({
+        ...t,
+        status: "running" as TaskStatus,
+        turns: [...(t.turns ?? []), { role: "user", content: promptText, timestamp: turnIso }],
+        updatedAt: turnAt,
+      }));
+      setFollowUpText("");
+      setFollowUpImages([]);
+
+      const controller = new AbortController();
+      yaverAgentAbortersRef.current.set(taskId, controller);
+
+      try {
+        const ctx: YaverAgentToolContext = {
+          devices: () => devices,
+          primaryDeviceId: () => primaryDeviceId,
+          secondaryDeviceId: () => null,
+          selectDevice: async (deviceId) => {
+            const d = devices.find((x) => x.id === deviceId);
+            if (d) await selectDevice(d);
+          },
+        };
+        const result = await runYaverAgent({
+          prompt: promptText,
+          ctx,
+          history,
+          maxSteps: 6,
+          signal: controller.signal,
+          onProgress: (event) => {
+            if (event.kind === "tool_call") {
+              const summary = event.call.error
+                ? `↳ ${event.call.name} failed: ${event.call.error}`
+                : `↳ ${event.call.name} ✓`;
+              updateTask((t) => ({ ...t, output: [...t.output, summary], updatedAt: Date.now() }));
+            }
+          },
+        });
+        const replyText = result.finalText.trim() || "(no reply)";
+        const finishedAt = Date.now();
+        updateTask((t) => ({
+          ...t,
+          status: "completed" as TaskStatus,
+          resultText: replyText,
+          turns: [
+            ...(t.turns ?? []),
+            { role: "assistant", content: replyText, timestamp: new Date(finishedAt).toISOString() },
+          ],
+          updatedAt: finishedAt,
+        }));
+      } catch (e) {
+        const aborted = e instanceof Error && e.name === "AbortError";
+        const msg = aborted ? "Stopped." : e instanceof Error ? e.message : String(e);
+        const finishedAt = Date.now();
+        updateTask((t) => ({
+          ...t,
+          status: aborted ? ("stopped" as TaskStatus) : ("failed" as TaskStatus),
+          resultText: msg,
+          turns: [
+            ...(t.turns ?? []),
+            { role: "assistant", content: msg, timestamp: new Date(finishedAt).toISOString() },
+          ],
+          updatedAt: finishedAt,
+        }));
+      } finally {
+        yaverAgentAbortersRef.current.delete(taskId);
+        setIsSendingFollowUp(false);
+      }
+      return;
+    }
+
     try {
       if (selectedTask.isAdopted) {
         // For adopted tmux sessions, send input directly via tmux send-keys
@@ -3361,6 +3616,15 @@ export default function TasksScreen() {
               </View>
             ) : devices.length === 0 ? (
               <View style={s.emptyList}>
+                <YaverAgentTasksHint
+                  hasZeroDevices
+                  primarySet={!!primaryDeviceId}
+                  onSuggestion={(prompt) => {
+                    setNewTaskText(prompt);
+                    setShowNewTask(true);
+                  }}
+                  onOpenSettings={() => taskRouter.push("/(tabs)/settings" as any)}
+                />
                 <Text style={[s.discoverIcon, { color: c.textMuted }]}>{"\u2318"}</Text>
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Start Coding</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginTop: 8, marginBottom: 20 }]}>
@@ -3441,6 +3705,15 @@ export default function TasksScreen() {
               // every known device gets a row with an explicit status
               // pill (online / stale / offline) and tap-to-retry.
               <View style={s.emptyList}>
+                <YaverAgentTasksHint
+                  hasZeroDevices={false}
+                  primarySet={!!primaryDeviceId}
+                  onSuggestion={(prompt) => {
+                    setNewTaskText(prompt);
+                    setShowNewTask(true);
+                  }}
+                  onOpenSettings={() => taskRouter.push("/(tabs)/settings" as any)}
+                />
                 <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u23FB"}</Text>
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginBottom: 16 }]}>
@@ -3570,7 +3843,12 @@ export default function TasksScreen() {
               setAttachedImages([]);
               setInputFromSpeech(false);
               pendingOpenTaskRef.current = null;
-              setShowNewTask(true);
+              if (multiTargetMode) {
+                setPendingTarget(null);
+                setShowTargetWizard(true);
+              } else {
+                setShowNewTask(true);
+              }
             }}
           >
             <Ionicons name="add" size={28} color="#ffffff" />
@@ -3766,6 +4044,23 @@ export default function TasksScreen() {
           </View>
         </Modal>
 
+        {/* Multi-target wizard. Only mounted when the user opted into
+            "Pick machine + agent per task" in Settings; the FAB opens
+            this first, and the wizard's onConfirmed sets pendingTarget
+            (which locks the runner + model in the compose modal) and
+            opens the compose. The wizard's selectDevice already
+            switches the QUIC client to the chosen device, so sendTask
+            below targets the correct baseUrl without further work. */}
+        <TaskTargetWizard
+          visible={showTargetWizard}
+          onCancel={() => setShowTargetWizard(false)}
+          onConfirmed={(target) => {
+            setPendingTarget(target);
+            setShowTargetWizard(false);
+            setShowNewTask(true);
+          }}
+        />
+
         {/* New Task Modal */}
         <Modal
           visible={showNewTask}
@@ -3778,10 +4073,11 @@ export default function TasksScreen() {
             setNewTaskText("");
             setAttachedImages([]);
             setInputFromSpeech(false);
+            setPendingTarget(null);
           }}
         >
           <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === "ios" ? "padding" : "height"}>
-            <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); }} />
+            <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); setPendingTarget(null); }} />
             <View style={[s.modalContent, { backgroundColor: c.bgCard }]}>
               <View style={s.modalHeader}>
                 <Text style={[s.modalTitle, { color: c.textPrimary }]}>New task</Text>
@@ -3789,6 +4085,27 @@ export default function TasksScreen() {
                     follow-up bar so the user can pick the agent at task
                     creation, not only after the task starts. Opens the
                     same showAgentPicker sheet that follow-ups use. */}
+                {pendingTarget ? (
+                  // Locked target chip: when the wizard chose this
+                  // device + runner, the picker is non-interactive so
+                  // the user can't accidentally redirect a single task
+                  // mid-compose. Re-open the wizard to change it.
+                  <View
+                    style={[
+                      s.agentBadge,
+                      { backgroundColor: c.bgCardElevated, borderColor: c.accent, marginLeft: "auto", marginRight: 10 },
+                    ]}
+                  >
+                    <Text style={[s.agentBadgeText, { color: c.textSecondary }]} numberOfLines={1}>
+                      {pendingTarget.deviceName} · {
+                        pendingTarget.runner === "codex" ? "Codex"
+                          : pendingTarget.runner === "opencode" ? "OpenCode"
+                            : "Claude"
+                      }
+                    </Text>
+                    <Text style={{ color: c.accent, fontSize: 10, marginLeft: 4 }}>·</Text>
+                  </View>
+                ) : (
                 <Pressable
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   style={({ pressed }) => [
@@ -3818,6 +4135,7 @@ export default function TasksScreen() {
                   </Text>
                   <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
                 </Pressable>
+                )}
                 <Pressable
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                   onPress={() => {
@@ -3826,6 +4144,7 @@ export default function TasksScreen() {
                     setNewTaskText("");
                     setAttachedImages([]);
                     setInputFromSpeech(false);
+                    setPendingTarget(null);
                   }}
                   style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
                   accessibilityRole="button"

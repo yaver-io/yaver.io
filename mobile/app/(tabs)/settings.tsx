@@ -27,6 +27,7 @@ import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceConte
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
+import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS, TTS_PROVIDERS } from "../../src/lib/speech";
@@ -116,7 +117,7 @@ export default function SettingsScreen() {
   const KEEP_SANDBOX_SURFACE = true;
   const SHOW_HOST_NOTIFICATION_CHANNELS = false;
   const { user, token, logout, refreshUser } = useAuth();
-  const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices } = useDevice();
+  const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices, multiTargetMode, setMultiTargetMode } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -3151,6 +3152,23 @@ export default function SettingsScreen() {
                 thumbColor="#ffffff"
               />
             </View>
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+            <View style={styles.themeRow}>
+              <View style={{ flex: 1, paddingRight: 12 }}>
+                <Text style={[styles.themeLabel, { color: c.textPrimary }]}>Pick machine + agent per task</Text>
+                <Text style={{ fontSize: 12, color: c.textMuted, marginTop: 3 }}>
+                  When on, the + button asks which machine and coding agent to use. Off = always use the connected device.
+                </Text>
+              </View>
+              <Switch
+                value={multiTargetMode}
+                onValueChange={(value) => {
+                  void setMultiTargetMode(value);
+                }}
+                trackColor={{ false: c.border, true: c.accent }}
+                thumbColor="#ffffff"
+              />
+            </View>
           </View>
         </View>
 
@@ -4432,6 +4450,10 @@ export default function SettingsScreen() {
                   ))
                 )}
               </View>
+
+              <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
+
+              <YaverAgentSettings connected={connectionStatus === "connected" && !activeDevice?.isGuest} />
 
               <View style={[styles.separator, { backgroundColor: c.borderSubtle, marginVertical: 16 }]} />
 
