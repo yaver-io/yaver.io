@@ -1001,12 +1001,32 @@ export default function DevicesScreen() {
       lastSeen: peer.lastSeen && peer.lastSeen > device.lastSeen ? peer.lastSeen : device.lastSeen,
     };
   }).sort((a, b) => {
-    const aActive = activeDevice?.id === a.id ? 1 : 0;
-    const bActive = activeDevice?.id === b.id ? 1 : 0;
-    if (aActive !== bActive) return bActive - aActive;
-    const aPrimary = primaryDeviceId === a.id ? 1 : 0;
-    const bPrimary = primaryDeviceId === b.id ? 1 : 0;
-    if (aPrimary !== bPrimary) return bPrimary - aPrimary;
+    // Sort priority — high to low — keeping the role-aware ordering
+    // even when the user has multiple connected boxes:
+    //   1. CONNECTED primary  (the box new tasks default to)
+    //   2. CONNECTED secondary (watchdog fallback)
+    //   3. CONNECTED active focus (whatever's selected right now)
+    //   4. Other connected (pool clients live but not focused)
+    //   5. Primary offline (still pinned above stale rows)
+    //   6. Secondary offline
+    //   7. Active focus offline
+    //   8. Everything else (registration order preserved)
+    // The previous sort only pinned active + primary — secondary and
+    // other connected boxes fell back to "registration order", which
+    // shoved a connected secondary below disconnected/offline rows.
+    const isConnected = (id: string) =>
+      connectedSet.has(id) || (activeDevice?.id === id && connectionStatus === "connected");
+    const rank = (id: string): number => {
+      const conn = isConnected(id);
+      if (id === primaryDeviceId) return conn ? 0 : 4;
+      if (id === secondaryDeviceId) return conn ? 1 : 5;
+      if (id === activeDevice?.id) return conn ? 2 : 6;
+      if (conn) return 3;
+      return 7;
+    };
+    const ra = rank(a.id);
+    const rb = rank(b.id);
+    if (ra !== rb) return ra - rb;
     return 0;
   });
 

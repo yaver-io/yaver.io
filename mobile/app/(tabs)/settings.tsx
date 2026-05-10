@@ -119,7 +119,20 @@ export default function SettingsScreen() {
   const SHOW_HOST_NOTIFICATION_CHANNELS = false;
   const tabletContent = useTabletContentStyle("regular");
   const { user, token, logout, refreshUser } = useAuth();
-  const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices, multiTargetMode, setMultiTargetMode } = useDevice();
+  const {
+    devices,
+    activeDevice,
+    connectionStatus,
+    disconnect,
+    selectDevice,
+    refreshDevices,
+    multiTargetMode,
+    setMultiTargetMode,
+    primaryDeviceId,
+    setPrimaryDevice,
+    secondaryDeviceId,
+    setSecondaryDevice,
+  } = useDevice();
   const { isDark, toggleTheme } = useTheme();
   const c = useColors();
   const insets = useSafeAreaInsets();
@@ -1816,6 +1829,116 @@ export default function SettingsScreen() {
             <CodingAgentsSection device={activeDevice} />
           </View>
         ) : null}
+
+        {/* Default device routing — primary + secondary picker. The
+            same controls that live as inline pills on each Devices-
+            tab card, surfaced here so the user can re-route without
+            switching tabs. setPrimaryDevice / setSecondaryDevice
+            route through DeviceContext (Convex + watchdog
+            propagation), same path the Devices tab uses, so the
+            change reflects on every signed-in surface immediately. */}
+        {(() => {
+          const eligible = devices.filter((d) => !d.isGuest);
+          if (eligible.length === 0) return null;
+          const primary = eligible.find((d) => d.id === primaryDeviceId) || null;
+          const secondary = eligible.find((d) => d.id === secondaryDeviceId) || null;
+          // Build the selection sheet — used for both Change Primary
+          // and Set/Change Secondary. Displays each non-guest device
+          // by name, calls the appropriate setter, surfaces the
+          // failure inline. Skips the device that's already in the
+          // OTHER role (you can't be primary and secondary at once).
+          const pickDevice = (kind: "primary" | "secondary") => {
+            const excludeId = kind === "primary" ? secondaryDeviceId : primaryDeviceId;
+            const choices = eligible.filter((d) => d.id !== excludeId);
+            const buttons: { text: string; onPress?: () => void; style?: "cancel" | "destructive" }[] = [];
+            for (const d of choices) {
+              const isCurrent = (kind === "primary" ? primaryDeviceId : secondaryDeviceId) === d.id;
+              buttons.push({
+                text: isCurrent ? `${d.name} (current)` : d.name,
+                onPress: async () => {
+                  try {
+                    if (kind === "primary") {
+                      await setPrimaryDevice(d.id);
+                    } else {
+                      await setSecondaryDevice(d.id);
+                    }
+                  } catch (e: any) {
+                    Alert.alert("Failed", e?.message || "Could not save");
+                  }
+                },
+              });
+            }
+            buttons.push({ text: "Cancel", style: "cancel" });
+            Alert.alert(
+              kind === "primary" ? "Pick primary device" : "Pick secondary device",
+              kind === "primary"
+                ? "The primary box is what Yaver auto-connects to and routes new tasks at by default."
+                : "The secondary box is the watchdog fallback when primary is unreachable.",
+              buttons,
+            );
+          };
+          return (
+            <View style={styles.section}>
+              <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Default routing</Text>
+              <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+                <View style={styles.aboutRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>★ Primary</Text>
+                    <Text style={[styles.aboutValue, { color: c.textMuted, fontSize: 12, marginTop: 2 }]}>
+                      {primary ? primary.name : "(none picked)"}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => pickDevice("primary")}
+                    style={({ pressed }) => [
+                      { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: c.accent + "18" },
+                      pressed && { opacity: 0.6 },
+                    ]}
+                  >
+                    <Text style={{ color: c.accent, fontWeight: "600", fontSize: 13 }}>
+                      {primary ? "Change" : "Set"}
+                    </Text>
+                  </Pressable>
+                </View>
+                <View style={[styles.aboutRow, { borderTopWidth: 1, borderTopColor: c.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>☆ Secondary</Text>
+                    <Text style={[styles.aboutValue, { color: c.textMuted, fontSize: 12, marginTop: 2 }]}>
+                      {secondary ? secondary.name : "(none — watchdog disabled)"}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    {secondary ? (
+                      <Pressable
+                        onPress={async () => {
+                          try { await setSecondaryDevice(null); }
+                          catch (e: any) { Alert.alert("Failed", e?.message || "Could not save"); }
+                        }}
+                        style={({ pressed }) => [
+                          { paddingHorizontal: 10, paddingVertical: 8, borderRadius: 8, backgroundColor: c.bgCardElevated },
+                          pressed && { opacity: 0.6 },
+                        ]}
+                      >
+                        <Text style={{ color: c.textSecondary, fontWeight: "600", fontSize: 13 }}>Unmark</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={() => pickDevice("secondary")}
+                      style={({ pressed }) => [
+                        { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: c.accent + "18" },
+                        pressed && { opacity: 0.6 },
+                      ]}
+                    >
+                      <Text style={{ color: c.accent, fontWeight: "600", fontSize: 13 }}>
+                        {secondary ? "Change" : "Add"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            </View>
+          );
+        })()}
 
         {/* Voice Input & TTS */}
         <View style={styles.section}>
