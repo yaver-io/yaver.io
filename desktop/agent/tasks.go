@@ -2229,11 +2229,28 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	} else {
 		// ── Direct execution (default) ──────────────────────────────────
 
-		cmd := exec.CommandContext(ctx, runner.Command, args...)
+		// Optional tmux-attach mode: route eligible runners through an
+		// existing user-owned tmux session so they inherit that session's
+		// auth context (notably macOS Keychain unlocking for Claude Code,
+		// which we can't get from a launchd/ssh-launched daemon).
+		// Opt-in via YAVER_TMUX_RUNNER=<session-name>; falls through to
+		// direct exec when off, tmux missing, or session absent.
+		var cmd *exec.Cmd
+		var tmuxEnvAdditions []string
+		if session := tmuxRunnerReady(); session != "" && tmuxRunnerEligible(runner.RunnerID) {
+			log.Printf("[task %s] tmux mode: dispatching %s into session %q",
+				task.ID, runner.Command, session)
+			cmd, tmuxEnvAdditions = buildTmuxRunnerCommand(ctx, session, task.ID, runner.Command, args)
+		} else {
+			cmd = exec.CommandContext(ctx, runner.Command, args...)
+		}
 		cmd.Dir = taskDir
 
 		// Ensure common tool paths are in PATH for background processes.
 		cmd.Env = taskEnv(task)
+		if len(tmuxEnvAdditions) > 0 {
+			cmd.Env = append(cmd.Env, tmuxEnvAdditions...)
+		}
 
 		// Log the first two argv tokens for context (subcommand + first
 		// flag). Some runners' Args templates collapse to a single token
