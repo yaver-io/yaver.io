@@ -25,6 +25,7 @@ import {
 } from "../../src/lib/quic";
 import { loadAppIfChanged } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
+import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
@@ -33,6 +34,7 @@ import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { shouldShowCurrentReloadIncident, visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -126,7 +128,9 @@ function describeRuntimeFamilySelection(metadata?: Record<string, unknown> | nul
 export default function HotReloadScreen() {
   const c = useColors();
   const router = useRouter();
-  const tabletContent = useTabletContentStyle("regular");
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
+  const projectCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
   const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
@@ -143,6 +147,12 @@ export default function HotReloadScreen() {
   const [devLog, setDevLog] = useState<string[]>([]);
   const [reloadIncidents, setReloadIncidents] = useState<IncidentEvent[]>([]);
   const [reloadOperations, setReloadOperations] = useState<OperationState[]>([]);
+  const [showRemoteBoxPicker, setShowRemoteBoxPicker] = useState(false);
+  const [remoteHermesReady, setRemoteHermesReady] = useState<{
+    enabled: boolean;
+    reason?: string;
+    notes?: string[];
+  } | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   // Stop UX state: "idle" → "stopping" (after Stop tapped) → "stopped" (post
   // /dev/stop with verified=true). Snaps back to "idle" after a 2s success
@@ -200,18 +210,32 @@ export default function HotReloadScreen() {
 
     const poll = async () => {
       try {
-        const [status, session, info] = await Promise.all([
+        const [status, session, info, snapshot] = await Promise.all([
           quicClient.getDevServerStatus(),
           quicClient.getMobileWorkerPreviewSession(),
           quicClient.getInfo(),
+          quicClient.capabilitySnapshot(),
         ]);
         if (mounted) setDevStatus(status?.running || status?.framework ? status : null);
         if (mounted) setWorkerSession(session);
         if (mounted) setAgentInfo(info);
+        if (mounted) {
+          const target = snapshot?.targets?.["mobile-hermes"];
+          setRemoteHermesReady(
+            target
+              ? {
+                  enabled: !!target.enabled,
+                  reason: target.reason,
+                  notes: Array.isArray(target.notes) ? target.notes : undefined,
+                }
+              : null,
+          );
+        }
       } catch {
         if (mounted) setDevStatus(null);
         if (mounted) setWorkerSession(null);
         if (mounted) setAgentInfo(null);
+        if (mounted) setRemoteHermesReady(null);
       }
       try {
         const [operations, incidents] = await Promise.all([
@@ -603,48 +627,56 @@ export default function HotReloadScreen() {
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
-        {agentInfo && (
-          // Tappable so the user can swap which box drives the reload
-          // without leaving the tab — relevant when bouncing between a
-          // Mac mini and a Linux test box for the same project. Drops
-          // into the Devices tab; the multi-device pool keeps the
-          // current connection warm in case the user backs out.
-          <Pressable
-            onPress={() => router.push("/(tabs)/devices")}
-            style={({ pressed }) => [
-              s.card,
-              s.projectCard,
-              {
-                backgroundColor: c.bgCard,
-                borderColor: c.border,
-                marginTop: 12,
-                opacity: pressed ? 0.85 : 1,
-              },
-            ]}
-          >
-            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-              <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
+        <View
+          style={[
+            s.card,
+            s.projectCard,
+            {
+              backgroundColor: c.bgCard,
+              borderColor: c.border,
+              marginTop: 12,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+            <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
+            <Pressable onPress={() => setShowRemoteBoxPicker(true)}>
               <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Switch ›</Text>
-            </View>
-            <Text style={[s.projectMeta, { color: c.textSecondary, marginTop: 4 }]}>
-              {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version || "unknown"}
+            </Pressable>
+          </View>
+          <Text style={[s.projectMeta, { color: c.textSecondary, marginTop: 4 }]}>
+            {(agentInfo?.hostname || activeDevice?.name || "unknown host")} · Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
+          </Text>
+          {remoteHermesReady ? (
+            <Text style={[s.projectMeta, { color: remoteHermesReady.enabled ? c.success : c.warn, marginTop: 4, fontWeight: "600" }]}>
+              {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
             </Text>
-            {agentInfo.workDir ? (
-              <Text
-                style={[
-                  s.projectPath,
-                  { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
-                ]}
-                numberOfLines={1}
-              >
-                {agentInfo.workDir}
-              </Text>
-            ) : null}
-            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
-              Tap to switch to a different machine
+          ) : null}
+          {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
+            <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 2 }]}>
+              {remoteHermesReady.notes[0]}
             </Text>
-          </Pressable>
-        )}
+          ) : null}
+          {agentInfo?.workDir ? (
+            <Text
+              style={[
+                s.projectPath,
+                { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+              ]}
+              numberOfLines={1}
+            >
+              {agentInfo.workDir}
+            </Text>
+          ) : null}
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11 }}>
+              Reload owns box switching. Devices stays for pairing, connection health, and details.
+            </Text>
+            <Pressable onPress={() => router.push("/(tabs)/devices")}>
+              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600" }}>Manage</Text>
+            </Pressable>
+          </View>
+        </View>
 
         {mobileWorkers.length > 0 && (
           <>
@@ -926,13 +958,24 @@ export default function HotReloadScreen() {
         <FlatList
           data={devProjects.filter((p) => devStatus?.workDir !== p.path)}
           keyExtractor={(item) => item.path}
+          // Tablets fan project cards into 2/3-col grids so the wide
+          // canvas isn't a single stretched row of repos. Re-mount on
+          // column-count change.
+          key={`hotreload-cols-${projectCols}`}
+          numColumns={projectCols}
+          columnWrapperStyle={projectCols > 1 ? { gap: 10 } : undefined}
           contentContainerStyle={[s.listContent, tabletContent]}
           renderItem={({ item }) => {
             const isStarting = startingProject === item.name;
 
             return (
               <Pressable
-                style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                style={[
+                  s.card,
+                  s.projectCard,
+                  { backgroundColor: c.bgCard, borderColor: c.border },
+                  projectCols > 1 ? { flex: 1, maxWidth: `${100 / projectCols}%` } : null,
+                ]}
                 onPress={() => handleStartProject(item)}
                 disabled={isStarting}
               >
@@ -1012,6 +1055,11 @@ export default function HotReloadScreen() {
           }
         />
       </View>
+
+      <RemoteBoxPickerModal
+        visible={showRemoteBoxPicker}
+        onClose={() => setShowRemoteBoxPicker(false)}
+      />
 
     </SafeAreaView>
   );

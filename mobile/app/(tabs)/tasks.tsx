@@ -3722,6 +3722,15 @@ export default function TasksScreen() {
           data={displayTasks}
           keyExtractor={(item) => item.id}
           alwaysBounceVertical
+          // Tablet portrait: 2-col grid for created tasks. Tablet
+          // landscape: stays single column because the right pane
+          // already shows the selected chat — a narrow 2-col grid
+          // there would crush card content. Phone: single column.
+          // numColumns can't change without remounting; key forces
+          // remount on rotation.
+          key={`tasks-cols-${tabletDualPane ? 1 : (layout.layoutClass === "tablet-portrait" ? 2 : 1)}`}
+          numColumns={tabletDualPane ? 1 : (layout.layoutClass === "tablet-portrait" ? 2 : 1)}
+          columnWrapperStyle={!tabletDualPane && layout.layoutClass === "tablet-portrait" ? { gap: 12 } : undefined}
           contentContainerStyle={[s.listContent, displayTasks.length === 0 && s.listContentEmpty, tabletDualPane ? null : tabletContent]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
@@ -3959,14 +3968,21 @@ export default function TasksScreen() {
               </View>
             ) : null
           }
-          renderItem={({ item }) => (
-            <TaskCard
-              item={item}
-              onPress={() => setSelectedTask(item)}
-              onDelete={() => handleDeleteTask(item.id)}
-              onComplete={() => handleCompleteTask(item.id)}
-            />
-          )}
+          renderItem={({ item }) => {
+            const inGrid = !tabletDualPane && layout.layoutClass === "tablet-portrait";
+            const card = (
+              <TaskCard
+                item={item}
+                onPress={() => setSelectedTask(item)}
+                onDelete={() => handleDeleteTask(item.id)}
+                onComplete={() => handleCompleteTask(item.id)}
+              />
+            );
+            // Wrap in flex View when 2-col so each cell takes 50%.
+            return inGrid ? (
+              <View style={{ flex: 1, maxWidth: "50%" }}>{card}</View>
+            ) : card;
+          }}
         />
         )}
 

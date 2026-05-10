@@ -29,6 +29,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import {
   quicClient,
   type ErrorRecord,
@@ -46,6 +47,7 @@ type Section = "errors" | "releases" | "machine" | "uptime" | "events" | "flags"
 
 export default function MonitorScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
 
@@ -115,6 +117,7 @@ export default function MonitorScreen() {
 
 function ErrorsPane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [data, setData] = useState<ErrorsListResponse | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [includeResolved, setIncludeResolved] = useState(false);
@@ -183,7 +186,7 @@ function ErrorsPane() {
         data={records}
         keyExtractor={(it) => it.fingerprint}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        contentContainerStyle={{ padding: 12 }}
+        contentContainerStyle={[{ padding: 12 }, tabletContent]}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
@@ -258,6 +261,7 @@ function ErrorCard({
 
 function ReleasesPane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [channel, setChannel] = useState("production");
   const [manifest, setManifest] = useState<ReleaseManifest | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -313,7 +317,7 @@ function ReleasesPane() {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={[{ padding: 12 }, tabletContent]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Channel</Text>
@@ -432,6 +436,7 @@ function ReleasesPane() {
 
 function UptimePane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [monitors, setMonitors] = useState<YaverMonitor[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [newUrl, setNewUrl] = useState("");
@@ -498,7 +503,7 @@ function UptimePane() {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={[{ padding: 12 }, tabletContent]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       <Text style={[styles.sectionLabel, { color: c.textSecondary }]}>Add monitor</Text>
@@ -602,6 +607,7 @@ function UptimePane() {
 
 function EventsPane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [events, setEvents] = useState<TrackEvent[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -623,7 +629,7 @@ function EventsPane() {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={[{ padding: 12 }, tabletContent]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
@@ -672,6 +678,7 @@ function EventsPane() {
 
 function LogsPane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
@@ -745,7 +752,7 @@ function LogsPane() {
         data={entries}
         keyExtractor={(_, i) => String(i)}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        contentContainerStyle={{ padding: 12, paddingTop: 0 }}
+        contentContainerStyle={[{ padding: 12, paddingTop: 0 }, tabletContent]}
         ListEmptyComponent={
           <View style={styles.empty}>
             <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
@@ -781,6 +788,7 @@ function LogsPane() {
 
 function MachinePane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [health, setHealth] = useState<MachineHealth | null>(null);
   const [peers, setPeers] = useState<PeerState[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -807,7 +815,7 @@ function MachinePane() {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={[{ padding: 12 }, tabletContent]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       {health == null ? (
@@ -966,6 +974,7 @@ function MachinePane() {
 
 function FlagsPane() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const [flags, setFlags] = useState<YaverFlag[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -1031,7 +1040,7 @@ function FlagsPane() {
 
   return (
     <ScrollView
-      contentContainerStyle={{ padding: 12 }}
+      contentContainerStyle={[{ padding: 12 }, tabletContent]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
     >
       {flags.length === 0 ? (

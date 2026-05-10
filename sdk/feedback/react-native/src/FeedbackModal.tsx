@@ -12,6 +12,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
 import {
@@ -64,6 +65,11 @@ type MachineCardState = {
 };
 
 export const FeedbackModal: React.FC = () => {
+  const { width: winW, height: winH } = useWindowDimensions();
+  const isTablet = Math.min(winW, winH) >= 600;
+  // Tablet color/icon picker fans out to 5/6 cols — 31% (3-col)
+  // looks empty on a 1024pt iPad. Mobile keeps 3-col.
+  const iconOptionWidthOverride = isTablet ? '18%' : undefined;
   const [visible, setVisible] = useState(false);
   const [action, setAction] = useState<ActionState>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -679,7 +685,21 @@ export const FeedbackModal: React.FC = () => {
               pointerEvents="box-none"
             >
             <Pressable
-              style={styles.modal}
+              // Tablet: cap modal width and center as a card-style
+              // sheet rather than a phone bottom sheet that stretches
+              // across a 12.9" iPad. Phone behaviour unchanged.
+              style={[
+                styles.modal,
+                isTablet
+                  ? {
+                      width: '100%',
+                      maxWidth: 640,
+                      alignSelf: 'center',
+                      borderTopLeftRadius: 22,
+                      borderTopRightRadius: 22,
+                    }
+                  : null,
+              ]}
               onPress={(e) => {
                 e.stopPropagation();
                 Keyboard.dismiss();
@@ -785,6 +805,7 @@ export const FeedbackModal: React.FC = () => {
                         }}
                         style={[
                           styles.iconOption,
+                          iconOptionWidthOverride ? { width: iconOptionWidthOverride } : null,
                           selected && styles.iconOptionSelected,
                         ]}
                       >

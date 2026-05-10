@@ -18,6 +18,7 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type HealthMonitorTarget } from "../../src/lib/quic";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 const STATUS_COLORS: Record<string, string> = {
   up: "#22c55e",
@@ -44,7 +45,9 @@ export default function HealthMonitorScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const tabletContent = useTabletContentStyle("regular");
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
+  const monitorCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
@@ -342,7 +345,17 @@ export default function HealthMonitorScreen() {
         <FlatList
           data={targets}
           keyExtractor={(item) => item.id}
-          renderItem={renderTarget}
+          // Tablets fan health monitor cards into 2/3-col grids.
+          // numColumns can't change in-flight; key forces remount.
+          key={`hm-cols-${monitorCols}`}
+          numColumns={monitorCols}
+          columnWrapperStyle={monitorCols > 1 ? { gap: 10 } : undefined}
+          renderItem={({ item }) => {
+            const node = renderTarget({ item });
+            return monitorCols > 1 ? (
+              <View style={{ flex: 1, maxWidth: `${100 / monitorCols}%` }}>{node}</View>
+            ) : node;
+          }}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={ListEmpty}
           contentContainerStyle={[{ padding: 16, gap: 10 }, tabletContent]}

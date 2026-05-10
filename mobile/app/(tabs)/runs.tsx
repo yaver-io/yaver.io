@@ -24,6 +24,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import {
   quicClient,
   TestkitAutoFix,
@@ -42,6 +43,7 @@ type Tab = "specs" | "history" | "flake" | "alerts" | "devices" | "fixes" | "set
 
 export default function RunsScreen() {
   const c = useColors();
+  const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus } = useDevice();
   const isConnected = connectionStatus === "connected";
 
@@ -304,7 +306,7 @@ export default function RunsScreen() {
           data={selectedProject ? specs.filter(sp => sp.path.startsWith(selectedProject)) : specs}
           keyExtractor={(it) => it.path}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListEmptyComponent={
             <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
               No specs found. Create yaver-tests/example.test.yaml in your repo.
@@ -327,7 +329,7 @@ export default function RunsScreen() {
           data={history.slice().reverse()}
           keyExtractor={(it) => it.started_at}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListEmptyComponent={
             <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
               No runs yet. Tap "Run all specs" on the Specs tab.
@@ -381,7 +383,7 @@ export default function RunsScreen() {
           data={alerts}
           keyExtractor={(it) => it.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListHeaderComponent={
             markers.length > 0 ? (
               <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginBottom: 12 }]}>
@@ -455,7 +457,7 @@ export default function RunsScreen() {
           data={flake}
           keyExtractor={(it) => it.path}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListEmptyComponent={
             <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
               No history yet — run a few times to see flake stats.
@@ -481,7 +483,7 @@ export default function RunsScreen() {
           data={devices}
           keyExtractor={(it) => it.UDID}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListEmptyComponent={
             <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
               No USB devices connected. Plug your iPhone or Android in and pull to refresh.
@@ -505,7 +507,7 @@ export default function RunsScreen() {
           data={autofixes}
           keyExtractor={(it) => it.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListEmptyComponent={
             <Text style={[styles.muted, { color: c.textMuted, textAlign: "center", marginTop: 32 }]}>
               No autonomous fixes yet. The agent records here whenever it patches a broken spec.
@@ -559,7 +561,7 @@ export default function RunsScreen() {
           data={integrations}
           keyExtractor={(it) => it.name}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={c.textPrimary} />}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={[{ padding: 12 }, tabletContent]}
           ListHeaderComponent={
             <Text style={[styles.muted, { color: c.textMuted, marginBottom: 12 }]}>
               {"Run `yaver install <name>` from your terminal to install missing pieces."}

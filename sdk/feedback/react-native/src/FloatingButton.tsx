@@ -11,6 +11,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { YaverFeedback } from './YaverFeedback';
 import { FixReport } from './FixReport';
@@ -58,6 +59,15 @@ export interface FloatingButtonProps {
 
 const DEFAULT_SIZE = 40;
 const DEFAULT_COLOR = '#6366f1';
+
+// Tablet detection — short-edge dp >= 600 means iPad / 7"+ Android
+// tablet / Z Fold open. The SDK has no app-side responsive context
+// to lean on (it's a guest in third-party apps), so we infer
+// locally and bump the button + panel to tablet sizes.
+const TABLET_SHORT_EDGE = 600;
+function isTabletWindow(width: number, height: number): boolean {
+  return Math.min(width, height) >= TABLET_SHORT_EDGE;
+}
 const DEFAULT_PANEL_BG = '#2d2d2d';
 
 /**
@@ -101,7 +111,16 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   healthCheckInterval = 5000,
   panelBackgroundColor,
 }) => {
-  const { width: screenWidth } = Dimensions.get('window');
+  // Read window size live so the SDK overlay re-pins itself when
+  // the host app rotates or splits. The legacy snapshot via
+  // Dimensions.get only ran once and parked the button off-screen
+  // after orientation changes on iPad.
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isTablet = isTabletWindow(screenWidth, screenHeight);
+  // Tablets get a larger touch target and a wider panel — phones
+  // keep the existing 40 / 280 defaults so guest apps aren't
+  // disrupted on small screens.
+  const effectiveSize = isTablet ? Math.max(size, 52) : size;
   const defaultX = initialPosition?.x ?? 10;
   const defaultY = initialPosition?.y ?? 90;
 
@@ -535,7 +554,12 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
   const buttonIcon = icon ?? 'y';
   const btnBg = isConnected ? color : `${color}88`;
 
-  const panelWidth = fullSize ? screenWidth - 24 : 280;
+  // Panel sizing — tablets get a wider compact panel (420) and a
+  // capped full-size panel (max 720 instead of full window) so the
+  // overlay doesn't dwarf the host app on a 12.9" iPad.
+  const compactPanelWidth = isTablet ? 420 : 280;
+  const fullPanelWidth = isTablet ? Math.min(screenWidth - 24, 720) : screenWidth - 24;
+  const panelWidth = fullSize ? fullPanelWidth : compactPanelWidth;
 
   return (
     <Animated.View
@@ -730,7 +754,7 @@ export const FloatingButton: React.FC<FloatingButtonProps> = ({
         style={[
           s.button,
           isTerminal ? s.buttonTerminal : s.buttonMinimal,
-          { backgroundColor: btnBg, width: size, height: size },
+          { backgroundColor: btnBg, width: effectiveSize, height: effectiveSize },
           !isTerminal && { borderRadius: size / 2 },
         ]}
         activeOpacity={0.7}
