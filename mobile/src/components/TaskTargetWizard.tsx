@@ -257,14 +257,17 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     }
   }, []);
 
-  // Single-device shortcut: if there's exactly one online + authed
-  // device, auto-pick it on open. Inline agent picker handles the
-  // rest — no pane swap.
+  // Single-device shortcut: if there's exactly one machine in the
+  // wizard's eligible list, auto-pick it on open. Inline agent
+  // picker handles the rest — no pane swap. Aligned with
+  // eligibleDevices (not the raw online filter) so the auto-pick
+  // fires whenever the user-visible list collapses to a single row,
+  // not whenever the underlying device count happens to be 1.
   React.useEffect(() => {
     if (!visible || pane !== "unified") return;
-    const eligible = devices.filter((d) => d.online && !d.needsAuth);
-    if (eligible.length === 1) {
-      const only = eligible[0];
+    if (eligibleDevices.length === 1) {
+      const only = eligibleDevices[0];
+      if (pickedDevice?.id === only.id) return;
       setPickedDevice(only);
       const seed = primaryRunnerByDevice[only.id];
       if (seed) {
@@ -273,7 +276,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
       }
       void runAudit(only);
     }
-  }, [visible, pane, devices, primaryRunnerByDevice, runAudit]);
+  }, [visible, pane, eligibleDevices, pickedDevice?.id, primaryRunnerByDevice, runAudit]);
 
   // Keep `pickedModel` in lockstep with `pickedRunner`. When the user
   // toggles between Claude Code and Codex (or the auto-seed flips
@@ -397,17 +400,22 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // ─────────────────────────────────────────────────────────────────
   // Render
 
-  // Filter to "actually usable" devices: live pool connection + same
-  // user + auth ready. The user's explicit ask was "only show
-  // connected machines" — a stale heartbeat row is noise here. We
-  // OR in the focused activeDevice as a defensive fallback during
-  // the brief window before the manager pool publishes
-  // connectedDeviceIds.
+  // Eligible = either pool-connected (instant target) OR online with a
+  // fresh heartbeat (tap-to-connect target). User asked for "show
+  // other at least live (heartbeat machines) as well too" — those
+  // boxes are tappable; we connect on pick. Devices needing yaver
+  // auth or fully offline still get filtered out so the list stays
+  // honest. Sort connected first, then by name.
   const eligibleDevices = React.useMemo(() => {
     const filtered = devices.filter((d) =>
-      !d.needsAuth && (connectedSet.has(d.id) || activeDevice?.id === d.id),
+      !d.needsAuth && (connectedSet.has(d.id) || activeDevice?.id === d.id || d.online),
     );
-    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+    return filtered.sort((a, b) => {
+      const aLive = connectedSet.has(a.id) ? 0 : 1;
+      const bLive = connectedSet.has(b.id) ? 0 : 1;
+      if (aLive !== bLive) return aLive - bLive;
+      return a.name.localeCompare(b.name);
+    });
   }, [devices, connectedSet, activeDevice?.id]);
 
   // Unified pane: a single scrolling view that lists every CONNECTED
@@ -491,7 +499,11 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                       {d.alias ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  @{d.alias}</Text> : null}
                     </Text>
                     <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                      {connectedSet.has(d.id) ? "Connected" : d.online ? "Online" : "Offline"}
+                      {connectedSet.has(d.id)
+                        ? "Connected"
+                        : d.online
+                          ? "Live · tap to connect"
+                          : "Offline"}
                       {activeDevice?.id === d.id ? " · Focused" : ""}
                       {versionSuffix && !outdated ? versionSuffix : ""}
                     </Text>
@@ -781,13 +793,25 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
               borderBottomColor: c.border,
             }}
           >
-            <Pressable onPress={onCancel} hitSlop={10}>
-              <Text style={{ color: c.textMuted, fontSize: 14 }}>Cancel</Text>
+            <Pressable
+              onPress={onCancel}
+              hitSlop={10}
+              style={({ pressed }) => ({
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 8,
+                borderWidth: 1,
+                borderColor: c.border,
+                backgroundColor: pressed ? c.bgCard : "transparent",
+                opacity: pressed ? 0.85 : 1,
+              })}
+            >
+              <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>Cancel</Text>
             </Pressable>
-            <Text style={{ color: c.textMuted, fontSize: 12 }}>
+            <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "700" }}>
               {pane === "switching" ? "Switching" : "New task"}
             </Text>
-            <View style={{ width: 50 }} />
+            <View style={{ width: 70 }} />
           </View>
           {pane === "unified" && renderUnifiedPane()}
           {pane === "switching" && renderSwitchingPane()}

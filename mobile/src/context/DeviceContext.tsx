@@ -2698,6 +2698,56 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // Multiple devices + neither primary nor secondary online → do nothing; UI asks the user to pick.
   }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
 
+  // Background "warm the pool" pass. After the focused auto-connect
+  // above settles, this effect quietly opens additional connections
+  // for every other online + authed + non-guest device the user has,
+  // so the multi-target wizard and Tasks tab can route to siblings
+  // without a cold-connect penalty. The user explicitly asked for
+  // "at opening app try to connect both" — without this, only the
+  // single focused box came up at boot.
+  //
+  // Implementation: walk devices each time they refresh, pick the
+  // ones that look healthy AND aren't already pooled, and ensure
+  // their per-device QuicClient is connected. Errors swallow
+  // silently — a failed sibling shouldn't pollute lastError or take
+  // the focused connection down with it. We don't change focus; the
+  // existing focused-auto-connect logic owns that.
+  useEffect(() => {
+    if (!token || !relaysReady || userDisconnected) return;
+    const candidates = devices.filter((d) =>
+      d.online &&
+      !d.needsAuth &&
+      !d.isGuest &&
+      !connectedDeviceIds.includes(d.id) &&
+      !unreachableSet.has(d.id),
+    );
+    if (candidates.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const device of candidates) {
+        if (cancelled) return;
+        const client = connectionManager.clientFor(device.id);
+        if (client.isConnected) continue;
+        try {
+          await client.connect(
+            device.host,
+            device.port,
+            token,
+            device.id,
+            device.lanIps,
+            tunnelServersForDevice(device),
+          );
+        } catch {
+          // Silent. The sibling stays unpooled; user can tap it
+          // explicitly from Devices tab if they need it later.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [devices, token, relaysReady, userDisconnected, connectedDeviceIds, unreachableSet]);
+
   // Trigger immediate reconnection on network change (WiFi↔cellular roaming,
   // Wi-Fi → Wi-Fi roam between APs (same SSID, new IP), VPN/Tailscale toggle).
   useEffect(() => {
