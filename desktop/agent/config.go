@@ -93,6 +93,15 @@ type Config struct {
 	// goroutines or who've wired the same checks elsewhere.
 	DisableDiskHealth       bool `json:"disable_disk_health,omitempty"`
 	DisableHeartbeatWatcher bool `json:"disable_heartbeat_watcher,omitempty"`
+	// DisableAutoPublicIP suppresses the agent's "probe my own external
+	// IPv4 at startup and append it to publicEndpoints" behavior.
+	// Default OFF (auto-publish IS on) because Yaver's wedge for
+	// remote primaries is "user reaches the box from their phone, no
+	// SSH" — a device with zero working publicEndpoints is invisible
+	// the moment a Cloudflare tunnel rotates or a relay subdomain
+	// loses DNS routing. Set true if you route exclusively through
+	// Cloudflare and don't want the bare host:port advertised.
+	DisableAutoPublicIP bool `json:"disable_auto_public_ip,omitempty"`
 
 	// BootstrapSecretHash is the SHA-256 of a pre-shared
 	// secret used by the unauthenticated /auth/recover

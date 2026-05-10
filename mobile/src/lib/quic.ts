@@ -14,6 +14,14 @@
 
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  loadConnectionCache,
+  persistConnectionCache,
+  probeBaseFor,
+  probeHeadersFor,
+  type ConnectionCacheEntry,
+  type ConnectionMode as CacheConnectionMode,
+} from "./connectionCache";
 import { cacheTaskList, cacheTaskOutput, getCachedTaskList, getDeletedTaskIds } from "./storage";
 import { beaconListener } from "./beacon";
 import NetInfo from "@react-native-community/netinfo";
@@ -944,7 +952,7 @@ export interface ExecOptions {
 export type ConnectionState = "disconnected" | "connecting" | "connected" | "error";
 export type ConnectionMode = "direct" | "relay" | "tunnel" | null;
 /** How the connection was established — tracked for diagnostics and faster reconnection. */
-export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-tailscale" | "relay" | "cloudflare-tunnel" | null;
+export type ConnectionPath = "lan-beacon" | "lan-convex-ip" | "lan-beacon-upgrade" | "lan-heartbeat" | "lan-tailscale" | "lan-cached" | "relay" | "cloudflare-tunnel" | null;
 
 export type OutputCallback = (taskId: string, line: string) => void;
 export type ConnectionStateCallback = (state: ConnectionState) => void;
@@ -1014,6 +1022,14 @@ export class QuicClient {
   private _isForeground = true;
   private readonly baseBackoffMs = 1000;
   private readonly _maxReconnectAttempts = 5;
+  // True once we've successfully reached this device's agent at least
+  // once — either earlier this session OR persisted from a prior session
+  // via connectionCache.hadSuccess. Drives the reconnect policy: a device
+  // that has ever talked to us retries forever (capped backoff), since
+  // "stuck CONNECTING with no further attempts" is the worst UX. A device
+  // we've never reached still gives up at _maxReconnectAttempts so we
+  // don't drain battery probing a wrong host the user just typo'd.
+  private _hadSuccessfulConnect = false;
 
   private _connectionMode: ConnectionMode = null;
   private _connectionPath: ConnectionPath = null;
@@ -1088,6 +1104,7 @@ export class QuicClient {
     lanIps?: string[],
     sessionTunnels?: TunnelServer[],
   ): void {
+    const isReattach = this.deviceId === deviceId;
     this.host = host;
     this.port = port;
     this.token = token;
@@ -1096,6 +1113,18 @@ export class QuicClient {
       ? lanIps.filter((s) => typeof s === "string" && s.length > 0)
       : [];
     this.setSessionTunnelServers(sessionTunnels);
+    // Hydrate the "had successful connect" flag from the persisted cache
+    // so the indefinite-retry policy survives an app restart. Switching
+    // to a different deviceId resets the in-memory flag — we only trust
+    // a hadSuccess=true entry that matches the device we're priming for.
+    if (!isReattach) {
+      this._hadSuccessfulConnect = false;
+      void loadConnectionCache(deviceId).then((cached) => {
+        if (cached?.hadSuccess && this.deviceId === deviceId) {
+          this._hadSuccessfulConnect = true;
+        }
+      });
+    }
   }
 
   /** Snapshot of the configured relay servers (highest priority first). Used
@@ -1425,6 +1454,11 @@ export class QuicClient {
     this.sessionTunnelServers = [];
     this._tunnelUrl = null;
     this._tunnelHeaders = {};
+    // Drop the in-memory "had successful connect" flag — primeTarget
+    // re-hydrates it from the persisted cache on the next attach. The
+    // cache itself is intentionally preserved across disconnect so a
+    // sign-out/sign-in round-trip doesn't lose the fast-path.
+    this._hadSuccessfulConnect = false;
   }
 
   // ── OpenCode config API ────────────────────────────────────────────
@@ -3419,10 +3453,11 @@ export class QuicClient {
     return res.json();
   }
 
-  async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
+  async capabilitySnapshot(target?: string): Promise<CapabilitySnapshot | null> {
     if (!this.isConnected && !this.hasConnectionInfo) return null;
     try {
-      const res = await fetch(`${this.baseUrl}/capabilities/snapshot`, { headers: this.authHeaders });
+      const base = this.peerEndpoint(target, "/capabilities/snapshot");
+      const res = await fetch(base, { headers: this.authHeaders });
       if (!res.ok) return null;
       const data = await res.json();
       return (data?.snapshot as CapabilitySnapshot) ?? null;
@@ -5103,14 +5138,36 @@ export class QuicClient {
       // Strategy: direct-first on WiFi (lowest latency), relay-fallback.
       // On cellular: skip direct, go straight to relay.
 
-      // 1. Try direct connection first — race every candidate IP in parallel.
-      //    Candidates: LAN beacon (freshest), heartbeat-advertised localIps
-      //    (Wi-Fi + Tailscale + Ethernet), then the Convex-stored primary
-      //    host. Whoever returns 200 from /health first wins; the others
-      //    are abandoned. This collapses the old serial 2s+2s waterfall
-      //    into a single ~2s window and survives stale Convex IPs because
-      //    the freshest signal wins, not the first-tried one.
-      if (isWifi && !this._forceRelay) {
+      // 0. Cached fast-path — if a previous session for this device
+      //    finished a successful connect, we have its exact transport
+      //    coordinates persisted (host:port for direct, full URL +
+      //    headers for tunnel/relay). Probe that endpoint with a tight
+      //    2s timeout. If it answers /health, we're done in one round-
+      //    trip without waiting for the candidate race. If it doesn't,
+      //    fall through to the normal flow — the cached path may have
+      //    rotated. Direct-mode entries are skipped on cellular since
+      //    a cached LAN IP can't possibly route from outside that LAN
+      //    and would just burn the timeout window.
+      if (this.deviceId) {
+        const cached = await loadConnectionCache(this.deviceId);
+        if (cached && this.cachedPathStillUsable(cached, isWifi)) {
+          const winner = await this.probeCachedPath(cached);
+          if (winner) {
+            this.applyCachedPath(cached, winner.authExpired);
+            connected = true;
+            console.log(`[QUIC] Cached fast-path (${cached.mode}) — skipped candidate race`);
+          }
+        }
+      }
+
+      // 1. Try direct connection first — race every direct candidate IP in
+      //    parallel. Candidates: LAN beacon (freshest), heartbeat-advertised
+      //    localIps (Wi-Fi + Tailscale + Ethernet), then the Convex-stored
+      //    primary host. Whoever returns 200 from /health first wins; the
+      //    others are abandoned. This collapses the old serial 2s+2s
+      //    waterfall into a single ~2s window and survives stale Convex IPs
+      //    because the freshest signal wins, not the first-tried one.
+      if (!connected && isWifi && !this._forceRelay) {
         const winner = await this.raceDirectCandidates();
         if (winner) {
           this.host = winner.ip;
@@ -5201,13 +5258,130 @@ export class QuicClient {
 
       this.setReconnectAttempt(0);
       this.setConnectionState("connected");
+      this._hadSuccessfulConnect = true;
       this.startPolling();
+      // Persist the exact coordinates that worked so the next session can
+      // try them first instead of waiting through the candidate race
+      // again. Best-effort — losing the cache is fine, it just costs us
+      // one extra round-trip on the following connect.
+      void this.persistConnectionSnapshot();
       // Best-effort vault sync on connect
       this.syncVault();
     } catch {
       this.setConnectionState("error");
       this.scheduleReconnect();
     }
+  }
+
+  /** True when the cached path could plausibly route from our current
+   *  network. Direct-mode (LAN IP) entries are pointless on cellular. */
+  private cachedPathStillUsable(cached: ConnectionCacheEntry, isWifi: boolean): boolean {
+    if (cached.mode === "direct") return isWifi;
+    return true;
+  }
+
+  /** Probes the cached endpoint with /health. Returns null on timeout
+   *  or non-200. authExpired surfaces the agent's "I have a token but
+   *  Convex rejected it" signal so the UI can prompt re-auth without
+   *  treating the connection as dead. */
+  private async probeCachedPath(
+    cached: ConnectionCacheEntry
+  ): Promise<{ authExpired: boolean } | null> {
+    const base = probeBaseFor(cached);
+    if (!base) return null;
+    const headers: Record<string, string> = {
+      ...probeHeadersFor(cached),
+      ...this.authHeaders,
+    };
+    try {
+      const res = await this.fetchWithTimeout(`${base}/health`, { headers }, 2500);
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => ({} as { authExpired?: boolean }));
+      return { authExpired: !!body.authExpired };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Mirror the post-success state setters from the candidate race so
+   *  baseUrl + connection mode reflect the cached path. Keeps the rest
+   *  of the client (poller, exec, etc.) oblivious to the fast-path. */
+  private applyCachedPath(cached: ConnectionCacheEntry, authExpired: boolean): void {
+    this.agentAuthExpired = authExpired;
+    if (cached.mode === "direct" && cached.host && cached.port) {
+      this.host = cached.host;
+      this.port = cached.port;
+      this.activeRelayUrl = null;
+      this.activeRelayPassword = null;
+      this._tunnelUrl = null;
+      this._tunnelHeaders = {};
+      this.setConnectionMode("direct");
+      this._connectionPath = "lan-cached";
+      return;
+    }
+    if (cached.mode === "tunnel" && cached.tunnelUrl) {
+      this.activeRelayUrl = null;
+      this.activeRelayPassword = null;
+      this._tunnelUrl = cached.tunnelUrl;
+      this._tunnelHeaders = cached.tunnelHeaders ? { ...cached.tunnelHeaders } : {};
+      this.setConnectionMode("tunnel");
+      this._connectionPath = "cloudflare-tunnel";
+      return;
+    }
+    if (cached.mode === "relay" && cached.relayUrl) {
+      this.activeRelayUrl = cached.relayUrl;
+      this.activeRelayPassword = cached.relayPassword || null;
+      this._tunnelUrl = null;
+      this._tunnelHeaders = {};
+      this.setConnectionMode("relay");
+      this._connectionPath = "relay";
+    }
+  }
+
+  /** Captures the just-succeeded transport into AsyncStorage. Mode is
+   *  derived from which of {tunnelUrl, activeRelayUrl, host:port} is
+   *  populated — same precedence as `get baseUrl()`. */
+  private async persistConnectionSnapshot(): Promise<void> {
+    if (!this.deviceId) return;
+    let mode: CacheConnectionMode;
+    let entry: ConnectionCacheEntry;
+    if (this._tunnelUrl) {
+      mode = "tunnel";
+      entry = {
+        v: 1,
+        deviceId: this.deviceId,
+        mode,
+        tunnelUrl: this._tunnelUrl,
+        tunnelHeaders: { ...this._tunnelHeaders },
+        ts: Date.now(),
+        hadSuccess: true,
+      };
+    } else if (this.activeRelayUrl) {
+      mode = "relay";
+      entry = {
+        v: 1,
+        deviceId: this.deviceId,
+        mode,
+        relayUrl: this.activeRelayUrl,
+        relayPassword: this.activeRelayPassword || undefined,
+        ts: Date.now(),
+        hadSuccess: true,
+      };
+    } else if (this.host && this.port) {
+      mode = "direct";
+      entry = {
+        v: 1,
+        deviceId: this.deviceId,
+        mode,
+        host: this.host,
+        port: this.port,
+        ts: Date.now(),
+        hadSuccess: true,
+      };
+    } else {
+      return;
+    }
+    await persistConnectionCache(entry);
   }
 
   /**
@@ -5252,11 +5426,21 @@ export class QuicClient {
       return;
     }
 
-    // Give up after max retries — attempt `_maxReconnectAttempts` just failed.
+    // Give-up policy:
+    //   never-connected device → stop after _maxReconnectAttempts so a
+    //     wrong-host typo doesn't drain battery probing nothing
+    //   previously-connected device (this session OR persisted from a
+    //     prior session) → keep retrying forever with capped backoff,
+    //     because "stuck CONNECTING with no further attempts" is the
+    //     worst UX for a remote primary the user only reaches from
+    //     their phone. The agent is almost certainly transient-down.
     if (this._reconnectAttempt >= this._maxReconnectAttempts) {
-      console.log("[QUIC] Max reconnect attempts reached, giving up");
-      this.setConnectionState("error");
-      return;
+      if (!this._hadSuccessfulConnect) {
+        console.log("[QUIC] Max reconnect attempts reached for never-connected device, giving up");
+        this.setConnectionState("error");
+        return;
+      }
+      console.log(`[QUIC] Reconnect attempt ${this._reconnectAttempt} for previously-reachable device — keeping at it`);
     }
 
     // Exponential backoff indexed by the attempt that just failed (1, 2, 4, 8… capped),
