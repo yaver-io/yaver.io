@@ -270,7 +270,7 @@ export default function TabLayout() {
         options={{
           title: "Projects",
           tabBarIcon: ({ focused }) => (
-            <TabIcon label="Projects" focused={focused} showGreenDot={devServerRunning} />
+            <TabIcon label="Projects" focused={focused} />
           ),
         }}
       />
