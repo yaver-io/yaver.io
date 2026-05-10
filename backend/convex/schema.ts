@@ -251,6 +251,10 @@ export default defineSchema({
       status: v.string(),
       title: v.string(),
     }))),
+    // Durable device capability inventory: which first-class coding CLIs
+    // are installed on this machine. Intentionally narrow: presence only,
+    // never auth state or credentials.
+    installedRunnerIds: v.optional(v.array(v.string())),
     lastHeartbeat: v.number(),
     // Real-time tunnel state pushed by the relay server when an
     // agent's QUIC tunnel registers / deregisters. Optional because

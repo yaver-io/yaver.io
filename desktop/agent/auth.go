@@ -1508,16 +1508,18 @@ func RegisterDevice(baseURL string, r RegisterDeviceRequest) (string, error) {
 var ErrAuthExpired = fmt.Errorf("auth token expired (401)")
 
 // SendHeartbeat sends a heartbeat to the Convex backend so the device stays
-// marked as online. Includes active runner info, the preferred outbound IP
-// (quicHost), and every reachable LAN/Tailscale/Ethernet address the agent
-// has (localIps) so mobile clients can race them in parallel during connect.
-// Returns ErrAuthExpired if the server returns 401.
-func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture) error {
+// marked as online. Includes active runner info, a minimal installed-runner
+// inventory, the preferred outbound IP (quicHost), and every reachable
+// LAN/Tailscale/Ethernet address the agent has (localIps) so mobile clients
+// can race them in parallel during connect. Returns ErrAuthExpired if the
+// server returns 401.
+func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, installedRunnerIDs []string, quicHost string, localIps []string, publicEndpoints []string, recoveryPosture *RecoveryTransportPosture) error {
 	payload := map[string]interface{}{
-		"deviceId":     deviceID,
-		"runners":      runners,
-		"hardwareId":   HardwareID(),
-		"agentVersion": version,
+		"deviceId":           deviceID,
+		"runners":            runners,
+		"installedRunnerIds": installedRunnerIDs,
+		"hardwareId":         HardwareID(),
+		"agentVersion":       version,
 	}
 	if profile := hardwareProfileForHeartbeat(); profile != nil {
 		payload["hardwareProfile"] = profile

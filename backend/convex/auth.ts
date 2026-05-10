@@ -285,6 +285,7 @@ async function mergeUserInto(
         isOnline: device.isOnline,
         runnerDown: device.runnerDown ?? existingTargetDevice.runnerDown,
         runners: device.runners ?? existingTargetDevice.runners,
+        installedRunnerIds: device.installedRunnerIds ?? existingTargetDevice.installedRunnerIds,
         lastHeartbeat: Math.max(device.lastHeartbeat, existingTargetDevice.lastHeartbeat),
         hardwareId: device.hardwareId || existingTargetDevice.hardwareId,
       });

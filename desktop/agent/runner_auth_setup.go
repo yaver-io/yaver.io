@@ -26,6 +26,7 @@ type runnerAuthSetupRequest struct {
 	InstallIfMissing     *bool  `json:"install_if_missing,omitempty"`
 	CodexLogin           *bool  `json:"codex_login,omitempty"`
 	SetupMCP             *bool  `json:"setup_mcp,omitempty"`
+	AllowInstallOnly     *bool  `json:"allow_install_only,omitempty"`
 }
 
 type runnerAuthSetupResult struct {
@@ -317,9 +318,23 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	result.Detail = row.Detail
 
 	if req.Runner == "claude" && !row.AuthConfigured {
+		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
+			result.Warning = "Claude Code was installed, but authentication is still required."
+			if strings.TrimSpace(result.Detail) == "" {
+				result.Detail = "Open the browser/device login flow to finish Claude Code setup."
+			}
+			return result, nil
+		}
 		return result, fmt.Errorf("Claude Code is installed but no auth was configured. Provide --anthropic-api-key, --anthropic-auth-token, or --claude-code-oauth-token")
 	}
 	if req.Runner == "codex" && !row.AuthConfigured {
+		if boolOrDefault(req.AllowInstallOnly, false) && row.Installed {
+			result.Warning = "Codex was installed, but authentication is still required."
+			if strings.TrimSpace(result.Detail) == "" {
+				result.Detail = "Open the browser/device login flow or save OPENAI_API_KEY to finish Codex setup."
+			}
+			return result, nil
+		}
 		return result, fmt.Errorf("Codex is installed but no auth was configured. Provide --openai-api-key or complete native Codex login first")
 	}
 	if req.Runner == "claude" {

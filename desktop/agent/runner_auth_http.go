@@ -194,5 +194,9 @@ func (s *HTTPServer) handleRunnerAuthSetup(w http.ResponseWriter, r *http.Reques
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if result.InstallAttempt {
+		markInstalledRunnerInventoryDirty()
+	}
+	s.TriggerHeartbeat()
 	jsonReply(w, http.StatusOK, result)
 }

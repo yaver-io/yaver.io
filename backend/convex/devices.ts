@@ -82,6 +82,7 @@ type ListedDevice = {
   needsAuth: boolean;
   runnerDown: boolean;
   runners: Doc<"devices">["runners"];
+  installedRunnerIds?: string[];
   lastHeartbeat: number;
   lastTunnelEvent?: Doc<"devices">["lastTunnelEvent"];
   isGuest: boolean;
@@ -205,6 +206,10 @@ function mergeListedDevices(a: ListedDevice, b: ListedDevice): ListedDevice {
     localIps: [...new Set([...(a.localIps || []), ...(b.localIps || [])].filter(Boolean))],
     publicEndpoints: [...new Set([...(a.publicEndpoints || []), ...(b.publicEndpoints || [])].filter(Boolean))],
     runners: (base.runners && base.runners.length > 0) ? base.runners : other.runners,
+    installedRunnerIds:
+      (base.installedRunnerIds && base.installedRunnerIds.length > 0)
+        ? base.installedRunnerIds
+        : other.installedRunnerIds,
     sharedWithGuests: base.sharedWithGuests ?? other.sharedWithGuests,
     sharedGuests: [
       ...new Map(
@@ -596,6 +601,7 @@ export const heartbeat = mutation({
       status: v.string(),
       title: v.string(),
     }))),
+    installedRunnerIds: v.optional(v.array(v.string())),
     quicHost: v.optional(v.string()),
     localIps: v.optional(v.array(v.string())),
     publicEndpoints: v.optional(v.array(v.string())),
@@ -650,6 +656,7 @@ export const heartbeat = mutation({
       lastHeartbeat: Date.now(),
       needsAuth: false, // valid session → not in bootstrap mode
       runners: args.runners ?? [],
+      installedRunnerIds: args.installedRunnerIds ?? [],
     };
     // Version write is gated to once per 24h OR on change. Agents may
     // send it on every heartbeat (and they do for simplicity); the
@@ -874,6 +881,7 @@ export const listMyDevices = query({
       needsAuth: d.needsAuth ?? false,
       runnerDown: d.runnerDown ?? false,
       runners: d.runners ?? [],
+      installedRunnerIds: d.installedRunnerIds ?? [],
       lastHeartbeat: d.lastHeartbeat,
       lastTunnelEvent: d.lastTunnelEvent,
       agentVersion: d.agentVersion,
@@ -942,6 +950,7 @@ export const listMyDevices = query({
           needsAuth: d.needsAuth ?? false,
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
+          installedRunnerIds: d.installedRunnerIds ?? [],
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
           isGuest: true,
@@ -1004,6 +1013,7 @@ export const listMyDevices = query({
           needsAuth: d.needsAuth ?? false,
           runnerDown: d.runnerDown ?? false,
           runners: d.runners ?? [],
+          installedRunnerIds: d.installedRunnerIds ?? [],
           lastHeartbeat: d.lastHeartbeat,
           lastTunnelEvent: d.lastTunnelEvent,
           isGuest: true,

@@ -797,6 +797,24 @@ export interface RunnerAuthStatusRow {
   version?: string;
 }
 
+export interface RunnerAuthSetupParams {
+  runner: "claude" | "claude-code" | "codex" | "opencode";
+  openaiApiKey?: string;
+  anthropicApiKey?: string;
+  anthropicAuthToken?: string;
+  claudeCodeOauthToken?: string;
+  glmApiKey?: string;
+  zaiApiKey?: string;
+  notes?: string;
+  installIfMissing?: boolean;
+  codexLogin?: boolean;
+  setupMcp?: boolean;
+  /** Mobile wizard compat: install the CLI now and return a
+   *  non-terminal "auth still required" result instead of HTTP 400
+   *  when Claude/Codex end up installed but unauthenticated. */
+  allowInstallOnly?: boolean;
+}
+
 /**
  * Mirrors desktop/agent/runner_auth_browser_http.go's session shape.
  * Used by all four /runner-auth/browser/* endpoints to track an
@@ -3133,6 +3151,72 @@ export class QuicClient {
       ok: true,
       saved: Array.isArray(data?.saved) ? data.saved : [],
       runners: Array.isArray(data?.runners) ? data.runners : [],
+    };
+  }
+
+  async runnerAuthSetup(
+    params: RunnerAuthSetupParams,
+    target?: string,
+  ): Promise<{
+    ok: boolean;
+    runner: string;
+    installed: boolean;
+    installAttempt?: boolean;
+    ready: boolean;
+    authConfigured: boolean;
+    authSource?: string;
+    detail?: string;
+    warning?: string;
+    notes?: string[];
+    error?: string;
+  }> {
+    this.assertConnected();
+    const base = this.peerEndpoint(target, "/runner-auth/setup");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runner: params.runner,
+        openai_api_key: params.openaiApiKey,
+        anthropic_api_key: params.anthropicApiKey,
+        anthropic_auth_token: params.anthropicAuthToken,
+        claude_code_oauth_token: params.claudeCodeOauthToken,
+        glm_api_key: params.glmApiKey,
+        zai_api_key: params.zaiApiKey,
+        notes: params.notes,
+        install_if_missing: params.installIfMissing,
+        codex_login: params.codexLogin,
+        setup_mcp: params.setupMcp,
+        allow_install_only: params.allowInstallOnly,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        runner: String(data?.runner || params.runner || ""),
+        installed: data?.installed === true,
+        installAttempt: data?.installAttempt === true,
+        ready: data?.ready === true,
+        authConfigured: data?.authConfigured === true,
+        authSource: typeof data?.authSource === "string" ? data.authSource : undefined,
+        detail: typeof data?.detail === "string" ? data.detail : undefined,
+        warning: typeof data?.warning === "string" ? data.warning : undefined,
+        notes: Array.isArray(data?.notes) ? data.notes : undefined,
+        error: data?.error || `HTTP ${res.status}`,
+      };
+    }
+    return {
+      ok: data?.ok === true,
+      runner: String(data?.runner || params.runner || ""),
+      installed: data?.installed === true,
+      installAttempt: data?.installAttempt === true,
+      ready: data?.ready === true,
+      authConfigured: data?.authConfigured === true,
+      authSource: typeof data?.authSource === "string" ? data.authSource : undefined,
+      detail: typeof data?.detail === "string" ? data.detail : undefined,
+      warning: typeof data?.warning === "string" ? data.warning : undefined,
+      notes: Array.isArray(data?.notes) ? data.notes : undefined,
     };
   }
 

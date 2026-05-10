@@ -9,6 +9,7 @@ import (
 	osexec "os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 )
@@ -188,6 +189,17 @@ type runnerAuthStatusRow struct {
 	Version string `json:"version,omitempty"`
 }
 
+var installedRunnerInventoryCache = struct {
+	mu       sync.Mutex
+	ids      []string
+	probedAt time.Time
+	dirty    bool
+	ttl      time.Duration
+}{
+	dirty: true,
+	ttl:   30 * time.Minute,
+}
+
 func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 	wd, _ := os.Getwd()
 	runners := []struct {
@@ -256,6 +268,58 @@ func collectRunnerAuthStatusRows() ([]runnerAuthStatusRow, error) {
 	rows = append(rows, ollamaRunnerStatusRow())
 	rows = append(rows, opencodeProviderStatusRows(rows)...)
 	return rows, nil
+}
+
+func collectInstalledRunnerIDsFresh() []string {
+	runners := []struct {
+		taskID  string
+		auditID string
+		cmd     string
+	}{
+		{taskID: "claude-code", auditID: "claude", cmd: "claude"},
+		{taskID: "codex", auditID: "codex", cmd: "codex"},
+		{taskID: "opencode", auditID: "opencode", cmd: "opencode"},
+	}
+	installed := make([]string, 0, len(runners))
+	for _, runner := range runners {
+		path := resolveRunnerBinary(runner.cmd)
+		if path == "" {
+			continue
+		}
+		ok, _ := verifyRunnerBinarySignature(runner.auditID, path)
+		if ok {
+			installed = append(installed, runner.taskID)
+		}
+	}
+	return installed
+}
+
+func collectInstalledRunnerIDs() []string {
+	installedRunnerInventoryCache.mu.Lock()
+	if !installedRunnerInventoryCache.dirty &&
+		len(installedRunnerInventoryCache.ids) >= 0 &&
+		!installedRunnerInventoryCache.probedAt.IsZero() &&
+		time.Since(installedRunnerInventoryCache.probedAt) < installedRunnerInventoryCache.ttl {
+		cached := append([]string(nil), installedRunnerInventoryCache.ids...)
+		installedRunnerInventoryCache.mu.Unlock()
+		return cached
+	}
+	installedRunnerInventoryCache.mu.Unlock()
+
+	fresh := collectInstalledRunnerIDsFresh()
+
+	installedRunnerInventoryCache.mu.Lock()
+	installedRunnerInventoryCache.ids = append([]string(nil), fresh...)
+	installedRunnerInventoryCache.probedAt = time.Now()
+	installedRunnerInventoryCache.dirty = false
+	installedRunnerInventoryCache.mu.Unlock()
+	return fresh
+}
+
+func markInstalledRunnerInventoryDirty() {
+	installedRunnerInventoryCache.mu.Lock()
+	installedRunnerInventoryCache.dirty = true
+	installedRunnerInventoryCache.mu.Unlock()
 }
 
 // ollamaRunnerStatusRow probes the local Ollama daemon. Ollama needs no

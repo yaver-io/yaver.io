@@ -77,6 +77,7 @@ export interface Device {
     runnerId?: string;
     status?: string;
   }>;
+  installedRunnerIds?: string[];
   sessionBinding?: "dedicated" | "legacy-shared";
   lastTunnelEvent?: {
     online: boolean;
@@ -296,6 +297,10 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
       Array.isArray(base.runners) && base.runners.length > 0
         ? base.runners
         : other.runners,
+    installedRunnerIds:
+      Array.isArray(base.installedRunnerIds) && base.installedRunnerIds.length > 0
+        ? base.installedRunnerIds
+        : other.installedRunnerIds,
     lastSeen: (() => {
       const next = Math.max(Date.parse(existing.lastSeen || "") || 0, Date.parse(incoming.lastSeen || "") || 0);
       return next > 0 ? new Date(next).toISOString() : base.lastSeen || other.lastSeen;
@@ -521,6 +526,7 @@ export function useDevices(token: string | null): DevicesState & { hiddenIds: Se
         sharesAllRunners: d.sharesAllRunners,
         sharedRunners: Array.isArray(d.sharedRunners) ? d.sharedRunners : undefined,
         runners: Array.isArray(d.runners) ? d.runners : undefined,
+        installedRunnerIds: Array.isArray(d.installedRunnerIds) ? d.installedRunnerIds : undefined,
         sessionBinding: d.sessionBinding,
         lastTunnelEvent:
           d.lastTunnelEvent && typeof d.lastTunnelEvent === "object"

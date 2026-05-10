@@ -1512,6 +1512,11 @@ http.route({
       tokenHash,
       deviceId: body.deviceId,
       runners: body.runners,
+      installedRunnerIds: Array.isArray(body.installedRunnerIds)
+        ? body.installedRunnerIds
+        : body.installedRunnerIds === null
+          ? []
+          : undefined,
       // Pass quicHost as-is (including ""). The mutation now treats "" as
       // a deliberate clear (e.g. an upgraded agent retracting a stale
       // Docker-bridge address). Pre-fix `body.quicHost || undefined`

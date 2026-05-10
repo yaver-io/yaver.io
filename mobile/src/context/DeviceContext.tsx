@@ -190,6 +190,9 @@ export interface Device {
   lastSeen: number;
   os: string;
   runners: RunnerInfo[];
+  /** Durable inventory from Convex: which first-class coding CLIs are
+   * installed on this device. Presence only, no auth state. */
+  installedRunnerIds?: string[];
   /** X25519 public key (base64) for encrypted pairing — stored in Convex */
   publicKey?: string;
   /** true when the agent is running in bootstrap mode (no valid token) */
@@ -443,6 +446,7 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
       ...existing,
       ...incoming,
       runners: incoming.runners?.length ? incoming.runners : existing.runners,
+      installedRunnerIds: incoming.installedRunnerIds?.length ? incoming.installedRunnerIds : existing.installedRunnerIds,
       publicKey: incoming.publicKey || existing.publicKey,
       hwid: incoming.hwid || existing.hwid,
       host: incoming.host || existing.host,
@@ -459,6 +463,7 @@ function mergeDeviceEntries(existing: Device, incoming: Device): Device {
     online: existing.online || incoming.online,
     local: existing.local || incoming.local,
     runners: existing.runners?.length ? existing.runners : incoming.runners,
+    installedRunnerIds: existing.installedRunnerIds?.length ? existing.installedRunnerIds : incoming.installedRunnerIds,
     publicKey: existing.publicKey || incoming.publicKey,
     hwid: existing.hwid || incoming.hwid,
     lastSeen: Math.max(existing.lastSeen || 0, incoming.lastSeen || 0),
@@ -926,6 +931,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             lastSeen: isActivelyConnected ? Date.now() : (d.lastHeartbeat || d.lastSeen || 0),
             os: d.platform || d.os || "",
             runners: d.runners ?? [],
+            installedRunnerIds: Array.isArray(d.installedRunnerIds) ? d.installedRunnerIds : undefined,
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
             agentVersion: typeof d.agentVersion === "string" && d.agentVersion.trim() !== ""

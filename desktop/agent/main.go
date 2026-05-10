@@ -8418,18 +8418,18 @@ func isContainerBridgeInterfaceName(name string) bool {
 		return false
 	}
 	prefixes := []string{
-		"docker",   // docker0, dockerN
-		"br-",      // user-defined Docker networks
-		"virbr",    // libvirt
-		"podman",   // podmanN
-		"cni",      // CNI plugins (Kubernetes, OpenShift, …)
-		"flannel",  // Flannel CNI
-		"weave",    // Weave Net
-		"calico",   // Calico CNI
-		"cali",     // Calico interfaces (cali123abc)
-		"vxlan",    // overlay networks
-		"kube-",    // kube-bridge etc.
-		"veth",     // virtual ethernet pair (container side)
+		"docker",  // docker0, dockerN
+		"br-",     // user-defined Docker networks
+		"virbr",   // libvirt
+		"podman",  // podmanN
+		"cni",     // CNI plugins (Kubernetes, OpenShift, …)
+		"flannel", // Flannel CNI
+		"weave",   // Weave Net
+		"calico",  // Calico CNI
+		"cali",    // Calico interfaces (cali123abc)
+		"vxlan",   // overlay networks
+		"kube-",   // kube-bridge etc.
+		"veth",    // virtual ethernet pair (container side)
 	}
 	for _, p := range prefixes {
 		if strings.HasPrefix(n, p) {
@@ -8664,8 +8664,9 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 
 	// Send first heartbeat immediately (don't wait 2 min for ticker)
 	runners := taskMgr.GetRunnerInfos()
+	installedRunnerIDs := collectInstalledRunnerIDs()
 	initialRecoveryPosture := computeRecoveryTransportPosture(cfgAtStart)
-	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture); err != nil {
+	if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, lastIP, lastIPs, lastPublicEndpoints, &initialRecoveryPosture); err != nil {
 		if errors.Is(err, ErrAuthExpired) {
 			log.Println("[auth] WARNING: Auth token expired! Run 'yaver auth' to re-authenticate.")
 			authExpiredLogged = true
@@ -8690,6 +8691,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		cfgNow, _ := LoadConfig()
 		currentPublicEndpoints := configuredPublicEndpoints(cfgNow)
 		runners := taskMgr.GetRunnerInfos()
+		installedRunnerIDs := collectInstalledRunnerIDs()
 
 		if currentIP != lastIP {
 			log.Printf("[heartbeat] Local IP changed: %s → %s", lastIP, currentIP)
@@ -8705,7 +8707,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		}
 
 		currentRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
-		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture); err != nil {
+		if err := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &currentRecoveryPosture); err != nil {
 			if errors.Is(err, ErrAuthExpired) {
 				// Try to refresh token first — backend may rotate.
 				if !refreshAndPersist("on-401") {
@@ -8728,7 +8730,7 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 					clearAuthExpiredNotify()
 					// Retry heartbeat
 					retryRecoveryPosture := computeRecoveryTransportPosture(cfgNow)
-					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture); retryErr != nil {
+					if retryErr := SendHeartbeat(baseURL, currentToken(), deviceID, runners, installedRunnerIDs, currentIP, currentIPs, currentPublicEndpoints, &retryRecoveryPosture); retryErr != nil {
 						log.Printf("heartbeat retry failed: %v", retryErr)
 					}
 				}
