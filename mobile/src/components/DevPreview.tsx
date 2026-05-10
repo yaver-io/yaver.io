@@ -315,7 +315,13 @@ export function DevPreview() {
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
+        body: JSON.stringify(
+          buildNativeBuildRequest(
+            platform,
+            currentYaverConsumerContract(),
+            status?.workDir ? { projectPath: status.workDir } : undefined,
+          ),
+        ),
         signal: buildAbort.signal,
       });
       clearTimeout(buildAbortTimer);

@@ -26,10 +26,18 @@ export function hostNativeModulesFromBundledManifest(): Record<string, string> {
 export function buildNativeBuildRequest(
   platform: "ios" | "android",
   contract?: NativeBuildConsumerContract,
+  // `project` pins the request to a specific guest project so the agent
+  // never falls back to whatever dev server happens to be running. The
+  // agent (≥ 1.99.186) returns 400 PROJECT_REQUIRED when none of these
+  // are set; older agents continue to honour the legacy fallback.
+  project?: { projectPath?: string; projectName?: string; bundleId?: string },
 ) {
   const nativeModules = hostNativeModulesFromBundledManifest();
   return {
     platform,
+    ...(project?.projectPath ? { projectPath: project.projectPath } : {}),
+    ...(project?.projectName ? { projectName: project.projectName } : {}),
+    ...(project?.bundleId ? { bundleId: project.bundleId } : {}),
     ...(contract?.consumerVersion ? { consumerVersion: contract.consumerVersion } : {}),
     ...(contract?.consumerBuild ? { consumerBuild: contract.consumerBuild } : {}),
     ...(contract?.consumerSdkVersion ? { consumerSdkVersion: contract.consumerSdkVersion } : {}),

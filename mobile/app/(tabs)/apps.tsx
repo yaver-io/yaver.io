@@ -1320,7 +1320,13 @@ export default function AppsScreen() {
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
+        body: JSON.stringify(
+          buildNativeBuildRequest(
+            platform,
+            currentYaverConsumerContract(),
+            { projectPath: workDir },
+          ),
+        ),
       });
       const buildResult = await buildRes.json();
 

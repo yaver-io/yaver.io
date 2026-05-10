@@ -1040,8 +1040,14 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 		return nil, err
 	}
 
-	body := bytes.NewBufferString(fmt.Sprintf(`{"platform":%q}`, platform))
-	req := httptest.NewRequest(http.MethodPost, "/dev/build-native", body)
+	// Pin projectPath so the stateless build-native gate (≥ 1.99.186)
+	// doesn't 400 with PROJECT_REQUIRED for this internal entry-point.
+	bodyBytes, _ := json.Marshal(map[string]string{
+		"platform":    platform,
+		"projectPath": workDir,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/dev/build-native", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	s.handleBuildNativeBundle(rec, req)
 
@@ -2016,10 +2022,17 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		// r.Body was already drained by the json decode above, so we
 		// can't just pass `r` through. Build a fresh request body with
 		// the project hints so handleBuildNativeBundle sees them.
+		//
+		// Forward the *resolved* projectPath (req.ProjectPath OR the
+		// devServerMgr.Status().WorkDir fallback we computed above)
+		// so the inner /dev/build-native call always has a project
+		// pinned. Without this, callers that relied on the old
+		// "use the active dev server" behaviour would 400 with
+		// PROJECT_REQUIRED after the stateless cut-over in 1.99.186.
 		buildBody, _ := json.Marshal(map[string]string{
 			"platform":    "ios",
 			"projectName": req.ProjectName,
-			"projectPath": req.ProjectPath,
+			"projectPath": projectPath,
 			"bundleId":    req.BundleID,
 		})
 		buildReq, _ := http.NewRequest("POST", "/dev/build-native", bytes.NewReader(buildBody))
@@ -2594,12 +2607,42 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if workDir == "" {
-		status := s.devServerMgr.Status()
-		if status == nil || status.WorkDir == "" {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "no active dev server — start one first OR pass projectName / projectPath / bundleId in the body"})
+		// Stateless contract: callers must always pin the project. The
+		// previous fallback to devServerMgr.Status().WorkDir let a Vite /
+		// Next dev server (started by another caller, another device, or
+		// a monorepo-fallback auto-pick) silently dictate which project
+		// the Hermes bundle came from. Cross-device contention + webview
+		// state could leak into the native path. Refuse instead.
+		jsonReply(w, http.StatusBadRequest, map[string]string{
+			"error": "build-native requires projectName, projectPath, or bundleId in the request body — agent no longer infers the project from the active dev server",
+			"code":  "PROJECT_REQUIRED",
+		})
+		return
+	}
+	// Reject when the resolved project isn't a Hermes-compatible
+	// framework — Metro can technically be invoked against a Vite or
+	// Next.js workdir but the resulting "bundle" is meaningless on the
+	// mobile-hermes path. Detection is purely package.json / config-file
+	// based (see classify.go::detectFramework) so this is cheap and
+	// consistent with the rest of the agent's framework typing.
+	if buildTarget == "mobile-hermes" {
+		framework := detectFramework(workDir)
+		switch framework {
+		case "expo", "react-native":
+			// ok
+		case "":
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("build-native: %s does not look like a React Native / Expo project (no package.json, no expo/react-native dep) — Hermes bundles cannot be produced for it", workDir),
+				"code":  "FRAMEWORK_NOT_SUPPORTED",
+			})
+			return
+		default:
+			jsonReply(w, http.StatusBadRequest, map[string]string{
+				"error": fmt.Sprintf("build-native: %s is detected as %q — Hermes/Metro bundles only apply to react-native / expo projects. For web targets call build-native with target=web-js-bundle", workDir, framework),
+				"code":  "FRAMEWORK_NOT_SUPPORTED",
+			})
 			return
 		}
-		workDir = status.WorkDir
 	}
 	if guestUID == "" {
 		s.maybePullBeforeHotReloadBuild(workDir)

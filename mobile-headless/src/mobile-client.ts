@@ -768,7 +768,17 @@ export class MobileClient {
      */
     buildNative: async (
       platform: "ios" | "android",
-      opts?: { timeoutMs?: number; signal?: AbortSignal },
+      opts?: {
+        timeoutMs?: number;
+        signal?: AbortSignal;
+        // Stateless contract: agent ≥ 1.99.186 requires the caller to
+        // pin which guest project to bundle. Headless tests should
+        // always pass one of these so the agent never falls back to
+        // whatever dev server happens to be running on the box.
+        projectPath?: string;
+        projectName?: string;
+        bundleId?: string;
+      },
     ) => {
       const externalSignal = opts?.signal;
       const ctrl = new AbortController();
@@ -782,12 +792,22 @@ export class MobileClient {
       try {
         const r = await this.raw.post(
           "/dev/build-native",
-          buildNativeBuildRequest(platform, {
-            consumerVersion: "mobile-headless",
-            consumerBuild: "headless",
-            consumerSdkVersion: "headless",
-            consumerHermesBCVersion: 96,
-          }),
+          buildNativeBuildRequest(
+            platform,
+            {
+              consumerVersion: "mobile-headless",
+              consumerBuild: "headless",
+              consumerSdkVersion: "headless",
+              consumerHermesBCVersion: 96,
+            },
+            opts && (opts.projectPath || opts.projectName || opts.bundleId)
+              ? {
+                  projectPath: opts.projectPath,
+                  projectName: opts.projectName,
+                  bundleId: opts.bundleId,
+                }
+              : undefined,
+          ),
           { signal: ctrl.signal },
         );
         return { status: r.status, body: r.body };
