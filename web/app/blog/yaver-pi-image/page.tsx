@@ -88,7 +88,7 @@ export default function YaverPiImageBlogPage() {
           </h1>
           <p className="mt-4 text-sm leading-7 text-surface-400">
             A prebuilt ARM64 image that turns a Raspberry Pi 5 into a headless Yaver developer
-            node. Flash it, boot it, pair it from your phone. No SSH, no apt juggling, no
+            node. Flash it, boot it, pair it from your phone. No SSH, no distro package juggling, no
             manual install — the Pi is ready for Codex, Claude Code, Aider, or a local Ollama
             worker the first time you boot it.
           </p>

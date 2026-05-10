@@ -101,7 +101,7 @@ const faqs = [
     items: [
       {
         q: "Does the CLI auto-update?",
-        a: "Optionally. Enable with `yaver config set auto-update true`. Otherwise update manually via your package manager (`brew upgrade yaver` or `scoop update yaver`).",
+        a: "Optionally. Enable with `yaver config set auto-update true`. Otherwise update manually with `npm install -g yaver-cli@latest`.",
       },
       {
         q: "Can I use Yaver without the mobile app?",

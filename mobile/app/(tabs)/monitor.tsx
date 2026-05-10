@@ -891,7 +891,7 @@ function MachinePane() {
           <Text style={[styles.sectionLabel, { color: c.textSecondary, marginTop: 14 }]}>Drives</Text>
           {health.drives.length === 0 ? (
             <Text style={[styles.cardMeta, { color: c.textSecondary }]}>
-              (no SMART data yet — `brew install smartmontools` on Linux to enable)
+              (no SMART data yet — install `smartmontools` on the host to enable)
             </Text>
           ) : (
             health.drives.map((d) => (

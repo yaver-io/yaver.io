@@ -17,12 +17,7 @@ roadmap see [`docs/roadmap_ci_solo_developer_lower_costs.md`](./roadmap_ci_solo_
 have Yaver installed, you have the SDK.
 
 ```bash
-# macOS / Linux
-brew tap kivanccakmak/yaver && brew install yaver
-
-# Windows
-scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver
-scoop install yaver
+npm install -g yaver-cli
 ```
 
 Verify:

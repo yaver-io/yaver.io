@@ -4016,7 +4016,7 @@ export default function SettingsScreen() {
                     1. Install the CLI on your dev machine:{"\n\n"}
                   </Text>
                   <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: "monospace", lineHeight: 18, backgroundColor: c.bgCardElevated, padding: 10, borderRadius: 6, overflow: "hidden" }}>
-                    {"brew install kivanccakmak/yaver/yaver\n"}
+                    {"npm install -g yaver-cli\n"}
                     {"yaver auth\n"}
                     {"yaver serve"}
                   </Text>
@@ -4044,7 +4044,7 @@ export default function SettingsScreen() {
                   </Text>
                   <Text style={{ fontSize: 11, color: c.textSecondary, fontFamily: "monospace", lineHeight: 18, backgroundColor: c.bgCardElevated, padding: 10, borderRadius: 6, overflow: "hidden" }}>
                     {"# Install cloudflared\n"}
-                    {"brew install cloudflared\n\n"}
+                    {"yaver install cloudflared\n\n"}
                     {"# Quick tunnel (testing)\n"}
                     {"cloudflared tunnel --url http://localhost:18080\n\n"}
                     {"# Named tunnel (permanent)\n"}

@@ -986,7 +986,7 @@ export default function NewProjectScreen() {
           {connecting ? <ActivityIndicator style={{ marginBottom: 16 }} /> : null}
           {devices.length === 0 ? (
             <Text style={{ color: c.textMuted, fontSize: 13 }}>
-              No devices are registered yet. Run `brew install yaver && yaver auth && yaver serve` on your Mac.
+              No devices are registered yet. Run `npm install -g yaver-cli && yaver auth && yaver serve` on your machine.
             </Text>
           ) : (
             <View style={{ gap: 10 }}>

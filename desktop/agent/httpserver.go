@@ -15629,7 +15629,7 @@ Available help topics — use yaver_help({ topic: "..." }):
                                    how much you save
 
 Quick start:
-  1. Install: brew install kivanccakmak/yaver/yaver
+  1. Install: npm install -g yaver-cli
   2. Sign in: yaver auth
   3. yaver init    ← first-run wizard, walks you through everything
   4. yaver new     ← generate a fullstack monorepo for your next app

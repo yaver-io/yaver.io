@@ -104,7 +104,7 @@ export function welcomeHtml(name: string): string {
   </ul>
 
   <p style="font-size:15px;line-height:1.7;margin:0 0 20px;">
-    <strong>Get started:</strong> Install the desktop agent with <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;font-size:13px;">brew install yaver</code>,
+    <strong>Get started:</strong> Install the desktop agent with <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;font-size:13px;">npm install -g yaver-cli</code>,
     run <code style="background:#f0f0f0;padding:2px 6px;border-radius:4px;font-size:13px;">yaver auth</code>, and connect from the mobile app.
     Add the <a href="https://yaver.io/docs/feedback-sdk" style="color:#1a1a1a;">Feedback SDK</a> to your app for visual bug reports.
   </p>

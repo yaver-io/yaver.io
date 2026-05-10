@@ -827,8 +827,8 @@ function SetupInstructions() {
 
       {platform === "mac" && (
         <View style={styles.steps}>
-          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install via Homebrew</Text>
-          <CopyableCommand command="brew tap kivanccakmak/yaver && brew install yaver" />
+          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install with npm</Text>
+          <CopyableCommand command="npm install -g yaver-cli" />
 
           <Text style={[styles.stepLabel, { color: c.textSecondary }]}>2. Sign in & start</Text>
           <CopyableCommand command="yaver auth" />
@@ -837,11 +837,8 @@ function SetupInstructions() {
 
       {platform === "linux" && (
         <View style={styles.steps}>
-          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install via Homebrew</Text>
-          <CopyableCommand command="brew tap kivanccakmak/yaver && brew install yaver" />
-
-          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>Or download directly</Text>
-          <CopyableCommand command={'curl -fsSL https://github.com/kivanccakmak/yaver-cli/releases/latest/download/yaver-linux-amd64 -o yaver && chmod +x yaver && sudo mv yaver /usr/local/bin/'} />
+          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install with npm</Text>
+          <CopyableCommand command="npm install -g yaver-cli" />
 
           <Text style={[styles.stepLabel, { color: c.textSecondary }]}>2. Sign in & start</Text>
           <CopyableCommand command="yaver auth" />
@@ -850,12 +847,12 @@ function SetupInstructions() {
 
       {platform === "windows" && (
         <View style={styles.steps}>
-          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install via Scoop (PowerShell)</Text>
-          <CopyableCommand command="scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver && scoop install yaver" />
+          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>1. Install with npm inside WSL2</Text>
+          <CopyableCommand command="npm install -g yaver-cli" />
 
-          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>Or download manually</Text>
+          <Text style={[styles.stepLabel, { color: c.textSecondary }]}>Supported Windows path</Text>
           <Text style={[styles.stepHint, { color: c.textMuted }]}>
-            Download from yaver.io/download and add to your PATH.
+            Run Yaver inside WSL2, then sign in from the browser that opens on Windows.
           </Text>
 
           <Text style={[styles.stepLabel, { color: c.textSecondary }]}>2. Sign in & start</Text>

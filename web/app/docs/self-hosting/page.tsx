@@ -506,7 +506,7 @@ export default function SelfHostingPage() {
           <div className="mb-6">
             <Terminal title="production-setup (manual)">
               <Comment># 1. Install dependencies</Comment>
-              <Cmd>apt install -y nginx certbot python3-certbot-nginx</Cmd>
+              <Cmd># install nginx, certbot, and the nginx certbot plugin with your server&apos;s standard package flow</Cmd>
               <Divider />
               <Comment># 2. Get Let&apos;s Encrypt certificate</Comment>
               <Cmd>
@@ -654,7 +654,7 @@ server {
           <div className="mb-8">
             <Terminal title="cloudflare-tunnel">
               <Comment># Install cloudflared</Comment>
-              <Cmd>brew install cloudflare/cloudflare/cloudflared</Cmd>
+              <Cmd>cloudflared --version</Cmd>
               <Divider />
               <Comment># Authenticate</Comment>
               <Cmd>cloudflared tunnel login</Cmd>
@@ -675,6 +675,10 @@ server {
                 Tunnel connected: https://yaver.yourdomain.com
               </Output>
             </Terminal>
+            <Prose>
+              Install Cloudflare Tunnel from Cloudflare&apos;s official distribution first if{" "}
+              <InlineCode>cloudflared</InlineCode> is not already installed.
+            </Prose>
           </div>
 
           <div className="space-y-4">

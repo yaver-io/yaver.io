@@ -221,7 +221,7 @@ If any step fails, check `journalctl --user -u yaver -f` on the Linux box and th
 - **TestFlight / Play Store mobile binary distribution** — the bumped versions in 1.99.111 release commit (Info.plist + project.pbxproj + build.gradle) need `./scripts/deploy-testflight.sh` + `./scripts/deploy-playstore.sh` to actually build + upload. Those flows haven't run yet for this version.
 - **Convex schema migration** — `userSettings.managed` and the new `normalizePrimaryDeviceId` validator landed in this release. Backend deploy via `npx convex deploy --yes` is required.
 - **Web dashboard deployment** — `web/v1.1.115` tag triggers `release-web.yml` which does the wrangler deploy. Without the tag push, web stays at 1.1.114.
-- **Homebrew / Scoop / npm publish** — these need a tagged GitHub release with cross-compiled binaries for the CLI to land on `brew install yaver`.
+- **npm publish** — this needs a tagged GitHub release so the CLI lands on the supported install path: `npm install -g yaver-cli`.
 
 The deploy command sequence is in the next message; see CLAUDE.md "Deployments" + "Mobile Release Policy — Local-First, CI Optional" for the canonical commands.
 

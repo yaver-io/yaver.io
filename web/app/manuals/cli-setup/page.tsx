@@ -525,11 +525,10 @@ export default function CLISetupManual() {
                 <span className="text-surface-200">yaver uninstall</span>
               </div>
               <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Then remove the binary</div>
+              <div className="text-surface-500"># Then remove the npm package</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">brew uninstall yaver</span>
-                <span className="ml-2 text-surface-500"># or: scoop uninstall yaver</span>
+                <span className="text-surface-200">npm uninstall -g yaver-cli</span>
               </div>
             </div>
           </div>

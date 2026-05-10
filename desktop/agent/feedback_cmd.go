@@ -53,9 +53,8 @@ func printFeedbackUsage() {
   yaver feedback delete <id>                               Delete a feedback report
 
 Setup flow:
-  Install Yaver once with either install point:
-    npm install -g yaver-cli            (Node-first; works without the Go binary)
-    brew install yaver                  (or any other platform install)
+  Install Yaver once:
+    npm install -g yaver-cli
   Then, inside a project:
     yaver feedback init                 Autodetect project, install the right SDK
     yaver feedback init --platform web  Force a specific platform

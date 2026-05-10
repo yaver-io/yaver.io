@@ -36,11 +36,10 @@ The rule is simple:
 
 ## Install The Agent
 
-Use any supported Linux path inside WSL:
+Use the supported npm install path inside WSL:
 
 ```bash
-brew install kivanccakmak/yaver/yaver
-# or apt/AppImage/tarball from https://yaver.io/download
+npm install -g yaver-cli
 ```
 
 Then authenticate and start the agent:

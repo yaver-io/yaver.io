@@ -29,7 +29,7 @@ command here fails, read the error carefully and consult the
 | Web (yaver.io) | `web/v*` tag | Cloudflare Workers | `scripts/deploy-web.sh` | `.github/workflows/release-web.yml` |
 | Convex backend | manual | Convex prod | `cd backend && npx convex deploy --yes` | n/a |
 | Relay server | `relay/v*` tag | Hetzner / self-host | `cd relay/deploy && ./up.sh <ip> --docker` | `.github/workflows/release-relay.yml` |
-| CLI (`yaver`) | `cli/v*` tag | npm / Homebrew / apt / Scoop / AUR / Docker / Winget / Choco | see §CLI below | `.github/workflows/release-cli.yml` |
+| CLI (`yaver`) | `cli/v*` tag | npm | see §CLI below | `.github/workflows/release-cli.yml` |
 | SDKs (`yaver-sdk`, `yaver` python) | GitHub release published | npm + PyPI + pub.dev | see §SDKs below | `.github/workflows/release-sdk.yml` |
 | Desktop installer | `installer/v*` tag | macOS `.dmg` + Windows `.exe` + Linux `.AppImage` | electron-builder | `.github/workflows/release-installer.yml` |
 | Pi image | `piImage/v*` tag | GitHub release asset | `scripts/release-pi-image.sh` | `.github/workflows/release-pi-image.yml` |
@@ -350,43 +350,13 @@ gh run watch
 5. **release** — creates a **draft** GitHub release with all
    artifacts + `checksums.txt`. Windows `.exe` is unsigned at this
    point; sign with SimplySign Desktop before publishing the draft.
-6. **update-package-managers** — rewrites manifests in sibling
-   repos and commits:
-   - `kivanccakmak/homebrew-yaver` → `Formula/yaver.rb`
-   - `kivanccakmak/scoop-yaver` → `yaver.json` + `bucket/yaver.json`
-     (both must stay identical — Scoop clients vary which they read)
-   - `kivanccakmak/aur-yaver` → `PKGBUILD`
-   - `kivanccakmak/apt-yaver` → `pool/main/yaver_<version>_<arch>.deb`
-     + regenerated `dists/stable/Release`
-   - Generates Winget + Chocolatey manifests (not auto-submitted —
-     Winget needs `wingetcreate submit`, Chocolatey needs
-     `choco push`).
-7. **docker-build** + **docker-manifest** — builds multi-arch
+6. **docker-build** + **docker-manifest** — builds multi-arch
    (amd64 + arm64) images and pushes `kivanccakmak/yaver-cli:latest`
    + `:<version>` to Docker Hub and `ghcr.io`.
 
 ### User install commands after release
 
 ```bash
-# Homebrew (macOS + Linux)
-brew tap kivanccakmak/yaver && brew install yaver
-
-# apt (Debian / Ubuntu)
-curl -fsSL https://kivanccakmak.github.io/apt-yaver/pubkey.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/yaver.gpg
-echo "deb [signed-by=/etc/apt/keyrings/yaver.gpg] https://kivanccakmak.github.io/apt-yaver stable main" | sudo tee /etc/apt/sources.list.d/yaver.list
-sudo apt-get update && sudo apt-get install -y yaver
-
-# Scoop (Windows)
-scoop bucket add yaver https://github.com/kivanccakmak/scoop-yaver
-scoop install yaver
-
-# AUR (Arch)
-yay -S yaver
-
-# Winget (Windows)
-winget install Yaver.Yaver
-
-# npm (yaver-cli)
 npm install -g yaver-cli
 
 # Docker

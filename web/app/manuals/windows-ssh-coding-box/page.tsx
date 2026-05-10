@@ -151,8 +151,10 @@ export default function WindowsSshCodingBoxManual() {
             <code className="mx-1 rounded bg-surface-900 px-1.5 py-0.5 text-surface-300">qwen2.5-coder:14b</code>.
             Then add a lighter interactive option and a fast smoke-test option.
           </p>
+          <p className="mb-4 text-sm leading-relaxed text-surface-400">
+            Install Ollama from <a href="https://ollama.com/download/windows" className="underline hover:text-surface-200">the official Windows download</a>, then pull the models below.
+          </p>
           <Terminal title="windows powershell">
-            <WinCmd>winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements --silent</WinCmd>
             <WinCmd>ollama pull qwen2.5-coder:14b</WinCmd>
             <WinCmd>ollama pull qwen2.5-coder:7b</WinCmd>
             <WinCmd>ollama pull qwen2.5-coder:1.5b</WinCmd>
@@ -215,8 +217,10 @@ models:
             If you want a terminal-native coding agent on the Windows box, install Node LTS and
             then OpenCode.
           </p>
+          <p className="mb-4 text-sm leading-relaxed text-surface-400">
+            Install Node LTS from <a href="https://nodejs.org" className="underline hover:text-surface-200">nodejs.org</a> first if it is not already present.
+          </p>
           <Terminal title="windows powershell">
-            <WinCmd>winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements --silent</WinCmd>
             <WinCmd>npm install -g opencode-ai</WinCmd>
           </Terminal>
           <p className="mb-4 text-sm leading-relaxed text-surface-400">

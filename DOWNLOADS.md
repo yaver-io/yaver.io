@@ -2,19 +2,11 @@
 
 ## Desktop Agent
 
-Install the Yaver agent on your development machine to connect with your mobile device.
+Install the Yaver agent on your development machine with the supported npm path:
 
-### macOS
-- **Apple Silicon (M1/M2/M3/M4)**: [Download DMG (arm64)](https://yaver.io/download/macos-arm64)
-- **Intel**: [Download DMG (x64)](https://yaver.io/download/macos-x64)
-
-### Windows
-- **Windows 10/11 (64-bit)**: [Download Installer (exe)](https://yaver.io/download/windows-x64)
-
-### Linux
-- **Debian/Ubuntu (amd64)**: [Download .deb](https://yaver.io/download/linux-deb-amd64)
-- **Debian/Ubuntu (arm64)**: [Download .deb](https://yaver.io/download/linux-deb-arm64)
-- **AppImage (amd64)**: [Download AppImage](https://yaver.io/download/linux-appimage-amd64)
+```bash
+npm install -g yaver-cli
+```
 
 ## Mobile App
 
@@ -25,21 +17,6 @@ Install the Yaver agent on your development machine to connect with your mobile 
 ### Android
 - [Google Play](https://play.google.com/store/apps/details?id=io.yaver.mobile) *(coming soon)*
 - [Direct APK](https://yaver.io/download/android-apk) *(coming soon)*
-
-## CLI (Advanced)
-
-If you prefer to install the agent without the GUI installer:
-
-```bash
-# macOS / Linux
-curl -fsSL https://yaver.io/install.sh | sh
-
-# Or with Homebrew
-brew install yaver-io/tap/yaver
-
-# Windows (PowerShell)
-irm https://yaver.io/install.ps1 | iex
-```
 
 ## System Requirements
 

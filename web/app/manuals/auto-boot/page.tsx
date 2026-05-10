@@ -135,10 +135,10 @@ export default function AutoBootManual() {
                 <span className="text-surface-200 select-all">yaver config set auto-update true</span>
               </div>
               <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Or install via Homebrew and let brew handle updates</div>
+              <div className="text-surface-500"># Manual update when you want the latest release</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200">brew upgrade yaver</span>
+                <span className="text-surface-200">npm install -g yaver-cli@latest</span>
               </div>
             </div>
           </div>
@@ -269,7 +269,7 @@ export default function AutoBootManual() {
   <string>io.yaver.agent</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/yaver</string>
+    <string>/absolute/path/to/yaver</string>
     <string>serve</string>
   </array>
   <key>RunAtLoad</key>
@@ -284,6 +284,10 @@ export default function AutoBootManual() {
 </plist>`}
             </pre>
           </div>
+          <p className="mt-3 text-xs text-surface-500">
+            Replace <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">/absolute/path/to/yaver</code> with the output of{" "}
+            <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">command -v yaver</code>.
+          </p>
         </section>
 
         {/* Linux */}
@@ -555,7 +559,7 @@ WantedBy=default.target`}
               <div className="terminal-dot bg-[#28c840]" />
             </div>
             <div className="terminal-body space-y-1 text-[13px]">
-              <div><span className="text-surface-400">$</span> <span className="text-surface-200">brew install kivanccakmak/yaver/yaver</span></div>
+              <div><span className="text-surface-400">$</span> <span className="text-surface-200">npm install -g yaver-cli</span></div>
               <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver auth</span></div>
               <div><span className="text-surface-400">$</span> <span className="text-surface-200">yaver serve --install-systemd</span>  <span className="text-surface-500"># or: yaver config set auto-start true</span></div>
             </div>

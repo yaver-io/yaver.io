@@ -321,7 +321,7 @@ export default function DevelopersPage() {
               },
               {
                 title: "2. Go Agent (yaver)",
-                install: "brew install kivanccakmak/yaver/yaver",
+                install: "npm install -g yaver-cli",
                 desc: "Native `yaver` command for AI agent connectivity (P2P, relay, MCP). Hot reload dev servers (Expo, Flutter, Vite, Next.js). Session transfer, tasks, builds, deploys. Also bridges `yaver push` through npm when Node is available.",
               },
               {
@@ -358,8 +358,8 @@ export default function DevelopersPage() {
             <strong className="text-surface-200">Key distinction:</strong>{" "}
             <InlineCode>yaver-cli</InlineCode> is now the npm distribution name for the unified bootstrap
             package. It installs the <InlineCode>yaver</InlineCode> command, which covers both the Go
-            agent workflow and the RN push-to-device flow. Native package-manager installs of the Go binary
-            still exist for developers who prefer brew/apt/system packages.
+            agent workflow and the RN push-to-device flow. This npm install is the supported path for
+            the Go agent too.
           </Prose>
           <Prose>
             <strong className="text-surface-200">Platform support boundary:</strong>{" "}
@@ -2491,8 +2491,7 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               <ul className="space-y-2 text-sm text-surface-400">
                 <li>
                   &bull; <span className="text-surface-200">Tags trigger releases</span>:
-                  push <InlineCode>cli/v1.30.0</InlineCode> to build + publish CLI binaries,
-                  update Homebrew/Scoop
+                  push <InlineCode>cli/v1.30.0</InlineCode> to build + publish the npm CLI release
                 </li>
                 <li>
                   &bull; <span className="text-surface-200">Package publishes can be local-first</span>:

@@ -17,8 +17,7 @@ If the human you're orchestrating is not a developer — they just want to
 be able to hit "reload" from their phone and don't care about the CLI —
 take the short path:
 
-1. **Bash install**: `npm install -g yaver-cli` (or the curl install.sh
-   below if Node isn't available).
+1. **Install**: `npm install -g yaver-cli` on the target machine.
 2. **MCP call** `yaver_lazy_setup` — **not** raw `yaver auth`. The tool
    is idempotent; call it repeatedly while the human works on their
    phone. It returns a structured plan:
@@ -65,13 +64,6 @@ yaver install all         # machine-wide tools catalogue when needed
 Do not send the human straight to raw `npm install yaver-feedback-*`,
 `flutter pub add ...`, or `pip install yaver` first unless they
 explicitly ask for the manual package-manager path.
-
-### Alternative (no Node)
-
-```
-curl -fsSL https://yaver.io/install.sh | sh      # macOS / Linux / WSL
-iwr -useb https://yaver.io/install.ps1 | iex     # Windows PowerShell
-```
 
 ## What `yaver auth` does on a headless / remote / WSL box
 
@@ -158,5 +150,4 @@ yaver init                         # one-time wizard; sets a bootstrap secret
 - FAQ: https://yaver.io/faq
 - Blog (releases, announcements): https://yaver.io/blog
 - Sitemap: https://yaver.io/sitemap.xml
-- Install scripts: https://yaver.io/install.sh, https://yaver.io/install.ps1
 - Open source: https://github.com/kivanccakmak/yaver.io (FSL-1.1-Apache-2.0 core, Apache-2.0 SDKs)

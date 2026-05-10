@@ -79,7 +79,6 @@ Success response:
   "action": "machine_remove",
   "phase": "scheduled",
   "manualSteps": [
-    "brew uninstall yaver",
     "npm uninstall -g yaver-cli",
     "rm /path/to/current/binary"
   ]

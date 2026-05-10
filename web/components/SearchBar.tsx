@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 // Static search index — all searchable pages
 const SEARCH_INDEX = [
   { path: "/", title: "Home", tags: "p2p encrypted ai agent mobile desktop cli" },
-  { path: "/download", title: "Download", tags: "install mac windows linux brew scoop homebrew" },
+  { path: "/download", title: "Download", tags: "install mac windows linux npm cli" },
   { path: "/docs", title: "Documentation", tags: "docs guide api reference" },
   { path: "/docs/developers", title: "Developer Guide", tags: "sdk api architecture build test contribute" },
   { path: "/docs/mcp", title: "MCP Protocol", tags: "mcp model context protocol tools json-rpc" },

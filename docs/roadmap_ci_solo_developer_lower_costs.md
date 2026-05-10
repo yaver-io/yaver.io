@@ -419,8 +419,7 @@ storing runtime. yaver-test-sdk adds:
 | Reporters                  | JUnit XML (for upload to GH Actions), HTML report, JSON for the mobile app, MCP messages for AI.  |
 | Spec parser + scheduler    | Pure Go. Fan-out across cores, retry-on-flake, hardware-aware throttling.                         |
 
-The non-negotiable rule: **after `brew install yaver` (or scoop /
-apt) the dev should be able to run `yaver test` against any of the
+The non-negotiable rule: **after `npm install -g yaver-cli` the dev should be able to run `yaver test` against any of the
 target types above without installing a single extra binary that
 ships from npm or pip.** The two exceptions we accept are Apple's
 Xcode (which the dev already needs to build the app) and Google's

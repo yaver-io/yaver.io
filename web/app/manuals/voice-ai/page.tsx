@@ -164,11 +164,14 @@ export default function VoiceAIManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew install python@3.12
+                  python3.12 --version
                 </span>
               </div>
             </div>
           </div>
+          <p className="mb-4 text-sm text-surface-400">
+            Install Python 3.12 from your platform&apos;s official Python distribution if it is not already available on your machine.
+          </p>
 
           <h3 className="mb-2 mt-6 text-sm font-semibold text-surface-200">
             Hugging Face account
@@ -479,7 +482,7 @@ export default function VoiceAIManual() {
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  brew install ollama
+                  ollama --version
                 </span>
               </div>
               <div>
@@ -516,6 +519,9 @@ export default function VoiceAIManual() {
               </div>
             </div>
           </div>
+          <p className="mb-4 text-sm text-surface-400">
+            Install Ollama from <a href="https://ollama.com" className="underline hover:text-surface-200">ollama.com</a> if it is not already present.
+          </p>
 
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -633,11 +639,7 @@ export default function VoiceAIManual() {
                 &quot;requires Python &ge;3.10, &lt;3.13&quot;
               </h3>
               <p className="text-sm text-surface-400">
-                Install Python 3.12 via{" "}
-                <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">
-                  brew install python@3.12
-                </code>{" "}
-                and create the venv with{" "}
+                Install Python 3.12 on the host, then create the venv with{" "}
                 <code className="rounded bg-surface-900 px-1.5 py-0.5 text-surface-400">
                   python3.12 -m venv .venv
                 </code>

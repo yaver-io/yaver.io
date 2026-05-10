@@ -70,15 +70,13 @@ export default function DownloadPage() {
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
               Why one path: a single <code>yaver</code> command, owned by the user who runs it (no
               system-user split, no <code>/root/.yaver</code> vs <code>/home/yaver/.yaver</code> drift),
-              auto-updates with <code>npm install -g yaver-cli@latest</code>, no apt repo / Homebrew tap /
-              Scoop bucket to manage. Every previous packaging path (apt, Homebrew, Scoop, Winget, raw
-              tarball, install.sh, Docker image) is removed.
+              auto-updates with <code>npm install -g yaver-cli@latest</code>, and avoids multiple
+              competing install channels on the same machine. Legacy packaging paths are removed.
             </p>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
-              Node itself can come from Homebrew, apt, NodeSource, or another standard Node installer.
-              That does not change Yaver distribution: <code>yaver-cli</code> is npm-only, and upgrades
-              must also happen through npm so one machine does not accumulate multiple competing
-              <code>yaver</code> binaries.
+              Install Node.js 18+ however you normally manage Node. That does not change Yaver
+              distribution: <code>yaver-cli</code> is npm-only, and upgrades must also happen through
+              npm so one machine does not accumulate multiple competing <code>yaver</code> binaries.
             </p>
           </div>
         </section>
@@ -119,10 +117,9 @@ export default function DownloadPage() {
             <h2 className="text-lg font-semibold text-surface-50">macOS</h2>
             <p className="mt-3 text-sm leading-6 text-surface-400">
               Apple Silicon and Intel. Binary is Developer ID signed and notarized — no Gatekeeper
-              prompts. Use Homebrew only to install Node.js itself; Yaver itself comes from npm.
+              prompts. Once Node.js 18+ is present, install Yaver with npm.
             </p>
             <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
-              <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">brew install node    # if you don&apos;t have it</span></div>
               <div><span className="text-surface-500">$</span> <span className="select-all">npm install -g yaver-cli</span></div>
             </div>
           </div>
@@ -130,15 +127,11 @@ export default function DownloadPage() {
           <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
             <h2 className="text-lg font-semibold text-surface-50">Linux (x64 and arm64)</h2>
             <p className="mt-3 text-sm leading-6 text-surface-400">
-              Ubuntu, Debian, Raspberry Pi 4/5, Hetzner ARM, AWS Graviton, Oracle Cloud ARM, etc. Use
-              your distro&apos;s package manager only to install Node.js. Install and update Yaver only with
-              npm.
+              Ubuntu, Debian, Raspberry Pi 4/5, Hetzner ARM, AWS Graviton, Oracle Cloud ARM, etc.
+              Once Node.js 18+ is present, install and update Yaver only with npm.
             </p>
             <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
-              <div className="mb-2 text-surface-500"># Ubuntu / Debian:</div>
-              <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -</span></div>
-              <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">sudo apt install -y nodejs</span></div>
-              <div><span className="text-surface-500">$</span> <span className="select-all">sudo npm install -g yaver-cli</span></div>
+              <div><span className="text-surface-500">$</span> <span className="select-all">npm install -g yaver-cli</span></div>
             </div>
           </div>
 
@@ -167,13 +160,12 @@ export default function DownloadPage() {
             <h2 className="text-lg font-semibold text-surface-50">Windows (via WSL2)</h2>
             <p className="mt-3 text-sm leading-6 text-surface-400">
               Native Windows is not supported. Run Yaver inside WSL2; <code>yaver auth</code> hands
-              browser sign-in off to Windows automatically.
+              browser sign-in off to Windows automatically. Once Node.js 18+ is present in WSL2,
+              install Yaver with npm.
             </p>
             <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
               <div className="mb-2 text-surface-500"># inside WSL2:</div>
-              <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -</span></div>
-              <div className="mb-2"><span className="text-surface-500">$</span> <span className="select-all">sudo apt install -y nodejs</span></div>
-              <div><span className="text-surface-500">$</span> <span className="select-all">sudo npm install -g yaver-cli</span></div>
+              <div><span className="text-surface-500">$</span> <span className="select-all">npm install -g yaver-cli</span></div>
             </div>
           </div>
 
@@ -238,9 +230,8 @@ export default function DownloadPage() {
               ships the new shim; the next <code>yaver</code> invocation downloads the matching binary.
             </p>
             <p>
-              All previously-published apt repos, Homebrew taps, Scoop buckets, install scripts, raw
-              tarballs, and Docker images are unsupported. They will not receive future updates and
-              should not be used.
+              Older install channels are unsupported. They will not receive future updates and should
+              not be used.
             </p>
             <p>
               The rule is simple: install Node however you want, but install and upgrade

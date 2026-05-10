@@ -83,7 +83,6 @@ Yaver is built for solo developers and small teams who ship from anywhere. It ha
 │                                                                             │
 │  📱 MOBILE APP (yaver.io)                    🔧 AGENT (yaver)              │
 │  App Store / Play Store                       npm install -g yaver-cli      │
-│                                                or brew install yaver        │
 │                                                                             │
 │  Remote control for everything.              The brain on your dev machine. │
 │  Send tasks to AI agents, test apps on       Runs AI agents (Claude Code,   │
@@ -828,7 +827,7 @@ Trigger AI tasks from CI/CD:
 | **Profiling** | valgrind (memcheck/callgrind/massif), perf, strace, ltrace, go pprof | 10+ |
 | **Testing** | run_tests (auto-detect), lint, format_code, type_check, benchmark | 4 |
 | **Dependencies** | outdated, audit, list — npm/pip/cargo/go auto-detect | 3 |
-| **Package Registries** | npm, PyPI, crates.io, Go modules, pub.dev, Homebrew, RubyGems, Maven, NuGet, Docker Hub | 24 |
+| **Package Registries** | npm, PyPI, crates.io, Go modules, pub.dev, RubyGems, Maven, NuGet, Docker Hub | 24 |
 | **GitHub + GitLab** | PRs, issues, CI, releases, stars, trending, MRs, pipelines | 10 |
 | **Platforms** | Supabase, Convex, Cloudflare (Workers/Pages/R2/D1/KV), Netlify, Firebase, Fly.io, Railway | 33 |
 | **Database** | query + schema (SQLite, Postgres, MySQL, Redis) | 2 |
@@ -1907,7 +1906,7 @@ ACL peers are also accessible via MCP tools (`acl_list_peers`, `acl_call_peer_to
 | Piece | Directory | Install | What it does |
 |-------|-----------|---------|-------------|
 | **Mobile App** | `mobile/` | App Store / Play Store | Remote control for AI agents + native RN container + on-device HTTP server (port 8347) |
-| **Desktop Agent** | `desktop/agent/` | `brew install yaver` or `apt install yaver` | Native `yaver` command for P2P server, AI agent runner, MCP, hot reload, builds, and session transfer. Also bridges `yaver push` through npm when Node is present. |
+| **Desktop Agent** | `desktop/agent/` | `npm i -g yaver-cli` | Native `yaver` command for P2P server, AI agent runner, MCP, hot reload, builds, and session transfer. Also bridges `yaver push` through npm when Node is present. |
 | **Unified NPM Bootstrap** | `cli/` | `npm i -g yaver-cli` | Umbrella install. Installs the `yaver` command, bootstraps the agent, and gives you one entry point for `yaver serve`, `yaver push`, `yaver feedback setup`, `yaver sdk add ...`, and `yaver install ...`. |
 | **Feedback SDKs** | `sdk/feedback/` | `npm i -g yaver-cli` then `yaver feedback setup` | Debug console + black box recorder embedded in your app. React Native, Flutter, Web. |
 | **Programmatic SDKs** | `sdk/` | `npm i -g yaver-cli` then `yaver sdk add core` | Automate Yaver from code — Go, Python, JS/TS, Flutter/Dart, C. |
@@ -2172,7 +2171,7 @@ yaver connect
 yaver> voice                                  # Records, transcribes, sends as task
 ```
 
-For local/free STT, install whisper.cpp: `brew install whisper-cpp`
+For local/free STT, install `whisper.cpp` on the host, then put the binary on `PATH`.
 
 ### Response Verbosity
 
@@ -2471,8 +2470,7 @@ ssh root@<server-ip> 'systemctl daemon-reload && systemctl enable --now yaver-re
 If you set up manually (without the setup script), add nginx + Let's Encrypt for HTTPS:
 
 ```bash
-# On your VPS — install nginx and certbot
-apt install -y nginx certbot python3-certbot-nginx
+# On your VPS — install nginx and certbot with your distro's standard package flow
 
 # Get SSL certificate (point DNS A record to VPS IP first)
 certbot certonly --standalone -d relay.example.com

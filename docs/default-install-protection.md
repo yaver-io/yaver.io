@@ -63,7 +63,7 @@ The main Linux prerequisites are:
 
 The lean npm install is best-effort.
 
-- if it has root privileges on Linux and `apt-get` is available, it now installs
+- if it has root privileges on Linux and a supported native package tool is available, it now installs
   `bubblewrap` and `uidmap` when missing
 - if it has root privileges, it also writes the user-namespace sysctl config
 - if it does not have enough privilege, it does not mutate the host aggressively

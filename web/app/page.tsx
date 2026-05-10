@@ -145,7 +145,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
 const LANDING_HOWTO_STEPS: ReadonlyArray<{ name: string; text: string; url?: string }> = [
   {
     name: "Install the Yaver CLI",
-    text: "Run npm install -g yaver-cli (or the curl install.sh on a box without Node).",
+    text: "Run npm install -g yaver-cli.",
     url: "https://yaver.io/download",
   },
   {
@@ -1015,14 +1015,6 @@ function MCPIntegrationSection() {
               </div>
               <div className="text-surface-500 pl-2"># installs `yaver` for agent + RN push-to-device</div>
               <div className="h-px bg-surface-800/60" />
-              <div className="text-surface-500"># Native package-manager alternative</div>
-              <div>
-                <span className="text-surface-400">$</span>{" "}
-                <span className="text-surface-200 select-all">
-                  brew install kivanccakmak/yaver/yaver
-                </span>
-              </div>
-              <div className="h-px bg-surface-800/60" />
               <div className="text-surface-500"># Start MCP server (stdio for Claude Desktop)</div>
               <div>
                 <span className="text-surface-400">$</span>{" "}
@@ -1231,13 +1223,10 @@ export default function HomePage() {
               <p className="mt-3 text-[11px] text-surface-500">
                 Recommended: <code>npm install -g yaver-cli</code>. Installs the
                 agent, feedback transport, and the RN push toolchain in one go;{" "}
-                <code>yaver auth</code> starts the agent automatically. Homebrew,{" "}
-                <code>apt</code>, AppImage, <code>.deb</code>/<code>.rpm</code>,
-                tarball, and install script work too &mdash;{" "}
-                <code>yaver push</code> on those paths auto-fetches the hermes
-                bundler via npm on first use.{" "}
+                <code>yaver auth</code> starts the agent automatically. Install
+                and update Yaver through npm only.{" "}
                 <Link href="/download" className="underline hover:text-surface-300">
-                  See install methods
+                  See install instructions
                 </Link>.
               </p>
               <p className="mt-2 text-[11px] text-surface-500">

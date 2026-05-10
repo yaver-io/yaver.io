@@ -20,7 +20,6 @@ func machineRemovalPhraseValid(phrase string) bool {
 
 func machineRemovalManualSteps() []string {
 	return []string{
-		"brew uninstall yaver",
 		"npm uninstall -g yaver-cli",
 		fmt.Sprintf("rm %s", os.Args[0]),
 	}

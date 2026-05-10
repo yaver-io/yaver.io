@@ -242,9 +242,9 @@ Output (human form):
 [FAIL] testflight  (react-native-expo)  project=mobile
 -----------------------------------------------------
   [  OK] xcodebuild     /usr/bin/xcodebuild Xcode 16.0
-  [  OK] pod            /opt/homebrew/bin/pod 1.15.2
-  [  OK] node           /opt/homebrew/bin/node v22.10.0
-  [  OK] npm            /opt/homebrew/bin/npm 10.9.0
+  [  OK] pod            /path/to/pod 1.15.2
+  [  OK] node           /path/to/node v22.10.0
+  [  OK] npm            /path/to/npm 10.9.0
   [  OK] APP_STORE_KEY_PATH             vault:project (mobile)
   [MISS] APP_STORE_KEY_ID               not set in vault or env
   [MISS] APP_STORE_KEY_ISSUER           not set in vault or env

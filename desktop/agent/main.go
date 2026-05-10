@@ -3169,20 +3169,26 @@ func runServe(args []string) {
 		cancel() // cancel the main context, triggers graceful shutdown
 	}
 	go func() {
-		if err := httpServer.Start(ctx); err != nil {
-			// "address already in use" is the most common cause of a
-			// fresh agent failing to start: a previous yaver process
-			// (often an older binary that survived a botched upgrade)
-			// is still bound to :18080. Detecting this and emitting an
-			// actionable message saves users from the silent-failure
-			// where the new binary is on disk but the old process
-			// keeps responding to clients with stale data — the exact
-			// trap that produced "dashboard says v1.99.36 even though
-			// /usr/local/bin/yaver --version prints v1.99.41" reports.
-			if strings.Contains(err.Error(), "address already in use") {
-				log.Printf("HTTP server error: %v", err)
-				log.Printf("[port-conflict] Another process is already bound to :%d.", *httpPort)
-				log.Printf("[port-conflict] Most likely an older yaver process from a previous install survived this restart.")
+		err := httpServer.Start(ctx)
+		// "address already in use" on the agent's HTTP port is almost
+		// always a stale `yaver serve` from a previous install that
+		// survived this restart. Try once to reclaim the port from
+		// that yaver-on-yaver conflict before falling through to the
+		// fatal exit — the user can't always SSH in to fix it (remote
+		// primary reached only from their phone).
+		// reclaimPortFromStaleYaver refuses to kill foreign processes,
+		// so the worst case is "no holder is yaver, retry skipped".
+		if err != nil && isAddrInUseErr(err) {
+			log.Printf("HTTP server bind failed on :%d: %v", *httpPort, err)
+			if reclaimPortFromStaleYaver(*httpPort) {
+				log.Printf("[port-reclaim] reclaimed :%d from stale yaver — retrying bind", *httpPort)
+				err = httpServer.Start(ctx)
+			}
+		}
+		if err != nil {
+			if isAddrInUseErr(err) {
+				log.Printf("[port-conflict] Another process is bound to :%d and we couldn't reclaim it.", *httpPort)
+				log.Printf("[port-conflict] Most likely an older yaver process or a foreign service is holding the port.")
 				log.Printf("[port-conflict] Find it: ss -tnlp | grep :%d   (or: lsof -i :%d)", *httpPort, *httpPort)
 				log.Printf("[port-conflict] Kill it: pkill -f 'yaver serve'  (then retry)")
 				log.Printf("[port-conflict] If the dashboard is showing a stale agent version, this is why.")
@@ -5708,11 +5714,7 @@ func runDoctor() {
 	latestCLI := fetchLatestCLIVersion()
 	if latestCLI != "" && latestCLI != version && isNewerVersion(latestCLI, version) {
 		fmt.Printf("  ⚠ Update available: %s → %s\n", version, latestCLI)
-		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-			fmt.Printf("    brew upgrade yaver\n\n")
-		} else {
-			fmt.Printf("    scoop update yaver\n\n")
-		}
+		fmt.Printf("    npm install -g yaver-cli@latest\n\n")
 	}
 
 	ok := 0
@@ -7777,9 +7779,8 @@ func runUninstall() {
 	fmt.Println()
 	fmt.Println("Yaver has been uninstalled.")
 	fmt.Println()
-	fmt.Println("If the binary itself remains (rare — npm/brew handle it):")
-	fmt.Println("  brew uninstall yaver          # if installed via Homebrew")
-	fmt.Println("  npm uninstall -g yaver-cli    # if installed via npm")
+	fmt.Println("If the binary itself remains (rare — npm uninstall already handles this):")
+	fmt.Println("  npm uninstall -g yaver-cli")
 	fmt.Printf("  rm %s   # if installed manually\n", os.Args[0])
 }
 
@@ -10201,11 +10202,7 @@ func checkLatestVersion() {
 
 	if result.CliVersion != "" && result.CliVersion != version && isNewerVersion(result.CliVersion, version) {
 		fmt.Printf("\nUpdate available: %s → %s\n", version, result.CliVersion)
-		if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-			fmt.Println("  brew upgrade yaver")
-		} else {
-			fmt.Println("  scoop update yaver")
-		}
+		fmt.Println("  npm install -g yaver-cli@latest")
 	}
 }
 

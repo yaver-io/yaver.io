@@ -364,7 +364,7 @@ TTL: 300`}
               <div>
                 <span className="text-surface-400">$</span>{" "}
                 <span className="text-surface-200 select-all">
-                  apt update &amp;&amp; apt install -y docker.io docker-compose-plugin nginx certbot
+                  # install Docker, nginx, and certbot with your server&apos;s standard package flow
                 </span>
               </div>
             </div>

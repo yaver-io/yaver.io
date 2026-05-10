@@ -91,7 +91,7 @@ export default function RaspberryPiManual() {
           </p>
           <div className="mt-3 overflow-x-auto rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
             <div><span className="text-surface-500">$</span> ssh yaver@yaver-pi.local</div>
-            <div><span className="text-surface-500">$</span> sudo apt update &amp;&amp; sudo apt -y full-upgrade</div>
+            <div className="text-surface-500"># update Raspberry Pi OS with your normal system update flow</div>
             <div><span className="text-surface-500">$</span> sudo reboot</div>
           </div>
         </section>
@@ -100,17 +100,14 @@ export default function RaspberryPiManual() {
         <section className="mb-12">
           <h2 className="mb-3 text-lg font-semibold text-surface-100">Install Yaver</h2>
           <p className="mb-3 text-sm leading-relaxed text-surface-400">
-            One line installs the agent, Node runtime, and the embedded hermesc
-            compiler into <code>~/.yaver/</code> and <code>~/.local/</code>. No sudo required
-            for the binary itself; the systemd install step below uses the user unit
-            so you never touch root services.
+            Install Yaver with npm, then use the CLI to pull any Pi-specific toolchains.
+            Make sure Node.js 18+ is present first. The systemd install step below uses the
+            user unit so you never touch root services.
           </p>
           <div className="overflow-x-auto rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
-            <div className="mb-1"><span className="text-surface-500">$</span> curl -fsSL https://yaver.io/install.sh | sh</div>
+            <div className="mb-1"><span className="text-surface-500">$</span> npm install -g yaver-cli</div>
             <div className="mb-3"><span className="text-surface-500">$</span> yaver install mobile   # pulls Node + hermesc, idempotent</div>
             <div className="mb-3"><span className="text-surface-500">$</span> yaver install pi-dev-node   # Pi-focused dev-node profile: AI stack + TDD + sqlite/vercel/convex/postgres/redis/supabase/mqtt</div>
-            <div className="mb-1 text-surface-500"># OR via Docker (multi-arch image, no native install):</div>
-            <div><span className="text-surface-500">$</span> docker pull kivanccakmak/yaver-cli:latest</div>
           </div>
           <p className="mt-4 text-sm leading-relaxed text-surface-400">
             The new <code>pi-dev-node</code> profile is the best starting point for a headless
@@ -284,7 +281,7 @@ EOF`}</div>
           <div className="overflow-x-auto rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">
             <div className="mb-1"><span className="text-surface-500">$</span> echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor</div>
             <div className="mb-1 text-surface-500"># persist via cpufrequtils:</div>
-            <div className="mb-1"><span className="text-surface-500">$</span> sudo apt -y install cpufrequtils</div>
+            <div className="mb-1 text-surface-500"># install cpufrequtils with your distro&apos;s standard package flow</div>
             <div><span className="text-surface-500">$</span> echo &apos;GOVERNOR=&quot;performance&quot;&apos; | sudo tee /etc/default/cpufrequtils</div>
           </div>
         </section>

@@ -2,7 +2,7 @@ package main
 
 // `yaver install <tool>` — one-shot dependency installer for the
 // integrations the local-CI runner needs. The point is "make
-// yaver-test-sdk Just Work after `brew install yaver`" without forcing
+// yaver-test-sdk Just Work after `npm install -g yaver-cli`" without forcing
 // the user to learn the package layouts of every browser, every mobile
 // SDK, and every test framework.
 //
