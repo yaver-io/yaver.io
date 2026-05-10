@@ -28,6 +28,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
+import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette, type ChipTone } from "../../src/lib/chipPalette";
@@ -1522,6 +1523,12 @@ export default function TasksScreen() {
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectingDeviceId, setReconnectingDeviceId] = useState<string | null>(null);
+  // Remote-box picker visibility for the tappable connection banner.
+  // The banner used to retry-on-tap; now it opens the picker instead,
+  // matching the same affordance Reload + Projects gained from the
+  // shared RemoteBoxBanner widget. Retry stays available via the
+  // dedicated Retry chip alongside Stop/Re-auth/View Logs.
+  const [showRemoteBoxPicker, setShowRemoteBoxPicker] = useState(false);
   const [recoveringDeviceId, setRecoveringDeviceId] = useState<string | null>(null);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [quicState, setQuicState] = useState<ConnectionState>(quicClient.connectionState);
@@ -3307,11 +3314,7 @@ export default function TasksScreen() {
         {/* Connection banner */}
         <Pressable
           style={[s.banner, { backgroundColor: banner.bg, borderBottomColor: banner.border, flexDirection: "column", alignItems: "flex-start", paddingVertical: 12 }]}
-          onPress={() => {
-            if (!isEffectivelyConnected && activeDevice) {
-              selectDevice(activeDevice);
-            }
-          }}
+          onPress={() => setShowRemoteBoxPicker(true)}
         >
           <View style={[s.bannerAccent, { backgroundColor: banner.dot }]} />
           <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
@@ -5380,6 +5383,10 @@ export default function TasksScreen() {
           </View>
         </Modal>
       </View>
+      <RemoteBoxPickerModal
+        visible={showRemoteBoxPicker}
+        onClose={() => setShowRemoteBoxPicker(false)}
+      />
     </SafeAreaView>
   );
 }

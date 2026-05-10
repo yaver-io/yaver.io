@@ -21,6 +21,8 @@ import { Platform } from "react-native";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import { useDevice } from "../../src/context/DeviceContext";
+import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient, type CapabilitySnapshot, type DevCompatibilityStatus, type DevServerStatus, type MobileWorkerPreviewSession } from "../../src/lib/quic";
 import { getAvailableModules, loadApp } from "../../src/lib/bundleLoader";
@@ -258,8 +260,13 @@ export default function AppsScreen() {
   const insets = useSafeAreaInsets();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
-  const { activeDevice, connectionStatus, devices } = useDevice();
+  const { activeDevice, connectionStatus, devices, connectedDeviceIds } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
+  // Effective state — focused box OR any pool client live. See
+  // lib/connectionState; aligns this tab with Devices/Tasks/Reload so
+  // we no longer disagree about "connected" when the focused box is
+  // mid-retry but a peer is still up.
+  const effectivelyConnected = computeEffectiveConnected(connectionStatus, connectedDeviceIds);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const mobileWorkers = devices.filter((d) => d.deviceClass === "edge-mobile");
   const selectedTarget = mobileWorkers.find((d) => d.id === selectedTargetId) || null;
@@ -440,6 +447,28 @@ export default function AppsScreen() {
   const [projectsDiscovering, setProjectsDiscovering] = useState(false);
   const webViewRef = useRef<WebView>(null);
 
+  // Remote Box switch — clear stale per-box state and kick a fresh
+  // project scan on the new machine. Mirror of the same pattern in
+  // hotreload.tsx; without it switching from yaver-test-ephemeral
+  // (Linux paths) to a Mac mini left the previous box's project
+  // list visible until the 15-second poll tick.
+  useEffect(() => {
+    if (!activeDevice?.id) return;
+    setProjects([]);
+    setProjectsDiscovering(false);
+    setDevStatus(null);
+    setWorkerSession(null);
+    setRepos([]);
+    setStartingProject(null);
+    setActionSheet(null);
+    setQuickActionStatus(null);
+    setBuildStatus(null);
+    setBundlerLine("");
+    if (effectivelyConnected) {
+      void quicClient.refreshMobileProjects().catch(() => {});
+    }
+  }, [activeDevice?.id]);
+
   // Poll dev server status + all projects
   useEffect(() => {
     if (!isConnected) return;
@@ -477,7 +506,11 @@ export default function AppsScreen() {
     const statusInterval = setInterval(pollStatus, 3000);
     const projectInterval = setInterval(fetchProjects, projectsDiscovering ? 2500 : 15000);
     return () => { mounted = false; clearInterval(statusInterval); clearInterval(projectInterval); };
-  }, [isConnected, projectsDiscovering]);
+    // activeDevice?.id in deps so the poll loop tears down + restarts
+    // on a Remote Box switch — without it the closure keeps using the
+    // same `mounted` flag and the user has to wait up to 15s for the
+    // next interval tick to fetch the new box's data.
+  }, [isConnected, projectsDiscovering, activeDevice?.id]);
 
   // SSE auto-reload
   useEffect(() => {
@@ -1448,9 +1481,13 @@ export default function AppsScreen() {
 
   const bundleUrl = devStatus ? quicClient.getDevServerBundleUrl(devStatus.bundleUrl || "/dev/") : "";
 
-  if (!isConnected) {
+  if (!effectivelyConnected) {
+    // Banner first (always actionable) so the user can tap Switch ›
+    // and pick a device — even from the empty state. Below, the same
+    // hint text the screen used to render full-bleed.
     return (
       <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+        <RemoteBoxBanner />
         <View style={s.emptyContainer}>
           <Ionicons name="phone-portrait-outline" size={56} color={c.textTertiary} style={{ opacity: 0.5, marginBottom: 12 }} />
           <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
@@ -1470,6 +1507,7 @@ export default function AppsScreen() {
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+      <RemoteBoxBanner />
       <View style={s.container}>
 
         {/* Running app — green card */}

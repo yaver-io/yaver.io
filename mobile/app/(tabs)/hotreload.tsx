@@ -26,6 +26,8 @@ import {
 import { loadAppIfChanged, setPhoneFrame, getPhoneFrame } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
+import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
+import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
@@ -137,7 +139,12 @@ export default function HotReloadScreen() {
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
   const projectCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
-  const { activeDevice, connectionStatus, devices } = useDevice();
+  const { activeDevice, connectionStatus, devices, connectedDeviceIds } = useDevice();
+  // Effective connected = focused-device alive OR any pool client live.
+  // Used for the in-tab gating logic (showing project list vs. CTA)
+  // so this tab no longer disagrees with Devices/Tasks about whether
+  // the user is "connected". See lib/connectionState for the rule.
+  const effectivelyConnected = computeEffectiveConnected(connectionStatus, connectedDeviceIds);
 
   // Promise wrapper around Alert.alert so handleOpen / handleStart
   // can `await` the user's pick. Returns `true` if cancelled (caller
@@ -270,7 +277,6 @@ export default function HotReloadScreen() {
     // so the user doesn't see a Mac mini's hostname next to a Linux
     // box's project paths during the gap before the new poll lands.
     setProjects([]);
-    setProjectsScanning(false);
     setScanStopping(false);
     setDevStatus(null);
     setWorkerSession(null);
@@ -292,8 +298,21 @@ export default function HotReloadScreen() {
     // returns fresh data within seconds instead of falling back to
     // the cached scan from the agent's last full sweep. Failure is
     // intentionally swallowed — the regular 15s poll catches up.
+    //
+    // Also flip projectsScanning ON optimistically so the UI shows
+    // "Discovering..." immediately AND the polling interval rebuilds
+    // at 2.5s (vs 15s for the idle cadence). Without this the user
+    // stares at a "No projects discovered — Rediscover" empty-state
+    // for up to 15s after switching, which makes the auto-scan look
+    // like it didn't fire. The next poll reconciles scanning back to
+    // false once the agent reports the scan finished.
     if (isConnected) {
-      void quicClient.refreshMobileProjects().catch(() => {});
+      setProjectsScanning(true);
+      void quicClient.refreshMobileProjects().catch(() => {
+        setProjectsScanning(false);
+      });
+    } else {
+      setProjectsScanning(false);
     }
   }, [activeDevice?.id]);
 
@@ -729,9 +748,15 @@ export default function HotReloadScreen() {
   // All projects from /projects/mobile are already mobile-only
   const devProjects = projects.filter(isMobileHotReloadProject);
 
-  if (!isConnected) {
+  if (!effectivelyConnected) {
+    // Shared banner first so the user can immediately tap Switch › and
+    // pick a device. Below it: the same minimal "connect a device"
+    // hint the screen used to render full-bleed. Crucially, this no
+    // longer hides the device-picker affordance behind a dead-end
+    // "Not connected" message — the banner is always actionable.
     return (
       <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
+        <RemoteBoxBanner />
         <View style={s.emptyContainer}>
           <Ionicons name="flame-outline" size={48} color={c.textTertiary} style={{ opacity: 0.5, marginBottom: 12 }} />
           <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
@@ -745,49 +770,37 @@ export default function HotReloadScreen() {
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <View style={s.container}>
-        <View
-          style={[
-            s.card,
-            s.projectCard,
-            {
-              backgroundColor: c.bgCard,
-              borderColor: c.border,
-              marginTop: 12,
-            },
-          ]}
-        >
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-            <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
-            <Pressable onPress={() => setShowRemoteBoxPicker(true)}>
-              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Switch ›</Text>
-            </Pressable>
+      <RemoteBoxBanner
+        extra={
+          <View style={{ gap: 2 }}>
+            <Text style={[s.projectMeta, { color: c.textSecondary }]} numberOfLines={1}>
+              Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
+            </Text>
+            {remoteHermesReady ? (
+              <Text style={[s.projectMeta, { color: remoteHermesReady.enabled ? c.success : c.warn, fontWeight: "600" }]}>
+                {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
+              </Text>
+            ) : null}
+            {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
+              <Text style={[s.projectMeta, { color: c.textMuted }]}>
+                {remoteHermesReady.notes[0]}
+              </Text>
+            ) : null}
+            {agentInfo?.workDir ? (
+              <Text
+                style={[
+                  s.projectPath,
+                  { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                ]}
+                numberOfLines={1}
+              >
+                {agentInfo.workDir}
+              </Text>
+            ) : null}
           </View>
-          <Text style={[s.projectMeta, { color: c.textSecondary, marginTop: 4 }]}>
-            {(agentInfo?.hostname || activeDevice?.name || "unknown host")} · Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
-          </Text>
-          {remoteHermesReady ? (
-            <Text style={[s.projectMeta, { color: remoteHermesReady.enabled ? c.success : c.warn, marginTop: 4, fontWeight: "600" }]}>
-              {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
-            </Text>
-          ) : null}
-          {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
-            <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 2 }]}>
-              {remoteHermesReady.notes[0]}
-            </Text>
-          ) : null}
-          {agentInfo?.workDir ? (
-            <Text
-              style={[
-                s.projectPath,
-                { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
-              ]}
-              numberOfLines={1}
-            >
-              {agentInfo.workDir}
-            </Text>
-          ) : null}
-        </View>
+        }
+      />
+      <View style={s.container}>
 
         {mobileWorkers.length > 0 && (
           <>
