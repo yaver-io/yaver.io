@@ -1511,6 +1511,10 @@ export default function TasksScreen() {
     userPickedModelRef.current = false;
   }, [activeDevice?.id]);
   const [runnerAuthModalRunner, setRunnerAuthModalRunner] = useState<string | null>(null);
+  // Target device id for the runner-auth modal. When set, the modal routes
+  // /runner-auth/browser/* through /peer/<id> so the OAuth flow runs on
+  // the failing remote box, not on whichever agent is currently focused.
+  const [runnerAuthModalTarget, setRunnerAuthModalTarget] = useState<string | null>(null);
   const [showTmuxSessions, setShowTmuxSessions] = useState(false);
   const [tmuxSessions, setTmuxSessions] = useState<TmuxSession[]>([]);
   const [isLoadingTmux, setIsLoadingTmux] = useState(false);
@@ -1806,13 +1810,14 @@ export default function TasksScreen() {
     }
   }, [connectionStatus]);
 
-  const openRunnerAuthModal = useCallback((runnerId: string) => {
+  const openRunnerAuthModal = useCallback((runnerId: string, targetDeviceId?: string | null) => {
     const normalized = String(runnerId || "").trim().toLowerCase();
     if (normalized !== "claude" && normalized !== "codex") {
       Alert.alert("Sign-in unavailable", `${displayRunnerLabel(runnerId)} does not support browser sign-in from mobile yet.`);
       return;
     }
     setRunnerAuthModalRunner(normalized);
+    setRunnerAuthModalTarget(targetDeviceId || null);
   }, []);
 
   useEffect(() => {
@@ -4617,9 +4622,17 @@ export default function TasksScreen() {
           visible={!!runnerAuthModalRunner}
           runner={runnerAuthModalRunner || "claude"}
           deviceName={activeDevice?.name || "this machine"}
-          onClose={() => setRunnerAuthModalRunner(null)}
+          // Routes /runner-auth/browser/* via /peer/<id> when set, so
+          // OAuth runs against the remote box where the runner actually
+          // lives — not the device the phone happens to be focused on.
+          target={runnerAuthModalTarget || activeDevice?.id || undefined}
+          onClose={() => {
+            setRunnerAuthModalRunner(null);
+            setRunnerAuthModalTarget(null);
+          }}
           onCompleted={() => {
             setRunnerAuthModalRunner(null);
+            setRunnerAuthModalTarget(null);
             void refreshRunnerState();
           }}
         />
@@ -4852,6 +4865,26 @@ export default function TasksScreen() {
                                 // a nudge so they know to retry once they're
                                 // done. The agent's preflight error embedded
                                 // the exact command in suggestion.payload.
+                                if (suggestion.kind === "runner-auth-needed") {
+                                  // The runner on the failing task's
+                                  // device hit a "Not logged in" /
+                                  // expired-token state. Open the
+                                  // browser-auth modal pre-filled with
+                                  // that runner; the modal already
+                                  // routes through /peer/<deviceId>/
+                                  // when target is set. Recover the
+                                  // target device id from the failed
+                                  // task so we don't re-auth on the
+                                  // wrong machine when the user has a
+                                  // mesh of boxes.
+                                  const runnerId = (suggestion.payload || selectedTask.runnerId || "claude").toLowerCase();
+                                  setRunnerAuthModalRunner(runnerId);
+                                  // Task type doesn't carry deviceId — fall back
+                                  // to the active device (which is where the
+                                  // task ran when the user selected it).
+                                  setRunnerAuthModalTarget(activeDevice?.id || null);
+                                  return;
+                                }
                                 if (suggestion.kind === "chown-fix") {
                                   const cmd = suggestion.payload || "";
                                   if (cmd) {

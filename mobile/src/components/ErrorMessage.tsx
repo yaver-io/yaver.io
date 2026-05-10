@@ -12,11 +12,13 @@ import { monoFamily, spacing } from "../theme/tokens";
 export interface SmartRetrySuggestion {
   label: string;
   /** Raw key for analytics so we can see which suggestions get tapped. */
-  kind: "skip-git-repo-check" | "api-key-missing" | "node-modules" | "permission" | "chown-fix";
+  kind: "skip-git-repo-check" | "api-key-missing" | "node-modules" | "permission" | "chown-fix" | "runner-auth-needed";
   /** Optional payload tied to the suggestion. For chown-fix this
    *  carries the exact `sudo chown -R …` command pulled out of the
    *  agent's preflight error so the UI can offer a Copy button without
-   *  having to re-derive it. */
+   *  having to re-derive it. For runner-auth-needed it carries the
+   *  runner id ("claude" | "codex") so the caller can open the right
+   *  RunnerAuthModal pre-filled. */
   payload?: string;
 }
 
@@ -37,10 +39,41 @@ function extractChownCommand(raw: string): string {
   return "";
 }
 
+// Runner-auth detection: claude prints "Not logged in · Please run /login"
+// (subscription token expired / Keychain locked / no creds), codex prints
+// "Sign in required" / similar. Match BEFORE api-key-missing so we never
+// route the user toward an API-key-style fix when the real answer is OAuth.
+// Returns the runner id when we can attribute the failure.
+function detectRunnerAuthFailure(haystack: string): "claude" | "codex" | null {
+  const m = haystack.toLowerCase();
+  const looksLikeClaude =
+    (m.includes("not logged in") && (m.includes("/login") || m.includes("please run"))) ||
+    m.includes("invalid bearer token") ||
+    m.includes("invalid authentication credentials") ||
+    m.includes("claude code-credentials");
+  if (looksLikeClaude) return "claude";
+  const looksLikeCodex =
+    (m.includes("sign in required") && (m.includes("codex") || m.includes("chatgpt"))) ||
+    m.includes("codex login --device-auth") ||
+    (m.includes("not authenticated") && m.includes("codex"));
+  if (looksLikeCodex) return "codex";
+  return null;
+}
+
 export function detectSmartRetry(message: string): SmartRetrySuggestion | null {
   const raw = String(message || "");
   const m = raw.toLowerCase();
   if (!m) return null;
+  // Subscription-OAuth failures take priority over generic api-key hints
+  // — claude/codex auth needs the browser flow, never an API key.
+  const runner = detectRunnerAuthFailure(raw);
+  if (runner) {
+    return {
+      label: runner === "codex" ? "Sign in to Codex" : "Sign in to Claude Code",
+      kind: "runner-auth-needed",
+      payload: runner,
+    };
+  }
   if (m.includes("skip-git-repo-check") && m.includes("not specified")) {
     return { label: "Retry with --skip-git-repo-check", kind: "skip-git-repo-check" };
   }

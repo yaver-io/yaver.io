@@ -3447,6 +3447,13 @@ export default function DashboardPage() {
         <RunnerAuthModal
           runner={chatRunnerAuthModal}
           deviceName={connectedDevice?.name || connectedDevice?.id || "this machine"}
+          // Routes /runner-auth/browser/* via /peer/<id> so the OAuth
+          // flow runs on the device the dashboard is connected to,
+          // even when the dashboard is itself served from a relay
+          // (browsers can't dial LAN IPs). When undefined the call
+          // hits the connected agent directly — same shape as the
+          // mobile RunnerAuthModal target prop.
+          target={connectedDevice?.id || undefined}
           onClose={() => {
             setChatRunnerAuthModal(null);
             void refreshConnectedRunners();
@@ -3479,11 +3486,17 @@ export default function DashboardPage() {
 function RunnerAuthModal({
   runner,
   deviceName,
+  target,
   onClose,
   onCompleted,
 }: {
   runner: string;
   deviceName: string;
+  /** Optional peer device id. When set, all `/runner-auth/browser/*`
+   *  calls route via `/peer/<target>/...` so the OAuth flow runs on
+   *  the named device — used for "sign in to claude on Mac mini" while
+   *  the dashboard is connected via relay or to a different machine. */
+  target?: string;
   onClose: () => void;
   onCompleted: () => void;
 }) {
@@ -3500,13 +3513,13 @@ function RunnerAuthModal({
     startedRef.current = true;
     (async () => {
       try {
-        const started = await agentClient.startRunnerBrowserAuth(runner);
+        const started = await agentClient.startRunnerBrowserAuth(runner, target);
         setSession(started);
       } catch (error) {
         setStartError(error instanceof Error ? error.message : String(error));
       }
     })();
-  }, [runner]);
+  }, [runner, target]);
 
   useEffect(() => {
     if (!session) return;
@@ -3516,12 +3529,12 @@ function RunnerAuthModal({
     }
     const interval = setInterval(async () => {
       try {
-        const next = await agentClient.getRunnerBrowserAuthStatus(session.id);
+        const next = await agentClient.getRunnerBrowserAuthStatus(session.id, target);
         setSession(next);
       } catch {}
     }, 1500);
     return () => clearInterval(interval);
-  }, [session, onCompleted]);
+  }, [session, onCompleted, target]);
 
   const terminal = session && ["completed", "failed", "cancelled"].includes(session.status);
 
@@ -3548,7 +3561,7 @@ function RunnerAuthModal({
           <button
             onClick={async () => {
               if (session && !terminal) {
-                await agentClient.cancelRunnerBrowserAuth(session.id).catch(() => {});
+                await agentClient.cancelRunnerBrowserAuth(session.id, target).catch(() => {});
               }
               onClose();
             }}
@@ -3632,7 +3645,7 @@ function RunnerAuthModal({
                         setSubmitting(true);
                         setSubmitError(null);
                         try {
-                          const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim());
+                          const next = await agentClient.submitRunnerBrowserAuthCode(session.id, pasteCode.trim(), target);
                           setSession(next);
                           setPasteCode("");
                         } catch (err) {

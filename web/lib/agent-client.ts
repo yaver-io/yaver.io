@@ -1697,10 +1697,19 @@ export class AgentClient {
    * (codex `--device-auth`, claude `auth login --console`). Returns a session
    * id that callers poll via getRunnerBrowserAuthStatus to grab the URL +
    * code the user needs to complete in their browser.
+   *
+   * Pass `target` to drive the OAuth flow on a peer device the connected
+   * agent owns (routes via `/peer/<id>/runner-auth/browser/*`). This is
+   * how the dashboard signs the user into claude/codex on a *different*
+   * machine than the one the dashboard is connected to — the same code
+   * path mobile uses from DeviceDetailsModal.
    */
-  async startRunnerBrowserAuth(runner: string): Promise<RunnerBrowserAuthSession> {
+  async startRunnerBrowserAuth(runner: string, target?: string): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/runner-auth/browser/start`, {
+    const url = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
+      : `${this.baseUrl}/runner-auth/browser/start`;
+    const res = await fetch(url, {
       method: "POST",
       headers: this.authHeaders,
       body: JSON.stringify({ runner }),
@@ -1713,9 +1722,11 @@ export class AgentClient {
     return data.session as RunnerBrowserAuthSession;
   }
 
-  async getRunnerBrowserAuthStatus(sessionId: string): Promise<RunnerBrowserAuthSession> {
+  async getRunnerBrowserAuthStatus(sessionId: string, target?: string): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const base = `${this.baseUrl}/runner-auth/browser/status`;
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/status`
+      : `${this.baseUrl}/runner-auth/browser/status`;
     const url = `${base}?id=${encodeURIComponent(sessionId)}`;
     const res = await fetch(url, { headers: this.authHeaders });
     if (!res.ok) {
@@ -1726,9 +1737,12 @@ export class AgentClient {
     return data.session as RunnerBrowserAuthSession;
   }
 
-  async cancelRunnerBrowserAuth(sessionId: string): Promise<void> {
+  async cancelRunnerBrowserAuth(sessionId: string, target?: string): Promise<void> {
     this.assertConnected();
-    const url = `${this.baseUrl}/runner-auth/browser/cancel?id=${encodeURIComponent(sessionId)}`;
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/cancel`
+      : `${this.baseUrl}/runner-auth/browser/cancel`;
+    const url = `${base}?id=${encodeURIComponent(sessionId)}`;
     await fetch(url, { method: "POST", headers: this.authHeaders }).catch(() => {});
   }
 
@@ -1745,9 +1759,12 @@ export class AgentClient {
    * caller could be a guest — the agent's authSDK middleware enforces
    * that, but this comment is the second line of defence.
    */
-  async submitRunnerBrowserAuthCode(sessionId: string, code: string): Promise<RunnerBrowserAuthSession> {
+  async submitRunnerBrowserAuthCode(sessionId: string, code: string, target?: string): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const url = `${this.baseUrl}/runner-auth/browser/submit-code?id=${encodeURIComponent(sessionId)}`;
+    const base = target
+      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/submit-code`
+      : `${this.baseUrl}/runner-auth/browser/submit-code`;
+    const url = `${base}?id=${encodeURIComponent(sessionId)}`;
     const res = await fetch(url, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
