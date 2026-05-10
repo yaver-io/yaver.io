@@ -19,6 +19,16 @@ services:
       # relay.service), not this docker-compose, and supplies its own
       # CONVEX_URL there.
       - CONVEX_URL=${CONVEX_URL:-}
+      # Optional. When set, the relay auto-provisions a per-device
+      # subdomain (`<deviceId>.${EXPOSE_DOMAIN}`) for every connected
+      # agent and publishes it back as `publicUrl`. You also need
+      # wildcard DNS for `*.${EXPOSE_DOMAIN}` pointing at this host
+      # (DNS-only on Cloudflare so the wildcard never enters a
+      # Worker route configured for the apex zone) AND a wildcard
+      # TLS cert for the same pattern (DNS-01 challenge — HTTP-01
+      # doesn't cover wildcards). Leave empty to disable the
+      # auto-subdomain feature entirely.
+      - EXPOSE_DOMAIN=${EXPOSE_DOMAIN:-}
     restart: unless-stopped
     logging:
       driver: "json-file"

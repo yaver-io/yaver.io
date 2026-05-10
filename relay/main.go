@@ -108,7 +108,12 @@ func runServe(args []string) {
 	httpPort := fs.Int("http-port", 8443, "HTTP port for mobile clients")
 	password := fs.String("password", "", "Shared password for relay authentication (env: RELAY_PASSWORD)")
 	convexURL := fs.String("convex-url", "", "Convex backend URL for per-user password validation (env: CONVEX_URL)")
-	exposeDomain := fs.String("expose-domain", "yaver.io", "Base domain for subdomain expose routing (env: EXPOSE_DOMAIN)")
+	// Default empty → no auto-subdomain feature. The previous default of
+	// "yaver.io" was a hard-coded operator-of-the-public-relay assumption
+	// that broke every self-hoster (they don't own that zone) and quietly
+	// published unroutable publicUrls into Convex device rows. Empty is
+	// safe; the official deployment opts in via systemd unit or env.
+	exposeDomain := fs.String("expose-domain", "", "Base domain for subdomain expose routing — e.g. dev.yaver.io. Empty disables auto-subdomain. (env: EXPOSE_DOMAIN)")
 	allowOpen := fs.Bool("allow-open", false, "Explicitly allow running with no password and no Convex URL (open mode). Refuses to start otherwise. C-9 audit.")
 	// Phase 7 — colocated TURN. Disabled by default (port=0) so existing
 	// docker-compose deployments don't suddenly bind a new port. Operators

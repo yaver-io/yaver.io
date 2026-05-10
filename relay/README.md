@@ -52,6 +52,63 @@ Yaver's native `Remote Runtime` lane is relay-compatible.
 
 That means the current relay is already suitable for the fallback transport used by Swift/Kotlin remote-runtime sessions. Full TURN-style media relay would still be a separate future feature for first-class cross-network WebRTC media.
 
+## Reachability Layers — How Mobile Finds the Agent
+
+The mobile app races every available transport in parallel and keeps
+the first one to answer `/health`. Each transport just needs to
+publish a working URL into the device's `publicEndpoints` list (or
+private IP into `localIps`); mobile is transport-agnostic.
+
+| Transport | How the URL gets published | Use when |
+|---|---|---|
+| **LAN direct** | Agent enumerates RFC1918 interface IPs into `localIps[]` on every heartbeat. Mobile races over plain HTTP `:18080`. | Phone + box on the same Wi-Fi/Ethernet. Lowest latency. |
+| **Tailscale / Headscale** | Add the 100.x address to `public_endpoints` in `~/.yaver/config.json` (auto-detection from the Tailscale interface is on the roadmap). Use `https://100.x.y.z:18443` so iOS App Transport Security accepts it. | Both ends on the same tailnet. Direct, end-to-end encrypted, NAT-pierced. |
+| **Cloudflare Tunnel** | Configure a `cloudflare_tunnels` entry in `~/.yaver/config.json` (or a manual `public_endpoints` URL). Agent publishes the hostname on every heartbeat. | Any-network, no port-forwarding. Costs nothing on Cloudflare's free plan. |
+| **Custom VPN / WireGuard** | Add the VPN-side hostname/IP to `public_endpoints`. Same shape as Tailscale. | Self-hosted overlay where you already own the routing. |
+| **Auto-detected public IP** | Agent probes `api.ipify.org` / `icanhazip.com` / `ifconfig.me` on heartbeat (cached 5 min) and appends `http://<ip>:<port>` to `publicEndpoints`. Default ON; opt out via `disable_auto_public_ip: true`. | Box has a routable public IPv4 and you didn't want to set up Cloudflare/Tailscale. Works through Hetzner, DigitalOcean, EC2 etc. |
+| **Yaver-hosted relay (free)** | Agent registers with the public relay (`relay.yaver.io:4433`) on startup and is auto-assigned `https://<deviceId>.dev.yaver.io`. Published as `publicUrl` in the heartbeat. | No public IP, no Tailscale, no setup. Pass-through QUIC tunnel. Bandwidth shared. |
+| **Yaver-hosted managed relay (paid)** | Same as the free relay but provisioned per-team via `yaver-cli managed-relay provision`. Reserved bandwidth, custom subdomain. | Teams who want isolation from the shared free pool. |
+| **Self-hosted Yaver relay** | Run `yaver-relay serve --expose-domain dev.your-zone.com` on your own VPS, point `*.dev.your-zone.com` DNS at it, terminate TLS via wildcard cert. Agent connects per the `relay_servers` Convex entry. | Fleet operators who want everything under their own DNS + TLS. |
+
+Mobile reads `device.publicEndpoints` from the Convex device row +
+`device.localIps` (also from heartbeat) + the active relay servers.
+The order it tries them in is policy, not protocol — adding a new
+transport never requires a mobile change.
+
+### Cloudflare DNS for the auto-subdomain feature
+
+When `--expose-domain dev.example.com` is set, the relay assigns
+`<deviceId>.dev.example.com` to every connecting agent and publishes
+it back as `publicUrl`. For that URL to actually route, you need:
+
+1. **Wildcard DNS**: `*.dev.example.com → A <relay-ip>` set as
+   **DNS-only** on Cloudflare (gray cloud — proxy OFF). If you leave
+   the orange cloud on, requests will hit Cloudflare Workers that
+   match the apex zone and never reach the relay.
+2. **Wildcard TLS**: `*.dev.example.com` cert. Use certbot with the
+   DNS-01 challenge (HTTP-01 doesn't cover wildcards). On Cloudflare
+   that's `certbot certonly --dns-cloudflare` with an API token
+   scoped to `Zone:DNS:Edit`.
+3. **Wildcard nginx server block**:
+   ```nginx
+   server {
+       listen 443 ssl;
+       server_name *.dev.example.com;
+       ssl_certificate     /etc/letsencrypt/live/dev.example.com/fullchain.pem;
+       ssl_certificate_key /etc/letsencrypt/live/dev.example.com/privkey.pem;
+       location / {
+           proxy_pass http://127.0.0.1:8443;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+       }
+   }
+   ```
+
+The default `expose-domain` is now empty — relays must opt in by
+passing the flag (or setting `EXPOSE_DOMAIN`). The previous default
+of `yaver.io` quietly published unroutable URLs into self-hosters'
+device rows; empty is the safe fallback.
+
 ## Multi-Relay Architecture
 
 Relay servers are stored as a JSON array in Convex `platformConfig` under the key `relay_servers`:

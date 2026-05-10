@@ -22,8 +22,17 @@ Type=simple
 # CONVEX_URL via /etc/default/yaver-relay for staging-Convex deploys.
 Environment=YAVER_RELAY_OFFICIAL=1
 Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site
+# EXPOSE_DOMAIN drives the auto-provisioned per-device subdomain that
+# the relay assigns to every connected agent (e.g.
+# <deviceId>.dev.yaver.io) and publishes back as `publicUrl` in the
+# heartbeat. Routed via Cloudflare DNS (`*.dev.yaver.io` → A → this
+# relay's IP, DNS-only / gray cloud) so the wildcard never enters the
+# Worker that serves the apex `yaver.io` marketing site. Self-hosted
+# operators override this in /etc/default/yaver-relay or leave it
+# empty to disable the auto-subdomain feature entirely.
+Environment=EXPOSE_DOMAIN=dev.yaver.io
 EnvironmentFile=-/etc/default/yaver-relay
-ExecStart=/usr/local/bin/yaver-relay serve --quic-port=4433 --http-port=8443
+ExecStart=/usr/local/bin/yaver-relay serve --quic-port=4433 --http-port=8443 --expose-domain=${EXPOSE_DOMAIN}
 Restart=always
 RestartSec=5
 StartLimitIntervalSec=60
