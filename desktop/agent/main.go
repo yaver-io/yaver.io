@@ -6623,8 +6623,20 @@ func runDevices(args []string) {
 		runnerByDevice[d.DeviceID] = summarizeDeviceRunners(cfg, d)
 	}
 
-	fmt.Printf("%-10s  %-16s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s\n",
-		"ID", "ALIAS", "NAME", "PLATFORM", "STATUS", "ACCESS", "SESSION", "RUNNERS", "ADDRESS")
+	// Best-effort fetch of primary + secondary deviceId so the listing
+	// can flag them. Failure here is silent — the user just sees the
+	// list without ROLE annotations.
+	var primaryID, secondaryID string
+	if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		primaryID, _ = primaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		secondaryID, _ = secondaryGetCurrent(ctx, cfg.AuthToken, cfg.ConvexSiteURL)
+		cancel()
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	defer w.Flush()
+	fmt.Fprintln(w, "ID\tROLE\tALIAS\tNAME\tPLATFORM\tSTATUS\tACCESS\tSESSION\tRUNNERS\tADDRESS")
 	for _, d := range devices {
 		status := "offline"
 		if d.IsOnline {
@@ -6632,24 +6644,26 @@ func runDevices(args []string) {
 		}
 		id := d.DeviceID
 		if len(id) > 8 {
-			id = id[:8] + "..."
+			id = id[:8]
 		}
-		alias := d.Alias
-		if strings.TrimSpace(alias) == "" {
-			alias = "not set"
+		alias := strings.TrimSpace(d.Alias)
+		if alias == "" {
+			alias = "-"
 		}
-		if len(alias) > 16 {
-			alias = alias[:15] + "…"
+		role := "-"
+		switch d.DeviceID {
+		case primaryID:
+			role = "primary"
+		case secondaryID:
+			role = "secondary"
 		}
 		runners := runnerByDevice[d.DeviceID]
 		if strings.TrimSpace(runners) == "" {
 			runners = "-"
 		}
-		if len(runners) > 36 {
-			runners = runners[:35] + "…"
-		}
-		fmt.Printf("%-10s  %-16s  %-20s  %-8s  %-8s  %-22s  %-14s  %-36s  %s:%d\n",
-			id, alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, d.QuicHost, d.QuicPort)
+		address := fmt.Sprintf("%s:%d", d.QuicHost, d.QuicPort)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			id, role, alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, address)
 	}
 }
 

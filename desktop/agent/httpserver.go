@@ -1167,6 +1167,15 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/vault/push", s.rateLimit(s.auth(s.handleVaultPush)))
 	mux.HandleFunc("/vault/peer-sync", s.rateLimit(s.auth(s.handleVaultPeerSync)))
 
+	// Yaver-agent (mobile-embedded control-plane LLM) provider config —
+	// stored in vault under project "yaver-agent". GET returns the
+	// metadata without the API key value; POST writes any subset.
+	mux.HandleFunc("/yaver-agent/config", s.rateLimit(s.auth(s.handleYaverAgentConfig)))
+	// Aggregated device + runner audit consumed by the mobile-embedded
+	// yaver-agent so it can answer "what's the state of this box?" in
+	// a single round trip.
+	mux.HandleFunc("/yaver-agent/audit", s.auth(s.handleYaverAgentDeviceAudit))
+
 	// MCP (Model Context Protocol) endpoint — JSON-RPC 2.0 over HTTP
 	mux.HandleFunc("/mcp", s.auth(s.handleMCP))
 
