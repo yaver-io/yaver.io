@@ -257,6 +257,46 @@ export default function HotReloadScreen() {
     }
   }, [devStatus?.targetDeviceId, devStatus?.running, devStatus?.building]);
 
+  // Remote Box switch — clear every piece of state bound to the
+  // previous box AND kick a fresh project scan on the new box. Without
+  // this, switching from yaver-test-ephemeral (paths like /root/...)
+  // to a Mac mini (paths like /Users/...) leaves the previous box's
+  // project list visible until the 15-second poll tick happens to fire,
+  // which makes the Reload tab look broken even though it's just stale.
+  // Triggered on every activeDevice.id transition (and on first attach).
+  useEffect(() => {
+    if (!activeDevice?.id) return;
+    // Snapshot fields read from the previous box's agent — drop them
+    // so the user doesn't see a Mac mini's hostname next to a Linux
+    // box's project paths during the gap before the new poll lands.
+    setProjects([]);
+    setProjectsScanning(false);
+    setScanStopping(false);
+    setDevStatus(null);
+    setWorkerSession(null);
+    setAgentInfo(null);
+    setRemoteHermesReady(null);
+    setReloadIncidents([]);
+    setReloadOperations([]);
+    setDevLog([]);
+    // Action state from the previous box — a "Building HBC..." spinner
+    // for a build that's now happening on a different machine, or a
+    // stop-action mid-flight against the prior agent.
+    setStartingProject(null);
+    setNativeLoading(false);
+    setLoadingStatus("");
+    setStopState("idle");
+    setStopMessage("");
+    setStopBuildsCancelled(0);
+    // Best-effort scan kick on the new box so the next GET poll
+    // returns fresh data within seconds instead of falling back to
+    // the cached scan from the agent's last full sweep. Failure is
+    // intentionally swallowed — the regular 15s poll catches up.
+    if (isConnected) {
+      void quicClient.refreshMobileProjects().catch(() => {});
+    }
+  }, [activeDevice?.id]);
+
   // Poll dev server status + mobile projects
   useEffect(() => {
     if (!isConnected) return;
@@ -339,7 +379,11 @@ export default function HotReloadScreen() {
     const interval = setInterval(poll, 3000);
     const projectInterval = setInterval(fetchMobileProjects, projectsScanning ? 2500 : 15000);
     return () => { mounted = false; clearInterval(interval); clearInterval(projectInterval); };
-  }, [isConnected, projectsScanning]);
+    // activeDevice?.id is in the deps so the poll loop tears down +
+    // restarts on a Remote Box switch — without it the closure keeps
+    // running with the same `mounted` flag and the user has to wait
+    // up to 15s for the next interval tick to fetch the new box's data.
+  }, [isConnected, projectsScanning, activeDevice?.id]);
 
   // Subscribe to /dev/events SSE so the user sees Metro / Expo /
   // Flutter output live while the dev server is coming up. Without
@@ -743,14 +787,6 @@ export default function HotReloadScreen() {
               {agentInfo.workDir}
             </Text>
           ) : null}
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, gap: 8 }}>
-            <Text style={{ color: c.textMuted, fontSize: 11, flex: 1 }} numberOfLines={2}>
-              Reload owns box switching. Devices stays for pairing, connection health, and details.
-            </Text>
-            <Pressable onPress={() => router.push("/(tabs)/devices")} hitSlop={8}>
-              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Manage ›</Text>
-            </Pressable>
-          </View>
         </View>
 
         {mobileWorkers.length > 0 && (
