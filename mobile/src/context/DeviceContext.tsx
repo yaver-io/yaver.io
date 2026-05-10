@@ -15,6 +15,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { quicClient, RecoveryResult, RelayServer, TunnelServer } from "../lib/quic";
+import { connectionManager } from "../lib/connectionManager";
 import { useAuth } from "./AuthContext";
 import { getLocalSecret, getUserSettings, saveUserSettings, LOCAL_KEYS } from "../lib/auth";
 import { appLog } from "../lib/logger";
@@ -197,6 +198,16 @@ export interface Device {
   local?: boolean;
   /** stable hardware ID (P2P only, never sent to Convex) */
   hwid?: string;
+  /** Agent binary version reported via heartbeat or `/info` (e.g.
+   *  "1.99.180"). Surfaced on machine-picker cards so the user can spot
+   *  a box running an old daemon — the npm install might have bumped the
+   *  on-disk symlink without the systemd unit ever picking it up. Empty
+   *  when the row is too old to carry the field. */
+  agentVersion?: string;
+  /** Epoch ms when `agentVersion` was last reported; used to decide whether
+   *  to fall back to a live `/info` probe instead of trusting the cached
+   *  Convex value. */
+  agentVersionReportedAt?: number;
   /** best-effort cached machine + local runtime capability snapshot */
   hardwareProfile?: {
     os?: string;
@@ -670,6 +681,21 @@ interface DeviceState {
     mode?: string | null,
     provider?: string | null,
   ) => Promise<void>;
+  /** Latest published CLI/agent version (from /config). Null until
+   *  the platform-config fetch returns. Pair this with a device's
+   *  `agentVersion` to render an "outdated" badge on machine cards. */
+  latestCliVersion: string | null;
+  /** Device IDs whose pooled QuicClient is currently `isConnected`.
+   *  Includes the focused device plus any background-connected boxes
+   *  the user has previously selected this session. Drives the "N
+   *  devices connected" badge and the multi-target wizard's
+   *  "directly reachable" hint. */
+  connectedDeviceIds: string[];
+  /** Drop the pooled client for a single device without affecting
+   *  any other live connections. Use this for an explicit
+   *  "Disconnect from box X" UX — the equivalent of `disconnect()`
+   *  in single-device mode, scoped to one machine. */
+  disconnectDevice: (deviceId: string) => void;
 }
 
 const DeviceContext = createContext<DeviceState | undefined>(undefined);
@@ -740,6 +766,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // agent rings the bus every 60 s, so a healthy peer stays "fresh"
   // long before its Convex timestamp catches up.
   const [busPresence, setBusPresence] = useState<Record<string, number>>({});
+  // Latest published CLI/agent version (from Convex platformConfig.cli_version
+  // via /config). Used to render "X behind" badges on machine cards so the
+  // user can spot a daemon that hasn't been restarted after npm bumped the
+  // on-disk symlink. Null when /config hasn't returned yet.
+  const [latestCliVersion, setLatestCliVersion] = useState<string | null>(null);
+  // Device IDs whose pooled per-device client currently reports
+  // `isConnected === true`. Updated whenever the connection manager
+  // notifies (focus shift, pool add/remove) and on every QUIC
+  // connection-state event from any pooled client. Surfaced so UI
+  // can render "3 devices connected" without each consumer reaching
+  // into the manager directly.
+  const [connectedDeviceIds, setConnectedDeviceIds] = useState<string[]>([]);
   // Auto-pair failure tracking. Each auto-pair path (LAN beacon / relay /
   // direct) records per-device failures; after MAX_PAIR_ATTEMPTS we add
   // the deviceId to `manualAuthRequiredSet` and the polling loops skip
@@ -890,6 +928,12 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
             runners: d.runners ?? [],
             publicKey: d.publicKey,
             hwid: d.hardwareId || d.hwid,
+            agentVersion: typeof d.agentVersion === "string" && d.agentVersion.trim() !== ""
+              ? d.agentVersion.trim()
+              : undefined,
+            agentVersionReportedAt: typeof d.agentVersionReportedAt === "number"
+              ? d.agentVersionReportedAt
+              : undefined,
             hardwareProfile: d.hardwareProfile ?? undefined,
             lanIps: Array.isArray(d.localIps) ? d.localIps : undefined,
             lastTunnelEvent,
@@ -960,24 +1004,47 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setUserDisconnected(false);
       setLastError(null);
 
-      if (quicClient.isConnected) {
-        quicClient.disconnect();
-      }
+      // Multi-device: previously this tore the focused QuicClient down
+      // before reconnecting it to a different deviceId, which dropped
+      // every in-flight stream and forced peer-routed calls for every
+      // non-focused box. Now we look up (or lazily create) a per-device
+      // client in the connection manager pool, leave the previously
+      // focused client alive in that pool so its tasks/streams keep
+      // running, and just shift the "focused" pointer. Any code path
+      // still using the legacy `quicClient` Proxy automatically follows
+      // the new focus.
+      const client = connectionManager.clientFor(device.id);
+      connectionManager.setFocused(device.id);
 
       setConnectionStatus("connecting");
       setActiveDevice(device);
       setAgentAuthExpired(false);
 
+      // If the per-device client already has a live connection (the
+      // user is bouncing back to a box they recently were on), skip
+      // the connect+timeout dance and just refresh state.
+      if (client.isConnected) {
+        sendTelemetry(token, "connect-resume", `Already connected to ${device.name}`, JSON.stringify({
+          device: device.name, deviceId: device.id.slice(0, 8),
+          mode: client.connectionMode,
+        }));
+        setConnectionStatus("connected");
+        setLastError(null);
+        setAgentAuthExpired(client.agentAuthExpired);
+        clearDeviceUnreachable(device.id);
+        return;
+      }
+
       try {
         sendTelemetry(token, "connect-start", `Connecting to ${device.name}`, JSON.stringify({
           host: device.host, port: device.port, deviceId: device.id.slice(0, 8),
-          relayCount: quicClient.relayServerCount,
+          relayCount: client.relayServerCount,
         }));
-        // Race connect against a 10s timeout. Pass every reachable IP the
+        // Race connect against a 20s timeout. Pass every reachable IP the
         // agent has reported in heartbeat (Wi-Fi LAN, Tailscale 100.x,
-        // Ethernet) so quicClient can race them in parallel against the
+        // Ethernet) so the client can race them in parallel against the
         // beacon and Convex-stored primary host.
-        const connectPromise = quicClient.connect(
+        const connectPromise = client.connect(
           device.host,
           device.port,
           token,
@@ -989,16 +1056,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           setTimeout(() => reject(new Error("Could not connect in 20s")), 20000)
         );
         await Promise.race([connectPromise, timeoutPromise]);
-        sendTelemetry(token, "connect-success", `Connected via ${quicClient.connectionMode}`, JSON.stringify({
-          device: device.name, path: quicClient.connectionPath, network: quicClient.networkType, mode: quicClient.connectionMode,
+        sendTelemetry(token, "connect-success", `Connected via ${client.connectionMode}`, JSON.stringify({
+          device: device.name, path: client.connectionPath, network: client.networkType, mode: client.connectionMode,
         }));
         setConnectionStatus("connected");
         setLastError(null);
-        setAgentAuthExpired(quicClient.agentAuthExpired);
+        setAgentAuthExpired(client.agentAuthExpired);
         clearDeviceUnreachable(device.id);
         // Fetch hwid from /info for dedup (P2P only, never sent to Convex)
         try {
-          const info = await quicClient.getInfo();
+          const info = await client.getInfo();
           if (info && (info as any).hwid) {
             const hwid = (info as any).hwid as string;
             setActiveDevice((prev) => prev ? { ...prev, hwid } : prev);
@@ -1011,10 +1078,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const errMsg = e instanceof Error ? e.message : String(e);
         sendTelemetry(token, "connect-fail", `Connection failed: ${errMsg}`, JSON.stringify({
           host: device.host, port: device.port, deviceId: device.id.slice(0, 8),
-          relayCount: quicClient.relayServerCount,
+          relayCount: client.relayServerCount,
         }));
-        // Stop any background reconnection attempts
-        quicClient.disconnect();
+        // Drop just THIS device's client. Any other clients in the pool
+        // (boxes the user previously connected to) keep their state.
+        connectionManager.disconnect(device.id);
         setConnectionStatus("disconnected");
         setAgentAuthExpired(false);
         // Keep activeDevice so Retry button works — don't null it
@@ -1032,12 +1100,30 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   );
 
   const disconnect = useCallback(() => {
-    quicClient.disconnect();
+    // User-initiated "Stop": tear down every pooled per-device client,
+    // not just the focused one. Keeping a secondary connection alive
+    // here would let it silently retry from the background and undo
+    // the user's intent to fully disconnect. Sign-out re-enters the
+    // same path via stopReconnectAndBounce/userDisconnected.
+    connectionManager.disconnectAll();
     setActiveDevice(null);
     setConnectionStatus("disconnected");
     setUserDisconnected(true);
     setAgentAuthExpired(false);
   }, []);
+
+  /** Drop a single device's pooled connection without affecting any
+   *  other live ones. Used when a device row goes offline or the user
+   *  explicitly removes one box from the running set. The focused
+   *  client is replaced (focus clears) only if the dropped device WAS
+   *  the focus — otherwise focus stays put. */
+  const disconnectDevice = useCallback((deviceId: string) => {
+    connectionManager.disconnect(deviceId);
+    if (activeDevice?.id === deviceId) {
+      setActiveDevice(null);
+      setConnectionStatus("disconnected");
+    }
+  }, [activeDevice?.id]);
 
   const setPrimaryDevice = useCallback(async (deviceId: string | null) => {
     if (!token) throw new Error("Not signed in");
@@ -1168,8 +1254,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // best-effort
     }
-    quicClient.disconnect();
     if (failed) {
+      // Drop only THIS device's pooled client. Other connections the
+      // user has open to peer machines must keep running — they're not
+      // implicated in the reconnect failure.
+      connectionManager.disconnect(failed.id);
       markDeviceUnreachable(failed.id);
     }
     setActiveDevice(null);
@@ -1187,11 +1276,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const handleDetachDevice = useCallback(async (device: Device) => {
     const key = deviceIdentityKey(device);
     await addDetachedDevice(key);
-    // If detaching the active device, disconnect first
+    // If detaching the active device, disconnect ITS pool client
+    // (peer connections to other boxes stay open).
     if (activeDevice?.id === device.id) {
-      quicClient.disconnect();
+      connectionManager.disconnect(device.id);
       setActiveDevice(null);
       setConnectionStatus("disconnected");
+    } else {
+      // Even when not focused, the device may have a live pooled
+      // connection from a previous focus — drop it so we don't leak.
+      connectionManager.disconnect(device.id);
     }
     setDevices((prev) => prev.filter((d) => deviceIdentityKey(d) !== key));
   }, [activeDevice]);
@@ -1248,10 +1342,15 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       throw new Error(data.error || "Failed to remove device");
     }
     if (activeDevice?.id === device.id) {
-      quicClient.disconnect();
+      connectionManager.disconnect(device.id);
       setActiveDevice(null);
       setConnectionStatus("disconnected");
       setAgentAuthExpired(false);
+    } else {
+      // Drop any background connection to the removed device so it
+      // doesn't keep heartbeating to a Convex row that no longer
+      // exists. Other pooled clients are untouched.
+      connectionManager.disconnect(device.id);
     }
     setDevices((prev) => prev.filter((d) => d.id !== device.id));
   }, [activeDevice, handleDetachDevice, token]);
@@ -1274,7 +1373,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         const max = quicClient.maxReconnectAttempts;
         const gaveUp = attempt >= max || quicClient.reconnectStopped;
         if (gaveUp) {
-          quicClient.disconnect();
+          // Only the failed device's pooled client dies — peer
+          // connections to other boxes the user is mid-session on
+          // keep their state so a single flaky machine doesn't tear
+          // down the whole multi-device experience.
+          if (activeDevice) connectionManager.disconnect(activeDevice.id);
           setConnectionStatus("disconnected");
           setAgentAuthExpired(false);
           setLastError(
@@ -1413,8 +1516,34 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // observed stale and a full reconnect is forced.
   useEffect(() => {
     if (!token) return;
-    quicClient.setToken(token);
+    // Fan the new bearer out to every pooled per-device client so a
+    // mid-session token rotation doesn't leave secondary connections
+    // silently 401-ing for the rest of the session. The proxied
+    // `quicClient.setToken` would only hit the focused client.
+    connectionManager.setTokenOnAll(token);
   }, [token]);
+
+  // Keep `connectedDeviceIds` in step with the pool. The manager fires
+  // on focus + membership changes; we additionally poll every 4s so
+  // the badge reflects the underlying QuicClient state changes (which
+  // each client tracks via its own listener API but doesn't propagate
+  // up to the manager). Cheap — it's just a Map iteration.
+  useEffect(() => {
+    const recompute = () => {
+      const next = connectionManager.connectedDeviceIds();
+      setConnectedDeviceIds((prev) => {
+        if (prev.length === next.length && prev.every((id, i) => id === next[i])) return prev;
+        return next;
+      });
+    };
+    recompute();
+    const unsub = connectionManager.subscribe(recompute);
+    const interval = setInterval(recompute, 4000);
+    return () => {
+      unsub();
+      clearInterval(interval);
+    };
+  }, []);
 
   // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
@@ -1427,7 +1556,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       if (customRaw) {
         const customRelays: RelayServer[] = JSON.parse(customRaw);
         if (customRelays.length > 0) {
-          quicClient.setRelayServers(customRelays);
+          connectionManager.setRelayServersOnAll(customRelays);
           mirrorRelayPasswordToNative(customRelays);
           console.log("[DeviceContext] Using", customRelays.length, "custom relay server(s)");
           return customRelays.length;
@@ -1440,6 +1569,9 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (res.ok) {
           const data = await res.json();
           platformServers = data.relayServers || [];
+          if (typeof data.cliVersion === "string" && data.cliVersion.trim() !== "") {
+            setLatestCliVersion(data.cliVersion.trim());
+          }
         }
       } catch {
         // Best-effort — account relay may still work on mobile without platform config.
@@ -1451,7 +1583,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
           const settings = await getUserSettings(token);
           if (settings.relayUrl) {
             const resolved = resolveRelayServers(platformServers, settings.relayUrl, settings.relayPassword);
-            quicClient.setRelayServers(resolved);
+            connectionManager.setRelayServersOnAll(resolved);
             // Persist the resolved fallback set so the app can reconnect offline too.
             await AsyncStorage.setItem(RELAYS_KEY, JSON.stringify(resolved));
             await AsyncStorage.setItem(SYNC_KEY, "true");
@@ -1472,7 +1604,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       // with "invalid relay password" / "Relay password mismatch"
       // because the password lived only on the per-server entry
       // platformServers carries from /config.
-      quicClient.setRelayServers(platformServers);
+      connectionManager.setRelayServersOnAll(platformServers);
       mirrorRelayPasswordToNative(platformServers);
       console.log("[DeviceContext] Loaded", platformServers.length, "relay server(s) from Convex");
       return platformServers.length;
@@ -1541,7 +1673,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
         // Apply forceRelay
         if (settings.forceRelay !== undefined) {
-          quicClient.setForceRelay(settings.forceRelay);
+          connectionManager.setForceRelayOnAll(settings.forceRelay);
           appLog("info", `[settings] forceRelay=${settings.forceRelay}`);
         }
 
@@ -2492,6 +2624,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       const interval = setInterval(refreshDevices, 30000);
       return () => clearInterval(interval);
     } else {
+      // Token cleared = signed out. Tear down every pooled per-device
+      // client so the next user landing on this device (or the same
+      // user re-signing in) doesn't inherit live QUIC connections
+      // bound to the previous bearer.
+      connectionManager.disconnectAll();
       setDevices([]);
       setActiveDevice(null);
       setConnectionStatus("disconnected");
@@ -2688,8 +2825,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       multiTargetMode,
       setMultiTargetMode,
       setPrimaryRunnerForDevice,
+      latestCliVersion,
+      connectedDeviceIds,
+      disconnectDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice, latestCliVersion, connectedDeviceIds, disconnectDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

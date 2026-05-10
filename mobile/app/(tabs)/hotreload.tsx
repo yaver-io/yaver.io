@@ -602,8 +602,28 @@ export default function HotReloadScreen() {
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
         {agentInfo && (
-          <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
-            <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
+          // Tappable so the user can swap which box drives the reload
+          // without leaving the tab — relevant when bouncing between a
+          // Mac mini and a Linux test box for the same project. Drops
+          // into the Devices tab; the multi-device pool keeps the
+          // current connection warm in case the user backs out.
+          <Pressable
+            onPress={() => router.push("/(tabs)/devices")}
+            style={({ pressed }) => [
+              s.card,
+              s.projectCard,
+              {
+                backgroundColor: c.bgCard,
+                borderColor: c.border,
+                marginTop: 12,
+                opacity: pressed ? 0.85 : 1,
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={[s.projectName, { color: c.textPrimary }]}>Remote Box</Text>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Switch ›</Text>
+            </View>
             <Text style={[s.projectMeta, { color: c.textSecondary, marginTop: 4 }]}>
               {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version || "unknown"}
             </Text>
@@ -618,7 +638,10 @@ export default function HotReloadScreen() {
                 {agentInfo.workDir}
               </Text>
             ) : null}
-          </View>
+            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 6 }}>
+              Tap to switch to a different machine
+            </Text>
+          </Pressable>
         )}
 
         {mobileWorkers.length > 0 && (

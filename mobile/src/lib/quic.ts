@@ -1131,6 +1131,34 @@ export class QuicClient {
     return this.authHeaders;
   }
 
+  /** Public accessor for the deviceId this client is currently attached
+   *  to. Used by the connection manager to keep a per-device pool, and
+   *  by peer-aware callers that want to compare a target id against
+   *  the live attachment without having to thread it through. */
+  get attachedDeviceId(): string | null {
+    return this.deviceId;
+  }
+
+  /** Build a peer-aware URL. When `target` is empty OR equals the
+   *  device this client is already attached to, drops the
+   *  `/peer/<id>/` prefix entirely — otherwise the agent's peer proxy
+   *  rejects self-targeting calls with errProxyLocal (HTTP 400) and the
+   *  caller silently sees an empty/error response.
+   *
+   *  That bug is what made the wizard's "Pick a coding agent" pane
+   *  report "Not installed on this device" for runners that were
+   *  actually present on the box, when the user had auto-attached to
+   *  the only-online device. Centralising the rule here keeps every
+   *  peer-aware getter from re-introducing the same bug. */
+  private peerEndpoint(target: string | undefined, suffix: string): string {
+    const path = suffix.startsWith("/") ? suffix : `/${suffix}`;
+    const t = (target || "").trim();
+    if (!t || t === this.deviceId) {
+      return `${this.baseUrl}${path}`;
+    }
+    return `${this.baseUrl}/peer/${encodeURIComponent(t)}${path}`;
+  }
+
   /** Relay base URL we're currently routed through, if any. Needed by the
    *  "Deploy to another of my devices" flow (pushPhoneProject's `dev-hw`
    *  target) so the push can walk the same relay back to the sibling agent
@@ -1383,9 +1411,7 @@ export class QuicClient {
   async getOpenCodeConfig(target?: string): Promise<OpenCodeConfigSummary | null> {
     if (!this.isConnected && !this.hasConnectionInfo) return null;
     try {
-      const url = target
-        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner/opencode/config`
-        : `${this.baseUrl}/runner/opencode/config`;
+      const url = this.peerEndpoint(target, "/runner/opencode/config");
       const res = await fetch(url, { headers: this.authHeaders });
       if (!res.ok) return null;
       const data = await res.json();
@@ -2980,9 +3006,7 @@ export class QuicClient {
     target?: string,
   ): Promise<RunnerBrowserAuthSession> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/start`
-      : `${this.baseUrl}/runner-auth/browser/start`;
+    const base = this.peerEndpoint(target, "/runner-auth/browser/start");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -3002,9 +3026,7 @@ export class QuicClient {
     if (!this.isConnected && !this.hasConnectionInfo) {
       throw new Error("agent not reachable");
     }
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/status`
-      : `${this.baseUrl}/runner-auth/browser/status`;
+    const base = this.peerEndpoint(target, "/runner-auth/browser/status");
     const url = new URL(base);
     url.searchParams.set("id", sessionId);
     const res = await fetch(url.toString(), { headers: this.authHeaders });
@@ -3017,9 +3039,7 @@ export class QuicClient {
 
   async cancelRunnerBrowserAuth(sessionId: string, target?: string): Promise<void> {
     if (!this.isConnected && !this.hasConnectionInfo) return;
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/cancel`
-      : `${this.baseUrl}/runner-auth/browser/cancel`;
+    const base = this.peerEndpoint(target, "/runner-auth/browser/cancel");
     const url = new URL(base);
     url.searchParams.set("id", sessionId);
     await fetch(url.toString(), { method: "POST", headers: this.authHeaders }).catch(() => {});
@@ -3034,9 +3054,7 @@ export class QuicClient {
     if (!sessionId) {
       throw new Error("submitRunnerBrowserAuthCode requires sessionId");
     }
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/browser/submit-code`
-      : `${this.baseUrl}/runner-auth/browser/submit-code`;
+    const base = this.peerEndpoint(target, "/runner-auth/browser/submit-code");
     // Agent's handleRunnerBrowserAuthSubmitCode reads `id` from the URL
     // query string — only `code` comes from the JSON body. Putting id in
     // the body alone made the agent answer 400 "missing id" on every
@@ -3058,9 +3076,7 @@ export class QuicClient {
   async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {
     if (!this.isConnected && !this.hasConnectionInfo) return [];
     try {
-      const base = target
-        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/status`
-        : `${this.baseUrl}/runner-auth/status`;
+      const base = this.peerEndpoint(target, "/runner-auth/status");
       const res = await fetch(base, { headers: this.authHeaders });
       if (!res.ok) return [];
       const data = await res.json().catch(() => ({}));
@@ -3070,14 +3086,31 @@ export class QuicClient {
     }
   }
 
+  /** Variant of runnerAuthStatus that distinguishes "the agent legitimately
+   *  reported zero runners" (empty array) from "we couldn't reach the agent"
+   *  (null). Callers that need to render "Couldn't audit" instead of falsely
+   *  showing every runner as Not Installed should use this. The original
+   *  runnerAuthStatus stays for back-compat with sites that just want a list. */
+  async runnerAuthStatusOrNull(target?: string): Promise<RunnerAuthStatusRow[] | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const base = this.peerEndpoint(target, "/runner-auth/status");
+      const res = await fetch(base, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      if (!data) return null;
+      return Array.isArray(data?.runners) ? data.runners : [];
+    } catch {
+      return null;
+    }
+  }
+
   async runnerAuthSet(
     params: RunnerAuthSetParams,
     target?: string,
   ): Promise<{ ok: boolean; saved: string[]; runners: RunnerAuthStatusRow[]; error?: string }> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/runner-auth/set`
-      : `${this.baseUrl}/runner-auth/set`;
+    const base = this.peerEndpoint(target, "/runner-auth/set");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -3106,9 +3139,7 @@ export class QuicClient {
   async machineOnboardingStatus(target?: string): Promise<MachineOnboardingProviderStatus[]> {
     if (!this.isConnected && !this.hasConnectionInfo) return [];
     try {
-      const base = target
-        ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/status`
-        : `${this.baseUrl}/machine/onboarding/status`;
+      const base = this.peerEndpoint(target, "/machine/onboarding/status");
       const res = await fetch(base, { headers: this.authHeaders });
       if (!res.ok) return [];
       const data = await res.json().catch(() => ({}));
@@ -3123,9 +3154,7 @@ export class QuicClient {
     target?: string,
   ): Promise<{ ok: boolean; applied: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/apply`
-      : `${this.baseUrl}/machine/onboarding/apply`;
+    const base = this.peerEndpoint(target, "/machine/onboarding/apply");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -3160,9 +3189,7 @@ export class QuicClient {
     target?: string,
   ): Promise<{ ok: boolean; removed: string[]; providers: MachineOnboardingProviderStatus[]; error?: string }> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/machine/onboarding/remove`
-      : `${this.baseUrl}/machine/onboarding/remove`;
+    const base = this.peerEndpoint(target, "/machine/onboarding/remove");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -5530,9 +5557,7 @@ export class QuicClient {
     target?: string,
   ): Promise<{ name: string; installed: boolean; description: string }[]> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/list`
-      : `${this.baseUrl}/install/list`;
+    const base = this.peerEndpoint(target, "/install/list");
     const res = await fetch(base, { headers: this.authHeaders });
     if (!res.ok) return [];
     return res.json();
@@ -5553,9 +5578,7 @@ export class QuicClient {
     target?: string,
   ): Promise<{ ok: boolean; tool: string; stream: string; error?: string }> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/${encodeURIComponent(tool)}`
-      : `${this.baseUrl}/install/${encodeURIComponent(tool)}`;
+    const base = this.peerEndpoint(target, `/install/${encodeURIComponent(tool)}`);
     const res = await fetch(base, {
       method: "POST",
       headers: this.authHeaders,
@@ -5580,9 +5603,7 @@ export class QuicClient {
     target?: string,
   ): Promise<{ ok: boolean; error?: string }> {
     this.assertConnected();
-    const base = target
-      ? `${this.baseUrl}/peer/${encodeURIComponent(target)}/install/sudo`
-      : `${this.baseUrl}/install/sudo`;
+    const base = this.peerEndpoint(target, "/install/sudo");
     const res = await fetch(base, {
       method: "POST",
       headers: { ...this.authHeaders, "Content-Type": "application/json" },
@@ -8283,16 +8304,59 @@ export interface MorningRunSummary {
   note?: string;
 }
 
-/** Singleton client instance. */
-export const quicClient = new QuicClient();
-
-// Fresh-instance factory. The singleton above is what the mobile app
-// consumes at runtime; `mobile-headless` (see MOBILE_HEADLESS.md)
-// needs one QuicClient per harness instance so test runs don't share
-// auth state across parallel cases. Not called by any app code.
+// Fresh-instance factory. Used by the multi-device connection manager
+// (`./connectionManager.ts`) so each device the user has signed into
+// can keep its own QUIC connection in parallel — the same factory the
+// `mobile-headless` harness uses to give each test run an isolated
+// auth state.
 export function createQuicClient(): QuicClient {
   return new QuicClient();
 }
+
+// Stable instance the legacy `quicClient` Proxy falls back to before
+// the connection manager has been wired (or after a full sign-out
+// when there's nothing focused). Holds the relay servers / token the
+// app set during boot — once a device is focused, those settings have
+// already been fanned out to every per-device client by
+// `connectionManager.setRelayServersOnAll` etc., so the fallback's
+// copy is just defensive.
+const fallbackQuicClient = new QuicClient();
+
+// The connection manager registers itself here at module load time so
+// `quicClient.foo()` resolves to whichever per-device QuicClient is
+// currently focused. Late-bound to avoid a circular import — quic.ts
+// must not pull connectionManager.ts (which already pulls quic.ts).
+let activeClientResolver: () => QuicClient = () => fallbackQuicClient;
+
+/** Wire the legacy `quicClient` Proxy to a per-call resolver. Called
+ *  once by the connection manager during its module init. Don't call
+ *  this from app code — it's an internal seam. */
+export function setQuicClientResolver(fn: () => QuicClient): void {
+  activeClientResolver = fn;
+}
+
+/** Legacy singleton handle. Retained as a Proxy so the 15+ existing
+ *  imports (`import { quicClient } from "./quic"`) keep working
+ *  without code churn — every property access is delegated to the
+ *  currently-focused QuicClient owned by the connection manager.
+ *  New code that genuinely needs to talk to a specific (possibly
+ *  non-focused) device should import `connectionManager` and call
+ *  `connectionManager.clientFor(deviceId)` instead. */
+export const quicClient: QuicClient = new Proxy({} as QuicClient, {
+  get(_target, prop) {
+    const target = activeClientResolver();
+    const value = (target as any)[prop];
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+  set(_target, prop, value) {
+    const target = activeClientResolver();
+    (target as any)[prop] = value;
+    return true;
+  },
+  has(_target, prop) {
+    return prop in (activeClientResolver() as any);
+  },
+});
 
 // Morning endpoints use the same relay-aware baseUrl + auth that tasks
 // do, so a user vibing at the beach gets their overnight report over

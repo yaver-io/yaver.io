@@ -237,6 +237,9 @@ function DeviceCard({
   onSelect,
   onLongPress,
   onRecoverAuth,
+  onSetSecondary,
+  onUnsetSecondary,
+  onSetPrimary,
   token,
   forceDetailsOpen,
 }: {
@@ -260,6 +263,13 @@ function DeviceCard({
   onSelect: () => Promise<void> | void;
   onLongPress: () => void;
   onRecoverAuth: () => Promise<void>;
+  /** One-tap setters for the primary / secondary roles, surfaced as
+   *  pill buttons on the card so the user doesn't have to discover
+   *  the long-press menu just to mark a fallback box. The long-press
+   *  flow stays as-is for guest devices and the destructive Remove. */
+  onSetSecondary?: () => void;
+  onUnsetSecondary?: () => void;
+  onSetPrimary?: () => void;
   token: string | null;
   // When true (set by DevicesScreen via openDetails query param —
   // e.g. the "Open recovery" alert from DeviceContext fires
@@ -669,6 +679,36 @@ function DeviceCard({
               <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
             </Pressable>
           )}
+          {/* Inline elevation actions. Guest devices and the device
+              that's already primary get nothing here — the long-press
+              menu still owns those edge cases. Otherwise we surface
+              "Make secondary" / "Unmark secondary" as a pill so the
+              fallback role is reachable in a single tap from the list. */}
+          {!device.isGuest && !isPrimary ? (
+            isSecondary && onUnsetSecondary ? (
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: "#8b5cf618", borderWidth: 1, borderColor: "#8b5cf655" }]}
+                onPress={onUnsetSecondary}
+              >
+                <Text style={[styles.pingBtnText, { color: "#8b5cf6", fontWeight: "700" }]}>★ Unmark Secondary</Text>
+              </Pressable>
+            ) : onSetSecondary ? (
+              <Pressable
+                style={[styles.pingBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
+                onPress={onSetSecondary}
+              >
+                <Text style={[styles.pingBtnText, { color: c.textSecondary, fontWeight: "700" }]}>☆ Make Secondary</Text>
+              </Pressable>
+            ) : null
+          ) : null}
+          {!device.isGuest && !isPrimary && !isSecondary && onSetPrimary ? (
+            <Pressable
+              style={[styles.pingBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
+              onPress={onSetPrimary}
+            >
+              <Text style={[styles.pingBtnText, { color: c.textSecondary, fontWeight: "700" }]}>★ Make Primary</Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <DeviceDetailsModal
@@ -1152,6 +1192,21 @@ export default function DevicesScreen() {
               isSecondary={secondaryDeviceId === item.id}
               defaultRunner={primaryRunnerByDevice[item.id] || ""}
               onSelect={() => selectDevice(item)}
+              onSetPrimary={() => {
+                void setPrimaryDevice(item.id).catch((e: any) =>
+                  Alert.alert("Error", e?.message || "Failed"),
+                );
+              }}
+              onSetSecondary={() => {
+                void setSecondaryDevice(item.id).catch((e: any) =>
+                  Alert.alert("Error", e?.message || "Failed"),
+                );
+              }}
+              onUnsetSecondary={() => {
+                void setSecondaryDevice(null).catch((e: any) =>
+                  Alert.alert("Error", e?.message || "Failed"),
+                );
+              }}
               authExpired={activeDevice?.id === item.id && connectionStatus === "connected" && agentAuthExpired}
               forceDetailsOpen={openDetailsId === item.id}
               onLongPress={() => {

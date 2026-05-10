@@ -28,6 +28,7 @@ import {
 import { useColors } from "../context/ThemeContext";
 import { useDevice, type Device } from "../context/DeviceContext";
 import { quicClient, type RunnerAuthStatusRow, type OpenCodeConfigSummary } from "../lib/quic";
+import { connectionManager } from "../lib/connectionManager";
 import RunnerAuthModal from "./RunnerAuthModal";
 
 export interface TaskTarget {
@@ -65,6 +66,88 @@ const RUNNERS: Array<{
 
 type Pane = "device" | "agent" | "switching";
 
+/** Runner ↔ model registry. First entry per runner is the "best
+ *  default" we hand out when the user hasn't picked one for that
+ *  (device, runner) pair yet. Model ids mirror the agent's
+ *  `fallbackRunnerModels` (desktop/agent/httpserver.go) — keep them
+ *  in sync; a model id passed to the wrong runner is what crashed
+ *  Claude Code with `GPT-5.4` because Codex's default leaked across.
+ *
+ *  Why hardcoded here instead of fetched from /agent/runners:
+ *    - The list rarely changes (new model every few months) and
+ *      mirroring it on the client lets us render the picker
+ *      synchronously without a spinner on every wizard open.
+ *    - The agent endpoint already has the SAME list as a fallback
+ *      for users on older runners, so the failure mode is symmetric.
+ *  When the agent ships a new model, bump both this constant and
+ *  fallbackRunnerModels in the same change. */
+const MODELS_BY_RUNNER: Record<TaskTarget["runner"], { id: string; label: string }[]> = {
+  "claude-code": [
+    { id: "claude-opus-4-7", label: "Opus 4.7 (best)" },
+    { id: "claude-sonnet-4-6", label: "Sonnet 4.6" },
+    { id: "claude-haiku-4-5", label: "Haiku 4.5 (fast)" },
+    { id: "claude-opus-4-6", label: "Opus 4.6" },
+    { id: "claude-sonnet-4-5", label: "Sonnet 4.5" },
+  ],
+  codex: [
+    { id: "gpt-5.5-pro", label: "GPT-5.5 Pro (best)" },
+    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-5.4", label: "GPT-5.4" },
+    { id: "gpt-5.4-mini", label: "GPT-5.4 Mini (fast)" },
+    { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+  ],
+  // OpenCode picks model+provider via opencode.json on the host, not
+  // via a wizard-level model id. The runner's own agents pane handles
+  // that — leave the array empty so renderAgentPane skips the model
+  // picker and shows the existing OpenCode mode picker instead.
+  opencode: [],
+};
+
+/** True when `modelId` is a known model for `runner`. Strict membership
+ *  check — without this the wizard would happily forward Codex's
+ *  GPT-5.4 default into a Claude Code task and the agent process
+ *  would crash on launch. */
+function isModelCompatibleWithRunner(modelId: string | undefined | null, runner: TaskTarget["runner"]): boolean {
+  if (!modelId) return false;
+  const list = MODELS_BY_RUNNER[runner];
+  return list.some((m) => m.id === modelId);
+}
+
+/** Return the "best" default model id for the runner (first entry in
+ *  the list — by convention the highest-capability option). Used to
+ *  pre-fill `pickedModel` whenever the user picks a runner without a
+ *  prior compatible choice. */
+function defaultModelForRunner(runner: TaskTarget["runner"]): string | null {
+  const list = MODELS_BY_RUNNER[runner];
+  if (!list || list.length === 0) return null;
+  return list[0].id;
+}
+
+/** Distance between two semver-like strings. Returns 0 when equal, a
+ *  positive integer when `current` is older, -1 when we can't decide
+ *  (different major series, malformed strings, etc.) — render the version
+ *  string but skip the "X behind" suffix in that case.
+ *
+ *  Yaver versions today are 1.99.<patch> on every channel, so the diff is
+ *  almost always patch-only. Major + minor must match exactly; patch
+ *  difference is the count returned. */
+function versionPatchDistance(current: string, latest: string): number {
+  const c = current.trim();
+  const l = latest.trim();
+  if (!c || !l) return -1;
+  if (c === l) return 0;
+  const parse = (s: string): [number, number, number] | null => {
+    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(s);
+    if (!m) return null;
+    return [Number(m[1]), Number(m[2]), Number(m[3])];
+  };
+  const cv = parse(c);
+  const lv = parse(l);
+  if (!cv || !lv) return -1;
+  if (cv[0] !== lv[0] || cv[1] !== lv[1]) return -1;
+  return Math.max(0, lv[2] - cv[2]);
+}
+
 export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Props) {
   const c = useColors();
   const {
@@ -74,12 +157,22 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     recoverDeviceAuth,
     primaryRunnerByDevice,
     primaryModelByDevice,
+    latestCliVersion,
+    connectedDeviceIds,
   } = useDevice();
+  // Quick lookup for "is there already a warm pooled connection to this
+  // device?" — separate from activeDevice (the focused one). With the
+  // multi-device pool a non-focused box can still be live, so the card
+  // surfaces both states distinctly.
+  const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
 
   const [pane, setPane] = React.useState<Pane>("device");
   const [pickedDevice, setPickedDevice] = React.useState<Device | null>(null);
   const [pickedRunner, setPickedRunner] = React.useState<TaskTarget["runner"] | null>(null);
-  const [auditByDevice, setAuditByDevice] = React.useState<Record<string, RunnerAuthStatusRow[]>>({});
+  // null = audit attempted but failed (network/peer-proxy/etc) — UI must
+  // render "Couldn't audit" rather than masquerading as "not installed".
+  // [] = audit succeeded but agent reported no rows.
+  const [auditByDevice, setAuditByDevice] = React.useState<Record<string, RunnerAuthStatusRow[] | null>>({});
   const [auditingId, setAuditingId] = React.useState<string | null>(null);
   // OpenCode config per device — agents (modes) + providers come from the
   // remote box's opencode.json so the wizard reflects the user's actual
@@ -88,6 +181,12 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   const [opencodeByDevice, setOpencodeByDevice] = React.useState<Record<string, OpenCodeConfigSummary | null>>({});
   const [opencodeLoadingId, setOpencodeLoadingId] = React.useState<string | null>(null);
   const [pickedOpencodeMode, setPickedOpencodeMode] = React.useState<string | null>(null);
+  // Per-runner model id the user actually wants for THIS task. Kept
+  // separate from primaryModelByDevice (which is keyed by device, not
+  // runner) so switching from Codex back to Claude Code never lets a
+  // gpt-5.4 default leak into the claude --model flag — the kind of
+  // mismatch that crashes the agent process on launch.
+  const [pickedModel, setPickedModel] = React.useState<string | null>(null);
   const [recoveryConfirm, setRecoveryConfirm] = React.useState<Device | null>(null);
   const [runnerAuthFor, setRunnerAuthFor] = React.useState<{
     deviceId: string;
@@ -107,6 +206,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     setOpencodeByDevice({});
     setOpencodeLoadingId(null);
     setPickedOpencodeMode(null);
+    setPickedModel(null);
     setRecoveryConfirm(null);
     setRunnerAuthFor(null);
     setSwitchError(null);
@@ -130,15 +230,24 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
 
   const runAudit = React.useCallback(async (device: Device) => {
     if (!quicClient.isConnected) {
-      setAuditByDevice((p) => ({ ...p, [device.id]: [] }));
+      setAuditByDevice((p) => ({ ...p, [device.id]: null }));
       return;
     }
     setAuditingId(device.id);
     try {
-      const rows = await quicClient.runnerAuthStatus(device.id);
+      // Prefer a direct connection to the audited device when one is
+      // already pooled — same machine, no peer-proxy hop, no risk of
+      // hitting errProxyLocal when the audit target happens to equal
+      // the focused device. Falls back to the focused client (which
+      // peerEndpoint already routes correctly for both self-target
+      // and remote-peer cases).
+      const direct = connectionManager.clientFor(device.id);
+      const rows = direct.isConnected
+        ? await direct.runnerAuthStatusOrNull()
+        : await quicClient.runnerAuthStatusOrNull(device.id);
       setAuditByDevice((p) => ({ ...p, [device.id]: rows }));
     } catch {
-      setAuditByDevice((p) => ({ ...p, [device.id]: [] }));
+      setAuditByDevice((p) => ({ ...p, [device.id]: null }));
     } finally {
       setAuditingId(null);
     }
@@ -162,6 +271,26 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
       void runAudit(only);
     }
   }, [visible, pane, devices, primaryRunnerByDevice, runAudit]);
+
+  // Keep `pickedModel` in lockstep with `pickedRunner`. When the user
+  // toggles between Claude Code and Codex (or the auto-seed flips
+  // either of them on), reset to a runner-compatible default — the
+  // saved primaryModelByDevice value is reused only when it actually
+  // belongs to the new runner. Without this gate, Codex's gpt-5.4
+  // default would carry over into a Claude Code task and crash the
+  // claude CLI on launch with an unknown-model error.
+  React.useEffect(() => {
+    if (!pickedDevice || !pickedRunner) {
+      setPickedModel(null);
+      return;
+    }
+    const saved = primaryModelByDevice[pickedDevice.id];
+    if (saved && isModelCompatibleWithRunner(saved, pickedRunner)) {
+      setPickedModel(saved);
+      return;
+    }
+    setPickedModel(defaultModelForRunner(pickedRunner));
+  }, [pickedDevice?.id, pickedRunner, primaryModelByDevice]);
 
   const handlePickDevice = async (device: Device) => {
     if (device.needsAuth && device.online) {
@@ -194,6 +323,12 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
 
   const auditFor = (deviceId: string, auditId: string): RunnerAuthStatusRow | undefined =>
     auditByDevice[deviceId]?.find((r) => r.id === auditId);
+
+  // Did the audit fail for this device? Distinguishes "we couldn't reach
+  // the agent" (null) from "the agent answered with rows that don't list
+  // this runner" (row undefined inside an array).
+  const auditFailed = (deviceId: string): boolean =>
+    auditByDevice[deviceId] === null;
 
   const handlePickRunner = (taskId: TaskTarget["runner"], auditId: "claude" | "codex" | "opencode") => {
     if (!pickedDevice) return;
@@ -236,11 +371,19 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
       if (!quicClient.isConnected) {
         throw new Error("Could not reach this device.");
       }
+      // Only forward the model when it's actually compatible with the
+      // runner the user just picked — peace of mind belt over the
+      // useEffect that already keeps pickedModel in sync. A stray
+      // gpt-5.* getting through to claude-code is what produced the
+      // "Agent process crashed (attempt N/4)" loop on Mobiles-Mac-mini.
+      const safeModel = pickedModel && isModelCompatibleWithRunner(pickedModel, pickedRunner)
+        ? pickedModel
+        : undefined;
       onConfirmed({
         deviceId: pickedDevice.id,
         deviceName: pickedDevice.name,
         runner: pickedRunner,
-        model: primaryModelByDevice[pickedDevice.id],
+        model: safeModel,
         opencodeMode: pickedRunner === "opencode" && pickedOpencodeMode ? pickedOpencodeMode : undefined,
       });
     } catch (err: any) {
@@ -284,6 +427,21 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
           const ready = d.online && !d.needsAuth;
           const offlineNeedsAuth = d.needsAuth && !d.online;
           const disabled = !d.online || offlineNeedsAuth;
+          // Agent-version line. Always render the bare version when present;
+          // when we also have a latest reference and the device is on the
+          // same major.minor series, append "· current" or "· N behind".
+          const agentVer = (d.agentVersion || "").trim();
+          const distance = agentVer && latestCliVersion
+            ? versionPatchDistance(agentVer, latestCliVersion)
+            : -1;
+          const outdated = distance > 0;
+          const versionSuffix = !agentVer
+            ? ""
+            : distance < 0
+              ? ` · yaver ${agentVer}`
+              : distance === 0
+                ? ` · yaver ${agentVer} · current`
+                : ` · yaver ${agentVer} · ${distance} behind`;
           return (
             <Pressable
               key={d.id}
@@ -308,8 +466,18 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                   <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
                     {d.online ? "Online" : "Offline"}
                     {d.needsAuth ? " · Needs Yaver auth" : ""}
-                    {activeDevice?.id === d.id ? " · Connected" : ""}
+                    {activeDevice?.id === d.id
+                      ? " · Connected"
+                      : connectedSet.has(d.id)
+                        ? " · Live (pooled)"
+                        : ""}
+                    {versionSuffix && !outdated ? versionSuffix : ""}
                   </Text>
+                  {outdated ? (
+                    <Text style={{ color: "#d97706", fontSize: 11, marginTop: 2, fontWeight: "600" }}>
+                      yaver {agentVer} · {distance} version{distance === 1 ? "" : "s"} behind {latestCliVersion}
+                    </Text>
+                  ) : null}
                 </View>
                 {ready ? (
                   <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
@@ -345,20 +513,23 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
         ) : (
           RUNNERS.map(({ taskId, auditId, label }) => {
             const row = auditFor(pickedDevice.id, auditId);
+            const failed = auditFailed(pickedDevice.id);
             const installed = !!row?.installed;
             const authed = !!row?.authConfigured;
             const ready = installed && authed;
             const selected = pickedRunner === taskId;
-            const subtitle = !installed
-              ? "Not installed on this device"
-              : authed
-                ? "Ready"
-                : "Needs auth — tap to set up";
+            const subtitle = failed
+              ? "Couldn't audit this device — tap to retry"
+              : !installed
+                ? "Not installed on this device"
+                : authed
+                  ? `Ready${row?.version ? ` · ${row.version}` : ""}`
+                  : "Needs auth — tap to set up";
             return (
               <Pressable
                 key={taskId}
-                onPress={() => handlePickRunner(taskId, auditId)}
-                disabled={!installed}
+                onPress={() => failed ? runAudit(pickedDevice) : handlePickRunner(taskId, auditId)}
+                disabled={!failed && !installed}
                 style={({ pressed }) => ({
                   marginBottom: 10,
                   padding: 14,
@@ -366,7 +537,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
                   borderWidth: 1,
                   borderColor: selected ? c.accent : c.border,
                   backgroundColor: c.bgCard,
-                  opacity: !installed ? 0.5 : pressed ? 0.85 : 1,
+                  opacity: (!failed && !installed) ? 0.5 : pressed ? 0.85 : 1,
                 })}
               >
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
@@ -388,6 +559,53 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             );
           })
         )}
+        {/* Per-runner model picker. Claude Code (Opus / Sonnet / Haiku)
+            and Codex (GPT-5 family) need a model. Picking the wrong
+            family is what crashed claude-cli on Mobiles-Mac-mini —
+            Codex's gpt-5.4 default carried over when the user switched
+            runners — so the picker is unconditional for these two and
+            the default lights up the highest-capability option. The
+            useEffect above keeps `pickedModel` in sync with the runner
+            so we never forward a mismatched id. */}
+        {pickedRunner && (pickedRunner === "claude-code" || pickedRunner === "codex") ? (
+          <View style={{ marginTop: 4, marginBottom: 12 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
+              MODEL
+            </Text>
+            {MODELS_BY_RUNNER[pickedRunner].map((m) => {
+              const sel = pickedModel === m.id;
+              return (
+                <Pressable
+                  key={m.id}
+                  onPress={() => setPickedModel(m.id)}
+                  style={({ pressed }) => ({
+                    marginBottom: 8,
+                    padding: 12,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: sel ? c.accent : c.border,
+                    backgroundColor: c.bgCard,
+                    opacity: pressed ? 0.85 : 1,
+                  })}
+                >
+                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                    <View style={{ flex: 1, paddingRight: 10 }}>
+                      <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>
+                        {m.label}
+                      </Text>
+                      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
+                        {m.id}
+                      </Text>
+                    </View>
+                    {sel ? (
+                      <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text>
+                    ) : null}
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
         {/* OpenCode sub-step: agents (modes) + providers come from the
             remote box's opencode.json so the picker reflects that
             machine's actual setup, not a hardcoded list. Only rendered
@@ -499,15 +717,31 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             {continueDisabled ? "Pick an agent to continue" : "Continue"}
           </Text>
         </Pressable>
+        {/* "Back to machines" used to be a faint gray link at the bottom
+            and users were missing it — it's the only escape hatch when
+            the picked machine has every runner stuck on "needs auth"
+            (Continue is disabled, Cancel kills the whole wizard). Promoted
+            to an outlined accent button on the same visual weight tier as
+            Continue so it's findable at a glance. */}
         <Pressable
           onPress={() => setPane("device")}
           style={({ pressed }) => ({
-            paddingVertical: 12,
+            marginTop: 10,
+            paddingVertical: 13,
+            borderRadius: 10,
+            borderWidth: 1.5,
+            borderColor: c.accent,
             alignItems: "center",
-            opacity: pressed ? 0.7 : 1,
+            flexDirection: "row",
+            justifyContent: "center",
+            backgroundColor: pressed ? c.bgCard : "transparent",
+            opacity: pressed ? 0.85 : 1,
           })}
         >
-          <Text style={{ color: c.textMuted, fontSize: 13 }}>Back to machines</Text>
+          <Text style={{ color: c.accent, fontSize: 16, fontWeight: "700", marginRight: 6 }}>‹</Text>
+          <Text style={{ color: c.accent, fontSize: 14, fontWeight: "700", letterSpacing: 0.3 }}>
+            Back to machines
+          </Text>
         </Pressable>
       </ScrollView>
     );
