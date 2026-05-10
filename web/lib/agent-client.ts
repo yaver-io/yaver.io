@@ -1186,6 +1186,14 @@ export class AgentClient {
     return this._connectionState;
   }
 
+  /** deviceId the client is currently bound to. Lets callers verify
+   *  that an action they're about to dispatch (e.g. /agent/update)
+   *  will hit the device they think it will, instead of the last
+   *  workspace the user happened to open. */
+  get connectedDeviceId(): string | null {
+    return this.deviceId;
+  }
+
   // ── Relay server config ────────────────────────────────────────────
 
   /** Set relay servers fetched from platform config. Sorted by priority.

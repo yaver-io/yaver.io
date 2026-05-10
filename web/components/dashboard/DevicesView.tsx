@@ -2000,15 +2000,40 @@ export default function DevicesView({
                       device.probeState === "ok" ||
                       device.probeState === "auth-expired" ? (
                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                          {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (
-                            <button
-                              onClick={() => setUpdateModalDevice(device)}
-                              title={`Update v${String(device.agentVersion).replace(/^v/i, "")} → v${latestAgentVersion} on ${device.name}`}
-                              className="rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
-                            >
-                              update → v{latestAgentVersion}
-                            </button>
-                          ) : null}
+                          {device.agentVersion && latestAgentVersion && compareSemver(String(device.agentVersion).replace(/^v/i, ""), latestAgentVersion) < 0 ? (() => {
+                            const lc = deriveDeviceLifecycleState(device);
+                            const reachable = lc === "connected" || lc === "ready-to-connect";
+                            const cur = String(device.agentVersion).replace(/^v/i, "");
+                            if (reachable) {
+                              return (
+                                <button
+                                  onClick={() => setUpdateModalDevice(device)}
+                                  title={`Update v${cur} → v${latestAgentVersion} on ${device.name}`}
+                                  className="rounded-full border border-amber-300 bg-amber-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-amber-700 hover:bg-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                                >
+                                  update → v{latestAgentVersion}
+                                </button>
+                              );
+                            }
+                            // Lifecycle is bootstrap / yaver-auth-expired / offline:
+                            // the agent is unreachable from the browser, so POST
+                            // /agent/update would fail at the network layer.
+                            // Show a muted chip that explains why instead of an
+                            // amber button that throws "AgentClient is not
+                            // connected" on click.
+                            const hint =
+                              lc === "yaver-auth-expired" || lc === "bootstrap"
+                                ? `v${cur} → v${latestAgentVersion} available — re-auth from CLI first (yaver primary auth, or yaver auth on the box)`
+                                : `v${cur} → v${latestAgentVersion} available — device is offline, bring it back online first`;
+                            return (
+                              <span
+                                title={hint}
+                                className="rounded-full border border-slate-300 bg-slate-50 px-2 py-px text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:border-surface-700 dark:bg-surface-800/40 dark:text-surface-400"
+                              >
+                                update → v{latestAgentVersion} (unreachable)
+                              </span>
+                            );
+                          })() : null}
                           {device.probeState === "ok" && device.probePath ? (
                             <span>· probed via {device.probePath}</span>
                           ) : null}
@@ -2595,8 +2620,11 @@ export default function DevicesView({
 //
 // Limitation: today only updates the device the dashboard is
 // connected to (agentClient.baseUrl is implicit). Updating a peer
-// device would need a /peer/<id>/agent/update path — leave for a
-// later iteration.
+// device would need to forward through /peer/<id>/agent/update —
+// left for a later iteration. The pre-flight in this modal at least
+// fails loudly when agentClient is bound to a different device or
+// disconnected, instead of throwing "AgentClient is not connected"
+// from deep inside triggerAgentUpdate().
 function AgentUpdateModal({
   device,
   latestVersion,
@@ -2649,6 +2677,28 @@ function AgentUpdateModal({
 
     (async () => {
       try {
+        // Pre-flight: triggerAgentUpdate() asserts the singleton is
+        // connected and posts to its baseUrl — which is whichever
+        // device the user last opened, not necessarily the one shown
+        // on this card. Fail loudly here with an actionable message
+        // before assertConnected throws "AgentClient is not connected"
+        // (the symptom that originally surfaced this bug).
+        if (!agentClient.isConnected) {
+          if (!cancelled) {
+            setError(
+              `Open this device's workspace before running the update — the dashboard isn't currently connected to ${device.name}.`,
+            );
+          }
+          return;
+        }
+        if (agentClient.connectedDeviceId && agentClient.connectedDeviceId !== device.id) {
+          if (!cancelled) {
+            setError(
+              `Refusing to update — the workspace is open on a different device. Close it and open ${device.name} first, otherwise this would update the wrong agent.`,
+            );
+          }
+          return;
+        }
         // Kick off the update on the agent. Returns started=true
         // when an update is now in flight, started=false when the
         // agent thinks it's already on the latest version. 409
