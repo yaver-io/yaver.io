@@ -887,9 +887,29 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     try {
       // Only fetch device list — settings are loaded once on startup, not every poll
       const convexSiteUrl = getConvexSiteUrl();
-      const devicesRes = await fetch(`${convexSiteUrl}/devices/list`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // RN-Android: force a fresh TCP socket and bound the wait. After
+      // OAuth deep-link bring-to-foreground, OkHttp's pool keeps sockets
+      // that the upstream (iPhone Personal Hotspot, in our test setup)
+      // has already dropped. Reusing one hangs send() forever — a 10 s
+      // abort + cache-bust + Connection: close opens a fresh socket and
+      // lets the user see a real error instead of a never-ending spinner.
+      // iOS users were unaffected because NSURLSession's pool detects
+      // dead sockets quickly; this matters most for Android.
+      const controller = new AbortController();
+      const abortTimer = setTimeout(() => controller.abort(), 10_000);
+      let devicesRes: Response;
+      try {
+        devicesRes = await fetch(`${convexSiteUrl}/devices/list?_=${Date.now()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Cache-Control": "no-cache, no-store",
+            Connection: "close",
+          },
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(abortTimer);
+      }
       appLog("info", `/devices/list status: ${devicesRes.status} via ${convexSiteUrl}`);
 
       if (devicesRes.ok) {
