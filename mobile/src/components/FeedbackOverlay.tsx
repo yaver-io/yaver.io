@@ -142,7 +142,7 @@ function feedbackMarkdownStyles() {
  */
 export function FeedbackOverlay() {
   const { user, token } = useAuth();
-  const { activeDevice, connectionStatus } = useDevice();
+  const { activeDevice, connectionStatus, connectedDeviceIds } = useDevice();
   const [enabled, setEnabled] = useState(false);
   const [buttonColor, setButtonColor] = useState("#6366f1");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
@@ -255,8 +255,15 @@ export function FeedbackOverlay() {
     });
   }, [enabled, addOutput]);
 
-  const agentUrl = connectionStatus === "connected" ? quicClient.baseUrl : null;
-  const isConnected = connectionStatus === "connected" && !!agentUrl;
+  // Pool-aware gate: feedback sends through the focused client's
+  // baseUrl, which is correct as long as ANY pool client is live —
+  // when the user has multiple devices pooled, they're probably
+  // submitting feedback against whichever is in focus, and a
+  // momentary "connected → disconnected" flip on the focused client
+  // doesn't actually mean nothing's reachable.
+  const hasAnyConnection = connectionStatus === "connected" || connectedDeviceIds.length > 0;
+  const agentUrl = hasAnyConnection ? quicClient.baseUrl : null;
+  const isConnected = hasAnyConnection && !!agentUrl;
 
   useEffect(() => {
     if (!token) return;

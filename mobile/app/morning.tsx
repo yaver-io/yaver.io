@@ -14,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useColors } from "../src/context/ThemeContext";
+import { useDevice } from "../src/context/DeviceContext";
 import { AppBackButton } from "../src/components/AppBackButton";
 import {
   morningGetRun,
@@ -34,6 +35,13 @@ import {
 export default function MorningScreen() {
   const c = useColors();
   const router = useRouter();
+  const { connectionStatus, connectedDeviceIds } = useDevice();
+  // True when EITHER the focused QuicClient is up OR any pooled
+  // sibling has a live connection. Used to gate the empty-state copy
+  // so a multi-device user with focus on a quiet box doesn't see
+  // "Connect a device" while overnight reports are reachable through
+  // a sibling pool client.
+  const hasAnyConnection = connectionStatus === "connected" || connectedDeviceIds.length > 0;
   const [runs, setRuns] = useState<MorningRunSummary[]>([]);
   const [selected, setSelected] = useState<MorningRunSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -129,10 +137,17 @@ export default function MorningScreen() {
       ) : !selected ? (
         <View style={styles.center}>
           <Text style={[styles.emptyTitle, { color: c.textPrimary }]}>
-            {quicClient.isConnected ? "No overnight run to show" : "Connect a device"}
+            {/* `quicClient.isConnected` only reflects the focused
+                pool client. If the user is connected to several boxes
+                via the multi-device pool but happens to have focus
+                somewhere unreachable, the empty state used to lie
+                with "Connect a device" while overnight reports were
+                already on the way from a sibling. Read the pool from
+                DeviceContext below for the truthful gate. */}
+            {hasAnyConnection ? "No overnight run to show" : "Connect a device"}
           </Text>
           <Text style={[styles.emptyBody, { color: c.textMuted }]}>
-            {quicClient.isConnected
+            {hasAnyConnection
               ? "Run `yaver autodev --morning` on your dev machine before bed to see a match report here in the morning."
               : "Select a dev machine from the Devices tab first."}
           </Text>

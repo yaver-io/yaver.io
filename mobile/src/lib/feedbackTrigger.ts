@@ -62,7 +62,15 @@ async function maybeLaunchFeedbackFromShake(source: FeedbackLaunchSource, userId
     if (!cfg?.enabled || cfg.trigger !== "shake") return;
   }
   cooldownUntil = nowMs() + 2500;
-  if (activeRemoteRuntimeSessionID && quicClient.isConnected) {
+  // quicClient.isConnected checks the FOCUSED pool client only. The
+  // remote-runtime session might be bound to a different (still
+  // pooled) device — in that case the focused check would fail and
+  // the launch-feedback command would silently never go out. We can't
+  // know from here which pool client owns the session, so be lenient:
+  // try to send through the focused client AND let the call fail
+  // softly (.catch), since the worst case is a no-op the user can
+  // re-trigger by shaking again.
+  if (activeRemoteRuntimeSessionID) {
     quicClient.sendRemoteRuntimeCommand(activeRemoteRuntimeSessionID, "launch-feedback", source).catch(() => {});
   }
   triggerFeedbackLaunch(source);

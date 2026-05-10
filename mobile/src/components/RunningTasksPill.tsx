@@ -27,8 +27,13 @@ export function RunningTasksPill() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { connectionStatus, activeDevice } = useDevice();
-  const isConnected = connectionStatus === "connected" && !!activeDevice;
+  const { connectionStatus, activeDevice, connectedDeviceIds } = useDevice();
+  // Pool-aware: pill polls if EITHER the focused device is connected,
+  // OR any other pooled box is. Without this, switching focus to a
+  // box mid-task would silently kill the cross-tab "running" indicator
+  // even though the original task keeps streaming on the previous
+  // (now-pooled) connection.
+  const isConnected = (connectionStatus === "connected" && !!activeDevice) || connectedDeviceIds.length > 0;
   const [running, setRunning] = useState<Task[]>([]);
   const dot = React.useRef(new Animated.Value(0.35)).current;
 
