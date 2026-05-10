@@ -2701,7 +2701,12 @@ export default function MoreScreen() {
   const LEAN_MORE_SURFACE = true;
   const c = useColors();
   const router = useRouter();
-  const tabletContent = useTabletContentStyle("regular");
+  // "regular" caps at 720pt, which on a 1340pt landscape tablet
+  // leaves ~310pt of empty whitespace each side — the More tab read
+  // as a phone strip floating in a void. "wide" (960pt) keeps the
+  // reading line bounded but uses the canvas. Phone behavior is
+  // unaffected (the hook returns {} on phones).
+  const tabletContent = useTabletContentStyle("wide");
   const { connectionStatus, activeDevice } = useDevice();
   const { token, user } = useAuth();
   const connected = connectionStatus === "connected";

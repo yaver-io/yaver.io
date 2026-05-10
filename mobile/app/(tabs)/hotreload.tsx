@@ -28,7 +28,7 @@ import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
 import { isEffectivelyConnected as computeEffectiveConnected } from "../../src/lib/connectionState";
-import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
+import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
 // Guest-crash helpers used to render an inline orange banner in the
 // hot-reload card. Banner removed (see jsx below) but the data path is
 // kept so a future DeviceDetailsModal section can surface it on tap.
@@ -140,6 +140,25 @@ export default function HotReloadScreen() {
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
   const projectCols = layout.layoutClass === "phone" ? 1 : layout.layoutClass === "tablet-portrait" ? 2 : 3;
+  // Phone-sized type (13-17pt) reads as postage-stamp text on a
+  // 1340pt-wide tablet, especially against the larger "Other apps"
+  // grid where the eye expects the active card to dominate.
+  // Bump type + padding on tablet so the running-project card
+  // actually anchors the screen. Untouched on phones.
+  const tabletCard = layout.isTablet
+    ? {
+        cardPadding: { paddingHorizontal: 22, paddingVertical: 20 } as const,
+        title: { fontSize: 22, lineHeight: 28 } as const,
+        meta: { fontSize: 15, lineHeight: 21 } as const,
+        path: { fontSize: 13 } as const,
+        metaPillText: { fontSize: 12, letterSpacing: 0.4 } as const,
+        statusPillText: { fontSize: 13 } as const,
+        projectName: { fontSize: 19, lineHeight: 25 } as const,
+        caret: 22,
+        frameworkIconSize: 28,
+        listGap: 14,
+      }
+    : null;
   const { activeDevice, connectionStatus, devices, connectedDeviceIds } = useDevice();
   // Effective connected = focused-device alive OR any pool client live.
   // Used for the in-tab gating logic (showing project list vs. CTA)
@@ -788,19 +807,31 @@ export default function HotReloadScreen() {
       <RemoteBoxBanner
         extra={
           <View style={s.bannerExtra}>
-            <Text style={[s.bannerChipText, { color: c.textSecondary }]}>
-              Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
-            </Text>
-            {remoteHermesReady ? (
-              <Text style={[s.bannerChipText, { color: remoteHermesReady.enabled ? c.success : c.warn }]}>
-                {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
+            <View style={[s.bannerPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+              <Text style={[s.bannerChipText, { color: c.textSecondary }]}>
+                Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
               </Text>
+            </View>
+            {remoteHermesReady ? (
+              <View
+                style={[
+                  s.bannerPill,
+                  {
+                    backgroundColor: remoteHermesReady.enabled ? c.successBg : c.warnBg,
+                    borderColor: remoteHermesReady.enabled ? c.successBorder : c.warnBorder,
+                  },
+                ]}
+              >
+                <Text style={[s.bannerChipText, { color: remoteHermesReady.enabled ? c.success : c.warn }]}>
+                  {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
+                </Text>
+              </View>
             ) : null}
             {agentInfo?.workDir ? (
               <Text
                 style={[
                   s.bannerPath,
-                  { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                  { color: c.textTertiary, fontFamily: monoFamily },
                 ]}
                 numberOfLines={1}
               >
@@ -821,7 +852,14 @@ export default function HotReloadScreen() {
           <>
             <Text style={[s.sectionTitle, { color: c.textMuted }]}>Preview Target</Text>
             <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }, !isDark && { shadowColor: c.shadowSm }]}>
-              <Text style={[s.projectName, { color: c.textPrimary }]}>Choose real-device Hermes target</Text>
+              <View style={s.targetHeaderRow}>
+                <Text style={[s.projectName, { color: c.textPrimary }]}>Choose real-device Hermes target</Text>
+                <View style={[s.targetStatePill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                  <Text style={[s.targetStateText, { color: c.textSecondary }]}>
+                    {selectedTarget?.name || "This device"}
+                  </Text>
+                </View>
+              </View>
               <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
                 Default stays on this phone. Pick a spare mobile worker only when you want Hermes preview to target that device.
               </Text>
@@ -872,11 +910,15 @@ export default function HotReloadScreen() {
               borderColor: isDark ? c.accent + "55" : c.borderSubtle,
             },
             !isDark && { shadowColor: c.shadowSm },
+            tabletCard?.cardPadding,
           ]}>
             <View style={s.cardHeader}>
+              <View style={[s.activeFrameworkBadge, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                <FrameworkIcon framework={devStatus.framework} size={tabletCard?.frameworkIconSize ?? 24} />
+              </View>
               <View style={s.cardTitleContainer}>
                 <View style={s.activeTitleRow}>
-                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{runningProject}</Text>
+                  <Text style={[s.cardTitle, tabletCard?.title, { color: c.textPrimary }]}>{runningProject}</Text>
                   <View
                     style={[
                       s.statusPill,
@@ -889,6 +931,7 @@ export default function HotReloadScreen() {
                     <Text
                       style={[
                         s.statusPillText,
+                        tabletCard?.statusPillText,
                         { color: devStatus.error ? c.error : devStatus.running ? c.success : c.warn },
                       ]}
                     >
@@ -896,19 +939,46 @@ export default function HotReloadScreen() {
                     </Text>
                   </View>
                 </View>
-                <Text style={[s.cardMeta, { color: c.textSecondary }]}>
+                <Text style={[s.cardMeta, tabletCard?.meta, { color: c.textSecondary }]}>
                   {devStatus.error
                     ? `${devStatus.framework} · failed to start`
                     : devStatus.running
                       ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
                       : `${devStatus.framework} · starting...`}
                 </Text>
-                {(devStatus.targetDeviceName || selectedTarget?.name || !devStatus.targetDeviceName) && (
-                  <Text style={[s.cardMeta, { color: c.textMuted }]}>
-                    <Text style={{ color: c.accent }}>target · </Text>
-                    {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
+                <View style={s.activeMetaChips}>
+                  <View style={[s.activeMetaPill, { backgroundColor: c.accentSoft, borderColor: c.accent + "44" }]}>
+                    <Text style={[s.activeMetaPillText, tabletCard?.metaPillText, { color: c.accent }]}>{String(devStatus.framework || "app").toUpperCase()}</Text>
+                  </View>
+                  {devStatus.port ? (
+                    <View style={[s.activeMetaPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                      <Text style={[s.activeMetaPillText, tabletCard?.metaPillText, { color: c.textSecondary }]}>PORT {devStatus.port}</Text>
+                    </View>
+                  ) : null}
+                  <View
+                    style={[
+                      s.activeMetaPill,
+                      {
+                        backgroundColor: devStatus.hotReload ? c.successBg : c.warnBg,
+                        borderColor: devStatus.hotReload ? c.successBorder : c.warnBorder,
+                      },
+                    ]}
+                  >
+                    <Text style={[s.activeMetaPillText, tabletCard?.metaPillText, { color: devStatus.hotReload ? c.success : c.warn }]}>
+                      {devStatus.hotReload ? "HOT RELOAD ON" : "HOT RELOAD OFF"}
+                    </Text>
+                  </View>
+                  <View style={[s.activeMetaPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                    <Text style={[s.activeMetaPillText, tabletCard?.metaPillText, { color: c.textSecondary }]}>
+                      TARGET {devStatus.targetDeviceName || selectedTarget?.name || "THIS DEVICE"}
+                    </Text>
+                  </View>
+                </View>
+                {devStatus.workDir ? (
+                  <Text style={[s.activePath, tabletCard?.path, { color: c.textTertiary, fontFamily: monoFamily }]} numberOfLines={1}>
+                    {devStatus.workDir}
                   </Text>
-                )}
+                ) : null}
               </View>
               {!devStatus.running && !devStatus.error && <ActivityIndicator size="small" color={c.warn} />}
             </View>
@@ -967,7 +1037,7 @@ export default function HotReloadScreen() {
                 <Text style={[s.insetLabel, { color: c.error }]}>
                   Start failed
                 </Text>
-                <Text style={[s.errorMono, { color: c.error, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]} numberOfLines={10}>
+                <Text style={[s.errorMono, { color: c.error, fontFamily: monoFamily }]} numberOfLines={10}>
                   {String(devStatus.error).trim()}
                 </Text>
               </View>
@@ -983,7 +1053,7 @@ export default function HotReloadScreen() {
                 {devLog.slice(-6).map((line, i) => (
                   <Text
                     key={`${i}-${line.length}`}
-                    style={{ color: isDark ? c.textSecondary : c.textTertiary, fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}
+                    style={{ color: isDark ? c.textSecondary : c.textTertiary, fontSize: 11, fontFamily: monoFamily }}
                     numberOfLines={1}
                   >
                     {line}
@@ -991,10 +1061,14 @@ export default function HotReloadScreen() {
                 ))}
               </View>
             ) : null}
-            <View style={s.cardActions}>
+            <View style={[s.cardActions, layout.isTablet ? s.cardActionsTablet : null]}>
               {devStatus.running && (
                 <>
-                  <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
+                  <Pressable
+                    style={[s.actionBtn, s.openBtn, layout.isTablet ? s.openBtnTablet : null]}
+                    onPress={handleOpen}
+                    disabled={nativeLoading}
+                  >
                     {nativeLoading ? (
                       <View style={s.actionBtnRow}>
                         <ActivityIndicator size="small" color="#fff" />
@@ -1005,14 +1079,14 @@ export default function HotReloadScreen() {
                     )}
                   </Pressable>
                   <Pressable
-                    style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                    style={[s.actionBtn, s.reloadBtn, layout.isTablet ? s.secondaryBtnTablet : null, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
                     onPress={handleReload}
                   >
                     <Text style={[s.reloadBtnText, { color: c.accent }]}>{"\u21BB"} Reload</Text>
                   </Pressable>
                   {workerSession?.hasTarget && workerSession.workerOnline && (
                     <Pressable
-                      style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                      style={[s.actionBtn, s.reloadBtn, layout.isTablet ? s.secondaryBtnTablet : null, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
                       onPress={handleRequestScreenshot}
                     >
                       <Text style={[s.reloadBtnText, { color: c.accent }]}>Shot</Text>
@@ -1022,7 +1096,7 @@ export default function HotReloadScreen() {
               )}
               {devStatus.error && devStatus.workDir && devStatus.framework && (
                 <Pressable
-                  style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                  style={[s.actionBtn, s.reloadBtn, layout.isTablet ? s.secondaryBtnTablet : null, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
                   onPress={() => {
                     const framework = devStatus.framework || "";
                     const workDir = devStatus.workDir || "";
@@ -1039,7 +1113,7 @@ export default function HotReloadScreen() {
                 </Pressable>
               )}
               <Pressable
-                style={[s.actionBtn, s.stopBtn, { backgroundColor: c.errorBg, borderColor: c.errorBorder }, stopState === "stopping" && { opacity: 0.6 }]}
+                style={[s.actionBtn, s.stopBtn, layout.isTablet ? s.secondaryBtnTablet : null, { backgroundColor: c.errorBg, borderColor: c.errorBorder }, stopState === "stopping" && { opacity: 0.6 }]}
                 onPress={handleStop}
                 disabled={stopState === "stopping"}
               >
@@ -1101,7 +1175,7 @@ export default function HotReloadScreen() {
           // column-count change.
           key={`hotreload-cols-${projectCols}`}
           numColumns={projectCols}
-          columnWrapperStyle={projectCols > 1 ? { gap: 10 } : undefined}
+          columnWrapperStyle={projectCols > 1 ? { gap: tabletCard?.listGap ?? 10 } : undefined}
           contentContainerStyle={[s.listContent, tabletContent]}
           renderItem={({ item }) => {
             const isStarting = startingProject === item.name;
@@ -1114,16 +1188,17 @@ export default function HotReloadScreen() {
                   { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
                   !isDark && { shadowColor: c.shadowSm },
                   projectCols > 1 ? { flex: 1, maxWidth: `${100 / projectCols}%` } : null,
+                  tabletCard?.cardPadding,
                 ]}
                 onPress={() => handleStartProject(item)}
                 disabled={isStarting}
               >
                 <View style={s.cardHeader}>
                   <View style={s.frameworkIcon}>
-                    <FrameworkIcon framework={item.framework} size={22} />
+                    <FrameworkIcon framework={item.framework} size={tabletCard?.frameworkIconSize ?? 22} />
                   </View>
                   <View style={s.cardTitleContainer}>
-                    <Text style={[s.projectName, { color: c.textPrimary }]}>{displayProjectTitle(item)}</Text>
+                    <Text style={[s.projectName, tabletCard?.projectName, { color: c.textPrimary }]}>{displayProjectTitle(item)}</Text>
                     <View style={s.tagRow}>
                       {item.tags?.map((tag) => (
                         <View key={tag} style={[s.tag, { backgroundColor: c.accentSoft, borderColor: "transparent" }]}>
@@ -1134,14 +1209,15 @@ export default function HotReloadScreen() {
                     <Text
                       style={[
                         s.projectPath,
-                        { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
+                        tabletCard?.path,
+                        { color: c.textTertiary, fontFamily: monoFamily },
                       ]}
                       numberOfLines={1}
                     >
                       {item.path}
                     </Text>
                     {isNativeRemoteRuntimeProject(item) ? (
-                      <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
+                      <Text style={[s.projectMeta, tabletCard?.meta, { color: c.textMuted, marginTop: 4 }]}>
                         Opens via Remote Runtime — drives the simulator on the dev box; phone stays paired.
                       </Text>
                     ) : null}
@@ -1252,9 +1328,26 @@ const s = StyleSheet.create({
     marginTop: 12,
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
+  activeFrameworkBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   cardTitleContainer: { flex: 1 },
   cardTitle: { ...typography.cardTitle, fontSize: 16, fontWeight: "600" },
   cardMeta: { ...typography.caption, fontSize: 13, marginTop: 4 },
+  activeMetaChips: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 10 },
+  activeMetaPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  activeMetaPillText: { fontSize: 10, fontWeight: "700", letterSpacing: 0.35 },
+  activePath: { ...typography.monoCaption, marginTop: 10 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
   activeTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   statusPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },
@@ -1268,9 +1361,12 @@ const s = StyleSheet.create({
   errorMono: { fontSize: 11, lineHeight: 16, marginTop: 2 },
 
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
+  cardActionsTablet: { flexWrap: "wrap", alignItems: "stretch" },
   actionBtn: { paddingVertical: 11, paddingHorizontal: 14, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   actionBtnRow: { flexDirection: "row", alignItems: "center", gap: 6 },
   openBtn: { flex: 2, alignItems: "center" },
+  openBtnTablet: { flexBasis: "100%" },
+  secondaryBtnTablet: { flex: 1, minWidth: 140 },
   openBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
   reloadBtn: { borderWidth: 1, flex: 1, alignItems: "center" },
   reloadBtnText: { color: "#6E56F6", fontSize: 13, fontWeight: "600" },
@@ -1299,6 +1395,15 @@ const s = StyleSheet.create({
   projectPath: { ...typography.path, marginTop: 3 },
   listContent: { paddingBottom: 40 },
   targetChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  targetHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  targetStatePill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    flexShrink: 1,
+  },
+  targetStateText: { fontSize: 11, fontWeight: "700" },
   targetChip: {
     borderWidth: 1,
     borderRadius: 999,
@@ -1306,8 +1411,15 @@ const s = StyleSheet.create({
     paddingVertical: 6,
   },
   bannerExtra: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", backgroundColor: "transparent" },
+  bannerPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: "transparent",
+  },
   bannerChipText: { fontSize: 12, fontWeight: "600", backgroundColor: "transparent" },
-  bannerPath: { ...typography.path, fontSize: 11 },
+  bannerPath: { ...typography.monoCaption, width: "100%" },
   bannerNote: { fontSize: 11, lineHeight: 16, width: "100%" },
 
   // Empty

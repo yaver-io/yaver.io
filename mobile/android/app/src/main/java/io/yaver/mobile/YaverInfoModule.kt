@@ -139,4 +139,11 @@ object YaverNativePrefs {
   // feedback applies to.
   const val GUEST_PROJECT_NAME = "yaverInheritedGuestProjectName"
   const val GUEST_PROJECT_PATH = "yaverInheritedGuestProjectPath"
+  // YaverBundleLoader — Hermes-push guest bundle state. Mirrors the
+  // iOS UserDefaults keys (see YaverBundleLoader.swift) so the JS
+  // contract (loadedModuleName / loadedBundleMd5) is platform-symmetric.
+  const val LOADED_MODULE_NAME = "yaverLoadedModuleName"
+  const val LOADED_BUNDLE_MD5 = "yaverLoadedBundleMd5"
+  const val SELECTED_RUNTIME_FAMILY_ID = "yaverSelectedRuntimeFamilyID"
+  const val SELECTED_RUNTIME_FAMILY_LABEL = "yaverSelectedRuntimeFamilyLabel"
 }

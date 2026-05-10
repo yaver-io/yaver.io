@@ -143,7 +143,14 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
   accent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
-  row: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  // `flex-start` left the Switch chip pinned to the top of the row
+  // while the rowMain content (status pill + role + device name) sat
+  // a few pt lower because of the dot + line-height baseline. On
+  // tablet that gap was wide enough that the Switch chip and the
+  // adjacent latency chip read as floating in their own column.
+  // Centering keeps the right-side pills aligned to the row's
+  // vertical midline so they read as part of the banner, not above it.
+  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
   rowMain: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0, gap: 8, flexWrap: "wrap" },
   statusLine: { flexDirection: "row", alignItems: "center", flexShrink: 0 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },

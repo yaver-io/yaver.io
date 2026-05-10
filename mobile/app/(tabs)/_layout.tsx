@@ -1,6 +1,7 @@
 import { Tabs, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ExpoDevice from "expo-device";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
@@ -76,6 +77,16 @@ export default function TabLayout() {
   // keeps the bottom tab bar. expo-router's <Tabs> exposes
   // tabBarPosition='left' in v3+; we set it via screenOptions.
   const useLeftRail = layout.layoutClass === "tablet-landscape";
+  const insets = useSafeAreaInsets();
+  // Tablet portrait still uses the bottom bar, but at a phone-sized
+  // 64pt with paddingTop:0 the icons jam against the top edge —
+  // there's plenty of vertical space on a tablet, so size the bar
+  // for the form factor instead. iOS pads via the safe-area inset
+  // automatically; on Android we add it ourselves.
+  const isTabletPortrait = layout.layoutClass === "tablet-portrait";
+  const bottomBarHeight = isTabletPortrait ? 76 : 64;
+  const bottomBarPaddingBottom = Math.max(insets.bottom, isTabletPortrait ? 4 : 0);
+  const bottomBarPaddingTop = isTabletPortrait ? 8 : 6;
 
   const backToMore = useCallback(
     () => (
@@ -230,18 +241,26 @@ export default function TabLayout() {
               backgroundColor: c.bgTabBar,
               borderTopColor: c.borderSubtle,
               borderTopWidth: isDark ? StyleSheet.hairlineWidth : 0,
-              height: 64,
-              paddingTop: 0,
+              height: bottomBarHeight + bottomBarPaddingBottom,
+              paddingTop: bottomBarPaddingTop,
+              paddingBottom: bottomBarPaddingBottom,
               shadowColor: !isDark ? c.shadowSm : "transparent",
               shadowOffset: { width: 0, height: -6 },
               shadowOpacity: 0.14,
               shadowRadius: 14,
               elevation: 8,
             },
-        tabBarLabel: () => null,
+        // TabIcon renders its own label as a child Text — telling
+        // react-navigation to hide its label slot frees the vertical
+        // space that was forcing icons to the top of the bar.
+        tabBarShowLabel: false,
         tabBarActiveTintColor: c.tabActive,
         tabBarInactiveTintColor: c.tabInactive,
-        tabBarItemStyle: useLeftRail ? { height: 64 } : undefined,
+        tabBarItemStyle: useLeftRail
+          ? { height: 64 }
+          : isTabletPortrait
+          ? { paddingVertical: 0 }
+          : undefined,
       }}
     >
       <Tabs.Screen
@@ -330,7 +349,7 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 4, gap: 4 },
+  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 2, gap: 3 },
   // Pill behind the icon glyph; only painted on focus (background set
   // inline). 48x28 / radius 14 mirrors the Material 3 active-tab
   // indicator and works in both themes via accent + low alpha.

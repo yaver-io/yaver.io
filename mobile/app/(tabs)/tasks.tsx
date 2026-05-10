@@ -1395,7 +1395,12 @@ export default function TasksScreen() {
   const insets = useSafeAreaInsets();
   const taskRouter = useRouter();
   const layout = useResponsiveLayout();
-  const tabletContent = useTabletContentStyle("regular");
+  // "wide" (960pt) over "regular" (720pt) on tablet. The DevPreview
+  // serving banner + filter chip row + task list all read better at
+  // wider clamp on a tablet — at 720pt the chips wrapped to 2 lines
+  // and the serving CTA dominated. Phones unaffected — hook returns
+  // {} when layoutClass === "phone".
+  const tabletContent = useTabletContentStyle("wide");
   // Tablet landscape: render task detail as a persistent right-pane
   // panel instead of a slide-up sheet, so the task list stays
   // visible on the left. The Modal is still used (so keyboard +
@@ -5094,12 +5099,38 @@ export default function TasksScreen() {
                     </View>
                   </View>
                 ) : (
-                  <View style={[s.chatInputBar, { borderTopColor: c.border, backgroundColor: c.bgCard, flexDirection: "row", alignItems: "center", gap: 8 }]}>
+                  <View
+                    style={[
+                      s.chatInputBar,
+                      {
+                        borderTopColor: c.border,
+                        backgroundColor: c.bgCard,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        paddingTop: layout.isTablet ? 10 : 8,
+                        paddingBottom: Math.max(
+                          insets.bottom + (layout.isTablet ? 10 : 6),
+                          Platform.OS === "ios" ? 24 : 12,
+                        ),
+                      },
+                    ]}
+                  >
                     <Pressable
                       style={{ flex: 1 }}
                       onPress={() => setFollowUpExpanded(true)}
                     >
-                      <View style={[s.chatInput, { backgroundColor: c.bg, borderColor: c.border, justifyContent: "center", minHeight: 44, maxHeight: 44 }]}>
+                      <View
+                        style={[
+                          s.chatInput,
+                          s.chatPromptShell,
+                          {
+                            backgroundColor: c.bg,
+                            borderColor: c.border,
+                            justifyContent: "center",
+                          },
+                        ]}
+                      >
                         <Text style={{ color: c.textMuted, fontSize: 15 }}>
                           {isRunning ? "Send follow-up while it works" : "Follow up — or send another command"}
                         </Text>
@@ -5701,6 +5732,7 @@ const s = StyleSheet.create({
   chatInputBarRunning: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 8 },
   chatRunningText: { fontSize: 14 },
   chatInput: { flex: 1, borderWidth: 1, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12, fontSize: 15, maxHeight: 200, minHeight: 190 },
+  chatPromptShell: { minHeight: 48, maxHeight: 48, paddingVertical: 0, borderRadius: 18 },
   chatSendBtn: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   chatSendText: { color: "#fff", fontSize: 18, fontWeight: "700" },
 

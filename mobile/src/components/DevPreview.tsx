@@ -16,6 +16,8 @@ import { useColors } from "../context/ThemeContext";
 import { loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
+import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
+import { monoFamily } from "../theme/tokens";
 
 /**
  * Dev Preview.
@@ -47,8 +49,20 @@ function currentYaverConsumerContract() {
   };
 }
 
+function projectLabelFromStatus(status: DevServerStatus | null): string {
+  const workDir = String(status?.workDir || "").trim();
+  if (workDir) {
+    const parts = workDir.split("/").filter(Boolean);
+    const tail = parts[parts.length - 1];
+    if (tail) return tail;
+  }
+  const framework = String(status?.framework || "").trim();
+  return framework || "App";
+}
+
 export function DevPreview() {
   const c = useColors();
+  const layout = useResponsiveLayout();
   const [status, setStatus] = useState<DevServerStatus | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -360,7 +374,15 @@ export function DevPreview() {
         : err?.buildResult ? nativeBuildFailureTitle(err.buildResult) : "Load Failed";
       Alert.alert(title, message);
     }
-  }, []);
+    // status.workDir MUST be in the deps. Agent 1.99.187+ requires
+    // every /dev/build-native to pin the project via projectName,
+    // projectPath, or bundleId — with `[]` deps the closure froze
+    // `status` to its first-render value (undefined), so the tap
+    // sent an unpinned request and the agent rejected with
+    // PROJECT_REQUIRED ("build-native requires projectName,
+    // projectPath, or bundleId..."). Including workDir means the
+    // callback refreshes whenever the dev server's project changes.
+  }, [status?.workDir]);
 
   const handleOpen = useCallback(() => {
     if (mustUseNativePreview) {
@@ -409,6 +431,12 @@ export function DevPreview() {
   if (!status) return null;
 
   const bundleUrl = quicClient.getDevServerBundleUrl(status.bundleUrl || "/dev/");
+  const projectLabel = projectLabelFromStatus(status);
+  const servingMeta = [
+    status.framework || null,
+    status.port ? `port ${status.port}` : null,
+    `target ${status.targetDeviceName || "this device"}`,
+  ].filter(Boolean).join(" · ");
   const tone = status.building
     ? { border: c.warnBorder, bg: c.warnBg, text: c.warn }
     : { border: c.successBorder, bg: c.bgCard, text: c.success };
@@ -422,66 +450,95 @@ export function DevPreview() {
           borderColor: tone.border,
         }]}
       >
-        <View style={styles.bannerLeft}>
-          {status.building ? (
-            <ActivityIndicator size="small" color={tone.text} />
-          ) : (
-            <View style={[styles.dot, { backgroundColor: tone.text }]} />
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.bannerTitle, { color: c.textPrimary }]}>
-              {status.building ? "Building native app..." : `${status.framework} dev server`}
-            </Text>
-            {status.workDir && (
-              <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
-                {status.workDir.split("/").pop()}
-              </Text>
-            )}
-            <Text style={[styles.bannerSubtitle, { color: c.textMuted, marginTop: 2 }]} numberOfLines={1}>
-              {`target · ${status.targetDeviceName || "this device"}`}
-            </Text>
-            {lastLogLine ? (
-              <Text style={[styles.bannerSubtitle, {
-                color: tone.text,
-                fontSize: 10,
-                marginTop: 2,
-                fontFamily: "monospace",
-              }]} numberOfLines={1}>
-                {lastLogLine}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-        <View style={styles.bannerRight}>
-          <Pressable
-            onPress={handleOpen}
-            disabled={!!status.building || nativeLoading}
-            style={({ pressed }) => [
-              styles.bannerPrimaryBtn,
-              { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.8 : 1 },
-            ]}
-          >
-            {status.building || nativeLoading ? (
-              <ActivityIndicator size="small" color={c.textInverse} />
+        <View
+          style={[
+            styles.bannerMain,
+            !layout.isPhone ? styles.bannerMainWide : null,
+          ]}
+        >
+          <View style={styles.bannerLeft}>
+            {status.building ? (
+              <ActivityIndicator size="small" color={tone.text} />
             ) : (
-              <Text style={[styles.bannerPrimaryText, { color: c.textInverse }]}>Open in Yaver</Text>
+              <View style={[styles.dot, { backgroundColor: tone.text }]} />
             )}
-          </Pressable>
-          <Pressable
-            onPress={handleStop}
-            disabled={!!status.building}
-            style={({ pressed }) => [
-              styles.bannerStopBtn,
-              {
-                borderColor: c.errorBorder,
-                backgroundColor: c.errorBg,
-                opacity: pressed || status.building ? 0.7 : 1,
-              },
-            ]}
-          >
-            <Text style={[styles.bannerStopText, { color: c.error }]}>{status.stopActionLabel || "Stop Serving"}</Text>
-          </Pressable>
-        </View>
+            <View style={styles.bannerTextWrap}>
+              <View style={styles.bannerTitleRow}>
+                <Text style={[styles.bannerTitle, { color: c.textPrimary }]} numberOfLines={1}>
+                  {projectLabel}
+                </Text>
+                <View style={[styles.bannerStatePill, { backgroundColor: tone.text + "16", borderColor: tone.text + "36" }]}>
+                  <Text style={[styles.bannerStateText, { color: tone.text }]}>
+                    {status.building ? "BUILDING" : "SERVING"}
+                  </Text>
+                </View>
+              </View>
+              <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
+                {servingMeta}
+              </Text>
+              {status.workDir ? (
+                <Text
+                  style={[styles.bannerPath, { color: c.textMuted }]}
+                  numberOfLines={1}
+                >
+                  {status.workDir}
+                </Text>
+              ) : null}
+              {lastLogLine ? (
+                <Text style={[styles.bannerLogLine, { color: tone.text }]} numberOfLines={1}>
+                  {lastLogLine}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+            <View
+              style={[
+                styles.bannerRight,
+                layout.isPhone ? styles.bannerRightStacked : styles.bannerRightInline,
+              ]}
+            >
+              <Pressable
+                onPress={handleOpen}
+                disabled={!!status.building || nativeLoading}
+                style={({ pressed }) => [
+                  styles.bannerPrimaryBtn,
+                  { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.8 : 1 },
+                ]}
+              >
+                {status.building || nativeLoading ? (
+                  <ActivityIndicator size="small" color={c.textInverse} />
+                ) : (
+                  <Text
+                    style={[styles.bannerPrimaryText, { color: c.textInverse }]}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                  >
+                    Open in Yaver
+                  </Text>
+                )}
+              </Pressable>
+              <Pressable
+                onPress={handleStop}
+                disabled={!!status.building}
+                style={({ pressed }) => [
+                  styles.bannerStopBtn,
+                  {
+                    borderColor: c.errorBorder,
+                    backgroundColor: c.errorBg,
+                    opacity: pressed || status.building ? 0.7 : 1,
+                  },
+                ]}
+              >
+                <Text
+                  style={[styles.bannerStopText, { color: c.error }]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
+                  {status.stopActionLabel || "Stop Serving"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
       </View>
       {/* Full-screen WebView Modal */}
       <Modal visible={showPreview} animationType="slide" onRequestClose={() => setShowPreview(false)}>
@@ -689,36 +746,80 @@ export function useDevServerStatus() {
 
 const styles = StyleSheet.create({
   banner: {
-    flexDirection: "column",
     padding: 14,
     marginHorizontal: 16,
     marginBottom: 8,
     borderRadius: 14,
     borderWidth: 1,
   },
-  bannerLeft: {
+  bannerMain: {
+    gap: 12,
+  },
+  bannerMainWide: {
     flexDirection: "row",
     alignItems: "center",
+  },
+  bannerLeft: {
+    flexDirection: "row",
+    alignItems: "flex-start",
     gap: 10,
     flex: 1,
+  },
+  bannerTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  bannerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flexWrap: "wrap",
   },
   dot: { width: 10, height: 10, borderRadius: 5 },
   dotSmall: { width: 7, height: 7, borderRadius: 4 },
   bannerTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "700",
     color: "#e4e4e7",
+    flexShrink: 1,
+  },
+  bannerStatePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  bannerStateText: {
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
   bannerSubtitle: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#888",
-    marginTop: 1,
+    marginTop: 3,
+  },
+  bannerPath: {
+    fontSize: 10,
+    marginTop: 4,
+    fontFamily: monoFamily,
+  },
+  bannerLogLine: {
+    fontSize: 10,
+    marginTop: 4,
+    fontFamily: monoFamily,
   },
   bannerRight: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "stretch",
     gap: 10,
-    marginTop: 12,
+  },
+  bannerRightInline: {
+    width: 220,
+    flexDirection: "column",
+  },
+  bannerRightStacked: {
+    flexDirection: "row",
   },
   bannerPrimaryBtn: {
     flex: 1,
@@ -733,6 +834,7 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   bannerStopBtn: {
+    flex: 1,
     minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 10,

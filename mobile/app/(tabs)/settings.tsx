@@ -137,7 +137,12 @@ export default function SettingsScreen() {
   const LEAN_SETTINGS_SURFACE = true;
   const KEEP_SANDBOX_SURFACE = true;
   const SHOW_HOST_NOTIFICATION_CHANNELS = false;
-  const tabletContent = useTabletContentStyle("regular");
+  // "wide" clamp (960pt) instead of "regular" (720pt) — Settings on
+  // a 1340pt landscape tablet had 4-5 sub-sections rendering as a
+  // narrow phone strip in the middle with empty whitespace on both
+  // sides. 960pt still keeps reading lines tight while using the
+  // canvas. Phone returns {} from the hook so phone layout unchanged.
+  const tabletContent = useTabletContentStyle("wide");
   const { user, token, logout, refreshUser } = useAuth();
   const {
     devices,
