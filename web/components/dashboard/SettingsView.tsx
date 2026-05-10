@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 import { useDevices } from "@/lib/use-devices";
 import { PasskeysCard } from "./PasskeyEnrollPrompt";
+import YaverAgentSettings from "./YaverAgentSettings";
+import { agentClient } from "@/lib/agent-client";
 import pkg from "../../package.json";
 
 const WEB_VERSION = (pkg as { version?: string }).version ?? "unknown";
@@ -566,6 +568,9 @@ export default function SettingsView({ user, onLogout }: SettingsViewProps) {
           )}
         </div>
       </div>
+
+      {/* Yaver Agent (control-plane LLM) provider config */}
+      <YaverAgentSettings connected={agentClient.isConnected} />
 
       {/* Legal */}
       <div className="card mb-6">

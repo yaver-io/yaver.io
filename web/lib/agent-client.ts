@@ -397,6 +397,33 @@ export interface VaultEntry extends VaultEntrySummary {
   value: string;
 }
 
+// Yaver Agent (control-plane LLM) types — mirrors yaver_agent_config.go.
+export type YaverAgentProviderId = "glm" | "anthropic" | "openai" | "openrouter";
+
+export interface YaverAgentConfig {
+  provider: YaverAgentProviderId | "";
+  model: string;
+  baseUrl?: string;
+  hasApiKey: boolean;
+  updatedAt?: number;
+}
+
+export interface YaverAgentProviderDefault {
+  provider: YaverAgentProviderId;
+  model: string;
+  baseUrl?: string;
+  label: string;
+  note?: string;
+}
+
+export interface YaverAgentSetRequest {
+  provider: YaverAgentProviderId;
+  model?: string;
+  baseUrl?: string;
+  /** "" clears the stored key; omit to leave existing untouched. */
+  apiKey?: string;
+}
+
 export interface APIKeyRecord {
   tokenHash: string;
   label: string;
@@ -4237,6 +4264,12 @@ export class AgentClient {
     fileCount?: number;
     builtAt?: string;
     caller?: string;
+    /** Source project root the bundle was built from. Lets the
+     *  dashboard tell whether the on-disk bundle belongs to the
+     *  user's selected project before promoting a stale build to
+     *  the iframe — see WebReloadView's failed→ready guard. */
+    workDir?: string;
+    buildDir?: string;
   }> {
     if (!this.baseUrl) return { built: false };
     try {
@@ -4254,6 +4287,8 @@ export class AgentClient {
         fileCount: typeof body.fileCount === "number" ? body.fileCount : undefined,
         builtAt: typeof body.builtAt === "string" ? body.builtAt : undefined,
         caller: typeof body.caller === "string" ? body.caller : undefined,
+        workDir: typeof body.workDir === "string" ? body.workDir : undefined,
+        buildDir: typeof body.buildDir === "string" ? body.buildDir : undefined,
       };
     } catch {
       return { built: false };
@@ -5255,6 +5290,37 @@ export class AgentClient {
       { method: "DELETE", headers: this.authHeaders },
     );
     if (!res.ok) throw new Error(`vault delete: HTTP ${res.status}`);
+  }
+
+  // ── Yaver Agent (mobile-embedded control-plane LLM) provider config ─
+
+  async yaverAgentConfigGet(): Promise<{
+    config: YaverAgentConfig;
+    providers: YaverAgentProviderId[];
+    defaults: YaverAgentProviderDefault[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/yaver-agent/config`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`yaver-agent config get: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async yaverAgentConfigSet(req: YaverAgentSetRequest): Promise<{
+    config: YaverAgentConfig;
+    providers: YaverAgentProviderId[];
+    defaults: YaverAgentProviderDefault[];
+  }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/yaver-agent/config`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.error || `yaver-agent config set: HTTP ${res.status}`);
+    }
+    return res.json();
   }
 
   // ── API keys (SDK-token registry with labels + usage) ─────────────
