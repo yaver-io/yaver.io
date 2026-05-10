@@ -253,6 +253,7 @@ func (s *HTTPServer) buildWebJSBundle(w http.ResponseWriter, r *http.Request, re
 	s.devServerMgr.SetWebBundleInfo(WebBundleInfo{
 		Target:    "web-js-bundle",
 		BuildDir:  buildDir,
+		WorkDir:   workDir,
 		IndexFile: "index.html",
 		Size:      totalBytes,
 		FileCount: fileCount,
@@ -428,6 +429,7 @@ func (s *HTTPServer) buildWebHermesWasm(w http.ResponseWriter, r *http.Request, 
 	s.devServerMgr.SetWebBundleInfo(WebBundleInfo{
 		Target:    "web-hermes-wasm",
 		BuildDir:  buildDir,
+		WorkDir:   workDir,
 		IndexFile: "index.html",
 		Size:      int64(len(bundleBytes)),
 		FileCount: 0,
@@ -645,6 +647,25 @@ func (s *HTTPServer) handleServeWebBundle(w http.ResponseWriter, r *http.Request
 	}
 	// Strip /dev/web-bundle prefix; default to index.html when bare.
 	rel := strings.TrimPrefix(r.URL.Path, "/dev/web-bundle/")
+	isIndexRequest := rel == "" || rel == "/" || strings.HasSuffix(strings.ToLower(rel), ".html")
+	// Serve-time freshness guard. On the iframe's index/HTML fetch only
+	// (never on asset requests), check whether HEAD has advanced past
+	// the cached BuiltAt timestamp. If so, kick off the existing
+	// /dev/build-native pipeline (which already runs the pre-build git
+	// pull) and serve a small rebuilding placeholder that polls
+	// /dev/web-bundle/info every 2 s. Falls through silently on any
+	// non-git workdir, missing upstream, parse error, etc. — those
+	// users keep getting the existing static bundle behavior.
+	if isIndexRequest {
+		if stale, headTime, ok := webBundleStaleVsHead(resolveWebBundleWorkDir(info), info.BuiltAt); ok && stale {
+			if s.triggerWebBundleRebuildAsync(info) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+				_, _ = w.Write(renderWebRebuildingPage(info.BuiltAt, headTime))
+				return
+			}
+		}
+	}
 	if rel == "" || rel == "/" {
 		rel = info.IndexFile
 		if rel == "" {
