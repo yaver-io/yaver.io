@@ -251,12 +251,34 @@ this Mac.
 $(yaver vault env --project mobile)
 ./scripts/deploy-testflight.sh
 
-# explicit env path (when vault is locked)
+# fallback when vault is locked: source the gitignored env file
+source ~/.appstoreconnect/yaver.env
+./scripts/deploy-testflight.sh
+
+# explicit env path (no vault, no env file — type the values yourself)
 export APP_STORE_KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_77Z6B543D5.p8"
 export APP_STORE_KEY_ID="77Z6B543D5"
-export APP_STORE_KEY_ISSUER="<uuid from yaver vault env --project mobile>"
+export APP_STORE_KEY_ISSUER="<uuid>"
 export APPLE_TEAM_ID="5SJZ4KA39A"
 ./scripts/deploy-testflight.sh
+```
+
+`~/.appstoreconnect/yaver.env` is gitignored and pre-seeded with all four
+exports — sourcing it is the friction-free path when vault is locked
+(common after auth token rotation). Keep it in sync if you rotate the
+App Store Connect issuer/key.
+
+GitHub Actions secrets backing the same flow (already populated): `APPLE_TEAM_ID`,
+`APP_STORE_CONNECT_API_KEY`, `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`,
+`APPLE_CERTIFICATE_P12`, `APPLE_CERTIFICATE_PASSWORD`. Verify with `gh secret list -R kivanccakmak/yaver.io`.
+
+Vault entries (write once when vault is unlocked, then `yaver vault env --project mobile`
+emits the same exports as the env file):
+```bash
+yaver vault add APP_STORE_KEY_PATH   --project mobile --value "$HOME/.appstoreconnect/private_keys/AuthKey_77Z6B543D5.p8"
+yaver vault add APP_STORE_KEY_ID     --project mobile --value 77Z6B543D5
+yaver vault add APP_STORE_KEY_ISSUER --project mobile --value <uuid>
+yaver vault add APPLE_TEAM_ID        --project mobile --value 5SJZ4KA39A
 ```
 
 The script auto-bumps CFBundleVersion, archives at `/tmp/Yaver.xcarchive`,
