@@ -4838,6 +4838,64 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolJSON(out)
 
+	case "wireless_detect":
+		// Paired + visible-unpaired across iOS and Android.
+		// See mcp_wireless_tools.go.
+		out, err := mcpWirelessDetect()
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wireless_setup_android":
+		// Polls mDNS for the pairing service, runs adb pair + auto-connect.
+		// Caller supplies the 6-digit code (typically collected via
+		// yaver_ask_user). See mcp_wireless_tools.go.
+		var args mcpWirelessSetupAndroidArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWirelessSetupAndroid(args)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wireless_pair_android":
+		var args mcpWirelessPairAndroidArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWirelessPairAndroid(args)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wireless_connect_android":
+		var args mcpWirelessConnectAndroidArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWirelessConnectAndroid(args)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
+	case "wireless_push":
+		// Same as wire_push but routes through the wireless device picker.
+		// See mcp_wireless_tools.go.
+		var args mcpWirelessPushArgs
+		if err := json.Unmarshal(call.Arguments, &args); err != nil {
+			return mcpToolError("bad args: " + err.Error())
+		}
+		out, err := mcpWirelessPush(args)
+		if err != nil {
+			return mcpToolError(err.Error())
+		}
+		return mcpToolJSON(out)
+
 	case "fork_task":
 		// Runtime agent switch over MCP. Same shape as POST /tasks/{id}/fork.
 		// Returns a structured object so calling AI agents can chain follow-ups

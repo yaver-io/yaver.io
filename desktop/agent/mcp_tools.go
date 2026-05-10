@@ -183,6 +183,105 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "wireless_detect",
+			"description": "List WiFi-paired iPhones/iPads (xcrun devicectl over network) AND Android devices (adb devices), PLUS Android devices that are visible on the local network via mDNS but haven't been adb-paired with this machine yet. Each entry has a status field: 'paired' (ready for wireless_push) or 'visible-unpaired' (call wireless_setup_android first). Use this BEFORE wireless_push to confirm the target is paired; if you see visible-unpaired entries, prompt the user via yaver_ask_user to tap 'Pair device with pairing code' on the phone, then call wireless_setup_android with the 6-digit code.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "wireless_setup_android",
+			"description": "First-time Android wireless pairing for AI agents. Prerequisite: the user has tapped 'Pair device with pairing code' on the phone (Settings → Developer options → Wireless debugging) and read off the 6-digit code. This tool polls mDNS for the pairing service, runs `adb pair`, then auto-resolves the matching connect endpoint and runs `adb connect`. Returns the post-setup device list so you can verify pairing in one round trip. Use yaver_ask_user to collect the code BEFORE calling this — never make up a code.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"code"},
+				"properties": map[string]interface{}{
+					"code": map[string]interface{}{
+						"type":        "string",
+						"description": "The 6-digit pairing code shown on the phone's 'Pair device with pairing code' screen.",
+					},
+					"poll_seconds": map[string]interface{}{
+						"type":        "integer",
+						"description": "How long to wait for the pairing service to appear in mDNS. Default 120, max 300.",
+						"minimum":     10,
+						"maximum":     300,
+					},
+				},
+			},
+		},
+		{
+			"name":        "wireless_pair_android",
+			"description": "Manual one-shot Android wireless pair when you already know the pair host:port (e.g. user typed it from the phone screen). Prefer wireless_setup_android when you don't have the host:port yet — it auto-discovers via mDNS. The pair port is DIFFERENT from the connect port shown on the main Wireless debugging screen. With auto_connect=true (default), this tool also resolves the matching connect entry and runs adb connect immediately, returning a single ready-to-use paired device.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"ip_port", "code"},
+				"properties": map[string]interface{}{
+					"ip_port": map[string]interface{}{
+						"type":        "string",
+						"description": "The PAIR host:port from the phone's 'Pair device with pairing code' screen — NOT the connect port from the main Wireless debugging screen.",
+					},
+					"code": map[string]interface{}{
+						"type":        "string",
+						"description": "The 6-digit pairing code shown next to the pair host:port on the phone.",
+					},
+					"auto_connect": map[string]interface{}{
+						"type":        "boolean",
+						"description": "After pairing, auto-resolve the connect endpoint via mDNS and run adb connect. Default true.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "wireless_connect_android",
+			"description": "Reconnect a previously-paired Android phone over WiFi. Use this when wireless_detect shows the phone as visible-unpaired but it was paired in a past session (e.g. after a phone reboot). Empty ip_port = auto-discover via mDNS.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{
+					"ip_port": map[string]interface{}{
+						"type":        "string",
+						"description": "Connect host:port from the phone's main Wireless debugging screen. Empty = auto-discover via mDNS.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "wireless_push",
+			"description": "Build a self-contained native binary (xcodebuild Release / gradle installRelease) and install it on a WIFI-paired phone via the agent's host machine. Same long-running build pipeline as wire_push, but routes through the wireless device picker. If no paired wireless device is found, the error includes a count of visible-unpaired devices so you can chain wireless_setup_android. Returns {ok, exit_code, device, platform, transport, stack, log_path, log_tail, elapsed_sec}.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"path": map[string]interface{}{
+						"type":        "string",
+						"description": "Project path. Empty = the agent's current workdir.",
+					},
+					"device": map[string]interface{}{
+						"type":        "string",
+						"description": "Specific device UDID (iOS) or wireless serial like '192.168.1.42:5555' (Android). Empty = first paired wireless device for the platform. Run wireless_detect first to see your options.",
+					},
+					"platform": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "ios", "android"},
+						"description": "Force a platform when the project supports both. Empty = auto-pick.",
+					},
+					"config": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "Debug", "Release"},
+						"description": "Build configuration. Default Release.",
+					},
+					"no_launch": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Install but don't launch. Default false.",
+					},
+					"timeout_sec": map[string]interface{}{
+						"type":        "integer",
+						"description": "Hard timeout in seconds. Default 1800 (30 min).",
+						"minimum":     60,
+					},
+				},
+			},
+		},
+		{
 			"name":        "fork_task",
 			"description": "Switch the coding agent (claude/codex/opencode) for an existing task. Creates a NEW child task running on the requested runner with a bounded recent-context handoff (last few turns + assistant tail) — the parent task stays immutable. Use this instead of continue_task when the user wants a different runner/model/mode mid-conversation. Claude/Codex/OpenCode don't share session formats, so an in-place runner swap would corrupt session state. Returns the child task ID + runner + how many words of context were carried.",
 			"inputSchema": map[string]interface{}{

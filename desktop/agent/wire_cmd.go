@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -91,18 +92,28 @@ type wireDevice struct {
 	Name     string `json:"name"`
 	Platform string `json:"platform"` // "ios" | "android"
 	OS       string `json:"os,omitempty"`
+	// Info is optionally populated by enrichWireDevices() — empty
+	// pointer means "not enriched yet" (vs zero-value struct, which
+	// would mean "we tried and got nothing back"). The CLI's --info
+	// flag, the mobile devices section, and MCP detect tools all
+	// populate this; raw `adb devices -l` listings leave it nil.
+	Info *mobileDeviceInfo `json:"info,omitempty"`
 }
 
 func runWireDetect(args []string) {
 	fs := flag.NewFlagSet("wire detect", flag.ExitOnError)
 	jsonOut := fs.Bool("json", false, "emit JSON")
+	noInfo := fs.Bool("no-info", false, "skip device info enrichment (faster, fewer adb/xcrun calls)")
 	_ = fs.Parse(args)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	devices := append([]wireDevice{}, listIOSWireDevices(ctx)...)
 	devices = append(devices, listAndroidWireDevices(ctx)...)
+	if !*noInfo {
+		enrichWireDevices(ctx, devices, 4)
+	}
 
 	if *jsonOut {
 		_ = json.NewEncoder(os.Stdout).Encode(devices)
@@ -123,15 +134,26 @@ func runWireDetect(args []string) {
 		return
 	}
 
-	fmt.Printf("%-10s  %-44s  %s\n", "PLATFORM", "UDID/SERIAL", "NAME")
-	fmt.Printf("%-10s  %-44s  %s\n", "--------", "-----------", "----")
+	fmt.Printf("%-10s  %-44s  %s\n", "PLATFORM", "UDID/SERIAL", "DEVICE")
+	fmt.Printf("%-10s  %-44s  %s\n", "--------", "-----------", "------")
 	for _, d := range devices {
-		name := d.Name
-		if name == "" {
-			name = "(unknown)"
-		}
-		fmt.Printf("%-10s  %-44s  %s\n", d.Platform, d.UDID, name)
+		label := wireRowLabel(d)
+		fmt.Printf("%-10s  %-44s  %s\n", d.Platform, d.UDID, label)
 	}
+}
+
+// wireRowLabel mirrors wirelessRowLabel for the cable-attached path:
+// enriched summary when we have one, else the raw name.
+func wireRowLabel(d wireDevice) string {
+	if d.Info != nil {
+		if s := d.Info.summary(); s != "" {
+			return s
+		}
+	}
+	if d.Name != "" {
+		return d.Name
+	}
+	return "(unknown)"
 }
 
 // listIOSWireDevices runs `xcrun devicectl list devices` (Xcode 15+) and
@@ -332,6 +354,12 @@ func listAndroidWirelessDevices(ctx context.Context) []wireDevice {
 // androidDevicesFromAdb shells out to `adb devices -l` and returns either
 // the wired (USB) entries or the wireless (IP:port) entries. Emulators
 // (`emulator-*`) are always dropped.
+//
+// Wireless dedupe: Android 11+ adb often reports the same physical device
+// twice — once as `IP:port` (after `adb connect`) and once as the mDNS
+// hostname (`adb-<serial>-...._adb-tls-connect.`). When both forms point
+// at the same `device:` qualifier, we keep only the IP:port form so the
+// UI doesn't show two rows for one tablet.
 func androidDevicesFromAdb(ctx context.Context, wireless bool) []wireDevice {
 	if _, err := exec.LookPath("adb"); err != nil {
 		return nil
@@ -340,7 +368,12 @@ func androidDevicesFromAdb(ctx context.Context, wireless bool) []wireDevice {
 	if err != nil {
 		return nil
 	}
-	var devs []wireDevice
+	type rawDev struct {
+		dev      wireDevice
+		deviceID string // value of `device:<id>` qualifier (model code)
+		isMDNS   bool
+	}
+	var raws []rawDev
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "List of devices") {
@@ -359,19 +392,201 @@ func androidDevicesFromAdb(ctx context.Context, wireless bool) []wireDevice {
 			continue
 		}
 		name := ""
+		deviceID := ""
 		for _, f := range fields[2:] {
-			if strings.HasPrefix(f, "model:") {
+			switch {
+			case strings.HasPrefix(f, "model:"):
 				name = strings.ReplaceAll(strings.TrimPrefix(f, "model:"), "_", " ")
-				break
+			case strings.HasPrefix(f, "device:"):
+				deviceID = strings.TrimPrefix(f, "device:")
 			}
 		}
-		devs = append(devs, wireDevice{
-			UDID:     serial,
-			Name:     name,
-			Platform: "android",
+		raws = append(raws, rawDev{
+			dev: wireDevice{
+				UDID:     serial,
+				Name:     name,
+				Platform: "android",
+			},
+			deviceID: deviceID,
+			isMDNS:   strings.Contains(serial, "._adb-tls-connect.") || strings.Contains(serial, "._adb-tls-pairing."),
 		})
 	}
+	if !wireless {
+		devs := make([]wireDevice, 0, len(raws))
+		for _, r := range raws {
+			devs = append(devs, r.dev)
+		}
+		return devs
+	}
+	// Wireless dedupe: prefer IP:port form over mDNS form when the same
+	// device qualifier appears under both.
+	hasIP := map[string]bool{}
+	for _, r := range raws {
+		if !r.isMDNS && r.deviceID != "" {
+			hasIP[r.deviceID] = true
+		}
+	}
+	devs := make([]wireDevice, 0, len(raws))
+	for _, r := range raws {
+		if r.isMDNS && r.deviceID != "" && hasIP[r.deviceID] {
+			continue
+		}
+		devs = append(devs, r.dev)
+	}
 	return devs
+}
+
+// adbMdnsService is one entry in `adb mdns services` output. adb's mDNS
+// browser surfaces every Android 11+ device on the local network whose
+// Wireless Debugging is enabled — paired or not. We use this to spot
+// "visible but unpaired" tablets so `yaver wireless detect` can hint
+// the user toward `yaver wireless setup-android` instead of leaving
+// them staring at an empty list.
+type adbMdnsService struct {
+	Name     string `json:"name"`      // e.g. adb-R52W60BEDXD-x6aGBg
+	Serial   string `json:"serial"`    // R52W60BEDXD (extracted from name)
+	Type     string `json:"type"`      // _adb-tls-connect._tcp or _adb-tls-pairing._tcp
+	HostPort string `json:"host_port"` // 192.168.1.42:39869 or 0.0.0.0:NNNN
+}
+
+// adbMdnsServices runs `adb mdns services` and parses the result.
+// adb only enumerates devices on the local link, so this is empty when
+// the agent and the phone aren't on the same WiFi/subnet — that's the
+// correct signal to surface to the user.
+//
+// adb sometimes reports `0.0.0.0` as the host for the pairing service
+// (it's a local-link bind quirk); the connect-service entry for the
+// same device usually has the real LAN IP, and repairAdbMdnsHost()
+// patches the pairing entry from that.
+func adbMdnsServices(ctx context.Context) []adbMdnsService {
+	if _, err := exec.LookPath("adb"); err != nil {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "adb", "mdns", "services").Output()
+	if err != nil {
+		return nil
+	}
+	var svcs []adbMdnsService
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "List of discovered") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		name, typ, hp := fields[0], fields[1], fields[2]
+		if !strings.HasPrefix(typ, "_adb-tls-") {
+			continue
+		}
+		svcs = append(svcs, adbMdnsService{
+			Name:     name,
+			Serial:   adbSerialFromMdnsName(name),
+			Type:     typ,
+			HostPort: hp,
+		})
+	}
+	return repairAdbMdnsHost(svcs)
+}
+
+// adbSerialFromMdnsName pulls the device serial out of an mDNS instance
+// name. Format is `adb-<SERIAL>-<random>`. Returns "" on no match so the
+// caller can fall back to the full instance name.
+func adbSerialFromMdnsName(name string) string {
+	if !strings.HasPrefix(name, "adb-") {
+		return ""
+	}
+	rest := strings.TrimPrefix(name, "adb-")
+	// The trailing random suffix is separated by '-'. The serial itself
+	// never contains '-' on the devices we've seen (Samsung, Pixel,
+	// OnePlus) so first-dash split is safe.
+	if dash := strings.LastIndex(rest, "-"); dash > 0 {
+		return rest[:dash]
+	}
+	return rest
+}
+
+// repairAdbMdnsHost substitutes the real LAN IP from a device's connect
+// service into its pairing service when the latter reports `0.0.0.0`.
+// Same `adb-<serial>-<suffix>` instance name on both sides identifies
+// them as the same device.
+func repairAdbMdnsHost(svcs []adbMdnsService) []adbMdnsService {
+	hostByName := map[string]string{}
+	for _, s := range svcs {
+		if s.Type == "_adb-tls-connect._tcp" && !strings.HasPrefix(s.HostPort, "0.0.0.0:") {
+			hostByName[s.Name] = strings.SplitN(s.HostPort, ":", 2)[0]
+		}
+	}
+	out := make([]adbMdnsService, len(svcs))
+	for i, s := range svcs {
+		if strings.HasPrefix(s.HostPort, "0.0.0.0:") {
+			if host, ok := hostByName[s.Name]; ok {
+				port := strings.TrimPrefix(s.HostPort, "0.0.0.0:")
+				s.HostPort = host + ":" + port
+			}
+		}
+		out[i] = s
+	}
+	return out
+}
+
+// enrichWireDevices fans out to xcrun/adb in parallel and attaches a
+// mobileDeviceInfo to each entry whose Info is still nil. Bounded by
+// `parallel` concurrent shells (default 4) — xcrun's coredevice daemon
+// serializes anyway, but parallelizing across the iOS/Android boundary
+// keeps total wall time near max(slowest_ios, slowest_android).
+func enrichWireDevices(ctx context.Context, devs []wireDevice, parallel int) {
+	if parallel <= 0 {
+		parallel = 4
+	}
+	sem := make(chan struct{}, parallel)
+	var wg sync.WaitGroup
+	for i := range devs {
+		if devs[i].Info != nil {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			info := enrichMobileDevice(ctx, devs[idx])
+			devs[idx].Info = &info
+		}(i)
+	}
+	wg.Wait()
+}
+
+// adbPair runs `adb pair <ip:port> <code>`. Returns combined output for
+// the caller to surface; non-nil error includes the exit failure.
+func adbPair(ctx context.Context, ipPort, code string) (string, error) {
+	if _, err := exec.LookPath("adb"); err != nil {
+		return "", fmt.Errorf("adb not found")
+	}
+	out, err := exec.CommandContext(ctx, "adb", "pair", ipPort, code).CombinedOutput()
+	return string(out), err
+}
+
+// adbConnect runs `adb connect <ip:port>`. adb returns exit 0 even when
+// the connect failed — its only signal is the stdout text. We treat any
+// "failed", "cannot", or "unauthorized" line as a real error.
+func adbConnect(ctx context.Context, ipPort string) (string, error) {
+	if _, err := exec.LookPath("adb"); err != nil {
+		return "", fmt.Errorf("adb not found")
+	}
+	out, err := exec.CommandContext(ctx, "adb", "connect", ipPort).CombinedOutput()
+	s := string(out)
+	if err != nil {
+		return s, err
+	}
+	low := strings.ToLower(s)
+	for _, marker := range []string{"failed to connect", "cannot connect", "unauthorized", "no such device"} {
+		if strings.Contains(low, marker) {
+			return s, fmt.Errorf("adb connect did not establish: %s", strings.TrimSpace(s))
+		}
+	}
+	return s, nil
 }
 
 // isAdbWirelessSerial reports whether an adb serial looks like a

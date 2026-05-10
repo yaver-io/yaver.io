@@ -536,6 +536,8 @@ func main() {
 		runWire(os.Args[2:])
 	case "wireless":
 		runWireless(os.Args[2:])
+	case "android":
+		runAndroid(os.Args[2:])
 	case "remote":
 		runRemote(os.Args[2:])
 	case "insert":
@@ -6666,6 +6668,129 @@ func runDevices(args []string) {
 		address := fmt.Sprintf("%s:%d", d.QuicHost, d.QuicPort)
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			id, role, alias, d.Name, d.Platform, status, deviceAccessLabel(d), deviceSessionBindingLabel(d), runners, address)
+	}
+	w.Flush()
+
+	printMobileDevicesSection(os.Stdout)
+}
+
+// printMobileDevicesSection appends a "Mobile devices" block to
+// `yaver devices`: USB-cable-attached and WiFi-paired phones/tablets
+// with their model, OS version, SoC, and RAM. Local-only data; nothing
+// here flows to Convex (see CLAUDE.md privacy contract).
+//
+// Skipped silently when nothing is attached AND no tooling is missing —
+// an empty header would just be noise.
+func printMobileDevicesSection(out *os.File) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	wired := append([]wireDevice{}, listIOSWireDevices(ctx)...)
+	wired = append(wired, listAndroidWireDevices(ctx)...)
+	wirelessReport := buildWirelessDetectReport(ctx)
+
+	type mobileRow struct {
+		Transport string
+		Status    string
+		Platform  string
+		UDID      string
+		Info      *mobileDeviceInfo
+		Bare      wireDevice
+	}
+	var rows []mobileRow
+
+	for _, d := range wired {
+		rows = append(rows, mobileRow{
+			Transport: "usb",
+			Status:    "attached",
+			Platform:  d.Platform,
+			UDID:      d.UDID,
+			Bare:      d,
+		})
+	}
+	wiredUDIDs := map[string]bool{}
+	for _, d := range wired {
+		wiredUDIDs[d.UDID] = true
+	}
+	for _, d := range wirelessReport.Devices {
+		if wiredUDIDs[d.UDID] {
+			continue
+		}
+		rows = append(rows, mobileRow{
+			Transport: "wifi",
+			Status:    d.Status,
+			Platform:  d.Platform,
+			UDID:      d.UDID,
+			Bare:      d.wireDevice,
+		})
+	}
+
+	if len(rows) == 0 {
+		hint := wirelessReport.Hint
+		if hint == "" {
+			return
+		}
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "Mobile devices: (none attached)")
+		fmt.Fprintln(out, "  →", hint)
+		return
+	}
+
+	pairedIdx := []int{}
+	pairedDevs := []wireDevice{}
+	for i, r := range rows {
+		if r.Status == "visible-unpaired" {
+			continue
+		}
+		pairedIdx = append(pairedIdx, i)
+		pairedDevs = append(pairedDevs, r.Bare)
+	}
+	enrichWireDevices(ctx, pairedDevs, 4)
+	for j, idx := range pairedIdx {
+		rows[idx].Info = pairedDevs[j].Info
+	}
+
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Mobile devices (USB + WiFi):")
+	mw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	defer mw.Flush()
+	fmt.Fprintln(mw, "TRANSPORT\tSTATUS\tPLATFORM\tUDID/SERIAL\tDEVICE\tOS\tSOC\tRAM")
+	for _, r := range rows {
+		device := "(unknown)"
+		osLabel := "-"
+		soc := "-"
+		ram := "-"
+		if r.Info != nil {
+			switch {
+			case r.Info.DeviceName != "":
+				device = r.Info.DeviceName
+			case r.Info.MarketingName != "":
+				device = r.Info.MarketingName
+			case r.Info.ModelCode != "":
+				device = r.Info.ModelCode
+			}
+			if r.Info.OS != "" {
+				osLabel = r.Info.OS
+				if r.Info.OSVersion != "" {
+					osLabel = r.Info.OS + " " + r.Info.OSVersion
+				}
+			}
+			if r.Info.SoC != "" {
+				soc = r.Info.SoC
+			}
+			if r.Info.RAMBytes > 0 {
+				ram = formatBytes(int64(r.Info.RAMBytes))
+			}
+		} else if r.Bare.Name != "" {
+			device = r.Bare.Name
+		}
+		fmt.Fprintf(mw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Transport, r.Status, r.Platform, r.UDID, device, osLabel, soc, ram)
+	}
+	if wirelessReport.VisibleCount > 0 {
+		mw.Flush()
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "→ visible-unpaired entries: run `yaver android setup` to pair.")
 	}
 }
 
