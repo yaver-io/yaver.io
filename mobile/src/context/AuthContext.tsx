@@ -213,11 +213,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (newToken: string) => {
     await hydrateBackendConfigFromCache();
-    await refreshHostedBackendConfig();
-    const validatedUser = await validateToken(newToken);
-    if (!validatedUser) {
-      throw new Error("Invalid token");
+    // Don't AWAIT the remote config refresh — its fetch (to
+    // yaver.io/api/mobile-config) currently 404s, and forcing it to
+    // run in series before validateToken adds a 5-second AbortController
+    // wait AND parks RN-Android's OkHttp pool with a stale socket that
+    // breaks the next call. Fire it as background work so it can update
+    // the cache for next launch without blocking sign-in.
+    refreshHostedBackendConfig().catch(() => {});
+    // Use the detailed variant so the caller can tell "server says
+    // invalid" apart from "couldn't reach server" — a network blip
+    // shouldn't look identical to a revoked token in the UI.
+    const validation = await validateTokenDetailed(newToken);
+    if (validation.kind === "networkError") {
+      const detail = validation.detail ? ` — ${validation.detail}` : "";
+      throw new Error(
+        `Couldn't reach the auth server (${getConvexSiteUrl()})${detail}. Check your network and try again.`,
+      );
     }
+    if (validation.kind === "invalid") {
+      throw new Error(
+        `Auth server (${getConvexSiteUrl()}) rejected the token. Try signing in again.`,
+      );
+    }
+    const validatedUser = validation.user;
     appLog(
       "info",
       `[auth] login resolved ${validatedUser.email || validatedUser.id} via ${getConvexSiteUrl()}`,

@@ -89,45 +89,83 @@ export async function saveUser(user: User): Promise<void> {
 export type ValidationResult =
   | { kind: "valid"; user: User }
   | { kind: "invalid" }
-  | { kind: "networkError" };
+  | { kind: "networkError"; detail?: string };
 
 export async function validateTokenDetailed(token: string): Promise<ValidationResult> {
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
-    const response = await fetch(
-      `${getConvexSiteUrl()}/auth/validate`,
-      {
+  // De-dupe concurrent validations of the same token. On Android,
+  // an OAuth deep link triggers THREE login() call sites in parallel
+  // — Linking listener on the login screen, the
+  // WebBrowser.openAuthSessionAsync promise resolution, and the
+  // expo-router mount of /oauth-callback — each calling
+  // validateTokenDetailed independently. The duplicate fetches flood
+  // RN-Android's network bridge and all three wedge for tens of
+  // seconds. iOS only fires one path (the in-process
+  // ASWebAuthenticationSession resolution) so it never noticed.
+  // Returning the same in-flight promise to all three callers is the
+  // real fix; the earlier retry/XHR bandages were treating symptoms
+  // of the race rather than the race itself.
+  const cached = inFlightValidations.get(token);
+  if (cached) return cached;
+
+  const inflight = (async (): Promise<ValidationResult> => {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      // Cache-bust: a unique query param plus no-store + Connection:
+      // close make OkHttp use a fresh TCP socket instead of reaching
+      // for one in its pool. Pooled sockets go stale across the
+      // background-during-OAuth window on RN-Android, which is what
+      // turned this fetch into a multi-second hang. Cost: one extra
+      // TLS handshake (~50 ms on this device).
+      const url = `${getConvexSiteUrl()}/auth/validate?_=${Date.now()}`;
+      const response = await fetch(url, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
+          "Cache-Control": "no-cache, no-store",
+          Connection: "close",
         },
         signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (response.status === 401 || response.status === 403) {
+        return { kind: "invalid" };
       }
-    );
-    clearTimeout(timeout);
-    if (response.status === 401 || response.status === 403) {
-      return { kind: "invalid" };
+      if (!response.ok) {
+        return { kind: "networkError", detail: `HTTP ${response.status}` };
+      }
+      const data = await response.json();
+      const u = data.user;
+      const user: User = {
+        id: u.userId ?? u.id,
+        email: u.email,
+        name: u.fullName ?? u.name,
+        provider: u.provider,
+        avatarUrl: u.avatarUrl,
+        surveyCompleted: u.surveyCompleted ?? false,
+      };
+      return { kind: "valid", user };
+    } catch (e) {
+      const detail = e instanceof Error ? e.message : String(e);
+      return { kind: "networkError", detail };
+    } finally {
+      // Clear the cache entry after a short grace window so a manual
+      // retry from the user (e.g. tapping "Try again") still goes
+      // through. Keeping it forever would let a single bad result
+      // freeze the auth flow.
+      setTimeout(() => inFlightValidations.delete(token), 500);
     }
-    if (!response.ok) {
-      // 5xx / unexpected — treat as transient, do NOT nuke the session.
-      return { kind: "networkError" };
-    }
-    const data = await response.json();
-    const u = data.user;
-    const user: User = {
-      id: u.userId ?? u.id,
-      email: u.email,
-      name: u.fullName ?? u.name,
-      provider: u.provider,
-      avatarUrl: u.avatarUrl,
-      surveyCompleted: u.surveyCompleted ?? false,
-    };
-    return { kind: "valid", user };
-  } catch {
-    return { kind: "networkError" };
-  }
+  })();
+
+  inFlightValidations.set(token, inflight);
+  return inflight;
 }
+
+// inFlightValidations holds Promise<ValidationResult> per token so
+// concurrent validateTokenDetailed calls coalesce to a single fetch.
+// Cleared 500 ms after each promise settles. See the comment in
+// validateTokenDetailed for why this matters on Android.
+const inFlightValidations = new Map<string, Promise<ValidationResult>>();
 
 /** Legacy wrapper — returns the user on success, null on invalid OR
  *  network error. Prefer `validateTokenDetailed` in new code. */
