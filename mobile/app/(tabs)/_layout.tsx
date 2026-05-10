@@ -10,6 +10,7 @@ import { loadApp } from "../../src/lib/bundleLoader";
 import { openAppBus } from "../../src/lib/openAppBus";
 import { AppBackButton } from "../../src/components/AppBackButton";
 import { typography } from "../../src/theme/tokens";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 // (DeviceAttentionBanner / HeaderWithBanner removed — see commit
 // notes. Recovery is now silent: the agent and the per-tab UI hooks
@@ -52,10 +53,16 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
 export default function TabLayout() {
   const c = useColors();
   const router = useRouter();
+  const layout = useResponsiveLayout();
   const { connectionStatus, activeDevice, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   const [devServerRunning, setDevServerRunning] = useState(false);
   const wasRunning = useRef(false);
+
+  // Tablet landscape gets a left navigation rail; everywhere else
+  // keeps the bottom tab bar. expo-router's <Tabs> exposes
+  // tabBarPosition='left' in v3+; we set it via screenOptions.
+  const useLeftRail = layout.layoutClass === "tablet-landscape";
 
   const backToMore = useCallback(
     () => (
@@ -196,16 +203,27 @@ export default function TabLayout() {
         headerStyle: { backgroundColor: c.bg },
         headerTintColor: c.textPrimary,
         headerTitleStyle: { ...typography.navTitle, color: c.textPrimary },
-        tabBarStyle: {
-          backgroundColor: c.bgTabBar,
-          borderTopColor: c.border,
-          borderTopWidth: 1,
-          height: 68,
-          paddingTop: 0,
-        },
+        tabBarPosition: useLeftRail ? "left" : "bottom",
+        tabBarStyle: useLeftRail
+          ? {
+              backgroundColor: c.bgTabBar,
+              borderRightColor: c.border,
+              borderRightWidth: 1,
+              borderTopWidth: 0,
+              width: 96,
+              paddingTop: 12,
+            }
+          : {
+              backgroundColor: c.bgTabBar,
+              borderTopColor: c.border,
+              borderTopWidth: 1,
+              height: 68,
+              paddingTop: 0,
+            },
         tabBarLabel: () => null,
         tabBarActiveTintColor: c.tabActive,
         tabBarInactiveTintColor: c.tabInactive,
+        tabBarItemStyle: useLeftRail ? { height: 64 } : undefined,
       }}
     >
       <Tabs.Screen

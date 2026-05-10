@@ -438,6 +438,9 @@ const styles = StyleSheet.create({
   },
   card: {
     width: "100%",
+    // 460 matches layoutTokens.dialog.form — keeping the literal here
+    // because importing tokens for one Stylesheet entry blows up the
+    // file. If form-dialog width changes globally, update tokens too.
     maxWidth: 460,
     backgroundColor: "#0f172a",
     borderColor: "#1e293b",

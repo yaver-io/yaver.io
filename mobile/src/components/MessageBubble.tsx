@@ -1,7 +1,16 @@
 import React from "react";
-import { StyleSheet, Text, View, type TextStyle } from "react-native";
+import { StyleSheet, Text, View, useWindowDimensions, type TextStyle } from "react-native";
 import { useColors } from "../context/ThemeContext";
 import { monoFamily, spacing, typography } from "../theme/tokens";
+
+// Tablet-aware bubble width. On wide screens, percent-based maxWidths
+// (75% / 90% / 100%) blow out to 700-900pt rivers. Cap at 640pt — the
+// reading-line sweet spot — without hurting the phone behaviour where
+// the percent never exceeds the cap anyway.
+const BUBBLE_HARD_CAP = 640;
+function bubbleMaxWidth(windowWidth: number, pct: number): number {
+  return Math.min(windowWidth * pct, BUBBLE_HARD_CAP);
+}
 
 // Variant-aware chat bubble shell.
 //   user   — brand-filled right bubble (used for what the human sent)
@@ -41,6 +50,10 @@ export function MessageBubble({
   leading,
 }: MessageBubbleProps) {
   const c = useColors();
+  const { width: winW } = useWindowDimensions();
+  const userMax = bubbleMaxWidth(winW, 0.75);
+  const toolMax = bubbleMaxWidth(winW, 0.9);
+  const errorMax = bubbleMaxWidth(winW, 1.0);
 
   if (variant === "system") {
     return (
@@ -62,7 +75,7 @@ export function MessageBubble({
     };
     return (
       <View style={styles.userRow}>
-        <View style={[styles.userBubble, { backgroundColor: c.brandPrimary }]}>
+        <View style={[styles.userBubble, { backgroundColor: c.brandPrimary, maxWidth: userMax }]}>
           {content ? <Text style={bodyStyle}>{content}</Text> : null}
           {children}
         </View>
@@ -73,7 +86,7 @@ export function MessageBubble({
   if (variant === "tool") {
     return (
       <View style={styles.toolRow}>
-        <View style={[styles.toolBubble, { backgroundColor: c.surfaceMuted }]}>
+        <View style={[styles.toolBubble, { backgroundColor: c.surfaceMuted, maxWidth: toolMax }]}>
           {leading ? <View style={styles.toolLeading}>{leading}</View> : null}
           {content ? (
             <Text
@@ -101,6 +114,7 @@ export function MessageBubble({
           {
             backgroundColor: c.errorBg,
             borderLeftColor: c.error,
+            maxWidth: errorMax,
           },
         ]}
       >

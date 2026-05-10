@@ -17,8 +17,10 @@ installRuntimeDebugHandlers();
 
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useEffect } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { Dimensions, ScrollView, Text, View } from "react-native";
+import { breakpoints } from "../src/theme/tokens";
 import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
@@ -72,6 +74,28 @@ function InnerLayout() {
   useEffect(() => {
     return startFeedbackShakeBridge(user?.id);
   }, [user?.id]);
+  // Orientation policy: phones stay portrait (system rotation lock
+  // is unreliable across Android OEMs, so enforce in-app); tablets
+  // run free so split-pane layouts can use landscape. Decision is
+  // made by short-edge dp at boot — a foldable will reach this
+  // hook again on configuration change because react-native
+  // remounts layout on size class shifts when the OS reports it.
+  useEffect(() => {
+    const { width, height } = Dimensions.get("window");
+    const isTablet = Math.min(width, height) >= breakpoints.tablet;
+    (async () => {
+      try {
+        if (isTablet) {
+          await ScreenOrientation.unlockAsync();
+        } else {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        }
+      } catch {
+        // Some Android OEMs / iPad multitasking modes reject lock
+        // requests; falling back to manifest defaults is fine.
+      }
+    })();
+  }, []);
   return (
     <>
       <StatusBar style={isDark ? "light" : "dark"} />

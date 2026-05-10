@@ -423,6 +423,12 @@ export interface DeviceDetailsModalProps {
   agentVersion?: string | null;
   visible: boolean;
   onClose: () => void;
+  // When `inline` is true, the body renders as a plain View instead
+  // of inside a Modal — used by the tablet-landscape master-detail
+  // shell on devices.tsx so the same content reads as a persistent
+  // right pane. `visible` and `onClose` still apply: visible=false
+  // collapses to nothing, the Done button still calls onClose.
+  inline?: boolean;
 }
 
 function OwnerClaimAuthRow({ device }: { device: Device }) {
@@ -1188,7 +1194,7 @@ function HardwareCapabilitiesSection({ device }: { device: Device }) {
   );
 }
 
-export default function DeviceDetailsModal({ device, agentVersion, visible, onClose }: DeviceDetailsModalProps) {
+export default function DeviceDetailsModal({ device, agentVersion, visible, onClose, inline }: DeviceDetailsModalProps) {
   const c = useColors();
   const { isDark } = useTheme();
   const t = device ? transportFor(device) : null;
@@ -1232,9 +1238,22 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
     </View>
   );
 
+  // Body wrapper: either <Modal>…</Modal> on phones / portrait
+  // tablets, or a plain <View flex 1> when the screen renders this
+  // inline as a master-detail right pane on tablet landscape.
+  if (inline && !visible) return null;
+  const Wrap: React.FC<{ children: React.ReactNode }> = ({ children }) =>
+    inline ? (
+      <View style={{ flex: 1, backgroundColor: c.bg }}>{children}</View>
+    ) : (
+      <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+        <View style={{ flex: 1, backgroundColor: c.bg }}>{children}</View>
+      </Modal>
+    );
+
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: c.bg }}>
+    <Wrap>
+      <>
         <View style={{
           flexDirection: "row", justifyContent: "space-between", alignItems: "center",
           paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12,
@@ -1435,7 +1454,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
             </View>
           ) : null}
         </ScrollView>
-      </View>
-    </Modal>
+      </>
+    </Wrap>
   );
 }

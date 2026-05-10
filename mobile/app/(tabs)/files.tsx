@@ -19,6 +19,8 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // Read-only file browser for the "I want to peek at a repo from
 // my couch" use case. Scoped server-side to the agent's
@@ -42,6 +44,8 @@ export default function FilesScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("regular");
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
@@ -220,7 +224,7 @@ export default function FilesScreen() {
           refreshControl={
             <RefreshControl refreshing={loading} onRefresh={() => loadDirectory(currentRoot, currentPath)} tintColor={c.textMuted} />
           }
-          contentContainerStyle={{ paddingVertical: 6 }}
+          contentContainerStyle={[{ paddingVertical: 6 }, tabletContent]}
           renderItem={({ item }) => (
             <Pressable
               onPress={() =>
@@ -313,6 +317,10 @@ function FileViewer({
 }) {
   const ext = (name.split(".").pop() || "").toLowerCase();
   const win = Dimensions.get("window");
+  // Cap image preview at 720pt — phones use the full window width
+  // (image always fits), tablets keep images readable instead of
+  // ballooning to 1300pt+ on a 12.9" iPad landscape.
+  const imageEdge = Math.min(win.width - 24, 720);
 
   // Image viewer
   if (content.startsWith("__IMAGE__:") && currentRoot) {
@@ -323,7 +331,7 @@ function FileViewer({
       <ScrollView contentContainerStyle={styles.imageWrap}>
         <Image
           source={{ uri: src, headers: authHeaders }}
-          style={{ width: win.width - 24, height: win.width - 24, resizeMode: "contain" }}
+          style={{ width: imageEdge, height: imageEdge, resizeMode: "contain" }}
         />
       </ScrollView>
     );

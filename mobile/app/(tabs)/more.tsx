@@ -17,6 +17,7 @@ import { useRouter, useLocalSearchParams } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { quicClient, type HealthMonitorTarget, type MachineInfo } from "../../src/lib/quic";
 import { describeConnectionStatus } from "../../src/lib/connection";
 import {
@@ -2700,6 +2701,7 @@ export default function MoreScreen() {
   const LEAN_MORE_SURFACE = true;
   const c = useColors();
   const router = useRouter();
+  const tabletContent = useTabletContentStyle("regular");
   const { connectionStatus, activeDevice } = useDevice();
   const { token, user } = useAuth();
   const connected = connectionStatus === "connected";
@@ -2846,7 +2848,7 @@ export default function MoreScreen() {
 
   return (
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <ScrollView contentContainerStyle={s.list}>
+      <ScrollView contentContainerStyle={[s.list, tabletContent]}>
         {/* No big page-title block here on purpose — every other tab
             (Tasks, Devices, Projects, Hot Reload) relies solely on the
             navigator header at the top of the screen for its title.

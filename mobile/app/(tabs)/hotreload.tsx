@@ -32,6 +32,7 @@ import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 // Once that lands, re-import shouldShowGuestCrashReport / formatGuestCrashReport.
 import { shouldShowCurrentReloadIncident, visibleReloadIncidents, visibleReloadOperations } from "../../src/lib/hotReloadState";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -125,6 +126,7 @@ function describeRuntimeFamilySelection(metadata?: Record<string, unknown> | nul
 export default function HotReloadScreen() {
   const c = useColors();
   const router = useRouter();
+  const tabletContent = useTabletContentStyle("regular");
   const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
 
@@ -924,7 +926,7 @@ export default function HotReloadScreen() {
         <FlatList
           data={devProjects.filter((p) => devStatus?.workDir !== p.path)}
           keyExtractor={(item) => item.path}
-          contentContainerStyle={s.listContent}
+          contentContainerStyle={[s.listContent, tabletContent]}
           renderItem={({ item }) => {
             const isStarting = startingProject === item.name;
 

@@ -19,6 +19,7 @@ import {
   Text,
   View,
   ActivityIndicator,
+  useWindowDimensions,
 } from "react-native";
 import { useColors } from "../context/ThemeContext";
 import { quicClient } from "../lib/quic";
@@ -50,6 +51,10 @@ function newId(): string {
 
 export function AutodevChat({ streamName, maxRows = 500 }: Props) {
   const colors = useColors();
+  const { width: winW } = useWindowDimensions();
+  // Bubble cap — see MessageBubble.tsx for the same rule. Tablets
+  // would otherwise produce 870pt-wide bubbles from 85% × 1024.
+  const bubbleCapStyle = { maxWidth: Math.min(winW * 0.85, 640) };
   const [events, setEvents] = useState<AutodevChatEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const listRef = useRef<FlatList<AutodevChatEvent>>(null);
@@ -92,7 +97,7 @@ export function AutodevChat({ streamName, maxRows = 500 }: Props) {
       case "yaver_say":
         return (
           <View style={[styles.row, styles.rowLeft]}>
-            <View style={[styles.bubble, styles.bubbleYaver]}>
+            <View style={[styles.bubble, styles.bubbleYaver, bubbleCapStyle]}>
               <Text style={styles.bubbleAuthor}>yaver</Text>
               <Text style={styles.bubbleText}>{item.text}</Text>
             </View>
@@ -110,7 +115,7 @@ export function AutodevChat({ streamName, maxRows = 500 }: Props) {
       case "runner_text":
         return (
           <View style={[styles.row, styles.rowRight]}>
-            <View style={[styles.bubble, styles.bubbleRunner]}>
+            <View style={[styles.bubble, styles.bubbleRunner, bubbleCapStyle]}>
               <Text style={styles.bubbleAuthor}>{item.runner ?? "runner"}</Text>
               <Text style={styles.bubbleText}>{item.text}</Text>
             </View>
@@ -190,6 +195,9 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
     rowRight: { justifyContent: "flex-end" },
     rowFull: { justifyContent: "flex-start" },
     bubble: {
+      // Capped at 640pt on tablets so 85% of a 1024pt iPad doesn't
+      // produce 870pt rivers. The cap applies to phones too but the
+      // % is always smaller, so phone behaviour is unchanged.
       maxWidth: "85%",
       paddingVertical: 6,
       paddingHorizontal: 10,

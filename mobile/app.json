@@ -3,7 +3,7 @@
     "name": "Yaver",
     "slug": "yaver",
     "version": "1.18.93",
-    "orientation": "portrait",
+    "orientation": "default",
     "scheme": "yaver",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",

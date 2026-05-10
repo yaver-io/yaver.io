@@ -8,6 +8,8 @@ import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 
 // Install catalogue metadata — kept tiny, emoji + tagline per tool so
 // the install grid reads as "what to add to this machine" instead of
@@ -53,6 +55,7 @@ export default function InfraScreen() {
   const c = useColors();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const tabletContent = useTabletContentStyle("wide");
   const { token } = useAuth();
   const { devices, activeDevice } = useDevice();
   const [summary, setSummary] = useState<InfraSummary | null>(null);
@@ -275,7 +278,7 @@ export default function InfraScreen() {
           <Text style={{ color: c.textMuted, textAlign: "center" }}>No active infra summary yet.</Text>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32, gap: 12 }}>
+        <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32, gap: 12 }, tabletContent]}>
           {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
             <View style={[card(c), { gap: 6, borderColor: "#7f1d1d", backgroundColor: "#2b1212" }]}>
               <Text style={{ color: "#fecaca", fontSize: 13, fontWeight: "700" }}>Remote preview blocked</Text>
@@ -807,8 +810,18 @@ function Section({ c, title, subtitle, children }: { c: any; title: string; subt
 }
 
 function Metric({ c, label, value, sub }: { c: any; label: string; value: string; sub: string }) {
+  const layout = useResponsiveLayout();
+  // 2 cols on phone (47%), 3 on tablet portrait (31%), 4 on
+  // tablet landscape (23%). Lets metric strips fan out across
+  // wide screens instead of producing 600pt-wide cards.
+  const minWidth =
+    layout.layoutClass === "phone"
+      ? "47%"
+      : layout.layoutClass === "tablet-portrait"
+      ? "31%"
+      : "23%";
   return (
-    <View style={[card(c), { flex: 1, minWidth: "47%" }]}>
+    <View style={[card(c), { flex: 1, minWidth }]}>
       <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>{label}</Text>
       <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginTop: 6 }}>{value}</Text>
       <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>{sub}</Text>

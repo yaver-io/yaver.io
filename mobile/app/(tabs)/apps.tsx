@@ -30,6 +30,8 @@ import { describeConnectionStatus } from "../../src/lib/connection";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../../src/lib/nativeBuild";
 import { isActiveDevServerStatus } from "../../src/lib/devServerState";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -254,6 +256,8 @@ function getProjectCategory(framework?: string): "mobile" | "web" | "other" {
 export default function AppsScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
   const { activeDevice, connectionStatus, devices } = useDevice();
   const isConnected = connectionStatus === "connected" && !!activeDevice;
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -1680,32 +1684,64 @@ export default function AppsScreen() {
             <Text style={[s.reposHeader, { color: c.textMuted }]}>
               Repos · {repos.length}
             </Text>
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={s.reposRow}
-            >
-              {repos.map((repo) => (
-                <Pressable
-                  key={repo.path}
-                  style={[s.repoCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
-                  onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
-                >
-                  <View style={s.repoCardRow}>
-                    <Ionicons name="git-branch-outline" size={16} color={c.accent} />
-                    <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
-                      {repo.name}
-                    </Text>
-                  </View>
-                  {repo.branch ? (
-                    <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
-                      {repo.branch}
-                      {repo.isMonorepo ? " · monorepo" : ""}
-                    </Text>
-                  ) : null}
-                </Pressable>
-              ))}
-            </ScrollView>
+            {/* Phone keeps the horizontal scroller (one row, swipe to
+                see more). Tablets switch to a wrapping grid so the
+                repos fan out across the wide canvas instead of
+                producing one stretched row. */}
+            {layout.isTablet ? (
+              <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+                {repos.map((repo) => (
+                  <Pressable
+                    key={repo.path}
+                    style={[
+                      s.repoCard,
+                      { backgroundColor: c.bgCard, borderColor: c.border, flexBasis: layout.layoutClass === "tablet-landscape" ? "23%" : "31%", flexGrow: 1 },
+                    ]}
+                    onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
+                  >
+                    <View style={s.repoCardRow}>
+                      <Ionicons name="git-branch-outline" size={16} color={c.accent} />
+                      <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
+                        {repo.name}
+                      </Text>
+                    </View>
+                    {repo.branch ? (
+                      <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
+                        {repo.branch}
+                        {repo.isMonorepo ? " · monorepo" : ""}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            ) : (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.reposRow}
+              >
+                {repos.map((repo) => (
+                  <Pressable
+                    key={repo.path}
+                    style={[s.repoCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                    onPress={() => router.navigate({ pathname: "/(tabs)/project", params: { dir: repo.path } } as any)}
+                  >
+                    <View style={s.repoCardRow}>
+                      <Ionicons name="git-branch-outline" size={16} color={c.accent} />
+                      <Text style={[s.repoCardName, { color: c.textPrimary }]} numberOfLines={1}>
+                        {repo.name}
+                      </Text>
+                    </View>
+                    {repo.branch ? (
+                      <Text style={[s.repoCardBranch, { color: c.textMuted }]} numberOfLines={1}>
+                        {repo.branch}
+                        {repo.isMonorepo ? " · monorepo" : ""}
+                      </Text>
+                    ) : null}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
           </View>
         )}
 
@@ -1766,6 +1802,11 @@ export default function AppsScreen() {
         })()}
 
         <FlatList
+          // Tablets get a 2/3-col project grid; phone keeps single column.
+          // Re-mount when column count changes — FlatList rejects mid-flight changes.
+          key={`projects-cols-${layout.gridCols("repos")}`}
+          numColumns={layout.gridCols("repos")}
+          columnWrapperStyle={layout.gridCols("repos") > 1 ? { gap: 10 } : undefined}
           data={projects.filter((p) => {
             // Fuzzy search
             if (search.trim()) {
@@ -1784,14 +1825,16 @@ export default function AppsScreen() {
             return true;
           })}
           keyExtractor={(item) => item.path}
-          contentContainerStyle={s.listContent}
+          contentContainerStyle={[s.listContent, layout.gridCols("repos") > 1 ? null : tabletContent]}
           renderItem={({ item }) => {
             const isRunning = devStatus?.workDir === item.path;
             const isStarting = startingProject === item.name;
+            const cols = layout.gridCols("repos");
 
             return (
               <Pressable
                 style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border },
+                  cols > 1 ? { flex: 1, maxWidth: `${100 / cols}%` } : null,
                   isRunning && { borderColor: c.accent, borderWidth: 1.5 }]}
                 onPress={() => handleTapProject(item)}
                 disabled={isStarting || loadingActions}
@@ -2165,7 +2208,12 @@ export default function AppsScreen() {
               {(vibingState?.quickActions ?? []).filter(qa => qa.id !== "custom").map((qa) => (
                 <Pressable
                   key={qa.id}
-                  style={[s.vibingGridItem, { backgroundColor: c.bgCard, borderColor: c.border }]}
+                  style={[
+                    s.vibingGridItem,
+                    { backgroundColor: c.bgCard, borderColor: c.border },
+                    layout.layoutClass === "tablet-portrait" ? { width: "31%" } : null,
+                    layout.layoutClass === "tablet-landscape" ? { width: "23%" } : null,
+                  ]}
                   onPress={async () => {
                     try {
                       const result = await quicClient.executeVibingSuggestion(qa.prompt, vibingState!.path);

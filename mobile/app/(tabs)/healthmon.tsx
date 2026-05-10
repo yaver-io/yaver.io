@@ -17,6 +17,7 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient, type HealthMonitorTarget } from "../../src/lib/quic";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 const STATUS_COLORS: Record<string, string> = {
   up: "#22c55e",
@@ -43,6 +44,7 @@ export default function HealthMonitorScreen() {
   const c = useColors();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const tabletContent = useTabletContentStyle("regular");
   const { connectionStatus } = useDevice();
   const connected = connectionStatus === "connected";
 
@@ -343,7 +345,7 @@ export default function HealthMonitorScreen() {
           renderItem={renderTarget}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={ListEmpty}
-          contentContainerStyle={{ padding: 16, gap: 10 }}
+          contentContainerStyle={[{ padding: 16, gap: 10 }, tabletContent]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} />
           }

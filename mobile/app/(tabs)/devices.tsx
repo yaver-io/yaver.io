@@ -37,6 +37,8 @@ import {
 } from "../../src/lib/deviceStatus";
 import { Badge } from "../../src/components/Badge";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
+import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 function transportFor(device: Device): TransportInfo {
   return classifyTransport({
@@ -243,6 +245,7 @@ function DeviceCard({
   onSetPrimary,
   token,
   forceDetailsOpen,
+  onOpenDetails,
 }: {
   device: Device;
   isActive: boolean;
@@ -285,6 +288,9 @@ function DeviceCard({
   // matching card opens its DeviceDetailsModal automatically. Used
   // for the auto-guide-to-recovery flow on the active device.
   forceDetailsOpen?: boolean;
+  // When set, the card defers to the parent for showing details
+  // (tablet master-detail) instead of opening its own modal.
+  onOpenDetails?: () => void;
 }) {
   const c = useColors();
   const { isDark } = useTheme();
@@ -294,11 +300,19 @@ function DeviceCard({
   const [projectSummary, setProjectSummary] = useState<DeviceProjectSummary | null>(null);
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [remoteAuthExpired, setRemoteAuthExpired] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  // When DevicesScreen receives the openDetails query param it sets
-  // forceDetailsOpen=true on the matching card. Honor it once on
-  // transition. Used by the auto-guide flow that fires when the
-  // active device hits auth-expired.
+  const [detailsOpen, setDetailsOpenLocal] = useState(false);
+  // openDetails routes through the parent (master-detail right
+  // pane) when onOpenDetails is provided; otherwise pops the
+  // local modal as before. All four call sites (smart-connect,
+  // primary button, Details button, forceDetailsOpen effect) go
+  // through this helper.
+  const setDetailsOpen = (open: boolean) => {
+    if (open && onOpenDetails) {
+      onOpenDetails();
+      return;
+    }
+    setDetailsOpenLocal(open);
+  };
   useEffect(() => {
     if (forceDetailsOpen) setDetailsOpen(true);
   }, [forceDetailsOpen]);
@@ -858,6 +872,8 @@ function SetupInstructions() {
 
 export default function DevicesScreen() {
   const c = useColors();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("wide");
   const { token, user } = useAuth();
   const {
     devices,
@@ -868,6 +884,7 @@ export default function DevicesScreen() {
     recoverDeviceAuth,
     selectDevice,
     disconnect,
+    disconnectDevice,
     refreshDevices,
     detachDevice,
     removeDevice,
@@ -907,6 +924,25 @@ export default function DevicesScreen() {
   const [guestCode, setGuestCode] = useState("");
   const [guestLoading, setGuestLoading] = useState(false);
   const [peerStates, setPeerStates] = useState<Record<string, { state: "online" | "stale" | "offline"; lastSeen?: number }>>({});
+  // Tablet master-detail: when in landscape, picking a device on
+  // the left list opens its details in a persistent right pane
+  // instead of a modal. Phone + portrait keep the modal flow.
+  const useMasterDetail = layout.layoutClass === "tablet-landscape";
+  const [selectedDetailDeviceId, setSelectedDetailDeviceId] = useState<string | null>(null);
+  const detailDevice = useMasterDetail
+    ? devices.find((d) => d.id === selectedDetailDeviceId) ?? null
+    : null;
+  // Auto-select first device when entering master-detail with no
+  // selection — empty right pane reads as a bug otherwise.
+  useEffect(() => {
+    if (!useMasterDetail) return;
+    if (selectedDetailDeviceId) return;
+    if (devices.length > 0) setSelectedDetailDeviceId(devices[0].id);
+  }, [useMasterDetail, selectedDetailDeviceId, devices]);
+  const gridCols = layout.gridCols("devices");
+  // Suppress numColumns when in master-detail so the narrow list
+  // stays single-column. Tablet portrait keeps 2-col grid.
+  const listNumColumns = useMasterDetail ? 1 : gridCols;
 
   // Bootstrap devices — fresh yaver boxes on the LAN that are
   // running `yaver serve` in unauthenticated mode. Tapping one
@@ -1036,7 +1072,8 @@ export default function DevicesScreen() {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
-      <View style={styles.container}>
+      <View style={[styles.container, useMasterDetail ? { flexDirection: "row" } : null]}>
+      <View style={useMasterDetail ? { width: 380, borderRightWidth: 1, borderRightColor: c.border } : { flex: 1 }}>
         {activeDevice && connectionStatus !== "disconnected" && (
           <View style={[styles.statusBar, { borderBottomColor: c.border }]}>
             <ConnectionBadge status={connectionStatus} />
@@ -1190,7 +1227,13 @@ export default function DevicesScreen() {
         <FlatList
           data={displayDevices}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
+          // FlatList needs to remount when numColumns changes; use the
+          // count itself as the key so portrait↔landscape rotations
+          // don't crash with "Changing numColumns on the fly".
+          key={`devices-cols-${listNumColumns}`}
+          numColumns={listNumColumns}
+          columnWrapperStyle={listNumColumns > 1 ? { gap: 12 } : undefined}
+          contentContainerStyle={[styles.listContent, useMasterDetail ? null : tabletContent]}
           refreshing={isLoadingDevices}
           onRefresh={refreshDevices}
           ListEmptyComponent={isLoadingDevices ? (
@@ -1199,6 +1242,7 @@ export default function DevicesScreen() {
             </View>
           ) : <SetupInstructions />}
           renderItem={({ item }) => (
+            <View style={listNumColumns > 1 ? { flex: 1, maxWidth: `${100 / listNumColumns}%` } : undefined}>
             <DeviceCard
               device={item}
               isActive={activeDevice?.id === item.id}
@@ -1228,9 +1272,14 @@ export default function DevicesScreen() {
               forceDetailsOpen={openDetailsId === item.id}
               onLongPress={() => {
                 const actionLabel = item.isGuest ? "Detach" : "Remove";
+                const isConnectedHere = connectedSet.has(item.id);
                 const message = item.isGuest
-                  ? "Remove this shared machine from your list? It will reappear if the host shares it again."
-                  : "Remove this device from your account? The node will need to re-register before it shows up again.";
+                  ? isConnectedHere
+                    ? "Disconnect from this shared machine, or remove it from your list? It will reappear if the host shares it again."
+                    : "Remove this shared machine from your list? It will reappear if the host shares it again."
+                  : isConnectedHere
+                    ? "Disconnect from this machine, or remove it from your account? The node will need to re-register before it shows up again."
+                    : "Remove this device from your account? The node will need to re-register before it shows up again.";
                 // Guest machines can't be elevated — they can vanish on host revocation.
                 const isThisPrimary = primaryDeviceId === item.id;
                 const isThisSecondary = secondaryDeviceId === item.id;
@@ -1255,6 +1304,14 @@ export default function DevicesScreen() {
                 const buttons: any[] = [{ text: "Cancel", style: "cancel" }];
                 if (primaryAction) buttons.push(primaryAction);
                 if (secondaryAction) buttons.push(secondaryAction);
+                if (isConnectedHere) {
+                  buttons.push({
+                    text: "Disconnect",
+                    onPress: () => {
+                      disconnectDevice(item.id);
+                    },
+                  });
+                }
                 buttons.push({
                   text: actionLabel,
                   style: "destructive",
@@ -1302,9 +1359,30 @@ export default function DevicesScreen() {
                 }
               }}
               token={token}
+              onOpenDetails={useMasterDetail ? () => setSelectedDetailDeviceId(item.id) : undefined}
             />
+            </View>
           )}
         />
+      </View>
+      {useMasterDetail ? (
+        <View style={{ flex: 1 }}>
+          {detailDevice ? (
+            <DeviceDetailsModal
+              device={detailDevice}
+              visible
+              inline
+              onClose={() => setSelectedDetailDeviceId(null)}
+            />
+          ) : (
+            <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
+              <Text style={{ color: c.textMuted, fontSize: 14 }}>
+                Select a device to see details.
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : null}
       </View>
     </SafeAreaView>
   );

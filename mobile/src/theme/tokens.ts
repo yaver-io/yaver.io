@@ -8,6 +8,67 @@ export const spacing = {
   xxxl: 32,
 } as const;
 
+// Width breakpoints used by useResponsiveLayout. Anything below
+// `tablet` is treated as a phone; tablet-portrait flips into
+// landscape behaviour above `tabletLandscape`. Foldables that
+// stretch into the 600-900pt band land in tablet-portrait, which
+// is intentional — single-pane with grids feels right at that
+// size.
+export const breakpoints = {
+  tablet: 600,
+  tabletLandscape: 900,
+  desktop: 1200,
+} as const;
+
+// Tablet content scaffolding. `contentMaxWidth.*` constrains
+// reading-line lengths so wide displays don't stretch single
+// columns edge-to-edge. `pane.*` defines two/three-pane shells.
+export const layoutTokens = {
+  contentMaxWidth: {
+    narrow: 560,    // forms, settings rows, single chat column
+    regular: 720,   // primary content (chat, lists, tasks)
+    wide: 960,      // feeds with rich cards
+    full: Number.POSITIVE_INFINITY,
+  },
+  pane: {
+    minListWidth: 320,
+    maxListWidth: 420,
+    detailMinWidth: 480,
+    threeColMinWidth: 1100,
+    gap: 1,         // hairline divider between panes; cards inside add their own gutters
+  },
+  rail: {
+    width: 88,           // collapsed icon rail
+    expandedWidth: 240,  // when expanded with labels
+  },
+  // Modal scale presets. Used by AdaptiveDialog. On phone every
+  // size collapses to bottom-sheet/full-screen; on tablet they
+  // become centered cards.
+  dialog: {
+    compact: 320,        // confirm prompts
+    form: 460,           // simple forms (auth, target picker)
+    sheet: 600,          // pageSheet equivalent
+    wide: 760,           // multi-column / preview dialogs
+  },
+  // Tablet content gutters — bigger than phone padding so cards
+  // breathe on big screens.
+  gutter: {
+    phone: 14,
+    tabletPortrait: 24,
+    tabletLandscape: 32,
+  },
+  // Grid column counts by layout class. Used by FlatList numColumns.
+  gridCols: {
+    devices: { phone: 1, tabletPortrait: 2, tabletLandscape: 2 },
+    repos:   { phone: 1, tabletPortrait: 3, tabletLandscape: 4 },
+    vibing:  { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
+    metrics: { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
+  },
+} as const;
+
+export type ContentWidthKey = keyof typeof layoutTokens.contentMaxWidth;
+export type DialogSizeKey = keyof typeof layoutTokens.dialog;
+
 // SF Mono ships with iOS but isn't installed by name; Menlo is the
 // system mono that picks SF Mono glyphs. On Android we fall back to
 // the platform monospace family.

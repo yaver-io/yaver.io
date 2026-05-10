@@ -12,7 +12,9 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  useWindowDimensions,
 } from "react-native";
+import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
 import Markdown from "react-native-markdown-display";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
@@ -22,8 +24,15 @@ import { subscribeFeedbackLaunch } from "../lib/feedbackTrigger";
 import { getLocalSecret, getUserSettings, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../lib/auth";
 import { transcribe, initWhisper, speakText as speakConfiguredText } from "../lib/speech";
 
+// Phone defaults; tablet sizes are computed at render time so the
+// drag button is large enough for finger or pencil input on a 10"
+// canvas and the panel doesn't feel postage-stamp-sized. The
+// constants stay so the StyleSheet still type-checks with literal
+// numbers for the phone path.
 const BUTTON_SIZE = 46;
 const PANEL_WIDTH = 300;
+const TABLET_BUTTON_SIZE = 54;
+const TABLET_PANEL_WIDTH = 420;
 
 const ANSI_PATTERN =
   // eslint-disable-next-line no-control-regex
@@ -169,9 +178,22 @@ export function FeedbackOverlay() {
   // generic /tasks path. Reset on chat close.
   const lastLaunchSource = useRef<string | null>(null);
 
-  const { width: screenWidth } = Dimensions.get("window");
-  const startX = screenWidth - BUTTON_SIZE - 10;
+  // Read window size live so the overlay re-pins itself on rotate.
+  // The legacy snapshot via Dimensions.get only ran once and left
+  // the button parked off-screen after orientation changes on
+  // iPad. Layout class drives tablet-sized button + panel.
+  const layout = useResponsiveLayout();
+  const { width: screenWidth } = useWindowDimensions();
+  const buttonSize = layout.isTablet ? TABLET_BUTTON_SIZE : BUTTON_SIZE;
+  const panelWidth = layout.isTablet ? TABLET_PANEL_WIDTH : PANEL_WIDTH;
+  const startX = screenWidth - buttonSize - 10;
   const pan = useRef(new Animated.ValueXY({ x: startX, y: 90 })).current;
+  // When the device rotates (or splits with Stage Manager), the
+  // button can land outside the new bounds. Snap it back to the
+  // right edge once on width change.
+  useEffect(() => {
+    pan.x.setValue(Math.max(8, Math.min(buttonPosX.current || startX, screenWidth - buttonSize - 8)));
+  }, [screenWidth, buttonSize]);
 
   // Track button X position for panel alignment
   useEffect(() => {
@@ -568,8 +590,17 @@ export function FeedbackOverlay() {
       {chatOpen && (
         <View style={[
           fullSize ? styles.panelFull : styles.panel,
+          { width: panelWidth },
           { borderColor: `${buttonColor}44`, shadowColor: buttonColor },
-          fullSize && { width: screenWidth - 24, position: "absolute", right: -(screenWidth - BUTTON_SIZE - 24), top: BUTTON_SIZE + 8 },
+          // Tablet full-size: cap at 720pt content width and pin
+          // it to the right edge instead of the old screenWidth-24
+          // formula that produced 12.9"-wide panels on iPad.
+          fullSize && {
+            width: layout.isTablet ? Math.min(screenWidth - 24, 720) : screenWidth - 24,
+            position: "absolute",
+            right: -(screenWidth - buttonSize - 24),
+            top: buttonSize + 8,
+          },
         ]}>
           {/* Header */}
           <View style={styles.headerRow}>
@@ -718,7 +749,7 @@ export function FeedbackOverlay() {
           the user with a permanent UI element they didn't ask for. */}
       {enabled ? (
         <Pressable
-          style={[styles.button, { backgroundColor: btnBg }]}
+          style={[styles.button, { backgroundColor: btnBg, width: buttonSize, height: buttonSize }]}
           onPress={handleTap}
         >
           <Text style={styles.buttonIcon}>{chatOpen ? "\u2715" : "y"}</Text>

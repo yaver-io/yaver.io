@@ -37,6 +37,7 @@ import * as ExpoLinking from "expo-linking";
 import { getLogEntries, clearLogEntries, onLogsChanged, LogEntry } from "../../src/lib/logger";
 import { quicClient, type AgentStatus, type CapabilitySnapshot, type EnvironmentProfileApplyResult, type IncidentEvent, type MachineOnboardingProviderStatus, type RelayServer, type RunnerAuthStatusRow, type TunnelServer } from "../../src/lib/quic";
 import { loadTaskVideoSummaryEnabled, saveTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
+import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -116,6 +117,7 @@ export default function SettingsScreen() {
   const LEAN_SETTINGS_SURFACE = true;
   const KEEP_SANDBOX_SURFACE = true;
   const SHOW_HOST_NOTIFICATION_CHANNELS = false;
+  const tabletContent = useTabletContentStyle("regular");
   const { user, token, logout, refreshUser } = useAuth();
   const { devices, activeDevice, connectionStatus, disconnect, selectDevice, refreshDevices, multiTargetMode, setMultiTargetMode } = useDevice();
   const { isDark, toggleTheme } = useTheme();
@@ -1798,7 +1800,7 @@ export default function SettingsScreen() {
       <ScrollView
         ref={scrollViewRef}
         style={styles.container}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, tabletContent]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="interactive"
       >
