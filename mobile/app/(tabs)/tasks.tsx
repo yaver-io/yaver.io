@@ -3715,15 +3715,14 @@ export default function TasksScreen() {
               // every known device gets a row with an explicit status
               // pill (online / stale / offline) and tap-to-retry.
               <View style={s.emptyList}>
-                <YaverAgentTasksHint
-                  hasZeroDevices={false}
-                  primarySet={!!primaryDeviceId}
-                  onSuggestion={(prompt) => {
-                    setNewTaskText(prompt);
-                    setShowNewTask(true);
-                  }}
-                  onOpenSettings={() => taskRouter.push("/(tabs)/settings" as any)}
-                />
+                {/* YaverAgentTasksHint used to render here too, but it
+                    duplicated the picker below + competed with the
+                    showDevicePicker branch above for vertical space \u2014
+                    on small phones the chips bled through the
+                    "Disconnected" header. The hint is meaningful only
+                    in hasZeroDevices state (where there's no picker to
+                    fall back to); when devices exist, the empty state
+                    below is the canonical "Pick a machine" affordance. */}
                 <Text style={[s.emptyIcon, { color: c.textMuted }]}>{"\u23FB"}</Text>
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>Not connected</Text>
                 <Text style={[s.emptySubtitle, { color: c.textSecondary, marginBottom: 16 }]}>

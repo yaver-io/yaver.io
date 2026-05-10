@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -233,6 +233,7 @@ function DeviceCard({
   isStale,
   isPrimary,
   isSecondary,
+  isPooledConnected,
   defaultRunner,
   onSelect,
   onLongPress,
@@ -255,6 +256,13 @@ function DeviceCard({
   // Optional secondary slot. Same elevated treatment as primary
   // for the watchdog + auto-connect. Renders ☆ instead of ★.
   isSecondary?: boolean;
+  // True when the connection-manager pool currently has a live
+  // QuicClient for this device — used to show the CONNECTED badge
+  // even on non-focused boxes once the user opens parallel
+  // connections from the Devices tab. Without it, only `isActive`
+  // (focused) devices ever showed CONNECTED, hiding the rest of
+  // the multi-device pool from the UI.
+  isPooledConnected?: boolean;
   // Runner the user picked as the default for this device in
   // DeviceDetailsModal. Empty string means none picked. Surfaced as a
   // small badge on the card so the user can see which agent runs
@@ -477,7 +485,13 @@ function DeviceCard({
   const platformLabel = formatDevicePlatform(device, runtimeLabel);
   const projectCount = projectSummary?.total ?? 0;
   const isConnecting = isActive && connectionStatus === "connecting";
-  const isConnected = isActive && connectionStatus === "connected";
+  // CONNECTED reflects "is there a live pooled client for this device"
+  // — true for the focused device when its connectionStatus is
+  // "connected", AND for any other box in the multi-device pool that's
+  // currently up. The user explicitly asked for parallel connections
+  // to be visible from this tab, so a pooled-but-not-focused box
+  // shouldn't be misreported as ready-to-connect.
+  const isConnected = (isActive && connectionStatus === "connected") || !!isPooledConnected;
   const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
     device,
     probe: statusProbe,
@@ -867,7 +881,9 @@ export default function DevicesScreen() {
     pendingClaims,
     refreshPendingClaims,
     claimPendingDevice,
+    connectedDeviceIds,
   } = useDevice();
+  const connectedSet = useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const [pendingBusyId, setPendingBusyId] = useState<string | null>(null);
 
   // Auto-open device details when navigated in with ?openDetails=<id>.
@@ -1190,6 +1206,7 @@ export default function DevicesScreen() {
               isStale={unreachableDeviceIds.includes(item.id)}
               isPrimary={primaryDeviceId === item.id}
               isSecondary={secondaryDeviceId === item.id}
+              isPooledConnected={connectedSet.has(item.id)}
               defaultRunner={primaryRunnerByDevice[item.id] || ""}
               onSelect={() => selectDevice(item)}
               onSetPrimary={() => {
