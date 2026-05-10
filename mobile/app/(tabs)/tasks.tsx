@@ -1231,11 +1231,29 @@ function TaskCard({
               </View>
             )}
           </View>
-          {item.runnerId && item.runnerId !== "claude" && item.runnerId !== "unknown" ? (
-            <Text style={[s.taskRunnerLabel, { color: c.textMuted }]} numberOfLines={1}>
-              {item.runnerId}
-            </Text>
-          ) : null}
+          {/* Device + runner label on the right of the card header.
+              User asked for the remote device + agent shown gracefully
+              on each task card. Pulls from the task's authoritative
+              fields (Task.deviceName + Task.runnerId), so a task that
+              ran on a non-focused box doesn't get mislabelled with
+              the focused device name. Trims `.local` and the trailing
+              `-ephemeral` for compactness. */}
+          {(() => {
+            const dn = (item.deviceName || "").trim().replace(/\.local$/, "");
+            const rid = item.runnerId;
+            const runnerLabel =
+              rid === "claude" || rid === "claude-code" ? "Claude"
+              : rid === "codex" ? "Codex"
+              : rid === "opencode" ? "OpenCode"
+              : rid;
+            const parts = [dn, runnerLabel].filter(Boolean);
+            if (parts.length === 0) return null;
+            return (
+              <Text style={[s.taskRunnerLabel, { color: c.textMuted }]} numberOfLines={1}>
+                {parts.join(" · ")}
+              </Text>
+            );
+          })()}
         </View>
         <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{normalizeTaskTitle(item.title)}</Text>
         {isRunning ? (
@@ -4978,7 +4996,7 @@ export default function TasksScreen() {
                           );
                         })()}
                         <AgentContextPanel
-                          rows={buildAgentContextRows(selectedTask, activeDevice?.name, connMode, availableModels, {
+                          rows={buildAgentContextRows(selectedTask, selectedTask.deviceName || activeDevice?.name, connMode, availableModels, {
                             selectedModelId: selectedModel,
                             activeDevice: activeDevice ?? undefined,
                             userEmail: user?.email,

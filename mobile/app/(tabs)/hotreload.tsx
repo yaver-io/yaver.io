@@ -178,6 +178,22 @@ export default function HotReloadScreen() {
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [projectsScanning, setProjectsScanning] = useState(false);
   const [scanStopping, setScanStopping] = useState(false);
+  // Stalled scan detection: a healthy /projects/mobile scan settles in
+  // 1-3s. If we're still "discovering" past ~10s, the remote agent is
+  // most likely unreachable (port-conflict, daemon crash, network
+  // partition) — surface a concrete "check Devices" hint instead of
+  // letting the spinner imply progress that isn't happening.
+  const scanStartedAtRef = useRef<number | null>(null);
+  const [scanStalled, setScanStalled] = useState(false);
+  useEffect(() => {
+    if (projectsScanning) {
+      if (scanStartedAtRef.current == null) scanStartedAtRef.current = Date.now();
+      const t = setTimeout(() => setScanStalled(true), 10000);
+      return () => clearTimeout(t);
+    }
+    scanStartedAtRef.current = null;
+    setScanStalled(false);
+  }, [projectsScanning]);
   const [startingProject, setStartingProject] = useState<string | null>(null);
   // Tail of log lines streamed from /dev/events SSE. Bounded to 40
   // so a chatty Metro bundle doesn't blow up state; the card shows
@@ -727,12 +743,12 @@ export default function HotReloadScreen() {
               {agentInfo.workDir}
             </Text>
           ) : null}
-          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
-            <Text style={{ color: c.textMuted, fontSize: 11 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 6, gap: 8 }}>
+            <Text style={{ color: c.textMuted, fontSize: 11, flex: 1 }} numberOfLines={2}>
               Reload owns box switching. Devices stays for pairing, connection health, and details.
             </Text>
-            <Pressable onPress={() => router.push("/(tabs)/devices")}>
-              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600" }}>Manage</Text>
+            <Pressable onPress={() => router.push("/(tabs)/devices")} hitSlop={8}>
+              <Text style={{ color: c.accent, fontSize: 12, fontWeight: "700" }}>Manage ›</Text>
             </Pressable>
           </View>
         </View>
@@ -1079,11 +1095,23 @@ export default function HotReloadScreen() {
             <View style={s.emptyList}>
               <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
                 {projectsScanning
-                  ? "Discovering mobile projects on your machine…"
+                  ? `Discovering mobile projects on ${agentInfo?.hostname || activeDevice?.name || "remote box"}…`
                   : projects.length > 0
-                  ? "No mobile projects found.\nLooking for Hermes apps and native Swift/Kotlin projects."
-                  : "No projects discovered yet.\nThe agent scans your home directory automatically."}
+                  ? `No mobile projects found on ${agentInfo?.hostname || activeDevice?.name || "this box"}.\nLooking for Hermes apps and native Swift/Kotlin projects.`
+                  : `No projects discovered on ${agentInfo?.hostname || activeDevice?.name || "this box"}.\nThe agent scans your home directory automatically.`}
               </Text>
+              {projectsScanning && scanStalled ? (
+                <Pressable
+                  onPress={() => router.push("/(tabs)/devices")}
+                  style={{ marginTop: 8 }}
+                  hitSlop={8}
+                >
+                  <Text style={{ color: c.warn, fontSize: 12, textAlign: "center", lineHeight: 18 }}>
+                    Taking longer than usual — the remote agent may be unreachable.{"\n"}
+                    <Text style={{ color: c.accent, fontWeight: "700" }}>Open Devices ›</Text>
+                  </Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 style={[s.rediscoverBtn, { borderColor: c.border, backgroundColor: c.bgCard }]}
                 onPress={async () => {
