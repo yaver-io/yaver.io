@@ -812,7 +812,16 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // userSettings on mount (see settings-load effect below) and
   // persisted through saveUserSettings on change.
   const [multiTargetMode, setMultiTargetModeState] = useState(false);
+  const [settingsReady, setSettingsReady] = useState(false);
   const hasLoadedOnce = useRef(false);
+  // Tracks the device the user most recently picked via the picker /
+  // selectDevice. The split-brain auto-fallback below treats this as
+  // sticky — it won't promote a different connected pool device on
+  // top of a user's explicit selection unless the user explicitly
+  // disconnects or picks something else. Fixes the "tap Mac mini in
+  // picker, end up on yaver-test-ephemeral" bounce reported via
+  // 2026-05-10 screen recording.
+  const userSelectedDeviceIdRef = useRef<string | null>(null);
 
   const setMultiTargetMode = useCallback(async (enabled: boolean) => {
     setMultiTargetModeState(enabled);
@@ -1030,6 +1039,19 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       setUserDisconnected(false);
       setLastError(null);
 
+      // Sticky user selection — pin this device id so the
+      // split-brain auto-fallback effect (~line 1584) won't promote
+      // a different pool device on top of an explicit user pick if
+      // the picked device's connection has a brief blip mid-select.
+      // Without this, the picker on the Reload tab would silently
+      // bounce the user back to the previously-focused box: pick
+      // Mac mini → Mac mini's pool client drops in the same render
+      // window → connectionStatus flips to "error" → auto-fallback
+      // picks yaver-test-ephemeral → user's selection vanishes.
+      // Cleared by `disconnect()` and by an explicit selection of a
+      // different device.
+      userSelectedDeviceIdRef.current = device.id;
+
       // Multi-device: previously this tore the focused QuicClient down
       // before reconnecting it to a different deviceId, which dropped
       // every in-flight stream and forced peer-routed calls for every
@@ -1134,6 +1156,10 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     // the user's intent to fully disconnect. Sign-out re-enters the
     // same path via stopReconnectAndBounce/userDisconnected.
     connectionManager.disconnectAll();
+    // Clear sticky-pick — an explicit disconnect releases the pin so
+    // the next auto-fallback (after a re-sign-in or auto-pair) is
+    // free to land on whichever device the user picks again.
+    userSelectedDeviceIdRef.current = null;
     setActiveDevice(null);
     setConnectionStatus("disconnected");
     setUserDisconnected(true);
@@ -1573,6 +1599,59 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Keep the focused device pointed at a live pooled client. Without
+  // this, the app can end up in a split-brain state: Devices shows
+  // green CONNECTED cards from the pool, but activeDevice still points
+  // at a stale box so Projects / Reload / other tabs think nothing is
+  // connected. When that happens, promote a live pooled device to the
+  // active focus immediately instead of waiting for the user to
+  // manually re-select it.
+  useEffect(() => {
+    if (!settingsReady) return;
+    if (userDisconnected || connectionStatus === "connecting") return;
+    if (connectedDeviceIds.length === 0) return;
+    if (activeDevice?.id && connectedDeviceIds.includes(activeDevice.id) && connectionStatus === "connected") return;
+
+    // Sticky user pick: when the user explicitly selected a device
+    // via the picker, don't stomp it just because that device's pool
+    // client briefly dropped or its connect retry is mid-flight.
+    // The split-brain promotion below would otherwise grab the next
+    // pool device and bounce the user out of their pick — the exact
+    // "I tap Mac mini, end up on yaver-test-ephemeral" symptom from
+    // the 2026-05-10 screen recording. Only honour stickiness while
+    // the picked device still exists in the device list (so a deletion
+    // / sign-out still allows a fallback).
+    const sticky = userSelectedDeviceIdRef.current;
+    if (sticky && devices.some((d) => d.id === sticky)) {
+      return;
+    }
+
+    const pickId =
+      (primaryDeviceId && connectedDeviceIds.includes(primaryDeviceId) ? primaryDeviceId : null) ||
+      (secondaryDeviceId && connectedDeviceIds.includes(secondaryDeviceId) ? secondaryDeviceId : null) ||
+      connectedDeviceIds[0];
+    if (!pickId) return;
+
+    const picked = devices.find((d) => d.id === pickId);
+    if (!picked) return;
+
+    connectionManager.setFocused(pickId);
+    const client = connectionManager.clientFor(pickId);
+    setActiveDevice((prev) => (prev?.id === picked.id ? prev : picked));
+    setConnectionStatus("connected");
+    setLastError(null);
+    setAgentAuthExpired(client.agentAuthExpired);
+  }, [
+    activeDevice?.id,
+    connectedDeviceIds,
+    connectionStatus,
+    devices,
+    primaryDeviceId,
+    settingsReady,
+    secondaryDeviceId,
+    userDisconnected,
+  ]);
+
   // Fetch relay servers: local AsyncStorage > Convex user settings > Convex platform config
   // Extracted so it can be called on startup AND on reconnection (when relay list is empty).
   // Returns the number of relays ultimately loaded into the QUIC client — 0 means "no relays
@@ -1777,6 +1856,8 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         }
       } catch {
         // Best-effort — settings will use defaults
+      } finally {
+        setSettingsReady(true);
       }
     })();
   }, [token, TUNNELS_KEY]);
@@ -2672,6 +2753,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // The user-disconnect flag always wins so a manual "Stop" isn't overridden
   // by the auto-connect effect firing again.
   useEffect(() => {
+    if (!settingsReady) return;
     if (!token || !relaysReady || activeDevice || connectionStatus === "connecting" || userDisconnected) return;
 
     const recentDevices = devices.filter((d) => d.online);
@@ -2724,7 +2806,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       }
     }
     // Multiple devices + neither primary nor secondary online → do nothing; UI asks the user to pick.
-  }, [devices, token, relaysReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
+  }, [devices, token, relaysReady, settingsReady, activeDevice, connectionStatus, userDisconnected, primaryDeviceId, secondaryDeviceId, selectDevice, setPrimaryDevice]);
 
   // Background "warm the pool" pass. After the focused auto-connect
   // above settles, this effect quietly opens additional connections
