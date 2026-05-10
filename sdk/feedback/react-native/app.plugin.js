@@ -51,9 +51,22 @@ function withYaverFeedbackAndroid(config) {
     }
 
     const permissions = manifest["uses-permission"];
+    // Camera + mic for screenshot/voice. The rest are required to
+    // make `react-native-record-screen` actually start on modern
+    // Android — without FOREGROUND_SERVICE_MEDIA_PROJECTION
+    // (API 34+, mandatory) startRecording throws SecurityException,
+    // and without POST_NOTIFICATIONS (API 33+) the recording
+    // notification fails to post which some OEMs use as a signal
+    // to kill the projection a few seconds in. Inject all five
+    // unconditionally — listing them does NOT trigger any user
+    // prompt; the actual runtime dialogs only fire if the app
+    // calls startVideoRecording().
     const requiredPermissions = [
       "android.permission.CAMERA",
       "android.permission.RECORD_AUDIO",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+      "android.permission.POST_NOTIFICATIONS",
     ];
 
     for (const perm of requiredPermissions) {
