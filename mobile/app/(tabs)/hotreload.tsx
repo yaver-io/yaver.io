@@ -468,10 +468,24 @@ export default function HotReloadScreen() {
 
       // Step 1: Build production Hermes bytecode bundle (embedded hermesc BC96)
       const platform = Platform.OS === "android" ? "android" : "ios";
+      // Pin the request to the dev server's active project so the agent
+      // (≥ 1.99.187) doesn't reject with PROJECT_REQUIRED. devStatus.workDir
+      // is the path of whatever Metro is serving — same project the user
+      // is viewing in this tab. Without this pin the agent refuses the
+      // build to avoid letting an unrelated dev server (e.g. a Vite worker
+      // started by another caller) dictate which project the Hermes bundle
+      // gets built from.
+      const projectPath = devStatus?.workDir ? String(devStatus.workDir).trim() : "";
       const buildRes = await fetch(`${baseUrl}/dev/build-native`, {
         method: "POST",
         headers,
-        body: JSON.stringify(buildNativeBuildRequest(platform, currentYaverConsumerContract())),
+        body: JSON.stringify(
+          buildNativeBuildRequest(
+            platform,
+            currentYaverConsumerContract(),
+            projectPath ? { projectPath } : undefined,
+          ),
+        ),
         signal: buildAbort.signal,
       });
       clearTimeout(buildAbortTimer);
