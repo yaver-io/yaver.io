@@ -110,6 +110,9 @@ export const set = mutation({
     ttsProvider: v.optional(v.string()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
+    // Mobile per-task device + agent picker. Stored on the user record
+    // so the toggle roams across phones / re-installs.
+    multiTargetMode: v.optional(v.boolean()),
     // null sentinel = clear the preference; undefined = leave untouched.
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
     secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
@@ -171,6 +174,7 @@ export const set = mutation({
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
+    if (args.multiTargetMode !== undefined) patch.multiTargetMode = args.multiTargetMode;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }
@@ -255,6 +259,7 @@ export const setByToken = mutation({
     ttsProvider: v.optional(v.string()),
     verbosity: v.optional(v.number()),
     keyStorage: v.optional(v.string()),
+    multiTargetMode: v.optional(v.boolean()),
     primaryDeviceId: v.optional(v.union(v.string(), v.null())),
     secondaryDeviceId: v.optional(v.union(v.string(), v.null())),
     primaryRunnerForDevice: v.optional(
@@ -305,6 +310,7 @@ export const setByToken = mutation({
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
     if (args.keyStorage !== undefined) patch.keyStorage = args.keyStorage;
+    if (args.multiTargetMode !== undefined) patch.multiTargetMode = args.multiTargetMode;
     if (args.primaryDeviceId !== undefined) {
       patch.primaryDeviceId = normalizedPrimaryDeviceId;
     }

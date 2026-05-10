@@ -530,6 +530,10 @@ export interface UserSettings {
   ttsEnabled?: boolean;
   verbosity?: number; // 0-10: response detail level
   keyStorage?: KeyStorage; // "local" = device Keychain only, "cloud" = sync to Convex
+  /** When true, the mobile tasks `+` button opens a device + agent
+   *  picker before the compose modal. Stored on the user record so it
+   *  roams across phones / re-installs. Default: undefined → off. */
+  multiTargetMode?: boolean;
   /** Preferred device for auto-connect when user has multiple machines.
    * Send `null` to clear; omit to leave untouched. Single-device users
    * auto-connect regardless of this field. */

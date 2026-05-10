@@ -658,6 +658,11 @@ interface DeviceState {
   /** Persist a per-device primary coding agent + optional model/mode/provider.
    *  runnerId=null clears the entry. model=null clears just the model
    *  (runner stays). model=undefined leaves any existing model alone. */
+  /** When true, the tasks `+` FAB opens a device + agent picker before
+   *  the compose modal, letting one task target a non-active machine.
+   *  Stored locally on the phone (no Convex roundtrip). Default false. */
+  multiTargetMode: boolean;
+  setMultiTargetMode: (enabled: boolean) => Promise<void>;
   setPrimaryRunnerForDevice: (
     deviceId: string,
     runnerId: string | null,
@@ -761,7 +766,18 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   const [primaryModelByDevice, setPrimaryModelByDeviceState] = useState<Record<string, string>>({});
   const [primaryModeByDevice, setPrimaryModeByDeviceState] = useState<Record<string, string>>({});
   const [primaryProviderByDevice, setPrimaryProviderByDeviceState] = useState<Record<string, string>>({});
+  // UI preference that follows the user across phones. Loaded from
+  // userSettings on mount (see settings-load effect below) and
+  // persisted through saveUserSettings on change.
+  const [multiTargetMode, setMultiTargetModeState] = useState(false);
   const hasLoadedOnce = useRef(false);
+
+  const setMultiTargetMode = useCallback(async (enabled: boolean) => {
+    setMultiTargetModeState(enabled);
+    if (token) {
+      await saveUserSettings(token, { multiTargetMode: enabled }).catch(() => {});
+    }
+  }, [token]);
 
   const markDeviceUnreachable = useCallback((deviceId: string) => {
     setUnreachableSet((prev) => {
@@ -1537,6 +1553,13 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
         if (settings.secondaryDeviceId !== undefined) {
           setSecondaryDeviceIdState(settings.secondaryDeviceId ?? null);
           appLog("info", `[settings] secondaryDeviceId=${settings.secondaryDeviceId ?? "(none)"}`);
+        }
+
+        // Multi-target mode is a UI preference that follows the user
+        // across phones, so it lives on userSettings. undefined → off.
+        if (settings.multiTargetMode !== undefined) {
+          setMultiTargetModeState(!!settings.multiTargetMode);
+          appLog("info", `[settings] multiTargetMode=${!!settings.multiTargetMode}`);
         }
 
         // Apply per-device primary coding agent preference. Stored on
@@ -2662,9 +2685,11 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
       primaryModelByDevice,
       primaryModeByDevice,
       primaryProviderByDevice,
+      multiTargetMode,
+      setMultiTargetMode,
       setPrimaryRunnerForDevice,
     }),
-    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, setPrimaryRunnerForDevice]
+    [displayDevices, activeDevice, connectionStatus, isLoadingDevices, userDisconnected, lastError, agentAuthExpired, recoverDeviceAuth, pendingClaims, refreshPendingClaims, claimPendingDevice, selectDevice, disconnect, refreshDevices, handleDetachDevice, handleRemoveDevice, handleSetDeviceAlias, unreachableSet, markDeviceUnreachable, manualAuthRequiredSet, stopReconnectAndBounce, guestInvitations, acceptGuestInvitation, acceptGuestByCode, inviteGuest, primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice, primaryRunnerByDevice, primaryModelByDevice, primaryModeByDevice, primaryProviderByDevice, multiTargetMode, setMultiTargetMode, setPrimaryRunnerForDevice]
   );
 
   return <DeviceContext.Provider value={value}>{children}</DeviceContext.Provider>;

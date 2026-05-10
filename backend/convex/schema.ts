@@ -480,6 +480,13 @@ export default defineSchema({
     ttsProvider: v.optional(v.string()),          // "device" | "openai"
     verbosity: v.optional(v.number()),            // 0-10: response detail level (0=summary, 10=full detail)
     keyStorage: v.optional(v.string()),            // "local" | "cloud" — where API keys are stored
+    // When true, the mobile + (eventually) web tasks `+` button opens a
+    // device + agent picker before the compose modal. Lets one task
+    // route to a specific machine + runner instead of always using the
+    // currently-connected device. Default: undefined → off. Stored on
+    // the user record (not per-device) so the preference roams across
+    // phones/web logins.
+    multiTargetMode: v.optional(v.boolean()),
     // Preferred device for auto-connect when the user has more than one
     // machine registered. When set, mobile / desktop / web will attach
     // to this device on login if it's online, skipping the "pick one"

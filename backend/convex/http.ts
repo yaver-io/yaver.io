@@ -2287,6 +2287,7 @@ http.route({
       ttsProvider: body.ttsProvider,
       verbosity: body.verbosity,
       keyStorage: body.keyStorage,
+      multiTargetMode: body.multiTargetMode,
       // Client sends null to clear the preference, undefined to leave untouched.
       primaryDeviceId: body.primaryDeviceId,
       secondaryDeviceId: body.secondaryDeviceId,
