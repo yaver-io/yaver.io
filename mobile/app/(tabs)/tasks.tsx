@@ -4211,23 +4211,17 @@ export default function TasksScreen() {
                   accessibilityRole="button"
                   accessibilityLabel="Change device, coding agent, and model for this task"
                 >
-                  <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
-                    {(() => {
-                      const deviceLabel = activeDevice?.name ? `${activeDevice.name} · ` : "";
-                      const r = selectedRunner
-                        || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
-                        || "claude";
-                      const runner = availableRunners.find((x) => x.id === r);
-                      const model = availableModels.find((m) => m.id === selectedModel);
-                      const runnerLabel = runner?.name
-                        || (r === "codex" ? "Codex"
-                          : r === "opencode" ? "OpenCode"
-                          : r === "custom" ? "Custom"
-                          : "Claude");
-                      const modelLabel = model?.name || selectedModel || "";
-                      const runnerSegment = modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
-                      return `${deviceLabel}${runnerSegment}`;
-                    })()}
+                  {/* Pill shows ONLY the machine name — runner + model
+                      were causing the pill to overflow off-screen on
+                      smaller phones, and the user explicitly asked
+                      for "only show machine in here". The full
+                      device + agent + model picker is one tap away
+                      via the wizard launched on press. */}
+                  <Text
+                    style={[s.agentBadgeText, { color: c.textSecondary, maxWidth: 220 }]}
+                    numberOfLines={1}
+                  >
+                    {activeDevice?.name || "Pick a machine"}
                   </Text>
                   <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
                 </Pressable>
