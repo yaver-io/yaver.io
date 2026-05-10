@@ -1411,13 +1411,66 @@ var (
 func setAssignedRelayURL(url string) {
 	assignedRelayURLMu.Lock()
 	defer assignedRelayURLMu.Unlock()
-	assignedRelayURL = url
+	// The relay assigns a per-device subdomain URL like
+	// `https://<deviceId>.yaver.io`. Until the wildcard *.yaver.io
+	// DNS / Vercel routing is wired through to the relay, every
+	// request to that subdomain returns 404 (DEPLOYMENT_NOT_FOUND)
+	// — which makes the dashboard's per-device /health and
+	// /projects polling fail with CORS preflight 404 on every tick,
+	// producing the visible "blinking" between connected/disconnected
+	// states. The relay's *path-style* endpoint
+	// `public.yaver.io/d/<deviceId>` does work (verified — returns
+	// the agent's 401 challenge instead of a Vercel 404). Transform
+	// the assigned URL here so the heartbeat publishes the working
+	// form to Convex; if/when the wildcard infra is fixed, we can
+	// remove this rewrite and revert to subdomain-direct.
+	assignedRelayURL = relayURLToPathStyle(url)
 }
 
 func getAssignedRelayURL() string {
 	assignedRelayURLMu.RLock()
 	defer assignedRelayURLMu.RUnlock()
 	return assignedRelayURL
+}
+
+// relayURLToPathStyle rewrites a relay-assigned `<deviceId>.<apex>`
+// subdomain URL into the working `public.<apex>/d/<deviceId>` path
+// form. Leaves non-matching URLs unchanged so configured custom-
+// relay hostnames keep working. Exported (lowercase still — same
+// package) only so tests can hit it directly.
+func relayURLToPathStyle(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	u, err := urlpkg.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw
+	}
+	// Only rewrite the relay's canonical subdomain form — the host
+	// must have exactly two leading labels (`<sub>.<apex>...`) where
+	// the apex looks like yaver.io. Manual / custom-domain endpoints
+	// (cloudflared, ngrok, user-configured CNAMEs) stay untouched.
+	parts := strings.SplitN(u.Host, ".", 2)
+	if len(parts) != 2 {
+		return raw
+	}
+	sub, apex := parts[0], parts[1]
+	if sub == "" || apex == "" {
+		return raw
+	}
+	if !strings.HasSuffix(apex, "yaver.io") {
+		return raw
+	}
+	// Already path-style (e.g. `public.yaver.io/d/<id>`) — leave it.
+	if strings.HasPrefix(strings.ToLower(u.Path), "/d/") {
+		return raw
+	}
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return scheme + "://public." + apex + "/d/" + sub
 }
 
 // PlatformConfig holds all platform-level config fetched from Convex /config.
