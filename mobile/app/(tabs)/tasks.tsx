@@ -4175,91 +4175,90 @@ export default function TasksScreen() {
           <KeyboardAvoidingView style={s.modalOverlay} behavior={Platform.OS === "ios" ? "padding" : "height"}>
             <Pressable style={s.modalDismiss} onPress={() => { Keyboard.dismiss(); setShowNewTask(false); setNewTaskText(""); setAttachedImages([]); setInputFromSpeech(false); setPendingTarget(null); }} />
             <View style={[s.modalContent, { backgroundColor: c.bgCard }]}>
-              <View style={s.modalHeader}>
-                <Text style={[s.modalTitle, { color: c.textPrimary }]}>New task</Text>
-                {/* Tappable runner+model pill — mirrors the badge in the
-                    follow-up bar so the user can pick the agent at task
-                    creation, not only after the task starts. Opens the
-                    same showAgentPicker sheet that follow-ups use. */}
-                {pendingTarget ? (
-                  // Locked target chip: when the wizard chose this
-                  // device + runner, the picker is non-interactive so
-                  // the user can't accidentally redirect a single task
-                  // mid-compose. Re-open the wizard to change it.
-                  <View
-                    style={[
+              {/* Two-row header: title + close on top, target chip below.
+                  The chip lived inline with the title, but device names
+                  like "Mobiles-Mac-mini.local · Claude" overflowed and
+                  collided with the title text. Stacking lets the chip
+                  use the full row width and show the full label without
+                  truncation or layout pressure on the title. */}
+              <View style={s.modalHeaderStack}>
+                <View style={s.modalHeaderRow}>
+                  <Text style={[s.modalTitle, { color: c.textPrimary }]}>New task</Text>
+                  <Pressable
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setShowNewTask(false);
+                      setNewTaskText("");
+                      setAttachedImages([]);
+                      setInputFromSpeech(false);
+                      setPendingTarget(null);
+                    }}
+                    style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close new task"
+                  >
+                    <Ionicons name="close" size={24} color={c.textSecondary} />
+                  </Pressable>
+                </View>
+                {/* Target chip row — runner+model pill mirrors the badge
+                    in the follow-up bar so the user can pick the agent
+                    at task creation, not only after the task starts. */}
+                <View style={s.modalTargetRow}>
+                  {pendingTarget ? (
+                    // Locked target chip: when the wizard chose this
+                    // device + runner, the picker is non-interactive so
+                    // the user can't accidentally redirect a single task
+                    // mid-compose. Re-open the wizard to change it.
+                    <View
+                      style={[
+                        s.agentBadge,
+                        { backgroundColor: c.bgCardElevated, borderColor: c.accent, flexShrink: 1 },
+                      ]}
+                    >
+                      <Text style={[s.agentBadgeText, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
+                        {pendingTarget.deviceName} · {
+                          pendingTarget.runner === "codex" ? "Codex"
+                            : pendingTarget.runner === "opencode" ? "OpenCode"
+                              : "Claude"
+                        }
+                      </Text>
+                    </View>
+                  ) : (
+                  <Pressable
+                    hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                    style={({ pressed }) => [
                       s.agentBadge,
-                      { backgroundColor: c.bgCardElevated, borderColor: c.accent, marginLeft: "auto", marginRight: 10 },
+                      { backgroundColor: c.bgCardElevated, borderColor: c.border, flexShrink: 1 },
+                      pressed && { opacity: 0.55 },
                     ]}
+                    // Opens the full TaskTargetWizard: machine selection,
+                    // agent selection, and the per-runner model picker
+                    // in one flow. Close compose first so the wizard owns
+                    // the screen; on confirm, pendingTarget is set and
+                    // the compose modal re-opens with the new target
+                    // bound to the next send.
+                    onPress={() => {
+                      setShowNewTask(false);
+                      setPendingTarget(null);
+                      setShowTargetWizard(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Change device, coding agent, and model for this task"
                   >
-                    <Text style={[s.agentBadgeText, { color: c.textSecondary }]} numberOfLines={1}>
-                      {pendingTarget.deviceName} · {
-                        pendingTarget.runner === "codex" ? "Codex"
-                          : pendingTarget.runner === "opencode" ? "OpenCode"
-                            : "Claude"
-                      }
+                    {/* Pill shows ONLY the machine name — keeps the chip
+                        compact; the full device + agent + model picker
+                        is one tap away via the wizard launched on press. */}
+                    <Text
+                      style={[s.agentBadgeText, { color: c.textSecondary, flexShrink: 1 }]}
+                      numberOfLines={1}
+                    >
+                      {activeDevice?.name || "Pick a machine"}
                     </Text>
-                    <Text style={{ color: c.accent, fontSize: 10, marginLeft: 4 }}>·</Text>
-                  </View>
-                ) : (
-                <Pressable
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  style={({ pressed }) => [
-                    s.agentBadge,
-                    { backgroundColor: c.bgCardElevated, borderColor: c.border, marginLeft: "auto", marginRight: 10 },
-                    pressed && { opacity: 0.55 },
-                  ]}
-                  // The pill used to open `setShowAgentPicker` (an
-                  // in-modal runner+model picker), which the user
-                  // reported as inert ("when I click on OpenAI Codex
-                  // it does nothing") and which couldn't switch the
-                  // target DEVICE — only the runner. Launch the full
-                  // TaskTargetWizard instead: it handles machine
-                  // selection, agent selection, and the per-runner
-                  // model picker in one flow. We close the compose
-                  // modal first so the wizard owns the screen; on
-                  // confirm, the wizard sets pendingTarget and the
-                  // tasks compose flow re-opens with the new target
-                  // bound to the next send.
-                  onPress={() => {
-                    setShowNewTask(false);
-                    setPendingTarget(null);
-                    setShowTargetWizard(true);
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel="Change device, coding agent, and model for this task"
-                >
-                  {/* Pill shows ONLY the machine name — runner + model
-                      were causing the pill to overflow off-screen on
-                      smaller phones, and the user explicitly asked
-                      for "only show machine in here". The full
-                      device + agent + model picker is one tap away
-                      via the wizard launched on press. */}
-                  <Text
-                    style={[s.agentBadgeText, { color: c.textSecondary, maxWidth: 220 }]}
-                    numberOfLines={1}
-                  >
-                    {activeDevice?.name || "Pick a machine"}
-                  </Text>
-                  <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
-                </Pressable>
-                )}
-                <Pressable
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setShowNewTask(false);
-                    setNewTaskText("");
-                    setAttachedImages([]);
-                    setInputFromSpeech(false);
-                    setPendingTarget(null);
-                  }}
-                  style={({ pressed }) => [s.modalCloseButton, pressed && { opacity: 0.55 }]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Close new task"
-                >
-                  <Ionicons name="close" size={24} color={c.textSecondary} />
-                </Pressable>
+                    <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>
+                  </Pressable>
+                  )}
+                </View>
               </View>
               <View
                 style={[
@@ -5500,6 +5499,9 @@ const s = StyleSheet.create({
   modalDismiss: { flex: 1 },
   modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 24, paddingTop: 28, paddingBottom: 40 },
   modalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 24 },
+  modalHeaderStack: { marginBottom: 20 },
+  modalHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  modalTargetRow: { flexDirection: "row", alignItems: "center", marginTop: 12 },
   modalCloseButton: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center" },
   modalTitle: { fontSize: 20, fontWeight: "700" },
   agentBadge: { flexDirection: "row", alignItems: "center", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999, borderWidth: 1 },
