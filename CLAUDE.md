@@ -47,6 +47,26 @@ mobile discovery, and remote-recovery — read it before changing those.
 - **Hetzner test box (`yaver-test-ephemeral`)** is disposable. Its IP, SSH
   key material, `hcloud` token, real device IDs never go in tracked files.
   Refer to it in code/docs only as `yaver-test-ephemeral`.
+- **Local deploy first, CI second.** Every deploy that can run on this Mac
+  should run on this Mac. Yaver's wedge is "lower dev opex" — defaulting to
+  GitHub Actions burns CI minutes you don't need to spend, slows down
+  iteration, and re-introduces the SaaS roundtrip you're trying to remove.
+  Use CI only when the deploy genuinely cannot work locally (a Linux-only
+  toolchain that isn't on macOS, a runner that needs a secret you don't
+  have on this machine, etc.) — and when you do, say so explicitly.
+
+  | Target | Local command (preferred) | CI fallback |
+  |---|---|---|
+  | npm (`yaver-cli`) | `cd cli && npm publish` | `release-cli.yml` |
+  | TestFlight (iOS) | `./scripts/deploy-testflight.sh` | local-only by design |
+  | Google Play internal | `JAVA_HOME=$(/usr/libexec/java_home -v 17) ./scripts/deploy-playstore.sh && PLAY_STORE_KEY_FILE=keys/google-play-service-account.json python3 scripts/upload-playstore.py` | `release-mobile.yml` (android job) |
+  | Convex backend | `cd backend && npx convex deploy --yes` | not wired to CI |
+  | Cloudflare web | `./scripts/deploy-web.sh` | `release-web.yml` |
+
+  When the user asks to ship, run the local command — don't push a tag and
+  let CI do it unless the user explicitly says "use CI". If a local deploy
+  fails for a reason that CI would also hit, fix the root cause; don't
+  switch to CI as a workaround.
 
 ## Distribution — npm only
 

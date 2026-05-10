@@ -21,6 +21,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors, useTheme } from "../src/context/ThemeContext";
+import { useResponsiveLayout } from "../src/hooks/useResponsiveLayout";
 import {
   type OAuthProvider,
   getConvexSiteUrl,
@@ -42,6 +43,17 @@ export default function LoginScreen() {
   const { login, surveyCompleted } = useAuth();
   const { isDark } = useTheme();
   const c = useColors();
+  const layout = useResponsiveLayout();
+  // Tablet polish:
+  //   • portrait: cap content width ~440pt, centered. The phone-shaped
+  //     login page on a 10" tablet stretched buttons across the whole
+  //     screen and read as a scaled-up phone UI.
+  //   • landscape: split-pane — brand on the left half, buttons on the
+  //     right. Reads as a real tablet sign-in screen, not a phone with
+  //     a giant header above the buttons.
+  //   • phone: unchanged (everything below uses the original styles).
+  const isTabletLandscape = layout.layoutClass === "tablet-landscape";
+  const isTablet = layout.isTablet;
   const [isLoading, setIsLoading] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
@@ -279,17 +291,65 @@ export default function LoginScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
       <ScrollView
-        contentContainerStyle={styles.scrollContainer}
+        contentContainerStyle={[
+          styles.scrollContainer,
+          // Tablet landscape: row-direction so the brand pane and the
+          // sign-in column sit side-by-side. Tablet portrait + phone
+          // keep the column stack with the inner cap below.
+          isTabletLandscape && { flexDirection: "row", paddingHorizontal: 48, gap: 64 },
+        ]}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.header}>
-          <Text style={[styles.logo, { color: c.textPrimary }]}>Yaver</Text>
-          <Text style={[styles.subtitle, { color: c.textSecondary }]}>
+        <View
+          style={[
+            // Header / brand block. Phone: top-of-card. Tablet portrait:
+            // top-of-card with content cap. Tablet landscape: left pane,
+            // vertically centered, brand large and prominent.
+            styles.header,
+            isTabletLandscape && {
+              flex: 1,
+              alignItems: "flex-start",
+              justifyContent: "center",
+              marginBottom: 0,
+              maxWidth: 480,
+              alignSelf: "center",
+            },
+            !isTabletLandscape && isTablet && {
+              maxWidth: 440,
+              alignSelf: "center",
+              width: "100%",
+            },
+          ]}
+        >
+          <Text
+            style={[
+              styles.logo,
+              { color: c.textPrimary },
+              isTabletLandscape && { fontSize: 64 },
+              !isTabletLandscape && isTablet && { fontSize: 56 },
+            ]}
+          >
+            Yaver
+          </Text>
+          <Text
+            style={[
+              styles.subtitle,
+              { color: c.textSecondary },
+              isTabletLandscape && { fontSize: 18, marginTop: 12, lineHeight: 26 },
+              !isTabletLandscape && isTablet && { fontSize: 17, marginTop: 10 },
+            ]}
+          >
             Your AI coding assistant, everywhere.
           </Text>
         </View>
 
-        <View style={styles.buttons}>
+        <View
+          style={[
+            styles.buttons,
+            isTabletLandscape && { flex: 1, justifyContent: "center", maxWidth: 420, alignSelf: "center" },
+            !isTabletLandscape && isTablet && { maxWidth: 440, alignSelf: "center", width: "100%" },
+          ]}
+        >
           {/* Passkey: shown first so a returning user with a synced
               iCloud Keychain credential can sign in with one tap.
               Hidden when the device claims no passkey support (older
@@ -516,7 +576,26 @@ export default function LoginScreen() {
           )}
         </View>
 
-        <View style={styles.footerContainer}>
+        <View
+          style={[
+            styles.footerContainer,
+            // Landscape: footer pinned at the bottom, full-width under
+            // both panes. Portrait/phone: stays inline with the buttons,
+            // capped to the same 440pt content column for visual coherence.
+            isTabletLandscape && {
+              position: "absolute",
+              left: 0,
+              right: 0,
+              bottom: 16,
+              marginTop: 0,
+            },
+            !isTabletLandscape && isTablet && {
+              maxWidth: 440,
+              alignSelf: "center",
+              width: "100%",
+            },
+          ]}
+        >
           <Text style={[styles.footer, { color: c.textMuted }]}>
             By signing in you agree to the{" "}
             <Text
