@@ -59,10 +59,15 @@ export const layoutTokens = {
   },
   // Grid column counts by layout class. Used by FlatList numColumns.
   gridCols: {
-    devices: { phone: 1, tabletPortrait: 2, tabletLandscape: 2 },
-    repos:   { phone: 1, tabletPortrait: 3, tabletLandscape: 4 },
-    vibing:  { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
-    metrics: { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
+    devices:  { phone: 1, tabletPortrait: 2, tabletLandscape: 2 },
+    repos:    { phone: 1, tabletPortrait: 3, tabletLandscape: 4 },
+    // Projects tab list (the cards under the search input). Capped at
+    // 2 cols on every tablet shell so card titles + paths breathe —
+    // reusing the `repos` token squeezed long monorepo names and
+    // crowded the chevron against the right edge.
+    projects: { phone: 1, tabletPortrait: 2, tabletLandscape: 2 },
+    vibing:   { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
+    metrics:  { phone: 2, tabletPortrait: 3, tabletLandscape: 4 },
   },
 } as const;
 

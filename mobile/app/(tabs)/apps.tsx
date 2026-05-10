@@ -1840,11 +1840,14 @@ export default function AppsScreen() {
         })()}
 
         <FlatList
-          // Tablets get a 2/3-col project grid; phone keeps single column.
+          // Tablets get a 2-col project grid (per the `projects` token);
+          // phone stays single column. Repos list above keeps its own
+          // 3/4-col `repos` token — they were sharing it before, which
+          // crowded long monorepo names against the chevron edge.
           // Re-mount when column count changes — FlatList rejects mid-flight changes.
-          key={`projects-cols-${layout.gridCols("repos")}`}
-          numColumns={layout.gridCols("repos")}
-          columnWrapperStyle={layout.gridCols("repos") > 1 ? { gap: 10 } : undefined}
+          key={`projects-cols-${layout.gridCols("projects")}`}
+          numColumns={layout.gridCols("projects")}
+          columnWrapperStyle={layout.gridCols("projects") > 1 ? { gap: 10 } : undefined}
           data={projects.filter((p) => {
             // Fuzzy search
             if (search.trim()) {
