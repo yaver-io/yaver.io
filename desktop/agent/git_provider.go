@@ -103,6 +103,178 @@ func findProvider(host string) *GitProvider {
 // Auto-detect tokens from dev machine's existing tooling
 // ---------------------------------------------------------------------------
 
+// gitProviderExternalAuth describes auth state detected outside Yaver's
+// own stores: gh/glab CLIs, env vars, ssh keys configured for the host.
+// Used by `yaver status` so the Git block doesn't show "not configured"
+// when the user has perfectly working git auth via standard tooling.
+type gitProviderExternalAuth struct {
+	Configured bool
+	Sources    []string // e.g. ["gh", "ssh", "env:GITHUB_TOKEN"]
+	Username   string
+}
+
+// detectGitHubExternalAuth probes gh CLI, env vars, and ~/.ssh for a
+// working GitHub identity that lives outside Yaver's own stores.
+func detectGitHubExternalAuth() gitProviderExternalAuth {
+	var out gitProviderExternalAuth
+	if user, ok := readGhAuthStatus("github.com"); ok {
+		out.Configured = true
+		out.Sources = append(out.Sources, "gh")
+		if user != "" {
+			out.Username = user
+		}
+	}
+	for _, env := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(env)) != "" {
+			out.Configured = true
+			out.Sources = append(out.Sources, "env:"+env)
+			break
+		}
+	}
+	if sshConfiguredForHost("github.com") {
+		out.Configured = true
+		out.Sources = append(out.Sources, "ssh")
+	}
+	return out
+}
+
+// detectGitLabExternalAuth is the GitLab counterpart of
+// detectGitHubExternalAuth: glab CLI, env vars, ssh.
+func detectGitLabExternalAuth(host string) gitProviderExternalAuth {
+	if strings.TrimSpace(host) == "" {
+		host = "gitlab.com"
+	}
+	var out gitProviderExternalAuth
+	if user, ok := readGlabAuthStatus(host); ok {
+		out.Configured = true
+		out.Sources = append(out.Sources, "glab")
+		if user != "" {
+			out.Username = user
+		}
+	}
+	for _, env := range []string{"GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(env)) != "" {
+			out.Configured = true
+			out.Sources = append(out.Sources, "env:"+env)
+			break
+		}
+	}
+	if sshConfiguredForHost(host) {
+		out.Configured = true
+		out.Sources = append(out.Sources, "ssh")
+	}
+	return out
+}
+
+// readGhAuthStatus parses `gh auth status` and returns (username, ok)
+// for the given host. No network call — gh reads its own config file.
+func readGhAuthStatus(host string) (string, bool) {
+	out, err := osexec.Command("gh", "auth", "status").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return "", false
+	}
+	return parseLoggedInUsername(string(out), host)
+}
+
+// readGlabAuthStatus is the glab equivalent of readGhAuthStatus.
+func readGlabAuthStatus(host string) (string, bool) {
+	out, err := osexec.Command("glab", "auth", "status").CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return "", false
+	}
+	return parseLoggedInUsername(string(out), host)
+}
+
+// parseLoggedInUsername scans `gh auth status` / `glab auth status`
+// output for "Logged in to <host>" and extracts the username. gh prints
+// "account <username>"; glab prints "as <username>" — handle both.
+func parseLoggedInUsername(s, host string) (string, bool) {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, line := range strings.Split(s, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, host) || !strings.Contains(lower, "logged in") {
+			continue
+		}
+		for _, marker := range []string{" account ", " as "} {
+			if idx := strings.Index(line, marker); idx >= 0 {
+				rest := strings.TrimSpace(line[idx+len(marker):])
+				end := len(rest)
+				for i, r := range rest {
+					if r == ' ' || r == '\t' || r == '(' {
+						end = i
+						break
+					}
+				}
+				name := strings.TrimSpace(rest[:end])
+				if name != "" {
+					return name, true
+				}
+			}
+		}
+		return "", true
+	}
+	return "", false
+}
+
+// sshConfiguredForHost is a local-only heuristic: returns true when
+// ~/.ssh has at least one common private key file AND the host appears
+// either in ~/.ssh/config (Host/HostName line) or ~/.ssh/known_hosts.
+// We can't actually verify the key is registered with the provider
+// without a network call; this just reflects "looks set up locally".
+func sshConfiguredForHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		return false
+	}
+	sshDir := filepath.Join(home, ".ssh")
+
+	haveKey := false
+	for _, name := range []string{"id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"} {
+		if _, err := os.Stat(filepath.Join(sshDir, name)); err == nil {
+			haveKey = true
+			break
+		}
+	}
+	if !haveKey {
+		// also accept any *_<host> key (e.g. id_ed25519_github)
+		entries, _ := os.ReadDir(sshDir)
+		for _, e := range entries {
+			n := e.Name()
+			if strings.HasPrefix(n, "id_") && !strings.HasSuffix(n, ".pub") {
+				haveKey = true
+				break
+			}
+		}
+	}
+	if !haveKey {
+		return false
+	}
+
+	if data, err := os.ReadFile(filepath.Join(sshDir, "config")); err == nil {
+		for _, raw := range strings.Split(string(data), "\n") {
+			line := strings.TrimSpace(strings.ToLower(raw))
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if (strings.HasPrefix(line, "host ") || strings.HasPrefix(line, "hostname ")) && strings.Contains(line, host) {
+				return true
+			}
+		}
+	}
+
+	if data, err := os.ReadFile(filepath.Join(sshDir, "known_hosts")); err == nil {
+		if strings.Contains(strings.ToLower(string(data)), host) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // detectGitHubToken tries to find a GitHub token from the dev machine.
 // Checks: gh CLI, git credential helpers, env vars, git-credentials file.
 func detectGitHubToken() string {

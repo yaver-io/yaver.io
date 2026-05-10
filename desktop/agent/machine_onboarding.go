@@ -256,6 +256,27 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 		openAISource = "env:OPENAI_API_KEY"
 	}
 
+	githubExt := detectGitHubExternalAuth()
+	gitlabExt := detectGitLabExternalAuth(gitlabHost)
+
+	githubCloneReady := (githubCred != nil && strings.TrimSpace(githubCred.Token) != "") || githubExt.Configured
+	gitlabCloneReady := (gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "") || gitlabExt.Configured
+
+	githubCloneSource := ""
+	switch {
+	case githubCred != nil && strings.TrimSpace(githubCred.Token) != "":
+		githubCloneSource = "git-credentials"
+	case len(githubExt.Sources) > 0:
+		githubCloneSource = strings.Join(githubExt.Sources, "+")
+	}
+	gitlabCloneSource := ""
+	switch {
+	case gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "":
+		gitlabCloneSource = "git-credentials"
+	case len(gitlabExt.Sources) > 0:
+		gitlabCloneSource = strings.Join(gitlabExt.Sources, "+")
+	}
+
 	out := []machineOnboardingProviderStatus{
 		{
 			ID:         "openai",
@@ -271,19 +292,14 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 			}(),
 		},
 		{
-			ID:         "github",
-			Name:       "GitHub",
-			Host:       "github.com",
-			CloneReady: githubCred != nil && strings.TrimSpace(githubCred.Token) != "",
-			CIReady:    githubVault != nil,
-			Ready:      githubCred != nil && strings.TrimSpace(githubCred.Token) != "" && githubVault != nil,
-			Configured: (githubCred != nil && strings.TrimSpace(githubCred.Token) != "") || githubVault != nil,
-			CloneSource: func() string {
-				if githubCred != nil && strings.TrimSpace(githubCred.Token) != "" {
-					return "git-credentials"
-				}
-				return ""
-			}(),
+			ID:          "github",
+			Name:        "GitHub",
+			Host:        "github.com",
+			CloneReady:  githubCloneReady,
+			CIReady:     githubVault != nil,
+			Ready:       githubCloneReady && githubVault != nil,
+			Configured:  githubCloneReady || githubVault != nil,
+			CloneSource: githubCloneSource,
 			CISource: func() string {
 				if githubVault != nil {
 					return "vault:github-token"
@@ -300,22 +316,17 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 					return githubCred.Username
 				}
 				return ""
-			}()),
+			}(), githubExt.Username),
 		},
 		{
-			ID:         "gitlab",
-			Name:       "GitLab",
-			Host:       gitlabHost,
-			CloneReady: gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "",
-			CIReady:    gitlabVault != nil,
-			Ready:      gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "" && gitlabVault != nil,
-			Configured: (gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "") || gitlabVault != nil,
-			CloneSource: func() string {
-				if gitlabCred != nil && strings.TrimSpace(gitlabCred.Token) != "" {
-					return "git-credentials"
-				}
-				return ""
-			}(),
+			ID:          "gitlab",
+			Name:        "GitLab",
+			Host:        gitlabHost,
+			CloneReady:  gitlabCloneReady,
+			CIReady:     gitlabVault != nil,
+			Ready:       gitlabCloneReady && gitlabVault != nil,
+			Configured:  gitlabCloneReady || gitlabVault != nil,
+			CloneSource: gitlabCloneSource,
 			CISource: func() string {
 				if gitlabVault != nil {
 					return "vault:" + gitlabVaultKey
@@ -332,7 +343,7 @@ func collectMachineOnboardingStatus() machineOnboardingStatus {
 					return gitlabCred.Username
 				}
 				return ""
-			}()),
+			}(), gitlabExt.Username),
 		},
 	}
 
