@@ -987,6 +987,7 @@ func (s *HTTPServer) handleWebBundleInfo(w http.ResponseWriter, r *http.Request)
 		"built":     true,
 		"target":    info.Target,
 		"buildDir":  info.BuildDir,
+		"workDir":   info.WorkDir,
 		"indexFile": info.IndexFile,
 		"size":      info.Size,
 		"fileCount": info.FileCount,

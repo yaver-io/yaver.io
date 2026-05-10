@@ -44,6 +44,18 @@ interface Props {
     elapsedSec?: number;      // counts up while bundling
     expectedSec?: number;     // typical bundle time (~30s for Expo Web)
   } | null;
+  /** When set, replaces the iframe with a build-failure card. Takes
+   *  precedence over the iframe so a failed build for project A doesn't
+   *  let the previously-rendered project B remain visible behind it
+   *  (the staleness poll then promotes B back to "ready" 5s later, and
+   *  the user concludes the project switch did nothing). */
+  buildFailure?: {
+    label: string;            // e.g. "Web build failed for yaver/mobile"
+    error?: string;           // one-line agent error string
+    tail?: string;            // bundler stdout/stderr tail (Metro / hermesc)
+    onRetry?: () => void;     // wired to handleBuildStaticBundle
+    retryLabel?: string;      // defaults to "Retry build"
+  } | null;
   /** Fires when the iframe's onload event triggers — used by the
    *  static-bundle target (web-js-bundle) to POST /dev/web-bundle/ack
    *  so the agent's transport tracker transitions to phase=delivered
@@ -62,7 +74,7 @@ interface Props {
   onViewportChange?: (v: ViewportId) => void;
 }
 
-export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState, onIframeLoad, hideViewportSelector, viewport: controlledViewport, onViewportChange }: Props) {
+export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, connectionLabel, notRenderableNotice, notRenderableAction, bundlingState, buildFailure, onIframeLoad, hideViewportSelector, viewport: controlledViewport, onViewportChange }: Props) {
   const [internalViewport, setInternalViewport] = useState<ViewportId>("fluid");
   const viewport = controlledViewport ?? internalViewport;
   const setViewport = (v: ViewportId) => {
@@ -182,8 +194,46 @@ export function WebPreviewFrame({ url, running, onHardReload, onOpenInNewTab, co
             )}
           </div>
 
-          {/* Iframe, bundling progress, non-renderable notice, or placeholder */}
-          {bundlingState ? (
+          {/* Iframe, build failure card, bundling progress, non-renderable
+              notice, or placeholder. Build failure beats every other state
+              because the iframe should not show the previous project's
+              bundle when the user's *current* attempt failed — that's the
+              "Start yaver/mobile but carrotbet stays on screen" bug. */}
+          {buildFailure ? (
+            <div
+              className="flex flex-col items-stretch gap-3 px-6 pt-6 pb-4 text-left"
+              style={{ height: `calc(100% - 41px)`, minHeight: 300 }}
+            >
+              <div className="flex items-start gap-3">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 flex-shrink-0 text-red-400/90">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold text-red-200">{buildFailure.label}</p>
+                  {buildFailure.error ? (
+                    <p className="mt-1 break-words font-mono text-[11px] leading-5 text-red-200/80">
+                      {buildFailure.error}
+                    </p>
+                  ) : null}
+                </div>
+                {buildFailure.onRetry ? (
+                  <button
+                    onClick={buildFailure.onRetry}
+                    className="flex-shrink-0 rounded border border-red-500/40 bg-red-500/10 px-3 py-1 text-[11px] font-medium text-red-200 hover:bg-red-500/20"
+                  >
+                    {buildFailure.retryLabel || "Retry build"}
+                  </button>
+                ) : null}
+              </div>
+              {buildFailure.tail ? (
+                <pre className="min-h-0 flex-1 overflow-auto rounded border border-red-500/20 bg-surface-950/80 px-3 py-2 font-mono text-[10px] leading-4 text-red-200/70 whitespace-pre">
+                  {buildFailure.tail}
+                </pre>
+              ) : null}
+            </div>
+          ) : bundlingState ? (
             (() => {
               const elapsed = bundlingState.elapsedSec ?? 0;
               const expected = bundlingState.expectedSec ?? 30;

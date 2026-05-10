@@ -116,6 +116,11 @@ export function WebReloadView({
   // SSE webview/transport events.
   const [staticBundleState, setStaticBundleState] = useState<"idle" | "building" | "ready" | "failed">("idle");
   const [staticBundleError, setStaticBundleError] = useState<string | null>(null);
+  // Bundler stdout/stderr tail captured from the agent's failure
+  // response so the iframe-area failure card can show *why* the build
+  // failed (Metro resolve errors, dependency drift, hermesc explosion).
+  // Cleared on the next attempt; populated only on the failure path.
+  const [staticBundleOutput, setStaticBundleOutput] = useState<string | null>(null);
   const [staticBundleInfo, setStaticBundleInfo] = useState<{ size: number; fileCount: number } | null>(null);
   const [staticBundleTransport, setStaticBundleTransport] = useState<{
     phase: string;
@@ -689,6 +694,7 @@ export function WebReloadView({
   const handleBuildStaticBundle = useCallback(async () => {
     setStaticBundleState("building");
     setStaticBundleError(null);
+    setStaticBundleOutput(null);
     setStaticBundleTransport(null);
     setStaticBundleInfo(null);
     staticBundleStartRef.current = Date.now();
@@ -704,6 +710,7 @@ export function WebReloadView({
       if (!r.ok) {
         setStaticBundleState("failed");
         setStaticBundleError(r.error || "build failed");
+        setStaticBundleOutput(r.output || null);
         return;
       }
       setStaticBundleInfo({ size: r.size, fileCount: r.fileCount });
@@ -721,16 +728,31 @@ export function WebReloadView({
   // to /dev/web-bundle/, and without periodic polling that flip never
   // happens since SSE doesn't fire a "bundle ready" notification on
   // out-of-band builds.
+  //
+  // Cross-project guard: if the user just had a build *fail* for project
+  // A but a stale bundle for project B is still on disk, do NOT promote
+  // failed → ready. Otherwise the iframe would re-render project B's
+  // content and look like nothing happened — exactly the bug the user
+  // hit when yaver/mobile failed to bundle and the iframe kept showing
+  // the previously-built carrotbet/mobile bundle.
   useEffect(() => {
     if (!isConnected) return;
     let cancelled = false;
     const tick = async () => {
       const info = await agentClient.getWebBundleInfo();
       if (cancelled) return;
-      if (info.built && (staticBundleState === "idle" || staticBundleState === "failed")) {
-        setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
-        setStaticBundleState("ready");
+      if (!info.built) return;
+      if (staticBundleState !== "idle" && staticBundleState !== "failed") return;
+      // After a failed build, only promote when the on-disk bundle
+      // belongs to the project the user just selected. The `idle` case
+      // (initial mount, no selection) is permissive — any pre-built
+      // bundle is fair game to render so the user lands on something.
+      if (staticBundleState === "failed" && selectedProjectPath) {
+        const bundleWorkDir = (info.workDir || "").trim();
+        if (bundleWorkDir && bundleWorkDir !== selectedProjectPath) return;
       }
+      setStaticBundleInfo({ size: info.size || 0, fileCount: info.fileCount || 0 });
+      setStaticBundleState("ready");
     };
     void tick();
     // Poll every 5s — only while idle/failed; once `ready` or `building`,
@@ -744,7 +766,7 @@ export function WebReloadView({
       cancelled = true;
       clearInterval(id);
     };
-  }, [isConnected, staticBundleState]);
+  }, [isConnected, staticBundleState, selectedProjectPath]);
 
   // No auto-build on tab open — the user explicitly wants to pick a
   // project and click "Build & render static bundle" themselves.
@@ -1566,6 +1588,24 @@ export function WebReloadView({
                     label: "Start Expo Web preview (sibling of Metro)",
                     onClick: () => void handleStartWebPreview(),
                     disabled: false,
+                  }
+                : null
+            }
+            // When the static-bundle build *fails*, render an error
+            // card in the iframe area instead of letting the iframe
+            // re-mount on the previous project's stale bundle URL.
+            // Without this card the staleness poll re-promotes the old
+            // bundle to "ready" 5s later and the user sees the wrong
+            // project — exactly the yaver/mobile → carrotbet/mobile
+            // confusion fixed alongside this. Carries the bundler tail
+            // (Metro / hermesc stdout) so the user sees *why* it failed.
+            buildFailure={
+              staticBundleState === "failed"
+                ? {
+                    label: `Web build failed for ${selectedProject?.name || activeProject?.name || selectedApp || "this project"}`,
+                    error: staticBundleError || undefined,
+                    tail: staticBundleOutput || undefined,
+                    onRetry: () => void handleBuildStaticBundle(),
                   }
                 : null
             }
