@@ -272,6 +272,63 @@ function ensurePathOnUnix() {
   }
 }
 
+// Belt-and-braces companion to ensurePathOnUnix: write the same PATH
+// rescue into ~/.zshenv. .zshrc patches break when the rc fails to
+// fully load — e.g. one user had a hanging `gcloud completion.zsh.inc`
+// `source` line whose interrupt aborted the rc before the appended
+// yaver PATH block ever ran, so `yaver` was "command not found" in
+// every new terminal even though the install succeeded. .zshenv loads
+// on every zsh shell before .zshrc and is unaffected by .zshrc errors,
+// so it survives that failure mode. Best-effort, never throws.
+function ensureZshenvRescue() {
+  try {
+    if (process.platform === "win32") return;
+    const prefix = (process.env.npm_config_prefix || "").trim();
+    if (!prefix) return;
+    const binDir = path.join(prefix, "bin");
+    if (!fs.existsSync(path.join(binDir, "yaver"))) return;
+
+    const home = os.homedir();
+    if (!home) return;
+
+    // Only touch .zshenv when the user actually uses zsh; otherwise we'd
+    // be creating a dotfile they never asked for.
+    const shell = String(process.env.SHELL || "");
+    const usesZsh =
+      shell.endsWith("/zsh") ||
+      fs.existsSync(path.join(home, ".zshrc")) ||
+      fs.existsSync(path.join(home, ".zshenv"));
+    if (!usesZsh) return;
+
+    const zshenv = path.join(home, ".zshenv");
+    const marker = "# yaver-cli zshenv rescue";
+    const yaverNodeBin = path.join(home, ".yaver", "runtimes", "node", "bin");
+    const dirs = [yaverNodeBin, binDir];
+    const dirsLiteral = dirs.map((d) => `"${d}"`).join(" ");
+    const block =
+      `\n${marker} (added by yaver-cli postinstall)\n` +
+      "# Loads on every zsh shell before .zshrc, so yaver stays on PATH\n" +
+      "# even if .zshrc fails to fully load.\n" +
+      `for __yaver_d in ${dirsLiteral}; do\n` +
+      "  case \":$PATH:\" in\n" +
+      "    *\":$__yaver_d:\"*) ;;\n" +
+      "    *) export PATH=\"$__yaver_d:$PATH\" ;;\n" +
+      "  esac\n" +
+      "done\n" +
+      "unset __yaver_d\n";
+
+    let existing = "";
+    if (fs.existsSync(zshenv)) {
+      existing = fs.readFileSync(zshenv, "utf8");
+      if (existing.includes(marker)) return;
+    }
+    fs.appendFileSync(zshenv, block);
+    log(`Patched ~/.zshenv with PATH rescue (yaver + bundled node).`);
+  } catch (_) {
+    // Best-effort only.
+  }
+}
+
 // Update ~/.yaver/bin/current → versioned dir for the binary just
 // installed. Without this, the symlink can lag behind npm — every time
 // I bumped CLI on the user's Mac mini, `~/.yaver/bin/current` kept
@@ -400,6 +457,7 @@ async function main() {
   }
 
   ensurePathOnUnix();
+  ensureZshenvRescue();
   addNpmGlobalBinToProcessPath();
   ensureLinuxRunnerSandboxPackages();
   ensureLinuxRunnerSandboxSupport();

@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import * as ExpoDevice from "expo-device";
 import { Ionicons } from "@expo/vector-icons";
-import { useColors } from "../../src/context/ThemeContext";
+import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
@@ -64,6 +64,7 @@ function TabIcon({ label, focused, showGreenDot }: { label: string; focused: boo
 
 export default function TabLayout() {
   const c = useColors();
+  const { isDark } = useTheme();
   const router = useRouter();
   const layout = useResponsiveLayout();
   const { connectionStatus, activeDevice, devices } = useDevice();
@@ -223,14 +224,19 @@ export default function TabLayout() {
               borderRightWidth: 1,
               borderTopWidth: 0,
               width: 104,
-              paddingTop: 12,
+              paddingTop: 16,
             }
           : {
               backgroundColor: c.bgTabBar,
               borderTopColor: c.borderSubtle,
-              borderTopWidth: StyleSheet.hairlineWidth,
+              borderTopWidth: isDark ? StyleSheet.hairlineWidth : 0,
               height: 64,
               paddingTop: 0,
+              shadowColor: !isDark ? c.shadowSm : "transparent",
+              shadowOffset: { width: 0, height: -6 },
+              shadowOpacity: 0.14,
+              shadowRadius: 14,
+              elevation: 8,
             },
         tabBarLabel: () => null,
         tabBarActiveTintColor: c.tabActive,
@@ -324,7 +330,7 @@ export default function TabLayout() {
 }
 
 const styles = StyleSheet.create({
-  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 4 },
+  tabIconWrap: { alignItems: "center", justifyContent: "center", minWidth: 56, paddingTop: 4, gap: 4 },
   // Pill behind the icon glyph; only painted on focus (background set
   // inline). 48x28 / radius 14 mirrors the Material 3 active-tab
   // indicator and works in both themes via accent + low alpha.
@@ -335,11 +341,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  tabLabel: { marginTop: 3, fontSize: 12 },
+  tabLabel: { marginTop: 1, fontSize: 12 },
   greenDot: {
     position: "absolute",
-    top: -2,
-    right: 4,
+    top: 2,
+    right: 8,
     width: 8,
     height: 8,
     borderRadius: 4,

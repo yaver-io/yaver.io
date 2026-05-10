@@ -19,6 +19,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { OAUTH_REDIRECT } from "../src/_core/constants";
 import { useAuth } from "../src/context/AuthContext";
 import { useColors, useTheme } from "../src/context/ThemeContext";
 import { useResponsiveLayout } from "../src/hooks/useResponsiveLayout";
@@ -38,6 +39,12 @@ import {
 } from "../src/lib/passkey";
 
 WebBrowser.maybeCompleteAuthSession();
+
+const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
+
+function isOAuthCallbackUrl(url: string): boolean {
+  return url.startsWith(OAUTH_REDIRECT) || url.startsWith(LEGACY_OAUTH_REDIRECT);
+}
 
 export default function LoginScreen() {
   const { login, surveyCompleted } = useAuth();
@@ -64,6 +71,36 @@ export default function LoginScreen() {
   const [emailError, setEmailError] = useState("");
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const passkeySupported = isPasskeySupported();
+  const isTabletPortrait = isTablet && !isTabletLandscape;
+  const providerGap = isTablet ? 10 : 8;
+  const providerBorderColor = isDark ? c.borderSubtle : c.border;
+  const heroCardShadow = !isDark
+    ? {
+        shadowColor: c.shadowSm,
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.22,
+        shadowRadius: 24,
+        elevation: 4,
+      }
+    : null;
+  const elevatedCardShadow = !isDark
+    ? {
+        shadowColor: c.shadowSm,
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.28,
+        shadowRadius: 28,
+        elevation: 6,
+      }
+    : null;
+  const darkHeroGlow = isDark
+    ? {
+        shadowColor: c.shadowMd,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.3,
+        shadowRadius: 20,
+        elevation: 6,
+      }
+    : null;
 
   // Belt-and-braces fallback: if the OAuth deep link arrives while
   // LoginScreen is still mounted (cold-start race winner), consume
@@ -72,7 +109,7 @@ export default function LoginScreen() {
   useEffect(() => {
     const subscription = Linking.addEventListener("url", async (event) => {
       const url = event.url;
-      if (!url.startsWith("yaver://oauth-callback")) return;
+      if (!isOAuthCallbackUrl(url)) return;
 
       const parsed = Linking.parse(url);
       const token = parsed.queryParams?.token as string | undefined;
@@ -161,7 +198,7 @@ export default function LoginScreen() {
   // already uses the same API for the link flow.)
   const handleOAuth = async (provider: OAuthProvider) => {
     const url = getOAuthUrl(provider);
-    const returnUrl = ExpoLinking.createURL("/oauth-callback");
+    const returnUrl = OAUTH_REDIRECT;
     setIsLoading(true);
     try {
       const result = await WebBrowser.openAuthSessionAsync(url, returnUrl);
@@ -290,334 +327,354 @@ export default function LoginScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-      <ScrollView
-        contentContainerStyle={[
-          styles.scrollContainer,
-          // Tablet landscape: row-direction so the brand pane and the
-          // sign-in column sit side-by-side. Tablet portrait + phone
-          // keep the column stack with the inner cap below.
-          isTabletLandscape && { flexDirection: "row", paddingHorizontal: 48, gap: 64 },
-        ]}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View
-          style={[
-            // Header / brand block. Phone: top-of-card. Tablet portrait:
-            // top-of-card with content cap. Tablet landscape: left pane,
-            // vertically centered, brand large and prominent.
-            styles.header,
-            isTabletLandscape && {
-              flex: 1,
-              alignItems: "flex-start",
-              justifyContent: "center",
-              marginBottom: 0,
-              maxWidth: 480,
-              alignSelf: "center",
-            },
-            !isTabletLandscape && isTablet && {
-              maxWidth: 440,
-              alignSelf: "center",
-              width: "100%",
-            },
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContainer,
+            isTabletLandscape && styles.scrollContainerLandscape,
+            isTabletPortrait && styles.scrollContainerTabletPortrait,
           ]}
+          keyboardShouldPersistTaps="handled"
         >
-          <Text
-            style={[
-              styles.logo,
-              { color: c.textPrimary },
-              isTabletLandscape && { fontSize: 64 },
-              !isTabletLandscape && isTablet && { fontSize: 56 },
-            ]}
-          >
-            Yaver
-          </Text>
-          <Text
-            style={[
-              styles.subtitle,
-              { color: c.textSecondary },
-              isTabletLandscape && { fontSize: 18, marginTop: 12, lineHeight: 26 },
-              !isTabletLandscape && isTablet && { fontSize: 17, marginTop: 10 },
-            ]}
-          >
-            Your AI coding assistant, everywhere.
-          </Text>
-        </View>
-
-        <View
-          style={[
-            styles.buttons,
-            isTabletLandscape && { flex: 1, justifyContent: "center", maxWidth: 420, alignSelf: "center" },
-            !isTabletLandscape && isTablet && { maxWidth: 440, alignSelf: "center", width: "100%" },
-          ]}
-        >
-          {/* Passkey: shown first so a returning user with a synced
-              iCloud Keychain credential can sign in with one tap.
-              Hidden when the device claims no passkey support (older
-              iOS / Android). Sign-in works for any account, regardless
-              of original auth method, as long as a passkey is enrolled. */}
-          {passkeySupported && !showEmailForm && (
-            <Pressable
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: c.accent + "15", borderColor: c.accent + "60" },
-                pressed && styles.buttonPressed,
-                passkeyLoading && { opacity: 0.6 },
+          <View style={[styles.shell, isTabletLandscape && styles.shellLandscape]}>
+            <View
+              style={[
+                styles.header,
+                isTabletPortrait && styles.headerTabletPortrait,
+                isTabletLandscape && styles.headerLandscape,
               ]}
-              onPress={handlePasskeySignin}
-              disabled={passkeyLoading}
             >
-              <View style={styles.buttonContent}>
-                <Ionicons name="key-outline" size={18} color={c.accent} style={styles.buttonIcon} />
-                <Text style={[styles.buttonTextCentered, { color: c.accent }]}>
-                  {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+              <View style={[styles.mark, { backgroundColor: c.accentSoft }]}>
+                <Text style={[styles.markText, { color: c.accent }]}>Y</Text>
+              </View>
+              <Text
+                style={[
+                  styles.logo,
+                  { color: c.textPrimary },
+                  isTabletLandscape && styles.logoTabletLandscape,
+                  isTabletPortrait && styles.logoTabletPortrait,
+                ]}
+              >
+                Yaver
+              </Text>
+              <Text
+                style={[
+                  styles.subtitle,
+                  { color: c.textSecondary },
+                  isTabletLandscape && styles.subtitleTabletLandscape,
+                  isTabletPortrait && styles.subtitleTablet,
+                ]}
+              >
+                Your AI coding assistant, everywhere.
+              </Text>
+              {isTabletLandscape && (
+                <Text style={[styles.tertiaryTagline, { color: c.textMuted }]}>
+                  Sign in to start coding from anywhere.
                 </Text>
-              </View>
-            </Pressable>
-          )}
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: c.bgCard, borderColor: c.border },
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={Platform.OS === "ios" ? handleAppleSignIn : () => handleOAuth("apple")}
-          >
-            <View style={styles.buttonContent}>
-              <Ionicons name="logo-apple" size={18} color={c.textPrimary} style={styles.buttonIcon} />
-              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Apple</Text>
+              )}
             </View>
-          </Pressable>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: c.bgCard, borderColor: c.border },
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={() => handleOAuth("google")}
-          >
-            <View style={styles.buttonContent}>
-              <Ionicons name="logo-google" size={16} color={c.textPrimary} style={styles.buttonIcon} />
-              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Google</Text>
-            </View>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: c.bgCard, borderColor: c.border },
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={() => handleOAuth("github")}
-          >
-            <View style={styles.buttonContent}>
-              <Ionicons name="logo-github" size={17} color={c.textPrimary} style={styles.buttonIcon} />
-              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitHub</Text>
-            </View>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: c.bgCard, borderColor: c.border },
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={() => handleOAuth("gitlab")}
-          >
-            <View style={styles.buttonContent}>
-              <FontAwesome name="gitlab" size={16} color={c.textPrimary} style={styles.buttonIcon} />
-              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitLab</Text>
-            </View>
-          </Pressable>
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.button,
-              { backgroundColor: c.bgCard, borderColor: c.border },
-              pressed && styles.buttonPressed,
-            ]}
-            onPress={() => handleOAuth("microsoft")}
-          >
-            <View style={styles.buttonContent}>
-              <FontAwesome name="windows" size={16} color={c.textPrimary} style={styles.buttonIcon} />
-              <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Microsoft</Text>
-            </View>
-          </Pressable>
-
-
-          {/* Continue with Email — collapsed button or expanded form */}
-          {!showEmailForm ? (
-            <Pressable
-              style={({ pressed }) => [
-                styles.button,
-                { backgroundColor: c.bgCard, borderColor: c.border },
-                pressed && styles.buttonPressed,
+            <View
+              style={[
+                styles.formCard,
+                { backgroundColor: isTablet ? c.bgCardElevated : "transparent" },
+                isTabletPortrait && styles.formCardTabletPortrait,
+                isTabletLandscape && styles.formCardTabletLandscape,
+                isTablet && { borderColor: c.borderSubtle },
+                isTablet && elevatedCardShadow,
               ]}
-              onPress={() => setShowEmailForm(true)}
             >
-              <View style={styles.buttonContent}>
-                <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
-                <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Email</Text>
-              </View>
-            </Pressable>
-          ) : (
-            <>
-              <View style={styles.divider}>
-                <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-                <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
-                <View style={[styles.dividerLine, { backgroundColor: c.border }]} />
-              </View>
-              <View style={styles.emailForm}>
-                {isSignUp && (
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="Full Name"
-                    placeholderTextColor={c.textMuted}
-                    value={fullName}
-                    onChangeText={setFullName}
-                    autoCapitalize="words"
-                    autoCorrect={false}
-                  />
-                )}
-                <TextInput
-                  style={[styles.input, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                  placeholder="Email"
-                  placeholderTextColor={c.textMuted}
-                  value={email}
-                  onChangeText={setEmail}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TextInput
-                  style={[styles.input, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                  placeholder="Password"
-                  placeholderTextColor={c.textMuted}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry
-                />
-                {isSignUp && (
-                  <TextInput
-                    style={[styles.input, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
-                    placeholder="Confirm Password"
-                    placeholderTextColor={c.textMuted}
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry
-                  />
-                )}
-
-                {emailError ? (
-                  <Text style={[styles.errorText, { color: c.error }]}>{emailError}</Text>
-                ) : null}
-
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.submitButton,
-                    { backgroundColor: c.accent },
-                    pressed && styles.buttonPressed,
-                    isLoading && { opacity: 0.6 },
-                  ]}
-                  onPress={handleEmailSubmit}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.submitButtonText}>
-                      {isSignUp ? "Create Account" : "Sign In"}
-                    </Text>
-                  )}
-                </Pressable>
-
-                {/* Passkey sign-up: only shown in signup mode. Email +
-                    fullName from the form above are used as the new
-                    account's identifiers; the password fields are
-                    ignored. EMAIL_EXISTS routes the user to sign-in. */}
-                {isSignUp && passkeySupported && (
+              <View style={styles.buttons}>
+                {passkeySupported && !showEmailForm && (
                   <Pressable
                     style={({ pressed }) => [
-                      styles.submitButton,
-                      { backgroundColor: c.accent + "15", borderWidth: 1, borderColor: c.accent + "60" },
+                      styles.passkeyButton,
+                      {
+                        backgroundColor: isDark ? c.accent + "1F" : c.accentSoft,
+                        borderColor: c.accent + "55",
+                      },
+                      heroCardShadow,
+                      darkHeroGlow,
                       pressed && styles.buttonPressed,
                       passkeyLoading && { opacity: 0.6 },
                     ]}
-                    onPress={handlePasskeySignup}
-                    disabled={passkeyLoading || !email.trim() || !fullName.trim()}
+                    onPress={handlePasskeySignin}
+                    disabled={passkeyLoading}
                   >
-                    {passkeyLoading ? (
-                      <ActivityIndicator size="small" color={c.accent} />
-                    ) : (
+                    <View style={styles.buttonContent}>
+                      {passkeyLoading ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={c.accent}
+                          style={styles.loadingIcon}
+                        />
+                      ) : (
+                        <Ionicons
+                          name="key-outline"
+                          size={20}
+                          color={c.accent}
+                          style={styles.buttonIcon}
+                        />
+                      )}
+                      <Text style={[styles.passkeyText, { color: c.accent }]}>
+                        {passkeyLoading ? "Waiting for passkey..." : "Sign in with passkey"}
+                      </Text>
+                    </View>
+                  </Pressable>
+                )}
+
+                <View style={[styles.providerGroup, { gap: providerGap }]}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={Platform.OS === "ios" ? handleAppleSignIn : () => handleOAuth("apple")}
+                  >
+                    <View style={styles.buttonContent}>
+                      <Ionicons name="logo-apple" size={18} color={c.textPrimary} style={styles.buttonIcon} />
+                      <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Apple</Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() => handleOAuth("google")}
+                  >
+                    <View style={styles.buttonContent}>
+                      <Ionicons name="logo-google" size={16} color="#4285F4" style={styles.buttonIcon} />
+                      <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Google</Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() => handleOAuth("github")}
+                  >
+                    <View style={styles.buttonContent}>
+                      <Ionicons name="logo-github" size={17} color={c.textPrimary} style={styles.buttonIcon} />
+                      <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitHub</Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() => handleOAuth("gitlab")}
+                  >
+                    <View style={styles.buttonContent}>
+                      <FontAwesome name="gitlab" size={16} color="#FC6D26" style={styles.buttonIcon} />
+                      <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with GitLab</Text>
+                    </View>
+                  </Pressable>
+
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.button,
+                      { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                      pressed && styles.buttonPressed,
+                    ]}
+                    onPress={() => handleOAuth("microsoft")}
+                  >
+                    <View style={styles.buttonContent}>
+                      <FontAwesome name="windows" size={16} color="#0078D4" style={styles.buttonIcon} />
+                      <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Microsoft</Text>
+                    </View>
+                  </Pressable>
+                </View>
+
+                {!showEmailForm ? (
+                  <>
+                    <View style={styles.divider}>
+                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                      <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
+                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                    </View>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.button,
+                        { backgroundColor: c.bgCard, borderColor: providerBorderColor },
+                        pressed && styles.buttonPressed,
+                      ]}
+                      onPress={() => setShowEmailForm(true)}
+                    >
                       <View style={styles.buttonContent}>
-                        <Ionicons name="key-outline" size={16} color={c.accent} style={styles.buttonIcon} />
-                        <Text style={[styles.submitButtonText, { color: c.accent }]}>Sign up with passkey</Text>
+                        <Ionicons name="mail-outline" size={17} color={c.textPrimary} style={styles.buttonIcon} />
+                        <Text style={[styles.buttonTextCentered, { color: c.textPrimary }]}>Continue with Email</Text>
                       </View>
-                    )}
-                  </Pressable>
-                )}
+                    </Pressable>
+                  </>
+                ) : (
+                  <>
+                    <View style={styles.divider}>
+                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                      <Text style={[styles.dividerText, { color: c.textMuted }]}>email</Text>
+                      <View style={[styles.dividerLine, { backgroundColor: c.borderSubtle }]} />
+                    </View>
+                    <View style={styles.emailForm}>
+                      {isSignUp && (
+                        <TextInput
+                          style={[
+                            styles.input,
+                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                          ]}
+                          placeholder="Full Name"
+                          placeholderTextColor={c.textMuted}
+                          value={fullName}
+                          onChangeText={setFullName}
+                          autoCapitalize="words"
+                          autoCorrect={false}
+                        />
+                      )}
+                      <TextInput
+                        style={[
+                          styles.input,
+                          { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                        ]}
+                        placeholder="Email"
+                        placeholderTextColor={c.textMuted}
+                        value={email}
+                        onChangeText={setEmail}
+                        keyboardType="email-address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <TextInput
+                        style={[
+                          styles.input,
+                          { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                        ]}
+                        placeholder="Password"
+                        placeholderTextColor={c.textMuted}
+                        value={password}
+                        onChangeText={setPassword}
+                        secureTextEntry
+                      />
+                      {isSignUp && (
+                        <TextInput
+                          style={[
+                            styles.input,
+                            { backgroundColor: c.bgInput, borderColor: c.borderSubtle, color: c.textPrimary },
+                          ]}
+                          placeholder="Confirm Password"
+                          placeholderTextColor={c.textMuted}
+                          value={confirmPassword}
+                          onChangeText={setConfirmPassword}
+                          secureTextEntry
+                        />
+                      )}
 
-                {!isSignUp && (
-                  <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>
-                    <Text style={[styles.forgotText, { color: c.textMuted }]}>
-                      Forgot password?
-                    </Text>
-                  </Pressable>
-                )}
+                      {emailError ? (
+                        <Text style={[styles.errorText, { color: c.error }]}>{emailError}</Text>
+                      ) : null}
 
-                <Pressable onPress={() => { setIsSignUp(!isSignUp); setEmailError(""); }}>
-                  <Text style={[styles.toggleText, { color: c.accent }]}>
-                    {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
-                  </Text>
-                </Pressable>
+                      <Pressable
+                        style={({ pressed }) => [
+                          styles.submitButton,
+                          { backgroundColor: c.accent },
+                          pressed && styles.buttonPressed,
+                          isLoading && { opacity: 0.6 },
+                        ]}
+                        onPress={handleEmailSubmit}
+                        disabled={isLoading}
+                      >
+                        {isLoading ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={styles.submitButtonText}>
+                            {isSignUp ? "Create Account" : "Sign In"}
+                          </Text>
+                        )}
+                      </Pressable>
+
+                      {isSignUp && passkeySupported && (
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.passkeySignupButton,
+                            {
+                              backgroundColor: isDark ? c.accent + "1F" : c.accentSoft,
+                              borderColor: c.accent + "55",
+                            },
+                            pressed && styles.buttonPressed,
+                            passkeyLoading && { opacity: 0.6 },
+                          ]}
+                          onPress={handlePasskeySignup}
+                          disabled={passkeyLoading || !email.trim() || !fullName.trim()}
+                        >
+                          {passkeyLoading ? (
+                            <ActivityIndicator size="small" color={c.accent} />
+                          ) : (
+                            <View style={styles.buttonContent}>
+                              <Ionicons name="key-outline" size={18} color={c.accent} style={styles.buttonIcon} />
+                              <Text style={[styles.passkeySignupText, { color: c.accent }]}>Sign up with passkey</Text>
+                            </View>
+                          )}
+                        </Pressable>
+                      )}
+
+                      {!isSignUp && (
+                        <Pressable onPress={() => Linking.openURL("https://yaver.io/auth/reset-password")}>
+                          <Text style={[styles.forgotText, { color: c.textMuted }]}>
+                            Forgot password?
+                          </Text>
+                        </Pressable>
+                      )}
+
+                      <Pressable onPress={() => { setIsSignUp(!isSignUp); setEmailError(""); }}>
+                        <Text style={[styles.toggleText, { color: c.textMuted }]}>
+                          {isSignUp ? "Already have an account? " : "Don't have an account? "}
+                          <Text style={{ color: c.accent }}>
+                            {isSignUp ? "Sign In" : "Sign Up"}
+                          </Text>
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </>
+                )}
               </View>
-            </>
-          )}
-        </View>
+            </View>
+          </View>
 
-        <View
-          style={[
-            styles.footerContainer,
-            // Landscape: footer pinned at the bottom, full-width under
-            // both panes. Portrait/phone: stays inline with the buttons,
-            // capped to the same 440pt content column for visual coherence.
-            isTabletLandscape && {
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 16,
-              marginTop: 0,
-            },
-            !isTabletLandscape && isTablet && {
-              maxWidth: 440,
-              alignSelf: "center",
-              width: "100%",
-            },
-          ]}
-        >
-          <Text style={[styles.footer, { color: c.textMuted }]}>
-            By signing in you agree to the{" "}
-            <Text
-              style={{ color: c.accent }}
-              onPress={() => Linking.openURL("https://yaver.io/terms")}
-            >
-              Terms of Service
-            </Text>{" "}
-            and{" "}
-            <Text
-              style={{ color: c.accent }}
-              onPress={() => Linking.openURL("https://yaver.io/privacy")}
-            >
-              Privacy Policy
+          <View
+            style={[
+              styles.footerContainer,
+              isTabletLandscape && styles.footerContainerLandscape,
+              isTabletPortrait && styles.footerContainerTabletPortrait,
+            ]}
+          >
+            <Text style={[styles.footer, { color: c.textMuted }]}>
+              By signing in you agree to the{" "}
+              <Text
+                style={{ color: c.accent }}
+                onPress={() => Linking.openURL("https://yaver.io/terms")}
+              >
+                Terms of Service
+              </Text>{" "}
+              and{" "}
+              <Text
+                style={{ color: c.accent }}
+                onPress={() => Linking.openURL("https://yaver.io/privacy")}
+              >
+                Privacy Policy
+              </Text>
+              .
             </Text>
-            .
-          </Text>
-          <Text style={[styles.versionText, { color: c.textMuted }]}>
-            v{Constants.expoConfig?.version ?? "1.0.0"}
-          </Text>
-        </View>
-      </ScrollView>
+            <Text style={[styles.versionText, { color: c.textMuted }]}>
+              v{Constants.expoConfig?.version ?? "1.0.0"}
+            </Text>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -628,31 +685,146 @@ const styles = StyleSheet.create({
   scrollContainer: {
     flexGrow: 1,
     paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 24,
+    justifyContent: "space-between",
+  },
+  scrollContainerTabletPortrait: {
+    paddingHorizontal: 32,
+    paddingTop: 56,
+    paddingBottom: 28,
+  },
+  scrollContainerLandscape: {
+    paddingHorizontal: 48,
+    paddingTop: 40,
+    paddingBottom: 32,
+  },
+  shell: {
+    width: "100%",
+    alignSelf: "center",
     justifyContent: "center",
+    flex: 1,
+  },
+  shellLandscape: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 72,
+    maxWidth: 1240,
   },
   header: {
     alignItems: "center",
-    marginBottom: 64,
+    marginBottom: 40,
+  },
+  headerTabletPortrait: {
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
+    marginBottom: 0,
+    paddingBottom: 24,
+  },
+  headerLandscape: {
+    flex: 1,
+    alignItems: "flex-start",
+    justifyContent: "center",
+    maxWidth: 520,
+    marginBottom: 0,
+    paddingLeft: 8,
   },
   logo: {
-    fontSize: 48,
-    fontWeight: "800",
-    letterSpacing: -1,
+    fontSize: 44,
+    fontWeight: "700",
+    letterSpacing: -1.5,
   },
+  logoTabletPortrait: { fontSize: 56 },
+  logoTabletLandscape: { fontSize: 64 },
   subtitle: {
-    fontSize: 16,
-    marginTop: 8,
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 12,
+    textAlign: "center",
   },
-  buttons: { gap: 12 },
+  subtitleTablet: {
+    fontSize: 17,
+  },
+  subtitleTabletLandscape: {
+    fontSize: 17,
+    textAlign: "left",
+    maxWidth: 360,
+  },
+  tertiaryTagline: {
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 18,
+    maxWidth: 320,
+  },
+  mark: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 18,
+  },
+  markText: {
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+  },
+  formCard: {
+    width: "100%",
+  },
+  formCardTabletPortrait: {
+    maxWidth: 480,
+    alignSelf: "center",
+    padding: 32,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  formCardTabletLandscape: {
+    flex: 1,
+    maxWidth: 420,
+    alignSelf: "center",
+    padding: 32,
+    borderRadius: 24,
+    borderWidth: 1,
+  },
+  buttons: {
+    gap: 0,
+  },
+  providerGroup: {
+    marginTop: 18,
+  },
   button: {
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 14,
+    minHeight: 48,
+    paddingVertical: 12,
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: 10,
     borderWidth: 1,
   },
-  buttonPressed: { opacity: 0.7 },
+  passkeyButton: {
+    minHeight: 56,
+    paddingVertical: 15,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  passkeySignupButton: {
+    minHeight: 48,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    marginTop: 2,
+  },
+  buttonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.985 }],
+  },
   buttonContent: {
     flexDirection: "row",
     alignItems: "center",
@@ -663,56 +835,82 @@ const styles = StyleSheet.create({
   },
   buttonTextCentered: {
     fontSize: 15,
+    fontWeight: "500",
+    textAlign: "center",
+  },
+  passkeyText: {
+    fontSize: 16,
     fontWeight: "600",
     textAlign: "center",
   },
+  passkeySignupText: {
+    fontSize: 15,
+    fontWeight: "600",
+  },
   footerContainer: {
-    marginTop: 48,
+    marginTop: 40,
     paddingBottom: 24,
     alignItems: "center",
+  },
+  footerContainerTabletPortrait: {
+    maxWidth: 480,
+    width: "100%",
+    alignSelf: "center",
+    marginTop: 28,
+  },
+  footerContainerLandscape: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 16,
+    marginTop: 0,
+    paddingHorizontal: 32,
   },
   footer: {
     fontSize: 12,
     textAlign: "center",
-    lineHeight: 18,
+    lineHeight: 17,
   },
   versionText: {
     fontSize: 11,
-    marginTop: 12,
-    opacity: 0.6,
+    marginTop: 8,
   },
   divider: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 24,
-    marginBottom: 24,
+    marginTop: 22,
+    marginBottom: 18,
   },
   dividerLine: {
     flex: 1,
     height: 1,
   },
   dividerText: {
-    marginHorizontal: 16,
-    fontSize: 13,
+    marginHorizontal: 14,
+    fontSize: 12,
     fontWeight: "500",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
   },
   emailForm: {
     gap: 12,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 14,
+    borderRadius: 10,
+    paddingVertical: 13,
     paddingHorizontal: 16,
     fontSize: 15,
   },
   errorText: {
     fontSize: 13,
     textAlign: "center",
+    lineHeight: 18,
   },
   submitButton: {
-    borderRadius: 12,
-    paddingVertical: 14,
+    minHeight: 48,
+    borderRadius: 10,
+    paddingVertical: 12,
     alignItems: "center",
     justifyContent: "center",
     marginTop: 4,
@@ -732,5 +930,8 @@ const styles = StyleSheet.create({
     textAlign: "right",
     marginTop: 2,
     marginBottom: 4,
+  },
+  loadingIcon: {
+    marginRight: 10,
   },
 });

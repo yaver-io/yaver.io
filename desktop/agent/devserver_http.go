@@ -1509,6 +1509,23 @@ func (s *HTTPServer) handleDevServerStart(w http.ResponseWriter, r *http.Request
 	}
 	req.WorkDir = resolvedWorkDir
 
+	// Fail fast if the workDir doesn't exist on this machine. Without
+	// this check, /dev/start happily accepts a Linux-only path on a
+	// macOS box (e.g. mobile UI carries the previous Remote Box's
+	// project across a switch), the operation enters "running"
+	// status, npm install fails seconds later with
+	// `chdir /root/<...>: no such file or directory`, and the user
+	// is left staring at a stuck failure card with a "Stop" button
+	// instead of a clean rejection.
+	if path := strings.TrimSpace(req.WorkDir); path != "" {
+		if stat, statErr := os.Stat(path); statErr != nil || !stat.IsDir() {
+			jsonReply(w, http.StatusNotFound, map[string]string{
+				"error": fmt.Sprintf("workDir not found on this machine: %s", path),
+			})
+			return
+		}
+	}
+
 	// Surface gate for the no-workspace-manifest path. The branch above
 	// only fires when the caller named an `App` from yaver.workspace.yaml.
 	// Without a manifest the dashboard's project-fallback picker can ask

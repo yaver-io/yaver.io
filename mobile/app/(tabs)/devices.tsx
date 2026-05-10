@@ -35,7 +35,6 @@ import {
   type MobileDeviceLifecycleState,
   type MobileDeviceStatusProbe,
 } from "../../src/lib/deviceStatus";
-import { Badge } from "../../src/components/Badge";
 import { lightCardShadow, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -55,9 +54,19 @@ function transportFor(device: Device): TransportInfo {
 }
 
 function TransportBadge({ device }: { device: Device }) {
+  const c = useColors();
   const t = transportFor(device);
-  const variant = t.tone === "emerald" ? "live" : t.tone === "blue" ? "ready" : "tech";
-  return <Badge variant={variant} label={t.label} />;
+  const toneColor =
+    t.tone === "emerald" ? c.success
+    : t.tone === "blue" ? c.info
+    : t.tone === "amber" ? c.warn
+    : c.textSecondary;
+  return (
+    <View style={[styles.neutralPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+      <View style={[styles.neutralPillDot, { backgroundColor: toneColor }]} />
+      <Text style={[styles.neutralPillText, { color: c.textSecondary }]}>{t.label}</Text>
+    </View>
+  );
 }
 
 function StatusChip({ tone, label, isDark }: {
@@ -65,13 +74,25 @@ function StatusChip({ tone, label, isDark }: {
   label: string;
   isDark: boolean;
 }) {
-  const variant =
-    tone === "emerald" ? "live"
-    : tone === "blue" ? "ready"
-    : tone === "violet" || tone === "indigo" ? "brand"
-    : tone === "amber" ? "warning"
-    : "tech";
-  return <Badge variant={variant} label={label} />;
+  const c = useColors();
+  const toneColor =
+    tone === "emerald" ? c.success
+    : tone === "blue" ? c.info
+    : tone === "violet" || tone === "indigo" ? c.accent
+    : tone === "amber" ? c.warn
+    : c.textSecondary;
+  const lead =
+    label.includes("★") ? "★"
+    : label.includes("☆") ? "☆"
+    : label === "CONNECTED" || label.includes("relay") || label.includes("READY") ? "●"
+    : null;
+  const cleanLabel = label.replace(" ★", "").replace(" ☆", "").replace("YAVER AUTH EXPIRED", "Auth expired").replace("READY TO CONNECT", "Ready").replace("CONNECTED", "Connected").replace("BOOTSTRAP", "Bootstrap").replace("SHARED", "Shared").replace("PRIMARY", "Primary").replace("SECONDARY", "Secondary").replace("RECOVERING…", "Recovering…").replace("PAIRING…", "Pairing…");
+  return (
+    <View style={[styles.neutralPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+      {lead ? <Text style={[styles.neutralPillLead, { color: toneColor }]}>{lead}</Text> : <View style={[styles.neutralPillDot, { backgroundColor: toneColor }]} />}
+      <Text style={[styles.neutralPillText, { color: c.textSecondary }]}>{cleanLabel}</Text>
+    </View>
+  );
 }
 
 type DeviceProjectSummary = {
@@ -140,7 +161,7 @@ function hasRecentLiveSignal(device: Pick<Device, "lastTunnelEvent">, maxAgeMs =
   );
 }
 
-function ConnectionBadge({ status }: { status: string }) {
+function ConnectionBadge({ status, label }: { status: string; label?: string }) {
   const c = useColors();
   const color =
     status === "connected" ? c.success
@@ -150,7 +171,7 @@ function ConnectionBadge({ status }: { status: string }) {
   return (
     <View style={[styles.connBadge, { backgroundColor: color + "22" }]}>
       <View style={[styles.connDot, { backgroundColor: color }]} />
-      <Text style={[styles.connText, { color }]}>{status}</Text>
+      <Text style={[styles.connText, { color }]}>{label || status}</Text>
     </View>
   );
 }
@@ -548,6 +569,8 @@ function DeviceCard({
       ? "Reclaim & Connect"
       : lifecycleState === "yaver-auth-expired"
         ? "Re-auth & Connect"
+        : lifecycleState === "connected" && !isActive
+          ? "Use This Device"
         : lifecycleState === "ready-to-connect"
           ? "Connect"
           : "Details";
@@ -561,6 +584,10 @@ function DeviceCard({
           : c.accent;
   const handleSmartConnect = async () => {
     if (recovering) return;
+    if (lifecycleState === "connected" && !isActive) {
+      await onSelect();
+      return;
+    }
     if (lifecycleState === "offline" || lifecycleState === "connected") {
       setDetailsOpen(true);
       return;
@@ -584,13 +611,13 @@ function DeviceCard({
         styles.card,
         {
           backgroundColor: c.bgCard,
-          borderColor: isActive ? c.accent : c.border,
-          borderWidth: isActive ? 1.5 : 1,
-          shadowColor: isActive ? c.accent : "#000",
-          shadowOpacity: isActive ? 0.3 : 0.4,
-          shadowRadius: isActive ? 16 : 12,
-          shadowOffset: { width: 0, height: 2 },
-          elevation: 2,
+          borderColor: c.borderSubtle,
+          borderWidth: 1,
+          shadowColor: !isDark ? c.shadowSm : "transparent",
+          shadowOpacity: !isDark ? 0.14 : 0,
+          shadowRadius: !isDark ? 12 : 0,
+          shadowOffset: { width: 0, height: 4 },
+          elevation: !isDark ? 2 : 0,
         },
         pressed && styles.cardPressed,
       ]}
@@ -625,28 +652,30 @@ function DeviceCard({
             <TransportBadge device={device} />
           </View>
           <Text style={[styles.deviceMeta, { color: c.textSecondary }]}>
-            {platformLabel} &middot; {device.host}
-            {device.isGuest && device.hostName ? ` · shared from ${device.hostName}` : ""}
+            {[platformLabel, device.host, device.isGuest && device.hostName ? `shared from ${device.hostName}` : ""].filter(Boolean).join(" · ")}
           </Text>
           <Text style={[styles.deviceMeta, { color: statusTone, marginTop: 4 }]}>
             {statusLabel}
             {device.lastSeen > 0 ? ` · ${timeSince(device.lastSeen)}` : ""}
           </Text>
-          <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
-            {lifecycleState === "bootstrap"
-              ? "Machine is up in bootstrap mode. Reclaim Yaver from this phone."
-              : lifecycleState === "yaver-auth-expired"
-                ? "Machine is up, but the agent session expired."
-                : lifecycleState === "ready-to-connect"
-                  ? "Machine is reachable or has a recent live signal."
-                  : lifecycleState === "offline"
-                    ? "No recent heartbeat. Power on and run yaver serve."
-                    : "This phone is attached to the device."}
-          </Text>
-          <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
-            {agentVersion ? `Yaver v${agentVersion}` : "Yaver version unknown"}
-            {projectSummary ? ` · ${projectCount} project${projectCount === 1 ? "" : "s"}` : ""}
-          </Text>
+          {lifecycleState === "bootstrap" || lifecycleState === "yaver-auth-expired" || lifecycleState === "ready-to-connect" || lifecycleState === "offline" || isActive ? (
+            <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
+              {lifecycleState === "bootstrap"
+                ? "Machine is up in bootstrap mode. Reclaim Yaver from this phone."
+                : lifecycleState === "yaver-auth-expired"
+                  ? "Machine is up, but the agent session expired."
+                  : lifecycleState === "ready-to-connect"
+                    ? "Machine is reachable or has a recent live signal."
+                    : lifecycleState === "offline"
+                      ? "No recent heartbeat. Power on and run yaver serve."
+                      : "This is the phone you're using."}
+            </Text>
+          ) : null}
+          {agentVersion || projectSummary ? (
+            <Text style={[styles.deviceMeta, { color: c.textSecondary, marginTop: 4 }]}>
+              {[agentVersion ? `Yaver v${agentVersion}` : "", projectSummary ? `${projectCount} project${projectCount === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")}
+            </Text>
+          ) : null}
         </View>
         <View style={styles.cardRight}>
           <View
@@ -666,23 +695,9 @@ function DeviceCard({
             style={[
               styles.pingBtn,
               {
-                backgroundColor:
-                  lifecycleState === "bootstrap"
-                    ? "#8b5cf618"
-                    : lifecycleState === "yaver-auth-expired"
-                      ? "#f59e0b18"
-                      : lifecycleState === "ready-to-connect"
-                        ? primaryActionTone + "22"
-                        : c.accent + "18",
+                backgroundColor: "transparent",
                 borderWidth: 1,
-                borderColor:
-                  lifecycleState === "bootstrap"
-                    ? "#8b5cf644"
-                    : lifecycleState === "yaver-auth-expired"
-                      ? "#f59e0b44"
-                      : lifecycleState === "ready-to-connect"
-                        ? primaryActionTone + "55"
-                        : c.accent + "40",
+                borderColor: c.accent + "55",
                 opacity: recovering ? 0.7 : 1,
               },
             ]}
@@ -701,7 +716,7 @@ function DeviceCard({
           </Pressable>
           {primaryActionLabel === "Details" ? null : (
             <Pressable
-              style={[styles.pingBtn, { backgroundColor: c.accent + "18" }]}
+              style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.accent + "55" }]}
               onPress={() => setDetailsOpen(true)}
             >
               <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>Details</Text>
@@ -715,26 +730,26 @@ function DeviceCard({
           {!device.isGuest && !isPrimary ? (
             isSecondary && onUnsetSecondary ? (
               <Pressable
-                style={[styles.pingBtn, { backgroundColor: "#8b5cf618", borderWidth: 1, borderColor: "#8b5cf655" }]}
+                style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.accent + "55" }]}
                 onPress={onUnsetSecondary}
               >
-                <Text style={[styles.pingBtnText, { color: "#8b5cf6", fontWeight: "700" }]}>★ Unmark Secondary</Text>
+                <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>★ Unmark Secondary</Text>
               </Pressable>
             ) : onSetSecondary ? (
               <Pressable
-                style={[styles.pingBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
+                style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.accent + "55" }]}
                 onPress={onSetSecondary}
               >
-                <Text style={[styles.pingBtnText, { color: c.textSecondary, fontWeight: "700" }]}>☆ Make Secondary</Text>
+                <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>☆ Make Secondary</Text>
               </Pressable>
             ) : null
           ) : null}
           {!device.isGuest && !isPrimary && !isSecondary && onSetPrimary ? (
             <Pressable
-              style={[styles.pingBtn, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}
+              style={[styles.pingBtn, { backgroundColor: "transparent", borderWidth: 1, borderColor: c.accent + "55" }]}
               onPress={onSetPrimary}
             >
-              <Text style={[styles.pingBtnText, { color: c.textSecondary, fontWeight: "700" }]}>★ Make Primary</Text>
+              <Text style={[styles.pingBtnText, { color: c.accent, fontWeight: "700" }]}>★ Make Primary</Text>
             </Pressable>
           ) : null}
         </View>
@@ -898,6 +913,24 @@ export default function DevicesScreen() {
     connectedDeviceIds,
   } = useDevice();
   const connectedSet = useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
+  const anyPoolConnected = connectedDeviceIds.length > 0;
+  // Cards already treat the connection pool as the source of truth:
+  // any device with a live pooled QuicClient renders CONNECTED even if
+  // the focused client is mid-switch. Promote the header banner the
+  // same way so it doesn't claim "connecting" while multiple cards
+  // directly below it are green.
+  const effectiveConnectionStatus: "disconnected" | "connecting" | "connected" =
+    connectionStatus === "connected"
+      ? "connected"
+      : connectionStatus === "error"
+        ? "connecting"
+        : anyPoolConnected
+          ? "connected"
+          : connectionStatus;
+  const connectionBadgeLabel =
+    effectiveConnectionStatus === "connected" && connectedDeviceIds.length > 1
+      ? `${connectedDeviceIds.length} connected`
+      : effectiveConnectionStatus;
   const [pendingBusyId, setPendingBusyId] = useState<string | null>(null);
 
   // Auto-open device details when navigated in with ?openDetails=<id>.
@@ -1091,11 +1124,11 @@ export default function DevicesScreen() {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={[styles.container, useMasterDetail ? { flexDirection: "row" } : null]}>
       <View style={useMasterDetail ? { width: 380, borderRightWidth: 1, borderRightColor: c.border } : { flex: 1 }}>
-        {activeDevice && connectionStatus !== "disconnected" && (
+        {(activeDevice || anyPoolConnected) && effectiveConnectionStatus !== "disconnected" && (
           <View style={[styles.statusBar, { borderBottomColor: c.border }]}>
-            <ConnectionBadge status={connectionStatus} />
-            {(connectionStatus === "connected" || connectionStatus === "error") && (
-              <Pressable style={[styles.disconnectBtn, { backgroundColor: c.bgCardElevated }]} onPress={disconnect}>
+            <ConnectionBadge status={effectiveConnectionStatus} label={connectionBadgeLabel} />
+            {(anyPoolConnected || activeDevice) && (
+              <Pressable style={styles.disconnectBtn} onPress={disconnect}>
                 <Text style={[styles.disconnectText, { color: c.error }]}>Disconnect</Text>
               </Pressable>
             )}
@@ -1105,7 +1138,7 @@ export default function DevicesScreen() {
         {/* Guest code input */}
         <View style={[styles.guestCodeRow, { borderBottomColor: c.border }]}>
           <TextInput
-            style={[styles.guestCodeInput, { backgroundColor: c.bgCard, borderColor: c.border, color: c.textPrimary }]}
+            style={[styles.guestCodeInput, { backgroundColor: c.bgCard, borderColor: c.borderSubtle, color: c.textPrimary }]}
             placeholder="Invite code"
             placeholderTextColor={c.textMuted}
             value={guestCode}
@@ -1114,9 +1147,9 @@ export default function DevicesScreen() {
             maxLength={6}
           />
           <Pressable
-            style={[styles.guestCodeBtn, { backgroundColor: c.accent, opacity: guestCode.trim().length < 4 ? 0.4 : 1 }]}
+            style={[styles.guestCodeBtn, { backgroundColor: guestCode.trim().length >= 6 ? c.accent : c.accent + "33" }]}
             onPress={handleAcceptGuestCode}
-            disabled={guestCode.trim().length < 4 || guestLoading}
+            disabled={guestCode.trim().length < 6 || guestLoading}
           >
             <Text style={styles.guestCodeBtnText}>{guestLoading ? "..." : "Join"}</Text>
           </Pressable>

@@ -15,7 +15,7 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useDevice } from "../../src/context/DeviceContext";
-import { useColors } from "../../src/context/ThemeContext";
+import { useColors, useTheme } from "../../src/context/ThemeContext";
 import {
   quicClient,
   type DevServerStatus,
@@ -135,6 +135,7 @@ const VIEW_MODE_KEY = "@yaver/tablet/view_mode";
 
 export default function HotReloadScreen() {
   const c = useColors();
+  const { isDark } = useTheme();
   const router = useRouter();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("wide");
@@ -786,29 +787,29 @@ export default function HotReloadScreen() {
     <SafeAreaView style={[s.safe, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <RemoteBoxBanner
         extra={
-          <View style={{ gap: 2 }}>
-            <Text style={[s.projectMeta, { color: c.textSecondary }]} numberOfLines={1}>
+          <View style={s.bannerExtra}>
+            <Text style={[s.bannerChipText, { color: c.textSecondary }]}>
               Go agent {agentInfo?.version || activeDevice?.agentVersion || "unknown"}
             </Text>
             {remoteHermesReady ? (
-              <Text style={[s.projectMeta, { color: remoteHermesReady.enabled ? c.success : c.warn, fontWeight: "600" }]}>
+              <Text style={[s.bannerChipText, { color: remoteHermesReady.enabled ? c.success : c.warn }]}>
                 {remoteHermesReady.enabled ? "Hermes reload ready" : remoteHermesReady.reason || "Hermes reload prerequisites missing"}
-              </Text>
-            ) : null}
-            {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
-              <Text style={[s.projectMeta, { color: c.textMuted }]}>
-                {remoteHermesReady.notes[0]}
               </Text>
             ) : null}
             {agentInfo?.workDir ? (
               <Text
                 style={[
-                  s.projectPath,
+                  s.bannerPath,
                   { color: c.textTertiary, fontFamily: Platform.OS === "ios" ? "SF Mono" : "monospace" },
                 ]}
                 numberOfLines={1}
               >
                 {agentInfo.workDir}
+              </Text>
+            ) : null}
+            {!remoteHermesReady?.enabled && remoteHermesReady?.notes?.[0] ? (
+              <Text style={[s.bannerNote, { color: c.textMuted }]} numberOfLines={2}>
+                {remoteHermesReady.notes[0]}
               </Text>
             ) : null}
           </View>
@@ -819,7 +820,7 @@ export default function HotReloadScreen() {
         {mobileWorkers.length > 0 && (
           <>
             <Text style={[s.sectionTitle, { color: c.textMuted }]}>Preview Target</Text>
-            <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.border }]}>
+            <View style={[s.card, s.projectCard, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }, !isDark && { shadowColor: c.shadowSm }]}>
               <Text style={[s.projectName, { color: c.textPrimary }]}>Choose real-device Hermes target</Text>
               <Text style={[s.projectMeta, { color: c.textMuted, marginTop: 4 }]}>
                 Default stays on this phone. Pick a spare mobile worker only when you want Hermes preview to target that device.
@@ -830,8 +831,8 @@ export default function HotReloadScreen() {
                   style={[
                     s.targetChip,
                     {
-                      borderColor: !selectedTarget ? c.accent : c.border,
-                      backgroundColor: !selectedTarget ? c.accent + "22" : c.bg,
+                      borderColor: !selectedTarget ? c.accent : "transparent",
+                      backgroundColor: !selectedTarget ? c.accentSoft : c.bgInput,
                     },
                   ]}
                 >
@@ -846,8 +847,8 @@ export default function HotReloadScreen() {
                     style={[
                       s.targetChip,
                       {
-                        borderColor: selectedTarget?.id === worker.id ? c.accent : c.border,
-                        backgroundColor: selectedTarget?.id === worker.id ? c.accent + "22" : c.bg,
+                        borderColor: selectedTarget?.id === worker.id ? c.accent : "transparent",
+                        backgroundColor: selectedTarget?.id === worker.id ? c.accentSoft : c.bgInput,
                       },
                     ]}
                   >
@@ -866,13 +867,35 @@ export default function HotReloadScreen() {
           <View style={[
             s.card,
             s.activeCard,
-            !devStatus.running && !devStatus.error && { borderColor: c.warn, backgroundColor: c.bgCard },
-            !!devStatus.error && { borderColor: c.error, backgroundColor: c.bgCard },
+            {
+              backgroundColor: c.bgCardElevated,
+              borderColor: isDark ? c.accent + "55" : c.borderSubtle,
+            },
+            !isDark && { shadowColor: c.shadowSm },
           ]}>
             <View style={s.cardHeader}>
-              <View style={[s.statusDot, { backgroundColor: devStatus.error ? "#ef4444" : devStatus.running ? "#22c55e" : "#f59e0b" }]} />
               <View style={s.cardTitleContainer}>
-                <Text style={[s.cardTitle, { color: c.textPrimary }]}>{runningProject}</Text>
+                <View style={s.activeTitleRow}>
+                  <Text style={[s.cardTitle, { color: c.textPrimary }]}>{runningProject}</Text>
+                  <View
+                    style={[
+                      s.statusPill,
+                      {
+                        backgroundColor: devStatus.error ? c.errorBg : devStatus.running ? c.successBg : c.warnBg,
+                        borderColor: devStatus.error ? c.errorBorder : devStatus.running ? c.successBorder : c.warnBorder,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        s.statusPillText,
+                        { color: devStatus.error ? c.error : devStatus.running ? c.success : c.warn },
+                      ]}
+                    >
+                      {devStatus.error ? "Failed" : devStatus.running ? "Running" : "Building"}
+                    </Text>
+                  </View>
+                </View>
                 <Text style={[s.cardMeta, { color: c.textSecondary }]}>
                   {devStatus.error
                     ? `${devStatus.framework} · failed to start`
@@ -880,79 +903,52 @@ export default function HotReloadScreen() {
                       ? `${devStatus.framework} · port ${devStatus.port} · hot reload ${devStatus.hotReload ? "on" : "off"}`
                       : `${devStatus.framework} · starting...`}
                 </Text>
-                <Text style={[s.cardMeta, { color: c.success }]}>
-                  mode · {devStatus.iosInstallMethod === "native" ? "native install" : "Hermes bytecode"}
-                </Text>
-                {devStatus.iosInstallReason && devStatus.iosInstallMethod === "native" ? (
-                  <Text style={[s.cardMeta, { color: "#d1d5db" }]}>
-                    {devStatus.iosInstallReason}
-                  </Text>
-                ) : null}
-                {runningGuidance ? (
-                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
-                    {runningGuidance}
-                  </Text>
-                ) : null}
-                {(devStatus.targetDeviceName || selectedTarget?.name) && (
-                  <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
-                    target · {devStatus.targetDeviceName || selectedTarget?.name}
-                  </Text>
-                )}
-                {workerSession?.hasTarget && (
-                  <Text style={[s.cardMeta, { color: workerSession.workerOnline ? "#86efac" : "#fbbf24" }]}>
-                    worker · {workerSession.workerOnline ? "online" : "offline"}
-                  </Text>
-                )}
-                {agentInfo?.version ? (
-                  <Text style={[s.cardMeta, { color: "#cbd5e1" }]}>
-                    remote box · {agentInfo.hostname || "unknown host"} · Go agent {agentInfo.version}
-                  </Text>
-                ) : null}
-                {!devStatus.targetDeviceName && !selectedTarget && (
-                  <Text style={[s.cardMeta, { color: "#7dd3fc" }]}>
-                    target · this device
+                {(devStatus.targetDeviceName || selectedTarget?.name || !devStatus.targetDeviceName) && (
+                  <Text style={[s.cardMeta, { color: c.textMuted }]}>
+                    <Text style={{ color: c.accent }}>target · </Text>
+                    {devStatus.targetDeviceName || selectedTarget?.name || "this device"}
                   </Text>
                 )}
               </View>
               {!devStatus.running && !devStatus.error && <ActivityIndicator size="small" color={c.warn} />}
             </View>
             {loadingStatus ? (
-              <Text style={{ color: "#9ca3af", fontSize: 11, marginTop: 4 }}>{loadingStatus}</Text>
+              <Text style={[s.inlineMeta, { color: c.textMuted }]}>{loadingStatus}</Text>
             ) : null}
             {currentOperation ? (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#0b1220", borderWidth: 1, borderColor: "#1d4ed8" }}>
-                <Text style={{ color: "#93c5fd", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
-                  agent operation
+              <View style={[s.insetCard, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                <Text style={[s.insetLabel, { color: c.textSecondary }]}>
+                  {"\u25CF"} agent operation
                 </Text>
-                <Text style={{ color: "#dbeafe", fontSize: 11 }}>
+                <Text style={[s.insetMeta, { color: c.textSecondary }]}>
                   {currentOperation.kind} · {currentOperation.status}
                   {currentOperation.phase ? ` · ${currentOperation.phase}` : ""}
                 </Text>
                 {currentOperation.message ? (
-                  <Text style={{ color: "#bfdbfe", fontSize: 11, marginTop: 4 }}>
+                  <Text style={[s.insetBody, { color: c.textPrimary }]}>
                     {currentOperation.message}
                   </Text>
                 ) : null}
                 {runtimeFamilyLine ? (
-                  <Text style={{ color: "#93c5fd", fontSize: 11, marginTop: 4 }}>
+                  <Text style={[s.insetCaption, { color: c.textMuted }]}>
                     {runtimeFamilyLine}
                   </Text>
                 ) : null}
               </View>
             ) : null}
             {showCurrentIncident && currentIncident ? (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>
-                <Text style={{ color: "#fca5a5", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+              <View style={[s.insetCard, { backgroundColor: c.errorBg, borderColor: c.errorBorder }]}>
+                <Text style={[s.insetLabel, { color: c.error }]}>
                   current blocker
                 </Text>
-                <Text style={{ color: "#fecaca", fontSize: 11, fontWeight: "600" }}>
+                <Text style={[s.insetMeta, { color: c.error }]}>
                   {currentIncident.title || currentIncident.code}
                 </Text>
-                <Text style={{ color: "#fecaca", fontSize: 11, marginTop: 4 }}>
+                <Text style={[s.insetBody, { color: c.error }]}>
                   {currentIncident.userMessage}
                 </Text>
                 {currentIncident.suggestedAction ? (
-                  <Text style={{ color: "#fda4af", fontSize: 10, marginTop: 4 }}>
+                  <Text style={[s.insetCaption, { color: c.error }]}>
                     Next: {currentIncident.suggestedAction}
                   </Text>
                 ) : null}
@@ -967,11 +963,11 @@ export default function HotReloadScreen() {
                 running/reloading rather than reading old crash dumps. */}
             {/* Failure banner: shows the server-captured reason (stderr tail, missing tool, etc.) */}
             {devStatus.error ? (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#2a0a0a", borderWidth: 1, borderColor: "#ef444466" }}>
-                <Text style={{ color: "#f87171", fontSize: 12, fontWeight: "600", marginBottom: 4 }}>
+              <View style={[s.insetCard, { backgroundColor: c.errorBg, borderColor: c.errorBorder }]}>
+                <Text style={[s.insetLabel, { color: c.error }]}>
                   Start failed
                 </Text>
-                <Text style={{ color: "#fecaca", fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }} numberOfLines={10}>
+                <Text style={[s.errorMono, { color: c.error, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]} numberOfLines={10}>
                   {String(devStatus.error).trim()}
                 </Text>
               </View>
@@ -980,14 +976,14 @@ export default function HotReloadScreen() {
                 Shows the last ~6 lines so the user sees progress during "starting…" and
                 the actual log tail on failure. */}
             {devLog.length > 0 ? (
-              <View style={{ marginTop: 8, padding: 8, borderRadius: 6, backgroundColor: "#0b0b0b", borderWidth: 1, borderColor: "#333" }}>
-                <Text style={{ color: "#9ca3af", fontSize: 10, fontWeight: "600", marginBottom: 4 }}>
+              <View style={[s.insetCard, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                <Text style={[s.insetLabel, { color: c.textSecondary }]}>
                   agent activity
                 </Text>
                 {devLog.slice(-6).map((line, i) => (
                   <Text
                     key={`${i}-${line.length}`}
-                    style={{ color: "#cbd5e1", fontSize: 10, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}
+                    style={{ color: isDark ? c.textSecondary : c.textTertiary, fontSize: 11, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}
                     numberOfLines={1}
                   >
                     {line}
@@ -1000,24 +996,33 @@ export default function HotReloadScreen() {
                 <>
                   <Pressable style={[s.actionBtn, s.openBtn]} onPress={handleOpen} disabled={nativeLoading}>
                     {nativeLoading ? (
-                      <ActivityIndicator size="small" color="#000" />
+                      <View style={s.actionBtnRow}>
+                        <ActivityIndicator size="small" color="#fff" />
+                        <Text style={s.openBtnText}>Opening…</Text>
+                      </View>
                     ) : (
                       <Text style={s.openBtnText}>Open in Yaver</Text>
                     )}
                   </Pressable>
-                  <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleReload}>
-                    <Text style={s.reloadBtnText}>{"\u21BB"} Reload</Text>
+                  <Pressable
+                    style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                    onPress={handleReload}
+                  >
+                    <Text style={[s.reloadBtnText, { color: c.accent }]}>{"\u21BB"} Reload</Text>
                   </Pressable>
                   {workerSession?.hasTarget && workerSession.workerOnline && (
-                    <Pressable style={[s.actionBtn, s.reloadBtn]} onPress={handleRequestScreenshot}>
-                      <Text style={s.reloadBtnText}>Shot</Text>
+                    <Pressable
+                      style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                      onPress={handleRequestScreenshot}
+                    >
+                      <Text style={[s.reloadBtnText, { color: c.accent }]}>Shot</Text>
                     </Pressable>
                   )}
                 </>
               )}
               {devStatus.error && devStatus.workDir && devStatus.framework && (
                 <Pressable
-                  style={[s.actionBtn, s.reloadBtn]}
+                  style={[s.actionBtn, s.reloadBtn, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
                   onPress={() => {
                     const framework = devStatus.framework || "";
                     const workDir = devStatus.workDir || "";
@@ -1030,16 +1035,16 @@ export default function HotReloadScreen() {
                     }).catch(() => Alert.alert("Retry failed", "Could not restart the dev server"));
                   }}
                 >
-                  <Text style={s.reloadBtnText}>Retry</Text>
+                  <Text style={[s.reloadBtnText, { color: c.accent }]}>Retry</Text>
                 </Pressable>
               )}
               <Pressable
-                style={[s.actionBtn, s.stopBtn, stopState === "stopping" && { opacity: 0.6 }]}
+                style={[s.actionBtn, s.stopBtn, { backgroundColor: c.errorBg, borderColor: c.errorBorder }, stopState === "stopping" && { opacity: 0.6 }]}
                 onPress={handleStop}
                 disabled={stopState === "stopping"}
               >
                 {stopState === "stopping" ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <View style={s.actionBtnRow}>
                     <ActivityIndicator size="small" color="#fff" />
                     <Text style={s.stopBtnText}>Stopping…</Text>
                   </View>
@@ -1059,25 +1064,20 @@ export default function HotReloadScreen() {
             the request. */}
         {(stopState === "stopped" || stopState === "error") && (
           <View
-            style={{
-              marginHorizontal: 16,
-              marginTop: 12,
-              padding: 12,
-              borderRadius: 10,
-              borderWidth: StyleSheet.hairlineWidth,
-              backgroundColor: stopState === "stopped" ? "#0f3a1f" : "#3a1f1f",
-              borderColor: stopState === "stopped" ? "#16a34a" : "#dc2626",
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 10,
-            }}
+            style={[
+              s.stopBanner,
+              {
+                backgroundColor: stopState === "stopped" ? c.successBg : c.errorBg,
+                borderColor: stopState === "stopped" ? c.successBorder : c.errorBorder,
+              },
+            ]}
           >
             <Text style={{ fontSize: 18 }}>{stopState === "stopped" ? "✓" : "⚠"}</Text>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: "#fff", fontSize: 13, fontWeight: "600" }}>
+              <Text style={{ color: stopState === "stopped" ? c.success : c.error, fontSize: 13, fontWeight: "600" }}>
                 {stopState === "stopped" ? "Dev server stopped" : "Stop incomplete"}
               </Text>
-              <Text style={{ color: "#cbd5e1", fontSize: 11, marginTop: 2 }}>
+              <Text style={{ color: c.textSecondary, fontSize: 11, marginTop: 2 }}>
                 {stopState === "stopped"
                   ? stopBuildsCancelled > 0
                     ? `Subprocess confirmed exit. Cancelled ${stopBuildsCancelled} in-flight build${stopBuildsCancelled === 1 ? "" : "s"}.`
@@ -1111,7 +1111,8 @@ export default function HotReloadScreen() {
                 style={[
                   s.card,
                   s.projectCard,
-                  { backgroundColor: c.bgCard, borderColor: c.border },
+                  { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
+                  !isDark && { shadowColor: c.shadowSm },
                   projectCols > 1 ? { flex: 1, maxWidth: `${100 / projectCols}%` } : null,
                 ]}
                 onPress={() => handleStartProject(item)}
@@ -1125,8 +1126,8 @@ export default function HotReloadScreen() {
                     <Text style={[s.projectName, { color: c.textPrimary }]}>{displayProjectTitle(item)}</Text>
                     <View style={s.tagRow}>
                       {item.tags?.map((tag) => (
-                        <View key={tag} style={s.tag}>
-                          <Text style={s.tagText}>{tag}</Text>
+                        <View key={tag} style={[s.tag, { backgroundColor: c.accentSoft, borderColor: "transparent" }]}>
+                          <Text style={[s.tagText, { color: c.accent }]}>{tag}</Text>
                         </View>
                       ))}
                     </View>
@@ -1156,17 +1157,29 @@ export default function HotReloadScreen() {
           }}
           ListEmptyComponent={
             <View style={s.emptyList}>
-              <Text style={[s.emptySubtitle, { color: c.textMuted }]}>
-                {projectsScanning
-                  ? `Discovering mobile projects on ${agentInfo?.hostname || activeDevice?.name || "remote box"}…`
-                  : projects.length > 0
-                  ? `No mobile projects found on ${agentInfo?.hostname || activeDevice?.name || "this box"}.\nLooking for Hermes apps and native Swift/Kotlin projects.`
-                  : `No projects discovered on ${agentInfo?.hostname || activeDevice?.name || "this box"}.\nThe agent scans your home directory automatically.`}
-              </Text>
+              <View
+                style={[
+                  s.emptyStateCard,
+                  { backgroundColor: c.bgCardElevated, borderColor: c.borderSubtle },
+                  !isDark && { shadowColor: c.shadowSm },
+                ]}
+              >
+                <Ionicons name="folder-open-outline" size={32} color={c.textMuted} style={{ marginBottom: 12 }} />
+                <Text style={[s.emptyStateTitle, { color: c.textPrimary }]}>
+                  {projectsScanning ? "Discovering apps" : "No apps yet"}
+                </Text>
+                <Text style={[s.emptyStateBody, { color: c.textSecondary }]}>
+                  {projectsScanning
+                    ? `Discovering mobile projects on ${agentInfo?.hostname || activeDevice?.name || "remote box"}…`
+                    : projects.length > 0
+                    ? `No mobile projects found on ${agentInfo?.hostname || activeDevice?.name || "this box"}. Looking for Hermes apps and native Swift/Kotlin projects.`
+                    : `No projects discovered on ${agentInfo?.hostname || activeDevice?.name || "this box"}. The agent scans your home directory automatically.`}
+                </Text>
+              </View>
               {projectsScanning && scanStalled ? (
                 <Pressable
                   onPress={() => router.push("/(tabs)/devices")}
-                  style={{ marginTop: 8 }}
+                  style={[s.warnCallout, { backgroundColor: c.warnBg, borderColor: c.warnBorder }]}
                   hitSlop={8}
                 >
                   <Text style={{ color: c.warn, fontSize: 12, textAlign: "center", lineHeight: 18 }}>
@@ -1176,7 +1189,7 @@ export default function HotReloadScreen() {
                 </Pressable>
               ) : null}
               <Pressable
-                style={[s.rediscoverBtn, { borderColor: c.border, backgroundColor: c.bgCard }]}
+                style={[s.rediscoverBtn, { borderColor: c.accent, backgroundColor: c.accent }]}
                 onPress={async () => {
                   try {
                     setProjectsScanning(true);
@@ -1186,17 +1199,17 @@ export default function HotReloadScreen() {
                   } catch {}
                 }}
               >
-                <Text style={[s.rediscoverBtnText, { color: c.textPrimary }]}>
+                <Text style={[s.rediscoverBtnText, { color: c.textInverse }]}>
                   {projectsScanning ? "Discovering..." : "Rediscover"}
                 </Text>
               </Pressable>
               {projectsScanning ? (
                 <Pressable
-                  style={[s.rediscoverBtn, { borderColor: "#ef444466", backgroundColor: "#ef444411" }]}
+                  style={[s.rediscoverBtn, { borderColor: c.errorBorder, backgroundColor: c.errorBg }]}
                   onPress={() => { void handleStopDiscovery(); }}
                   disabled={scanStopping}
                 >
-                  <Text style={[s.rediscoverBtnText, { color: "#f87171" }]}>
+                  <Text style={[s.rediscoverBtnText, { color: c.error }]}>
                     {scanStopping ? "Stopping..." : "Stop Discovery"}
                   </Text>
                 </Pressable>
@@ -1222,36 +1235,46 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Section
-  sectionTitle: { ...typography.badge, textTransform: "uppercase", letterSpacing: 1.2, marginHorizontal: 16, marginTop: 24, marginBottom: 12 },
+  sectionTitle: { ...typography.badge, textTransform: "uppercase", letterSpacing: 0.5, marginHorizontal: 16, marginTop: 24, marginBottom: 8 },
 
   // Cards
   card: {
     marginHorizontal: spacing.lg,
-    borderRadius: 16,
+    borderRadius: 14,
     paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
+    paddingVertical: 16,
     marginBottom: spacing.md,
     borderWidth: 1,
     ...lightCardShadow,
   },
   activeCard: {
     borderWidth: 1,
-    borderColor: "#6E56F6",
     marginTop: 12,
   },
   cardHeader: { flexDirection: "row", alignItems: "center", gap: 10 },
   cardTitleContainer: { flex: 1 },
-  cardTitle: { ...typography.cardTitle, fontSize: 17 },
-  cardMeta: { ...typography.caption, color: "#5A5A66", marginTop: 3 },
+  cardTitle: { ...typography.cardTitle, fontSize: 16, fontWeight: "600" },
+  cardMeta: { ...typography.caption, fontSize: 13, marginTop: 4 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
+  activeTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
+  statusPill: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },
+  statusPillText: { fontSize: 11, fontWeight: "700" },
+  inlineMeta: { fontSize: 11, marginTop: 4 },
+  insetCard: { marginTop: 10, padding: 12, borderRadius: 10, borderWidth: 1 },
+  insetLabel: { fontSize: 12, fontWeight: "600", marginBottom: 4 },
+  insetMeta: { fontSize: 12, marginBottom: 4 },
+  insetBody: { fontSize: 13, lineHeight: 18 },
+  insetCaption: { fontSize: 11, marginTop: 4 },
+  errorMono: { fontSize: 11, lineHeight: 16, marginTop: 2 },
 
   cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
-  actionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
-  openBtn: { backgroundColor: "#22c55e", flex: 1, alignItems: "center" },
-  openBtnText: { color: "#000", fontSize: 13, fontWeight: "700" },
-  reloadBtn: { backgroundColor: "#22c55e22", flex: 1, alignItems: "center" },
-  reloadBtnText: { color: "#22c55e", fontSize: 13, fontWeight: "600" },
-  stopBtn: { backgroundColor: "#ef444422", paddingHorizontal: 16, alignItems: "center" },
+  actionBtn: { paddingVertical: 11, paddingHorizontal: 14, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  actionBtnRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  openBtn: { flex: 2, alignItems: "center" },
+  openBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  reloadBtn: { borderWidth: 1, flex: 1, alignItems: "center" },
+  reloadBtnText: { color: "#6E56F6", fontSize: 13, fontWeight: "600" },
+  stopBtn: { borderWidth: 1, paddingHorizontal: 16, alignItems: "center" },
   stopBtnText: { color: "#ef4444", fontSize: 13, fontWeight: "600" },
 
   // Framework icon
@@ -1261,11 +1284,13 @@ const s = StyleSheet.create({
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 4, marginTop: 3 },
   tag: {
     backgroundColor: "#6366f115",
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: "transparent",
   },
-  tagText: { color: "#818cf8", fontSize: 9, fontWeight: "600" },
+  tagText: { color: "#818cf8", fontSize: 11, fontWeight: "600" },
 
   // Project cards
   projectCard: { borderWidth: 1 },
@@ -1277,9 +1302,13 @@ const s = StyleSheet.create({
   targetChip: {
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
   },
+  bannerExtra: { flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap", backgroundColor: "transparent" },
+  bannerChipText: { fontSize: 12, fontWeight: "600", backgroundColor: "transparent" },
+  bannerPath: { ...typography.path, fontSize: 11 },
+  bannerNote: { fontSize: 11, lineHeight: 16, width: "100%" },
 
   // Empty
   emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center", padding: 40 },
@@ -1287,7 +1316,30 @@ const s = StyleSheet.create({
   emptyTitle: { fontSize: 18, fontWeight: "700", marginBottom: 4 },
   emptySubtitle: { fontSize: 13, textAlign: "center", lineHeight: 20 },
   emptyList: { padding: 40, alignItems: "center" },
+  emptyStateCard: {
+    width: "100%",
+    maxWidth: 360,
+    paddingHorizontal: 24,
+    paddingVertical: 24,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: "center",
+    marginBottom: 14,
+  },
+  emptyStateTitle: { fontSize: 16, fontWeight: "600", marginBottom: 8 },
+  emptyStateBody: { fontSize: 13, lineHeight: 19, textAlign: "center" },
+  warnCallout: { marginTop: 8, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, borderWidth: 1 },
   rediscoverBtn: { marginTop: 14, borderWidth: 1, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 10 },
   rediscoverBtnText: { fontSize: 14, fontWeight: "600" },
+  stopBanner: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
 
 });

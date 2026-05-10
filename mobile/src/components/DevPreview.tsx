@@ -16,35 +16,6 @@ import { useColors } from "../context/ThemeContext";
 import { loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
-import { VibePreviewModal } from "./VibePreviewModal";
-
-// Web frameworks where the vibe-preview modal makes sense — chromedp on
-// the agent host can navigate to the dev server URL and capture frames.
-// Native RN/Expo runs in this very mobile app, not in headless Chrome,
-// so the modal isn't useful for those.
-function isWebFrameworkForVibePreview(status: DevServerStatus | null): boolean {
-  const framework = String(status?.framework || "").toLowerCase();
-  return framework === "vite" || framework === "nextjs" || framework === "next" ||
-    framework === "astro" || framework === "web" || status?.devMode === "web";
-}
-
-// Best-effort project name for the vibe-preview session. The agent's
-// devserver_http.go reports workDir on /dev/status; the trailing path
-// segment is what humans recognise as the project name.
-function vibePreviewProjectFromStatus(status: DevServerStatus | null): string {
-  const wd = status?.workDir;
-  if (!wd) return "vibe-preview";
-  const segs = wd.split("/").filter(Boolean);
-  return segs[segs.length - 1] || "vibe-preview";
-}
-
-// Dev-server URL the agent's chromedp will navigate to. Always
-// localhost from the agent's perspective — the headless Chrome runs
-// on the same host as the dev server.
-function vibePreviewTargetUrlFromStatus(status: DevServerStatus | null): string {
-  const port = status?.port || 3000;
-  return `http://127.0.0.1:${port}`;
-}
 
 /**
  * Dev Preview.
@@ -80,7 +51,6 @@ export function DevPreview() {
   const c = useColors();
   const [status, setStatus] = useState<DevServerStatus | null>(null);
   const [showPreview, setShowPreview] = useState(false);
-  const [showVibePreview, setShowVibePreview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [webViewKey, setWebViewKey] = useState(0);
   const wasRunning = useRef(false);
@@ -439,39 +409,40 @@ export function DevPreview() {
   if (!status) return null;
 
   const bundleUrl = quicClient.getDevServerBundleUrl(status.bundleUrl || "/dev/");
+  const tone = status.building
+    ? { border: c.warnBorder, bg: c.warnBg, text: c.warn }
+    : { border: c.successBorder, bg: c.bgCard, text: c.success };
+  const actionBg = status.building ? c.warn : c.success;
 
   return (
     <>
-      {/* Banner */}
-      <Pressable
+      <View
         style={[styles.banner, {
-          backgroundColor: status.building ? "#1a1a0f" : "#0f1a0f",
-          borderColor: status.building ? "#eab308" : "#22c55e",
+          backgroundColor: tone.bg,
+          borderColor: tone.border,
         }]}
-        onPress={status.building ? undefined : handleOpen}
-        disabled={!!status.building}
       >
         <View style={styles.bannerLeft}>
           {status.building ? (
-            <ActivityIndicator size="small" color="#eab308" />
+            <ActivityIndicator size="small" color={tone.text} />
           ) : (
-            <View style={[styles.dot, { backgroundColor: "#22c55e" }]} />
+            <View style={[styles.dot, { backgroundColor: tone.text }]} />
           )}
           <View style={{ flex: 1 }}>
-            <Text style={styles.bannerTitle}>
+            <Text style={[styles.bannerTitle, { color: c.textPrimary }]}>
               {status.building ? "Building native app..." : `${status.framework} dev server`}
             </Text>
             {status.workDir && (
-              <Text style={styles.bannerSubtitle} numberOfLines={1}>
+              <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
                 {status.workDir.split("/").pop()}
               </Text>
             )}
-            <Text style={[styles.bannerSubtitle, { color: "#7dd3fc", marginTop: 2 }]} numberOfLines={1}>
+            <Text style={[styles.bannerSubtitle, { color: c.textMuted, marginTop: 2 }]} numberOfLines={1}>
               {`target · ${status.targetDeviceName || "this device"}`}
             </Text>
             {lastLogLine ? (
               <Text style={[styles.bannerSubtitle, {
-                color: status.building ? "#eab308" : "#6b7280",
+                color: tone.text,
                 fontSize: 10,
                 marginTop: 2,
                 fontFamily: "monospace",
@@ -482,47 +453,36 @@ export function DevPreview() {
           </View>
         </View>
         <View style={styles.bannerRight}>
-          {status.building ? (
-            <Text style={[styles.bannerAction, { color: "#eab308" }]}>Compiling</Text>
-          ) : nativeLoading ? (
-            <ActivityIndicator size="small" color="#22c55e" />
-          ) : (
-            <>
-              <Text style={styles.bannerAction}>Open in Yaver</Text>
-              <Text style={styles.bannerArrow}>{"\u203A"}</Text>
-            </>
-          )}
-          {!status.building && isWebFrameworkForVibePreview(status) && (
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation?.();
-                setShowVibePreview(true);
-              }}
-              hitSlop={8}
-              style={({ pressed }) => [styles.bannerStopBtn, pressed && { opacity: 0.6 }]}
-              accessibilityLabel="Open Vibe Preview live stream"
-            >
-              <Text style={styles.bannerStopText}>🎬 Vibe</Text>
-            </Pressable>
-          )}
-          {!status.building && (
-            <Pressable
-              onPress={(e) => { e.stopPropagation?.(); handleStop(); }}
-              hitSlop={8}
-              style={({ pressed }) => [styles.bannerStopBtn, pressed && { opacity: 0.6 }]}
-            >
-              <Text style={styles.bannerStopText}>{status.stopActionLabel || "Stop Serving"}</Text>
-            </Pressable>
-          )}
+          <Pressable
+            onPress={handleOpen}
+            disabled={!!status.building || nativeLoading}
+            style={({ pressed }) => [
+              styles.bannerPrimaryBtn,
+              { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.8 : 1 },
+            ]}
+          >
+            {status.building || nativeLoading ? (
+              <ActivityIndicator size="small" color={c.textInverse} />
+            ) : (
+              <Text style={[styles.bannerPrimaryText, { color: c.textInverse }]}>Open in Yaver</Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleStop}
+            disabled={!!status.building}
+            style={({ pressed }) => [
+              styles.bannerStopBtn,
+              {
+                borderColor: c.errorBorder,
+                backgroundColor: c.errorBg,
+                opacity: pressed || status.building ? 0.7 : 1,
+              },
+            ]}
+          >
+            <Text style={[styles.bannerStopText, { color: c.error }]}>{status.stopActionLabel || "Stop Serving"}</Text>
+          </Pressable>
         </View>
-      </Pressable>
-      <VibePreviewModal
-        visible={showVibePreview}
-        project={vibePreviewProjectFromStatus(status)}
-        targetUrl={vibePreviewTargetUrlFromStatus(status)}
-        onClose={() => setShowVibePreview(false)}
-      />
-
+      </View>
       {/* Full-screen WebView Modal */}
       <Modal visible={showPreview} animationType="slide" onRequestClose={() => setShowPreview(false)}>
         <View style={[styles.container, { backgroundColor: c.bg }]}>
@@ -729,9 +689,7 @@ export function useDevServerStatus() {
 
 const styles = StyleSheet.create({
   banner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+    flexDirection: "column",
     padding: 14,
     marginHorizontal: 16,
     marginBottom: 8,
@@ -759,33 +717,33 @@ const styles = StyleSheet.create({
   bannerRight: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    flexShrink: 0,
-    marginLeft: 8,
+    gap: 10,
+    marginTop: 12,
   },
-  bannerAction: {
+  bannerPrimaryBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  bannerPrimaryText: {
     fontSize: 14,
-    fontWeight: "700",
-    color: "#22c55e",
-  },
-  bannerArrow: {
-    fontSize: 20,
-    color: "#22c55e",
-    marginTop: -2,
+    fontWeight: "800",
   },
   bannerStopBtn: {
-    marginLeft: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: "#2e1a1a",
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#ef4444",
+    alignItems: "center",
+    justifyContent: "center",
   },
   bannerStopText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#ef4444",
   },
   container: { flex: 1 },
   header: {

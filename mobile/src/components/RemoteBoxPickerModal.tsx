@@ -29,14 +29,27 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
     activeDevice,
     selectDevice,
     connectedDeviceIds,
+    primaryDeviceId,
+    secondaryDeviceId,
     latestCliVersion,
     lastError,
   } = useDevice();
 
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
   const eligibleDevices = React.useMemo(
-    () => eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id),
-    [devices, connectedSet, activeDevice?.id],
+    () =>
+      eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id).sort((a, b) => {
+        const rank = (device: Device) => {
+          if (device.id === primaryDeviceId) return 0;
+          if (device.id === secondaryDeviceId) return 1;
+          if (device.id === activeDevice?.id) return 2;
+          return 3;
+        };
+        const delta = rank(a) - rank(b);
+        if (delta !== 0) return delta;
+        return a.name.localeCompare(b.name);
+      }),
+    [devices, connectedSet, activeDevice?.id, primaryDeviceId, secondaryDeviceId],
   );
 
   const [pickedDeviceId, setPickedDeviceId] = React.useState<string | null>(null);
@@ -125,8 +138,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
 
   const pickedDevice = eligibleDevices.find((d) => d.id === pickedDeviceId) ?? null;
 
-  const handleContinue = React.useCallback(async () => {
-    if (!pickedDevice) return;
+  const handleContinue = React.useCallback(async (targetOverride?: Device | null) => {
+    const target = targetOverride ?? pickedDevice;
+    if (!target) return;
     setSwitching(true);
     setSwitchError(null);
     try {
@@ -144,18 +158,18 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       // 1032 — sets connectionStatus straight back to "connected"
       // after the optimistic "connecting" tick), so calling it
       // unconditionally is safe and idempotent.
-      if (activeDevice?.id !== pickedDevice.id) {
-        await selectDevice(pickedDevice);
+      if (activeDevice?.id !== target.id || !connectionManager.clientFor(target.id).isConnected) {
+        await selectDevice(target);
       }
-      if (!connectionManager.clientFor(pickedDevice.id).isConnected) {
+      if (!connectionManager.clientFor(target.id).isConnected) {
         const detail = (lastError || "").trim();
         throw new Error(
           detail
-            ? `Couldn't reach ${pickedDevice.name}: ${detail}`
-            : `Couldn't reach ${pickedDevice.name}.`,
+            ? `Couldn't reach ${target.name}: ${detail}`
+            : `Couldn't reach ${target.name}.`,
         );
       }
-      onSelected?.(pickedDevice);
+      onSelected?.(target);
       onClose();
     } catch (err: any) {
       setSwitchError(err?.message || "Failed to switch remote box.");
@@ -163,6 +177,9 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
       setSwitching(false);
     }
   }, [pickedDevice, selectDevice, activeDevice?.id, lastError, onSelected, onClose]);
+
+  const pickedDeviceIsCurrent = !!pickedDevice && activeDevice?.id === pickedDevice.id;
+  const pickedDeviceIsConnected = !!pickedDevice && connectedSet.has(pickedDevice.id);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -281,10 +298,25 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                   : device.online
                     ? "Live · tap to connect"
                     : "Offline";
+                const roleLabel =
+                  device.id === primaryDeviceId
+                    ? "Primary"
+                    : device.id === secondaryDeviceId
+                      ? "Secondary"
+                      : null;
                 return (
                   <Pressable
                     key={device.id}
-                    onPress={() => setPickedDeviceId(device.id)}
+                    onPress={() => {
+                      setPickedDeviceId(device.id);
+                      if (switching) return;
+                      if (activeDevice?.id === device.id && connectedSet.has(device.id)) {
+                        onSelected?.(device);
+                        onClose();
+                        return;
+                      }
+                      void handleContinue(device);
+                    }}
                     style={({ pressed }) => ({
                       marginBottom: 10,
                       padding: 14,
@@ -301,6 +333,22 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
                           {device.name}
                           {device.alias ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  @{device.alias}</Text> : null}
                         </Text>
+                        {roleLabel ? (
+                          <View
+                            style={{
+                              alignSelf: "flex-start",
+                              marginTop: 6,
+                              paddingHorizontal: 8,
+                              paddingVertical: 3,
+                              borderRadius: 999,
+                              borderWidth: 1,
+                              borderColor: c.accent + "44",
+                              backgroundColor: c.accent + "16",
+                            }}
+                          >
+                            <Text style={{ color: c.accent, fontSize: 10, fontWeight: "700" }}>{roleLabel}</Text>
+                          </View>
+                        ) : null}
                         <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
                           {statusLine}
                           {activeDevice?.id === device.id ? " · Focused" : ""}
@@ -353,8 +401,10 @@ export default function RemoteBoxPickerModal({ visible, onClose, onSelected }: P
               <Text style={{ color: !pickedDevice ? c.textMuted : "#000", fontWeight: "700" }}>
                 {!pickedDevice
                   ? "Pick a machine to continue"
-                  : activeDevice?.id === pickedDevice.id
+                  : pickedDeviceIsCurrent && pickedDeviceIsConnected
                     ? "Keep using this machine"
+                    : pickedDeviceIsCurrent
+                      ? "Reconnect to this machine"
                     : "Switch to this machine"}
               </Text>
             </Pressable>

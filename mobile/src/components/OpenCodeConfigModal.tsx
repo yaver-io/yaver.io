@@ -30,11 +30,15 @@ import { useDevice } from "../context/DeviceContext";
 interface Props {
   visible: boolean;
   onClose: () => void;
+  startInAddProvider?: boolean;
 }
 
 // Pre-fills for the most common providers. Same set the web
 // ToolsView uses; keep them in sync.
-const PRESETS: Array<{ label: string; id: string; name: string; baseUrl: string; hint: string }> = [
+const PRESETS: Array<{ label: string; id: string; name: string; baseUrl?: string; hint: string }> = [
+  { label: "OpenAI", id: "openai", name: "OpenAI", hint: "GPT-5 family via your OpenAI API key." },
+  { label: "Anthropic", id: "anthropic", name: "Anthropic", hint: "Claude models via your Anthropic API key." },
+  { label: "Gemini", id: "google", name: "Google Gemini", hint: "Gemini models via GEMINI_API_KEY. OpenCode knows the stock Google provider." },
   // Two distinct z.ai surfaces — same vendor, different keys/SLA. Coding
   // Plan keys (z.ai/coding) only authenticate against the coding endpoint;
   // Zhipu OpenAPI keys only authenticate against bigmodel.cn. Picking the
@@ -49,7 +53,7 @@ const PRESETS: Array<{ label: string; id: string; name: string; baseUrl: string;
   { label: "DeepSeek", id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com", hint: "DeepSeek-Coder/V3. Key from platform.deepseek.com." },
 ];
 
-export function OpenCodeConfigModal({ visible, onClose }: Props) {
+export function OpenCodeConfigModal({ visible, onClose, startInAddProvider = false }: Props) {
   const c = useColors();
   // Sync the device's primary runner choice to Convex once the user
   // configures a working provider+key. Without this the user has to ALSO
@@ -71,6 +75,7 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
   const [editApiKey, setEditApiKey] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [addId, setAddId] = useState("");
+  const [addName, setAddName] = useState("");
   const [addBaseUrl, setAddBaseUrl] = useState("");
   const [addApiKey, setAddApiKey] = useState("");
   const [presetHint, setPresetHint] = useState("");
@@ -96,6 +101,19 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
   useEffect(() => {
     if (visible) void load();
   }, [visible, load]);
+
+  useEffect(() => {
+    if (!visible) {
+      setShowAdd(false);
+      setAddId("");
+      setAddName("");
+      setAddBaseUrl("");
+      setAddApiKey("");
+      setPresetHint("");
+      return;
+    }
+    if (startInAddProvider) setShowAdd(true);
+  }, [visible, startInAddProvider]);
 
   const saveTopLevel = useCallback(async () => {
     setBusy(true);
@@ -175,6 +193,7 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
       providers: [
         {
           id: addId.trim(),
+          name: addName.trim() || undefined,
           baseUrl: addBaseUrl.trim() || undefined,
           apiKey: apiKeyTrimmed || undefined,
         },
@@ -197,10 +216,11 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
     }
     setShowAdd(false);
     setAddId("");
+    setAddName("");
     setAddBaseUrl("");
     setAddApiKey("");
     setPresetHint("");
-  }, [addId, addBaseUrl, addApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
+  }, [addId, addName, addBaseUrl, addApiKey, activeDevice, primaryRunnerByDevice, setPrimaryRunnerForDevice]);
 
   const deleteProvider = useCallback(
     (provider: OpenCodeProviderSummary) => {
@@ -384,18 +404,25 @@ export function OpenCodeConfigModal({ visible, onClose }: Props) {
               <Pressable onPress={() => setShowAdd(false)} hitSlop={12} style={styles.headerBtn}>
                 <Text style={{ color: c.accent, fontSize: 16 }}>Cancel</Text>
               </Pressable>
-              <Text style={[styles.title, { color: c.textPrimary }]}>Add provider</Text>
+              <Text style={[styles.title, { color: c.textPrimary }]}>
+                {startInAddProvider ? "Set up OpenCode" : "Add provider"}
+              </Text>
               <View style={styles.headerBtn} />
             </View>
             <ScrollView contentContainerStyle={{ padding: 16 }}>
-              <Text style={[styles.muted, { color: c.textMuted, marginBottom: 8 }]}>Quick fill:</Text>
+              <Text style={[styles.muted, { color: c.textMuted, marginBottom: 8 }]}>
+                {startInAddProvider
+                  ? "Pick where OpenCode should route requests on this machine."
+                  : "Quick fill:"}
+              </Text>
               <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
                 {PRESETS.map((p) => (
                   <Pressable
                     key={p.label}
                     onPress={() => {
                       setAddId(p.id);
-                      setAddBaseUrl(p.baseUrl);
+                      setAddName(p.name);
+                      setAddBaseUrl(p.baseUrl || "");
                       setPresetHint(p.hint);
                     }}
                     style={({ pressed }) => [

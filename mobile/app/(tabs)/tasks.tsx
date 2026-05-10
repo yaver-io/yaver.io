@@ -25,10 +25,10 @@ import {
 } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import Markdown from "react-native-markdown-display";
 import { useDevice } from "../../src/context/DeviceContext";
-import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
+import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
 import TaskTargetWizard, { type TaskTarget } from "../../src/components/TaskTargetWizard";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
 import { chipPalette, type ChipTone } from "../../src/lib/chipPalette";
@@ -114,81 +114,6 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   failed: "#ef4444",
   stopped: "#a1a1aa",
 };
-
-const DARK_BANNER_CONFIG: Record<
-  ConnectionState,
-  { bg: string; border: string; dot: string; text: string; label: string }
-> = {
-  connected: {
-    bg: "#15151A",
-    border: "#1F1F26",
-    dot: "#22c55e",
-    text: "#22c55e",
-    label: "Connected",
-  },
-  connecting: {
-    bg: "#15151A",
-    border: "#1F1F26",
-    dot: "#f59e0b",
-    text: "#f59e0b",
-    label: "Reconnecting",
-  },
-  error: {
-    bg: "#15151A",
-    border: "#1F1F26",
-    dot: "#ef4444",
-    text: "#ef4444",
-    label: "Disconnected",
-  },
-  disconnected: {
-    bg: "#15151A",
-    border: "#1F1F26",
-    dot: "#A8A8B0",
-    text: "#A8A8B0",
-    label: "Disconnected",
-  },
-};
-
-function bannerConfigForTheme(
-  state: ConnectionState,
-  isDark: boolean,
-): { bg: string; border: string; dot: string; text: string; label: string } {
-  if (isDark) return DARK_BANNER_CONFIG[state];
-  if (state === "connected") {
-    return {
-      bg: "#f0fdf4",
-      border: "#bbf7d0",
-      dot: "#22c55e",
-      text: "#15803d",
-      label: "Connected",
-    };
-  }
-  if (state === "connecting") {
-    return {
-      bg: "#fffbeb",
-      border: "#fde68a",
-      dot: "#f59e0b",
-      text: "#b45309",
-      label: "Reconnecting",
-    };
-  }
-  if (state === "error") {
-    return {
-      bg: "#fef2f2",
-      border: "#fecaca",
-      dot: "#ef4444",
-      text: "#b91c1c",
-      label: "Reconnecting",
-    };
-  }
-  return {
-    bg: "#f5f5f5",
-    border: "#e5e5e5",
-    dot: "#9ca3af",
-    text: "#6b7280",
-    label: "Disconnected",
-  };
-}
 
 function isKivancAccount(email: string | null | undefined): boolean {
   const normalized = String(email || "").trim().toLowerCase();
@@ -1129,6 +1054,7 @@ function TaskCard({
   onComplete: () => void;
 }) {
   const c = useColors();
+  const { isDark } = useTheme();
   const isRunning = item.status === "running" || item.status === "queued";
   const enter = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(isRunning ? 0.55 : 1)).current;
@@ -1206,20 +1132,27 @@ function TaskCard({
       }}
     >
       <TouchableOpacity
-        style={[s.cardContainer, s.taskCard, { backgroundColor: c.bgCard, borderColor: c.border }]}
+        style={[
+          s.cardContainer,
+          s.taskCard,
+          { backgroundColor: c.bgCard, borderColor: c.borderSubtle },
+          !isDark && { shadowColor: c.shadowSm },
+        ]}
         onPress={onPress}
         onLongPress={handleLongPress}
         activeOpacity={0.86}
       >
         <View style={s.taskHeader}>
           <View style={s.taskHeaderMain}>
-            <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + "1f" }]}>
+            <View style={[s.statusBadge, { backgroundColor: STATUS_COLORS[item.status] + "14", borderColor: STATUS_COLORS[item.status] + "45" }]}>
               {isRunning ? (
                 <Animated.View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status], opacity: pulse }]} />
               ) : (
                 <View style={[s.statusPulseDot, { backgroundColor: STATUS_COLORS[item.status] }]} />
               )}
-              <Text style={[s.statusText, { color: STATUS_COLORS[item.status] }]}>{item.status}</Text>
+              <Text style={[s.statusText, { color: STATUS_COLORS[item.status] }]}>
+                {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+              </Text>
             </View>
             {item.isAdopted && (
               <View style={[s.metaPill, { backgroundColor: "#8b5cf614", borderColor: "#8b5cf633" }]}>
@@ -1239,22 +1172,33 @@ function TaskCard({
               ran on a non-focused box doesn't get mislabelled with
               the focused device name. Trims `.local` and the trailing
               `-ephemeral` for compactness. */}
-          {(() => {
-            const dn = (item.deviceName || "").trim().replace(/\.local$/, "");
-            const rid = item.runnerId;
-            const runnerLabel =
-              rid === "claude" || rid === "claude-code" ? "Claude"
-              : rid === "codex" ? "Codex"
-              : rid === "opencode" ? "OpenCode"
-              : rid;
-            const parts = [dn, runnerLabel].filter(Boolean);
-            if (parts.length === 0) return null;
-            return (
-              <Text style={[s.taskRunnerLabel, { color: c.textMuted }]} numberOfLines={1}>
-                {parts.join(" · ")}
-              </Text>
-            );
-          })()}
+          <View style={s.taskHeaderMeta}>
+            {(() => {
+              const dn = (item.deviceName || "").trim().replace(/\.local$/, "");
+              if (!dn) return null;
+              return (
+                <View style={[s.ipPill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                  <Text style={[s.ipPillText, { color: c.textMuted }]} numberOfLines={1}>
+                    {dn}
+                  </Text>
+                </View>
+              );
+            })()}
+            {(() => {
+              const rid = item.runnerId;
+              const runnerLabel =
+                rid === "claude" || rid === "claude-code" ? "Claude"
+                : rid === "codex" ? "Codex"
+                : rid === "opencode" ? "OpenCode"
+                : rid;
+              if (!runnerLabel) return null;
+              return (
+                <Text style={[s.taskRunnerLabel, { color: c.textMuted }]} numberOfLines={1}>
+                  {runnerLabel}
+                </Text>
+              );
+            })()}
+          </View>
         </View>
         <Text style={[s.taskTitle, { color: c.textPrimary }]} numberOfLines={2}>{normalizeTaskTitle(item.title)}</Text>
         {isRunning ? (
@@ -1448,6 +1392,7 @@ function buildChatMessages(task: Task): { role: string; content: string }[] {
 export default function TasksScreen() {
   const c = useColors();
   const { isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const taskRouter = useRouter();
   const layout = useResponsiveLayout();
   const tabletContent = useTabletContentStyle("regular");
@@ -1523,12 +1468,6 @@ export default function TasksScreen() {
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectingDeviceId, setReconnectingDeviceId] = useState<string | null>(null);
-  // Remote-box picker visibility for the tappable connection banner.
-  // The banner used to retry-on-tap; now it opens the picker instead,
-  // matching the same affordance Reload + Projects gained from the
-  // shared RemoteBoxBanner widget. Retry stays available via the
-  // dedicated Retry chip alongside Stop/Re-auth/View Logs.
-  const [showRemoteBoxPicker, setShowRemoteBoxPicker] = useState(false);
   const [recoveringDeviceId, setRecoveringDeviceId] = useState<string | null>(null);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [quicState, setQuicState] = useState<ConnectionState>(quicClient.connectionState);
@@ -3171,9 +3110,7 @@ export default function TasksScreen() {
     // make the banner lie.
     anyPoolConnected ? "connected" :
     connectionStatus;
-  const banner = bannerConfigForTheme(effectiveState, isDark);
   const isEffectivelyConnected = effectiveState === "connected";
-  const modeLabel = connMode === "relay" ? " via Relay" : connMode === "direct" ? " Direct" : "";
 
   useEffect(() => {
     if (isEffectivelyConnected || devices.length === 0) return;
@@ -3311,199 +3248,146 @@ export default function TasksScreen() {
   return (
     <SafeAreaView style={[s.safeArea, { backgroundColor: c.bg }]} edges={["bottom"]}>
       <View style={s.container}>
-        {/* Connection banner */}
-        <Pressable
-          style={[s.banner, { backgroundColor: banner.bg, borderBottomColor: banner.border, flexDirection: "column", alignItems: "flex-start", paddingVertical: 12 }]}
-          onPress={() => setShowRemoteBoxPicker(true)}
-        >
-          <View style={[s.bannerAccent, { backgroundColor: banner.dot }]} />
-          <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
-            <View style={[s.dot, { backgroundColor: banner.dot }]} />
-            <Text style={[s.bannerText, { color: banner.text, flexShrink: 1 }]} numberOfLines={1}>
-              {/* Never surface raw transport errors here — they read
-                  as "the product is broken" even when a single retry
-                  would fix it. The banner stays at "Disconnected"
-                  level and the unified Not-connected list below
-                  shows the per-device options. */}
-              {banner.label}
-              {isEffectivelyConnected ? modeLabel : ""}
-              {activeDevice ? ` \u00b7 ${activeDevice.name}` : ""}
-            </Text>
-            {/* Visible Switch \u203a chip \u2014 matches the affordance Reload
-                + Projects gained from the shared RemoteBoxBanner widget.
-                The whole banner is also tappable (onPress on the parent
-                Pressable opens the same picker) so users discover the
-                gesture either way. */}
-            <Pressable
-              onPress={(e) => { e.stopPropagation(); setShowRemoteBoxPicker(true); }}
-              hitSlop={6}
-              style={{ marginLeft: "auto", paddingLeft: 8 }}
-            >
-              <Text style={{ color: banner.text, fontSize: 12, fontWeight: "700" }}>Switch \u203a</Text>
-            </Pressable>
-            {showReconnectProgress && (
-              <Text style={{ color: banner.text, fontSize: 11, marginLeft: 6, fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }}>
-                {displayedAttempt}/{quicClient.maxReconnectAttempts}
-              </Text>
-            )}
-            {showReconnectProgress && (
-              <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#ef444433" }}
-                onPress={() => { stopReconnectAndBounce().catch(() => {}); }}
-              >
-                <Text style={{ fontSize: 12, color: "#f87171", fontWeight: "600" }}>Stop</Text>
-              </Pressable>
-            )}
-            {!showReconnectProgress && showRetryButton && (
-              <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: c.accentSoft }}
-                onPress={() => activeDevice && selectDevice(activeDevice)}
-              >
-                <Text style={{ fontSize: 12, color: c.accent, fontWeight: "600" }}>Retry</Text>
-              </Pressable>
-            )}
-            {/* Re-auth shortcut for the "agent gone silent / bootstrap"
-                case. Tap → recoverDeviceAuth → /auth/recover device-code →
-                in-app Safari sheet. Only shown when Retry alone won't fix
-                it: Convex says offline OR the agent already told us
-                needsAuth. Skipped while a reconnect attempt is in flight
-                so a single tap doesn't queue both flows. */}
-            {!showReconnectProgress && showRetryButton && activeDevice
-              && (activeDevice.needsAuth || !activeDevice.online) && (
-              <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: c.accentSoft }}
-                onPress={() => {
-                  if (!activeDevice) return;
-                  recoverDeviceAuth(activeDevice).catch(() => {});
-                }}
-              >
-                <Text style={{ fontSize: 12, color: c.accent, fontWeight: "600" }}>Re-auth</Text>
-              </Pressable>
-            )}
-            {(showReconnectProgress || showRetryButton) && (
-              <Pressable
-                style={{ marginLeft: 8, paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, backgroundColor: "#64748b33" }}
-                onPress={() => setShowLogs(true)}
-              >
-                <Text style={{ fontSize: 12, color: "#94a3b8", fontWeight: "600" }}>View Logs</Text>
-              </Pressable>
-            )}
-          </View>
-          {isEffectivelyConnected && agentAuthExpired && (
-            <View style={{ flexDirection: "row", alignItems: "center", marginTop: 6, marginLeft: 18, gap: 8, flexWrap: "wrap" }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: "#f59e0b" }} />
-              <Text style={{ color: "#fbbf24", fontSize: 11, flexShrink: 1 }}>
-                Machine is up but Yaver auth on it expired.
-              </Text>
-              {activeDevice ? (
-                <Pressable
-                  onPress={async () => {
-                    if (isReconnecting || recoveringDeviceId === activeDevice.id) return;
-                    // Tap directly into recoverDeviceAuth so we can surface
-                    // the rate-limit / auth-healthy / failure outcomes via
-                    // Alert. handleReconnect set reconnectError state but
-                    // nothing rendered it, so the user saw "nothing happen"
-                    // when the recovery actually returned an error.
-                    setRecoveringDeviceId(activeDevice.id);
-                    setIsReconnecting(true);
-                    try {
-                      const result = await recoverDeviceAuth(activeDevice);
-                      if (result?.ok) {
-                        // selectDevice will re-establish the connection on
-                        // the new token. handleReconnect path does this; we
-                        // mirror it.
-                        await selectDevice(activeDevice);
-                        return;
-                      }
-                      if (result?.rateLimited) {
-                        Alert.alert(
-                          "Agent rate-limited",
-                          `Agent's per-IP recovery cooldown is still active (5s window). Wait a few seconds and tap Re-auth again.\n\n${appTag()}`,
-                        );
-                        return;
-                      }
-                      Alert.alert(
-                        "Re-auth Failed",
-                        `${result?.error || `Could not recover ${activeDevice.name}.`}\n\n${appTag()}`,
-                      );
-                    } catch (e: any) {
-                      Alert.alert("Re-auth Failed", `${e?.message || "Unexpected error."}\n\n${appTag()}`);
-                    } finally {
-                      setRecoveringDeviceId((cur) => (cur === activeDevice.id ? null : cur));
-                      setIsReconnecting(false);
-                    }
-                  }}
-                  disabled={isReconnecting || recoveringDeviceId === activeDevice.id}
-                  style={{
-                    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6,
-                    borderWidth: 1, borderColor: c.warn,
-                    backgroundColor: "rgba(213, 162, 38, 0.12)",
-                    opacity: isReconnecting || recoveringDeviceId === activeDevice.id ? 0.5 : 1,
-                  }}
-                >
-                  <Text style={{ color: "#fbbf24", fontSize: 11, fontWeight: "700" }}>
-                    {recoveringDeviceId === activeDevice.id ? "Re-authing…" : "Re-auth"}
-                  </Text>
-                </Pressable>
-              ) : null}
-            </View>
-          )}
-          {isEffectivelyConnected && !agentAuthExpired && (
-            // Subline: transport icon + runner state on the left, ping
-            // on the right — single row, no duplicated copy. The first
-            // banner line already says "Connected via Relay · <device>";
-            // re-stating it here just made the box read like it had been
-            // pasted twice. The radio/wifi icon is the transport hint
-            // now, and runner state ("OpenAI Codex ready") + ping carry
-            // the unique signal.
-            <View style={[s.bannerSecondaryRow, { flexDirection: "row", justifyContent: "space-between", alignItems: "center" }]}>
-              <View style={[s.bannerSublineWrap, { flexShrink: 1 }]}>
-                <Ionicons
-                  name={connMode === "direct" ? "wifi-outline" : "radio-outline"}
-                  size={16}
-                  color={banner.dot}
-                />
-                {runnerBannerState ? (
-                  <Text style={[s.bannerStatusCopy, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
-                    {runnerBannerState.text}
-                  </Text>
-                ) : null}
-              </View>
-              <View style={s.bannerStatusRow}>
-                {pingRtt !== null ? (
-                  <Pressable onPress={handlePing}>
-                    <Badge
-                      variant={pingRtt === -1 ? "warning" : "live"}
-                      label={isPinging ? "..." : pingRtt === -1 ? "no response" : `${pingRtt}ms`}
-                    />
-                  </Pressable>
-                ) : (
-                  <Pressable onPress={handlePing}>
-                    <Text style={[s.bannerStatusCopy, { color: banner.text }]}>{isPinging ? "pinging..." : "ping"}</Text>
-                  </Pressable>
-                )}
-              </View>
-            </View>
-          )}
-          {isEffectivelyConnected &&
-            runnerBannerState &&
-            runnerBannerState.kind !== "ok" &&
-            runnerBannerState.kind !== "authNeeded" && (
-              <View style={{ flexDirection: "row", alignItems: "center", marginTop: 2, marginLeft: 18 }}>
-                {(availableRunners.length > 0 || agentStatus) && (
+        <RemoteBoxBanner
+          extra={
+            <>
+              {showReconnectProgress || showRetryButton ? (
+                <View style={s.bannerActionRow}>
+                  {showReconnectProgress ? (
+                    <>
+                      <Text style={[s.bannerStatusCopy, { color: c.textSecondary, fontFamily: monoFamily }]}>
+                        reconnect {displayedAttempt}/{quicClient.maxReconnectAttempts}
+                      </Text>
+                      <Pressable
+                        style={[s.bannerInlineBtn, { backgroundColor: c.errorBg }]}
+                        onPress={() => { stopReconnectAndBounce().catch(() => {}); }}
+                      >
+                        <Text style={[s.bannerInlineBtnText, { color: c.error }]}>Stop</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+                  {!showReconnectProgress && showRetryButton ? (
+                    <>
+                      <Pressable
+                        style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft }]}
+                        onPress={() => activeDevice && selectDevice(activeDevice)}
+                      >
+                        <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>Retry</Text>
+                      </Pressable>
+                      {activeDevice && (activeDevice.needsAuth || !activeDevice.online) ? (
+                        <Pressable
+                          style={[s.bannerInlineBtn, { backgroundColor: c.warnBg }]}
+                          onPress={() => { recoverDeviceAuth(activeDevice).catch(() => {}); }}
+                        >
+                          <Text style={[s.bannerInlineBtnText, { color: c.warn }]}>Re-auth</Text>
+                        </Pressable>
+                      ) : null}
+                    </>
+                  ) : null}
                   <Pressable
-                    onPress={handleRestartRunner}
-                    disabled={isRestartingRunner}
-                    style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, backgroundColor: "#6366f122" }}
+                    style={[s.bannerInlineBtn, { backgroundColor: c.surfaceMuted }]}
+                    onPress={() => setShowLogs(true)}
                   >
-                    <Text style={{ color: "#818cf8", fontSize: 11 }}>
-                      {isRestartingRunner ? "Restarting..." : "Restart"}
-                    </Text>
+                    <Text style={[s.bannerInlineBtnText, { color: c.textSecondary }]}>View Logs</Text>
                   </Pressable>
-                )}
-              </View>
-            )}
-        </Pressable>
+                </View>
+              ) : null}
+              {isEffectivelyConnected && agentAuthExpired ? (
+                <View style={s.bannerActionRow}>
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c.warn }} />
+                  <Text style={[s.bannerStatusCopy, { color: c.warn, flex: 1 }]}>
+                    Machine is up but Yaver auth on it expired.
+                  </Text>
+                  {activeDevice ? (
+                    <Pressable
+                      onPress={async () => {
+                        if (isReconnecting || recoveringDeviceId === activeDevice.id) return;
+                        setRecoveringDeviceId(activeDevice.id);
+                        setIsReconnecting(true);
+                        try {
+                          const result = await recoverDeviceAuth(activeDevice);
+                          if (result?.ok) {
+                            await selectDevice(activeDevice);
+                            return;
+                          }
+                          if (result?.rateLimited) {
+                            Alert.alert(
+                              "Agent rate-limited",
+                              `Agent's per-IP recovery cooldown is still active (5s window). Wait a few seconds and tap Re-auth again.\n\n${appTag()}`,
+                            );
+                            return;
+                          }
+                          Alert.alert(
+                            "Re-auth Failed",
+                            `${result?.error || `Could not recover ${activeDevice.name}.`}\n\n${appTag()}`,
+                          );
+                        } catch (e: any) {
+                          Alert.alert("Re-auth Failed", `${e?.message || "Unexpected error."}\n\n${appTag()}`);
+                        } finally {
+                          setRecoveringDeviceId((cur) => (cur === activeDevice.id ? null : cur));
+                          setIsReconnecting(false);
+                        }
+                      }}
+                      disabled={isReconnecting || recoveringDeviceId === activeDevice.id}
+                      style={[s.bannerInlineBtn, { backgroundColor: c.warnBg, opacity: isReconnecting || recoveringDeviceId === activeDevice.id ? 0.5 : 1 }]}
+                    >
+                      <Text style={[s.bannerInlineBtnText, { color: c.warn }]}>
+                        {recoveringDeviceId === activeDevice.id ? "Re-authing…" : "Re-auth"}
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ) : null}
+              {isEffectivelyConnected && !agentAuthExpired ? (
+                <View style={s.bannerMetaRow}>
+                  <View style={s.bannerTransportRow}>
+                    <Ionicons
+                      name={connMode === "direct" ? "wifi-outline" : "radio-outline"}
+                      size={16}
+                      color={connMode === "direct" ? c.success : c.info}
+                    />
+                    <Text style={[s.bannerStatusCopy, { color: c.textSecondary }]}>
+                      {connMode === "direct" ? "Direct" : connMode === "relay" ? "Relay" : "Transport pending"}
+                    </Text>
+                    {runnerBannerState ? (
+                      <Text style={[s.bannerStatusCopy, { color: c.textSecondary, flexShrink: 1 }]} numberOfLines={1}>
+                        · {runnerBannerState.text}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={s.bannerStatusRow}>
+                    {pingRtt !== null ? (
+                      <Pressable onPress={handlePing}>
+                        <Badge
+                          variant={pingRtt === -1 ? "warning" : "live"}
+                          label={isPinging ? "..." : pingRtt === -1 ? "no response" : `${pingRtt}ms`}
+                        />
+                      </Pressable>
+                    ) : (
+                      <Pressable onPress={handlePing}>
+                        <Text style={[s.bannerStatusCopy, { color: c.textSecondary }]}>{isPinging ? "pinging..." : "ping"}</Text>
+                      </Pressable>
+                    )}
+                    {runnerBannerState &&
+                    runnerBannerState.kind !== "ok" &&
+                    runnerBannerState.kind !== "authNeeded" &&
+                    (availableRunners.length > 0 || agentStatus) ? (
+                      <Pressable
+                        onPress={handleRestartRunner}
+                        disabled={isRestartingRunner}
+                        style={[s.bannerInlineBtn, { backgroundColor: c.accentSoft }]}
+                      >
+                        <Text style={[s.bannerInlineBtnText, { color: c.accent }]}>
+                          {isRestartingRunner ? "Restarting..." : "Restart"}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+            </>
+          }
+        />
 
         {/* Dev server preview banner */}
         {isEffectivelyConnected && <View style={{ marginTop: 12 }}><DevPreview /></View>}
@@ -3581,36 +3465,38 @@ export default function TasksScreen() {
                   key={chip.key}
                   onPress={() => setStatusFilter(chip.key)}
                   style={[s.actionButton, {
-                    backgroundColor: (effectiveFilter === chip.key) ? withAlpha(c.accent, "24") : c.bgInput,
+                    backgroundColor: (effectiveFilter === chip.key) ? withAlpha(chip.color, "1f") : c.bgInput,
                     borderWidth: 1,
-                    borderColor: (effectiveFilter === chip.key) ? withAlpha(c.accent, "47") : "transparent",
+                    borderColor: (effectiveFilter === chip.key) ? withAlpha(chip.color, "60") : "transparent",
                   }]}
                 >
-                  <Text style={[s.actionButtonText, { color: (effectiveFilter === chip.key) ? c.accent : c.textSecondary }]}>
-                    {chip.label}{chip.count > 0 ? ` ${chip.count}` : ""}
+                  <Text style={[s.actionButtonText, { color: (effectiveFilter === chip.key) ? chip.color : c.textSecondary }]}>
+                    {chip.label}
+                    <Text style={{ color: c.textMuted }}>{` · ${chip.count}`}</Text>
                   </Text>
                 </Pressable>
               ))}
+              <View style={[s.actionDivider, { backgroundColor: c.borderSubtle }]} />
               {tasks.some(t => t.status === "running") && (
-                <Pressable style={[s.actionButton, { backgroundColor: "#ef444418" }]} onPress={handleStopAll}>
+                <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleStopAll}>
                   <Text style={[s.actionButtonText, { color: "#ef4444" }]}>Stop All</Text>
                 </Pressable>
               )}
               {tasks.some(t => t.status !== "running" && t.status !== "queued") && (
-                <Pressable style={[s.actionButton, { backgroundColor: c.bgCardElevated }]} onPress={handleDeleteAll}>
+                <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleDeleteAll}>
                   <Text style={[s.actionButtonText, { color: c.textMuted }]}>Clear</Text>
                 </Pressable>
               )}
-              <Pressable style={[s.actionButton, { backgroundColor: "#8b5cf618" }]} onPress={handleOpenTmuxSessions}>
+              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleOpenTmuxSessions}>
                 <Text style={[s.actionButtonText, { color: "#8b5cf6" }]}>Tmux</Text>
               </Pressable>
-              <Pressable style={[s.actionButton, { backgroundColor: "#64748b22" }]} onPress={() => setShowLogs(true)}>
+              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={() => setShowLogs(true)}>
                 <Text style={[s.actionButtonText, { color: "#94a3b8" }]}>Logs</Text>
               </Pressable>
-              <Pressable style={[s.actionButton, { backgroundColor: "#f9731618" }]} onPress={handleShipIt}>
+              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShipIt}>
                 <Text style={[s.actionButtonText, { color: "#f97316" }]}>Ship It</Text>
               </Pressable>
-              <Pressable style={[s.actionButton, { backgroundColor: "#06b6d418" }]} onPress={handleShowSummary}>
+              <Pressable style={[s.utilityButton, { backgroundColor: c.bgCard, borderColor: c.borderSubtle }]} onPress={handleShowSummary}>
                 <Text style={[s.actionButtonText, { color: "#06b6d4" }]}>Summary</Text>
               </Pressable>
             </ScrollView>
@@ -4027,7 +3913,15 @@ export default function TasksScreen() {
         {(isEffectivelyConnected || hasAnyPooledConnection) && (
           <Pressable
             hitSlop={12}
-            style={({ pressed }) => [s.fab, { backgroundColor: c.accent }, pressed && s.fabPressed]}
+            style={({ pressed }) => [
+              s.fab,
+              {
+                backgroundColor: c.accent,
+                bottom: Math.max(insets.bottom + 16, 24),
+                shadowColor: c.shadowMd,
+              },
+              pressed && s.fabPressed,
+            ]}
             onPress={() => {
               // Defensive reset — guarantees the modal opens cleanly even if
               // a previous cancel/backdrop-dismiss left stale state around.
@@ -5395,10 +5289,6 @@ export default function TasksScreen() {
           </View>
         </Modal>
       </View>
-      <RemoteBoxPickerModal
-        visible={showRemoteBoxPicker}
-        onClose={() => setShowRemoteBoxPicker(false)}
-      />
     </SafeAreaView>
   );
 }
@@ -5409,26 +5299,27 @@ const s = StyleSheet.create({
   safeArea: { flex: 1 },
   container: { flex: 1 },
 
-  // Banner
-  banner: {
+  bannerMetaRow: {
+    marginTop: 6,
+    marginLeft: 18,
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderLeftWidth: 0,
-    position: "relative",
-    overflow: "hidden",
+    justifyContent: "space-between",
+    gap: 10,
   },
-  bannerAccent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
-  bannerText: { ...typography.captionStrong, letterSpacing: 0.1 },
-  bannerSecondaryRow: { marginTop: 6, marginLeft: 18, gap: 6 },
-  bannerSublineWrap: { flexDirection: "row", alignItems: "center", gap: 6, paddingRight: 12 },
-  bannerSublinePrefix: { ...typography.captionStrong },
-  bannerSublineDevice: { ...typography.captionStrong, flexShrink: 1 },
+  bannerTransportRow: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1, minWidth: 0 },
+  bannerActionRow: { marginTop: 6, marginLeft: 18, flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   bannerStatusRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   bannerStatusCopy: { ...typography.caption },
+  bannerInlineBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  bannerInlineBtnText: {
+    fontSize: 11,
+    fontWeight: "700",
+  },
 
   // Ping overlay
   pingOverlay: { marginHorizontal: 16, marginTop: 8, padding: 14, borderRadius: 12, borderWidth: 1 },
@@ -5544,54 +5435,65 @@ const s = StyleSheet.create({
   // Task card
   cardContainer: { marginBottom: 10 },
   taskCard: {
-    borderRadius: 20,
+    borderRadius: 14,
     paddingHorizontal: 16,
     paddingVertical: 15,
     borderWidth: 1,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.14,
-    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
     elevation: 2,
   },
   taskCardPressed: { opacity: 0.7 },
   taskHeader: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10, gap: 10 },
   taskHeaderMain: { flexDirection: "row", alignItems: "center", gap: 7, flexWrap: "wrap", flex: 1 },
-  statusBadge: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999 },
+  statusBadge: { flexDirection: "row", alignItems: "center", gap: 7, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },
   statusPulseDot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { fontSize: 11, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.45 },
+  statusText: { fontSize: 11, fontWeight: "700" },
   metaPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1 },
   metaPillText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.3 },
-  taskRunnerLabel: { fontSize: 11, marginTop: 4, marginLeft: 8, maxWidth: 90, textAlign: "right" },
-  taskTitle: { fontSize: 17, fontWeight: "600", lineHeight: 22, letterSpacing: -0.2 },
+  taskHeaderMeta: { alignItems: "flex-end", gap: 6, maxWidth: 132, marginLeft: 8 },
+  ipPill: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 999, borderWidth: 1, maxWidth: 132 },
+  ipPillText: { fontSize: 11, fontWeight: "500" },
+  taskRunnerLabel: { fontSize: 11, maxWidth: 132, textAlign: "right" },
+  taskTitle: { fontSize: 16, fontWeight: "600", lineHeight: 22, letterSpacing: -0.2 },
   taskPhaseRow: { marginBottom: 8 },
   phaseChip: { alignSelf: "flex-start", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 999, borderWidth: 1 },
   phaseChipText: { fontSize: 11, fontWeight: "700", textTransform: "lowercase", letterSpacing: 0.25 },
-  taskOutputPreview: { fontSize: 13, marginTop: 4, lineHeight: 18 },
+  taskOutputPreview: { fontSize: 14, marginTop: 4, lineHeight: 20 },
   taskFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
-  taskTimestamp: { fontSize: 11 },
-  taskFooterMeta: { fontSize: 11, fontWeight: "600" },
+  taskTimestamp: { fontSize: 12 },
+  taskFooterMeta: { fontSize: 12, fontWeight: "600" },
 
   // FAB
   fab: {
     position: "absolute",
     bottom: 24,
-    right: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    right: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: "center",
     justifyContent: "center",
     elevation: 12,
     zIndex: 41,
     backgroundColor: "#7C66FF",
-    shadowColor: "#7C66FF",
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.32,
+    shadowOpacity: 0.28,
     shadowRadius: 16,
   },
   fabPressed: { opacity: 0.92, transform: [{ scale: 0.96 }] },
   fabText: { fontSize: 28, color: "#ffffff", fontWeight: "300" },
+  actionDivider: { width: 1, alignSelf: "stretch", marginVertical: 5, marginHorizontal: 6 },
+  utilityButton: {
+    minHeight: 34,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+  },
 
   // New task modal
   modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },

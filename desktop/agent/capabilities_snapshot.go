@@ -76,13 +76,26 @@ func (s *HTTPServer) buildCapabilitySnapshot(ctx context.Context) CapabilitySnap
 
 func capabilityForMobileHermes() CapabilityTargetReadiness {
 	nodePath, nodeVersion := detectManagedOrSystemNode()
-	hermesSummary, hermesErr := embeddedHermescSummary()
+
+	// Mirror resolveHermesc's preference order: embedded → system
+	// prewarmed. (Project-local + build-from-source are intentionally
+	// skipped here — the first needs a workDir we don't have, the
+	// second is a 1-2 min compile that would block the snapshot.)
+	// Without this, linux/arm64 boxes — which always go through the
+	// /usr/local/libexec/yaver/hermesc path — get incorrectly flagged
+	// "Embedded hermesc is unavailable" even when reload works fine.
+	hermesSummary, hermesSource, hermesErr := resolveHermescForCapability()
+
 	notes := []string{}
 	if nodePath != "" {
 		notes = append(notes, "Node.js runtime: "+nodeVersion)
 	}
 	if hermesErr == nil && hermesSummary != "" {
-		notes = append(notes, "Embedded hermesc: "+hermesSummary)
+		label := "Embedded hermesc"
+		if hermesSource == "system" {
+			label = "System hermesc"
+		}
+		notes = append(notes, label+": "+hermesSummary)
 	}
 	if nodePath != "" && hermesErr == nil {
 		return CapabilityTargetReadiness{
@@ -93,11 +106,11 @@ func capabilityForMobileHermes() CapabilityTargetReadiness {
 	reason := "This machine is not ready for Hermes reload."
 	switch {
 	case nodePath == "" && hermesErr != nil:
-		reason = "Node.js runtime and embedded hermesc validation are missing."
+		reason = "Node.js runtime and hermesc are missing."
 	case nodePath == "":
 		reason = "Node.js runtime is missing."
 	case hermesErr != nil:
-		reason = "Embedded hermesc is unavailable on this machine."
+		reason = "No hermesc binary available on this machine."
 	}
 	if hermesErr != nil {
 		notes = append(notes, hermesErr.Error())
@@ -108,6 +121,29 @@ func capabilityForMobileHermes() CapabilityTargetReadiness {
 		Reason:          reason,
 		SuggestedAction: "Run `yaver install mobile` on this machine, then retry Hermes reload.",
 		Notes:           notes,
+	}
+}
+
+// resolveHermescForCapability finds a usable hermesc the same way
+// resolveHermesc does, minus the path that needs a project workDir
+// and the cold build-from-source path. Returns (summary, source,
+// nil) on success; (_, _, embedded-error) when neither is found.
+func resolveHermescForCapability() (string, string, error) {
+	if _, err := GetEmbeddedHermesc(); err == nil {
+		summary, sErr := embeddedHermescSummary()
+		if sErr == nil {
+			return summary, "embedded", nil
+		}
+		return "", "embedded", sErr
+	} else {
+		if path := findSystemHermesc(); path != "" {
+			summary, sErr := hermescSummaryAt(path)
+			if sErr == nil {
+				return summary, "system", nil
+			}
+			return "", "system", sErr
+		}
+		return "", "", err
 	}
 }
 

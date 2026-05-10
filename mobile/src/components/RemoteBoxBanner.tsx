@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useDevice } from "../context/DeviceContext";
-import { useColors, useTheme } from "../context/ThemeContext";
+import { useColors } from "../context/ThemeContext";
 import { typography } from "../theme/tokens";
 import RemoteBoxPickerModal from "./RemoteBoxPickerModal";
 import { deriveEffectiveConnectionState, type EffectiveConnectionState } from "../lib/connectionState";
@@ -44,23 +44,8 @@ export interface RemoteBoxBannerProps {
   disableTap?: boolean;
 }
 
-const DARK_PALETTE: Record<EffectiveConnectionState, BannerPalette> = {
-  connected: { bg: "#15151A", border: "#1F1F26", dot: "#22c55e", text: "#22c55e", label: "Connected" },
-  connecting: { bg: "#15151A", border: "#1F1F26", dot: "#f59e0b", text: "#f59e0b", label: "Reconnecting" },
-  error: { bg: "#15151A", border: "#1F1F26", dot: "#ef4444", text: "#ef4444", label: "Disconnected" },
-  disconnected: { bg: "#15151A", border: "#1F1F26", dot: "#A8A8B0", text: "#A8A8B0", label: "Disconnected" },
-};
-
-const LIGHT_PALETTE: Record<EffectiveConnectionState, BannerPalette> = {
-  connected: { bg: "#f0fdf4", border: "#bbf7d0", dot: "#22c55e", text: "#15803d", label: "Connected" },
-  connecting: { bg: "#fffbeb", border: "#fde68a", dot: "#f59e0b", text: "#b45309", label: "Reconnecting" },
-  error: { bg: "#fef2f2", border: "#fecaca", dot: "#ef4444", text: "#b91c1c", label: "Disconnected" },
-  disconnected: { bg: "#f5f5f5", border: "#e5e5e5", dot: "#9ca3af", text: "#6b7280", label: "Disconnected" },
-};
-
 interface BannerPalette {
-  bg: string;
-  border: string;
+  stripe: string;
   dot: string;
   text: string;
   label: string;
@@ -68,12 +53,16 @@ interface BannerPalette {
 
 export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: RemoteBoxBannerProps) {
   const c = useColors();
-  const { isDark } = useTheme();
-  const { activeDevice, connectionStatus, connectedDeviceIds } = useDevice();
+  const { activeDevice, connectionStatus, connectedDeviceIds, primaryDeviceId, secondaryDeviceId } = useDevice();
   const [pickerVisible, setPickerVisible] = useState(false);
 
   const effective = deriveEffectiveConnectionState(connectionStatus, connectedDeviceIds);
-  const palette = (isDark ? DARK_PALETTE : LIGHT_PALETTE)[effective];
+  const palette: BannerPalette = {
+    connected: { stripe: c.success, dot: c.success, text: c.textSecondary, label: "Connected" },
+    connecting: { stripe: c.warn, dot: c.warn, text: c.textSecondary, label: "Reconnecting" },
+    error: { stripe: c.error, dot: c.error, text: c.textPrimary, label: "Disconnected" },
+    disconnected: { stripe: c.textMuted, dot: c.textMuted, text: c.textSecondary, label: "Disconnected" },
+  }[effective];
 
   // Lead with the focused device name so the user sees immediately
   // which box this tab is reading from. When no device is selected
@@ -81,7 +70,13 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
   // banner reads "No device selected" and the Switch chip changes
   // to "Pick" so the action verb matches the empty state.
   const deviceLabel = activeDevice?.name?.trim() || "No device selected";
-  const ctaLabel = activeDevice ? "Switch ›" : "Pick ›";
+  const ctaLabel = activeDevice ? "Switch" : "Pick";
+  const roleLabel =
+    activeDevice?.id === primaryDeviceId
+      ? "Primary"
+      : activeDevice?.id === secondaryDeviceId
+        ? "Secondary"
+        : null;
 
   const Wrapper: any = disableTap ? View : Pressable;
   const wrapperProps = disableTap ? {} : { onPress: () => setPickerVisible(true), hitSlop: 6 };
@@ -93,25 +88,36 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
         style={[
           styles.banner,
           {
-            backgroundColor: palette.bg,
-            borderBottomColor: palette.border,
+            backgroundColor: c.bgCardElevated,
+            borderBottomColor: c.borderSubtle,
           },
         ]}
       >
-        <View style={[styles.accent, { backgroundColor: palette.dot }]} />
+        <View style={[styles.accent, { backgroundColor: palette.stripe }]} />
         <View style={styles.row}>
-          <View style={[styles.dot, { backgroundColor: palette.dot }]} />
-          <Text
-            style={[styles.label, { color: palette.text }]}
-            numberOfLines={1}
-          >
-            {palette.label} {"·"} {deviceLabel}
-          </Text>
+          <View style={styles.rowMain}>
+            <View style={styles.statusLine}>
+              <View style={[styles.dot, { backgroundColor: palette.dot }]} />
+              <Text style={[styles.label, { color: palette.text }]} numberOfLines={1}>
+                {palette.label}
+              </Text>
+            </View>
+            {roleLabel ? (
+              <View style={[styles.inlineChip, styles.rolePill, { backgroundColor: c.bgInput, borderColor: c.borderSubtle }]}>
+                <Text style={[styles.roleText, { color: c.textSecondary }]}>{roleLabel}</Text>
+              </View>
+            ) : null}
+            <Text style={[styles.deviceText, { color: c.textPrimary }]} numberOfLines={1}>
+              {deviceLabel}
+            </Text>
+            {extra ? <View style={styles.extraInline}>{extra}</View> : null}
+          </View>
           {!disableTap && (
-            <Text style={[styles.cta, { color: palette.text }]}>{ctaLabel}</Text>
+            <View style={[styles.inlineChip, styles.ctaPill, { borderColor: c.borderSubtle, backgroundColor: c.bgInput }]}>
+              <Text style={[styles.cta, { color: c.textSecondary }]}>{ctaLabel} ›</Text>
+            </View>
           )}
         </View>
-        {extra ? <View style={styles.extra}>{extra}</View> : null}
       </Wrapper>
       <RemoteBoxPickerModal
         visible={pickerVisible}
@@ -131,24 +137,59 @@ export default function RemoteBoxBanner({ extra, onDeviceChange, disableTap }: R
 const styles = StyleSheet.create({
   banner: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 11,
     borderBottomWidth: 1,
     position: "relative",
     overflow: "hidden",
   },
-  accent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3 },
-  row: { flexDirection: "row", alignItems: "center" },
+  accent: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4 },
+  row: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: 12 },
+  rowMain: { flexDirection: "row", alignItems: "center", flex: 1, minWidth: 0, gap: 8, flexWrap: "wrap" },
+  statusLine: { flexDirection: "row", alignItems: "center", flexShrink: 0 },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   label: {
-    ...typography.captionStrong,
+    ...typography.caption,
+    fontWeight: "600",
     letterSpacing: 0.1,
-    flex: 1,
     fontFamily: Platform.OS === "ios" ? undefined : undefined,
   },
-  cta: {
-    ...typography.captionStrong,
-    fontWeight: "700",
-    marginLeft: 8,
+  deviceText: {
+    ...typography.caption,
+    fontWeight: "600",
+    flexShrink: 1,
+    minWidth: 0,
   },
-  extra: { marginTop: 8, marginLeft: 18 },
+  inlineChip: {
+    minHeight: 24,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    justifyContent: "center",
+  },
+  rolePill: {
+    flexShrink: 0,
+  },
+  roleText: {
+    ...typography.caption,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  ctaPill: {
+    marginLeft: 8,
+    flexShrink: 0,
+  },
+  cta: {
+    ...typography.caption,
+    fontWeight: "700",
+  },
+  extraInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+    minWidth: 0,
+    flexShrink: 1,
+    backgroundColor: "transparent",
+  },
 });

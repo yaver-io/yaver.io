@@ -21,6 +21,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as WebBrowser from "expo-web-browser";
+import { OAUTH_REDIRECT } from "../../src/_core/constants";
 import { useAuth } from "../../src/context/AuthContext";
 import { useDevice } from "../../src/context/DeviceContext";
 import { customRelaysKey, customTunnelsKey } from "../../src/context/DeviceContext";
@@ -29,7 +30,7 @@ import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getAiRunners, type AiRunner, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
 import { SPEECH_PROVIDERS, TTS_PROVIDERS } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
@@ -41,14 +42,33 @@ import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 
 WebBrowser.maybeCompleteAuthSession();
 
-// User-facing picker has exactly three rows: Claude Code, OpenAI Codex,
-// OpenCode. The backend's catalog (backend/convex/aiRunners.ts) ships
-// Claude under runnerId="claude"; we rewrite it to "claude-code" at
-// fetch time so the picker keys + saved settings stay aligned with the
-// rest of the codebase (devices.tsx, RunnerAuthModal, autodev, etc.,
-// which all already accept "claude-code"). Without the rewrite, Claude
-// silently dropped out of the picker.
-const SUPPORTED_RUNNERS = new Set(["claude-code", "codex", "opencode"]);
+const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
+
+function isOAuthCallbackUrl(url: string): boolean {
+  return url.startsWith(OAUTH_REDIRECT) || url.startsWith(LEGACY_OAUTH_REDIRECT);
+}
+
+const RUNNER_OPTIONS: ReadonlyArray<{
+  runnerId: "claude-code" | "codex" | "opencode";
+  name: string;
+  description: string;
+}> = [
+  {
+    runnerId: "claude-code",
+    name: "Claude Code",
+    description: "Anthropic Claude CLI with streaming",
+  },
+  {
+    runnerId: "codex",
+    name: "OpenAI Codex",
+    description: "OpenAI Codex CLI",
+  },
+  {
+    runnerId: "opencode",
+    name: "OpenCode",
+    description: "Bring your own provider: OpenRouter, Gemini, GLM, Ollama, and more.",
+  },
+];
 
 const APP_VERSION = Constants.expoConfig?.version ?? "1.0.0";
 const BUILD_NUMBER =
@@ -167,9 +187,7 @@ export default function SettingsScreen() {
   const [debugLogsEnabled, setDebugLogsEnabled] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
   const [guideSection, setGuideSection] = useState<string | null>(null);
-  const [runners, setRunners] = useState<AiRunner[]>([]);
   const [selectedRunner, setSelectedRunner] = useState<string>("claude-code");
-  const [customRunnerCommand, setCustomRunnerCommand] = useState("");
   const [agentVersion, setAgentVersion] = useState<string | null>(null);
   const [agentLastPing, setAgentLastPing] = useState<Date | null>(null);
   const [agentStatus, setAgentStatus] = useState<AgentStatus | null>(null);
@@ -203,6 +221,7 @@ export default function SettingsScreen() {
   // OpenCode config full editor — opens a sheet that hits
   // /runner/opencode/config on the connected device.
   const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
+  const [openCodeStartInAddProvider, setOpenCodeStartInAddProvider] = useState(false);
   const [mobileCodingProvider, setMobileCodingProvider] = useState<"openai" | "glm">("openai");
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
@@ -695,7 +714,6 @@ export default function SettingsScreen() {
         // users whose userSettings was saved before the rename.
         setSelectedRunner(s.runnerId === "claude" ? "claude-code" : s.runnerId);
       }
-      if (s.customRunnerCommand) setCustomRunnerCommand(s.customRunnerCommand);
       if (s.speechProvider) setSpeechProvider(s.speechProvider);
       if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);
       if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
@@ -728,7 +746,6 @@ export default function SettingsScreen() {
         setMobileCodingProvider(s.mobileCodingProvider);
       }
     });
-    getAiRunners().then(setRunners);
     getUsageSummary(token).then(setUsageSummary);
   }, [token]);
 
@@ -1610,7 +1627,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     const sub = Linking.addEventListener("url", (event) => {
       const url = event.url || "";
-      if (!url.startsWith("yaver://oauth-callback")) return;
+      if (!isOAuthCallbackUrl(url)) return;
       if (!/\blinked=1\b/.test(url)) return;
       const parsed = ExpoLinking.parse(url);
       const linkedProvider = (parsed.queryParams?.linkedProvider as string | undefined) || "provider";
@@ -1630,7 +1647,7 @@ export default function SettingsScreen() {
       const tok = await getToken();
       if (!tok) throw new Error("Not signed in.");
       const intent = await startLinkIntent(tok, provider);
-      const returnUrl = ExpoLinking.createURL("/oauth-callback");
+      const returnUrl = OAUTH_REDIRECT;
       const result = await WebBrowser.openAuthSessionAsync(intent.url, returnUrl);
 
       if (result.type === "cancel" || result.type === "dismiss") {
@@ -3191,7 +3208,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: c.textMuted }]}>AI Runner</Text>
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
-            {runners.filter((r) => SUPPORTED_RUNNERS.has(r.runnerId)).map((runner) => {
+            {RUNNER_OPTIONS.map((runner) => {
               const selected = selectedRunner === runner.runnerId;
               return (
                 <Pressable
@@ -3199,7 +3216,17 @@ export default function SettingsScreen() {
                   style={[styles.runnerOption, { borderBottomColor: c.borderSubtle }]}
                   onPress={() => {
                     setSelectedRunner(runner.runnerId);
-                    if (token) saveUserSettings(token, { runnerId: runner.runnerId });
+                    if (token) void saveUserSettings(token, { runnerId: runner.runnerId });
+                    if (runner.runnerId !== "opencode") return;
+                    if (!activeDevice || connectionStatus !== "connected") {
+                      Alert.alert(
+                        "Connect a machine first",
+                        "OpenCode preferences are stored on the connected machine. Connect one, then pick OpenCode again.",
+                      );
+                      return;
+                    }
+                    setOpenCodeStartInAddProvider(true);
+                    setShowOpenCodeConfig(true);
                   }}
                 >
                   <View style={[styles.radioOuter, { borderColor: selected ? c.accent : c.border }]}>
@@ -3212,32 +3239,6 @@ export default function SettingsScreen() {
                 </Pressable>
               );
             })}
-            <Pressable
-              style={styles.runnerOption}
-              onPress={() => {
-                setSelectedRunner("custom");
-                if (token) saveUserSettings(token, { runnerId: "custom", customRunnerCommand });
-              }}
-            >
-              <View style={[styles.radioOuter, { borderColor: selectedRunner === "custom" ? c.accent : c.border }]}>
-                {selectedRunner === "custom" && <View style={[styles.radioInner, { backgroundColor: c.accent }]} />}
-              </View>
-              <Text style={[styles.runnerName, { color: c.textPrimary }]}>Custom</Text>
-            </Pressable>
-            {selectedRunner === "custom" && (
-              <TextInput
-                style={[styles.customRunnerInput, { backgroundColor: c.bgCardElevated, borderColor: c.border, color: c.textPrimary }]}
-                placeholder='my-tool --auto "{prompt}"'
-                placeholderTextColor={c.textMuted}
-                value={customRunnerCommand}
-                onChangeText={(text) => {
-                  setCustomRunnerCommand(text);
-                  if (token) saveUserSettings(token, { runnerId: "custom", customRunnerCommand: text });
-                }}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            )}
           </View>
         </View>
 
@@ -5103,7 +5104,14 @@ export default function SettingsScreen() {
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
-      <OpenCodeConfigModal visible={showOpenCodeConfig} onClose={() => setShowOpenCodeConfig(false)} />
+      <OpenCodeConfigModal
+        visible={showOpenCodeConfig}
+        startInAddProvider={openCodeStartInAddProvider}
+        onClose={() => {
+          setShowOpenCodeConfig(false);
+          setOpenCodeStartInAddProvider(false);
+        }}
+      />
     </View>
   );
 }

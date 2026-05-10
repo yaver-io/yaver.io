@@ -69,6 +69,14 @@ func embeddedHermescSummary() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("not available: %w", err)
 	}
+	return hermescSummaryAt(hermescBin)
+}
+
+// hermescSummaryAt produces the same human-readable summary as
+// embeddedHermescSummary but for any hermesc binary on disk —
+// e.g. the prewarmed system path used on linux/arm64 where the
+// embedded prebuilt is unavailable.
+func hermescSummaryAt(hermescBin string) (string, error) {
 	out, err := exec.Command(hermescBin, "--version").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("present but --version failed: %v", err)
