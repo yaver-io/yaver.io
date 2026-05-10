@@ -3911,61 +3911,22 @@ export default function TasksScreen() {
               setAttachedImages([]);
               setInputFromSpeech(false);
               pendingOpenTaskRef.current = null;
-              // Multi-target mode used to ALWAYS open the wizard, even
-              // when the user was already connected to a device with
-              // a known primary runner. That made the common case
-              // ("send another task to the box I'm already on") two
-              // taps slower for no reason. Now: if we have an active
-              // connection, ask first — keep the existing target by
-              // default, only fall through to the wizard when the user
-              // wants to switch device or agent.
-              const fallthrough = () => {
-                if (multiTargetMode) {
-                  setPendingTarget(null);
-                  setShowTargetWizard(true);
-                } else {
-                  setShowNewTask(true);
-                }
-              };
-              if (multiTargetMode && activeDevice && isEffectivelyConnected) {
-                const primaryRunnerId = primaryRunnerByDevice[activeDevice.id] || "";
-                const agentLabel = primaryRunnerId
-                  ? (primaryRunnerId === "claude" || primaryRunnerId === "claude-code"
-                      ? "Claude Code"
-                      : primaryRunnerId === "codex"
-                        ? "Codex"
-                        : primaryRunnerId === "opencode"
-                          ? "OpenCode"
-                          : primaryRunnerId)
-                  : "the active agent";
-                Alert.alert(
-                  "New task",
-                  `Continue on ${activeDevice.name} with ${agentLabel}?`,
-                  [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                      text: "Use this",
-                      onPress: () => {
-                        // Skip the wizard — open the regular compose modal
-                        // bound to the already-connected device + its
-                        // saved primary runner. setPendingTarget(null)
-                        // tells the compose path to use activeDevice.
-                        setPendingTarget(null);
-                        setShowNewTask(true);
-                      },
-                    },
-                    {
-                      text: "Choose another…",
-                      onPress: () => {
-                        setPendingTarget(null);
-                        setShowTargetWizard(true);
-                      },
-                    },
-                  ],
-                );
-                return;
+              // The Alert.alert chooser ("Use this / Choose another /
+              // Cancel") was friction the user explicitly asked to
+              // remove — opening compose directly is the fast path,
+              // and the agent pill INSIDE compose now launches the
+              // wizard for switching device + agent + model when the
+              // user wants to change the target. multiTargetMode
+              // without an active connection still falls through to
+              // the wizard so the user can pick a target before they
+              // even see the composer.
+              if (multiTargetMode && (!activeDevice || !isEffectivelyConnected)) {
+                setPendingTarget(null);
+                setShowTargetWizard(true);
+              } else {
+                setPendingTarget(null);
+                setShowNewTask(true);
               }
-              fallthrough();
             }}
           >
             <Ionicons name="add" size={28} color="#ffffff" />
@@ -4230,12 +4191,29 @@ export default function TasksScreen() {
                     { backgroundColor: c.bgCardElevated, borderColor: c.border, marginLeft: "auto", marginRight: 10 },
                     pressed && { opacity: 0.55 },
                   ]}
-                  onPress={() => setShowAgentPicker(true)}
+                  // The pill used to open `setShowAgentPicker` (an
+                  // in-modal runner+model picker), which the user
+                  // reported as inert ("when I click on OpenAI Codex
+                  // it does nothing") and which couldn't switch the
+                  // target DEVICE — only the runner. Launch the full
+                  // TaskTargetWizard instead: it handles machine
+                  // selection, agent selection, and the per-runner
+                  // model picker in one flow. We close the compose
+                  // modal first so the wizard owns the screen; on
+                  // confirm, the wizard sets pendingTarget and the
+                  // tasks compose flow re-opens with the new target
+                  // bound to the next send.
+                  onPress={() => {
+                    setShowNewTask(false);
+                    setPendingTarget(null);
+                    setShowTargetWizard(true);
+                  }}
                   accessibilityRole="button"
-                  accessibilityLabel="Change coding agent and model for this task"
+                  accessibilityLabel="Change device, coding agent, and model for this task"
                 >
                   <Text style={[s.agentBadgeText, { color: c.textSecondary }]}>
                     {(() => {
+                      const deviceLabel = activeDevice?.name ? `${activeDevice.name} · ` : "";
                       const r = selectedRunner
                         || (activeDevice ? primaryRunnerByDevice[activeDevice.id] : "")
                         || "claude";
@@ -4247,7 +4225,8 @@ export default function TasksScreen() {
                           : r === "custom" ? "Custom"
                           : "Claude");
                       const modelLabel = model?.name || selectedModel || "";
-                      return modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
+                      const runnerSegment = modelLabel ? `${runnerLabel} · ${modelLabel}` : runnerLabel;
+                      return `${deviceLabel}${runnerSegment}`;
                     })()}
                   </Text>
                   <Text style={{ color: c.textMuted, fontSize: 10, marginLeft: 4 }}>▾</Text>

@@ -64,7 +64,11 @@ const RUNNERS: Array<{
   { taskId: "opencode", auditId: "opencode", label: "OpenCode" },
 ];
 
-type Pane = "device" | "agent" | "switching";
+// "switching" is the only out-of-band pane left after the wizard
+// flattened device + agent + model into a single unified view —
+// it covers the brief moment between hitting Continue and the
+// compose modal taking over (or surfacing a "couldn't switch" error).
+type Pane = "unified" | "switching";
 
 /** Runner ↔ model registry. First entry per runner is the "best
  *  default" we hand out when the user hasn't picked one for that
@@ -166,7 +170,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // surfaces both states distinctly.
   const connectedSet = React.useMemo(() => new Set(connectedDeviceIds), [connectedDeviceIds]);
 
-  const [pane, setPane] = React.useState<Pane>("device");
+  const [pane, setPane] = React.useState<Pane>("unified");
   const [pickedDevice, setPickedDevice] = React.useState<Device | null>(null);
   const [pickedRunner, setPickedRunner] = React.useState<TaskTarget["runner"] | null>(null);
   // null = audit attempted but failed (network/peer-proxy/etc) — UI must
@@ -198,7 +202,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // Reset everything on close.
   React.useEffect(() => {
     if (visible) return;
-    setPane("device");
+    setPane("unified");
     setPickedDevice(null);
     setPickedRunner(null);
     setAuditByDevice({});
@@ -254,20 +258,19 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   }, []);
 
   // Single-device shortcut: if there's exactly one online + authed
-  // device, skip Pane A entirely.
+  // device, auto-pick it on open. Inline agent picker handles the
+  // rest — no pane swap.
   React.useEffect(() => {
-    if (!visible || pane !== "device") return;
+    if (!visible || pane !== "unified") return;
     const eligible = devices.filter((d) => d.online && !d.needsAuth);
     if (eligible.length === 1) {
       const only = eligible[0];
       setPickedDevice(only);
-      // pre-seed runner from primaryRunnerByDevice if present
       const seed = primaryRunnerByDevice[only.id];
       if (seed) {
         const tid = seed === "claude" ? "claude-code" : (seed as TaskTarget["runner"]);
         setPickedRunner(tid);
       }
-      setPane("agent");
       void runAudit(only);
     }
   }, [visible, pane, devices, primaryRunnerByDevice, runAudit]);
@@ -306,7 +309,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
     } else {
       setPickedRunner(null);
     }
-    setPane("agent");
+    // Stay in unified pane — picked device's agents render inline.
     if (!auditByDevice[device.id]) void runAudit(device);
   };
 
@@ -394,22 +397,32 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // ─────────────────────────────────────────────────────────────────
   // Render
 
-  const sortedDevices = React.useMemo(() => {
-    return [...devices].sort((a, b) => {
-      const aReady = a.online && !a.needsAuth ? 0 : a.online ? 1 : 2;
-      const bReady = b.online && !b.needsAuth ? 0 : b.online ? 1 : 2;
-      if (aReady !== bReady) return aReady - bReady;
-      return a.name.localeCompare(b.name);
-    });
-  }, [devices]);
+  // Filter to "actually usable" devices: live pool connection + same
+  // user + auth ready. The user's explicit ask was "only show
+  // connected machines" — a stale heartbeat row is noise here. We
+  // OR in the focused activeDevice as a defensive fallback during
+  // the brief window before the manager pool publishes
+  // connectedDeviceIds.
+  const eligibleDevices = React.useMemo(() => {
+    const filtered = devices.filter((d) =>
+      !d.needsAuth && (connectedSet.has(d.id) || activeDevice?.id === d.id),
+    );
+    return filtered.sort((a, b) => a.name.localeCompare(b.name));
+  }, [devices, connectedSet, activeDevice?.id]);
 
-  const renderDevicePane = () => (
+  // Unified pane: a single scrolling view that lists every CONNECTED
+  // device, expanding the picked one inline to show agents + model.
+  // The user explicitly asked for "one page not two" — the previous
+  // 2-step wizard (Pick a machine → Pick a coding agent) doubled the
+  // tap budget for the common case of picking the same box you were
+  // already on with a different agent.
+  const renderUnifiedPane = () => (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
       <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
-        Pick a machine
+        Send a task
       </Text>
       <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }}>
-        Where should this task run? Auth state is shown per device.
+        Pick a connected machine, then choose its agent and model.
       </Text>
       {!activeDevice ? (
         <View style={{ padding: 16, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}>
@@ -417,13 +430,20 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             Connect to any device first
           </Text>
           <Text style={{ color: c.textMuted, fontSize: 12 }}>
-            The wizard queries each remote machine through the device you're attached to. Pick one from the Devices tab, then come back.
+            Pick one from the Devices tab and come back — the wizard only lists machines that have a live connection.
           </Text>
         </View>
-      ) : sortedDevices.length === 0 ? (
-        <Text style={{ color: c.textMuted, fontSize: 13 }}>No devices yet. Sign in on a machine first.</Text>
+      ) : eligibleDevices.length === 0 ? (
+        <View style={{ padding: 16, borderRadius: 10, borderWidth: 1, borderColor: c.border, backgroundColor: c.bgCard }}>
+          <Text style={{ color: c.textPrimary, fontWeight: "600", marginBottom: 6 }}>
+            No connected machines
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 12 }}>
+            Open the Devices tab, tap Connect on the box you want to use, then return here.
+          </Text>
+        </View>
       ) : (
-        sortedDevices.map((d) => {
+        eligibleDevices.map((d) => {
           const ready = d.online && !d.needsAuth;
           const offlineNeedsAuth = d.needsAuth && !d.online;
           const disabled = !d.online || offlineNeedsAuth;
@@ -442,310 +462,274 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
               : distance === 0
                 ? ` · yaver ${agentVer} · current`
                 : ` · yaver ${agentVer} · ${distance} behind`;
+          const expanded = pickedDevice?.id === d.id;
+          const rows = auditByDevice[d.id];
+          return (
+            <View
+              key={d.id}
+              style={{
+                marginBottom: 10,
+                borderRadius: 10,
+                borderWidth: expanded ? 1.5 : 1,
+                borderColor: expanded ? c.accent : c.border,
+                backgroundColor: c.bgCard,
+                overflow: "hidden",
+              }}
+            >
+              <Pressable
+                onPress={() => handlePickDevice(d)}
+                disabled={disabled}
+                style={({ pressed }) => ({
+                  padding: 14,
+                  opacity: disabled ? 0.55 : pressed ? 0.85 : 1,
+                })}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                  <View style={{ flex: 1, paddingRight: 12 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }} numberOfLines={1}>
+                      {d.name}
+                      {d.alias ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  @{d.alias}</Text> : null}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
+                      {connectedSet.has(d.id) ? "Connected" : d.online ? "Online" : "Offline"}
+                      {activeDevice?.id === d.id ? " · Focused" : ""}
+                      {versionSuffix && !outdated ? versionSuffix : ""}
+                    </Text>
+                    {outdated ? (
+                      <Text style={{ color: "#d97706", fontSize: 11, marginTop: 2, fontWeight: "600" }}>
+                        yaver {agentVer} · {distance} version{distance === 1 ? "" : "s"} behind {latestCliVersion}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={{ color: c.accent, fontSize: 18 }}>{expanded ? "▾" : "›"}</Text>
+                </View>
+              </Pressable>
+              {expanded ? renderInlineAgentSection(d, rows) : null}
+            </View>
+          );
+        })
+      )}
+      <View style={{ height: 16 }} />
+      {/* Sticky Continue button at the bottom of the unified scroll
+          view. Disabled until both a device and a runner (with a
+          model where required) are picked. */}
+      <Pressable
+        onPress={handleContinue}
+        disabled={continueDisabled}
+        style={({ pressed }) => ({
+          backgroundColor: continueDisabled ? c.border : c.accent,
+          paddingVertical: 14,
+          borderRadius: 10,
+          alignItems: "center",
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        <Text style={{ color: continueDisabled ? c.textMuted : "#000", fontWeight: "700" }}>
+          {!pickedDevice
+            ? "Pick a machine to continue"
+            : !pickedRunner
+              ? "Pick an agent to continue"
+              : "Continue"}
+        </Text>
+      </Pressable>
+    </ScrollView>
+  );
+
+  // Inline agent + model picker rendered under the picked device card
+  // in the unified pane. Pulled out as a function so the pane render
+  // stays readable.
+  const renderInlineAgentSection = (
+    d: Device,
+    rows: RunnerAuthStatusRow[] | null | undefined,
+  ) => (
+    <View style={{ paddingHorizontal: 14, paddingBottom: 14, borderTopWidth: 1, borderTopColor: c.border }}>
+      <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginTop: 10, marginBottom: 8, letterSpacing: 0.5 }}>
+        AGENT
+      </Text>
+      {auditingId === d.id || rows === undefined ? (
+        <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 12 }}>
+          <ActivityIndicator color={c.accent} />
+          <Text style={{ color: c.textMuted, marginLeft: 10, fontSize: 12 }}>Checking agent state…</Text>
+        </View>
+      ) : (
+        RUNNERS.map(({ taskId, auditId, label }) => {
+          const row = auditFor(d.id, auditId);
+          const failed = auditFailed(d.id);
+          const installed = !!row?.installed;
+          const authed = !!row?.authConfigured;
+          const ready = installed && authed;
+          const selected = pickedRunner === taskId;
+          const subtitle = failed
+            ? "Couldn't audit this device — tap to retry"
+            : !installed
+              ? "Not installed on this device"
+              : authed
+                ? `Ready${row?.version ? ` · ${row.version}` : ""}`
+                : "Needs auth — tap to set up";
           return (
             <Pressable
-              key={d.id}
-              onPress={() => handlePickDevice(d)}
-              disabled={disabled}
+              key={taskId}
+              onPress={() => failed ? runAudit(d) : handlePickRunner(taskId, auditId)}
+              disabled={!failed && !installed}
               style={({ pressed }) => ({
-                marginBottom: 10,
-                padding: 14,
-                borderRadius: 10,
+                marginBottom: 8,
+                padding: 12,
+                borderRadius: 8,
                 borderWidth: 1,
-                borderColor: ready ? c.border : c.borderSubtle,
-                backgroundColor: c.bgCard,
-                opacity: disabled ? 0.55 : pressed ? 0.85 : 1,
+                borderColor: selected ? c.accent : c.border,
+                backgroundColor: c.bg,
+                opacity: (!failed && !installed) ? 0.5 : pressed ? 0.85 : 1,
               })}
             >
               <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                 <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }} numberOfLines={1}>
-                    {d.name}
-                    {d.alias ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  @{d.alias}</Text> : null}
-                  </Text>
-                  <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                    {d.online ? "Online" : "Offline"}
-                    {d.needsAuth ? " · Needs Yaver auth" : ""}
-                    {activeDevice?.id === d.id
-                      ? " · Connected"
-                      : connectedSet.has(d.id)
-                        ? " · Live (pooled)"
-                        : ""}
-                    {versionSuffix && !outdated ? versionSuffix : ""}
-                  </Text>
-                  {outdated ? (
-                    <Text style={{ color: "#d97706", fontSize: 11, marginTop: 2, fontWeight: "600" }}>
-                      yaver {agentVer} · {distance} version{distance === 1 ? "" : "s"} behind {latestCliVersion}
-                    </Text>
-                  ) : null}
+                  <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>{label}</Text>
+                  <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }}>{subtitle}</Text>
                 </View>
                 {ready ? (
-                  <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
-                ) : d.needsAuth && d.online ? (
+                  selected ? (
+                    <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text>
+                  ) : (
+                    <Text style={{ color: c.accent, fontSize: 16 }}>›</Text>
+                  )
+                ) : installed ? (
                   <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>AUTHENTICATE</Text>
-                ) : (
-                  <Text style={{ color: c.textMuted, fontSize: 11 }}>Wake first</Text>
-                )}
+                ) : null}
               </View>
             </Pressable>
           );
         })
       )}
-    </ScrollView>
-  );
-
-  const renderAgentPane = () => {
-    if (!pickedDevice) return null;
-    const rows = auditByDevice[pickedDevice.id];
-    return (
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
-        <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
-          Pick a coding agent
-        </Text>
-        <Text style={{ color: c.textMuted, fontSize: 13, marginBottom: 20 }} numberOfLines={2}>
-          On {pickedDevice.name}. Tap an agent that needs auth to set it up here.
-        </Text>
-        {auditingId === pickedDevice.id || rows === undefined ? (
-          <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 12 }}>
-            <ActivityIndicator color={c.accent} />
-            <Text style={{ color: c.textMuted, marginLeft: 10, fontSize: 12 }}>Checking agent state…</Text>
-          </View>
-        ) : (
-          RUNNERS.map(({ taskId, auditId, label }) => {
-            const row = auditFor(pickedDevice.id, auditId);
-            const failed = auditFailed(pickedDevice.id);
-            const installed = !!row?.installed;
-            const authed = !!row?.authConfigured;
-            const ready = installed && authed;
-            const selected = pickedRunner === taskId;
-            const subtitle = failed
-              ? "Couldn't audit this device — tap to retry"
-              : !installed
-                ? "Not installed on this device"
-                : authed
-                  ? `Ready${row?.version ? ` · ${row.version}` : ""}`
-                  : "Needs auth — tap to set up";
+      {/* Per-runner model picker — only when the picked device matches
+          this card and runner is Claude Code or Codex. OpenCode picks
+          model + provider from the host's opencode.json, handled in
+          the OpenCode block below. */}
+      {pickedDevice?.id === d.id && pickedRunner && (pickedRunner === "claude-code" || pickedRunner === "codex") ? (
+        <View style={{ marginTop: 6 }}>
+          <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
+            MODEL
+          </Text>
+          {MODELS_BY_RUNNER[pickedRunner].map((m) => {
+            const sel = pickedModel === m.id;
             return (
               <Pressable
-                key={taskId}
-                onPress={() => failed ? runAudit(pickedDevice) : handlePickRunner(taskId, auditId)}
-                disabled={!failed && !installed}
+                key={m.id}
+                onPress={() => setPickedModel(m.id)}
                 style={({ pressed }) => ({
-                  marginBottom: 10,
-                  padding: 14,
-                  borderRadius: 10,
+                  marginBottom: 6,
+                  padding: 10,
+                  borderRadius: 8,
                   borderWidth: 1,
-                  borderColor: selected ? c.accent : c.border,
-                  backgroundColor: c.bgCard,
-                  opacity: (!failed && !installed) ? 0.5 : pressed ? 0.85 : 1,
+                  borderColor: sel ? c.accent : c.border,
+                  backgroundColor: c.bg,
+                  opacity: pressed ? 0.85 : 1,
                 })}
               >
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                  <View style={{ flex: 1, paddingRight: 12 }}>
-                    <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "600" }}>{label}</Text>
-                    <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>{subtitle}</Text>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                  <View style={{ flex: 1, paddingRight: 10 }}>
+                    <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+                      {m.label}
+                    </Text>
+                    <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
+                      {m.id}
+                    </Text>
                   </View>
-                  {ready ? (
-                    selected ? (
-                      <Text style={{ color: c.accent, fontWeight: "700", fontSize: 13 }}>SELECTED</Text>
-                    ) : (
-                      <Text style={{ color: c.accent, fontSize: 18 }}>›</Text>
-                    )
-                  ) : installed ? (
-                    <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700" }}>AUTHENTICATE</Text>
-                  ) : null}
+                  {sel ? <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text> : null}
                 </View>
               </Pressable>
             );
-          })
-        )}
-        {/* Per-runner model picker. Claude Code (Opus / Sonnet / Haiku)
-            and Codex (GPT-5 family) need a model. Picking the wrong
-            family is what crashed claude-cli on Mobiles-Mac-mini —
-            Codex's gpt-5.4 default carried over when the user switched
-            runners — so the picker is unconditional for these two and
-            the default lights up the highest-capability option. The
-            useEffect above keeps `pickedModel` in sync with the runner
-            so we never forward a mismatched id. */}
-        {pickedRunner && (pickedRunner === "claude-code" || pickedRunner === "codex") ? (
-          <View style={{ marginTop: 4, marginBottom: 12 }}>
-            <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
-              MODEL
-            </Text>
-            {MODELS_BY_RUNNER[pickedRunner].map((m) => {
-              const sel = pickedModel === m.id;
-              return (
-                <Pressable
-                  key={m.id}
-                  onPress={() => setPickedModel(m.id)}
-                  style={({ pressed }) => ({
-                    marginBottom: 8,
-                    padding: 12,
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: sel ? c.accent : c.border,
-                    backgroundColor: c.bgCard,
-                    opacity: pressed ? 0.85 : 1,
-                  })}
-                >
-                  <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                    <View style={{ flex: 1, paddingRight: 10 }}>
-                      <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>
-                        {m.label}
-                      </Text>
-                      <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 2 }} numberOfLines={1}>
-                        {m.id}
-                      </Text>
-                    </View>
-                    {sel ? (
-                      <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text>
-                    ) : null}
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-        {/* OpenCode sub-step: agents (modes) + providers come from the
-            remote box's opencode.json so the picker reflects that
-            machine's actual setup, not a hardcoded list. Only rendered
-            when OpenCode is the picked runner (and authed, since
-            handlePickRunner gates on authConfigured before flipping
-            pickedRunner to opencode). */}
-        {pickedRunner === "opencode" ? (
-          (() => {
-            const cfg = opencodeByDevice[pickedDevice.id];
-            const loading = opencodeLoadingId === pickedDevice.id || cfg === undefined;
-            const agents = (cfg?.agents || []).filter((a) => !!a?.name);
-            const fallback = ["build", "plan"]; // sensible defaults if config probe failed
-            const showFallback = !loading && agents.length === 0;
-            return (
-              <View style={{ marginTop: 4, marginBottom: 12 }}>
-                <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
-                  OPENCODE AGENT
-                </Text>
-                {loading ? (
-                  <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 8 }}>
-                    <ActivityIndicator color={c.accent} />
-                    <Text style={{ color: c.textMuted, marginLeft: 10, fontSize: 12 }}>
-                      Reading opencode.json on {pickedDevice.name}…
-                    </Text>
-                  </View>
-                ) : showFallback ? (
-                  <>
-                    <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 8 }}>
-                      Couldn't read opencode.json on this device — using defaults.
-                    </Text>
-                    {fallback.map((mode) => {
-                      const sel = pickedOpencodeMode === mode;
-                      return (
-                        <Pressable
-                          key={mode}
-                          onPress={() => setPickedOpencodeMode(mode)}
-                          style={({ pressed }) => ({
-                            marginBottom: 8,
-                            padding: 12,
-                            borderRadius: 8,
-                            borderWidth: 1,
-                            borderColor: sel ? c.accent : c.border,
-                            backgroundColor: c.bgCard,
-                            opacity: pressed ? 0.85 : 1,
-                          })}
-                        >
-                          <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }}>{mode}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </>
-                ) : (
-                  agents.map((a) => {
-                    const sel = pickedOpencodeMode === a.name;
+          })}
+        </View>
+      ) : null}
+      {/* OpenCode mode picker — shown when this card's device is
+          picked and the runner is OpenCode. Modes come from the
+          remote box's opencode.json. */}
+      {pickedDevice?.id === d.id && pickedRunner === "opencode" ? (
+        (() => {
+          const cfg = opencodeByDevice[d.id];
+          const loading = opencodeLoadingId === d.id || cfg === undefined;
+          const agents = (cfg?.agents || []).filter((a) => !!a?.name);
+          const fallback = ["build", "plan"];
+          const showFallback = !loading && agents.length === 0;
+          return (
+            <View style={{ marginTop: 6 }}>
+              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "700", marginBottom: 8, letterSpacing: 0.5 }}>
+                OPENCODE AGENT
+              </Text>
+              {loading ? (
+                <View style={{ flexDirection: "row", alignItems: "center", paddingVertical: 8 }}>
+                  <ActivityIndicator color={c.accent} />
+                  <Text style={{ color: c.textMuted, marginLeft: 10, fontSize: 12 }}>
+                    Reading opencode.json…
+                  </Text>
+                </View>
+              ) : showFallback ? (
+                <>
+                  <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 8 }}>
+                    Couldn't read opencode.json — using defaults.
+                  </Text>
+                  {fallback.map((mode) => {
+                    const sel = pickedOpencodeMode === mode;
                     return (
                       <Pressable
-                        key={a.name}
-                        onPress={() => setPickedOpencodeMode(a.name)}
+                        key={mode}
+                        onPress={() => setPickedOpencodeMode(mode)}
                         style={({ pressed }) => ({
-                          marginBottom: 8,
-                          padding: 12,
+                          marginBottom: 6,
+                          padding: 10,
                           borderRadius: 8,
                           borderWidth: 1,
                           borderColor: sel ? c.accent : c.border,
-                          backgroundColor: c.bgCard,
+                          backgroundColor: c.bg,
                           opacity: pressed ? 0.85 : 1,
                         })}
                       >
-                        <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-                          <View style={{ flex: 1, paddingRight: 10 }}>
-                            <Text style={{ color: c.textPrimary, fontSize: 14, fontWeight: "600" }} numberOfLines={1}>
-                              {a.name}
-                              {a.isBuiltin ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  (builtin)</Text> : null}
-                            </Text>
-                            {a.model || a.description ? (
-                              <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }} numberOfLines={2}>
-                                {a.description || a.model}
-                              </Text>
-                            ) : null}
-                          </View>
-                          {sel ? <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text> : null}
-                        </View>
+                        <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>{mode}</Text>
                       </Pressable>
                     );
-                  })
-                )}
-                {!loading && cfg && (cfg.providers?.length || 0) > 0 ? (
-                  <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 4 }}>
-                    Providers on this device: {(cfg.providers || []).map((p) => p.name || p.id).filter(Boolean).join(", ")}
-                  </Text>
-                ) : null}
-              </View>
-            );
-          })()
-        ) : null}
-        <View style={{ height: 16 }} />
-        <Pressable
-          onPress={handleContinue}
-          disabled={continueDisabled}
-          style={({ pressed }) => ({
-            backgroundColor: continueDisabled ? c.border : c.accent,
-            paddingVertical: 14,
-            borderRadius: 10,
-            alignItems: "center",
-            opacity: pressed ? 0.85 : 1,
-          })}
-        >
-          <Text style={{ color: continueDisabled ? c.textMuted : "#000", fontWeight: "700" }}>
-            {continueDisabled ? "Pick an agent to continue" : "Continue"}
-          </Text>
-        </Pressable>
-        {/* "Back to machines" used to be a faint gray link at the bottom
-            and users were missing it — it's the only escape hatch when
-            the picked machine has every runner stuck on "needs auth"
-            (Continue is disabled, Cancel kills the whole wizard). Promoted
-            to an outlined accent button on the same visual weight tier as
-            Continue so it's findable at a glance. */}
-        <Pressable
-          onPress={() => setPane("device")}
-          style={({ pressed }) => ({
-            marginTop: 10,
-            paddingVertical: 13,
-            borderRadius: 10,
-            borderWidth: 1.5,
-            borderColor: c.accent,
-            alignItems: "center",
-            flexDirection: "row",
-            justifyContent: "center",
-            backgroundColor: pressed ? c.bgCard : "transparent",
-            opacity: pressed ? 0.85 : 1,
-          })}
-        >
-          <Text style={{ color: c.accent, fontSize: 16, fontWeight: "700", marginRight: 6 }}>‹</Text>
-          <Text style={{ color: c.accent, fontSize: 14, fontWeight: "700", letterSpacing: 0.3 }}>
-            Back to machines
-          </Text>
-        </Pressable>
-      </ScrollView>
-    );
-  };
+                  })}
+                </>
+              ) : (
+                agents.map((a) => {
+                  const sel = pickedOpencodeMode === a.name;
+                  return (
+                    <Pressable
+                      key={a.name}
+                      onPress={() => setPickedOpencodeMode(a.name)}
+                      style={({ pressed }) => ({
+                        marginBottom: 6,
+                        padding: 10,
+                        borderRadius: 8,
+                        borderWidth: 1,
+                        borderColor: sel ? c.accent : c.border,
+                        backgroundColor: c.bg,
+                        opacity: pressed ? 0.85 : 1,
+                      })}
+                    >
+                      <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                        <View style={{ flex: 1, paddingRight: 10 }}>
+                          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }} numberOfLines={1}>
+                            {a.name}
+                            {a.isBuiltin ? <Text style={{ color: c.textMuted, fontWeight: "400" }}>  (builtin)</Text> : null}
+                          </Text>
+                          {a.model || a.description ? (
+                            <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 3 }} numberOfLines={2}>
+                              {a.description || a.model}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {sel ? <Text style={{ color: c.accent, fontWeight: "700", fontSize: 12 }}>SELECTED</Text> : null}
+                      </View>
+                    </Pressable>
+                  );
+                })
+              )}
+            </View>
+          );
+        })()
+      ) : null}
+    </View>
+  );
 
   const renderSwitchingPane = () => (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: 24 }}>
@@ -758,7 +742,7 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             {switchError}
           </Text>
           <Pressable
-            onPress={() => setPane("agent")}
+            onPress={() => setPane("unified")}
             style={({ pressed }) => ({
               backgroundColor: c.accent,
               paddingVertical: 12,
@@ -801,12 +785,11 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
               <Text style={{ color: c.textMuted, fontSize: 14 }}>Cancel</Text>
             </Pressable>
             <Text style={{ color: c.textMuted, fontSize: 12 }}>
-              {pane === "device" ? "Step 1 of 2" : pane === "agent" ? "Step 2 of 2" : "Switching"}
+              {pane === "switching" ? "Switching" : "New task"}
             </Text>
             <View style={{ width: 50 }} />
           </View>
-          {pane === "device" && renderDevicePane()}
-          {pane === "agent" && renderAgentPane()}
+          {pane === "unified" && renderUnifiedPane()}
           {pane === "switching" && renderSwitchingPane()}
         </View>
       </Modal>
