@@ -748,3 +748,31 @@ func mcpRunnerBrowserAuthCancel(deviceID, sessionID string) map[string]interface
 	}
 	return out
 }
+
+// mcpRunnerAuthCredentialsImport copies a subscription token blob to the
+// named device's runner credentials file. See the HTTP handler at
+// runner_auth_browser_http.go::handleRunnerAuthCredentialsImport for
+// detail on storage paths and side-effects.
+//
+// Yaver is a single-user wrapper — when claude is already signed in on
+// one of the user's devices, this tool ships that working state to a
+// remote box without re-running the OAuth flow there (which is the
+// fragile path on macOS-headless boxes).
+func mcpRunnerAuthCredentialsImport(deviceID, runner, credentialsJSON string) map[string]interface{} {
+	body := map[string]string{"runner": runner, "credentialsJson": credentialsJSON}
+	if strings.TrimSpace(deviceID) != "" {
+		out, err := proxyToDeviceJSON(context.Background(), "runner_auth_credentials_import", strings.TrimSpace(deviceID), http.MethodPost, "/runner-auth/credentials/import", body)
+		if err != nil {
+			return map[string]interface{}{"ok": false, "error": err.Error()}
+		}
+		return out
+	}
+	out, err := localAgentRequest(http.MethodPost, "/runner-auth/credentials/import", map[string]interface{}{
+		"runner":          runner,
+		"credentialsJson": credentialsJSON,
+	})
+	if err != nil {
+		return map[string]interface{}{"ok": false, "error": err.Error()}
+	}
+	return out
+}

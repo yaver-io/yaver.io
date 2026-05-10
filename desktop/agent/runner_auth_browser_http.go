@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -145,8 +146,26 @@ func runnerBrowserAuthCommand(runner string) (method string, cmd *exec.Cmd, err 
 		if bin == "" {
 			return "", nil, fmt.Errorf("claude CLI not found on this machine (looked in PATH, ~/.npm-global/bin, ~/.local/bin, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin, and the user login shell). Run `npm i -g @anthropic-ai/claude-code` and try again.")
 		}
-		cmd = exec.Command(bin, "auth", "login", "--console")
-		cmd.Env = append(cmd.Environ(), "CI=1", "NO_COLOR=1", "TERM=dumb")
+		// Use --claudeai (Claude Max / Pro subscription) — the default
+		// path. The previous `--console` flag was wrong: it's the
+		// "Anthropic Console (API usage billing)" flow, which mints a
+		// token that 401s against subscription endpoints. Yaver's
+		// no-API-keys constraint means we always want the subscription
+		// OAuth, never per-token billing.
+		//
+		// Pass --claudeai explicitly (not via default) so a future
+		// claude release can't silently switch defaults. CLAUDE_CONFIG_DIR
+		// nudges claude to also write `~/.claude/.credentials.json` even
+		// on macOS — the daemon's spawned-by-launchd / spawned-from-SSH
+		// processes can read the file regardless of the GUI security
+		// session that gates Keychain access; without this, OAuth saves
+		// to Keychain only and subsequent tasks still 401 because the
+		// daemon's Keychain access is broken.
+		cmd = exec.Command(bin, "auth", "login", "--claudeai")
+		cmd.Env = append(cmd.Environ(),
+			"CI=1", "NO_COLOR=1", "TERM=dumb",
+			"CLAUDE_CONFIG_DIR="+filepath.Join(os.Getenv("HOME"), ".claude"),
+		)
 		return "oauth", cmd, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported runner %q (want claude or codex)", runner)
@@ -512,5 +531,90 @@ func (s *HTTPServer) handleRunnerBrowserAuthCancel(w http.ResponseWriter, r *htt
 	jsonReply(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"session": snap,
+	})
+}
+
+// handleRunnerAuthCredentialsImport accepts a runner credentials JSON
+// blob (the format claude / codex write to disk on a successful login)
+// and persists it where the local runner CLI will read it on next spawn.
+// This is the "copy my local token to the remote box" path — yaver is a
+// single-user wrapper, so when the user already has working subscription
+// auth on one of their devices, we copy that working state instead of
+// running fresh OAuth on every box (which hits the SSH-launched-daemon
+// Keychain wall on macOS).
+//
+// Body: {"runner": "claude" | "codex", "credentialsJson": "<full JSON>"}
+//
+// Storage: claude → $HOME/.claude/.credentials.json (mode 0600),
+//	      codex  → $HOME/.codex/auth.json (mode 0600).
+//
+// Side effect: clears MarkRunnerAuthInvalid for that runner so DeviceDetails
+// flips back to ✓ signed in on the next /runner-auth/status poll without
+// waiting for a successful task to vouch for the new creds.
+//
+// Note: this writes to the **file** path. claude on macOS reads the file
+// before falling back to Keychain when CLAUDE_CONFIG_DIR is set or the
+// default file path exists. Subsequent task spawns will pick up the new
+// creds without needing GUI Keychain access.
+func (s *HTTPServer) handleRunnerAuthCredentialsImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	var body struct {
+		Runner          string `json:"runner"`
+		CredentialsJSON string `json:"credentialsJson"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	runner := normalizeRunnerAuthName(body.Runner)
+	if runner != "claude" && runner != "codex" {
+		jsonError(w, http.StatusBadRequest, "unsupported runner — claude or codex only")
+		return
+	}
+	creds := strings.TrimSpace(body.CredentialsJSON)
+	if creds == "" {
+		jsonError(w, http.StatusBadRequest, "missing credentialsJson")
+		return
+	}
+	// Sanity-check it parses — refuse to write garbage that would break
+	// the runner CLI on next spawn.
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(creds), &probe); err != nil {
+		jsonError(w, http.StatusBadRequest, "credentialsJson is not valid JSON: "+err.Error())
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		jsonError(w, http.StatusInternalServerError, "cannot resolve $HOME on this machine")
+		return
+	}
+	var dest string
+	switch runner {
+	case "claude":
+		dest = filepath.Join(home, ".claude", ".credentials.json")
+	case "codex":
+		dest = filepath.Join(home, ".codex", "auth.json")
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
+		jsonError(w, http.StatusInternalServerError, "mkdir "+filepath.Dir(dest)+": "+err.Error())
+		return
+	}
+	if err := os.WriteFile(dest, []byte(creds), 0o600); err != nil {
+		jsonError(w, http.StatusInternalServerError, "write "+dest+": "+err.Error())
+		return
+	}
+	// Reset the auth-failure override so the runner status pill flips
+	// back to ✓ signed in on the next poll instead of waiting for a
+	// task to vouch for the new creds.
+	ClearRunnerAuthInvalid(runner)
+	log.Printf("[runner-auth] imported %s credentials to %s (%d bytes)", runner, dest, len(creds))
+	jsonReply(w, http.StatusOK, map[string]any{
+		"ok":     true,
+		"runner": runner,
+		"path":   dest,
+		"bytes":  len(creds),
 	})
 }

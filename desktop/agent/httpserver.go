@@ -287,6 +287,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/runner-auth/browser/status", s.authSDK(s.handleRunnerBrowserAuthStatus))
 	mux.HandleFunc("/runner-auth/browser/cancel", s.authSDK(s.handleRunnerBrowserAuthCancel))
 	mux.HandleFunc("/runner-auth/browser/submit-code", s.authSDK(s.handleRunnerBrowserAuthSubmitCode))
+	// Subscription-token transfer between user-owned devices. See the
+	// handler — yaver is a single-user wrapper, so the user's existing
+	// local Claude / Codex token gets *copied* to a remote box rather
+	// than re-OAuthing per box. Avoids the SSH-launched-daemon Keychain
+	// quagmire entirely.
+	mux.HandleFunc("/runner-auth/credentials/import", s.authSDK(s.handleRunnerAuthCredentialsImport))
 	mux.HandleFunc("/machine/onboarding/status", s.auth(s.handleMachineOnboardingStatus))
 	mux.HandleFunc("/machine/onboarding/apply", s.auth(s.handleMachineOnboardingApply))
 	mux.HandleFunc("/machine/onboarding/remove", s.auth(s.handleMachineOnboardingRemove))
@@ -9818,6 +9824,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpRunnerBrowserAuthCancel(a.DeviceID, a.SessionID))
+	case "runner_auth_credentials_import":
+		var a struct {
+			DeviceID        string `json:"device_id"`
+			Runner          string `json:"runner"`
+			CredentialsJSON string `json:"credentials_json"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpRunnerAuthCredentialsImport(a.DeviceID, a.Runner, a.CredentialsJSON))
 	case "machine_onboarding_status":
 		var a struct {
 			DeviceID  string   `json:"device_id"`
