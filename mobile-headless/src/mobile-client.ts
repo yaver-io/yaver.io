@@ -771,7 +771,7 @@ export class MobileClient {
       opts?: {
         timeoutMs?: number;
         signal?: AbortSignal;
-        // Stateless contract: agent ≥ 1.99.186 requires the caller to
+        // Stateless contract: agent ≥ 1.99.187 requires the caller to
         // pin which guest project to bundle. Headless tests should
         // always pass one of these so the agent never falls back to
         // whatever dev server happens to be running on the box.

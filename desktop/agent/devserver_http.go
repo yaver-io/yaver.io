@@ -1040,7 +1040,7 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 		return nil, err
 	}
 
-	// Pin projectPath so the stateless build-native gate (≥ 1.99.186)
+	// Pin projectPath so the stateless build-native gate (≥ 1.99.187)
 	// doesn't 400 with PROJECT_REQUIRED for this internal entry-point.
 	bodyBytes, _ := json.Marshal(map[string]string{
 		"platform":    platform,
@@ -2028,7 +2028,7 @@ func (s *HTTPServer) handleReloadApp(w http.ResponseWriter, r *http.Request) {
 		// so the inner /dev/build-native call always has a project
 		// pinned. Without this, callers that relied on the old
 		// "use the active dev server" behaviour would 400 with
-		// PROJECT_REQUIRED after the stateless cut-over in 1.99.186.
+		// PROJECT_REQUIRED after the stateless cut-over in 1.99.187.
 		buildBody, _ := json.Marshal(map[string]string{
 			"platform":    "ios",
 			"projectName": req.ProjectName,

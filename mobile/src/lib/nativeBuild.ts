@@ -28,7 +28,7 @@ export function buildNativeBuildRequest(
   contract?: NativeBuildConsumerContract,
   // `project` pins the request to a specific guest project so the agent
   // never falls back to whatever dev server happens to be running. The
-  // agent (≥ 1.99.186) returns 400 PROJECT_REQUIRED when none of these
+  // agent (≥ 1.99.187) returns 400 PROJECT_REQUIRED when none of these
   // are set; older agents continue to honour the legacy fallback.
   project?: { projectPath?: string; projectName?: string; bundleId?: string },
 ) {
