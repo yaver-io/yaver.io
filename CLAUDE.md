@@ -188,7 +188,7 @@ yaver ping <alias|deviceId|name>     # same, any device
 # devices
 yaver devices                        # list registered devices
 yaver alias set <name> <deviceId>    # short name for ssh / connect / ping
-yaver ssh <alias|primary>            # OpenSSH wrap, resolves via Tailscale → device row → ssh config
+yaver ssh <alias|primary>            # OpenSSH wrap, resolves LAN-on-subnet → Tailscale (gated on local 100.x interface up) → device row → ssh config
 
 # code
 yaver code                           # local TUI on this machine

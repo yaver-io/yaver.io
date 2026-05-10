@@ -6962,14 +6962,70 @@ func runSSHWrap(args []string) {
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
 			if ee, ok := err.(*osexec.ExitError); ok {
+				printSSHResolutionDiagnostic(target, dest, resolvedDevice)
 				os.Exit(ee.ExitCode())
 			}
 			fmt.Fprintf(os.Stderr, "ssh: %v\n", err)
+			printSSHResolutionDiagnostic(target, dest, resolvedDevice)
 			os.Exit(1)
 		}
 		return
 	}
+	printSSHResolutionDiagnostic(target, dest, resolvedDevice)
 	os.Exit(exitCode)
+}
+
+// printSSHResolutionDiagnostic explains what `yaver ssh` resolved to
+// and what other endpoints the device row carries — so a timeout or
+// refused connection doesn't leave the user guessing why we picked
+// the IP we did. Printed only when ssh exited non-zero AND we have a
+// device row to draw from. No-op when we ssh'd to a literal hostname
+// the user typed (no Yaver context to share).
+func printSSHResolutionDiagnostic(input, attempted string, dev *DeviceInfo) {
+	if dev == nil {
+		return
+	}
+	tsUp := localTailscaleUp()
+	fmt.Fprintf(os.Stderr, "\nyaver ssh: %s did not connect.\n", attempted)
+	fmt.Fprintf(os.Stderr, "  device:  %s", strings.TrimSpace(dev.Name))
+	if alias := strings.TrimSpace(dev.Alias); alias != "" {
+		fmt.Fprintf(os.Stderr, " (alias %s)", alias)
+	}
+	fmt.Fprintf(os.Stderr, " — %s\n", dev.DeviceID)
+	if len(dev.LocalIps) > 0 {
+		fmt.Fprintf(os.Stderr, "  IPs:     %s\n", strings.Join(dev.LocalIps, ", "))
+	}
+	if len(dev.PublicEndpoints) > 0 {
+		fmt.Fprintf(os.Stderr, "  public:  %s\n", strings.Join(dev.PublicEndpoints, ", "))
+	}
+	if dev.QuicHost != "" {
+		fmt.Fprintf(os.Stderr, "  quic:    %s\n", dev.QuicHost)
+	}
+	fmt.Fprintf(os.Stderr, "  tailscale: %s\n", tailscaleStateLabel(tsUp))
+	if !tsUp {
+		// Most-common cause of a Yaver-resolved address timing out:
+		// device row carries a 100.x address for an overlay that's
+		// down on this host. Spell it out so the user doesn't have
+		// to read the rest of the table to figure it out.
+		hadCGNAT := false
+		for _, ip := range dev.LocalIps {
+			if isCGNATTailscaleIP(ip) {
+				hadCGNAT = true
+				break
+			}
+		}
+		if hadCGNAT {
+			fmt.Fprintln(os.Stderr, "  hint: tailscale is down on this host. Start it (`tailscale up`) or use a LAN/public IP.")
+		}
+	}
+	fmt.Fprintln(os.Stderr, "  hint: `yaver devices` lists every endpoint, or `ssh <user>@<other-ip>` directly.")
+}
+
+func tailscaleStateLabel(up bool) string {
+	if up {
+		return "up (100.x interface present)"
+	}
+	return "down or not authenticated (no 100.x interface on this host)"
 }
 
 // sshArgsWithSurvivability prepends keepalive + ControlMaster flags so
@@ -7176,57 +7232,101 @@ func resolveSSHHost(target string) string {
 	if path, err := osexec.LookPath("tailscale"); err == nil {
 		tsPath = path
 	}
+	// Detect locally-up Tailscale by interface inspection — works
+	// regardless of whether the `tailscale` CLI is on PATH (Docker
+	// hosts, headless Linux, etc.). When false, every Tailscale path
+	// below is short-circuited so we don't hand back an unreachable
+	// 100.x address that ssh will block on for 30 s.
+	tsUp := localTailscaleUp()
 
-	// 1. Tailscale lookup is cheapest and handles ephemeral boxes that
-	//    never registered with Convex. `tailscale ip` accepts the
-	//    Tailscale-side hostname and returns one IP per line.
-	if ip := lookupTailscaleIP(tsPath, target); ip != "" {
-		return ip
+	// 1. Convex device row first. We need it up front to compare the
+	//    device's announced LAN IPs against our local subnet — that
+	//    comparison is what unlocks the LAN-preferred path. When
+	//    we're not signed in or Convex is down, dev stays nil and we
+	//    fall through to the historical Tailscale-then-fail behavior.
+	var dev *DeviceInfo
+	if cfg, err := LoadConfig(); err == nil && cfg != nil && cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
+		if devices, derr := listDevices(cfg.ConvexSiteURL, cfg.AuthToken); derr == nil {
+			if d, rerr := resolveDevice(target, devices); rerr == nil {
+				dev = d
+			}
+		}
 	}
 
-	// 2. Ask Convex. If we're not signed in we silently skip — the
-	//    user might be ssh'ing a literal host they already know.
-	cfg, err := LoadConfig()
-	if err != nil || cfg == nil || cfg.AuthToken == "" || cfg.ConvexSiteURL == "" {
+	// 2. LAN IP on our /24 wins over everything. Faster than the
+	//    Tailscale overlay, doesn't depend on tailscaled, survives
+	//    `tailscale down` / Wi-Fi roams.
+	if dev != nil {
+		if ip := pickReachableLanIP(dev.LocalIps); ip != "" {
+			return ip
+		}
+	}
+
+	// 3. Tailscale-by-hint (cheap, handles devices not in Convex).
+	//    Gated on local Tailscale being up.
+	if tsUp {
+		if ip := lookupTailscaleIP(tsPath, target); ip != "" {
+			return ip
+		}
+	}
+
+	if dev == nil {
 		return ""
 	}
-	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
-	if err != nil {
-		return ""
+
+	// 4. Tailscale via device alias / canonical name (same gate).
+	if tsUp {
+		if ip := lookupTailscaleIP(tsPath, dev.Alias, dev.Name, strings.TrimSuffix(dev.Name, ".local")); ip != "" {
+			return ip
+		}
 	}
-	dev, err := resolveDevice(target, devices)
-	if err != nil {
-		return ""
-	}
-	if ip := lookupTailscaleIP(tsPath, dev.Alias, dev.Name, strings.TrimSuffix(dev.Name, ".local")); ip != "" {
-		return ip
-	}
+
+	// 5. Public endpoints. Skip Yaver's HTTP relay hostnames —
+	//    `<uuid>.yaver.io` / `<uuid>.dev.yaver.io` terminate HTTPS
+	//    only, so handing ssh one of those just hangs.
 	for _, raw := range dev.PublicEndpoints {
 		ep := strings.TrimPrefix(raw, "https://")
 		ep = strings.TrimPrefix(ep, "http://")
 		ep = strings.TrimSuffix(ep, "/")
-		// Yaver's HTTP relay publishes <uuid>.yaver.io and
-		// <uuid>.dev.yaver.io. Those are Cloudflare-tunneled HTTP
-		// gateways, not SSH hosts — picking one here would hand ssh a
-		// hostname where port 22 is not published, producing a hang.
-		// Skip them so the caller falls through to the device name
-		// (which usually matches a Host entry in ~/.ssh/config).
 		if isYaverHTTPRelayHost(ep) {
 			continue
 		}
 		return ep
 	}
-	for _, ip := range dev.LocalIps {
-		if strings.HasPrefix(ip, "100.") && strings.Contains(ip, ".") {
-			return ip
+
+	// 6. Tailscale CGNAT addresses from the device row — only when
+	//    our overlay is up. Without this gate, a host with Tailscale
+	//    stopped would still get back a 100.x IP and waste 30 s on
+	//    "Operation timed out". Surfaces as fast "no host" instead.
+	if tsUp {
+		for _, ip := range dev.LocalIps {
+			if isCGNATTailscaleIP(ip) {
+				return ip
+			}
 		}
 	}
+
+	// 7. Any other LAN IP from the device row, even off-subnet —
+	//    better than nothing; ssh will produce a useful error if it's
+	//    really unreachable. Tailscale CGNAT is filtered when local
+	//    overlay is down (already handled above when up).
 	for _, ip := range dev.LocalIps {
-		if ip != "" && !strings.HasPrefix(ip, "127.") && ip != "::1" && !isLikelyDockerBridgeIP(ip) {
-			return ip
+		if ip == "" || strings.HasPrefix(ip, "127.") || ip == "::1" {
+			continue
 		}
+		if isLikelyDockerBridgeIP(ip) {
+			continue
+		}
+		if !tsUp && isCGNATTailscaleIP(ip) {
+			continue
+		}
+		return ip
 	}
+
 	if dev.QuicHost != "" && dev.QuicHost != "0.0.0.0" && !isLikelyDockerBridgeIP(dev.QuicHost) {
+		if !tsUp && isCGNATTailscaleIP(dev.QuicHost) {
+			return ""
+		}
 		return dev.QuicHost
 	}
 	return ""
