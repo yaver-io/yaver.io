@@ -1612,13 +1612,22 @@ export default function TasksScreen() {
     });
   }, [token]);
 
-  // Track QUIC connection state and mode
+  // Track QUIC connection state and mode. The deps include
+  // `activeDevice?.id` because `quicClient` is now a Proxy that
+  // delegates to whichever pool client is currently focused — without
+  // re-subscribing on focus change, the listener would stay bound to
+  // the boot-time fallback client (which never connects), `quicState`
+  // would freeze at "disconnected", and effectiveState's
+  // connected-but-quicState-stale branch would silently render the
+  // banner as "Disconnected" while the pool was actually live.
   useEffect(() => {
+    setQuicState(quicClient.connectionState);
+    setConnMode(quicClient.connectionMode);
     const unsub1 = quicClient.on("connectionState", setQuicState);
     const unsub2 = quicClient.on("connectionMode", setConnMode);
     const unsub3 = quicClient.on("reconnectAttempt", setReconnectAttempt);
     return () => { unsub1(); unsub2(); unsub3(); };
-  }, []);
+  }, [activeDevice?.id]);
 
   // Fetch agent status when connected
   useEffect(() => {
@@ -3048,9 +3057,18 @@ export default function TasksScreen() {
   // truth the Devices tab is already reading from.
   const anyPoolConnected = connectedDeviceIds.length > 0;
   const effectiveState: ConnectionState =
-    connectionStatus === "connected" ? quicState :
+    // Trust `connectionStatus` directly when the focused device says
+    // connected — using `quicState` here was a leak from the
+    // pre-pool world; the listener now re-arms on focus change but
+    // we still don't want a momentary "connecting" transition during
+    // resume to flip the banner back to a not-connected look once
+    // selectDevice has confirmed the focused client is up.
+    connectionStatus === "connected" ? "connected" :
     // Show yellow "Reconnecting" for error state (active retries)
     connectionStatus === "error" ? "connecting" :
+    // Pool fallback: any other live client is enough to call us
+    // "connected" overall. Without this, focus on a quiet box would
+    // make the banner lie.
     anyPoolConnected ? "connected" :
     connectionStatus;
   const banner = bannerConfigForTheme(effectiveState, isDark);
@@ -3634,7 +3652,15 @@ export default function TasksScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={c.accent} colors={[c.accent]} progressBackgroundColor={c.bgCard} />
           }
           ListEmptyComponent={
-            isEffectivelyConnected ? (
+            // Belt-and-suspenders: also consider raw pool state. If
+            // ANY pool client is live, the user has at least one
+            // connected box to send tasks to, so we should be in the
+            // "All Clear · No tasks yet" empty state — not the
+            // disconnected picker. Without this fallback, a stale
+            // effectiveState (e.g. mid-transition) would briefly
+            // surface "Pick a device" while Devices tab shows green
+            // CONNECTED chips.
+            (isEffectivelyConnected || anyPoolConnected) ? (
               <View style={s.emptyList}>
                 <Ionicons name="file-tray-outline" size={56} color={withAlpha(c.textMuted, "99")} />
                 <Text style={[s.emptyTitle, { color: c.textPrimary }]}>All Clear</Text>
