@@ -241,6 +241,12 @@ func startRunnerBrowserAuthSession(runner string, onTerminal func()) (*runnerBro
 			state.CompletedAt = time.Now().UnixMilli()
 			if err == nil {
 				state.Status = "completed"
+				// Drop any stale auth-failure override for this runner
+				// — fresh OAuth just landed, future tasks should use
+				// the new token from the keychain/file. Without this,
+				// DeviceDetails would keep showing ⚠️ for up to 30 min
+				// after a successful re-sign-in.
+				ClearRunnerAuthInvalid(state.Runner)
 			} else if ctx.Err() == context.Canceled {
 				state.Status = "cancelled"
 				if state.Detail == "" {

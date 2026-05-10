@@ -104,19 +104,121 @@ func checkRunnerWorkDirWritable(runner RunnerConfig, workDir string) error {
 
 // DetectRunnerRuntimeStatus performs best-effort readiness checks for runners
 // whose real usability depends on auth state, local config, or provider policy.
+//
+// Honors `lastRunnerAuthFailure` — when a recent task with this runner exited
+// with an auth-error pattern (401 / Invalid bearer token / Not logged in),
+// flips AuthConfigured back to false even if the file/keychain is present.
+// File presence is a *necessary* but not *sufficient* signal — without this
+// override, DeviceDetailsModal cheerfully renders ✓ signed in while the next
+// task instantly 401's. Cleared via runner_auth_browser_http.go's OAuth-
+// completion path so a successful re-sign-in reverts the override.
 func DetectRunnerRuntimeStatus(runner RunnerConfig, workDir string) RunnerRuntimeStatus {
 	status := RunnerRuntimeStatus{Ready: true}
 
 	switch normalizeRunnerID(runner.RunnerID) {
 	case "codex":
-		return detectCodexStatus()
+		status = detectCodexStatus()
 	case "opencode":
 		return detectOpenCodeStatus(workDir)
 	case "claude":
-		return detectClaudeStatus()
+		status = detectClaudeStatus()
 	default:
 		return status
 	}
+	if status.AuthConfigured && runnerAuthFailureRecent(normalizeRunnerID(runner.RunnerID)) {
+		status.AuthConfigured = false
+		status.AuthSource = ""
+		if strings.TrimSpace(status.Warning) == "" {
+			status.Warning = "Token rejected by API on the last task — sign in again to refresh."
+		}
+	}
+	return status
+}
+
+// lastRunnerAuthFailure tracks runners whose most recent task spawn exited
+// with an auth-error pattern in stdout/stderr. tasks.go/watchProcess writes
+// here on detection; DetectRunnerRuntimeStatus reads to override the
+// presence-based AuthConfigured. Cleared when a fresh OAuth completes.
+//
+// Why a TTL at all: if the user signs back in via a path we can't observe
+// (e.g. they SSH'd to the box and ran `claude /login` themselves), the
+// override would otherwise stick forever. 30 min lets the next status poll
+// re-check via DetectRunnerRuntimeStatus's normal file/keychain probe.
+var (
+	lastRunnerAuthFailure = struct {
+		sync.Mutex
+		at map[string]time.Time
+	}{at: make(map[string]time.Time)}
+	runnerAuthFailureTTL = 30 * time.Minute
+)
+
+// MarkRunnerAuthInvalid records that the named runner just produced an
+// auth-error on a task spawn. Called from tasks.go/watchProcess. Safe to
+// call from any goroutine.
+func MarkRunnerAuthInvalid(runnerID string) {
+	id := normalizeRunnerID(runnerID)
+	if id == "" {
+		return
+	}
+	lastRunnerAuthFailure.Lock()
+	defer lastRunnerAuthFailure.Unlock()
+	lastRunnerAuthFailure.at[id] = time.Now()
+}
+
+// ClearRunnerAuthInvalid removes the override for a runner. Called from the
+// browser-auth flow when a fresh OAuth completes successfully.
+func ClearRunnerAuthInvalid(runnerID string) {
+	id := normalizeRunnerID(runnerID)
+	if id == "" {
+		return
+	}
+	lastRunnerAuthFailure.Lock()
+	defer lastRunnerAuthFailure.Unlock()
+	delete(lastRunnerAuthFailure.at, id)
+}
+
+func runnerAuthFailureRecent(runnerID string) bool {
+	lastRunnerAuthFailure.Lock()
+	defer lastRunnerAuthFailure.Unlock()
+	at, ok := lastRunnerAuthFailure.at[runnerID]
+	if !ok {
+		return false
+	}
+	if time.Since(at) > runnerAuthFailureTTL {
+		delete(lastRunnerAuthFailure.at, runnerID)
+		return false
+	}
+	return true
+}
+
+// IsRunnerAuthFailureOutput matches stdout/stderr from a runner spawn
+// against patterns indicating the OAuth token was rejected. Mirrors mobile
+// ErrorMessage.tsx::detectRunnerAuthFailure so server- and client-side
+// detections stay in sync — if a pattern triggers the mobile failure card
+// CTA, the server-side override should also fire.
+//
+// Returns the runner id ("claude" / "codex") on match, "" otherwise.
+func IsRunnerAuthFailureOutput(output string) string {
+	m := strings.ToLower(output)
+	if m == "" {
+		return ""
+	}
+	looksLikeClaude := (strings.Contains(m, "not logged in") &&
+		(strings.Contains(m, "/login") || strings.Contains(m, "please run"))) ||
+		strings.Contains(m, "invalid bearer token") ||
+		strings.Contains(m, "invalid authentication credentials") ||
+		strings.Contains(m, "claude code-credentials")
+	if looksLikeClaude {
+		return "claude"
+	}
+	looksLikeCodex := (strings.Contains(m, "sign in required") &&
+		(strings.Contains(m, "codex") || strings.Contains(m, "chatgpt"))) ||
+		strings.Contains(m, "codex login --device-auth") ||
+		(strings.Contains(m, "not authenticated") && strings.Contains(m, "codex"))
+	if looksLikeCodex {
+		return "codex"
+	}
+	return ""
 }
 
 func capabilityForRunner(runnerID, workDir string) CapabilityTargetReadiness {

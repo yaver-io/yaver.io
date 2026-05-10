@@ -2430,6 +2430,25 @@ func (tm *TaskManager) startProcess(task *Task) error {
 						}
 					}()
 
+					// Auth-error detection: if stdout/stderr indicates the
+					// runner's OAuth token was rejected by the API (401 /
+					// invalid bearer / not logged in), invalidate that
+					// runner's status cache so DeviceDetails / dashboard
+					// flip from ✓ signed in to ⚠️ Sign in on next heartbeat
+					// instead of waiting for the user to discover the
+					// stale state by failing another task. Mirrors the
+					// mobile ErrorMessage.detectRunnerAuthFailure patterns.
+					if hitRunner := IsRunnerAuthFailureOutput(task.Output); hitRunner != "" {
+						MarkRunnerAuthInvalid(hitRunner)
+						log.Printf("[task %s] auth-failure pattern detected for runner %q — invalidated runner auth status", task.ID, hitRunner)
+						// Next periodic heartbeat (~30s) propagates the
+						// new state to Convex; mobile/web pick up the
+						// flipped pill on their next /runner-auth/status
+						// poll. The user already gets immediate feedback
+						// via the failure-card "Sign in to Claude Code"
+						// CTA.
+					}
+
 					task.Status = TaskStatusFailed
 					log.Printf("[task %s] %s process failed: %v", task.ID, task.runner.Name, err)
 				}

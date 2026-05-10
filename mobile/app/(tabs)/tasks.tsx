@@ -1816,8 +1816,18 @@ export default function TasksScreen() {
       Alert.alert("Sign-in unavailable", `${displayRunnerLabel(runnerId)} does not support browser sign-in from mobile yet.`);
       return;
     }
-    setRunnerAuthModalRunner(normalized);
-    setRunnerAuthModalTarget(targetDeviceId || null);
+    // RunnerAuthModal is a sibling of the new-task wizard Modal and the
+    // chat-detail Modal. React Native cannot reliably stack two visible
+    // Modals on iOS — opening the auth modal while either is on screen
+    // makes it render invisibly behind. Dismiss any open parent Modals
+    // first, then open the auth modal on the next tick so RN has a frame
+    // to play the dismiss animation.
+    setShowNewTask(false);
+    setSelectedTask(null);
+    setTimeout(() => {
+      setRunnerAuthModalRunner(normalized);
+      setRunnerAuthModalTarget(targetDeviceId || null);
+    }, 280);
   }, []);
 
   useEffect(() => {
@@ -4872,17 +4882,29 @@ export default function TasksScreen() {
                                   // browser-auth modal pre-filled with
                                   // that runner; the modal already
                                   // routes through /peer/<deviceId>/
-                                  // when target is set. Recover the
-                                  // target device id from the failed
-                                  // task so we don't re-auth on the
-                                  // wrong machine when the user has a
-                                  // mesh of boxes.
+                                  // when target is set.
                                   const runnerId = (suggestion.payload || selectedTask.runnerId || "claude").toLowerCase();
-                                  setRunnerAuthModalRunner(runnerId);
-                                  // Task type doesn't carry deviceId — fall back
-                                  // to the active device (which is where the
-                                  // task ran when the user selected it).
-                                  setRunnerAuthModalTarget(activeDevice?.id || null);
+                                  // Task type doesn't carry deviceId — fall
+                                  // back to the active device (which is where
+                                  // the task ran when the user selected it).
+                                  const targetId = activeDevice?.id || null;
+                                  // CRITICAL: dismiss the chat-detail Modal
+                                  // before opening RunnerAuthModal. React
+                                  // Native cannot stack two sibling Modals
+                                  // reliably on iOS — the previous
+                                  // implementation called setRunnerAuthModalRunner
+                                  // while the chat detail was still on screen,
+                                  // and the new modal silently rendered behind
+                                  // it (button "did nothing"). Close first,
+                                  // then open the auth modal on the next tick
+                                  // so the dismiss animation has a frame to
+                                  // play. The failed task is recoverable from
+                                  // the task list after sign-in completes.
+                                  setSelectedTask(null);
+                                  setTimeout(() => {
+                                    setRunnerAuthModalRunner(runnerId);
+                                    setRunnerAuthModalTarget(targetId);
+                                  }, 280);
                                   return;
                                 }
                                 if (suggestion.kind === "chown-fix") {
