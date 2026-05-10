@@ -3039,10 +3039,19 @@ export default function TasksScreen() {
     }
   };
 
+  // The header banner ALSO needs to reflect the connection-manager pool
+  // — without this, a user with two live pooled clients but a
+  // momentarily-stale focused client would see "Disconnected · <name>"
+  // at the top of Tasks while Devices simultaneously rendered both
+  // boxes as CONNECTED. Promote effectiveState to "connected" whenever
+  // any pool client reports live, so the banner mirrors the source of
+  // truth the Devices tab is already reading from.
+  const anyPoolConnected = connectedDeviceIds.length > 0;
   const effectiveState: ConnectionState =
     connectionStatus === "connected" ? quicState :
     // Show yellow "Reconnecting" for error state (active retries)
     connectionStatus === "error" ? "connecting" :
+    anyPoolConnected ? "connected" :
     connectionStatus;
   const banner = bannerConfigForTheme(effectiveState, isDark);
   const isEffectivelyConnected = effectiveState === "connected";
@@ -3116,7 +3125,11 @@ export default function TasksScreen() {
   // landing on the Tasks tab right after a focus shift would briefly
   // flash "Not connected · Pick one of your N devices" even though
   // the Devices tab simultaneously shows green CONNECTED chips.
-  const hasAnyPooledConnection = connectedDeviceIds.length > 0;
+  // anyPoolConnected is computed earlier next to effectiveState (kept
+  // there so the banner promotion can reuse it). Aliased locally for
+  // readability so the showDevicePicker gate reads as a flat list of
+  // suppression conditions.
+  const hasAnyPooledConnection = anyPoolConnected;
   const showDevicePicker =
     !isEffectivelyConnected &&
     !hasAnyPooledConnection &&
@@ -3507,11 +3520,23 @@ export default function TasksScreen() {
               renderItem={({ item: d }) => {
                   const unreachable = unreachableSet.has(d.id);
                   const probe = deviceProbeMap[d.id];
-                  const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
+                  // Pool-aware override: when the connection manager
+                  // already has a live QuicClient for this device, the
+                  // card MUST render "connected" regardless of what the
+                  // heartbeat-based lifecycle derivation says — otherwise
+                  // both Devices-tab CONNECTED chips and Tasks-tab READY
+                  // chips for the same row would coexist, which the
+                  // user just spotted as "in devices ui 2 boxes
+                  // connected, in tasks ui none".
+                  const pooled = connectedDeviceIds.includes(d.id);
+                  const baseLifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
                     device: d,
                     probe,
                     unreachable,
                   });
+                  const lifecycleState: MobileDeviceLifecycleState = pooled
+                    ? "connected"
+                    : baseLifecycleState;
                   const statusText =
                     lifecycleState === "connected"
                       ? "Connected"
@@ -3733,11 +3758,19 @@ export default function TasksScreen() {
                 {devices.map((d) => {
                   const unreachable = unreachableSet.has(d.id);
                   const probe = deviceProbeMap[d.id];
-                  const lifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
+                  // Same pool override as the showDevicePicker branch
+                  // — a pooled connection wins over the heartbeat
+                  // derivation so this list never lies about what's
+                  // actually live.
+                  const pooled = connectedDeviceIds.includes(d.id);
+                  const baseLifecycleState: MobileDeviceLifecycleState = deriveMobileDeviceLifecycleState({
                     device: d,
                     probe,
                     unreachable,
                   });
+                  const lifecycleState: MobileDeviceLifecycleState = pooled
+                    ? "connected"
+                    : baseLifecycleState;
                   const statusText =
                     lifecycleState === "connected"
                       ? "Connected"
