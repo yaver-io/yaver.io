@@ -3430,12 +3430,15 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		projectWorkDir = task.WorkDir
 	}
 	project := DetectProjectInfo(projectWorkDir)
+	hostname, _ := os.Hostname()
 	resp := map[string]interface{}{
-		"ok":       true,
-		"taskId":   task.ID,
-		"status":   task.Status,
-		"runnerId": task.RunnerID,
-		"project":  project.Name,
+		"ok":         true,
+		"taskId":     task.ID,
+		"status":     task.Status,
+		"runnerId":   task.RunnerID,
+		"model":      task.Model,
+		"deviceName": hostname,
+		"project":    project.Name,
 	}
 	log.Printf("[HTTP] Sending create response for task %s", task.ID)
 	jsonReply(w, http.StatusCreated, resp)

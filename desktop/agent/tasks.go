@@ -153,7 +153,15 @@ var builtinRunners = map[string]RunnerConfig{
 		// chosen model wins. Hardcoding "sonnet" here would shadow
 		// --implementer claude:opus (sees --model twice, last one
 		// wins, depends on CLI parsing — flaky).
-		Args: []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--skip-git-repo-check", "--permission-mode", "bypassPermissions"},
+		// Use --dangerously-skip-permissions (the yolo flag, per
+		// feedback_runners_always_dangerous.md) instead of
+		// --permission-mode bypassPermissions. Older claude-cli builds
+		// (2.1.138 on user's Mac mini) crash on --permission-mode
+		// because the flag wasn't introduced until later in the 2.x
+		// line — they spawn → exit non-zero → "Agent process crashed"
+		// loop. The legacy --dangerously-skip-permissions has been in
+		// claude-cli for as long as Yaver has supported it.
+		Args: []string{"-p", "{prompt}", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Bash", "--skip-git-repo-check", "--dangerously-skip-permissions"},
 		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
 		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
 		// lockstep so a feedback task arriving with task.Model="" lands on

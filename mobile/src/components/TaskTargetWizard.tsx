@@ -28,8 +28,11 @@ import {
 
 import { useColors } from "../context/ThemeContext";
 import { useDevice, type Device } from "../context/DeviceContext";
+import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
+import { useTabletContentStyle } from "../hooks/useTabletContentStyle";
 import { quicClient, type RunnerAuthStatusRow, type OpenCodeConfigSummary } from "../lib/quic";
 import { connectionManager } from "../lib/connectionManager";
+import { eligibleRemoteBoxDevices, versionPatchDistance } from "../lib/devicePicker";
 import RunnerAuthModal from "./RunnerAuthModal";
 
 export interface TaskTarget {
@@ -128,33 +131,10 @@ function defaultModelForRunner(runner: TaskTarget["runner"]): string | null {
   return list[0].id;
 }
 
-/** Distance between two semver-like strings. Returns 0 when equal, a
- *  positive integer when `current` is older, -1 when we can't decide
- *  (different major series, malformed strings, etc.) — render the version
- *  string but skip the "X behind" suffix in that case.
- *
- *  Yaver versions today are 1.99.<patch> on every channel, so the diff is
- *  almost always patch-only. Major + minor must match exactly; patch
- *  difference is the count returned. */
-function versionPatchDistance(current: string, latest: string): number {
-  const c = current.trim();
-  const l = latest.trim();
-  if (!c || !l) return -1;
-  if (c === l) return 0;
-  const parse = (s: string): [number, number, number] | null => {
-    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(s);
-    if (!m) return null;
-    return [Number(m[1]), Number(m[2]), Number(m[3])];
-  };
-  const cv = parse(c);
-  const lv = parse(l);
-  if (!cv || !lv) return -1;
-  if (cv[0] !== lv[0] || cv[1] !== lv[1]) return -1;
-  return Math.max(0, lv[2] - cv[2]);
-}
-
 export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Props) {
   const c = useColors();
+  const layout = useResponsiveLayout();
+  const tabletContent = useTabletContentStyle("regular");
   const {
     devices,
     activeDevice,
@@ -427,14 +407,27 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
             : `Couldn't reach ${pickedDevice.name}.`,
         );
       }
-      // Only forward the model when it's actually compatible with the
-      // runner the user just picked — peace of mind belt over the
-      // useEffect that already keeps pickedModel in sync. A stray
-      // gpt-5.* getting through to claude-code is what produced the
-      // "Agent process crashed (attempt N/4)" loop on Mobiles-Mac-mini.
-      const safeModel = pickedModel && isModelCompatibleWithRunner(pickedModel, pickedRunner)
-        ? pickedModel
-        : undefined;
+      // Resolve the model SYNCHRONOUSLY here instead of trusting
+      // `pickedModel` from state. The useEffect that keeps pickedModel
+      // in lockstep with pickedRunner runs after a render commit —
+      // when the user taps Claude Code and immediately taps Continue,
+      // pickedModel can still be the previous runner's default
+      // (e.g. Codex's gpt-5.4). That stale value passed to claude-cli
+      // crashed the agent process every time the user picked
+      // Claude Code from a wizard that had Codex pre-seeded. Compute
+      // here from the user's most recent picks so there's no race.
+      let safeModel: string | undefined = pickedModel ?? undefined;
+      if (safeModel && !isModelCompatibleWithRunner(safeModel, pickedRunner)) {
+        safeModel = undefined;
+      }
+      if (!safeModel) {
+        const saved = primaryModelByDevice[pickedDevice.id];
+        if (saved && isModelCompatibleWithRunner(saved, pickedRunner)) {
+          safeModel = saved;
+        } else {
+          safeModel = defaultModelForRunner(pickedRunner) ?? undefined;
+        }
+      }
       onConfirmed({
         deviceId: pickedDevice.id,
         deviceName: pickedDevice.name,
@@ -493,16 +486,8 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // auth or fully offline still get filtered out so the list stays
   // honest. Sort connected first, then by name.
   const eligibleDevices = React.useMemo(() => {
-    const filtered = devices.filter((d) =>
-      !d.needsAuth && (connectedSet.has(d.id) || activeDevice?.id === d.id || d.online),
-    );
-    return filtered.sort((a, b) => {
-      const aLive = connectedSet.has(a.id) ? 0 : 1;
-      const bLive = connectedSet.has(b.id) ? 0 : 1;
-      if (aLive !== bLive) return aLive - bLive;
-      return a.name.localeCompare(b.name);
-    });
-    }, [devices, connectedSet, activeDevice?.id]);
+    return eligibleRemoteBoxDevices(devices, connectedSet, activeDevice?.id);
+  }, [devices, connectedSet, activeDevice?.id]);
 
   // Auto-ping all connected devices when the wizard opens. Without
   // this, a stale pool client (relay password rotated, agent restarted
@@ -547,7 +532,10 @@ export default function TaskTargetWizard({ visible, onCancel, onConfirmed }: Pro
   // tap budget for the common case of picking the same box you were
   // already on with a different agent.
   const renderUnifiedPane = () => (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={[{ padding: 16, paddingBottom: 32 }, tabletContent]}
+    >
       <Text style={{ color: c.textPrimary, fontSize: 20, fontWeight: "700", marginBottom: 4 }}>
         Send a task
       </Text>
