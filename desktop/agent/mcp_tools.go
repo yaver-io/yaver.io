@@ -2528,6 +2528,49 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				},
 			},
 		},
+		{
+			"name":        "primary_auth",
+			"description": "Re-auth on the user's primary remote device. With runner empty (default) this refreshes the Yaver session token via the existing /auth/recover flow (same as `yaver primary auth`). With runner=claude or codex, it kicks off the runner's browser/device-code login flow on the primary box (same as `yaver primary auth claude` / `yaver primary auth codex`); the response carries the URL/code the user opens to finish. Resolves the primary deviceId automatically — no need to look it up first.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"runner": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"", "claude", "claude-code", "codex"},
+						"description": "Empty (default) for Yaver-level reauth; claude/claude-code or codex to start that runner's login flow on the primary device.",
+					},
+				},
+			},
+		},
+		{
+			"name":        "primary_status",
+			"description": "Live status of the user's primary remote device — agent version, lifecycle (healthy / ready-to-connect / yaver-auth-expired / bootstrap), runners, dev-server, project, transport. Same data as `yaver primary status --json`. Resolves the primary deviceId automatically.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "primary_ping",
+			"description": "Short reachability + auth check against the user's primary remote device. Returns transport, latency-class info, agent version, lifecycle, ownerEmail, and whether the box's owner matches the caller. Same shape as `yaver primary ping --json`.",
+			"inputSchema": map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "primary_projects",
+			"description": "List projects discovered by the agent's filesystem scanner on the user's primary remote device. Pass mobile_only=true to filter to mobile-capable projects only (Expo / React Native / Flutter / Swift / Kotlin) — same as `yaver primary mobiles`. Discovery runs without any coding-agent installed on the box.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"mobile_only": map[string]interface{}{
+						"type":        "boolean",
+						"description": "When true, return only mobile-capable projects (mobile + Flutter + Swift + Kotlin).",
+					},
+				},
+			},
+		},
 	}
 	tools = append(tools, primaryTools...)
 

@@ -11827,6 +11827,27 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(fmt.Sprintf("Primary device set to %s (%s).", chosen.Name, chosen.DeviceID))
 
+	// --- Primary device sugar (resolve "primary" → deviceId, then act) ---
+	case "primary_auth":
+		var a struct {
+			Runner string `json:"runner"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrimaryAuth(a.Runner))
+
+	case "primary_status":
+		return mcpToolJSON(mcpPrimaryStatus())
+
+	case "primary_ping":
+		return mcpToolJSON(mcpPrimaryPing())
+
+	case "primary_projects":
+		var a struct {
+			MobileOnly bool `json:"mobile_only"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpPrimaryProjects(a.MobileOnly))
+
 	// --- Remote Support Sessions ---
 	case "support_start":
 		var args struct {

@@ -562,6 +562,7 @@ Usage:
   yaver push ios    Discover iOS app in this repo, build IPA, upload to TestFlight
   yaver push android  Discover Android app in this repo, build AAB, upload to Play internal testing
   yaver auth        Sign in and start agent (opens browser)
+  yaver auth status [--show-token]  Show who you are signed in as (gh/glab style)
   yaver signout     Sign out and clear credentials
   yaver connect     Connect to your dev machine
   yaver ping        Ping a device (direct or via relay)
@@ -815,6 +816,9 @@ func runAuth(args []string) {
 		case "send":
 			runAuthSend(args[1:])
 			return
+		case "status":
+			runAuthStatus(args[1:])
+			return
 		case "factory-reset", "reset", "repair":
 			runAuthFactoryReset(args[1:])
 			return
@@ -1028,6 +1032,132 @@ func runAuth(args []string) {
 		fmt.Fprintln(os.Stderr, "Authentication timed out.")
 		os.Exit(1)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// auth status — gh / glab style summary of the local auth state
+// ---------------------------------------------------------------------------
+
+func runAuthStatus(args []string) {
+	fs := flag.NewFlagSet("auth status", flag.ExitOnError)
+	showToken := fs.Bool("show-token", false, "Display the auth token instead of masking it")
+	fs.Parse(args)
+
+	const host = "yaver.io"
+	fmt.Println(host)
+
+	cfg, err := LoadConfig()
+	cfgPath, _ := ConfigPath()
+	if cfgPath != "" {
+		if home, herr := os.UserHomeDir(); herr == nil && strings.HasPrefix(cfgPath, home) {
+			cfgPath = "~" + strings.TrimPrefix(cfgPath, home)
+		}
+	}
+
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		// Mid-device-code-flow is a meaningful "in progress" state — surface
+		// it explicitly so an orchestrating agent can poll for completion.
+		if pend, _ := loadPendingAuth(); pend != nil &&
+			pend.ExpiresAt > time.Now().UnixMilli() &&
+			strings.TrimSpace(pend.DeviceCode) != "" {
+			fmt.Printf("  \033[33m●\033[0m Sign-in pending on %s\n", host)
+			fmt.Printf("  - URL: %s\n", pend.URL)
+			fmt.Printf("  - Code: %s\n", pend.UserCode)
+			fmt.Printf("  - Expires in: %s\n", humanRoundDuration(time.Until(time.UnixMilli(pend.ExpiresAt))))
+			fmt.Println()
+			fmt.Println("Sign in on your phone, then run `yaver auth` again to finalize.")
+			os.Exit(1)
+		}
+		fmt.Printf("  \033[31mX\033[0m Not logged in to %s\n", host)
+		fmt.Println()
+		fmt.Println("To sign in, run: yaver auth")
+		os.Exit(1)
+	}
+
+	convexURL := cfg.ConvexSiteURL
+	if convexURL == "" {
+		convexURL = defaultConvexSiteURL
+	}
+
+	statusClient := &http.Client{Timeout: 5 * time.Second}
+	info, validateErr := func() (*UserInfo, error) {
+		req, reqErr := newBearerRequest("GET", convexURL+"/auth/validate", cfg.AuthToken, nil)
+		if reqErr != nil {
+			return nil, reqErr
+		}
+		resp, respErr := statusClient.Do(req)
+		if respErr != nil {
+			return nil, respErr
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("validate token failed (status %d)", resp.StatusCode)
+		}
+		var result struct {
+			User UserInfo `json:"user"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, err
+		}
+		return &result.User, nil
+	}()
+
+	tokenDisplay := maskAuthToken(cfg.AuthToken)
+	if *showToken {
+		tokenDisplay = cfg.AuthToken
+	}
+
+	if validateErr != nil {
+		// Distinguish "session expired" (server said 401) from "couldn't reach
+		// server" (network/dns/down). gh prints both as warnings, but we know
+		// the difference and the recovery path is different.
+		if strings.Contains(validateErr.Error(), "status 401") || strings.Contains(validateErr.Error(), "status 403") {
+			fmt.Printf("  \033[31mX\033[0m Session expired for %s (%s)\n", host, cfgPath)
+			fmt.Printf("  - Backend: %s\n", convexURL)
+			if cfg.DeviceID != "" {
+				fmt.Printf("  - Device ID: %s\n", cfg.DeviceID)
+			}
+			fmt.Printf("  - Token: %s\n", tokenDisplay)
+			fmt.Println()
+			fmt.Println("To re-authenticate, run: yaver auth")
+			os.Exit(1)
+		}
+		fmt.Printf("  \033[33m●\033[0m Token present but %s is unreachable (%v)\n", host, validateErr)
+		fmt.Printf("  - Backend: %s\n", convexURL)
+		if cfg.DeviceID != "" {
+			fmt.Printf("  - Device ID: %s\n", cfg.DeviceID)
+		}
+		fmt.Printf("  - Token: %s\n", tokenDisplay)
+		os.Exit(1)
+	}
+
+	identity := info.Email
+	if info.Provider != "" {
+		identity = fmt.Sprintf("%s (%s)", info.Email, info.Provider)
+	}
+	fmt.Printf("  \033[32m✓\033[0m Logged in to %s as %s (%s)\n", host, identity, cfgPath)
+	if info.FullName != "" && info.FullName != info.Email {
+		fmt.Printf("  - Name: %s\n", info.FullName)
+	}
+	fmt.Printf("  - Backend: %s\n", convexURL)
+	if cfg.DeviceID != "" {
+		fmt.Printf("  - Device ID: %s\n", cfg.DeviceID)
+	}
+	fmt.Printf("  - Token: %s\n", tokenDisplay)
+}
+
+// maskAuthToken returns a redacted form of an auth token suitable for display.
+// Keeps any well-known prefix (e.g. "yvr_") followed by asterisks the same
+// length as the rest of the token, mirroring `gh auth status` style.
+func maskAuthToken(tok string) string {
+	tok = strings.TrimSpace(tok)
+	if tok == "" {
+		return ""
+	}
+	if i := strings.IndexByte(tok, '_'); i > 0 && i < 8 {
+		return tok[:i+1] + strings.Repeat("*", len(tok)-i-1)
+	}
+	return strings.Repeat("*", len(tok))
 }
 
 // ---------------------------------------------------------------------------
