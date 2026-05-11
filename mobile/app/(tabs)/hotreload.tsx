@@ -23,6 +23,7 @@ import {
   type MobileWorkerPreviewSession,
   type OperationState,
 } from "../../src/lib/quic";
+import { connectionManager } from "../../src/lib/connectionManager";
 import { loadAppIfChanged, setPhoneFrame, getPhoneFrame } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
@@ -389,11 +390,25 @@ export default function HotReloadScreen() {
       }
     };
 
-    // Fetch mobile projects from dedicated scanner (cached, refreshes in background)
+    // Fetch mobile projects from dedicated scanner (cached, refreshes in background).
+    // Read baseUrl + headers from the device-specific client looked up
+    // by activeDevice.id, NOT from the global `quicClient` Proxy. When a
+    // user switches device in Devices and the previous device was in a
+    // "connecting" state, the Proxy can briefly publish the stale baseUrl
+    // (the focused pointer flips but the closure captured baseUrl at
+    // effect creation time). Pinning the lookup to activeDevice.id —
+    // which IS in this effect's deps — guarantees the fetch hits the
+    // agent the user actually picked. If the picked device has no
+    // pool client yet, abort the fetch rather than fall through to the
+    // Proxy's last-known URL.
     const fetchMobileProjects = async () => {
       try {
-        const baseUrl = (quicClient as any).baseUrl;
-        const headers = (quicClient as any).authHeaders;
+        const targetId = activeDevice?.id;
+        if (!targetId) return;
+        const client = (connectionManager.clientFor(targetId) as any);
+        const baseUrl = client?.baseUrl;
+        const headers = client?.authHeaders;
+        if (!baseUrl || !headers) return;
         const res = await fetch(`${baseUrl}/projects/mobile`, { headers });
         const data = await res.json();
         if (mounted && data.ok && data.projects) {
