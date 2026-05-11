@@ -1,0 +1,11 @@
+<svg width="500" height="240" viewBox="0 0 500 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Yaver login wordmark dark</title>
+  <!-- Y mark traced 1:1 from mobile/assets/icon.png — dot diameter
+       ≈ 22% of total Y width, slash thickness ≈ 67% of dot diameter,
+       meeting point inside-right with stem 33pt wide. "aver" starts
+       at x=92 so the "a" sits ~3pt clear of the slash outer edge at
+       lowercase x-height — visually adjacent like one word. -->
+  <circle cx="25" cy="74" r="25" fill="#111017"/>
+  <path d="M121 52H78L44 131V190H77V131Z" fill="#111017"/>
+  <text x="92" y="190" fill="#111017" font-family="Avenir Next, Avenir, Helvetica Neue, Arial, sans-serif" font-size="164" font-weight="700" letter-spacing="-7">aver</text>
+</svg>

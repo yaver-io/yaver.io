@@ -115,14 +115,22 @@ export function startFeedbackShakeBridge(userId?: string | null): () => void {
     }
   })();
 
-  // Android: subscribe to YaverShakeDetector's native event.
-  // iOS's ShakeDetectingWindow (AppDelegate.swift:71) handles shake
-  // at the UIWindow level and reaches JS through a different path;
-  // on Android we wire the SensorManager-based detector here so the
-  // gesture works even when the user's settings.feedback.trigger is
-  // "floating-button" (the default). Routing through
-  // "native-guest-shake" hits the unconditional branch at lines
-  // 47-58 so shake always opens the overlay — matching iOS.
+  // Android: subscribe to YaverShakeDetector's native event. The
+  // native side does TWO things on shake (see YaverShakeDetectorModule.kt):
+  //   - guest bundle loaded → persist a pending-feedback flag, unload
+  //     the guest natively, and recreate into Yaver's own bundle.
+  //     The startup/app-active consumePendingFeedbackLaunch() path
+  //     above then re-enters maybeLaunchFeedbackFromShake with
+  //     source = "native-guest-shake", bypassing the Settings gate
+  //     and preserving guest-aware feedback routing.
+  //   - no guest active → emit YaverShakeDetected; JS picks it up
+  //     here and routes through `maybeLaunchFeedbackFromShake` with
+  //     source = "shake" so the SETTINGS GATE applies. The user has
+  //     to have explicitly enabled feedback + trigger:"shake" in
+  //     Settings → Feedback SDK for the overlay to open. Otherwise
+  //     shaking the standalone Yaver app silently no-ops — matching
+  //     the user's product intent (feedback overlay is opt-in, not
+  //     surprise-on-every-shake).
   let nativeShakeSub: { remove: () => void } | null = null;
   if (Platform.OS === "android") {
     const detector = (NativeModules as any)?.YaverShakeDetector;
@@ -130,7 +138,7 @@ export function startFeedbackShakeBridge(userId?: string | null): () => void {
       const emitter = new NativeEventEmitter(detector);
       nativeShakeSub = emitter.addListener("YaverShakeDetected", () => {
         if (appState !== "active") return;
-        void maybeLaunchFeedbackFromShake("native-guest-shake", userId);
+        void maybeLaunchFeedbackFromShake("shake", userId);
       });
     }
   }

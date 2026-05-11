@@ -584,12 +584,28 @@ function DeviceCard({
           : c.accent;
   const handleSmartConnect = async () => {
     if (recovering) return;
+    // Pooled-connected but not the focused device — switch focus to it.
     if (lifecycleState === "connected" && !isActive) {
       await onSelect();
       return;
     }
-    if (lifecycleState === "offline" || lifecycleState === "connected") {
+    // Offline device → only place where the silent Details modal
+    // remains. The user can see why it's offline + try recovery
+    // actions from there.
+    if (lifecycleState === "offline") {
       setDetailsOpen(true);
+      return;
+    }
+    // Already-connected AND focused: previously this also opened
+    // the Details modal silently, which read as "Devices can't
+    // connect to my primary" — the connection-status banner could
+    // still show "Connecting" while the card said Ready, and a
+    // tap did nothing visible. Re-selecting refreshes the focus,
+    // clears any stale "connecting" pill, and re-runs the connect
+    // probe so a half-connected pool client gets repaired. iOS
+    // shares this code path — same fix.
+    if (lifecycleState === "connected") {
+      await onSelect();
       return;
     }
     if (lifecycleState === "ready-to-connect") {

@@ -63,6 +63,16 @@ class YaverInfoModule(private val ctx: ReactApplicationContext) :
         .apply()
   }
 
+  @ReactMethod
+  fun consumePendingFeedbackLaunch(promise: com.facebook.react.bridge.Promise) {
+    val p = prefs()
+    val pending = p.getBoolean(YaverNativePrefs.PENDING_FEEDBACK_LAUNCH, false)
+    if (pending) {
+      p.edit().remove(YaverNativePrefs.PENDING_FEEDBACK_LAUNCH).apply()
+    }
+    promise.resolve(pending)
+  }
+
   /// Mirror of mobile/ios/Yaver/YaverInfo.swift's setInheritedPrimaryRunner.
   /// DeviceContext (host JS) calls this whenever the active device's
   /// primary runner / model changes. The native feedback pane reads the
@@ -123,6 +133,7 @@ object YaverNativePrefs {
   const val AGENT_AUTH = "yaverAgentAuth"
   const val INHERITED_DEVICE_ID = "yaverInheritedDeviceId"
   const val GUEST_BUNDLE_LOADED = "yaverGuestAppRunning"
+  const val PENDING_FEEDBACK_LAUNCH = "yaverPendingFeedbackLaunch"
   // Preferred runner + model pushed by DeviceContext (Convex source of
   // truth: userSettings.primaryRunnerByDevice). Read by the feedback
   // pane so its POST /tasks routes to the same runner the user picked

@@ -52,23 +52,55 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
   private var lastShakeAt = 0L
   private var lastMagnitude = 0.0
   private var listening = false
+  // Debug sampling: log peak delta every N samples so we can confirm
+  // (a) the sensor is firing at all, (b) what the actual g-force
+  // deltas look like during a user shake on the target device. The
+  // Tab S7 FE's accelerometer noise floor + ergonomic-shake max may
+  // differ from the iPad/Pixel norms the threshold was tuned for.
+  private var sampleCount = 0
+  private var peakDeltaSinceLastLog = 0.0
 
   init {
-    // Start listening immediately on construction so the user gets
-    // shake-to-feedback without first opening any tab. iOS's
-    // ShakeDetectingWindow is installed at AppDelegate launch with
-    // the same intent.
+    // EVERY new instance must take over. The previous logic
+    // ("only first instance takes over") meant that after
+    // MainActivity.recreate() — which happens on every Hermes-push
+    // load/unload — a NEW YaverShakeDetectorModule got created but
+    // skipped startListening() because keepAliveOwner was still the
+    // OLD instance. That old instance's ReactApplicationContext is
+    // dead post-recreate, so its emitShake() short-circuits at
+    // ctx.hasActiveReactInstance() and the new JS subscription
+    // never sees the event. RN's host-pause path also unregisters
+    // the OLD listener during the recreate (logcat shows
+    // `D/SensorManager: unregisterListener` at activity onPause)
+    // and the old instance no longer re-registers, so by the time
+    // the new bridge is up, NO listener exists. Stop whatever the
+    // previous owner had registered, install ourselves on the
+    // new ctx, and re-register against SensorManager fresh.
+    keepAliveOwner?.let { old ->
+      if (old !== this) old.stopListening()
+    }
+    keepAliveOwner = this
     startListening()
   }
 
   @ReactMethod
   fun startObserving() {
-    startListening()
+    if (keepAliveOwner == this || keepAliveOwner == null) {
+      keepAliveOwner = this
+      startListening()
+    } else {
+      keepAliveOwner?.startListening()
+    }
   }
 
   @ReactMethod
   fun stopObserving() {
-    stopListening()
+    if (keepAliveOwner == this) {
+      stopListening()
+      keepAliveOwner = null
+    } else {
+      keepAliveOwner?.stopListening()
+    }
   }
 
   // RN NativeEventEmitter contract — required even if we don't track counts.
@@ -77,7 +109,13 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
 
   override fun onCatalystInstanceDestroy() {
     super.onCatalystInstanceDestroy()
-    stopListening()
+    // Intentionally keep the process-wide detector alive if this module
+    // owns it. Bridge swaps to a guest bundle invalidate the host React
+    // context, but we still need native shake handling while that guest
+    // is running so Android can jump back into Yaver and resume feedback.
+    if (keepAliveOwner != this) {
+      stopListening()
+    }
   }
 
   private fun startListening() {
@@ -113,10 +151,17 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
     val magnitude = sqrt(x * x + y * y + z * z).toDouble()
     val delta = kotlin.math.abs(magnitude - lastMagnitude)
     lastMagnitude = magnitude
+    if (delta > peakDeltaSinceLastLog) peakDeltaSinceLastLog = delta
+    sampleCount++
+    if (sampleCount % SAMPLES_PER_LOG == 0) {
+      Log.i(TAG, String.format("sensor alive — samples=%d peakDelta=%.3f threshold=%.3f", sampleCount, peakDeltaSinceLastLog, SHAKE_DELTA_THRESHOLD))
+      peakDeltaSinceLastLog = 0.0
+    }
     if (delta > SHAKE_DELTA_THRESHOLD) {
       val now = System.currentTimeMillis()
       if (now - lastShakeAt > SHAKE_COOLDOWN_MS) {
         lastShakeAt = now
+        Log.i(TAG, String.format("SHAKE fired — delta=%.3f", delta))
         emitShake()
       }
     }
@@ -130,17 +175,18 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
     // When a guest bundle is loaded, the React JS running is the
     // GUEST's bundle (e.g. todo-rn) — Yaver's feedback overlay JS
     // never gets a chance to subscribe to `YaverShakeDetected`, so
-    // emitting the JS event would just dead-letter. iOS handles
-    // this at the UIWindow level so the guest never even sees the
-    // motion. Mirror that: unload the guest natively + recreate
-    // the activity. After recreate, getJSBundleFile() returns null
-    // (we deleted the saved bundle) so RN boots back into Yaver's
-    // own embedded bundle.
+    // emitting the JS event would just dead-letter. Preserve the
+    // guest-shake intent in SharedPreferences, then unload the guest
+    // and recreate back into Yaver's own bundle. On startup the host
+    // JS consumes that flag via YaverInfo.consumePendingFeedbackLaunch()
+    // and re-opens feedback as `native-guest-shake`, which preserves
+    // the unconditional launch path and guest-aware `/vibing/execute`
+    // submission flow.
     val prefs = ctx.getSharedPreferences(YaverNativePrefs.NAME, Context.MODE_PRIVATE)
     val guestLoaded = prefs.getBoolean(YaverNativePrefs.GUEST_BUNDLE_LOADED, false) ||
         YaverBundleLoaderModule.savedBundleFile(ctx).exists()
     if (guestLoaded) {
-      Log.i(TAG, "shake during guest bundle — unloading guest and recreating")
+      Log.i(TAG, "shake during guest bundle — marking pending feedback, unloading guest, recreating")
       unloadGuestAndRecreate(prefs)
       return
     }
@@ -166,6 +212,7 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
       File(dir, YaverBundleLoaderModule.BUNDLE_FILENAME).delete()
       File(dir, "metadata.json").delete()
       prefs.edit()
+          .putBoolean(YaverNativePrefs.PENDING_FEEDBACK_LAUNCH, true)
           .remove(YaverNativePrefs.LOADED_MODULE_NAME)
           .remove(YaverNativePrefs.LOADED_BUNDLE_MD5)
           .remove(YaverNativePrefs.SELECTED_RUNTIME_FAMILY_ID)
@@ -185,9 +232,17 @@ class YaverShakeDetectorModule(private val ctx: ReactApplicationContext) :
   companion object {
     const val NAME = "YaverShakeDetector"
     private const val TAG = "YaverShakeDetector"
-    // Same threshold as feedbackTrigger.ts:102 — keeps detection
-    // ergonomics identical regardless of which path fires.
-    private const val SHAKE_DELTA_THRESHOLD = 1.45
+    private var keepAliveOwner: YaverShakeDetectorModule? = null
+    // Tuned to Tab S7 FE accelerometer ergonomics — captured peak delta
+    // during a deliberate user shake was ~0.758 (1.18.107 logcat 02:46:58).
+    // 0.6 catches that and gives a small margin while staying well above
+    // the casual-handling floor (~0.34 for picking the tablet up). If
+    // false positives appear, raise back to 0.7.
+    private const val SHAKE_DELTA_THRESHOLD = 0.6
     private const val SHAKE_COOLDOWN_MS = 2500L
+    // Log a heartbeat every ~6s assuming SENSOR_DELAY_UI delivers ~60ms
+    // samples (~100 samples ≈ 6s). Lets us confirm the listener is alive
+    // without flooding logcat.
+    private const val SAMPLES_PER_LOG = 100
   }
 }
