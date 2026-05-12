@@ -9,6 +9,7 @@ import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -41,6 +42,8 @@ import {
 WebBrowser.maybeCompleteAuthSession();
 
 const LEGACY_OAUTH_REDIRECT = "yaver:///oauth-callback";
+const YAVER_LOGIN_WORDMARK_DARK = require("../assets/branding/yaver-login-wordmark-dark.png");
+const YAVER_LOGIN_WORDMARK_LIGHT = require("../assets/branding/yaver-login-wordmark-light.png");
 
 function isOAuthCallbackUrl(url: string): boolean {
   return url.startsWith(OAUTH_REDIRECT) || url.startsWith(LEGACY_OAUTH_REDIRECT);
@@ -72,6 +75,7 @@ export default function LoginScreen() {
   const [passkeyLoading, setPasskeyLoading] = useState(false);
   const passkeySupported = isPasskeySupported();
   const isTabletPortrait = isTablet && !isTabletLandscape;
+  const loginWordmark = isDark ? YAVER_LOGIN_WORDMARK_LIGHT : YAVER_LOGIN_WORDMARK_DARK;
   const providerGap = isTablet ? 10 : 8;
   const providerBorderColor = isDark ? c.borderSubtle : c.border;
   const heroCardShadow = !isDark
@@ -343,19 +347,17 @@ export default function LoginScreen() {
                 isTabletLandscape && styles.headerLandscape,
               ]}
             >
-              <View style={[styles.mark, { backgroundColor: c.accentSoft }]}>
-                <Text style={[styles.markText, { color: c.accent }]}>Y</Text>
-              </View>
-              <Text
+              <Image
+                source={loginWordmark}
                 style={[
-                  styles.logo,
-                  { color: c.textPrimary },
-                  isTabletLandscape && styles.logoTabletLandscape,
-                  isTabletPortrait && styles.logoTabletPortrait,
+                  styles.wordmark,
+                  isTabletPortrait && styles.wordmarkTabletPortrait,
+                  isTabletLandscape && styles.wordmarkTabletLandscape,
                 ]}
-              >
-                Yaver
-              </Text>
+                resizeMode="contain"
+                accessibilityRole="image"
+                accessibilityLabel="Yaver"
+              />
               <Text
                 style={[
                   styles.subtitle,
@@ -364,7 +366,7 @@ export default function LoginScreen() {
                   isTabletPortrait && styles.subtitleTablet,
                 ]}
               >
-                Your AI coding assistant, everywhere.
+                {isTablet ? "AI coding assistant for your machines, from anywhere." : "AI coding assistant for your machines."}
               </Text>
               {isTabletLandscape && (
                 <Text style={[styles.tertiaryTagline, { color: c.textMuted }]}>
@@ -730,17 +732,25 @@ const styles = StyleSheet.create({
     marginBottom: 0,
     paddingLeft: 8,
   },
-  logo: {
-    fontSize: 44,
-    fontWeight: "700",
-    letterSpacing: -1.5,
+  wordmark: {
+    width: 240,
+    height: 98,
+    marginBottom: 8,
   },
-  logoTabletPortrait: { fontSize: 56 },
-  logoTabletLandscape: { fontSize: 64 },
+  wordmarkTabletPortrait: {
+    width: 320,
+    height: 128,
+    marginBottom: 10,
+  },
+  wordmarkTabletLandscape: {
+    width: 360,
+    height: 140,
+    marginBottom: 12,
+  },
   subtitle: {
     fontSize: 15,
     lineHeight: 22,
-    marginTop: 12,
+    marginTop: 6,
     textAlign: "center",
   },
   subtitleTablet: {
@@ -756,19 +766,6 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     marginTop: 18,
     maxWidth: 320,
-  },
-  mark: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 18,
-  },
-  markText: {
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 1.2,
   },
   formCard: {
     width: "100%",

@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
@@ -11,6 +11,7 @@ import { setActiveRemoteRuntimeSession } from "../src/lib/feedbackTrigger";
 export default function RemoteRuntimeScreen() {
   const c = useColors();
   const router = useRouter();
+  const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ project?: string; path?: string; framework?: string }>();
   const project = typeof params.project === "string" ? params.project : "Project";
   const path = typeof params.path === "string" ? params.path : "";
@@ -23,6 +24,31 @@ export default function RemoteRuntimeScreen() {
   const [controlText, setControlText] = useState("");
   const [viewerNote, setViewerNote] = useState<string>("Create a session to start remote viewing.");
   const [error, setError] = useState<string | null>(null);
+  const [connectingTargetLabel, setConnectingTargetLabel] = useState<string | null>(null);
+  const [connectingSince, setConnectingSince] = useState<number | null>(null);
+  const [connectionLogs, setConnectionLogs] = useState<Array<{ id: string; text: string; tone: "neutral" | "success" | "error" }>>([]);
+  const [connectionPhase, setConnectionPhase] = useState<string>("Preparing connection");
+  const connectionTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const isCompact = width < 430;
+  const panelWidth = Math.min(width - (isCompact ? 28 : 48), 560);
+
+  const clearConnectionTimers = useCallback(() => {
+    for (const timer of connectionTimers.current) clearTimeout(timer);
+    connectionTimers.current = [];
+  }, []);
+
+  const pushConnectionLog = useCallback((text: string, tone: "neutral" | "success" | "error" = "neutral") => {
+    setConnectionLogs((prev) => [
+      ...prev.slice(-3),
+      { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, text, tone },
+    ]);
+  }, []);
+
+  const finishConnectionOverlay = useCallback(() => {
+    clearConnectionTimers();
+    setConnectingTargetLabel(null);
+    setConnectingSince(null);
+  }, [clearConnectionTimers]);
 
   const load = useCallback(async () => {
     if (!path || !framework) {
@@ -45,24 +71,58 @@ export default function RemoteRuntimeScreen() {
     void load();
   }, [load]);
 
+  useEffect(() => () => clearConnectionTimers(), [clearConnectionTimers]);
+
   useEffect(() => {
     setActiveRemoteRuntimeSession(session?.id || null);
     return () => setActiveRemoteRuntimeSession(null);
   }, [session?.id]);
 
-  const createSession = useCallback(async (targetId: string) => {
-    setBusyTargetId(targetId);
+  const createSession = useCallback(async (target: { id: string; label: string }) => {
+    setBusyTargetId(target.id);
+    setConnectingTargetLabel(target.label);
+    setConnectingSince(Date.now());
+    setConnectionLogs([]);
+    setConnectionPhase("Preparing connection");
+    pushConnectionLog("Preparing connection");
+    clearConnectionTimers();
+    connectionTimers.current = [
+      setTimeout(() => {
+        setConnectionPhase("Resolving machine");
+        pushConnectionLog("Resolving machine");
+      }, 120),
+      setTimeout(() => {
+        setConnectionPhase(quicClient.activeRelayBaseUrl ? "Trying relay" : "Trying direct");
+        pushConnectionLog(quicClient.activeRelayBaseUrl ? "Trying relay" : "Trying direct");
+      }, 700),
+      setTimeout(() => {
+        setConnectionPhase("Authenticating");
+        pushConnectionLog("Auth OK", "success");
+      }, 1400),
+      setTimeout(() => {
+        setConnectionPhase("Starting remote view");
+        pushConnectionLog("Starting remote view");
+      }, 2100),
+    ];
     try {
       const transportMode = quicClient.activeRelayBaseUrl ? "relay-jpeg-poll" : "direct-webrtc";
-      const next = await quicClient.startRemoteRuntimeSession(path, framework, targetId, transportMode);
+      const next = await quicClient.startRemoteRuntimeSession(path, framework, target.id, transportMode);
       setSession(next);
       setViewerNote(next.note || `Session ${next.id} created.`);
+      setConnectionPhase("Session ready");
+      pushConnectionLog(transportMode === "relay-jpeg-poll" ? "Relay ready" : "Direct ready", "success");
+      pushConnectionLog("Session ready", "success");
+      setTimeout(() => finishConnectionOverlay(), 500);
     } catch (e) {
-      Alert.alert("Could not create session", e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      setConnectionPhase("Connection failed");
+      pushConnectionLog(message, "error");
+      setTimeout(() => finishConnectionOverlay(), 900);
+      Alert.alert("Could not create session", message);
     } finally {
       setBusyTargetId(null);
     }
-  }, [path, framework]);
+  }, [path, framework, clearConnectionTimers, finishConnectionOverlay, pushConnectionLog]);
 
   const sendControl = useCallback(async (body: { action: "tap" | "text" | "back" | "home"; text?: string }) => {
     if (!session) return;
@@ -158,7 +218,7 @@ export default function RemoteRuntimeScreen() {
                 {target.reason ? <Text style={[styles.reason, { color: "#fca5a5" }]}>{target.reason}</Text> : null}
                 <Pressable
                   disabled={!target.enabled || busyTargetId === target.id}
-                  onPress={() => createSession(target.id)}
+                  onPress={() => createSession({ id: target.id, label: target.label })}
                   style={[
                     styles.button,
                     { backgroundColor: target.enabled ? c.accent : c.border, opacity: busyTargetId === target.id ? 0.7 : 1 },
@@ -243,6 +303,58 @@ export default function RemoteRuntimeScreen() {
           </>
         )}
       </ScrollView>
+      {connectingTargetLabel ? (
+        <View style={styles.connectOverlay}>
+          <View style={styles.connectScrim} />
+          <View style={styles.connectPanelWrap}>
+            <View style={[styles.connectPanel, { width: panelWidth, paddingHorizontal: isCompact ? 20 : 26, paddingVertical: isCompact ? 22 : 28 }]}>
+              <View style={[styles.connectIconWrap, { width: isCompact ? 62 : 72, height: isCompact ? 62 : 72, borderRadius: isCompact ? 31 : 36, marginBottom: isCompact ? 14 : 18 }]}>
+                <Text style={[styles.connectIcon, { fontSize: isCompact ? 28 : 32 }]}>◌</Text>
+              </View>
+              <Text style={[styles.connectTitle, { fontSize: isCompact ? 22 : 28, marginBottom: isCompact ? 6 : 8 }]}>Connecting to Yaver</Text>
+              <Text style={[styles.connectTarget, { fontSize: isCompact ? 18 : 22, marginBottom: isCompact ? 10 : 12 }]} numberOfLines={2}>{connectingTargetLabel}</Text>
+              <Text style={[styles.connectPhase, { fontSize: isCompact ? 17 : 20, lineHeight: isCompact ? 22 : 26 }]}>{connectionPhase}</Text>
+              <Text style={[styles.connectElapsed, { fontSize: isCompact ? 13 : 15, marginTop: isCompact ? 6 : 8, marginBottom: isCompact ? 14 : 18 }]}>
+                {connectingSince ? `${Math.max(0, Math.round((Date.now() - connectingSince) / 1000))}s elapsed` : ""}
+              </Text>
+              <View style={[styles.connectLogStack, { minHeight: isCompact ? 104 : 122 }]}>
+                {connectionLogs.map((entry, index) => (
+                  <View key={entry.id} style={styles.connectLogRow}>
+                    <Text
+                      style={[
+                        styles.connectLogIcon,
+                        { width: isCompact ? 18 : 22, fontSize: isCompact ? 16 : 18 },
+                        entry.tone === "success"
+                          ? styles.connectLogIconSuccess
+                          : entry.tone === "error"
+                            ? styles.connectLogIconError
+                            : styles.connectLogIconNeutral,
+                      ]}
+                    >
+                      {entry.tone === "success" ? "✓" : entry.tone === "error" ? "!" : "•"}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.connectLogText,
+                        { fontSize: isCompact ? 15 : 18, lineHeight: isCompact ? 20 : 24 },
+                        entry.tone === "success"
+                          ? styles.connectLogTextSuccess
+                          : entry.tone === "error"
+                            ? styles.connectLogTextError
+                            : styles.connectLogTextNeutral,
+                        index === connectionLogs.length - 1 ? styles.connectLogTextCurrent : null,
+                      ]}
+                    >
+                      {entry.text}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+              <ActivityIndicator color="#22c55e" size={isCompact ? "small" : "large"} style={[styles.connectSpinner, { marginTop: isCompact ? 14 : 18 }]} />
+            </View>
+          </View>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -264,6 +376,109 @@ const styles = StyleSheet.create({
   inlineButton: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center", justifyContent: "center" },
   button: { marginTop: 14, borderRadius: 12, paddingVertical: 12, alignItems: "center" },
   buttonText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  connectOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  connectScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(3, 7, 18, 0.84)",
+  },
+  connectPanelWrap: {
+    width: "100%",
+    paddingHorizontal: 24,
+  },
+  connectPanel: {
+    borderRadius: 28,
+    backgroundColor: "#0a0f18",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.28)",
+    paddingHorizontal: 26,
+    paddingVertical: 28,
+    shadowColor: "#000",
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 18,
+  },
+  connectIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(34,197,94,0.12)",
+    borderWidth: 1,
+    borderColor: "rgba(34,197,94,0.24)",
+    marginBottom: 18,
+  },
+  connectIcon: {
+    color: "#22c55e",
+    fontSize: 32,
+    fontWeight: "700",
+  },
+  connectTitle: {
+    color: "#ffffff",
+    fontSize: 28,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  connectTarget: {
+    color: "#22c55e",
+    fontSize: 22,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 12,
+  },
+  connectPhase: {
+    color: "#ffffff",
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: "600",
+    textAlign: "center",
+  },
+  connectElapsed: {
+    color: "#94a3b8",
+    fontSize: 15,
+    textAlign: "center",
+    marginTop: 8,
+    marginBottom: 18,
+  },
+  connectLogStack: {
+    gap: 10,
+    minHeight: 122,
+    justifyContent: "center",
+  },
+  connectLogRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  connectLogIcon: {
+    width: 22,
+    textAlign: "center",
+    fontSize: 18,
+    fontWeight: "800",
+  },
+  connectLogIconNeutral: { color: "#cbd5e1" },
+  connectLogIconSuccess: { color: "#22c55e" },
+  connectLogIconError: { color: "#ef4444" },
+  connectLogText: {
+    flex: 1,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "500",
+  },
+  connectLogTextNeutral: { color: "#ffffff" },
+  connectLogTextSuccess: { color: "#22c55e" },
+  connectLogTextError: { color: "#ef4444" },
+  connectLogTextCurrent: { fontWeight: "700" },
+  connectSpinner: {
+    marginTop: 18,
+  },
 });
 
 function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, string>, session: RemoteRuntimeSession) {
