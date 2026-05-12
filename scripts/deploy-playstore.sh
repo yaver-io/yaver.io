@@ -3,6 +3,21 @@ set -e
 
 cd "$(dirname "$0")/../mobile/android"
 
+# `expo prebuild --clean` regenerates gradle.properties from Expo's
+# template, wiping any heap bump we made by hand. Without an 8g heap
+# the dex merge step OOMs ~9 min into bundleRelease. Force the bump
+# both as an env var (so this run is safe even if gradle.properties
+# stayed default) and back into gradle.properties (so subsequent
+# `gradle` invocations from outside this script also see it).
+export GRADLE_OPTS="${GRADLE_OPTS:-} -Xmx8g -XX:MaxMetaspaceSize=1g"
+if grep -q '^org.gradle.jvmargs=' gradle.properties 2>/dev/null; then
+  if ! grep -qE '^org\.gradle\.jvmargs=.*-Xmx(8|16|32)g' gradle.properties; then
+    sed -i.bak 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g -XX:+HeapDumpOnOutOfMemoryError/' gradle.properties
+    rm -f gradle.properties.bak
+    echo "Bumped gradle.properties JVM heap to 8g."
+  fi
+fi
+
 # Pull Android signing creds + Play service account path from the Yaver
 # vault (project="mobile" + globals). Vault values win when present;
 # values that don't exist in the vault pass through from the parent env.
