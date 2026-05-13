@@ -9688,6 +9688,16 @@ func runMCP(args []string) {
 		*workDir = wd
 	}
 
+	// Pin the AI session's cwd so MCP push/build tools default to the
+	// directory the AI is actually working in, not whatever `os.Getwd()`
+	// happens to be when each tool runs. Stdio MCP inherits $PWD from
+	// the AI client at spawn time; this just records it once. HTTP MCP
+	// callers can override per-call via YAVER_MCP_CWD env. See
+	// mcp_session_cwd.go for the resolver and why it matters when a
+	// user runs `claude` from inside their app repo (e.g. sfmg) rather
+	// than the yaver.io checkout.
+	SetMCPSessionCwd(*workDir)
+
 	cfg, _ := LoadConfig()
 	if cfg == nil {
 		cfg = &Config{}
@@ -9717,7 +9727,12 @@ func runMCP(args []string) {
 
 	switch *mode {
 	case "stdio":
-		fmt.Fprintf(os.Stderr, "Yaver MCP server (stdio) v%s — work dir: %s\n", version, *workDir)
+		// The work-dir line doubles as the session-cwd indicator —
+		// every push/build/dev MCP tool that doesn't get an explicit
+		// path will default here. If a user complains "wireless_push
+		// kept building the wrong project", this is the first place
+		// to look.
+		fmt.Fprintf(os.Stderr, "Yaver MCP server (stdio) v%s — session cwd: %s\n", version, *workDir)
 		runMCPStdio(taskMgr, aclMgr, emailMgr)
 	case "http":
 		fmt.Printf("Yaver MCP server (HTTP) v%s on port %d — work dir: %s\n", version, *httpPort, *workDir)

@@ -154,7 +154,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{
 					"path": map[string]interface{}{
 						"type":        "string",
-						"description": "Project path. Empty = the agent's current workdir. Walks one level into mobile/, app/, apps/*, packages/* if the given path isn't a mobile project itself.",
+						"description": "Project path. Empty = the AI session's working directory (the dir Claude Code / Codex / opencode was started in) — typically what you want. Walks one level into mobile/, app/, apps/*, packages/* if the given path isn't a mobile project itself.",
 					},
 					"device": map[string]interface{}{
 						"type":        "string",
@@ -253,7 +253,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{
 					"path": map[string]interface{}{
 						"type":        "string",
-						"description": "Project path. Empty = the agent's current workdir.",
+						"description": "Project path. Empty = the AI session's working directory (the dir Claude Code / Codex / opencode was started in) — typically what you want when iterating inside the app repo. Walks one level into mobile/, app/, apps/*, packages/* if the given path isn't a mobile project itself.",
 					},
 					"device": map[string]interface{}{
 						"type":        "string",

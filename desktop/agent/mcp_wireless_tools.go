@@ -277,10 +277,12 @@ type mcpWirelessPushArgs = mcpWirePushArgs
 func mcpWirelessPush(args mcpWirelessPushArgs) (interface{}, error) {
 	root := strings.TrimSpace(args.Path)
 	if root == "" {
-		var err error
-		root, err = os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("cwd: %w", err)
+		// Prefer the AI session's pinned cwd over the agent process's
+		// runtime cwd. See mcp_session_cwd.go. The caller can always
+		// override by passing an explicit `path`.
+		root = ResolveMCPCwd()
+		if root == "" {
+			return nil, fmt.Errorf("cwd: no session cwd and os.Getwd() returned empty")
 		}
 	}
 	abs, err := filepath.Abs(root)

@@ -232,7 +232,13 @@ func dispatchNativeBuildMCP(s *HTTPServer, name string, arguments json.RawMessag
 	}
 	_ = json.Unmarshal(arguments, &args)
 
-	startDir := firstNonEmpty(args.WorkDir, s.buildMgr.workDir, ".")
+	// Defaulting chain: explicit args.WorkDir → buildMgr's pinned dir →
+	// the MCP session cwd (AI's working directory) → "." (legacy
+	// fallback for ad-hoc CLI invocations). The MCP-session step is the
+	// reason `yaver mcp` started from `cd ../sfmg && claude` does the
+	// right thing without the AI having to pass work_dir on every
+	// build_*/push_* call. See mcp_session_cwd.go.
+	startDir := firstNonEmpty(args.WorkDir, s.buildMgr.workDir, ResolveMCPCwd(), ".")
 	switch name {
 	case "build_ios":
 		extra := append([]string{}, args.Args...)

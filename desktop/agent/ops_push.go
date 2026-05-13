@@ -73,7 +73,15 @@ func opsPushHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	}
 	workDir := p.WorkDir
 	if workDir == "" {
-		workDir = "."
+		// Fall back to the AI session's pinned cwd before bare ".",
+		// so an agent that runs `ops.push target=docker` from a
+		// session rooted in the user's app repo pushes from there.
+		// See mcp_session_cwd.go.
+		if cwd := ResolveMCPCwd(); cwd != "" {
+			workDir = cwd
+		} else {
+			workDir = "."
+		}
 	}
 
 	var cmd string

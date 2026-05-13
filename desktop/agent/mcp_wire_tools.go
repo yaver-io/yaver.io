@@ -82,10 +82,10 @@ type mcpWirePushArgs struct {
 func mcpWirePush(args mcpWirePushArgs) (interface{}, error) {
 	root := strings.TrimSpace(args.Path)
 	if root == "" {
-		var err error
-		root, err = os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("cwd: %w", err)
+		// Prefer the AI session's pinned cwd; see mcp_session_cwd.go.
+		root = ResolveMCPCwd()
+		if root == "" {
+			return nil, fmt.Errorf("cwd: no session cwd and os.Getwd() returned empty")
 		}
 	}
 	abs, err := filepath.Abs(root)
