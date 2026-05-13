@@ -37,9 +37,7 @@ import {
   PasskeyMisconfigured,
   PasskeyNoCredential,
   isPasskeySupported,
-  passkeyEnroll,
   passkeyHasCredential,
-  passkeyListCount,
   passkeySignin,
   passkeySignup,
 } from "../src/lib/passkey";
@@ -251,44 +249,11 @@ export default function LoginScreen() {
     }
   };
 
-  // Post-OAuth / post-email-login: if the device supports passkeys and
-  // the user has none enrolled, offer to add one inline before routing
-  // to "/". One Face ID tap and the user is set up for passkey-first
-  // sign-in everywhere — without needing to discover Settings → Passkeys.
-  //
-  // Bail-out paths: passkey unsupported (older OS), already has passkeys,
-  // network blip during list query (treated as "skip"), or user declines.
-  // Any failure here MUST NOT block the underlying OAuth/email login.
-  const offerPasskeyEnrollment = async (token: string): Promise<void> => {
-    if (!passkeySupported) return;
-    const count = await passkeyListCount(getConvexSiteUrl(), token);
-    if (count === null || count > 0) return;
-
-    const wantsToEnroll = await new Promise<boolean>((resolve) => {
-      Alert.alert(
-        "Enable passkey?",
-        "Sign in faster next time with Face ID or Touch ID — no password.",
-        [
-          { text: "Not now", style: "cancel", onPress: () => resolve(false) },
-          { text: "Enable", onPress: () => resolve(true) },
-        ],
-        { cancelable: true, onDismiss: () => resolve(false) },
-      );
-    });
-    if (!wantsToEnroll) return;
-
-    try {
-      await passkeyEnroll(getConvexSiteUrl(), token, Platform.OS === "ios" ? "iPhone" : "Android");
-    } catch (e: unknown) {
-      if (e instanceof PasskeyCancelled) return;
-      if (e instanceof PasskeyMisconfigured) {
-        Alert.alert("Passkey setup issue", e.message);
-        return;
-      }
-      const msg = e instanceof Error ? e.message : "Could not enable passkey.";
-      Alert.alert("Couldn't enable passkey", `${msg} You can try again from Settings.`);
-    }
-  };
+  // (Post-OAuth enrollment prompt removed in 1.18.118 — racing the
+  // freshly-minted session token against the immediate register/start
+  // call surfaced sporadic 401s before storage hydration completed.
+  // Settings → Add a passkey runs after the session has fully settled
+  // and works reliably; that's the canonical enrollment path now.)
 
   // openAuthSessionAsync returns the final redirect URL via the
   // awaited promise, so the OAuth token can't be lost to a deep-link
@@ -305,7 +270,6 @@ export default function LoginScreen() {
       const token = parsed.queryParams?.token as string | undefined;
       if (!token) return;
       await login(token);
-      await offerPasskeyEnrollment(token);
       router.replace("/");
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Sign-in failed";
@@ -357,7 +321,6 @@ export default function LoginScreen() {
 
       const { token } = await res.json();
       await login(token);
-      await offerPasskeyEnrollment(token);
       router.replace("/");
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "ERR_REQUEST_CANCELED") {
@@ -397,7 +360,6 @@ export default function LoginScreen() {
       if (isSignUp) {
         const result = await signupWithEmail(fullName.trim(), email.trim(), password);
         await login(result.token);
-        await offerPasskeyEnrollment(result.token);
         router.replace("/");
         return;
       }
@@ -413,7 +375,6 @@ export default function LoginScreen() {
         return;
       }
       await login(result.token);
-      await offerPasskeyEnrollment(result.token);
       router.replace("/");
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Something went wrong";

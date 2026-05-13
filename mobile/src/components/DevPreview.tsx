@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Ionicons } from "@expo/vector-icons";
 import {
   ActivityIndicator,
   Alert,
@@ -13,7 +14,7 @@ import {
 import { WebView } from "react-native-webview";
 import { quicClient, type DevServerStatus } from "../lib/quic";
 import { useColors } from "../context/ThemeContext";
-import { loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
+import { isBundleLoaded, loadAppIfChanged, onBundleEvent } from "../lib/bundleLoader";
 import { buildNativeBuildRequest, nativeBuildFailureMessage, nativeBuildFailureTitle } from "../lib/nativeBuild";
 import { isActiveDevServerStatus } from "../lib/devServerState";
 import { useResponsiveLayout } from "../hooks/useResponsiveLayout";
@@ -224,6 +225,8 @@ export function DevPreview() {
   }, [status?.running, status?.building, status?.framework, status?.devMode]);
 
   const [nativeLoading, setNativeLoading] = useState(false);
+  const [reloadLoading, setReloadLoading] = useState(false);
+  const [bundleMounted, setBundleMounted] = useState(false);
   const [lastLogLine, setLastLogLine] = useState<string>("");
 
   // Yaver Protocol v1: per-topic structured progress + transport
@@ -261,10 +264,24 @@ export function DevPreview() {
 
   // Listen for bundle unload events (user pressed "Back to Yaver")
   useEffect(() => {
+    let mounted = true;
+    void isBundleLoaded()
+      .then((loaded) => {
+        if (mounted) setBundleMounted(loaded);
+      })
+      .catch(() => {
+        if (mounted) setBundleMounted(false);
+      });
     const sub = onBundleEvent("onBundleUnloaded", () => {
       setNativeLoading(false);
+      setBundleMounted(false);
     });
-    return () => sub.remove();
+    const loadedSub = onBundleEvent("onBundleLoaded", () => setBundleMounted(true));
+    return () => {
+      mounted = false;
+      sub.remove();
+      loadedSub.remove();
+    };
   }, []);
 
   // Load the app inside Yaver via the secondary RCTBridge (super-host mode).
@@ -361,6 +378,7 @@ export function DevPreview() {
       if (loadResult.skipped) {
         setLastLogLine("Already up to date");
       }
+      setBundleMounted(true);
     } catch (err: any) {
       clearTimeout(buildAbortTimer);
       setNativeLoading(false);
@@ -397,23 +415,33 @@ export function DevPreview() {
   }, [mustUseNativePreview, handleRunInYaver]);
 
   const handleReload = useCallback(async () => {
+    if (reloadLoading || nativeLoading) return;
+    if (mustUseNativePreview && !bundleMounted) {
+      await handleRunInYaver();
+      return;
+    }
+    setReloadLoading(true);
     if (!mustUseNativePreview) {
       setLoading(true);
     }
-    const ok = await quicClient.reloadDevServer({ mode: mustUseNativePreview ? "bundle" : "dev" });
-    if (!ok) {
-      setLoading(false);
-      Alert.alert("Reload Failed", "Could not reload — is the dev server still running?");
-      return;
-    }
-    if (!mustUseNativePreview) {
-      if (!showPreview || !status?.running) {
-        setWebViewKey(k => k + 1);
-      } else {
-        setTimeout(() => setWebViewKey(k => k + 1), 500);
+    try {
+      const ok = await quicClient.reloadDevServer({ mode: mustUseNativePreview ? "bundle" : "dev" });
+      if (!ok) {
+        setLoading(false);
+        Alert.alert("Reload Failed", "Could not reload — is the dev server still running?");
+        return;
       }
+      if (!mustUseNativePreview) {
+        if (!showPreview || !status?.running) {
+          setWebViewKey(k => k + 1);
+        } else {
+          setTimeout(() => setWebViewKey(k => k + 1), 500);
+        }
+      }
+    } finally {
+      setReloadLoading(false);
     }
-  }, [mustUseNativePreview, showPreview, status?.running]);
+  }, [bundleMounted, handleRunInYaver, mustUseNativePreview, nativeLoading, reloadLoading, showPreview, status?.running]);
 
   const handleStop = useCallback(async () => {
     Alert.alert("Stop Serving Preview", "This will stop serving the current preview and close it on this device.", [
@@ -450,97 +478,79 @@ export function DevPreview() {
           borderColor: tone.border,
         }]}
       >
-        <View
-          style={[
-            styles.bannerMain,
-            !layout.isPhone ? styles.bannerMainWide : null,
-          ]}
-        >
-          <View style={styles.bannerLeft}>
-            {status.building ? (
-              <ActivityIndicator size="small" color={tone.text} />
-            ) : (
-              <View style={[styles.dot, { backgroundColor: tone.text }]} />
-            )}
-            <View style={styles.bannerTextWrap}>
-              <View style={styles.bannerTitleRow}>
-                <Text style={[styles.bannerTitle, { color: c.textPrimary }]} numberOfLines={1}>
-                  {projectLabel}
-                </Text>
-                <View style={[styles.bannerStatePill, { backgroundColor: tone.text + "16", borderColor: tone.text + "36" }]}>
-                  <Text style={[styles.bannerStateText, { color: tone.text }]}>
-                    {status.building ? "BUILDING" : "SERVING"}
-                  </Text>
-                </View>
-              </View>
-              <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
-                {servingMeta}
+        {/* Header row — project name front-and-centre. The Tasks-tab
+            preview banner previously surfaced two cramped lines of text
+            inside the green button ("Open in Yaver" + "Tap to load on
+            this device") with the project name buried in a smaller
+            block above. Flipping the hierarchy: project name owns the
+            top, action buttons sit underneath with single-word labels. */}
+        <View style={styles.bannerHeaderRow}>
+          {status.building ? (
+            <ActivityIndicator size="small" color={tone.text} />
+          ) : (
+            <View style={[styles.dot, { backgroundColor: tone.text }]} />
+          )}
+          <View style={styles.bannerTextWrap}>
+            <View style={styles.bannerTitleRow}>
+              <Text style={[styles.bannerTitleLarge, { color: c.textPrimary }]} numberOfLines={1}>
+                {projectLabel}
               </Text>
-              {status.workDir ? (
-                <Text
-                  style={[styles.bannerPath, { color: c.textMuted }]}
-                  numberOfLines={1}
-                >
-                  {status.workDir}
+              <View style={[styles.bannerStatePill, { backgroundColor: tone.text + "16", borderColor: tone.text + "36" }]}>
+                <Text style={[styles.bannerStateText, { color: tone.text }]}>
+                  {status.building ? "BUILDING" : "SERVING"}
                 </Text>
-              ) : null}
-              {lastLogLine ? (
-                <Text style={[styles.bannerLogLine, { color: tone.text }]} numberOfLines={1}>
-                  {lastLogLine}
-                </Text>
-              ) : null}
+              </View>
             </View>
+            <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
+              {servingMeta}
+            </Text>
+            {lastLogLine ? (
+              <Text style={[styles.bannerLogLine, { color: tone.text }]} numberOfLines={1}>
+                {lastLogLine}
+              </Text>
+            ) : null}
           </View>
-            <View
-              style={[
-                styles.bannerRight,
-                layout.isPhone ? styles.bannerRightStacked : styles.bannerRightInline,
-              ]}
+        </View>
+        <View style={styles.bannerActionRow}>
+          <Pressable
+            onPress={handleOpen}
+            disabled={!!status.building || nativeLoading}
+            style={({ pressed }) => [
+              styles.bannerPrimaryBtnSimple,
+              { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.85 : 1 },
+            ]}
+          >
+            {status.building || nativeLoading ? (
+              <ActivityIndicator size="small" color={c.textInverse} />
+            ) : (
+              <Text
+                style={[styles.bannerPrimaryTextSimple, { color: c.textInverse }]}
+                numberOfLines={1}
+              >
+                Open in Yaver
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
+            onPress={handleStop}
+            disabled={!!status.building}
+            style={({ pressed }) => [
+              styles.bannerStopBtnSimple,
+              {
+                borderColor: c.errorBorder,
+                backgroundColor: c.errorBg,
+                opacity: pressed || status.building ? 0.7 : 1,
+              },
+            ]}
+          >
+            <Text
+              style={[styles.bannerStopText, { color: c.error }]}
+              numberOfLines={1}
             >
-              <Pressable
-                onPress={handleOpen}
-                disabled={!!status.building || nativeLoading}
-                style={({ pressed }) => [
-                  styles.bannerPrimaryBtn,
-                  layout.isPhone ? styles.bannerActionRowGrow : null,
-                  { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.8 : 1 },
-                ]}
-              >
-                {status.building || nativeLoading ? (
-                  <ActivityIndicator size="small" color={c.textInverse} />
-                ) : (
-                  <Text
-                    style={[styles.bannerPrimaryText, { color: c.textInverse }]}
-                    numberOfLines={1}
-                    adjustsFontSizeToFit
-                  >
-                    Open in Yaver
-                  </Text>
-                )}
-              </Pressable>
-              <Pressable
-                onPress={handleStop}
-                disabled={!!status.building}
-                style={({ pressed }) => [
-                  styles.bannerStopBtn,
-                  layout.isPhone ? styles.bannerActionRowGrow : null,
-                  {
-                    borderColor: c.errorBorder,
-                    backgroundColor: c.errorBg,
-                    opacity: pressed || status.building ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text
-                  style={[styles.bannerStopText, { color: c.error }]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                >
-                  {status.stopActionLabel || "Stop Serving"}
-                </Text>
-              </Pressable>
-            </View>
-          </View>
+              {status.stopActionLabel || "Stop"}
+            </Text>
+          </Pressable>
+        </View>
       </View>
       {/* Full-screen WebView Modal */}
       <Modal visible={showPreview} animationType="slide" onRequestClose={() => setShowPreview(false)}>
@@ -676,8 +686,14 @@ export function DevPreview() {
                   )}
 
                   <View style={styles.nativeButtons}>
-                    <Pressable onPress={handleReload} style={[styles.nativeBtn, { backgroundColor: "#1a2e1a" }]}>
-                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>Reload</Text>
+                    <Pressable
+                      onPress={handleReload}
+                      disabled={reloadLoading || nativeLoading}
+                      style={[styles.nativeBtn, { backgroundColor: "#1a2e1a", opacity: reloadLoading || nativeLoading ? 0.75 : 1 }]}
+                    >
+                      <Text style={[styles.nativeBtnText, { color: "#22c55e" }]}>
+                        {reloadLoading ? "Reloading…" : bundleMounted ? "Reload" : "Open first"}
+                      </Text>
                     </Pressable>
                     <Pressable onPress={handleStop} style={[styles.nativeBtn, { backgroundColor: "#2e1a1a" }]}>
                       <Text style={[styles.nativeBtnText, { color: "#ef4444" }]}>{status.stopActionLabel || "Stop Serving"}</Text>
@@ -753,6 +769,44 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderRadius: 14,
     borderWidth: 1,
+    gap: 12,
+  },
+  // Header row owns the project name + state pill on top. Replaces the
+  // old horizontal bannerLeft/bannerRight split where the project name
+  // was buried in a small block next to the action buttons.
+  bannerHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  // Single-row pair: prominent green "Open in Yaver" + flat "Stop"
+  // pill. Mirrors the Projects-tab action row styling.
+  bannerActionRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: 10,
+  },
+  bannerPrimaryBtnSimple: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16,
+  },
+  bannerPrimaryTextSimple: {
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+  },
+  bannerStopBtnSimple: {
+    minWidth: 88,
+    minHeight: 48,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   bannerMain: {
     gap: 12,
@@ -784,6 +838,16 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#e4e4e7",
     flexShrink: 1,
+  },
+  // Larger, more prominent project name for the redesigned banner.
+  // Replaces the cramped layout where the green button text was the
+  // visual anchor — now the app name is.
+  bannerTitleLarge: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#e4e4e7",
+    flexShrink: 1,
+    letterSpacing: -0.2,
   },
   bannerStatePill: {
     paddingHorizontal: 8,
@@ -846,9 +910,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     alignSelf: "stretch",
   },
+  bannerPrimaryContent: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  bannerPrimaryIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.18)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bannerPrimaryTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
   bannerPrimaryText: {
     fontSize: 14,
     fontWeight: "800",
+  },
+  bannerPrimarySubtext: {
+    fontSize: 11,
+    fontWeight: "600",
+    opacity: 0.82,
+    marginTop: 2,
   },
   bannerStopBtn: {
     minHeight: 44,
