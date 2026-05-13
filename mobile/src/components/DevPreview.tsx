@@ -460,95 +460,100 @@ export function DevPreview() {
 
   const bundleUrl = quicClient.getDevServerBundleUrl(status.bundleUrl || "/dev/");
   const projectLabel = projectLabelFromStatus(status);
-  const servingMeta = [
-    status.framework || null,
-    status.port ? `port ${status.port}` : null,
-    `target ${status.targetDeviceName || "this device"}`,
-  ].filter(Boolean).join(" · ");
-  const tone = status.building
-    ? { border: c.warnBorder, bg: c.warnBg, text: c.warn }
-    : { border: c.successBorder, bg: c.bgCard, text: c.success };
-  const actionBg = status.building ? c.warn : c.success;
+  const frameworkLabel = status.framework || "app";
+  const portLabel = status.port ? `port ${status.port}` : null;
+  const hotReloadLabel = status.hotReload === false ? "hot reload off" : "hot reload on";
+  const metaLine = [frameworkLabel, portLabel, hotReloadLabel].filter(Boolean).join(" · ");
+  const modeLine = status.building
+    ? "build in progress"
+    : (status.iosInstallMethod === "native"
+        ? "native install"
+        : frameworkLabel.toLowerCase() === "flutter"
+          ? "LAN app reload"
+          : "Hermes bundle in Yaver");
+  const targetLabel = status.targetDeviceName || "this device";
+  const isBusy = !!status.building || nativeLoading;
+  const openLabel = status.building
+    ? "Compiling…"
+    : nativeLoading
+      ? "Building…"
+      : "Open in Yaver";
 
   return (
     <>
-      <View
-        style={[styles.banner, {
-          backgroundColor: tone.bg,
-          borderColor: tone.border,
-        }]}
-      >
-        {/* Header row — project name front-and-centre. The Tasks-tab
-            preview banner previously surfaced two cramped lines of text
-            inside the green button ("Open in Yaver" + "Tap to load on
-            this device") with the project name buried in a smaller
-            block above. Flipping the hierarchy: project name owns the
-            top, action buttons sit underneath with single-word labels. */}
-        <View style={styles.bannerHeaderRow}>
+      <View style={[styles.card, styles.activeCard]}>
+        {/* Mirror the Projects-tab card layout so the Tasks tab's
+            dev-server section reads as the same component. The previous
+            banner squeezed the project name + meta into a small block
+            beside a heavy two-line green button; this layout puts the
+            project name at the visual centre and lets the action row
+            (Open in Yaver / Reload / Stop) sit underneath with the
+            same three-button rhythm Apps uses. */}
+        <View style={styles.cardHeader}>
           {status.building ? (
-            <ActivityIndicator size="small" color={tone.text} />
+            <ActivityIndicator size="small" color="#eab308" />
           ) : (
-            <View style={[styles.dot, { backgroundColor: tone.text }]} />
+            <View style={[styles.statusDot, { backgroundColor: "#22c55e" }]} />
           )}
-          <View style={styles.bannerTextWrap}>
-            <View style={styles.bannerTitleRow}>
-              <Text style={[styles.bannerTitleLarge, { color: c.textPrimary }]} numberOfLines={1}>
-                {projectLabel}
-              </Text>
-              <View style={[styles.bannerStatePill, { backgroundColor: tone.text + "16", borderColor: tone.text + "36" }]}>
-                <Text style={[styles.bannerStateText, { color: tone.text }]}>
-                  {status.building ? "BUILDING" : "SERVING"}
-                </Text>
-              </View>
-            </View>
-            <Text style={[styles.bannerSubtitle, { color: c.textSecondary }]} numberOfLines={1}>
-              {servingMeta}
+          <View style={styles.cardTitleContainer}>
+            <Text style={styles.cardTitle} numberOfLines={1}>{projectLabel}</Text>
+            <Text style={styles.cardMeta} numberOfLines={1}>{metaLine}</Text>
+            <Text style={[styles.cardMeta, { color: "#86efac" }]} numberOfLines={1}>
+              mode · {modeLine}
+            </Text>
+            <Text style={[styles.cardMeta, { color: "#7dd3fc" }]} numberOfLines={1}>
+              target · {targetLabel}
             </Text>
             {lastLogLine ? (
-              <Text style={[styles.bannerLogLine, { color: tone.text }]} numberOfLines={1}>
+              <Text style={[styles.cardMeta, { color: "#94a3b8" }]} numberOfLines={1}>
                 {lastLogLine}
               </Text>
             ) : null}
           </View>
         </View>
-        <View style={styles.bannerActionRow}>
+        <View style={styles.cardActions}>
           <Pressable
-            onPress={handleOpen}
-            disabled={!!status.building || nativeLoading}
             style={({ pressed }) => [
-              styles.bannerPrimaryBtnSimple,
-              { backgroundColor: actionBg, opacity: pressed || status.building || nativeLoading ? 0.85 : 1 },
+              styles.actionBtn,
+              styles.openBtn,
+              (isBusy || pressed) && { opacity: pressed ? 0.85 : 0.55 },
             ]}
+            onPress={handleOpen}
+            disabled={isBusy}
           >
-            {status.building || nativeLoading ? (
-              <ActivityIndicator size="small" color={c.textInverse} />
+            {isBusy ? (
+              <>
+                <ActivityIndicator size="small" color="#000" />
+                <Text style={[styles.openBtnText, { marginLeft: 6 }]}>{openLabel}</Text>
+              </>
             ) : (
-              <Text
-                style={[styles.bannerPrimaryTextSimple, { color: c.textInverse }]}
-                numberOfLines={1}
-              >
-                Open in Yaver
-              </Text>
+              <Text style={styles.openBtnText}>{openLabel}</Text>
             )}
           </Pressable>
           <Pressable
-            onPress={handleStop}
-            disabled={!!status.building}
             style={({ pressed }) => [
-              styles.bannerStopBtnSimple,
-              {
-                borderColor: c.errorBorder,
-                backgroundColor: c.errorBg,
-                opacity: pressed || status.building ? 0.7 : 1,
-              },
+              styles.actionBtn,
+              styles.reloadBtn,
+              (isBusy || reloadLoading || pressed) && { opacity: pressed ? 0.85 : 0.55 },
             ]}
+            onPress={handleReload}
+            disabled={isBusy || reloadLoading}
           >
-            <Text
-              style={[styles.bannerStopText, { color: c.error }]}
-              numberOfLines={1}
-            >
-              {status.stopActionLabel || "Stop"}
-            </Text>
+            {reloadLoading ? (
+              <ActivityIndicator size="small" color="#22c55e" />
+            ) : (
+              <Text style={styles.reloadBtnText}>{"↻"} Reload</Text>
+            )}
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.actionBtn,
+              styles.stopBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={handleStop}
+          >
+            <Text style={styles.stopBtnText}>Stop</Text>
           </Pressable>
         </View>
       </View>
@@ -763,6 +768,54 @@ export function useDevServerStatus() {
 }
 
 const styles = StyleSheet.create({
+  // Replicates the Projects-tab "running app" card (apps.tsx ::
+  // card + activeCard) so the Tasks-tab dev banner reads as the same
+  // component on both screens. Dark-green background, subtle green
+  // border, generous internal padding, no shadow (RN-iOS handles depth
+  // via the bordered card itself).
+  card: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 0.5,
+  },
+  activeCard: {
+    backgroundColor: "#0f1a0f",
+    borderWidth: 1,
+    borderColor: "#22c55e44",
+    marginTop: 12,
+  },
+  cardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  cardTitleContainer: { flex: 1 },
+  cardTitle: { fontSize: 16, fontWeight: "700", color: "#fff" },
+  cardMeta: { fontSize: 11, color: "#666", marginTop: 2 },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  cardActions: { flexDirection: "row", gap: 8, marginTop: 12 },
+  actionBtn: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 8 },
+  openBtn: {
+    backgroundColor: "#22c55e",
+    flex: 1,
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 4,
+  },
+  openBtnText: { color: "#000", fontSize: 13, fontWeight: "700" },
+  reloadBtn: {
+    backgroundColor: "#22c55e22",
+    flex: 1,
+    alignItems: "center",
+  },
+  reloadBtnText: { color: "#22c55e", fontSize: 13, fontWeight: "600" },
+  stopBtn: { backgroundColor: "#ef444422", paddingHorizontal: 16, alignItems: "center" },
+  stopBtnText: { color: "#ef4444", fontSize: 13, fontWeight: "600" },
+
   banner: {
     padding: 14,
     marginHorizontal: 16,
