@@ -640,7 +640,13 @@ export const createOrUpdateUser = mutation({
     avatarUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const existing = await findUserForOAuth(ctx, args.provider, args.providerId, args.email);
+    // Normalize email at the boundary so by_email lookups (used by the
+    // auto-link path below + the new /auth/email-providers endpoint) are
+    // case-insensitive. Most OAuth providers already return lowercase,
+    // but Apple's RFC-2822 relay addresses + the Identity-token path can
+    // surface mixed-case in rare cases.
+    const email = args.email.trim().toLowerCase();
+    const existing = await findUserForOAuth(ctx, args.provider, args.providerId, email);
     if (existing) {
       // Don't overwrite users.email on every sign-in. Each provider has
       // its own address (Apple relay vs Gmail vs work Microsoft), and
@@ -654,8 +660,8 @@ export const createOrUpdateUser = mutation({
       const patch: Record<string, string | undefined | boolean | number> = {
         avatarUrl: args.avatarUrl,
       };
-      if (!existing.email && args.email) {
-        patch.email = args.email;
+      if (!existing.email && email) {
+        patch.email = email;
       }
       if (args.fullName && (!existing.fullName || existing.fullName === existing.email)) {
         patch.fullName = args.fullName;
@@ -669,7 +675,7 @@ export const createOrUpdateUser = mutation({
       }
       await ctx.db.patch(existing._id, patch);
       await ensureUserSettings(ctx, existing._id);
-      await ensureAuthIdentity(ctx, existing._id, args.provider, args.providerId, args.email);
+      await ensureAuthIdentity(ctx, existing._id, args.provider, args.providerId, email);
       return existing._id;
     }
 
@@ -680,13 +686,13 @@ export const createOrUpdateUser = mutation({
     // a verified status — if so, link the new identity to it rather
     // than create a parallel account. See findExistingUserForAutoLink
     // for the safety gate.
-    const linkTarget = await findExistingUserForAutoLink(ctx, args.provider, args.email);
+    const linkTarget = await findExistingUserForAutoLink(ctx, args.provider, email);
     if (linkTarget) {
-      await ensureAuthIdentity(ctx, linkTarget._id, args.provider, args.providerId, args.email);
+      await ensureAuthIdentity(ctx, linkTarget._id, args.provider, args.providerId, email);
       await ensureUserSettings(ctx, linkTarget._id);
       await recordAuthSecurityEvent(ctx, linkTarget._id, "link_added", {
         provider: args.provider,
-        email: args.email,
+        email,
         via: "auto_link_by_verified_email",
       });
       if (linkTarget.email) {
@@ -703,7 +709,7 @@ export const createOrUpdateUser = mutation({
     const userId = randomHex(16);
     const userDocId = await ctx.db.insert("users", {
       userId,
-      email: args.email,
+      email,
       fullName: args.fullName,
       provider: args.provider,
       providerId: args.providerId,
@@ -714,13 +720,13 @@ export const createOrUpdateUser = mutation({
       createdAt: Date.now(),
     });
     await ensureUserSettings(ctx, userDocId);
-    await ensureAuthIdentity(ctx, userDocId, args.provider, args.providerId, args.email);
+    await ensureAuthIdentity(ctx, userDocId, args.provider, args.providerId, email);
 
     await ctx.scheduler.runAfter(0, internal.email.send, {
       from: "Kivanc from Yaver <kivanc@yaver.io>",
-      to: args.email,
+      to: email,
       subject: "Welcome to Yaver",
-      html: welcomeHtml(args.fullName || args.email),
+      html: welcomeHtml(args.fullName || email),
       replyTo: "kivanc@yaver.io",
     });
 
@@ -1405,7 +1411,10 @@ export const lookupExistingProvidersByEmail = query({
       exists: true,
       providers,
       hasPasskey: passkeys.length > 0,
-      emailVerified: user.emailVerified === true,
+      // Deliberately omitting emailVerified — that flag is internal
+      // account-state and an anonymous caller doesn't need it for the
+      // signup-collision UI. Leaking it would let an attacker probe
+      // which accounts have unlocked auto-linking.
     };
   },
 });

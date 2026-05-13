@@ -130,7 +130,12 @@ export async function passkeySignup(
   fullName: string,
 ): Promise<
   | { ok: true; result: PasskeyAuthResult }
-  | { ok: false; error: "EMAIL_EXISTS" | "INVALID_EMAIL"; hasPasskey?: boolean }
+  | {
+      ok: false;
+      error: "EMAIL_EXISTS" | "INVALID_EMAIL";
+      hasPasskey?: boolean;
+      providers?: string[];
+    }
 > {
   const startRes = await fetch(`${convexBaseUrl}/auth/passkey/signup/start`, {
     method: "POST",
@@ -140,7 +145,12 @@ export async function passkeySignup(
   if (!startRes.ok) throw new PasskeyError(await startRes.text());
   const startData = await startRes.json();
   if (startData?.ok === false) {
-    return { ok: false, error: startData.error, hasPasskey: startData.hasPasskey };
+    return {
+      ok: false,
+      error: startData.error,
+      hasPasskey: startData.hasPasskey,
+      providers: Array.isArray(startData.providers) ? startData.providers : undefined,
+    };
   }
 
   let attestation;

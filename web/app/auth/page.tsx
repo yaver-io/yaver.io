@@ -204,11 +204,31 @@ function AuthContent() {
       const startData = await startRes.json();
       if (startData?.ok === false) {
         if (startData.error === "EMAIL_EXISTS") {
-          setFormError(
-            startData.hasPasskey
-              ? "An account with that email already exists. Use 'Sign in with passkey' instead."
-              : "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
-          );
+          // Mirror mobile: route the user to their existing sign-in
+          // method when we have one. If the existing user has OAuth
+          // providers, naming them explicitly turns this from a
+          // dead-end into a one-tap link.
+          const oauthProviders = Array.isArray(startData.providers)
+            ? (startData.providers as string[]).filter((p) =>
+                ["google", "microsoft", "apple", "github", "gitlab"].includes(p),
+              )
+            : [];
+          if (startData.hasPasskey) {
+            setFormError(
+              "An account with that email already exists. Use 'Sign in with passkey' instead.",
+            );
+          } else if (oauthProviders.length > 0) {
+            const labels = oauthProviders
+              .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+              .join(" / ");
+            setFormError(
+              `An account with that email already exists. Sign in with ${labels} below — your passkey will be added to that account automatically.`,
+            );
+          } else {
+            setFormError(
+              "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
+            );
+          }
         } else if (startData.error === "INVALID_EMAIL") {
           setFormError("Email looks invalid.");
         } else {
@@ -301,6 +321,46 @@ function AuthContent() {
 
       if (!res.ok) {
         const text = await res.text();
+        // EMAIL_EXISTS on signup → fetch the provider list and route the
+        // user to "Continue with their existing OAuth" instead of dead-
+        // ending. The backend auto-links the new identity by verified
+        // email so they land on the same account.
+        if (mode === "signup" && text.includes("EMAIL_EXISTS") && email.trim()) {
+          try {
+            const probeRes = await fetch(
+              `${CONVEX_URL}/auth/email-providers?email=${encodeURIComponent(email.trim().toLowerCase())}`,
+            );
+            if (probeRes.ok) {
+              const probe = (await probeRes.json()) as {
+                exists: boolean;
+                providers: string[];
+                hasPasskey: boolean;
+              };
+              const oauthProviders = (probe.providers || []).filter((p) =>
+                ["google", "microsoft", "apple", "github", "gitlab"].includes(p),
+              );
+              if (oauthProviders.length > 0) {
+                const labels = oauthProviders
+                  .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+                  .join(" / ");
+                setFormError(
+                  `An account with that email already exists. Sign in with ${labels} above — it'll be linked automatically.`,
+                );
+                setLoading(false);
+                return;
+              }
+              if (probe.hasPasskey) {
+                setFormError(
+                  "An account with that email already exists. Use 'Sign in with passkey' above.",
+                );
+                setLoading(false);
+                return;
+              }
+            }
+          } catch {
+            // ignore; fall through to generic error.
+          }
+        }
         setFormError(text || "Something went wrong. Please try again.");
         setLoading(false);
         return;

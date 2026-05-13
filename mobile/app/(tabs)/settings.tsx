@@ -174,6 +174,8 @@ export default function SettingsScreen() {
   const [removingMachine, setRemovingMachine] = useState(false);
   const [enrollingPasskey, setEnrollingPasskey] = useState(false);
   const [passkeyEnrollMessage, setPasskeyEnrollMessage] = useState<string | null>(null);
+  const [verifyEmailBusy, setVerifyEmailBusy] = useState(false);
+  const [verifyEmailMessage, setVerifyEmailMessage] = useState<string | null>(null);
   // Streaming uninstall progress: mirrors the web AccountsView. Each
   // entry is one step the remote agent emits via /streams/<machine-remove:...>.
   // Cleared when the user starts a fresh removal.
@@ -1472,6 +1474,48 @@ export default function SettingsScreen() {
     }
   };
 
+  // Resend the verify-email link for the currently signed-in user.
+  // Surfaced as an inline banner when user.emailVerified is false —
+  // unlocks email-keyed OAuth auto-linking once the user clicks
+  // through the email. Idempotent on the backend (re-uses an existing
+  // unconsumed token rather than spamming the inbox).
+  const handleRequestVerifyEmail = async () => {
+    setVerifyEmailMessage(null);
+    setVerifyEmailBusy(true);
+    try {
+      const { getToken, getConvexSiteUrl } = await import("../../src/lib/auth");
+      const t = await getToken();
+      if (!t) {
+        setVerifyEmailMessage("Sign in first.");
+        return;
+      }
+      const res = await fetch(`${getConvexSiteUrl()}/auth/verify-email/request`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!res.ok) {
+        setVerifyEmailMessage((await res.text()) || "Could not send verification email.");
+        return;
+      }
+      const data = await res.json();
+      if (data.alreadyVerified) {
+        setVerifyEmailMessage("✓ This email is already verified.");
+        await refreshUser();
+      } else if (data.ok) {
+        setVerifyEmailMessage("✓ Check your inbox for the verification link.");
+      } else if (data.error === "NO_EMAIL_ON_ACCOUNT") {
+        setVerifyEmailMessage("This account has no email on file.");
+      } else {
+        setVerifyEmailMessage(data.error || "Could not send verification email.");
+      }
+    } catch (e: unknown) {
+      setVerifyEmailMessage(e instanceof Error ? e.message : "Network error.");
+    } finally {
+      setVerifyEmailBusy(false);
+    }
+  };
+
   const handleRemoveMachine = async () => {
     if (machineDeleteConfirm !== "delete my machine") return;
     if (connectionStatus !== "connected" || !activeDevice) {
@@ -2484,6 +2528,56 @@ export default function SettingsScreen() {
             )}
           </View>
         </View>
+
+        {/* Email verification — surfaced only when emailVerified is
+            false. Clicking the link in the verification email flips
+            users.emailVerified=true on the backend, which unlocks
+            email-keyed OAuth auto-linking: signing in with Apple /
+            Google / etc. that returns the same address links the new
+            identity to this account instead of creating a duplicate. */}
+        {user && user.emailVerified === false && user.email ? (
+          <View style={styles.section}>
+            <Text style={[styles.sectionLabel, { color: c.textMuted }]}>Email verification</Text>
+            <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, padding: 14 }]}>
+              <Text style={{ color: c.textMuted, fontSize: 12, lineHeight: 18 }}>
+                Verify {user.email} so signing in with Apple, Google, GitHub, GitLab, or Microsoft can attach to this account automatically (instead of creating a parallel one).
+              </Text>
+              {verifyEmailMessage ? (
+                <Text
+                  style={{
+                    color: verifyEmailMessage.startsWith("✓") ? "#10b981" : c.error,
+                    fontSize: 12,
+                    marginTop: 10,
+                  }}
+                >
+                  {verifyEmailMessage}
+                </Text>
+              ) : null}
+              <Pressable
+                style={({ pressed }) => [
+                  {
+                    marginTop: 12,
+                    paddingVertical: 10,
+                    paddingHorizontal: 14,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: c.accent + "60",
+                    backgroundColor: c.accent + "15",
+                    alignItems: "center",
+                  },
+                  pressed && { opacity: 0.8 },
+                  verifyEmailBusy && { opacity: 0.6 },
+                ]}
+                onPress={handleRequestVerifyEmail}
+                disabled={verifyEmailBusy}
+              >
+                <Text style={{ color: c.accent, fontWeight: "600", fontSize: 14 }}>
+                  {verifyEmailBusy ? "Sending…" : "Send verification email"}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
 
         {/* Passkeys — sign-in fast next time. Lets the currently
             signed-in user (regardless of how they got here — Apple,

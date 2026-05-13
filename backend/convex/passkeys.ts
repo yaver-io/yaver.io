@@ -359,7 +359,12 @@ export const signupStart = action({
     args,
   ): Promise<
     | { ok: true; options: any }
-    | { ok: false; error: "EMAIL_EXISTS" | "INVALID_EMAIL"; hasPasskey?: boolean }
+    | {
+        ok: false;
+        error: "EMAIL_EXISTS" | "INVALID_EMAIL";
+        hasPasskey?: boolean;
+        providers?: string[];
+      }
   > => {
     if (!allowedOrigins().includes(args.origin)) {
       throw new Error("origin not allowed");
@@ -369,12 +374,22 @@ export const signupStart = action({
       return { ok: false, error: "INVALID_EMAIL" };
     }
 
-    const availability: { available: boolean; hasPasskey: boolean } = await ctx.runQuery(
-      api.passkeysDb.emailAvailable,
-      { email },
-    );
+    const availability: {
+      available: boolean;
+      hasPasskey: boolean;
+      providers?: string[];
+      emailVerified?: boolean;
+    } = await ctx.runQuery(api.passkeysDb.emailAvailable, { email });
     if (!availability.available) {
-      return { ok: false, error: "EMAIL_EXISTS", hasPasskey: availability.hasPasskey };
+      // Don't leak emailVerified here — it's an internal account-state
+      // flag and anonymous callers don't need it for the UI routing.
+      // hasPasskey + providers is enough to render "Sign in with X" hints.
+      return {
+        ok: false,
+        error: "EMAIL_EXISTS",
+        hasPasskey: availability.hasPasskey,
+        providers: availability.providers ?? [],
+      };
     }
 
     const rpID = rpIdForOrigin(args.origin);

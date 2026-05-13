@@ -133,9 +133,22 @@ export function welcomeHtml(name: string): string {
  * auto-linking when they later sign in with an OAuth provider that
  * returns the same email.
  */
+// HTML-escape user-supplied text before interpolating into an email
+// template. Names with `<`, `>`, `&`, `"` would otherwise break the
+// template at best, or land a malicious payload in clients that don't
+// sanitize (rare in 2026, but cheap insurance).
+function htmlEscape(input: string): string {
+  return input
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function verifyEmailHtml(name: string, token: string): string {
   const url = `https://yaver.io/auth/verify-email?token=${encodeURIComponent(token)}`;
-  const firstName = (name || "").split(" ")[0] || name || "there";
+  const firstName = htmlEscape((name || "").split(" ")[0] || name || "there");
   return `
 <!DOCTYPE html>
 <html>

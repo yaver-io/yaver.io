@@ -203,11 +203,32 @@ export default function LoginScreen() {
       const outcome = await passkeySignup(getConvexSiteUrl(), email.trim(), fullName.trim());
       if (!outcome.ok) {
         if (outcome.error === "EMAIL_EXISTS") {
-          setEmailError(
-            outcome.hasPasskey
-              ? "An account with that email already exists. Use 'Sign in with passkey' instead."
-              : "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
-          );
+          // Route the user to the most useful next step:
+          //   • Already enrolled passkey → "Sign in with passkey".
+          //   • OAuth providers present → name them explicitly so the
+          //     user can tap "Continue with Apple" below and have the
+          //     backend auto-link their new identity (verified-by-IdP).
+          //   • Email-only → tell them to sign in then enroll passkey.
+          const oauthProviders =
+            outcome.providers?.filter((p) =>
+              ["google", "microsoft", "apple", "github", "gitlab"].includes(p),
+            ) ?? [];
+          if (outcome.hasPasskey) {
+            setEmailError(
+              "An account with that email already exists. Use 'Sign in with passkey' instead.",
+            );
+          } else if (oauthProviders.length > 0) {
+            const labels = oauthProviders
+              .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+              .join(" / ");
+            setEmailError(
+              `An account with that email already exists. Sign in with ${labels} below — your passkey will be added to that account automatically.`,
+            );
+          } else {
+            setEmailError(
+              "An account with that email already exists. Sign in with your existing method, then add a passkey from settings.",
+            );
+          }
         } else if (outcome.error === "INVALID_EMAIL") {
           setEmailError("Email looks invalid.");
         }

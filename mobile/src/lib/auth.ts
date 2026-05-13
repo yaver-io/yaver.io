@@ -34,6 +34,11 @@ export interface User {
   provider?: string;
   avatarUrl?: string;
   surveyCompleted?: boolean;
+  // emailVerified gates email-keyed OAuth auto-linking on the backend.
+  // Settings UI surfaces a "Verify your email to link other sign-in
+  // methods" banner when this is false. OAuth signup users are
+  // verified-by-construction; email + passkey signups start unverified.
+  emailVerified?: boolean;
 }
 
 export async function getToken(): Promise<string | null> {
@@ -143,6 +148,7 @@ export async function validateTokenDetailed(token: string): Promise<ValidationRe
         provider: u.provider,
         avatarUrl: u.avatarUrl,
         surveyCompleted: u.surveyCompleted ?? false,
+        emailVerified: u.emailVerified === true,
       };
       return { kind: "valid", user };
     } catch (e) {
