@@ -22,6 +22,19 @@ if command -v yaver >/dev/null 2>&1; then
   eval "$(yaver vault env --project mobile 2>/dev/null || true)"
 fi
 
+# Vault-locked fallback. After kivanc's auth token rotates, `yaver vault
+# env` returns "wrong passphrase" until YAVER_VAULT_PASSPHRASE is set
+# to the previous token. Without this fallback, deploy-web silently
+# ships assetlinks.json without ANDROID_RELEASE_SHA256, breaking
+# passkey on Play-distributed Android builds. Source a gitignored env
+# file if present — same pattern as ~/.appstoreconnect/yaver.env for
+# TestFlight (see CLAUDE.md "TestFlight env-file fallback"). Vault
+# values still win when readable; this only fills gaps.
+if [ -f "$HOME/.androidplay/yaver.env" ]; then
+  # shellcheck source=/dev/null
+  set -a; source "$HOME/.androidplay/yaver.env"; set +a
+fi
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/web"
 MAX_SIZE_MB=10

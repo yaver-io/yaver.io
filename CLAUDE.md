@@ -342,6 +342,22 @@ keyAlias=yaver-upload
 keyPassword=<password manager>
 ```
 
+**Play app-signing SHA-256 fallback (mirrors the TestFlight env file)**:
+the SHA lives in Play Console → Setup → App integrity. The canonical
+source is the vault (`yaver vault add ANDROID_RELEASE_SHA256 --project
+mobile --value <fingerprint>`), but after an auth-token rotation the
+vault locks. Pre-seed `~/.androidplay/yaver.env` once and
+`deploy-web.sh` will source it on every run:
+```bash
+mkdir -p ~/.androidplay && cat > ~/.androidplay/yaver.env <<'EOF'
+export ANDROID_RELEASE_SHA256="AA:BB:CC:..."
+EOF
+```
+Without this, `assetlinks.json` ships with only the upload-keystore
+SHA — passkey enrollment silently fails on Play-distributed builds
+because Credential Manager can't bind `yaver.io` to the Play-resigned
+APK.
+
 ### Force-tracked iOS overlay files
 
 `mobile/ios/` is gitignored, but a few overlays are force-added because
