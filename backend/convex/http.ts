@@ -342,7 +342,8 @@ for (const path of [
   "/auth/device-code/authorize",
   "/auth/passkey/register/start", "/auth/passkey/register/finish",
   "/auth/passkey/login/start", "/auth/passkey/login/finish",
-  "/auth/passkey/list", "/auth/passkey/remove",
+  "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
+  "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
@@ -580,6 +581,42 @@ http.route({
     } catch (e: any) {
       return errorResponse(e?.message || "loginFinish failed", 401);
     }
+  }),
+});
+
+/**
+ * GET /auth/passkey/check?email=X — anonymous preflight.
+ *
+ * iOS returns ASAuthorizationError.canceled (1001) for BOTH "user
+ * dismissed the sheet" and "no credentials found for this rpId" — the
+ * sheet never appears in the no-credentials case. Without a preflight
+ * the mobile UI looks dead: tap → spinner → silent revert.
+ *
+ * Mobile calls this with the email the user typed so it can decide
+ * whether to invoke the platform sheet at all. Returns:
+ *   { hasPasskey: true,  emailRegistered: true  }  — passkey available
+ *   { hasPasskey: false, emailRegistered: true  }  — OAuth/email user
+ *                                                    needs to enroll first
+ *   { hasPasskey: false, emailRegistered: false }  — brand-new email
+ *
+ * Reveals "this email is registered" to anonymous callers — but
+ * /auth/passkey/signup/start and /auth/login already leak the same
+ * signal (EMAIL_EXISTS / wrong-password), so net new surface is zero.
+ */
+http.route({
+  path: "/auth/passkey/check",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      return jsonResponse({ hasPasskey: false, emailRegistered: false });
+    }
+    const result = await ctx.runQuery(api.passkeysDb.emailAvailable, { email });
+    return jsonResponse({
+      hasPasskey: result.available === false && result.hasPasskey === true,
+      emailRegistered: result.available === false,
+    });
   }),
 });
 

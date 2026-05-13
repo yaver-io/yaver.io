@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { browserSupportsWebAuthn, startAuthentication } from "@simplewebauthn/browser";
 import { CONVEX_URL } from "@/lib/constants";
 
 export type DeviceCodeInfo = null | {
@@ -52,6 +53,77 @@ export default function DeviceCodeClient({
   const [token, setToken] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [preferredProvider, setPreferredProvider] = useState<"apple" | "github" | "google" | "microsoft" | "gitlab" | null>(null);
+  const [passkeySupported, setPasskeySupported] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPasskeySupported(browserSupportsWebAuthn());
+  }, []);
+
+  // Headless-machine authorization needs the user to be signed in on
+  // *this* browser. Passkey works the same as OAuth here: success →
+  // store the token → render the authorize-this-device card.
+  // Mirrors the elapsed-time heuristic from /auth so a missing
+  // credential doesn't appear as a silent revert.
+  const handlePasskeyLogin = async () => {
+    setPasskeyError(null);
+    setPasskeyLoading(true);
+    try {
+      const startRes = await fetch(`${convexUrl}/auth/passkey/login/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!startRes.ok) {
+        setPasskeyError((await startRes.text()) || "Could not start passkey sign-in.");
+        return;
+      }
+      const { options } = await startRes.json();
+
+      let asseResp;
+      const sheetStartedAt = Date.now();
+      try {
+        asseResp = await startAuthentication({ optionsJSON: options });
+      } catch (err: any) {
+        const looksLikeCancel = err?.name === "NotAllowedError" || err?.name === "AbortError";
+        const elapsed = Date.now() - sheetStartedAt;
+        if (looksLikeCancel) {
+          if (elapsed < 800) {
+            setPasskeyError(
+              "No passkey found on this browser. Use an OAuth provider below, or sign in with passkey on yaver.io first.",
+            );
+          }
+          return;
+        }
+        setPasskeyError(err?.message || "Passkey sign-in failed.");
+        return;
+      }
+
+      const finishRes = await fetch(`${convexUrl}/auth/passkey/login/finish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response: asseResp }),
+      });
+      if (!finishRes.ok) {
+        setPasskeyError((await finishRes.text()) || "Passkey verification failed.");
+        return;
+      }
+      const data = await finishRes.json();
+      const issuedToken = data?.token;
+      if (!issuedToken) {
+        setPasskeyError("No token received from server.");
+        return;
+      }
+      localStorage.setItem("yaver_auth_token", issuedToken);
+      document.cookie = `yaver_auth_token=${issuedToken}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
+      setToken(issuedToken);
+    } catch {
+      setPasskeyError("Network error. Please try again.");
+    } finally {
+      setPasskeyLoading(false);
+    }
+  };
 
   useEffect(() => {
     const stored = localStorage.getItem("yaver_auth_token");
@@ -434,6 +506,27 @@ export default function DeviceCodeClient({
               </div>
             </div>
           </div>
+
+          {passkeySupported && (
+            <div className="mb-3 space-y-2">
+              <button
+                type="button"
+                onClick={handlePasskeyLogin}
+                disabled={passkeyLoading}
+                className="flex w-full items-center justify-center gap-3 rounded-lg border border-indigo-400/40 bg-indigo-500/15 px-4 py-3 text-sm font-medium text-surface-50 transition-colors hover:border-indigo-300 hover:bg-indigo-500/20 disabled:cursor-wait disabled:opacity-60"
+              >
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="8" cy="11" r="4" />
+                  <path d="m11 13 7 7" />
+                  <path d="m15 16 2 2" />
+                </svg>
+                {passkeyLoading ? "Waiting for passkey…" : "Sign in with passkey"}
+              </button>
+              {passkeyError && (
+                <p className="text-xs text-rose-300" role="alert">{passkeyError}</p>
+              )}
+            </div>
+          )}
 
           <div className="space-y-3">
             {orderedProviders.map((provider) => (

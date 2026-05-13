@@ -40,6 +40,33 @@ export class PasskeyCancelled extends Error {
   }
 }
 
+/**
+ * Thrown when the platform dismissed the passkey sheet without showing
+ * it — usually because no matching credential exists for rpId="yaver.io"
+ * in the platform keychain. iOS folds this into the same error code as
+ * "user cancelled" (ASAuthorizationError.canceled = 1001); we distinguish
+ * by elapsed time inside `passkeySignin` (a fast dismiss with no UI is
+ * NoCredential; a slow one is genuine user cancel).
+ */
+export class PasskeyNoCredential extends Error {
+  constructor() {
+    super("No passkey registered for this account on this device.");
+    this.name = "PasskeyNoCredential";
+  }
+}
+
+/**
+ * Thrown when the platform reports a configuration error — entitlements
+ * mismatch, AASA file unreachable, or assetlinks.json missing. Surfaces
+ * to the UI as a developer-actionable error, NOT a silent revert.
+ */
+export class PasskeyMisconfigured extends Error {
+  constructor(message: string) {
+    super(message || "Passkey support is misconfigured on this device.");
+    this.name = "PasskeyMisconfigured";
+  }
+}
+
 export class PasskeyError extends Error {
   constructor(message: string) {
     super(message);
@@ -75,11 +102,11 @@ export async function passkeySignin(convexBaseUrl: string): Promise<PasskeyAuthR
   const { options } = await startRes.json();
 
   let assertion;
+  const sheetStartedAt = Date.now();
   try {
     assertion = await Passkey.get({ ...options, rpId: options.rpId || RP_ID });
   } catch (err: any) {
-    if (isCancellation(err)) throw new PasskeyCancelled();
-    throw new PasskeyError(err?.message || "Passkey sign-in failed.");
+    throw classifyPasskeyError(err, sheetStartedAt, "sign-in");
   }
 
   const finishRes = await fetch(`${convexBaseUrl}/auth/passkey/login/finish`, {
@@ -117,11 +144,11 @@ export async function passkeySignup(
   }
 
   let attestation;
+  const sheetStartedAt = Date.now();
   try {
     attestation = await Passkey.create({ ...startData.options, rp: { ...startData.options.rp, id: startData.options.rp?.id || RP_ID } });
   } catch (err: any) {
-    if (isCancellation(err)) throw new PasskeyCancelled();
-    throw new PasskeyError(err?.message || "Passkey sign-up failed.");
+    throw classifyPasskeyError(err, sheetStartedAt, "sign-up");
   }
 
   const finishRes = await fetch(`${convexBaseUrl}/auth/passkey/signup/finish`, {
@@ -157,11 +184,11 @@ export async function passkeyEnroll(
   const { options } = await startRes.json();
 
   let attestation;
+  const sheetStartedAt = Date.now();
   try {
     attestation = await Passkey.create({ ...options, rp: { ...options.rp, id: options.rp?.id || RP_ID } });
   } catch (err: any) {
-    if (isCancellation(err)) throw new PasskeyCancelled();
-    throw new PasskeyError(err?.message || "Passkey enrollment failed.");
+    throw classifyPasskeyError(err, sheetStartedAt, "enrollment");
   }
 
   const finishRes = await fetch(`${convexBaseUrl}/auth/passkey/register/finish`, {
@@ -177,16 +204,100 @@ export async function passkeyEnroll(
   return (await finishRes.json()) as { ok: true; credentialId: string };
 }
 
-function isCancellation(err: any): boolean {
-  if (!err) return false;
+// iOS folds "no credential found" and "user cancelled" into the same
+// error code (ASAuthorizationError.canceled = 1001 → react-native-passkey
+// "UserCancelled"). They are distinguishable in practice by elapsed time:
+//
+//   - No credentials: iOS dismisses immediately, no sheet renders.
+//     Elapsed time ≪ 500 ms.
+//   - User cancel:    sheet animates in, user reads + taps cancel.
+//     Elapsed time ≥ 1500 ms in any plausible scenario.
+//
+// 800 ms is comfortably between the two regimes. The exact threshold is
+// not load-bearing — any value in [500, 1200] would work.
+const NO_CREDENTIAL_CANCEL_THRESHOLD_MS = 800;
+
+function classifyPasskeyError(err: any, sheetStartedAt: number, op: string): Error {
+  if (!err) return new PasskeyError(`Passkey ${op} failed.`);
+
   const code = String(err?.code || "");
-  const msg = String(err?.message || "").toLowerCase();
-  return (
+  const msg = String(err?.message || "");
+  const lower = msg.toLowerCase();
+  const elapsed = Date.now() - sheetStartedAt;
+
+  // Explicit no-credential signals from Android / future iOS versions.
+  if (code === "NoCredentials" || lower.includes("no credential") || lower.includes("no passkeys")) {
+    return new PasskeyNoCredential();
+  }
+
+  // Configuration errors — AASA / assetlinks / entitlements mismatch.
+  if (code === "BadConfiguration" || code === "NotConfiguredError" || code === "NotSupported") {
+    return new PasskeyMisconfigured(msg);
+  }
+
+  const looksLikeCancel =
     code === "UserCancelled" ||
     code === "Cancelled" ||
-    msg.includes("cancel") ||
-    msg.includes("aborted") ||
+    lower.includes("cancel") ||
+    lower.includes("aborted") ||
     err?.name === "AbortError" ||
-    err?.name === "NotAllowedError"
-  );
+    err?.name === "NotAllowedError";
+
+  if (looksLikeCancel) {
+    // Fast dismiss with no user interaction → there were no credentials
+    // for rpId="yaver.io" to show. Slow dismiss → genuine cancel.
+    if (elapsed < NO_CREDENTIAL_CANCEL_THRESHOLD_MS) {
+      return new PasskeyNoCredential();
+    }
+    return new PasskeyCancelled();
+  }
+
+  return new PasskeyError(msg || `Passkey ${op} failed.`);
+}
+
+/**
+ * Anonymous preflight: does this email have a passkey registered? Used
+ * by the login screen so we can route the user to OAuth instead of
+ * firing an iOS sheet that will silently dismiss with no UI.
+ *
+ * Returns null when the network call fails — caller should fall back to
+ * trying the platform sheet anyway rather than block sign-in on a network
+ * blip.
+ */
+export async function passkeyHasCredential(
+  convexBaseUrl: string,
+  email: string,
+): Promise<{ hasPasskey: boolean; emailRegistered: boolean } | null> {
+  const trimmed = email.trim().toLowerCase();
+  if (!trimmed || !trimmed.includes("@")) return null;
+  try {
+    const res = await fetch(
+      `${convexBaseUrl}/auth/passkey/check?email=${encodeURIComponent(trimmed)}`,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { hasPasskey: boolean; emailRegistered: boolean };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Signed-in user's enrolled passkey count. Powers the post-OAuth
+ * "Enable passkey for next time?" prompt on the login screen and the
+ * passkey settings card.
+ */
+export async function passkeyListCount(
+  convexBaseUrl: string,
+  authToken: string,
+): Promise<number | null> {
+  try {
+    const res = await fetch(`${convexBaseUrl}/auth/passkey/list`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { passkeys?: unknown[] };
+    return Array.isArray(data?.passkeys) ? data.passkeys.length : 0;
+  } catch {
+    return null;
+  }
 }

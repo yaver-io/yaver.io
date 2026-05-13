@@ -34,7 +34,12 @@ import {
 import {
   PasskeyCancelled,
   PasskeyError,
+  PasskeyMisconfigured,
+  PasskeyNoCredential,
   isPasskeySupported,
+  passkeyEnroll,
+  passkeyHasCredential,
+  passkeyListCount,
   passkeySignin,
   passkeySignup,
 } from "../src/lib/passkey";
@@ -135,16 +140,43 @@ export default function LoginScreen() {
   // signed up (Apple OAuth, Google OAuth, email/password). Discoverable
   // credentials let the platform passkey picker show without needing
   // an email field first.
+  //
+  // No-credential pre-flight: when the email field is filled, ping the
+  // backend to ask whether that account has any passkey enrolled. iOS
+  // returns the same error code for "user cancelled" and "no credentials
+  // for this rpId" — without this preflight the iOS sheet auto-dismisses
+  // silently and the user sees the button revert with no feedback.
   const handlePasskeySignin = async () => {
     setEmailError("");
     setPasskeyLoading(true);
     try {
+      if (email.trim()) {
+        const probe = await passkeyHasCredential(getConvexSiteUrl(), email.trim());
+        if (probe && probe.emailRegistered && !probe.hasPasskey) {
+          setEmailError(
+            "No passkey on this account yet. Sign in with Apple / Google / Email below, then enable passkey from Settings.",
+          );
+          return;
+        }
+        if (probe && !probe.emailRegistered) {
+          setEmailError(
+            "No account for that email. Use 'Continue with Email' or another provider to sign up first.",
+          );
+          return;
+        }
+      }
       const result = await passkeySignin(getConvexSiteUrl());
       await login(result.token);
       router.replace("/");
     } catch (e: unknown) {
       if (e instanceof PasskeyCancelled) {
         // User dismissed the platform sheet — silent.
+      } else if (e instanceof PasskeyNoCredential) {
+        setEmailError(
+          "No passkey found on this device. Sign in with Apple / Google / Email below, then enable passkey from Settings.",
+        );
+      } else if (e instanceof PasskeyMisconfigured) {
+        Alert.alert("Passkey setup issue", e.message);
       } else if (e instanceof PasskeyError) {
         setEmailError(e.message || "Passkey sign-in failed.");
       } else {
@@ -186,6 +218,8 @@ export default function LoginScreen() {
     } catch (e: unknown) {
       if (e instanceof PasskeyCancelled) {
         // Silent
+      } else if (e instanceof PasskeyMisconfigured) {
+        Alert.alert("Passkey setup issue", e.message);
       } else if (e instanceof PasskeyError) {
         setEmailError(e.message || "Passkey sign-up failed.");
       } else {
@@ -193,6 +227,45 @@ export default function LoginScreen() {
       }
     } finally {
       setPasskeyLoading(false);
+    }
+  };
+
+  // Post-OAuth / post-email-login: if the device supports passkeys and
+  // the user has none enrolled, offer to add one inline before routing
+  // to "/". One Face ID tap and the user is set up for passkey-first
+  // sign-in everywhere — without needing to discover Settings → Passkeys.
+  //
+  // Bail-out paths: passkey unsupported (older OS), already has passkeys,
+  // network blip during list query (treated as "skip"), or user declines.
+  // Any failure here MUST NOT block the underlying OAuth/email login.
+  const offerPasskeyEnrollment = async (token: string): Promise<void> => {
+    if (!passkeySupported) return;
+    const count = await passkeyListCount(getConvexSiteUrl(), token);
+    if (count === null || count > 0) return;
+
+    const wantsToEnroll = await new Promise<boolean>((resolve) => {
+      Alert.alert(
+        "Enable passkey?",
+        "Sign in faster next time with Face ID or Touch ID — no password.",
+        [
+          { text: "Not now", style: "cancel", onPress: () => resolve(false) },
+          { text: "Enable", onPress: () => resolve(true) },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) },
+      );
+    });
+    if (!wantsToEnroll) return;
+
+    try {
+      await passkeyEnroll(getConvexSiteUrl(), token, Platform.OS === "ios" ? "iPhone" : "Android");
+    } catch (e: unknown) {
+      if (e instanceof PasskeyCancelled) return;
+      if (e instanceof PasskeyMisconfigured) {
+        Alert.alert("Passkey setup issue", e.message);
+        return;
+      }
+      const msg = e instanceof Error ? e.message : "Could not enable passkey.";
+      Alert.alert("Couldn't enable passkey", `${msg} You can try again from Settings.`);
     }
   };
 
@@ -211,6 +284,7 @@ export default function LoginScreen() {
       const token = parsed.queryParams?.token as string | undefined;
       if (!token) return;
       await login(token);
+      await offerPasskeyEnrollment(token);
       router.replace("/");
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Sign-in failed";
@@ -262,6 +336,7 @@ export default function LoginScreen() {
 
       const { token } = await res.json();
       await login(token);
+      await offerPasskeyEnrollment(token);
       router.replace("/");
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "ERR_REQUEST_CANCELED") {
@@ -301,6 +376,7 @@ export default function LoginScreen() {
       if (isSignUp) {
         const result = await signupWithEmail(fullName.trim(), email.trim(), password);
         await login(result.token);
+        await offerPasskeyEnrollment(result.token);
         router.replace("/");
         return;
       }
@@ -316,6 +392,7 @@ export default function LoginScreen() {
         return;
       }
       await login(result.token);
+      await offerPasskeyEnrollment(result.token);
       router.replace("/");
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : "Something went wrong";

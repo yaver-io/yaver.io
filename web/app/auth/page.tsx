@@ -72,6 +72,43 @@ function AuthContent() {
     setFormError(null);
     setPasskeyLoading(true);
     try {
+      // 0. Preflight when the email field is filled — browsers fold
+      //    "no credentials" into the same NotAllowedError as "user
+      //    cancelled", so without this check the user sees the sheet
+      //    auto-dismiss with no actionable feedback. Skip the preflight
+      //    when no email was typed (true discoverable-credentials flow,
+      //    user expects the picker to enumerate).
+      if (email.trim()) {
+        try {
+          const probeRes = await fetch(
+            `${CONVEX_URL}/auth/passkey/check?email=${encodeURIComponent(email.trim().toLowerCase())}`,
+          );
+          if (probeRes.ok) {
+            const probe = (await probeRes.json()) as {
+              hasPasskey: boolean;
+              emailRegistered: boolean;
+            };
+            if (probe.emailRegistered && !probe.hasPasskey) {
+              setFormError(
+                "No passkey on this account yet. Sign in with an OAuth provider or email below, then add a passkey from Settings.",
+              );
+              setPasskeyLoading(false);
+              return;
+            }
+            if (!probe.emailRegistered) {
+              setFormError(
+                "No account for that email. Sign up first with email/OAuth.",
+              );
+              setPasskeyLoading(false);
+              return;
+            }
+          }
+        } catch {
+          // Network blip on the preflight — fall through to the live
+          // sheet rather than block sign-in on a non-critical probe.
+        }
+      }
+
       // 1. Pull a fresh challenge from the backend.
       const startRes = await fetch(`${CONVEX_URL}/auth/passkey/login/start`, {
         method: "POST",
@@ -88,17 +125,27 @@ function AuthContent() {
 
       // 2. Have the browser sign the challenge with whichever passkey
       //    the user picks (or the auto-fill credential they already
-      //    chose). Cancellation is the most common "error" — treat it
-      //    silently rather than as a flow failure.
+      //    chose). Distinguish "user cancelled the sheet" (slow dismiss,
+      //    > 800 ms) from "no credentials found / browser auto-dismissed"
+      //    (fast dismiss, < 800 ms) — both surface as NotAllowedError.
       let asseResp;
+      const sheetStartedAt = Date.now();
       try {
         asseResp = await startAuthentication({ optionsJSON: options });
       } catch (err: any) {
-        if (err?.name === "NotAllowedError" || err?.name === "AbortError") {
+        const looksLikeCancel =
+          err?.name === "NotAllowedError" || err?.name === "AbortError";
+        const elapsed = Date.now() - sheetStartedAt;
+        if (looksLikeCancel) {
+          if (elapsed < 800) {
+            setFormError(
+              "No passkey found on this browser. Sign in with an OAuth provider or email below, then add a passkey from Settings.",
+            );
+          }
           setPasskeyLoading(false);
           return;
         }
-        setFormError(err?.message || "Passkey sign-in cancelled.");
+        setFormError(err?.message || "Passkey sign-in failed.");
         setPasskeyLoading(false);
         return;
       }
