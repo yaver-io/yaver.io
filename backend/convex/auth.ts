@@ -9,6 +9,7 @@ import {
   providerUnlinkedHtml,
   accountsMergedHtml,
   mergeStartedHtml,
+  verifyEmailHtml,
 } from "./email";
 import { base32Decode, verifyTOTP } from "./totp";
 
@@ -343,6 +344,7 @@ async function mergeUserInto(
     sourceValue: Id<"users"> | string;
     targetValue: Id<"users"> | string;
   }> = [
+    { table: "passkeys", index: "by_userId", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
     { table: "subscriptions", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
     { table: "managedRelays", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
     { table: "cloudMachines", index: "by_user", field: "userId", sourceValue: sourceUserId, targetValue: targetUserId },
@@ -456,6 +458,8 @@ async function mergeUserInto(
     { table: "passwordResets" },
     { table: "pendingAuth" },
     { table: "oauthLinkIntents", index: "by_userId" },
+    { table: "passkeyChallenges" },
+    { table: "emailVerifications", index: "by_userId" },
   ];
   for (const { table, index } of ephemeralTables) {
     const rows = index
@@ -534,6 +538,8 @@ export async function validateSessionInternal(
     totpSecret?: string;
     totpEnabled?: boolean;
     totpRecoveryCodes?: string;
+    emailVerified?: boolean;
+    emailVerifiedAt?: number;
     createdAt: number;
   };
   sessionId: Id<"sessions">;
@@ -553,6 +559,66 @@ export async function validateSessionInternal(
 }
 
 // ── Mutations ────────────────────────────────────────────────────────
+
+// Verified-email auto-link gate. The set of providers we trust to
+// have attested email ownership at sign-in. Email signup is
+// excluded — it currently has no proof step. Passkey signup is
+// excluded for the same reason (user types the email, no
+// challenge). Both graduate to verified once they click the
+// verify-email link, which flips users.emailVerified=true.
+const PROVIDER_VERIFIES_EMAIL: Record<OAuthProvider, boolean> = {
+  google: true,
+  microsoft: true,
+  apple: true,
+  github: true,
+  gitlab: true,
+  email: false,
+  passkey: false,
+};
+
+/**
+ * Look for an existing user we can safely link this new OAuth identity
+ * to, when the strict (provider, providerId) lookup misses. Returns the
+ * existing user only when:
+ *
+ *   1. Email match is exact (lowercased, trimmed, non-empty).
+ *   2. There is exactly ONE candidate row (no ambiguity).
+ *   3. The candidate's email is verified — either via OAuth-by-construction
+ *      (provider ∈ verified set) OR the user already clicked their
+ *      verify-email link (users.emailVerified=true).
+ *   4. The new incoming identity is itself an OAuth provider that
+ *      attests email (otherwise we'd be linking an unverified passkey
+ *      / email-signup to an existing OAuth account, the dangerous
+ *      direction — covered separately by the verify-email-then-link
+ *      flow).
+ *
+ * Returning a candidate here ≠ silent merge: the caller still records a
+ * `link_added` security event and sends a notification email so the user
+ * can see what happened.
+ */
+async function findExistingUserForAutoLink(
+  ctx: QueryCtx | MutationCtx,
+  newProvider: OAuthProvider,
+  email: string,
+): Promise<{ _id: Id<"users">; email: string } | null> {
+  if (!PROVIDER_VERIFIES_EMAIL[newProvider]) return null;
+  const normalized = email.trim().toLowerCase();
+  if (!normalized || !normalized.includes("@")) return null;
+
+  const candidates = await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", normalized))
+    .collect();
+  if (candidates.length !== 1) return null;
+
+  const candidate = candidates[0];
+  const candidateProviderVerifies = PROVIDER_VERIFIES_EMAIL[candidate.provider as OAuthProvider];
+  const candidateExplicitlyVerified = candidate.emailVerified === true;
+  if (!candidateProviderVerifies && !candidateExplicitlyVerified) {
+    return null;
+  }
+  return candidate;
+}
 
 /**
  * Upsert a user by provider + providerId.
@@ -585,7 +651,7 @@ export const createOrUpdateUser = mutation({
       // briefly mask the real Gmail. Only seed it the first time a
       // resolved user has no email yet, and let unlinkAuthIdentity
       // re-promote when the primary provider is removed.
-      const patch: Record<string, string | undefined | boolean> = {
+      const patch: Record<string, string | undefined | boolean | number> = {
         avatarUrl: args.avatarUrl,
       };
       if (!existing.email && args.email) {
@@ -594,10 +660,44 @@ export const createOrUpdateUser = mutation({
       if (args.fullName && (!existing.fullName || existing.fullName === existing.email)) {
         patch.fullName = args.fullName;
       }
+      // OAuth identities are verified-by-IdP. Promote the user's
+      // emailVerified to true the first time they sign in via OAuth
+      // even if they originally signed up via email/passkey.
+      if (existing.emailVerified !== true && PROVIDER_VERIFIES_EMAIL[args.provider]) {
+        patch.emailVerified = true;
+        patch.emailVerifiedAt = Date.now();
+      }
       await ctx.db.patch(existing._id, patch);
       await ensureUserSettings(ctx, existing._id);
       await ensureAuthIdentity(ctx, existing._id, args.provider, args.providerId, args.email);
       return existing._id;
+    }
+
+    // Auto-link fallback: the strict (provider, providerId) lookup
+    // missed, so this is the first time the IdP has seen this
+    // user-on-Yaver pair. Before creating a brand-new users row,
+    // check whether an existing account already owns this email with
+    // a verified status — if so, link the new identity to it rather
+    // than create a parallel account. See findExistingUserForAutoLink
+    // for the safety gate.
+    const linkTarget = await findExistingUserForAutoLink(ctx, args.provider, args.email);
+    if (linkTarget) {
+      await ensureAuthIdentity(ctx, linkTarget._id, args.provider, args.providerId, args.email);
+      await ensureUserSettings(ctx, linkTarget._id);
+      await recordAuthSecurityEvent(ctx, linkTarget._id, "link_added", {
+        provider: args.provider,
+        email: args.email,
+        via: "auto_link_by_verified_email",
+      });
+      if (linkTarget.email) {
+        scheduleSecurityEmail(
+          ctx,
+          linkTarget.email,
+          `Sign-in method added: ${args.provider}`,
+          providerLinkedHtml(args.fullName || linkTarget.email, args.provider),
+        );
+      }
+      return linkTarget._id;
     }
 
     const userId = randomHex(16);
@@ -608,6 +708,9 @@ export const createOrUpdateUser = mutation({
       provider: args.provider,
       providerId: args.providerId,
       avatarUrl: args.avatarUrl,
+      // OAuth signup → email is attested by the IdP.
+      emailVerified: PROVIDER_VERIFIES_EMAIL[args.provider],
+      emailVerifiedAt: PROVIDER_VERIFIES_EMAIL[args.provider] ? Date.now() : undefined,
       createdAt: Date.now(),
     });
     await ensureUserSettings(ctx, userDocId);
@@ -1079,6 +1182,8 @@ export const validateSession = query({
       provider: result.user.provider,
       avatarUrl: result.user.avatarUrl,
       surveyCompleted: result.user.surveyCompleted ?? false,
+      emailVerified: result.user.emailVerified === true,
+      emailVerifiedAt: result.user.emailVerifiedAt,
     };
   },
 });
@@ -1232,6 +1337,7 @@ export const createEmailUser = mutation({
       provider: "email",
       providerId: args.email,
       passwordHash: args.passwordHash,
+      emailVerified: false,
       createdAt: Date.now(),
     });
     // Create default settings for new user with platform relay as default
@@ -1252,7 +1358,162 @@ export const createEmailUser = mutation({
       replyTo: "kivanc@yaver.io",
     });
 
+    // Verification email: enqueue a fresh token so the user can
+    // later link OAuth providers to this account by proving they
+    // own the inbox.
+    await scheduleEmailVerification(ctx, userDocId, args.email, args.fullName);
+
     return userDocId;
+  },
+});
+
+/**
+ * Provider hints for an existing email — used when a fresh signup
+ * collides with an account that's already in the system. Returned
+ * inside EMAIL_EXISTS_USE_PROVIDER so the UI can route the user to
+ * "Continue with Apple to link" instead of dead-ending at the error.
+ *
+ * Anonymous and rate-limited to (email-shaped strings only); the same
+ * presence signal is already leakable via /auth/login wrong-password
+ * vs unknown-user responses, so this isn't strictly new surface.
+ */
+export const lookupExistingProvidersByEmail = query({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const normalized = args.email.trim().toLowerCase();
+    if (!normalized || !normalized.includes("@")) {
+      return { exists: false, providers: [] as string[], hasPasskey: false };
+    }
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q) => q.eq("email", normalized))
+      .unique();
+    if (!user) {
+      return { exists: false, providers: [] as string[], hasPasskey: false };
+    }
+    const identities = await ctx.db
+      .query("authIdentities")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .collect();
+    const providers = Array.from(new Set(identities.map((row) => row.provider))).sort();
+    if (providers.length === 0) providers.push(user.provider);
+    const passkeys = await ctx.db
+      .query("passkeys")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .take(1);
+    return {
+      exists: true,
+      providers,
+      hasPasskey: passkeys.length > 0,
+      emailVerified: user.emailVerified === true,
+    };
+  },
+});
+
+// ── Email verification ──────────────────────────────────────────────
+
+/**
+ * Schedule an email-verification email for an unverified user. Idempotent:
+ * if there's already an unconsumed, unexpired token for this user we
+ * re-use it rather than mint a new one (avoids flooding the inbox when
+ * settings UI auto-resends). Token is 32 bytes hex; URL is built off the
+ * canonical web origin so the link works regardless of where the email
+ * client renders it.
+ */
+async function scheduleEmailVerification(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  email: string,
+  fullName: string,
+) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return;
+
+  const existing = await ctx.db
+    .query("emailVerifications")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .collect();
+  const now = Date.now();
+  let token = "";
+  for (const row of existing) {
+    if (!row.consumedAt && row.expiresAt > now && row.email === normalized) {
+      token = row.token;
+      break;
+    }
+  }
+  if (!token) {
+    token = randomHex(32);
+    await ctx.db.insert("emailVerifications", {
+      token,
+      userId,
+      email: normalized,
+      expiresAt: now + 24 * 60 * 60 * 1000,
+      createdAt: now,
+    });
+  }
+
+  await ctx.scheduler.runAfter(0, internal.email.send, {
+    from: "Yaver <kivanc@yaver.io>",
+    to: normalized,
+    subject: "Verify your email for Yaver",
+    html: verifyEmailHtml(fullName || normalized, token),
+    replyTo: "kivanc@yaver.io",
+  });
+}
+
+/**
+ * Re-send a verification email for the currently signed-in user. Used
+ * by Settings "Verify email" button and by the post-signup banner.
+ */
+export const requestEmailVerification = mutation({
+  args: { tokenHash: v.string() },
+  handler: async (ctx, args) => {
+    const result = await validateSessionInternal(ctx, args.tokenHash);
+    if (!result) throw new Error("Unauthorized");
+    if (result.user.emailVerified === true) {
+      return { ok: true, alreadyVerified: true };
+    }
+    if (!result.user.email) {
+      return { ok: false, error: "NO_EMAIL_ON_ACCOUNT" };
+    }
+    await scheduleEmailVerification(ctx, result.user._id, result.user.email, result.user.fullName);
+    return { ok: true, alreadyVerified: false };
+  },
+});
+
+/**
+ * Consume a verification token. Flips users.emailVerified=true and
+ * unlocks email-keyed auto-linking for this account. Single-use:
+ * subsequent attempts with the same token return alreadyConsumed=true
+ * so the UI can render an idempotent success state.
+ */
+export const confirmEmailVerification = mutation({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("emailVerifications")
+      .withIndex("by_token", (q) => q.eq("token", args.token))
+      .unique();
+    if (!row) return { ok: false, error: "TOKEN_NOT_FOUND" };
+    if (row.expiresAt < Date.now()) {
+      return { ok: false, error: "TOKEN_EXPIRED" };
+    }
+    if (row.consumedAt) {
+      return { ok: true, alreadyConsumed: true };
+    }
+    const user = await ctx.db.get(row.userId);
+    if (!user) return { ok: false, error: "USER_NOT_FOUND" };
+    if (user.email !== row.email) {
+      // The user changed their email after the token was issued.
+      // Don't auto-flip emailVerified for a stale address.
+      return { ok: false, error: "EMAIL_CHANGED" };
+    }
+    await ctx.db.patch(row.userId, {
+      emailVerified: true,
+      emailVerifiedAt: Date.now(),
+    });
+    await ctx.db.patch(row._id, { consumedAt: Date.now() });
+    return { ok: true, alreadyConsumed: false };
   },
 });
 

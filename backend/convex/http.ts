@@ -235,6 +235,7 @@ async function authenticateRequest(
   provider: string;
   avatarUrl?: string;
   surveyCompleted: boolean;
+  emailVerified: boolean;
 } | null> {
   const authHeader = request.headers.get("Authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
@@ -257,6 +258,11 @@ async function authenticateRequest(
     // that fallback (5s timeout, transient 5xx) silently shows the
     // onboarding form to a returning user.
     surveyCompleted: !!result.surveyCompleted,
+    // emailVerified gates the "Add OAuth provider via email match" flow
+    // and powers Settings UI banners. OAuth-signup users are verified
+    // by construction; email + passkey signups start unverified and
+    // graduate via /auth/verify-email/confirm.
+    emailVerified: result.emailVerified === true,
   };
 }
 
@@ -344,6 +350,7 @@ for (const path of [
   "/auth/passkey/login/start", "/auth/passkey/login/finish",
   "/auth/passkey/signup/start", "/auth/passkey/signup/finish",
   "/auth/passkey/list", "/auth/passkey/remove", "/auth/passkey/check",
+  "/auth/email-providers", "/auth/verify-email/request", "/auth/verify-email/confirm",
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
@@ -581,6 +588,65 @@ http.route({
     } catch (e: any) {
       return errorResponse(e?.message || "loginFinish failed", 401);
     }
+  }),
+});
+
+/**
+ * GET /auth/email-providers?email=X — anonymous lookup of which sign-in
+ * methods are already attached to an email address. Used by mobile / web
+ * after a signup collision (EMAIL_EXISTS) so the UI can route the user
+ * to "Continue with Apple to link" instead of dead-ending at the error.
+ *
+ * Returns the same shape regardless of whether the email exists, so
+ * timing differences are minimal and an attacker can't enumerate by
+ * response shape. Existence + provider hints DO leak — same signal as
+ * /auth/login wrong-password vs unknown-user, which is unavoidable.
+ */
+http.route({
+  path: "/auth/email-providers",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const email = (url.searchParams.get("email") || "").trim().toLowerCase();
+    const data = await ctx.runQuery(api.auth.lookupExistingProvidersByEmail, { email });
+    return jsonResponse(data);
+  }),
+});
+
+/**
+ * POST /auth/verify-email/request — authenticated user asks for a
+ * fresh verification email (re-send path or post-signup banner).
+ */
+http.route({
+  path: "/auth/verify-email/request",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
+    const tokenHash = await sha256Hex(authHeader.slice(7));
+    try {
+      const result = await ctx.runMutation(api.auth.requestEmailVerification, { tokenHash });
+      return jsonResponse(result);
+    } catch (e: any) {
+      if (e?.message === "Unauthorized") return errorResponse("Unauthorized", 401);
+      return errorResponse(e?.message || "Could not request verification email", 400);
+    }
+  }),
+});
+
+/**
+ * POST /auth/verify-email/confirm — anonymous: consume the token from
+ * the email link, flip users.emailVerified=true. Body: { token }.
+ */
+http.route({
+  path: "/auth/verify-email/confirm",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({} as any));
+    const token = String(body?.token || "");
+    if (!token) return errorResponse("token required", 400);
+    const result = await ctx.runMutation(api.auth.confirmEmailVerification, { token });
+    return jsonResponse(result);
   }),
 });
 

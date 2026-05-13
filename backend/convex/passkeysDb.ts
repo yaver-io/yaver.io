@@ -4,7 +4,9 @@
 
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { randomHex } from "./auth";
+import { verifyEmailHtml } from "./email";
 
 const challengePurpose = v.union(
   v.literal("register"),
@@ -197,13 +199,24 @@ export const emailAvailable = query({
       .withIndex("by_email", (q) => q.eq("email", normalized))
       .unique();
     if (!existing) {
-      return { available: true, hasPasskey: false };
+      return { available: true, hasPasskey: false, providers: [] as string[] };
     }
     const passkeys = await ctx.db
       .query("passkeys")
       .withIndex("by_userId", (q) => q.eq("userId", existing._id))
       .take(1);
-    return { available: false, hasPasskey: passkeys.length > 0 };
+    const identities = await ctx.db
+      .query("authIdentities")
+      .withIndex("by_userId", (q) => q.eq("userId", existing._id))
+      .collect();
+    const providers = Array.from(new Set(identities.map((row) => row.provider))).sort();
+    if (providers.length === 0) providers.push(existing.provider);
+    return {
+      available: false,
+      hasPasskey: passkeys.length > 0,
+      providers,
+      emailVerified: existing.emailVerified === true,
+    };
   },
 });
 
@@ -254,6 +267,11 @@ export const createPasskeyUser = mutation({
       fullName: args.fullName.trim() || email,
       provider: "passkey",
       providerId: args.credentialId,
+      // Passkey signup has no email-ownership proof (the user just
+      // typed it). Stay unverified until they click the verify-email
+      // link, which then unlocks auto-link with OAuth providers
+      // returning the same address.
+      emailVerified: false,
       createdAt: Date.now(),
     });
 
@@ -278,12 +296,30 @@ export const createPasskeyUser = mutation({
     });
 
     // Default settings — copied from auth.ts createEmailUser path.
-    // Skips the welcome email (we don't have a passkey-specific
-    // template yet, and adding email could surprise users who picked
-    // passkey for privacy). TODO: send welcome email asynchronously.
     await ctx.db.insert("userSettings", {
       userId: userDocId,
       forceRelay: false,
+    });
+
+    // Email-verification token: passkey signup gives no proof of
+    // email ownership, so we mint a verification link and let the
+    // user click through at their leisure. Until they do,
+    // users.emailVerified stays false and email-keyed OAuth
+    // auto-linking refuses to link this account.
+    const verificationToken = randomHex(32);
+    await ctx.db.insert("emailVerifications", {
+      token: verificationToken,
+      userId: userDocId,
+      email,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+      createdAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.email.send, {
+      from: "Yaver <kivanc@yaver.io>",
+      to: email,
+      subject: "Verify your email for Yaver",
+      html: verifyEmailHtml(args.fullName || email, verificationToken),
+      replyTo: "kivanc@yaver.io",
     });
 
     return userDocId;

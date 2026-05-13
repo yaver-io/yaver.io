@@ -126,6 +126,38 @@ export function welcomeHtml(name: string): string {
 </html>`.trim();
 }
 
+/**
+ * Email-ownership verification link. Sent at signup for email + passkey
+ * users (OAuth signups are verified-by-IdP and skip this). The link
+ * confirms the user controls the inbox, which unlocks email-keyed
+ * auto-linking when they later sign in with an OAuth provider that
+ * returns the same email.
+ */
+export function verifyEmailHtml(name: string, token: string): string {
+  const url = `https://yaver.io/auth/verify-email?token=${encodeURIComponent(token)}`;
+  const firstName = (name || "").split(" ")[0] || name || "there";
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:480px;margin:0 auto;padding:32px 16px;color:#1a1a1a;">
+  <h2 style="margin:0 0 8px;">Verify your email</h2>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 16px;color:#444;">Hi ${firstName},</p>
+  <p style="font-size:15px;line-height:1.6;margin:0 0 16px;color:#444;">
+    Confirm this email address so you can link other sign-in methods (Apple, Google, etc.) to your Yaver account later.
+  </p>
+  <p style="margin:24px 0;">
+    <a href="${url}" style="display:inline-block;background:#1a1a1a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:600;">Verify email</a>
+  </p>
+  <p style="font-size:13px;line-height:1.6;color:#666;margin:0 0 4px;">Or copy &amp; paste this URL into your browser:</p>
+  <p style="font-size:12px;color:#666;margin:0 0 16px;word-break:break-all;"><a href="${url}" style="color:#666;">${url}</a></p>
+  <p style="font-size:12px;color:#999;margin:24px 0 0;">
+    This link expires in 24 hours. If you didn't sign up for Yaver, you can safely ignore this email.
+  </p>
+</body>
+</html>`.trim();
+}
+
 // ── Security-event templates ────────────────────────────────────────
 // Every destructive auth operation (link a provider, unlink one, merge
 // another account) triggers a heads-up email. Keeps users in the loop

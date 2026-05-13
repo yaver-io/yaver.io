@@ -45,6 +45,13 @@ export default defineSchema({
     totpSecret: v.optional(v.string()),
     totpEnabled: v.optional(v.boolean()),
     totpRecoveryCodes: v.optional(v.string()),
+    // emailVerified gates email-keyed auto-linking. OAuth-signup users
+    // are verified-by-construction (the IdP attested the address).
+    // Email + passkey signups start unverified and graduate to true
+    // once the user clicks the verify-email link. Backfill is a
+    // best-effort scan based on provider; see migrations.
+    emailVerified: v.optional(v.boolean()),
+    emailVerifiedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_email", ["email"])
@@ -161,6 +168,23 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_challenge", ["challenge"])
+    .index("by_expiresAt", ["expiresAt"]),
+
+  // Email verification tokens — issued at email/passkey signup and on
+  // explicit re-send from settings. Click the link → users.emailVerified
+  // flips true → email-keyed auto-link unlocks. Tokens are single-use,
+  // 24-hour TTL, scoped to a specific email + userId so a token leaked
+  // from one inbox can't be redeemed against a different account.
+  emailVerifications: defineTable({
+    token: v.string(),
+    userId: v.id("users"),
+    email: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    consumedAt: v.optional(v.number()),
+  })
+    .index("by_token", ["token"])
+    .index("by_userId", ["userId"])
     .index("by_expiresAt", ["expiresAt"]),
 
   sessions: defineTable({
