@@ -527,24 +527,33 @@ export function DevPreview() {
                 <Text style={[styles.openBtnText, { marginLeft: 6 }]}>{openLabel}</Text>
               </>
             ) : (
-              <Text style={styles.openBtnText}>{openLabel}</Text>
+              <Text style={styles.openBtnText}>{bundleMounted ? "Reopen in Yaver" : openLabel}</Text>
             )}
           </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionBtn,
-              styles.reloadBtn,
-              (isBusy || reloadLoading || pressed) && { opacity: pressed ? 0.85 : 0.55 },
-            ]}
-            onPress={handleReload}
-            disabled={isBusy || reloadLoading}
-          >
-            {reloadLoading ? (
-              <ActivityIndicator size="small" color="#22c55e" />
-            ) : (
-              <Text style={styles.reloadBtnText}>{"↻"} Reload</Text>
-            )}
-          </Pressable>
+          {/* Reload only makes sense after the bundle is actually
+              mounted on this device — before the first Open in Yaver
+              tap there's nothing loaded to reload. Hiding it in that
+              state stops the "tapped Reload, nothing happened" trap
+              the user was hitting. For the web WebView path, the
+              modal has its own Reload button in the header, so we
+              don't need a third copy on the card. */}
+          {bundleMounted ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.actionBtn,
+                styles.reloadBtn,
+                (isBusy || reloadLoading || pressed) && { opacity: pressed ? 0.85 : 0.55 },
+              ]}
+              onPress={handleReload}
+              disabled={isBusy || reloadLoading}
+            >
+              {reloadLoading ? (
+                <ActivityIndicator size="small" color="#22c55e" />
+              ) : (
+                <Text style={styles.reloadBtnText}>{"↻"} Reload</Text>
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
             style={({ pressed }) => [
               styles.actionBtn,
