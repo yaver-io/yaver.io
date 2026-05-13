@@ -6,6 +6,7 @@ dist/
 build/
 out/
 .next/
+.yaver-build/
 
 # Throwaway demo scaffolds (e.g. `npx create-expo-app` output kept around
 # for local smoke tests) — these carry their own node_modules + native
