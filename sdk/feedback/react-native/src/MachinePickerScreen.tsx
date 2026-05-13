@@ -102,7 +102,14 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
       return;
     }
     const direct = await probeDeviceReachability(device);
-    if (!direct.reachable && !device.needsAuth) {
+    // Do not hard-block selection just because the LAN /health probe
+    // failed. The standalone SDK can still reach a healthy machine via
+    // the normal selected-device discovery path (including relay), and
+    // the Yaver host path may already be proving the machine works.
+    // Only treat the machine as unpickable when BOTH:
+    //   1. Convex says it is offline, and
+    //   2. the direct probe also failed.
+    if (!device.isOnline && !direct.reachable && !device.needsAuth) {
       setError('Selected machine is not responding. Start `yaver serve` on it and try again.');
       setReachability((prev) => ({ ...prev, [device.deviceId]: direct }));
       return;
@@ -130,7 +137,9 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
       ? '#f59e0b'
       : effectivelyReachable
         ? '#22c55e'
-        : explicitlyOffline || !device.isOnline
+        : device.isOnline
+          ? '#f59e0b'
+          : explicitlyOffline || !device.isOnline
           ? '#ef4444'
           : '#22c55e';
     // Derive a single short status phrase the user can act on.
@@ -145,7 +154,7 @@ export const YaverMachinePickerScreen: React.FC<YaverMachinePickerProps> = ({
       statusLine =
         'Needs pairing — open the Yaver app to adopt this machine';
     } else if (explicitlyOffline) {
-      statusLine = 'Agent not responding on this machine';
+      statusLine = 'Online, but direct probe failed — relay / selected-machine path may still work';
     } else if (device.runnerDown) {
       statusLine = 'Runner down — restart the coding agent on the Mac';
     } else {
