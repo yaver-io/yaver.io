@@ -34,6 +34,35 @@ export interface RunnerAuthStatusRow {
   version?: string;
 }
 
+export interface OpenCodeProviderSummary {
+  id: string;
+  name?: string;
+  hasApiKey?: boolean;
+  baseUrl?: string;
+  models?: Array<{ id: string; name?: string; provider?: string }>;
+}
+
+export interface OpenCodeAgentSummary {
+  name: string;
+  model?: string;
+  description?: string;
+  isBuiltin?: boolean;
+}
+
+export interface OpenCodeConfigSummary {
+  path: string;
+  exists: boolean;
+  defaultAgent?: string;
+  model?: string;
+  smallModel?: string;
+  buildModel?: string;
+  planModel?: string;
+  providers?: OpenCodeProviderSummary[];
+  models?: Array<{ id: string; name?: string; provider?: string }>;
+  agents?: OpenCodeAgentSummary[];
+  diagnostics?: string[];
+}
+
 export interface IncidentEvent {
   id: string;
   timestamp: number;

@@ -25,7 +25,13 @@ import {
   // stopVideoRecording,
 } from './capture';
 import { uploadFeedback } from './upload';
-import { DeviceInfo, FeedbackBundle, RunnerAuthStatusRow } from './types';
+import {
+  DeviceInfo,
+  FeedbackBundle,
+  OpenCodeConfigSummary,
+  OpenCodeProviderSummary,
+  RunnerAuthStatusRow,
+} from './types';
 import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
 import { VibeChatScreen } from './VibeChatScreen';
@@ -34,6 +40,10 @@ import { listReachableDevices, RemoteDevice } from './auth';
 import {
   QUICK_ICON_COLOR_PRESETS,
   QuickIconColorPreset,
+  getPreferredModel,
+  getPreferredRunner,
+  setPreferredModel,
+  setPreferredRunner,
 } from './preferences';
 
 /**
@@ -78,6 +88,14 @@ type RunnerCardState = {
   detail?: string;
   actionLabel?: string;
   actionRunner?: string;
+};
+
+type ProviderEditorState = {
+  mode: 'add' | 'edit';
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKey: string;
 };
 
 const PRIMARY_RUNNER_IDS = ['claude', 'codex', 'opencode'] as const;
@@ -203,6 +221,9 @@ export const FeedbackModal: React.FC = () => {
   );
   const [runnerStatusLoading, setRunnerStatusLoading] = useState(false);
   const [runnerStatusError, setRunnerStatusError] = useState<string | null>(null);
+  const [preferredRunner, setPreferredRunnerState] = useState<string | null>(null);
+  const [preferredModel, setPreferredModelState] = useState('');
+  const [showOpenCodeConfig, setShowOpenCodeConfig] = useState(false);
   const mountedRef = useRef(true);
 
   const loadSelectedMachine = useCallback(async () => {
@@ -350,6 +371,22 @@ export const FeedbackModal: React.FC = () => {
       }
     } finally {
       if (mountedRef.current) setRunnerStatusLoading(false);
+    }
+  }, []);
+
+  const loadRoutingPrefs = useCallback(async () => {
+    try {
+      const [runner, model] = await Promise.all([
+        getPreferredRunner(),
+        getPreferredModel(),
+      ]);
+      if (!mountedRef.current) return;
+      setPreferredRunnerState(runner);
+      setPreferredModelState(model ?? '');
+    } catch {
+      if (!mountedRef.current) return;
+      setPreferredRunnerState(null);
+      setPreferredModelState('');
     }
   }, []);
 

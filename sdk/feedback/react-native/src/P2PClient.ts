@@ -3,6 +3,7 @@ import {
   CapabilitySnapshot,
   FeedbackBundle,
   IncidentEvent,
+  OpenCodeConfigSummary,
   OperationState,
   RunnerBrowserAuthSession,
   RunnerAuthStatusRow,
@@ -233,6 +234,48 @@ export class P2PClient {
     }
     const data = await resp.json().catch(() => ({} as Record<string, unknown>));
     return Array.isArray(data.runners) ? (data.runners as RunnerAuthStatusRow[]) : [];
+  }
+
+  async getOpenCodeConfig(): Promise<OpenCodeConfigSummary | null> {
+    const resp = await fetch(`${this.baseUrl}/runner/opencode/config`, {
+      headers: this.authHeaders(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`getOpenCodeConfig HTTP ${resp.status}: ${text}`);
+    }
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    return (data.config ?? null) as OpenCodeConfigSummary | null;
+  }
+
+  async saveOpenCodeConfig(patch: {
+    defaultAgent?: string;
+    model?: string;
+    smallModel?: string;
+    buildModel?: string;
+    planModel?: string;
+    providers?: Array<{
+      id: string;
+      name?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      delete?: boolean;
+    }>;
+  }): Promise<{ ok: boolean; config?: OpenCodeConfigSummary; error?: string }> {
+    try {
+      const resp = await fetch(`${this.baseUrl}/runner/opencode/config`, {
+        method: 'POST',
+        headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+      if (!resp.ok) {
+        return { ok: false, error: (data.error as string | undefined) || `HTTP ${resp.status}` };
+      }
+      return { ok: true, config: data.config as OpenCodeConfigSummary | undefined };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {
