@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Yaver</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 14px;
+        width: 320px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 13px;
+        color: #1a1a1a;
+        background: #fafafa;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #999;
+      }
+      .dot.ok { background: #2ea043; }
+      .dot.bad { background: #d04030; }
+      label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.6;
+        margin: 12px 0 4px;
+      }
+      input[type="text"], input[type="url"] {
+        width: 100%;
+        padding: 6px 8px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+      }
+      button {
+        display: block;
+        width: 100%;
+        padding: 8px 10px;
+        margin-top: 6px;
+        border: 1px solid #1a1a1a;
+        background: #1a1a1a;
+        color: #fff;
+        border-radius: 4px;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #fff;
+        color: #1a1a1a;
+      }
+      button:hover { opacity: 0.9; }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      .row input[type="checkbox"] { margin: 0; }
+      .row label { margin: 0; text-transform: none; letter-spacing: 0; opacity: 1; font-size: 12px; }
+      .hint {
+        font-size: 11px;
+        opacity: 0.55;
+        margin-top: 8px;
+        line-height: 1.45;
+      }
+      .footer {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid #eee;
+        font-size: 11px;
+        opacity: 0.55;
+      }
+      .footer a { color: inherit; }
+      kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+        background: #eee;
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+      .recent {
+        margin-top: 4px;
+        max-height: 120px;
+        overflow-y: auto;
+        border: 1px solid #eee;
+        border-radius: 4px;
+        background: #fff;
+      }
+      .recent-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 6px 8px;
+        border-bottom: 1px solid #f3f3f3;
+        font-size: 12px;
+        line-height: 1.3;
+      }
+      .recent-item:last-child { border-bottom: none; }
+      .recent-item .url {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        opacity: 0.8;
+      }
+      .recent-item .mode {
+        font-size: 10px;
+        opacity: 0.5;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .recent-empty {
+        padding: 8px;
+        font-size: 11px;
+        opacity: 0.5;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>
+      <span class="dot" id="status-dot"></span>
+      Yaver · Capture
+    </h1>
+
+    <button id="capture-element">Pick an element <kbd id="kbd-elem">⌘⇧Y</kbd></button>
+    <button id="capture-page" class="secondary">Capture viewport <kbd id="kbd-page">⌘⇧P</kbd></button>
+    <button id="capture-fullpage" class="secondary">Capture full page (slow)</button>
+
+    <label for="agent-url">Local agent URL</label>
+    <input id="agent-url" type="url" placeholder="http://localhost:18080" />
+
+    <label for="auth-token">Auth token (optional)</label>
+    <input id="auth-token" type="text" placeholder="bearer token if your agent requires one" />
+
+    <div class="row">
+      <input id="auto-send" type="checkbox" />
+      <label for="auto-send">Auto-send to local agent</label>
+    </div>
+
+    <button id="save" class="secondary">Save settings</button>
+
+    <label>Recent captures</label>
+    <div id="recent" class="recent">
+      <div class="recent-empty">No captures yet.</div>
+    </div>
+
+    <div class="hint">
+      Captures go to <code>POST /design-references</code> on your local Yaver
+      agent. Older agents fall back to <code>/feedback</code> with
+      <code>kind: design-reference</code>. Disable auto-send to keep bundles
+      local.
+    </div>
+
+    <div class="footer">
+      Automation: <code>window.__yaver.capturePage()</code> · see
+      <a href="https://github.com/kivanccakmak/yaver.io/tree/main/sdk/feedback/browser-extension" target="_blank">examples</a>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

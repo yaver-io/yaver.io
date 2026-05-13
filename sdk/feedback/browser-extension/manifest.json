@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "Yaver — AI Design Reference",
+  "short_name": "Yaver",
+  "version": "0.1.0",
+  "description": "Capture any web UI as an AI-readable reference (DOM + computed styles + screenshot) and feed it to your local Yaver agent for vibe coding.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://localhost/*",
+    "https://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["overlay.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "commands": {
+    "capture-element": {
+      "suggested_key": { "default": "Ctrl+Shift+Y", "mac": "Command+Shift+Y" },
+      "description": "Pick an element to capture"
+    },
+    "capture-page": {
+      "suggested_key": { "default": "Ctrl+Shift+P", "mac": "Command+Shift+P" },
+      "description": "Capture the whole viewport"
+    }
+  }
+}

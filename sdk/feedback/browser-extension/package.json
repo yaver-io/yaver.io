@@ -1,0 +1,24 @@
+{
+  "name": "yaver-browser-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yaver browser extension — capture any web UI as an AI-readable reference (DOM + computed styles + screenshot) and feed it to your local Yaver agent for vibe coding. Manifest V3, no build step, Selenium/Playwright/Puppeteer compatible.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kivanccakmak/yaver.io",
+    "directory": "sdk/feedback/browser-extension"
+  },
+  "scripts": {
+    "pack": "zip -r yaver-extension.zip manifest.json background.js content.js overlay.css popup.html popup.js icons/"
+  },
+  "keywords": [
+    "yaver",
+    "browser-extension",
+    "chrome-extension",
+    "design-reference",
+    "ai-coding",
+    "selenium",
+    "playwright"
+  ]
+}
