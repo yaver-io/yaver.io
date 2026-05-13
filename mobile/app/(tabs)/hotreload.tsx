@@ -24,7 +24,7 @@ import {
   type OperationState,
 } from "../../src/lib/quic";
 import { connectionManager } from "../../src/lib/connectionManager";
-import { loadAppIfChanged, setPhoneFrame, getPhoneFrame } from "../../src/lib/bundleLoader";
+import { isBundleLoaded, loadAppIfChanged, onBundleEvent, setPhoneFrame } from "../../src/lib/bundleLoader";
 import { FrameworkIcon } from "../../src/components/FrameworkIcon";
 import RemoteBoxPickerModal from "../../src/components/RemoteBoxPickerModal";
 import RemoteBoxBanner from "../../src/components/RemoteBoxBanner";
@@ -467,7 +467,27 @@ export default function HotReloadScreen() {
 
 
   const [nativeLoading, setNativeLoading] = useState(false);
+  const [reloadLoading, setReloadLoading] = useState(false);
+  const [bundleMounted, setBundleMounted] = useState(false);
   const runningGuidance = agentFlowGuidance(devStatus?.framework);
+
+  useEffect(() => {
+    let mounted = true;
+    void isBundleLoaded()
+      .then((loaded) => {
+        if (mounted) setBundleMounted(loaded);
+      })
+      .catch(() => {
+        if (mounted) setBundleMounted(false);
+      });
+    const loadSub = onBundleEvent("onBundleLoaded", () => setBundleMounted(true));
+    const unloadSub = onBundleEvent("onBundleUnloaded", () => setBundleMounted(false));
+    return () => {
+      mounted = false;
+      loadSub.remove();
+      unloadSub.remove();
+    };
+  }, []);
 
   const handleOpen = useCallback(async () => {
     const baseUrl = (quicClient as any).baseUrl as string;
@@ -618,6 +638,7 @@ export default function HotReloadScreen() {
           ? `Already up to date${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""} · MD5: ${md5Short}...`
           : `Loaded${loadedFamilyLabel ? ` · ${loadedFamilyLabel}` : ""}! MD5: ${md5Short}...`,
       );
+      setBundleMounted(true);
     } catch (err: any) {
       clearTimeout(buildAbortTimer);
       setLoadingStatus("");
@@ -635,8 +656,29 @@ export default function HotReloadScreen() {
   }, [devStatus]);
 
   const handleReload = useCallback(async () => {
-    await quicClient.reloadDevServer();
-  }, []);
+    if (reloadLoading || nativeLoading) return;
+    const framework = String(devStatus?.framework || "").trim().toLowerCase();
+    const isHermesFramework = framework === "expo" || framework === "react-native";
+    if (isHermesFramework && !bundleMounted) {
+      await handleOpen();
+      return;
+    }
+    setReloadLoading(true);
+    setLoadingStatus(isHermesFramework ? "Preparing fresh bundle..." : "Sending reload command...");
+    try {
+      const ok = await quicClient.reloadDevServer({ mode: isHermesFramework ? "bundle" : "dev" });
+      if (!ok) {
+        setLoadingStatus("");
+        Alert.alert("Reload failed", "Could not send reload to the running app.");
+        return;
+      }
+      if (!isHermesFramework) {
+        setLoadingStatus("Reload sent.");
+      }
+    } finally {
+      setReloadLoading(false);
+    }
+  }, [bundleMounted, devStatus?.framework, handleOpen, nativeLoading, reloadLoading]);
 
   const handleStop = useCallback(() => {
     Alert.alert("Stop Dev Server", "Stop the running dev server?", [
@@ -1085,19 +1127,49 @@ export default function HotReloadScreen() {
                     disabled={nativeLoading}
                   >
                     {nativeLoading ? (
-                      <View style={s.actionBtnRow}>
+                      <View style={s.primaryActionContent}>
                         <ActivityIndicator size="small" color="#fff" />
-                        <Text style={s.openBtnText}>Opening…</Text>
+                        <View style={s.primaryActionTextWrap}>
+                          <Text style={s.openBtnText}>Opening…</Text>
+                          <Text style={s.openBtnSubtext}>Building and loading on this device</Text>
+                        </View>
                       </View>
                     ) : (
-                      <Text style={s.openBtnText}>Open in Yaver</Text>
+                      <View style={s.primaryActionContent}>
+                        <View style={s.primaryActionIcon}>
+                          <Ionicons name="phone-portrait-outline" size={16} color="#fff" />
+                        </View>
+                        <View style={s.primaryActionTextWrap}>
+                          <Text style={s.openBtnText}>Open in Yaver</Text>
+                          <Text style={s.openBtnSubtext}>
+                            {bundleMounted ? "Tap to bring it back on this device" : "Tap to load it on this device"}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={18} color="#fff" />
+                      </View>
                     )}
                   </Pressable>
                   <Pressable
-                    style={[s.actionBtn, s.reloadBtn, layout.isTablet ? s.secondaryBtnTablet : null, { backgroundColor: c.accentSoft, borderColor: c.accent + "55" }]}
+                    style={[
+                      s.actionBtn,
+                      s.reloadBtn,
+                      layout.isTablet ? s.secondaryBtnTablet : null,
+                      { backgroundColor: c.accentSoft, borderColor: c.accent + "55" },
+                      (reloadLoading || nativeLoading) && { opacity: 0.7 },
+                    ]}
                     onPress={handleReload}
+                    disabled={reloadLoading || nativeLoading}
                   >
-                    <Text style={[s.reloadBtnText, { color: c.accent }]}>{"\u21BB"} Reload</Text>
+                    {reloadLoading ? (
+                      <View style={s.actionBtnRow}>
+                        <ActivityIndicator size="small" color={c.accent} />
+                        <Text style={[s.reloadBtnText, { color: c.accent }]}>Reloading…</Text>
+                      </View>
+                    ) : (
+                      <Text style={[s.reloadBtnText, { color: c.accent }]}>
+                        {bundleMounted ? "\u21BB Reload" : "Open first"}
+                      </Text>
+                    )}
                   </Pressable>
                   {workerSession?.hasTarget && workerSession.workerOnline && (
                     <Pressable
@@ -1382,7 +1454,18 @@ const s = StyleSheet.create({
   openBtn: { flex: 2, alignItems: "center" },
   openBtnTablet: { flexBasis: "100%" },
   secondaryBtnTablet: { flex: 1, minWidth: 140 },
-  openBtnText: { color: "#fff", fontSize: 13, fontWeight: "700" },
+  primaryActionContent: { flexDirection: "row", alignItems: "center", gap: 10, width: "100%" },
+  primaryActionIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.16)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  primaryActionTextWrap: { flex: 1, minWidth: 0, alignItems: "flex-start" },
+  openBtnText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+  openBtnSubtext: { color: "rgba(255,255,255,0.84)", fontSize: 11, marginTop: 2 },
   reloadBtn: { borderWidth: 1, flex: 1, alignItems: "center" },
   reloadBtnText: { color: "#6E56F6", fontSize: 13, fontWeight: "600" },
   stopBtn: { borderWidth: 1, paddingHorizontal: 16, alignItems: "center" },
