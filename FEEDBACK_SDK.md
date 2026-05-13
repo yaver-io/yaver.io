@@ -44,6 +44,8 @@ In `yaver.io` SDK source:
 
 - standalone machine picker no longer hard-blocks an online machine just because a direct LAN `/health` probe failed
 - online + direct-probe-failed now renders as a warning-state hint instead of a false fatal offline state
+- standalone feedback modal now polls `/runner-auth/status` and shows per-runner install/auth/version state for the selected machine
+- standalone SDK now exposes Codex / Claude sign-in from those per-runner rows instead of only showing blind auth buttons
 
 ### What is still unresolved
 
@@ -166,6 +168,38 @@ What it appears to do:
 - can auto-trigger bundle rebuild + reload after successful vibing tasks when prompt intent asks for reload
 
 This is relevant for comparing "manual reload works" versus "fix flow auto-reload works".
+
+### Standalone runner-status parity improvement
+
+The standalone React Native SDK now does a lightweight version of the
+native Yaver mobile app's coding-agent preflight:
+
+- `sdk/feedback/react-native/src/P2PClient.ts` now exposes `getRunnerAuthStatus()`
+- `sdk/feedback/react-native/src/FeedbackModal.tsx` now fetches `/runner-auth/status`
+- the modal renders runner rows for:
+  - Claude Code
+  - OpenAI Codex
+  - OpenCode
+
+Each row now shows:
+
+- installed vs missing
+- signed in / configured vs not signed in
+- CLI version when available
+- warning/detail text from the agent
+
+The standalone modal also now:
+
+- refreshes runner status automatically while visible
+- exposes row-level `Sign in` / `Re-auth` actions for Claude + Codex
+- reloads runner status when the auth modal closes
+
+This closes a major parity gap versus `mobile/ios/Yaver/YaverAgentsPane.swift`,
+but does **not** yet fully replicate the native Yaver app:
+
+- no OpenCode config editor in the standalone SDK yet
+- no richer default-runner / default-model surface yet
+- no dedicated native agents pane; status lives inside the feedback modal
 
 ## Current SFMG-side state
 

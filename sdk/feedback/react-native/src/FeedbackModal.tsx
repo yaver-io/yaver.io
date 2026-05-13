@@ -25,7 +25,7 @@ import {
   // stopVideoRecording,
 } from './capture';
 import { uploadFeedback } from './upload';
-import { DeviceInfo, FeedbackBundle } from './types';
+import { DeviceInfo, FeedbackBundle, RunnerAuthStatusRow } from './types';
 import { AuthOverlay } from './AuthOverlay';
 import { QuickActionIcon } from './QuickActionIcon';
 import { VibeChatScreen } from './VibeChatScreen';
@@ -64,6 +64,103 @@ type MachineCardState = {
   detail: string;
 };
 
+type RunnerTone = 'ok' | 'warning' | 'error' | 'neutral';
+
+type RunnerCardState = {
+  id: string;
+  name: string;
+  installed: boolean;
+  authConfigured: boolean;
+  ready: boolean;
+  version?: string;
+  tone: RunnerTone;
+  statusLine: string;
+  detail?: string;
+  actionLabel?: string;
+  actionRunner?: string;
+};
+
+const PRIMARY_RUNNER_IDS = ['claude', 'codex', 'opencode'] as const;
+
+function normalizeRunnerStatusRows(rows: RunnerAuthStatusRow[]): RunnerCardState[] {
+  const byId = new Map<string, RunnerAuthStatusRow>();
+  for (const row of rows) {
+    const raw = String(row.id || '').trim().toLowerCase();
+    if (!raw) continue;
+    const normalized = raw === 'claude-code' ? 'claude' : raw;
+    if (!PRIMARY_RUNNER_IDS.includes(normalized as (typeof PRIMARY_RUNNER_IDS)[number])) continue;
+    byId.set(normalized, { ...row, id: normalized });
+  }
+
+  return PRIMARY_RUNNER_IDS.map((id) => {
+    const baseName =
+      id === 'claude' ? 'Claude Code' : id === 'codex' ? 'OpenAI Codex' : 'OpenCode';
+    const row = byId.get(id);
+    if (!row) {
+      return {
+        id,
+        name: baseName,
+        installed: false,
+        authConfigured: false,
+        ready: false,
+        tone: 'warning',
+        statusLine: 'Not installed on the selected machine',
+      };
+    }
+
+    const versionPrefix = row.version?.trim() ? `${row.version.trim()} · ` : '';
+    const detail = row.error?.trim() || row.warning?.trim() || row.detail?.trim() || undefined;
+
+    if (!row.installed) {
+      return {
+        id,
+        name: row.name || baseName,
+        installed: false,
+        authConfigured: false,
+        ready: false,
+        version: row.version,
+        tone: 'warning',
+        statusLine: 'Not installed on the selected machine',
+        detail,
+      };
+    }
+
+    if (id === 'opencode') {
+      const configured = row.authConfigured || row.ready;
+      return {
+        id,
+        name: row.name || baseName,
+        installed: row.installed,
+        authConfigured: row.authConfigured,
+        ready: row.ready,
+        version: row.version,
+        tone: configured ? 'ok' : 'warning',
+        statusLine: configured
+          ? `${versionPrefix}Configured on the selected machine`
+          : `${versionPrefix}Needs provider config on the selected machine`,
+        detail,
+      };
+    }
+
+    const authed = row.authConfigured || row.ready;
+    return {
+      id,
+      name: row.name || baseName,
+      installed: row.installed,
+      authConfigured: row.authConfigured,
+      ready: row.ready,
+      version: row.version,
+      tone: authed ? 'ok' : 'warning',
+      statusLine: authed
+        ? `${versionPrefix}Signed in on the selected machine`
+        : `${versionPrefix}Not signed in on the selected machine`,
+      detail,
+      actionLabel: authed ? 'Re-auth' : 'Sign in',
+      actionRunner: id,
+    };
+  });
+}
+
 export const FeedbackModal: React.FC = () => {
   const { width: winW, height: winH } = useWindowDimensions();
   const isTablet = Math.min(winW, winH) >= 600;
@@ -101,6 +198,11 @@ export const FeedbackModal: React.FC = () => {
     title: 'No machine selected',
     detail: 'Pick a remote dev machine before using the feedback actions.',
   });
+  const [runnerCards, setRunnerCards] = useState<RunnerCardState[]>(() =>
+    normalizeRunnerStatusRows([]),
+  );
+  const [runnerStatusLoading, setRunnerStatusLoading] = useState(false);
+  const [runnerStatusError, setRunnerStatusError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   const loadSelectedMachine = useCallback(async () => {
@@ -204,6 +306,53 @@ export const FeedbackModal: React.FC = () => {
     }
   }, []);
 
+  const loadRunnerStatuses = useCallback(async () => {
+    const cfg = YaverFeedback.getConfig();
+    if (!cfg?.authToken) {
+      if (mountedRef.current) {
+        setRunnerCards(normalizeRunnerStatusRows([]));
+        setRunnerStatusError('Sign in to inspect coding-agent status.');
+        setRunnerStatusLoading(false);
+      }
+      return;
+    }
+    if (!cfg.preferredDeviceId) {
+      if (mountedRef.current) {
+        setRunnerCards(normalizeRunnerStatusRows([]));
+        setRunnerStatusError('Pick a machine to inspect coding-agent status.');
+        setRunnerStatusLoading(false);
+      }
+      return;
+    }
+
+    if (mountedRef.current) {
+      setRunnerStatusLoading(true);
+      setRunnerStatusError(null);
+    }
+
+    try {
+      let client = YaverFeedback.getP2PClient();
+      if (!client) {
+        const ok = await YaverFeedback.reconnect();
+        if (ok) client = YaverFeedback.getP2PClient();
+      }
+      if (!client) {
+        throw new Error('Not connected to the selected machine yet.');
+      }
+      const rows = await client.getRunnerAuthStatus();
+      if (mountedRef.current) {
+        setRunnerCards(normalizeRunnerStatusRows(rows));
+      }
+    } catch (err) {
+      if (mountedRef.current) {
+        setRunnerCards(normalizeRunnerStatusRows([]));
+        setRunnerStatusError(err instanceof Error ? err.message : String(err));
+      }
+    } finally {
+      if (mountedRef.current) setRunnerStatusLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     const sub = DeviceEventEmitter.addListener('yaverFeedback:startReport', () => {
@@ -229,6 +378,7 @@ export const FeedbackModal: React.FC = () => {
           })
           .catch(() => {});
         void loadSelectedMachine();
+        void loadRunnerStatuses();
       }
     });
     // Agent streams build / compile progress through the BlackBox
@@ -257,15 +407,16 @@ export const FeedbackModal: React.FC = () => {
       sub.remove();
       statusSub.remove();
     };
-  }, [loadSelectedMachine]);
+  }, [loadRunnerStatuses, loadSelectedMachine]);
 
   useEffect(() => {
     if (!visible) return;
     const interval = setInterval(() => {
       void loadSelectedMachine();
+      void loadRunnerStatuses();
     }, 5000);
     return () => clearInterval(interval);
-  }, [loadSelectedMachine, visible]);
+  }, [loadRunnerStatuses, loadSelectedMachine, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -301,6 +452,7 @@ export const FeedbackModal: React.FC = () => {
     setAction('idle');
     setShowVibeInput(false);
     setVibePrompt('');
+    setRunnerStatusError(null);
   }, []);
 
   // Helper: run a P2P call; on network failure, ask YaverFeedback to
@@ -631,6 +783,11 @@ export const FeedbackModal: React.FC = () => {
   */
 
   const busy = action !== 'idle';
+  const readyRunnerCount = runnerCards.filter((row) => row.ready || row.authConfigured).length;
+  const missingRunnerCount = runnerCards.filter((row) => !row.installed).length;
+  const needsAuthRunnerCount = runnerCards.filter(
+    (row) => row.installed && !row.authConfigured && !row.ready,
+  ).length;
 
   // Once the user fires off a vibe task, swap the entire modal body
   // for the live chat screen. The chat manages its own SSE
@@ -765,6 +922,80 @@ export const FeedbackModal: React.FC = () => {
                 </Text>
                 <Text style={styles.machineMeta}>{machineCard.detail}</Text>
               </Pressable>
+
+              <View style={styles.runnerSection}>
+                <View style={styles.runnerSectionHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.runnerSectionTitle}>Coding Agents</Text>
+                    <Text style={styles.runnerSectionSubtitle}>
+                      {runnerStatusLoading
+                        ? 'Refreshing runner status on the selected machine…'
+                        : `${readyRunnerCount} ready · ${needsAuthRunnerCount} need sign-in · ${missingRunnerCount} missing`}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={() => void loadRunnerStatuses()}
+                    style={({ pressed }) => [
+                      styles.runnerRefreshBtn,
+                      pressed && styles.buttonPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh coding-agent status"
+                  >
+                    <Text style={styles.runnerRefreshBtnText}>
+                      {runnerStatusLoading ? 'Refreshing…' : 'Refresh'}
+                    </Text>
+                  </Pressable>
+                </View>
+
+                {runnerCards.map((row) => (
+                  <View
+                    key={row.id}
+                    style={[
+                      styles.runnerCard,
+                      row.tone === 'ok' && styles.runnerCardOk,
+                      row.tone === 'warning' && styles.runnerCardWarning,
+                      row.tone === 'error' && styles.runnerCardError,
+                    ]}
+                  >
+                    <View style={styles.runnerCardTop}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.runnerCardTitle}>{row.name}</Text>
+                        <Text
+                          style={[
+                            styles.runnerCardStatus,
+                            row.tone === 'ok' && styles.runnerCardStatusOk,
+                            row.tone === 'warning' && styles.runnerCardStatusWarning,
+                            row.tone === 'error' && styles.runnerCardStatusError,
+                          ]}
+                        >
+                          {row.statusLine}
+                        </Text>
+                      </View>
+                      {row.actionRunner ? (
+                        <Pressable
+                          onPress={() => setRunnerAuthModal(row.actionRunner ?? null)}
+                          style={({ pressed }) => [
+                            styles.runnerActionBtn,
+                            pressed && styles.buttonPressed,
+                          ]}
+                          accessibilityRole="button"
+                          accessibilityLabel={`${row.actionLabel} ${row.name}`}
+                        >
+                          <Text style={styles.runnerActionBtnText}>{row.actionLabel}</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    {row.detail ? (
+                      <Text style={styles.runnerCardDetail}>{row.detail}</Text>
+                    ) : null}
+                  </View>
+                ))}
+
+                {runnerStatusError ? (
+                  <Text style={styles.runnerSectionError}>{runnerStatusError}</Text>
+                ) : null}
+              </View>
 
               {quickIconHidden && (
                 <View style={styles.quickIconNote}>
@@ -931,41 +1162,6 @@ export const FeedbackModal: React.FC = () => {
                 <DeployPanel onClose={() => setShowDeploy(false)} />
               )}
 
-              {/* Remote sign-in buttons — trigger codex/claude device-auth
-                  on the selected agent without leaving the app. Opens a
-                  small native modal showing the verification URL + 8-char
-                  code the user enters in any browser. No API keys. */}
-              <View style={runnerAuthRowStyles.container}>
-                <Pressable
-                  onPress={() => setRunnerAuthModal('codex')}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    runnerAuthRowStyles.button,
-                    pressed && runnerAuthRowStyles.buttonPressed,
-                    busy && runnerAuthRowStyles.buttonDisabled,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Remote sign-in Codex"
-                >
-                  <Text style={runnerAuthRowStyles.buttonLabel}>Remote sign-in</Text>
-                  <Text style={runnerAuthRowStyles.buttonName}>Codex</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => setRunnerAuthModal('claude')}
-                  disabled={busy}
-                  style={({ pressed }) => [
-                    runnerAuthRowStyles.button,
-                    pressed && runnerAuthRowStyles.buttonPressed,
-                    busy && runnerAuthRowStyles.buttonDisabled,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Remote sign-in Claude"
-                >
-                  <Text style={runnerAuthRowStyles.buttonLabel}>Remote sign-in</Text>
-                  <Text style={runnerAuthRowStyles.buttonName}>Claude</Text>
-                </Pressable>
-              </View>
-
               {progress !== null && (
                 <View style={styles.progressTrack}>
                   <View
@@ -999,7 +1195,10 @@ export const FeedbackModal: React.FC = () => {
       {runnerAuthModal ? (
         <RunnerAuthNativeModal
           runner={runnerAuthModal}
-          onClose={() => setRunnerAuthModal(null)}
+          onClose={() => {
+            setRunnerAuthModal(null);
+            void loadRunnerStatuses();
+          }}
         />
       ) : null}
     </>
@@ -1226,6 +1425,106 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     lineHeight: 17,
+  },
+  runnerSection: {
+    marginTop: 2,
+    gap: 10,
+  },
+  runnerSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  runnerSectionTitle: {
+    color: '#f8fafc',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  runnerSectionSubtitle: {
+    marginTop: 2,
+    color: '#94a3b8',
+    fontSize: 12,
+  },
+  runnerRefreshBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.22)',
+    backgroundColor: 'rgba(15,23,42,0.65)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  runnerRefreshBtnText: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  runnerCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.14)',
+    backgroundColor: 'rgba(15,23,42,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    gap: 6,
+  },
+  runnerCardOk: {
+    borderColor: 'rgba(34,197,94,0.28)',
+    backgroundColor: 'rgba(20,83,45,0.20)',
+  },
+  runnerCardWarning: {
+    borderColor: 'rgba(251,191,36,0.28)',
+    backgroundColor: 'rgba(120,53,15,0.18)',
+  },
+  runnerCardError: {
+    borderColor: 'rgba(248,113,113,0.28)',
+    backgroundColor: 'rgba(127,29,29,0.18)',
+  },
+  runnerCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  runnerCardTitle: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  runnerCardStatus: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#cbd5e1',
+  },
+  runnerCardStatusOk: {
+    color: '#86efac',
+  },
+  runnerCardStatusWarning: {
+    color: '#fcd34d',
+  },
+  runnerCardStatusError: {
+    color: '#fca5a5',
+  },
+  runnerCardDetail: {
+    color: '#94a3b8',
+    fontSize: 11,
+    lineHeight: 16,
+  },
+  runnerActionBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(129,140,248,0.35)',
+    backgroundColor: 'rgba(67,56,202,0.22)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  runnerActionBtnText: {
+    color: '#c7d2fe',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  runnerSectionError: {
+    color: '#fca5a5',
+    fontSize: 12,
+    lineHeight: 18,
   },
   captureChoices: {
     gap: 10,
@@ -1603,40 +1902,6 @@ const RunnerAuthNativeModal: React.FC<{
     </Modal>
   );
 };
-
-const runnerAuthRowStyles = StyleSheet.create({
-  container: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 8,
-    flexWrap: 'wrap',
-  },
-  button: {
-    flexGrow: 1,
-    flexBasis: 0,
-    minWidth: 120,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(148,163,184,0.22)',
-    backgroundColor: 'rgba(15,23,42,0.6)',
-  },
-  buttonPressed: { opacity: 0.7 },
-  buttonDisabled: { opacity: 0.4 },
-  buttonLabel: {
-    fontSize: 10,
-    color: '#94a3b8',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  buttonName: {
-    marginTop: 2,
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#f1f5f9',
-  },
-});
 
 const runnerAuthModalStyles = StyleSheet.create({
   overlay: {

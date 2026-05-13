@@ -5,6 +5,7 @@ import {
   IncidentEvent,
   OperationState,
   RunnerBrowserAuthSession,
+  RunnerAuthStatusRow,
   TestSession,
   VoiceCapability,
 } from './types';
@@ -220,6 +221,18 @@ export class P2PClient {
     }
     const data = await resp.json();
     return data.session as RunnerBrowserAuthSession;
+  }
+
+  async getRunnerAuthStatus(): Promise<RunnerAuthStatusRow[]> {
+    const resp = await fetch(`${this.baseUrl}/runner-auth/status`, {
+      headers: this.authHeaders(),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new Error(`getRunnerAuthStatus HTTP ${resp.status}: ${text}`);
+    }
+    const data = await resp.json().catch(() => ({} as Record<string, unknown>));
+    return Array.isArray(data.runners) ? (data.runners as RunnerAuthStatusRow[]) : [];
   }
 
   async capabilitySnapshot(): Promise<CapabilitySnapshot | null> {

@@ -20,6 +20,20 @@ export interface RunnerBrowserAuthSession {
   completedAt?: number;
 }
 
+export interface RunnerAuthStatusRow {
+  id: string;
+  name: string;
+  installed: boolean;
+  ready: boolean;
+  authConfigured: boolean;
+  authSource?: string;
+  warning?: string;
+  error?: string;
+  path?: string;
+  detail?: string;
+  version?: string;
+}
+
 export interface IncidentEvent {
   id: string;
   timestamp: number;
