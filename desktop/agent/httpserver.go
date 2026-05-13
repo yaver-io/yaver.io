@@ -45,6 +45,7 @@ type HTTPServer struct {
 	tunnelMgr      *TunnelManager
 	testMgr        *TestManager
 	feedbackMgr    *FeedbackManager
+	designRefMgr   *DesignReferenceManager
 	blackboxMgr    *BlackBoxManager
 	devServerMgr   *DevServerManager
 	todolistMgr    *TodoListManager
@@ -661,6 +662,12 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
 	mux.HandleFunc("/feedback/stream", s.authSDK(s.handleFeedbackStream))
 	mux.HandleFunc("/feedback/", s.authSDK(s.handleFeedbackByID))
+
+	// Design references (web UI captures from the browser extension) —
+	// distinct store, same auth tier as feedback so SDK tokens can list
+	// references when feeding them as context to runners.
+	mux.HandleFunc("/design-references", s.authSDK(s.handleDesignReferences))
+	mux.HandleFunc("/design-references/", s.authSDK(s.handleDesignReferenceByID))
 
 	// Test app (autonomous testing from Feedback SDK) — SDK-accessible
 	mux.HandleFunc("/test-app/start", s.authSDK(s.handleTestAppStart))

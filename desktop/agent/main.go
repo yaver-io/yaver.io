@@ -35,7 +35,7 @@ import (
 	"golang.org/x/term"
 )
 
-const version = "1.99.191"
+const version = "1.99.199"
 
 // Default hosted Convex instance (public endpoint). Override with --convex-url flag or convex_site_url in config.json.
 const defaultConvexSiteURL = "https://perceptive-minnow-557.eu-west-1.convex.site"
@@ -2950,6 +2950,12 @@ func runServe(args []string) {
 	} else {
 		httpServer.feedbackMgr = fbMgr
 		log.Printf("Feedback manager ready (%d existing reports)", len(fbMgr.ListFeedback()))
+	}
+	if drMgr, err := NewDesignReferenceManager(); err != nil {
+		log.Printf("Warning: design references unavailable: %v", err)
+	} else {
+		httpServer.designRefMgr = drMgr
+		log.Printf("Design reference manager ready (%d existing references)", len(drMgr.List()))
 	}
 	if cfgDir, err := ConfigDir(); err == nil {
 		httpServer.guestConfigMgr = NewGuestConfigManager(cfgDir)
