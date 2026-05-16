@@ -58,3 +58,29 @@ func TestIsYaverHTTPRelayHost(t *testing.T) {
 		}
 	}
 }
+
+// Regression: `yaver primary auth` resolved a public endpoint to
+// "157.180.114.179:18080" and handed the HTTP-API port to ssh, which
+// has no host:port syntax → "Could not resolve hostname …:18080".
+// resolveSSHHost's public-endpoint branch must hand ssh a bare host.
+func TestBareHostNoPort(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "157.180.114.179:18080", want: "157.180.114.179"}, // the bug
+		{in: "157.180.114.179", want: "157.180.114.179"},        // bare host untouched
+		{in: "example-host:22", want: "example-host"},
+		{in: "example-host", want: "example-host"},
+		{in: "[::1]:18080", want: "::1"},
+		{in: "[2001:db8::1]:443", want: "2001:db8::1"},
+		{in: "[::1]", want: "::1"},
+		{in: "  157.180.114.179:18080  ", want: "157.180.114.179"},
+		{in: "", want: ""},
+	}
+	for _, tc := range tests {
+		if got := bareHostNoPort(tc.in); got != tc.want {
+			t.Fatalf("bareHostNoPort(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

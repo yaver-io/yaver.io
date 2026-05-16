@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -359,8 +360,6 @@ func main() {
 		runExec(os.Args[2:])
 	case "session":
 		runSession(os.Args[2:])
-	case "handoff":
-		runHandoff(os.Args[2:])
 	case "vault":
 		runVault(os.Args[2:])
 	case "runner":
@@ -411,6 +410,8 @@ func main() {
 		runDeploy(os.Args[2:])
 	case "test":
 		runTest(os.Args[2:])
+	case "autotest":
+		runAutotest(os.Args[2:])
 	case "dev":
 		runDev(os.Args[2:])
 	case "vibe":
@@ -425,10 +426,6 @@ func main() {
 		runGitCLI(os.Args[2:])
 	case "pipeline":
 		runPipeline(os.Args[2:])
-	case "loop":
-		runLoop(os.Args[2:])
-	case "hybrid":
-		runHybrid(os.Args[2:])
 	case "feedback":
 		runFeedback(os.Args[2:])
 	case "sdk":
@@ -459,10 +456,6 @@ func main() {
 		runManaged(os.Args[2:])
 	case "2fa", "totp":
 		runTwoFactor(os.Args[2:])
-	case "morning":
-		runMorning(os.Args[2:])
-	case "record":
-		runRecord(os.Args[2:])
 	case "sandbox":
 		runSandbox(os.Args[2:])
 	case "sdk-token":
@@ -508,10 +501,6 @@ func main() {
 		runInit(os.Args[2:])
 	case "new", "project-new", "project-wizard":
 		runNew(os.Args[2:])
-	case "autodev":
-		runAutodev(os.Args[2:])
-	case "autotest":
-		runAutotest(os.Args[2:])
 	case "autoideas":
 		runAutoIdeas(os.Args[2:])
 	case "autoinit":
@@ -572,7 +561,7 @@ Usage:
   yaver restart     Restart the agent
   yaver code        Terminal-first coding UX (interactive by default, mesh with --mesh)
   yaver attach      Interactive terminal — see tasks, type prompts (like Claude Code)
-  yaver agent       Dependency-aware agent graph runner (chat + autoideas + autodev + autotest)
+  yaver agent       Dependency-aware agent graph runner (chat + autoideas)
   yaver serve       Start the agent manually (advanced)
   yaver permissions Open the one-time macOS permission checklist again
   yaver logs        Show agent logs
@@ -691,10 +680,7 @@ Usage:
   yaver 2fa status             Show whether two-factor auth is enabled
   yaver 2fa enable             Enroll a TOTP authenticator app (optional)
   yaver 2fa disable            Remove two-factor auth from your account
-  yaver morning latest         Match-report of what shipped overnight
-  yaver morning list           List recent autodev runs
-  yaver morning rollback <run> <task>   Revert a single task's commits
-  yaver record start <run> <task>       Start recording for the morning reel
+  yaver record start <run> <task>       Start recording for a task
   yaver record stop  <run> <task>       Finalize a recording
   yaver record drivers                  Show which recording drivers work here
   yaver expose --port <N> [--subdomain <name>]  Expose a local port via yaver.io subdomain
@@ -3009,8 +2995,8 @@ func runServe(args []string) {
 	httpServer.devServerMgr = NewDevServerManager()
 	httpServer.browserMgr = NewBrowserManager()
 	httpServer.vibePreviewMgr = NewVibePreviewManager(httpServer.browserMgr)
-	// Register as the global accessor so smart-develop-mode in loop_exec.go
-	// can find it without threading a reference through every LoopState.
+	// Register as the global accessor so callers can find it without
+	// threading a reference through every code path.
 	SetActiveVibePreviewManager(httpServer.vibePreviewMgr)
 	// Pick the summary backend from YAVER_VIBE_SUMMARIZER (default noop;
 	// "claude" enables the CLI vision call when the binary is on PATH).
@@ -5268,12 +5254,38 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 		fmt.Println("  Shared sessions: unavailable (agent not in multi-user mode or not reachable)")
 	}
 
-	guests, guestErr := FetchGuestList(cfg.ConvexSiteURL, cfg.AuthToken)
+	statusCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	var (
+		guests      []GuestInfo
+		guestErr    error
+		configs     []GuestConfig
+		cfgErr      error
+		devices     []DeviceInfo
+		devicesErr  error
+		statusFetch sync.WaitGroup
+	)
+	statusFetch.Add(3)
+	go func() {
+		defer statusFetch.Done()
+		guests, guestErr = fetchGuestListForStatus(statusCtx, cfg.ConvexSiteURL, cfg.AuthToken)
+	}()
+	go func() {
+		defer statusFetch.Done()
+		configs, cfgErr = fetchGuestConfigsForStatus(statusCtx, cfg.ConvexSiteURL, cfg.AuthToken)
+	}()
+	go func() {
+		defer statusFetch.Done()
+		devices, devicesErr = listDevicesForStatus(statusCtx, cfg.ConvexSiteURL, cfg.AuthToken)
+	}()
+	statusFetch.Wait()
+
 	if guestErr != nil {
 		fmt.Printf("  Guests: unavailable (%v)\n", guestErr)
+		printStatusRunnableMachinesFromDevices(devices, devicesErr, cfg)
 		return
 	}
-	configs, cfgErr := FetchGuestConfigs(cfg.ConvexSiteURL, cfg.AuthToken)
 	configByEmail := map[string]*GuestConfig{}
 	if cfgErr == nil {
 		for i := range configs {
@@ -5290,7 +5302,7 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 	}
 	fmt.Printf("  Guests: %d total, %d active\n", len(guests), activeGuests)
 	if len(guests) == 0 {
-		printStatusRunnableMachines(cfg)
+		printStatusRunnableMachinesFromDevices(devices, devicesErr, cfg)
 		return
 	}
 
@@ -5311,11 +5323,15 @@ func printStatusSharing(client *http.Client, cfg *Config) {
 	}
 	w.Flush()
 
-	printStatusRunnableMachines(cfg)
+	printStatusRunnableMachinesFromDevices(devices, devicesErr, cfg)
 }
 
 func printStatusRunnableMachines(cfg *Config) {
 	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	printStatusRunnableMachinesFromDevices(devices, err, cfg)
+}
+
+func printStatusRunnableMachinesFromDevices(devices []DeviceInfo, err error, cfg *Config) {
 	if err != nil {
 		fmt.Printf("  Runnable machines: unavailable (%v)\n", err)
 		return
@@ -5372,6 +5388,76 @@ func printStatusRunnableMachines(cfg *Config) {
 		)
 	}
 	w.Flush()
+}
+
+func fetchGuestListForStatus(ctx context.Context, baseURL, token string) ([]GuestInfo, error) {
+	req, err := newBearerRequest("GET", baseURL+"/guests/list", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest list request: %w", err)
+	}
+	req = req.WithContext(ctx)
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest list: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest list failed (status %d)", resp.StatusCode)
+	}
+	var result struct {
+		Guests []GuestInfo `json:"guests"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest list: %w", err)
+	}
+	return result.Guests, nil
+}
+
+func fetchGuestConfigsForStatus(ctx context.Context, baseURL, token string) ([]GuestConfig, error) {
+	req, err := newBearerRequest("GET", baseURL+"/guests/config", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create guest config request: %w", err)
+	}
+	req = req.WithContext(ctx)
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch guest config: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("guest config failed (status %d)", resp.StatusCode)
+	}
+	var result struct {
+		Configs []GuestConfig `json:"configs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode guest config: %w", err)
+	}
+	return result.Configs, nil
+}
+
+func listDevicesForStatus(ctx context.Context, baseURL, token string) ([]DeviceInfo, error) {
+	req, err := newBearerRequest("GET", baseURL+"/devices/list", token, nil)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	resp, err := (&http.Client{Timeout: 4 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list devices failed (status %d): %s", resp.StatusCode, string(body))
+	}
+	var result struct {
+		Devices []DeviceInfo `json:"devices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse devices: %w", err)
+	}
+	return result.Devices, nil
 }
 
 func fetchLocalSharedUsers(client *http.Client, token string) (*statusSharedUsersResponse, error) {
@@ -5938,7 +6024,6 @@ func runDoctor() {
 	}
 
 	runDoctorMesh(check, pass, warning, failed)
-	runDoctorRecording(check, pass, warning, failed)
 
 	// 3b. Sessions — scan all agent processes and tmux sessions
 	fmt.Println("\n── Sessions ──")
@@ -6630,13 +6715,31 @@ func runDevices(args []string) {
 		return
 	}
 
+	mobileSectionDone := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		printMobileDevicesSection(&buf)
+		mobileSectionDone <- buf.String()
+	}()
+
 	runnerByDevice := map[string]string{}
+	var runnerMu sync.Mutex
+	var runnerWG sync.WaitGroup
 	for _, d := range devices {
 		if !d.IsOnline {
 			continue
 		}
-		runnerByDevice[d.DeviceID] = summarizeDeviceRunners(cfg, d)
+		d := d
+		runnerWG.Add(1)
+		go func() {
+			defer runnerWG.Done()
+			summary := summarizeDeviceRunners(cfg, d)
+			runnerMu.Lock()
+			runnerByDevice[d.DeviceID] = summary
+			runnerMu.Unlock()
+		}()
 	}
+	runnerWG.Wait()
 
 	// Best-effort fetch of primary + secondary deviceId so the listing
 	// can flag them. Failure here is silent — the user just sees the
@@ -6682,7 +6785,9 @@ func runDevices(args []string) {
 	}
 	w.Flush()
 
-	printMobileDevicesSection(os.Stdout)
+	if mobileSection := <-mobileSectionDone; strings.TrimSpace(mobileSection) != "" {
+		fmt.Print(mobileSection)
+	}
 }
 
 // printMobileDevicesSection appends a "Mobile devices" block to
@@ -6692,7 +6797,7 @@ func runDevices(args []string) {
 //
 // Skipped silently when nothing is attached AND no tooling is missing —
 // an empty header would just be noise.
-func printMobileDevicesSection(out *os.File) {
+func printMobileDevicesSection(out io.Writer) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -7472,12 +7577,20 @@ func resolveSSHHost(target string) string {
 
 	// 5. Public endpoints. Skip Yaver's HTTP relay hostnames —
 	//    `<uuid>.yaver.io` / `<uuid>.dev.yaver.io` terminate HTTPS
-	//    only, so handing ssh one of those just hangs.
+	//    only, so handing ssh one of those just hangs. Strip the
+	//    scheme AND the port: a public endpoint carries the agent's
+	//    HTTP API port (e.g. `157.180.114.179:18080`), which is
+	//    meaningless to ssh — OpenSSH has no `host:port` syntax and
+	//    would treat the whole string as a literal hostname
+	//    ("Could not resolve hostname 157.180.114.179:18080"). ssh
+	//    connects on port 22 (or whatever ~/.ssh/config says), so we
+	//    return only the bare host.
 	for _, raw := range dev.PublicEndpoints {
 		ep := strings.TrimPrefix(raw, "https://")
 		ep = strings.TrimPrefix(ep, "http://")
 		ep = strings.TrimSuffix(ep, "/")
-		if isYaverHTTPRelayHost(ep) {
+		ep = bareHostNoPort(ep)
+		if ep == "" || isYaverHTTPRelayHost(ep) {
 			continue
 		}
 		return ep
@@ -7564,6 +7677,27 @@ func firstPreferredTailscaleIP(out string) string {
 		}
 	}
 	return fallback
+}
+
+// bareHostNoPort strips a trailing :port (and surrounding IPv6 brackets)
+// from an "endpoint" string so it can be handed to ssh as a hostname.
+// Public endpoints carry the agent's HTTP API port (`host:18080`), which
+// OpenSSH would otherwise treat as part of a literal hostname — there is
+// no `host:port` ssh syntax. Bare hosts (no port) pass through unchanged;
+// "[::1]:18080" → "::1"; "[::1]" → "::1"; "1.2.3.4" → "1.2.3.4".
+func bareHostNoPort(ep string) string {
+	ep = strings.TrimSpace(ep)
+	if ep == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(ep); err == nil {
+		return strings.TrimSpace(host)
+	}
+	// No port: net.SplitHostPort errors. Still unwrap a bracketed
+	// bare IPv6 literal ("[::1]" → "::1").
+	ep = strings.TrimPrefix(ep, "[")
+	ep = strings.TrimSuffix(ep, "]")
+	return strings.TrimSpace(ep)
 }
 
 // isYaverHTTPRelayHost reports whether host looks like one of Yaver's
@@ -9779,10 +9913,6 @@ func runMCPStdio(taskMgr *TaskManager, aclMgr *ACLManager, emailMgr *EmailManage
 		emailMgr: emailMgr,
 	}
 	srv.devServerMgr = NewDevServerManager()
-	// Stdio MCP is spawned BY the AI agent (Claude Code, Claude Desktop,
-	// etc.), so our parent PID is the agent process. session_handoff
-	// uses this when the caller doesn't pass an explicit caller_pid.
-	setMCPStdioCallerPID(os.Getppid())
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
