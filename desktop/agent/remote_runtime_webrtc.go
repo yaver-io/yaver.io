@@ -12,13 +12,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pion/webrtc/v4"
-	"github.com/yaver-io/agent/testkit"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -101,21 +99,12 @@ func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, e
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	switch session.TargetID {
-	case "ios-simulator":
-		driver := &testkit.IOSSimDriver{DeviceType: "iPhone"}
-		deviceID, err = driver.Boot(ctx)
-	case "android-emulator":
-		driver := &testkit.AndroidEmuDriver{}
-		deviceID, err = driver.Boot(ctx)
-	case "android-device":
-		// No AVD to boot — a physical device is already attached.
-		// Resolve its adb serial; everything downstream (capture,
-		// dims, control) is serial-generic and shared with the
-		// emulator path.
-		deviceID, err = resolveAttachedAndroidDeviceSerial(ctx)
-	default:
-		err = fmt.Errorf("unknown remote runtime target %q", session.TargetID)
+	if tgt, terr := runtimeTargetFor(session.TargetID); terr != nil {
+		err = terr
+	} else {
+		// Boots an AVD/sim, or resolves an already-attached physical
+		// serial — see runtimeTarget impls.
+		deviceID, err = tgt.Attach(ctx)
 	}
 	if err != nil {
 		updated, _ := m.Update(sessionID, func(current *RemoteRuntimeSession) {
@@ -506,19 +495,12 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 	defer os.RemoveAll(tmpDir)
 	pngPath := filepath.Join(tmpDir, "frame.png")
 
-	switch targetID {
-	case "ios-simulator":
-		driver := &testkit.IOSSimDriver{}
-		if err := driver.Screenshot(ctx, deviceID, pngPath); err != nil {
-			return nil, 0, 0, err
-		}
-	case "android-emulator", "android-device":
-		driver := &testkit.AndroidEmuDriver{}
-		if err := driver.Screenshot(ctx, deviceID, pngPath); err != nil {
-			return nil, 0, 0, err
-		}
-	default:
+	tgt, terr := runtimeTargetFor(targetID)
+	if terr != nil {
 		return nil, 0, 0, fmt.Errorf("unsupported target %q", targetID)
+	}
+	if err := tgt.Screenshot(ctx, deviceID, pngPath); err != nil {
+		return nil, 0, 0, err
 	}
 
 	raw, err := os.ReadFile(pngPath)
@@ -673,14 +655,11 @@ func (live *remoteRuntimeLiveState) tap(ctx context.Context, x, y int) error {
 	targetID := live.targetID
 	deviceID := live.deviceID
 	live.mu.Unlock()
-	switch targetID {
-	case "ios-simulator":
-		return (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y)
-	case "android-emulator", "android-device":
-		return (&testkit.AndroidEmuDriver{}).Tap(ctx, deviceID, x, y)
-	default:
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
+	return tgt.Tap(ctx, deviceID, x, y)
 }
 
 // swipe drags from (x1,y1) to (x2,y2) over durationMs. Used by the
@@ -697,14 +676,11 @@ func (live *remoteRuntimeLiveState) swipe(ctx context.Context, x1, y1, x2, y2, d
 	targetID := live.targetID
 	deviceID := live.deviceID
 	live.mu.Unlock()
-	switch targetID {
-	case "android-emulator", "android-device":
-		return (&testkit.AndroidEmuDriver{}).Swipe(ctx, deviceID, x1, y1, x2, y2, durationMs)
-	case "ios-simulator":
-		return fmt.Errorf("swipe is not implemented for ios-simulator yet — drop in WDA or cliclick path in a follow-up phase")
-	default:
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
+	return tgt.Swipe(ctx, deviceID, x1, y1, x2, y2, durationMs)
 }
 
 func (live *remoteRuntimeLiveState) text(ctx context.Context, text string) error {
@@ -715,14 +691,11 @@ func (live *remoteRuntimeLiveState) text(ctx context.Context, text string) error
 	targetID := live.targetID
 	deviceID := live.deviceID
 	live.mu.Unlock()
-	switch targetID {
-	case "ios-simulator":
-		return (&testkit.IOSSimDriver{}).SendText(ctx, deviceID, text)
-	case "android-emulator", "android-device":
-		return (&testkit.AndroidEmuDriver{}).Text(ctx, deviceID, text)
-	default:
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
 		return fmt.Errorf("unsupported target %q", targetID)
 	}
+	return tgt.Text(ctx, deviceID, text)
 }
 
 func (live *remoteRuntimeLiveState) key(ctx context.Context, key string) error {
@@ -730,21 +703,13 @@ func (live *remoteRuntimeLiveState) key(ctx context.Context, key string) error {
 	targetID := live.targetID
 	deviceID := live.deviceID
 	live.mu.Unlock()
-	if targetID != "android-emulator" && targetID != "android-device" {
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
+		// Unknown/iOS targets keep the old "Android only" message —
+		// the iOS impl returns the same string.
 		return fmt.Errorf("%s is only supported for Android sessions right now", key)
 	}
-	driver := &testkit.AndroidEmuDriver{}
-	keycode, ok := androidKeycodeForName(key)
-	if ok {
-		return driver.KeyEvent(ctx, deviceID, keycode)
-	}
-	// Numeric escape hatch — `{"action":"key","key":"82"}` still
-	// works for any KEYCODE_* the user wants, even ones we don't
-	// have a friendly name for.
-	if code, err := strconv.Atoi(strings.TrimSpace(key)); err == nil {
-		return driver.KeyEvent(ctx, deviceID, code)
-	}
-	return fmt.Errorf("unsupported key %q", key)
+	return tgt.Key(ctx, deviceID, key)
 }
 
 // androidKeycodeForName maps the friendly key names the web viewer

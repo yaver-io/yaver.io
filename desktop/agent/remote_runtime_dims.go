@@ -44,13 +44,11 @@ func ProbeDeviceDims(ctx context.Context, targetID, deviceID string) DeviceDims 
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	switch targetID {
-	case "ios-simulator":
-		return probeIOSDims(probeCtx, deviceID)
-	case "android-emulator", "android-device":
-		return probeAndroidDims(probeCtx, deviceID)
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
+		return fallbackDims
 	}
-	return fallbackDims
+	return tgt.Dims(probeCtx, deviceID)
 }
 
 // probeAndroidDims reads `adb shell wm size` (and `wm density` for

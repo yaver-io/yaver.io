@@ -210,23 +210,19 @@ func (p *videoTrackPump) runOnce(ctx context.Context) error {
 // fragmented MP4. Both satisfy nalSource so the pump loop is the
 // same on top.
 func (p *videoTrackPump) newNALReader(r io.Reader) (nalSource, error) {
-	switch p.targetID {
-	case "android-emulator", "android-device":
-		return NewAnnexBReader(r), nil
-	case "ios-simulator":
-		return MP4ToAnnexB(r)
+	tgt, err := runtimeTargetFor(p.targetID)
+	if err != nil {
+		return nil, fmt.Errorf("no NAL reader for target %q", p.targetID)
 	}
-	return nil, fmt.Errorf("no NAL reader for target %q", p.targetID)
+	return tgt.NewNALReader(r)
 }
 
 func (p *videoTrackPump) spawnCapture(ctx context.Context) (*exec.Cmd, io.ReadCloser, error) {
-	switch p.targetID {
-	case "android-emulator", "android-device":
-		return spawnAdbScreenrecord(ctx, p.deviceID)
-	case "ios-simulator":
-		return spawnXcrunRecordVideo(ctx, p.deviceID)
+	tgt, err := runtimeTargetFor(p.targetID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unsupported target %q for rtp-h264 capture", p.targetID)
 	}
-	return nil, nil, fmt.Errorf("unsupported target %q for rtp-h264 capture", p.targetID)
+	return tgt.SpawnCapture(ctx, p.deviceID)
 }
 
 // spawnXcrunRecordVideo starts `xcrun simctl io <udid> recordVideo
@@ -300,17 +296,9 @@ func spawnAdbScreenrecord(ctx context.Context, deviceID string) (*exec.Cmd, io.R
 // override it deterministically without faking adb on PATH. Production
 // keeps the real probe.
 var agentCanEncodeRTPH264 = func(targetID string) bool {
-	switch targetID {
-	case "android-emulator", "android-device":
-		_, err := exec.LookPath("adb")
-		return err == nil
-	case "ios-simulator":
-		// Xcode 26's simctl no longer supports recordVideo to stdout
-		// ("rendering to standard out is no longer supported"). The
-		// RTP pump needs a streaming pipe, so keep iOS on WebRTC JPEG
-		// data-channel frames until we replace this with a file-backed
-		// fragment tailer or another live capture source.
+	tgt, err := runtimeTargetFor(targetID)
+	if err != nil {
 		return false
 	}
-	return false
+	return tgt.CanEncodeRTPH264()
 }
