@@ -5052,7 +5052,7 @@ func runStatus() {
 	if len(cfg.RelayServers) == 0 {
 		// Try to show relay info from user settings (per-user relay)
 		if cfg.AuthToken != "" && cfg.ConvexSiteURL != "" {
-			if us, err := FetchUserSettings(cfg.ConvexSiteURL, cfg.AuthToken); err == nil && us.RelayUrl != "" {
+			if us, err := fetchUserSettingsForStatus(cfg.ConvexSiteURL, cfg.AuthToken); err == nil && us.RelayUrl != "" {
 				pw := ""
 				if us.RelayPassword != "" {
 					pw = " [per-user password]"
@@ -5458,6 +5458,31 @@ func listDevicesForStatus(ctx context.Context, baseURL, token string) ([]DeviceI
 		return nil, fmt.Errorf("parse devices: %w", err)
 	}
 	return result.Devices, nil
+}
+
+func fetchUserSettingsForStatus(baseURL, token string) (*UserSettings, error) {
+	req, err := newBearerRequest("GET", baseURL+"/settings", token, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create settings request: %w", err)
+	}
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch settings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrAuthExpired
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("settings request failed (status %d)", resp.StatusCode)
+	}
+	var result struct {
+		Settings UserSettings `json:"settings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse settings: %w", err)
+	}
+	return &result.Settings, nil
 }
 
 func fetchLocalSharedUsers(client *http.Client, token string) (*statusSharedUsersResponse, error) {
@@ -6798,7 +6823,7 @@ func runDevices(args []string) {
 // Skipped silently when nothing is attached AND no tooling is missing —
 // an empty header would just be noise.
 func printMobileDevicesSection(out io.Writer) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
 	wired := append([]wireDevice{}, listIOSWireDevices(ctx)...)

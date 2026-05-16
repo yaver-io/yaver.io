@@ -87,7 +87,7 @@ func runElevatedSlotPing(ctx context.Context, slot string, args []string) {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	report, err := fetchRemoteAgentStatusByDeviceID(probeCtx, deviceID)
+	report, err := fetchRemoteAgentPingByDeviceID(probeCtx, deviceID)
 	emitPingReport(report, err, *jsonOut, slotLabel)
 	if err != nil || report == nil {
 		os.Exit(1)

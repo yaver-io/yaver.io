@@ -24,7 +24,7 @@ Flags:
   --agent <url>           Agent base URL.
   --token <bearer>        Agent bearer token.
   --workdir <path>        Fixture/project path on the remote host.
-  --framework <name>      Project framework: swift or kotlin.
+  --framework <name>      Project framework: swift, kotlin, or flutter.
   --target <id>           Remote runtime target id.
   --expect <state>        enabled | disabled
   --transport <mode>      direct-webrtc | relay-jpeg-poll (default: relay-jpeg-poll)
@@ -95,8 +95,10 @@ if [[ "$PREPARE_ANDROID" == "1" ]]; then
 fi
 
 echo "== remote runtime capabilities =="
+encoded_workdir="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$WORKDIR")"
+encoded_framework="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$FRAMEWORK")"
 caps_json="$(curl -fsS "${auth[@]}" \
-  "$AGENT/remote-runtime/capabilities?workDir=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$WORKDIR")&framework=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$FRAMEWORK"))"
+  "$AGENT/remote-runtime/capabilities?workDir=$encoded_workdir&framework=$encoded_framework")"
 echo "$caps_json" | jq .
 
 target_json="$(echo "$caps_json" | jq -c --arg target "$TARGET" '.targets[] | select(.id == $target)')"

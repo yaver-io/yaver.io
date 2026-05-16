@@ -71,7 +71,7 @@ func runReachPing(args []string) {
 	hint := fs.Arg(0)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	report, err := fetchRemoteAgentStatusByHint(ctx, hint)
+	report, err := fetchRemoteAgentPingByHint(ctx, hint)
 	emitPingReport(report, err, *jsonOut, hint)
 	if err != nil || report == nil {
 		os.Exit(1)
@@ -102,28 +102,145 @@ func runPrimaryPing(ctx context.Context, args []string) {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	report, err := fetchRemoteAgentStatusByDeviceID(probeCtx, current)
+	report, err := fetchRemoteAgentPingByDeviceID(probeCtx, current)
 	emitPingReport(report, err, *jsonOut, "primary")
 	if err != nil || report == nil {
 		os.Exit(1)
 	}
 }
 
+func fetchRemoteAgentPingByHint(ctx context.Context, deviceHint string) (*remoteAgentStatusReport, error) {
+	candidates, token, err := resolveRemoteAgentCandidates(deviceHint)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	devices, derr := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if derr != nil {
+		return nil, fmt.Errorf("list devices: %w", derr)
+	}
+	hint := normalizeDeviceHint(deviceHint)
+	var target *DeviceInfo
+	for i := range devices {
+		d := &devices[i]
+		if strings.HasPrefix(d.DeviceID, hint) ||
+			strings.EqualFold(d.Name, hint) ||
+			strings.HasPrefix(strings.ToLower(d.Name), strings.ToLower(hint)) ||
+			(strings.TrimSpace(d.Alias) != "" && strings.EqualFold(d.Alias, hint)) ||
+			(strings.TrimSpace(d.Alias) != "" && strings.HasPrefix(strings.ToLower(d.Alias), strings.ToLower(hint))) {
+			target = d
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("device %q not found", deviceHint)
+	}
+	return fetchRemoteAgentPing(ctx, candidates, token, target)
+}
+
+func fetchRemoteAgentPingByDeviceID(ctx context.Context, deviceID string) (*remoteAgentStatusReport, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.AuthToken) == "" {
+		return nil, fmt.Errorf("not signed in — run 'yaver auth' first")
+	}
+	if strings.TrimSpace(cfg.ConvexSiteURL) == "" {
+		cfg.ConvexSiteURL = defaultConvexSiteURL
+	}
+	devices, err := listDevices(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	var target *DeviceInfo
+	for i := range devices {
+		if devices[i].DeviceID == deviceID {
+			target = &devices[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("primary device %q is no longer in your registered devices — run 'yaver primary clear' to reset", deviceID)
+	}
+	if !target.IsOnline {
+		reachable := probeSSHReachable(target, 750*time.Millisecond)
+		return &remoteAgentStatusReport{
+			DeviceID:     target.DeviceID,
+			Name:         target.Name,
+			Alias:        strings.TrimSpace(target.Alias),
+			Platform:     target.Platform,
+			IsOnline:     false,
+			SSHReachable: &reachable,
+		}, nil
+	}
+	candidates, err := buildRemoteAgentCandidates(cfg, target)
+	if err != nil {
+		return nil, err
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("device %q has no reachable transport candidates", target.Name)
+	}
+	return fetchRemoteAgentPing(ctx, candidates, cfg.AuthToken, target)
+}
+
+func fetchRemoteAgentPing(ctx context.Context, candidates []RemoteAgentCandidate, token string, target *DeviceInfo) (*remoteAgentStatusReport, error) {
+	report := &remoteAgentStatusReport{
+		DeviceID: target.DeviceID,
+		Name:     target.Name,
+		Alias:    strings.TrimSpace(target.Alias),
+		Platform: target.Platform,
+		IsOnline: target.IsOnline,
+	}
+	chosen, status, raw, err := doRemoteAgentRequest(ctx, candidates, token, http.MethodGet, "/info", nil, 4*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("/info: %w", err)
+	}
+	report.HTTPStatusInfo = status
+	report.Transport = firstNonEmpty(strings.TrimSpace(chosen.Label), chosen.Kind)
+	report.BaseURL = chosen.BaseURL
+	if status >= 200 && status < 300 && len(raw) > 0 {
+		var info map[string]interface{}
+		if err := json.Unmarshal(raw, &info); err == nil {
+			report.Info = info
+			if v, ok := info["hostname"].(string); ok {
+				report.Hostname = v
+			}
+			if v, ok := info["version"].(string); ok {
+				report.Version = v
+			}
+			if v, ok := info["lifecycleState"].(string); ok {
+				report.LifecycleState = v
+			}
+			if needs, ok := info["needsAuth"].(bool); ok && needs {
+				report.NeedsAuth = true
+			}
+			if authExpired, ok := info["authExpired"].(bool); ok && authExpired {
+				report.NeedsAuth = true
+			}
+		}
+	}
+	return report, nil
+}
+
 type pingResult struct {
-	Hint            string `json:"hint"`
-	DeviceID        string `json:"deviceId,omitempty"`
-	Name            string `json:"name,omitempty"`
-	Reachable       bool   `json:"reachable"`
-	Transport       string `json:"transport,omitempty"`
-	BaseURL         string `json:"baseUrl,omitempty"`
-	LatencyMS       int64  `json:"latencyMs,omitempty"`
-	AgentVersion    string `json:"agentVersion,omitempty"`
-	LifecycleState  string `json:"lifecycleState,omitempty"`
-	NeedsAuth       bool   `json:"needsAuth"`
-	OwnerEmail      string `json:"ownerEmail,omitempty"`
-	OwnerIsCaller   bool   `json:"ownerIsCaller"`
-	Cause           string `json:"cause,omitempty"`
-	Hint2           string `json:"hint,omitempty"`
+	Hint           string `json:"hint"`
+	DeviceID       string `json:"deviceId,omitempty"`
+	Name           string `json:"name,omitempty"`
+	Reachable      bool   `json:"reachable"`
+	Transport      string `json:"transport,omitempty"`
+	BaseURL        string `json:"baseUrl,omitempty"`
+	LatencyMS      int64  `json:"latencyMs,omitempty"`
+	AgentVersion   string `json:"agentVersion,omitempty"`
+	LifecycleState string `json:"lifecycleState,omitempty"`
+	NeedsAuth      bool   `json:"needsAuth"`
+	OwnerEmail     string `json:"ownerEmail,omitempty"`
+	OwnerIsCaller  bool   `json:"ownerIsCaller"`
+	Cause          string `json:"cause,omitempty"`
+	Hint2          string `json:"hint,omitempty"`
 }
 
 func emitPingReport(report *remoteAgentStatusReport, err error, asJSON bool, hint string) {

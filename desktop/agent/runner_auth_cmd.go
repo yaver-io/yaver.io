@@ -462,7 +462,9 @@ func pluralS(n int) string {
 }
 
 func fetchRunnerAuthStatusRowsRemote(target string) ([]runnerAuthStatusRow, error) {
-	out, err := proxyToDeviceJSON(context.Background(), "runner-auth-status", target, http.MethodGet, "/agent/runners", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := proxyToDeviceJSON(ctx, "runner-auth-status", target, http.MethodGet, "/agent/runners", nil)
 	if err != nil {
 		return nil, err
 	}

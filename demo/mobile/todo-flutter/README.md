@@ -1,27 +1,37 @@
-# native-flutter-app — Yaver fixture
+# todo-flutter — Yaver Flutter fixture
 
-Minimal Flutter app with login (hardcoded `admin` / `admin`) → dashboard. Used by
-`desktop/agent/native_build_fixtures_test.go` to verify the `yaver flutter` /
-`/builds` (`platform: flutter`) pipeline can build and push a real Flutter app.
+Flutter todo app used to validate Yaver's native WebRTC remote-runtime path.
+Unlike the React Native fixture, this app runs in its own Flutter process on an
+Android emulator or iOS simulator and is viewed through the web dashboard's
+WebRTC stream.
 
-## First-time setup (regenerates platform shells)
+The seed data intentionally includes manufacturing and quality-control search
+terms used by real workflows:
+
+- GKK
+- ÇKK son kontrol formu
+- iş emri
+- üretim emri
+
+## First-time setup
 
 ```sh
-cd tests/fixtures/native-flutter-app
+cd demo/mobile/todo-flutter
 flutter create . --org io.yaver.fixture --platforms=android,ios --project-name yaver_native_flutter_app
 ```
 
-## Manual build via yaver
-
-```sh
-yaver flutter . --target=local       # build APK only, no install
-yaver flutter . --target=device      # build + adb install -r on connected phone (LAN)
-yaver flutter . --target=apk         # build APK
-yaver flutter . --target=playstore   # build AAB for Play upload
-```
-
-## Unit tests
+## Local checks
 
 ```sh
 flutter test
+flutter run -d <device-id>
 ```
+
+## Yaver WebRTC flow
+
+1. Start the agent on the host that has Flutter + Android SDK installed.
+2. Open the Yaver web dashboard and select the Flutter todo project.
+3. Choose the Android emulator target first on Linux hosts.
+4. Start the remote runtime session.
+5. Verify the dashboard viewer can search for `GKK`, `ÇKK`, `iş emri`, and
+   `üretim emri`, add a new item, and toggle it through WebRTC pointer input.

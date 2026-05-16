@@ -1,30 +1,45 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:yaver_native_flutter_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('renders seeded todo terms for remote-runtime smoke tests', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const YaverTodoApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Yaver Flutter Todo'), findsWidgets);
+    expect(find.text('GKK kontrol listesi'), findsOneWidget);
+    expect(find.text('ÇKK son kontrol formu'), findsOneWidget);
+    expect(find.text('İş emri hazırlığı'), findsOneWidget);
+    expect(find.text('Üretim emri planlama'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+  testWidgets('filters seeded work items by keyword', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const YaverTodoApp());
+
+    await tester.enterText(find.byKey(const Key('todo-search')), 'son kontrol');
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('ÇKK son kontrol formu'), findsOneWidget);
+    expect(find.text('GKK kontrol listesi'), findsNothing);
+  });
+
+  testWidgets('adds and completes a todo item', (WidgetTester tester) async {
+    await tester.pumpWidget(const YaverTodoApp());
+
+    await tester.enterText(find.byKey(const Key('new-todo-title')), 'Bakım emri');
+    await tester.tap(find.byKey(const Key('add-todo')));
+    await tester.pump();
+
+    expect(find.text('Bakım emri'), findsOneWidget);
+    expect(find.text('5 open'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('todo-Bakım emri')));
+    await tester.pump();
+
+    expect(find.text('4 open'), findsOneWidget);
   });
 }
