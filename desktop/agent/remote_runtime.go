@@ -190,17 +190,27 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 		case "swift":
 			caps.Targets = []RemoteRuntimeTarget{probeIOSSimulatorTarget()}
 		case "kotlin":
-			caps.Targets = []RemoteRuntimeTarget{probeAndroidEmulatorTarget()}
-		case "flutter":
-			// Flutter projects compile to the same booted simulators
-			// or emulators as their native counterparts. Expose both
-			// targets so the user can pick which surface they want
-			// to stream — `flutter build apk` for the Android side,
-			// `flutter build ios` for the iOS side. The session's
-			// build dispatch is identical to native; only the build
-			// command differs (handled in native_build.go).
+			// Emulator first (default where the host can run it),
+			// physical device second (the only path on a host with no
+			// emulator binary — e.g. linux/arm64). Capability-probed,
+			// never host-name-gated.
 			caps.Targets = []RemoteRuntimeTarget{
 				probeAndroidEmulatorTarget(),
+				probeAndroidDeviceTarget(),
+			}
+		case "flutter":
+			// Flutter projects compile to the same booted simulators
+			// or emulators as their native counterparts. Expose every
+			// surface so the user can pick — `flutter build apk` for
+			// the Android side, `flutter build ios` for iOS. The
+			// session's build dispatch is identical to native; only
+			// the build command differs (handled in native_build.go).
+			// android-device is the fallback when no local emulator
+			// binary exists (linux/arm64); sim/emu stay first-class
+			// wherever the host supports them.
+			caps.Targets = []RemoteRuntimeTarget{
+				probeAndroidEmulatorTarget(),
+				probeAndroidDeviceTarget(),
 				probeIOSSimulatorTarget(),
 			}
 		}

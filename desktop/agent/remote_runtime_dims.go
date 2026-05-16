@@ -47,7 +47,7 @@ func ProbeDeviceDims(ctx context.Context, targetID, deviceID string) DeviceDims 
 	switch targetID {
 	case "ios-simulator":
 		return probeIOSDims(probeCtx, deviceID)
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return probeAndroidDims(probeCtx, deviceID)
 	}
 	return fallbackDims

@@ -211,7 +211,7 @@ func (p *videoTrackPump) runOnce(ctx context.Context) error {
 // same on top.
 func (p *videoTrackPump) newNALReader(r io.Reader) (nalSource, error) {
 	switch p.targetID {
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return NewAnnexBReader(r), nil
 	case "ios-simulator":
 		return MP4ToAnnexB(r)
@@ -221,7 +221,7 @@ func (p *videoTrackPump) newNALReader(r io.Reader) (nalSource, error) {
 
 func (p *videoTrackPump) spawnCapture(ctx context.Context) (*exec.Cmd, io.ReadCloser, error) {
 	switch p.targetID {
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return spawnAdbScreenrecord(ctx, p.deviceID)
 	case "ios-simulator":
 		return spawnXcrunRecordVideo(ctx, p.deviceID)
@@ -301,18 +301,16 @@ func spawnAdbScreenrecord(ctx context.Context, deviceID string) (*exec.Cmd, io.R
 // keeps the real probe.
 var agentCanEncodeRTPH264 = func(targetID string) bool {
 	switch targetID {
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		_, err := exec.LookPath("adb")
 		return err == nil
 	case "ios-simulator":
-		// iOS Simulator capture only runs on macOS. The fragmented
-		// MP4 emitted by `xcrun simctl io recordVideo --codec=h264 -`
-		// is unpacked by MP4AnnexBReader (h264_extract.go).
-		if runtime.GOOS != "darwin" {
-			return false
-		}
-		_, err := exec.LookPath("xcrun")
-		return err == nil
+		// Xcode 26's simctl no longer supports recordVideo to stdout
+		// ("rendering to standard out is no longer supported"). The
+		// RTP pump needs a streaming pipe, so keep iOS on WebRTC JPEG
+		// data-channel frames until we replace this with a file-backed
+		// fragment tailer or another live capture source.
+		return false
 	}
 	return false
 }

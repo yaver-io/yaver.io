@@ -77,18 +77,23 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 
 func TestRemoteRuntimeCapabilitiesForKotlinUseAndroidHostClass(t *testing.T) {
 	caps := remoteRuntimeCapabilitiesForProject("/tmp/kotlin-app", "kotlin")
-	if len(caps.Targets) != 1 {
-		t.Fatalf("kotlin targets = %d, want 1", len(caps.Targets))
+	// android-emulator (default where the host can run it) +
+	// android-device (physical fallback, e.g. linux/arm64).
+	if len(caps.Targets) != 2 {
+		t.Fatalf("kotlin targets = %d, want 2 (android-emulator + android-device)", len(caps.Targets))
 	}
 	target := caps.Targets[0]
 	if target.ID != "android-emulator" {
-		t.Fatalf("kotlin target id = %q, want android-emulator", target.ID)
+		t.Fatalf("kotlin target[0] id = %q, want android-emulator", target.ID)
 	}
 	if !strings.Contains(target.RuntimeHostClass, "android") {
 		t.Fatalf("kotlin runtime host class = %q, want android suffix", target.RuntimeHostClass)
 	}
 	if target.RequiredCLI != "adb + emulator" {
 		t.Fatalf("kotlin required cli = %q", target.RequiredCLI)
+	}
+	if caps.Targets[1].ID != "android-device" {
+		t.Fatalf("kotlin target[1] id = %q, want android-device", caps.Targets[1].ID)
 	}
 }
 
@@ -97,15 +102,20 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	if !caps.RemoteRuntimeEligible {
 		t.Fatal("flutter should be remote-runtime eligible")
 	}
-	if len(caps.Targets) != 2 {
-		t.Fatalf("flutter targets = %d, want 2 (android-emulator + ios-simulator)", len(caps.Targets))
+	if len(caps.Targets) != 3 {
+		t.Fatalf("flutter targets = %d, want 3 (android-emulator + android-device + ios-simulator)", len(caps.Targets))
 	}
-	ids := []string{caps.Targets[0].ID, caps.Targets[1].ID}
-	wantIDs := map[string]bool{"android-emulator": true, "ios-simulator": true}
-	for _, id := range ids {
-		if !wantIDs[id] {
-			t.Fatalf("unexpected flutter target id %q (got %v)", id, ids)
+	ids := []string{}
+	wantIDs := map[string]bool{"android-emulator": true, "android-device": true, "ios-simulator": true}
+	for _, tg := range caps.Targets {
+		ids = append(ids, tg.ID)
+		if !wantIDs[tg.ID] {
+			t.Fatalf("unexpected flutter target id %q (got %v)", tg.ID, ids)
 		}
+		delete(wantIDs, tg.ID)
+	}
+	if len(wantIDs) != 0 {
+		t.Fatalf("flutter caps missing targets %v (got %v)", wantIDs, ids)
 	}
 }
 

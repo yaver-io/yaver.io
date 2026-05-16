@@ -123,6 +123,10 @@ func buildWebRTCDoctorReport(ctx context.Context) WebRTCDoctorReport {
 	adbCheck := probeBinary(ctx, "adb", "version")
 	report.Checks = append(report.Checks, adbCheck)
 	report.Targets["android-emulator"] = adbCheck.OK
+	// Physical Android only needs adb too; whether a device is
+	// actually plugged in is probed at session-create time
+	// (probeAndroidDeviceTarget), not here.
+	report.Targets["android-device"] = adbCheck.OK
 
 	// xcrun — required for the iOS target on macOS. Linux/WSL
 	// hosts get a "not applicable" line so the report doesn't look
@@ -230,7 +234,7 @@ func printWebRTCDoctorReport(r WebRTCDoctorReport) {
 	}
 	fmt.Println()
 	fmt.Println("Targets:")
-	for _, target := range []string{"android-emulator", "ios-simulator"} {
+	for _, target := range []string{"android-emulator", "android-device", "ios-simulator"} {
 		ok, present := r.Targets[target]
 		mark := "✗"
 		if ok {

@@ -72,12 +72,14 @@ type remoteRuntimeControlRequest struct {
 	X      int    `json:"x,omitempty"`
 	Y      int    `json:"y,omitempty"`
 	// Swipe end-point + duration. Used when Action == "swipe".
-	X2         int `json:"x2,omitempty"`
-	Y2         int `json:"y2,omitempty"`
-	DurationMs int `json:"durationMs,omitempty"`
+	X2         int    `json:"x2,omitempty"`
+	Y2         int    `json:"y2,omitempty"`
+	DurationMs int    `json:"durationMs,omitempty"`
 	Text       string `json:"text,omitempty"`
 	Key        string `json:"key,omitempty"`
 }
+
+const remoteRuntimeMaxJPEGDataChannelBytes = 60 * 1024
 
 func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, error) {
 	session, ok := m.Get(sessionID)
@@ -106,6 +108,12 @@ func (m *RemoteRuntimeManager) Attach(sessionID string) (RemoteRuntimeSession, e
 	case "android-emulator":
 		driver := &testkit.AndroidEmuDriver{}
 		deviceID, err = driver.Boot(ctx)
+	case "android-device":
+		// No AVD to boot — a physical device is already attached.
+		// Resolve its adb serial; everything downstream (capture,
+		// dims, control) is serial-generic and shared with the
+		// emulator path.
+		deviceID, err = resolveAttachedAndroidDeviceSerial(ctx)
 	default:
 		err = fmt.Errorf("unknown remote runtime target %q", session.TargetID)
 	}
@@ -234,13 +242,11 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 		return RemoteRuntimeSession{}, webrtc.SessionDescription{}, fmt.Errorf("remote runtime state missing")
 	}
 
-	// Auto-detect the desired transport from the offer SDP. A
-	// browser viewer that wants RTP video calls
-	// `pc.addTransceiver("video", { direction: "recvonly" })` before
-	// generating its offer, which puts an `m=video` line in the SDP.
-	// Old viewers (no video transceiver) skip the RTP path
-	// entirely — same behavior as before this change.
-	wantVideo := strings.Contains(offer.SDP, "m=video") && agentCanEncodeRTPH264(session.TargetID)
+	// Auto-detect the desired transport through the streamer facade.
+	// Browser/headless viewers always use the same signaling surface;
+	// the selected streamer decides whether the underlying capture is
+	// RTP H.264, WebRTC JPEG data-channel, or a future backend.
+	streamer := selectRemoteRuntimeStreamer(session.TargetID, offer.SDP)
 
 	// Phase-9 fan-out: if there's already an active video track AND
 	// the new offer also wants RTP, attach this offer as an
@@ -253,7 +259,7 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 	live.mu.Lock()
 	existingTrack := live.videoTrack
 	live.mu.Unlock()
-	if !wantVideo {
+	if !streamer.UsesRTP() {
 		// JPEG-DC offer arriving — close any existing peers (legacy
 		// single-viewer behavior). Same as pre-fan-out code path.
 		live.closePeer()
@@ -270,37 +276,12 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 		framesDC   *webrtc.DataChannel
 		videoTrack *webrtc.TrackLocalStaticSample
 	)
-	if wantVideo {
-		// Reuse the existing track if one is already running so all
-		// peers consume the same encoded H.264 bitstream. Only the
-		// FIRST RTP peer creates the track + boots the pump; later
-		// peers just AddTrack onto the existing one.
-		if existingTrack != nil {
-			videoTrack = existingTrack
-		} else {
-			track, terr := webrtc.NewTrackLocalStaticSample(
-				webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000},
-				"yaver-runtime", "yaver-stream",
-			)
-			if terr != nil {
-				_ = pc.Close()
-				return session, webrtc.SessionDescription{}, fmt.Errorf("create h264 track: %w", terr)
-			}
-			videoTrack = track
-		}
-		if _, terr := pc.AddTrack(videoTrack); terr != nil {
-			_ = pc.Close()
-			return session, webrtc.SessionDescription{}, fmt.Errorf("add track: %w", terr)
-		}
-		negotiatedTransport = "webrtc-rtp-h264-v1"
-	} else {
-		dc, derr := pc.CreateDataChannel("frames", nil)
-		if derr != nil {
-			_ = pc.Close()
-			return session, webrtc.SessionDescription{}, derr
-		}
-		framesDC = dc
+	videoTrack, framesDC, err = streamer.ConfigurePeer(pc, live, existingTrack)
+	if err != nil {
+		_ = pc.Close()
+		return session, webrtc.SessionDescription{}, err
 	}
+	negotiatedTransport = streamer.Transport()
 
 	eventsDC, err := pc.CreateDataChannel("events", nil)
 	if err != nil {
@@ -352,18 +333,10 @@ func (m *RemoteRuntimeManager) ApplyWebRTCOffer(sessionID string, offer webrtc.S
 			track := live.videoTrack
 			pumpRunning := live.videoPump != nil
 			live.mu.Unlock()
-			if track != nil {
-				if !pumpRunning {
-					pump := newVideoTrackPump(live.targetID, live.deviceID, track, func(ev map[string]any) {
-						live.sendEventJSON(ev)
-					})
-					live.mu.Lock()
-					live.videoPump = pump
-					live.mu.Unlock()
-					pump.Start(context.Background())
-				}
+			if track != nil && pumpRunning {
+				// Already streaming through the shared RTP pump.
 			} else {
-				live.startFramePump(m)
+				streamer.Start(context.Background(), live, m)
 			}
 			live.sendEventJSON(map[string]any{
 				"type":     "session",
@@ -539,7 +512,7 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 		if err := driver.Screenshot(ctx, deviceID, pngPath); err != nil {
 			return nil, 0, 0, err
 		}
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		driver := &testkit.AndroidEmuDriver{}
 		if err := driver.Screenshot(ctx, deviceID, pngPath); err != nil {
 			return nil, 0, 0, err
@@ -560,8 +533,8 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 	width := bounds.Dx()
 	height := bounds.Dy()
 	resized := img
-	if width > 900 {
-		dstW := 900
+	if width > 720 {
+		dstW := 720
 		dstH := int(float64(height) * (float64(dstW) / float64(width)))
 		dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 		xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, bounds, xdraw.Over, nil)
@@ -570,16 +543,29 @@ func (live *remoteRuntimeLiveState) captureJPEGFrame(ctx context.Context) ([]byt
 		height = dstH
 	}
 
-	var out bytes.Buffer
-	if err := jpeg.Encode(&out, resized, &jpeg.Options{Quality: 60}); err != nil {
+	payload, err := encodeRemoteRuntimeJPEG(resized)
+	if err != nil {
 		return nil, 0, 0, err
 	}
-	payload := out.Bytes()
 	live.mu.Lock()
 	live.lastFrame = append(live.lastFrame[:0], payload...)
 	live.lastFrameAt = time.Now().UTC()
 	live.mu.Unlock()
 	return payload, width, height, nil
+}
+
+func encodeRemoteRuntimeJPEG(img image.Image) ([]byte, error) {
+	quality := 55
+	for {
+		var out bytes.Buffer
+		if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: quality}); err != nil {
+			return nil, err
+		}
+		if out.Len() <= remoteRuntimeMaxJPEGDataChannelBytes || quality <= 35 {
+			return out.Bytes(), nil
+		}
+		quality -= 10
+	}
 }
 
 func (m *RemoteRuntimeManager) CaptureFrame(sessionID string) (RemoteRuntimeSession, []byte, error) {
@@ -690,7 +676,7 @@ func (live *remoteRuntimeLiveState) tap(ctx context.Context, x, y int) error {
 	switch targetID {
 	case "ios-simulator":
 		return (&testkit.IOSSimDriver{}).Tap(ctx, deviceID, x, y)
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return (&testkit.AndroidEmuDriver{}).Tap(ctx, deviceID, x, y)
 	default:
 		return fmt.Errorf("unsupported target %q", targetID)
@@ -712,7 +698,7 @@ func (live *remoteRuntimeLiveState) swipe(ctx context.Context, x1, y1, x2, y2, d
 	deviceID := live.deviceID
 	live.mu.Unlock()
 	switch targetID {
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return (&testkit.AndroidEmuDriver{}).Swipe(ctx, deviceID, x1, y1, x2, y2, durationMs)
 	case "ios-simulator":
 		return fmt.Errorf("swipe is not implemented for ios-simulator yet — drop in WDA or cliclick path in a follow-up phase")
@@ -732,7 +718,7 @@ func (live *remoteRuntimeLiveState) text(ctx context.Context, text string) error
 	switch targetID {
 	case "ios-simulator":
 		return (&testkit.IOSSimDriver{}).SendText(ctx, deviceID, text)
-	case "android-emulator":
+	case "android-emulator", "android-device":
 		return (&testkit.AndroidEmuDriver{}).Text(ctx, deviceID, text)
 	default:
 		return fmt.Errorf("unsupported target %q", targetID)
@@ -744,8 +730,8 @@ func (live *remoteRuntimeLiveState) key(ctx context.Context, key string) error {
 	targetID := live.targetID
 	deviceID := live.deviceID
 	live.mu.Unlock()
-	if targetID != "android-emulator" {
-		return fmt.Errorf("%s is only supported for Android emulator sessions right now", key)
+	if targetID != "android-emulator" && targetID != "android-device" {
+		return fmt.Errorf("%s is only supported for Android sessions right now", key)
 	}
 	driver := &testkit.AndroidEmuDriver{}
 	keycode, ok := androidKeycodeForName(key)
