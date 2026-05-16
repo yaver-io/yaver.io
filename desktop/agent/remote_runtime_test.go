@@ -57,12 +57,14 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 		t.Skip("linux-only expectation")
 	}
 	caps := remoteRuntimeCapabilitiesForProject("/tmp/swift-app", "swift")
-	if len(caps.Targets) != 1 {
-		t.Fatalf("swift targets = %d, want 1", len(caps.Targets))
+	// ios-simulator (default) + ios-device (physical, WDA). Both
+	// disabled on non-macOS — Swift/iOS needs a Mac either way.
+	if len(caps.Targets) != 2 {
+		t.Fatalf("swift targets = %d, want 2 (ios-simulator + ios-device)", len(caps.Targets))
 	}
 	target := caps.Targets[0]
 	if target.ID != "ios-simulator" {
-		t.Fatalf("swift target id = %q, want ios-simulator", target.ID)
+		t.Fatalf("swift target[0] id = %q, want ios-simulator", target.ID)
 	}
 	if target.RuntimeHostClass != "macos-ios" {
 		t.Fatalf("swift runtime host class = %q, want macos-ios", target.RuntimeHostClass)
@@ -72,6 +74,10 @@ func TestRemoteRuntimeCapabilitiesForSwiftOnLinuxRequiresMacHost(t *testing.T) {
 	}
 	if !strings.Contains(target.Reason, "macOS host") {
 		t.Fatalf("swift disabled reason = %q, want macOS host guidance", target.Reason)
+	}
+	dev := caps.Targets[1]
+	if dev.ID != "ios-device" || dev.Enabled || !strings.Contains(dev.Reason, "macOS") {
+		t.Fatalf("swift target[1] should be a disabled ios-device w/ macOS reason, got %+v", dev)
 	}
 }
 
@@ -102,11 +108,11 @@ func TestRemoteRuntimeCapabilitiesForFlutterExposesBothTargets(t *testing.T) {
 	if !caps.RemoteRuntimeEligible {
 		t.Fatal("flutter should be remote-runtime eligible")
 	}
-	if len(caps.Targets) != 3 {
-		t.Fatalf("flutter targets = %d, want 3 (android-emulator + android-device + ios-simulator)", len(caps.Targets))
+	if len(caps.Targets) != 4 {
+		t.Fatalf("flutter targets = %d, want 4 (android-emulator + android-device + ios-simulator + ios-device)", len(caps.Targets))
 	}
 	ids := []string{}
-	wantIDs := map[string]bool{"android-emulator": true, "android-device": true, "ios-simulator": true}
+	wantIDs := map[string]bool{"android-emulator": true, "android-device": true, "ios-simulator": true, "ios-device": true}
 	for _, tg := range caps.Targets {
 		ids = append(ids, tg.ID)
 		if !wantIDs[tg.ID] {

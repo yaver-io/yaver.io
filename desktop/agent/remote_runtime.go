@@ -188,7 +188,13 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 	case ExecutionModeNativeWebRTC:
 		switch strings.ToLower(strings.TrimSpace(framework)) {
 		case "swift":
-			caps.Targets = []RemoteRuntimeTarget{probeIOSSimulatorTarget()}
+			// Simulator first (default on a Mac); physical iPhone
+			// second (real-hardware fidelity, or the only iOS path
+			// when no sim is usable). Capability-probed.
+			caps.Targets = []RemoteRuntimeTarget{
+				probeIOSSimulatorTarget(),
+				probeIOSDeviceTarget(),
+			}
 		case "kotlin":
 			// Emulator first (default where the host can run it),
 			// physical device second (the only path on a host with no
@@ -212,6 +218,7 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 				probeAndroidEmulatorTarget(),
 				probeAndroidDeviceTarget(),
 				probeIOSSimulatorTarget(),
+				probeIOSDeviceTarget(),
 			}
 		}
 	}

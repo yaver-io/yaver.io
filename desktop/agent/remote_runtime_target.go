@@ -66,6 +66,8 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 		return androidEmulatorTarget{}, nil
 	case "android-device":
 		return androidDeviceTarget{}, nil
+	case "ios-device":
+		return iosDeviceTarget{}, nil
 	}
 	return nil, fmt.Errorf("unknown remote runtime target %q", targetID)
 }

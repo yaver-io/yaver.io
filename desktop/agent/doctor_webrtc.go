@@ -135,6 +135,11 @@ func buildWebRTCDoctorReport(ctx context.Context) WebRTCDoctorReport {
 		xcrunCheck := probeBinary(ctx, "xcrun", "--version")
 		report.Checks = append(report.Checks, xcrunCheck)
 		report.Targets["ios-simulator"] = xcrunCheck.OK
+		// ios-device needs xcrun (devicectl) too; whether a device is
+		// attached + WebDriverAgent is reachable is probed at
+		// session-create time (probeIOSDeviceTarget), not here —
+		// same model as android-device.
+		report.Targets["ios-device"] = xcrunCheck.OK
 		report.Checks = append(report.Checks, WebRTCDoctorCheck{
 			Name:   "ios-simulator RTP encode",
 			OK:     xcrunCheck.OK,
@@ -147,6 +152,7 @@ func buildWebRTCDoctorReport(ctx context.Context) WebRTCDoctorReport {
 			Detail: "n/a — iOS Simulator targets need a paired remote macOS builder. See `yaver builder --help` (Phase 5).",
 		})
 		report.Targets["ios-simulator"] = false
+		report.Targets["ios-device"] = false
 	}
 
 	// Optional: ffmpeg. Not required by the happy path but useful as
@@ -234,7 +240,7 @@ func printWebRTCDoctorReport(r WebRTCDoctorReport) {
 	}
 	fmt.Println()
 	fmt.Println("Targets:")
-	for _, target := range []string{"android-emulator", "android-device", "ios-simulator"} {
+	for _, target := range []string{"android-emulator", "android-device", "ios-simulator", "ios-device"} {
 		ok, present := r.Targets[target]
 		mark := "✗"
 		if ok {
