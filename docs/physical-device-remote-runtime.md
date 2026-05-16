@@ -1,7 +1,8 @@
 # Physical-Device Remote Runtime — Audit + Plan
 
-> **Status: design doc, NOT yet implemented (2026-05-16). Code is the
-> source of truth — re-grep every path before acting; this drifts.**
+> **Status: Phases 1–3 implemented + merged to main (2026-05-16).
+> Code is the source of truth — re-grep every path before acting;
+> this drifts.**
 > Parent: `docs/native-webrtc-web-streaming.md` (the emulator/simulator
 > pipeline this extends). Trigger: an ARM Linux cloud box
 > (linux/aarch64) can never run the Android emulator — Google ships no
@@ -9,6 +10,20 @@
 > `project_no_linux_arm64_android_emulator`), so streaming a third-party
 > app for testing must come from a **physical device** attached to some
 > agent host.
+>
+> **Implementation status:**
+> - Phase 1 ✅ `android-device` — `remote_runtime_android_device.go`
+>   (commit `2dd122e8`).
+> - Phase 2 ✅ `runtimeTarget` adapter — `remote_runtime_target.go`,
+>   9 switches collapsed (commit `38357c37`).
+> - Phase 3 ✅ `ios-device` via WebDriverAgent — `wda_client.go` +
+>   `remote_runtime_ios_device.go` (commit `ad5815f2`). WDA HTTP
+>   contract + control are tested against an httptest fake WDA.
+>   **Out-of-session remaining:** on-device pixel validation needs a
+>   signed WDA on a wired iPhone + a Mac running ffmpeg against the
+>   live MJPEG server. Until then `ios-device` capture is built but
+>   unproven on real hardware; control/dims/screenshot are contract-
+>   verified.
 
 ## 1. The "sync comm layer" already exists
 
