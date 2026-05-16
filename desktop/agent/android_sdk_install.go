@@ -132,13 +132,49 @@ func findAndroidToolPath(name string) string {
 	return ""
 }
 
+// emulatorHostSupported reports whether Google publishes an Android
+// Emulator host binary for the given GOOS/GOARCH. Google ships the
+// emulator only for linux-x86_64, darwin-x86_64, darwin-arm64 and
+// windows — there is NO linux-aarch64 build. On an aarch64 Linux host
+// `sdkmanager` has no `emulator` package at all, so requesting it
+// aborts the entire SDK install. This is independent of /dev/kvm:
+// even TCG software emulation needs the host binary to exist.
+func emulatorHostSupported(goos, goarch string) bool {
+	return !(goos == "linux" && goarch == "arm64")
+}
+
+// androidEmulatorHostSupported is emulatorHostSupported for the
+// running host.
+func androidEmulatorHostSupported() bool {
+	return emulatorHostSupported(runtime.GOOS, runtime.GOARCH)
+}
+
+// androidRuntimeSDKPackages is the sdkmanager package set for the
+// remote-runtime host. platform-tools (adb) and the build platform
+// are always useful — they back `yaver wire` native builds even where
+// the emulator can't run. emulator + system image are only added on
+// hosts that actually have a published emulator binary; adding them
+// on linux/arm64 makes `sdkmanager --install` fail the whole batch.
+func androidRuntimeSDKPackages() []string {
+	pkgs := []string{
+		"platform-tools",
+		fmt.Sprintf("platforms;android-%s", androidRemoteRuntimeAPILevel),
+	}
+	if androidEmulatorHostSupported() {
+		pkgs = append(pkgs, "emulator", androidSystemImagePackage())
+	}
+	return pkgs
+}
+
 func androidSystemImagePackage() string {
-	// Match the system image to the host's architecture — DO NOT pull
-	// x86_64 system images on an ARM64 Linux box. Cross-arch QEMU
-	// translation makes the emulator boot in 5+ minutes and run too
-	// slowly for Flutter/Kotlin reload cycles. Hetzner cax (Ampere
-	// Altra) hosts run ARM64-target ATD images natively at acceptable
-	// speed even under TCG (no /dev/kvm exposed on Hetzner cloud).
+	// Match the system image ABI to the host architecture. Apple
+	// Silicon (darwin/arm64) runs arm64-v8a images natively under
+	// HVF; x86-64 hosts use x86_64 images. We never reach here on
+	// linux/arm64 — Google ships no emulator host binary for that
+	// arch (see emulatorHostSupported), so there'd be nothing to run
+	// an arm64-v8a image with. Pulling the wrong ABI forces cross-arch
+	// QEMU translation (5+ min boots, unusable reload cycles), so this
+	// must stay arch-matched.
 	arch := "x86_64"
 	if runtime.GOARCH == "arm64" {
 		arch = "arm64-v8a"
@@ -214,12 +250,7 @@ func installAndroidSDKRuntime(ctx context.Context, progress func(string)) error 
 		return err
 	}
 
-	packages := []string{
-		"platform-tools",
-		"emulator",
-		fmt.Sprintf("platforms;android-%s", androidRemoteRuntimeAPILevel),
-		androidSystemImagePackage(),
-	}
+	packages := androidRuntimeSDKPackages()
 	logf("Installing Android SDK packages for remote runtime …")
 	if err := runAndroidSDKManager(ctx, "--licenses"); err != nil {
 		return err
@@ -230,6 +261,15 @@ func installAndroidSDKRuntime(ctx context.Context, progress func(string)) error 
 	}
 	if err := ensureAndroidSDKWrappers(); err != nil {
 		return err
+	}
+	if !androidEmulatorHostSupported() {
+		logf("Android emulator host binary is not published for " +
+			runtime.GOOS + "/" + runtime.GOARCH + " — installed adb + " +
+			"platform tools only. The android-emulator remote-runtime " +
+			"target stays disabled here; stream from a physical device " +
+			"(`yaver wire`) or a macOS / x86-64-Linux host instead.")
+		logf("Android SDK remote-runtime host tools ready (no emulator).")
+		return nil
 	}
 	if err := ensureDefaultYaverAVD(ctx, progress); err != nil {
 		return err

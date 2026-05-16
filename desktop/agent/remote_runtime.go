@@ -293,7 +293,13 @@ func probeAndroidEmulatorTarget() RemoteRuntimeTarget {
 	}
 	if findAndroidToolPath("emulator") == "" {
 		target.Enabled = false
-		target.Reason = "Android emulator binary not found."
+		if !androidEmulatorHostSupported() {
+			target.Reason = "Google ships no Android emulator binary for " +
+				runtime.GOOS + "/" + runtime.GOARCH + ". Stream from a physical " +
+				"device (`yaver wire`) or a macOS / x86-64-Linux host."
+		} else {
+			target.Reason = "Android emulator binary not found. Run `yaver install remote-runtime`."
+		}
 		return target
 	}
 	target.Enabled = true

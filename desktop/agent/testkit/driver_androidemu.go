@@ -55,15 +55,15 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 	}
 
 	// Spawn the emulator in the background and wait for adb to see it.
-	// On Hetzner cloud (and most VPS providers) /dev/kvm is not
-	// exposed to guests — the emulator falls back to QEMU TCG (pure
-	// software emulation) automatically when KVM is unavailable, BUT
-	// only when we tell it explicitly with `-accel tcg` plus a
-	// modest `-cores 2` cap (TCG eats CPU and starves the agent +
-	// ffmpeg encoder otherwise). When KVM IS available (devs running
-	// on bare metal or kvm-passthrough enabled hosts) we let the
-	// emulator's default acceleration win — it auto-picks KVM and
-	// boots in ~10s instead of ~90s.
+	// Many cloud / VPS hosts don't expose /dev/kvm to guests. Without
+	// KVM the emulator must use QEMU TCG (pure software emulation); we
+	// pass `-accel tcg` explicitly plus a modest `-cores 2` cap (TCG
+	// is CPU-hungry and otherwise starves the agent + encoder). With
+	// KVM (bare metal / kvm-passthrough) we let the emulator's default
+	// acceleration win — it auto-picks KVM (~10s boot vs the minutes
+	// TCG takes). NOTE: this path is unreachable on linux/arm64 —
+	// Google publishes no emulator host binary for that arch, so
+	// Available() fails first. TCG only ever matters on x86-64 Linux.
 	args := []string{"-avd", d.AVD, "-no-snapshot-save", "-no-window", "-no-boot-anim", "-noaudio"}
 	if !kvmAvailable() {
 		args = append(args, "-accel", "tcg", "-cores", "2")
@@ -86,13 +86,11 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 }
 
 // kvmAvailable reports whether /dev/kvm is exposed to this process.
-// Hetzner cloud doesn't expose nested KVM, so the emulator on
-// yaver-test-ephemeral runs under TCG software emulation; that's
-// slower (~90s cold boot vs ~10s with KVM) but correct on aarch64
-// host running aarch64 target. Bare-metal Linux hosts and macOS
-// (which uses HVF, not KVM-named) take the default-acceleration
-// path. Stat is cheap; we don't memo since this is called once
-// per emulator boot.
+// Most x86 cloud VMs don't expose nested KVM, so the emulator falls
+// back to TCG software emulation there (minutes-long cold boot vs
+// ~10s with KVM). Bare-metal Linux hosts and macOS (HVF, not
+// KVM-named) take the default-acceleration path. Stat is cheap; not
+// memoised since this is called once per emulator boot.
 func kvmAvailable() bool {
 	if _, err := os.Stat("/dev/kvm"); err == nil {
 		return true
