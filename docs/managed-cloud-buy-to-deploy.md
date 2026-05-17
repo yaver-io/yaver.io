@@ -37,10 +37,16 @@ web + builds + deploy** and **works on the current code today**
 D0, no new infra — fastest path to a real buyable product.
 
 The **KVM / emulator box** (Flutter/Kotlin-native WebRTC, Android
-emulator) is a **deferred premium SKU** — Phase D0 (a Hetzner Robot/
-bare-metal provisioner: different API, non-instant, ~€30–40+/mo) is
-**out of the launch path**, revisited after the Cloud-box product
-ships. GPU tier unchanged. iOS = Mac SKU, deferred (Linux impossible).
+emulator) is the premium SKU. Phase D0 **scaffolding shipped**
+(`cloud_provisioner_robot.go`, commit `6eea3461`,
+`HostHetznerRobot`): fail-closed — needs `HROBOT_USER`/`HROBOT_PASS`
+env + `confirmPaidOrder` + `live`; dry-run otherwise; `live` hard-
+fails as "unvalidated" rather than fake-succeed; byte-for-byte no-op
+until opted in. The **live server-market order + installimage + KVM
+verify is intentionally NOT automated** — it's a paid, account-
+specific, irreversible action the owner wires + validates against
+their own Robot account. GPU tier unchanged. iOS = Mac SKU, deferred
+(Linux impossible).
 
 ## 1. Audit — backend is wired, the front door is missing
 
