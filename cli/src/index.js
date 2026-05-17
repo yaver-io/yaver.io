@@ -8,6 +8,7 @@ const { modules } = require('./commands/modules');
 const { reset } = require('./commands/reset');
 const { status } = require('./commands/status');
 const { feedback } = require('./commands/feedback');
+const { deploy, isLocalDeployToken } = require('./commands/deploy');
 
 const PUSH_HELP = `
 yaver push — Push existing React Native projects to the Yaver mobile host
@@ -52,6 +53,19 @@ Push-to-device commands:
   yaver push devices                Scan LAN for Yaver mobile hosts
   yaver push reset                  Clear pushed bundle on the selected device
   yaver push status                 Show project + device push status
+
+Deploy commands (monorepo-aware; yaver.deploy.json + find/grep scan):
+  yaver deploy ios                  Mobile → TestFlight (RN/Expo, Flutter, Swift)
+  yaver deploy android              Mobile → Play internal (RN/Expo, Flutter, Kotlin)
+  yaver deploy convex               Deploy Convex backend (alias: backend)
+  yaver deploy supabase             Supabase db + edge functions (alias: backend)
+  yaver deploy cloudflare           Web/jamstack → Cloudflare (alias: frontend, front)
+  yaver deploy docker               Docker compose/image (alias: container, compose)
+  yaver deploy npm                  Publish detected npm library (alias: lib, publish)
+  yaver deploy mobile               ios + android
+  yaver deploy all                  backend → frontend → mobile (npm/docker excluded)
+  yaver deploy list                 Show resolved targets, framework + commands
+  yaver deploy <t> --dry-run        Print dir + command without running
 
 Feedback SDK commands (web and mobile SDKs are separate packages):
   yaver feedback init               Install the right feedback SDK for this project
@@ -163,6 +177,20 @@ async function runUnified(args) {
     // the Go binary can still wire up the SDK. Other subcommands (list, show,
     // fix, delete) fall through to the Go agent inside feedback() itself.
     await feedback(args.slice(1));
+    return;
+  }
+
+  if (command === 'deploy') {
+    // Friendly monorepo targets (ios/android/convex/cloudflare/
+    // mobile/all/aliases/list/--help) are handled locally. Legacy
+    // CI-trigger flags (-repo/-workflow/...) and future agent
+    // subcommands (generate/ship/runs/logs/diagnose) fall through to
+    // the Go agent untouched.
+    if (isLocalDeployToken(args[1], args)) {
+      await deploy(args.slice(1));
+      return;
+    }
+    await runAgentCommand(args);
     return;
   }
 
