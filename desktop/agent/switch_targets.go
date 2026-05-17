@@ -35,6 +35,14 @@ const (
 	// docs/managed-cloud-host-lifecycle.md Phase A); the API client
 	// in cloud_deploy.go always existed but was unwired 2026-04-28.
 	HostHetzner TargetHost = "hetzner"
+	// HostHetznerRobot is the premium KVM SKU: Hetzner dedicated/
+	// bare-metal via the Robot webservice (NOT the Cloud API — Cloud
+	// exposes no /dev/kvm anywhere, so it can't run the Android
+	// emulator for Flutter/Kotlin WebRTC). Ordering bare-metal is a
+	// paid, recurring, non-instant commitment — the provisioner is
+	// fail-closed (see cloud_provisioner_robot.go). Phase D0 /
+	// docs/managed-cloud-buy-to-deploy.md.
+	HostHetznerRobot TargetHost = "hetzner-robot"
 )
 
 type SwitchTarget struct {

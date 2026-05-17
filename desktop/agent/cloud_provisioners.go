@@ -35,6 +35,7 @@ func provisionerRegistry() map[TargetHost]provisioner {
 		HostSupabaseCloud: provisionSupabase,
 		HostVercel:        provisionVercel,
 		HostHetzner:       provisionHetzner,
+		HostHetznerRobot:  provisionHetznerRobot,
 	}
 }
 
