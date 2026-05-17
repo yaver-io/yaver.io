@@ -456,7 +456,7 @@ function AuthContent() {
             <button
               onClick={handlePasskeyLogin}
               disabled={passkeyLoading}
-              className={`flex w-full items-center justify-center gap-3 border border-cyan-400/40 bg-cyan-400/10 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-50 ${controlClass}`}
+              className={`flex w-full items-center justify-center gap-3 border text-sm font-semibold transition-colors disabled:opacity-50 border-cyan-600/40 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 dark:border-cyan-400/40 dark:bg-cyan-400/10 dark:text-cyan-100 dark:hover:border-cyan-300/60 dark:hover:bg-cyan-400/15 ${controlClass}`}
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" />
@@ -475,7 +475,7 @@ function AuthContent() {
             <button
               onClick={handlePasskeySignup}
               disabled={passkeyLoading || !email.trim()}
-              className={`flex w-full items-center justify-center gap-3 border border-cyan-400/40 bg-cyan-400/10 text-sm font-medium text-cyan-100 transition-colors hover:border-cyan-300/60 hover:bg-cyan-400/15 disabled:opacity-50 ${controlClass}`}
+              className={`flex w-full items-center justify-center gap-3 border text-sm font-semibold transition-colors disabled:opacity-50 border-cyan-600/40 bg-cyan-50 text-cyan-800 hover:bg-cyan-100 dark:border-cyan-400/40 dark:bg-cyan-400/10 dark:text-cyan-100 dark:hover:border-cyan-300/60 dark:hover:bg-cyan-400/15 ${controlClass}`}
             >
               <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" />

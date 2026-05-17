@@ -3405,7 +3405,7 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
                 .catch((e: any) => alert(`Failed to trigger update: ${e?.message ?? e}`));
             }}
             disabled={updating || updateStatus?.updating}
-            className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-200 hover:border-amber-400 hover:text-amber-100 disabled:opacity-50"
+            className="rounded-md border px-2.5 py-1 text-[11px] font-semibold disabled:opacity-50 border-amber-400 bg-amber-100 text-amber-800 hover:bg-amber-200 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200 dark:hover:border-amber-400 dark:hover:text-amber-100"
             title={`Update this machine from ${currentVersion || "current"} to ${latestVersion}. The agent may restart and disconnect briefly.`}
           >
             {updating || updateStatus?.updating ? "Updating..." : `Update to v${String(latestVersion).replace(/^v/i, "")}`}
