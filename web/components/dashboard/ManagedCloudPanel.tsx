@@ -73,9 +73,21 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     }
   }, [token]);
 
+  // Provision is async (LemonSqueezy webhook → Hetzner → cloud-init →
+  // agent heartbeat). Poll while the panel is open so a freshly
+  // bought/adopted box flips provisioning → active without a manual
+  // refresh. 8s is gentle; stops when the panel is closed.
   useEffect(() => {
-    if (open) void load();
+    if (!open) return;
+    void load();
+    const iv = setInterval(() => void load(), 8000);
+    return () => clearInterval(iv);
   }, [open, load]);
+
+  const provisioning = machines.filter(
+    (m) => m.status === "provisioning" || m.status === "stopping",
+  ).length;
+  const active = machines.filter((m) => m.status === "active").length;
 
   async function post(path: string, body: Record<string, unknown>) {
     setBusy(true);
@@ -186,6 +198,13 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
               {busy ? "…" : "Adopt as managed"}
             </button>
           </div>
+
+          {machines.length > 0 ? (
+            <p className="text-[11px] text-slate-500 dark:text-surface-400">
+              {active} active · {provisioning} provisioning
+              {provisioning > 0 ? " — auto-refreshing every 8s, your box appears here when ready" : ""}
+            </p>
+          ) : null}
 
           <div className="space-y-2">
             {machines.length === 0 ? (
