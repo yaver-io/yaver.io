@@ -55,6 +55,66 @@ type InstallEntry = { name: string; installed: boolean; description: string };
 // `cloud_checkout` ops verb (authed Convex proxy; token never leaves
 // the agent) and opens the LemonSqueezy URL. Owner/preview-gated
 // server-side; non-owner = a verbatim 403.
+// Per-managed-machine actions (D3 git connect/push, D4 reload/web-
+// preview, D5 deploy). Targets the box's EXPLICIT deviceId only —
+// never guessed. P2P via the agent ops verbs; tokens never Convex.
+function ManagedMachineActionsMobile({ deviceId, c }: { deviceId?: string; c: ReturnType<typeof useColors> }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [out, setOut] = useState<string | null>(null);
+  const [sess, setSess] = useState<{ id: string; code: string } | null>(null);
+  if (!deviceId) {
+    return <Text style={{ fontSize: 10, color: c.textMuted }}>actions appear once the box registers (deviceId pending)</Text>;
+  }
+  const run = async (label: string, verb: string, payload: Record<string, unknown>) => {
+    setBusy(label);
+    setOut(null);
+    const r = await quicClient.callOps(verb, { ...payload, deviceId });
+    setBusy(null);
+    if (r?.ok === false || (r as any)?.error) { setOut(`✗ ${(r as any)?.error || "failed"}`); return r; }
+    setOut(`✓ ${label}`);
+    return r;
+  };
+  const connect = async (provider: "github" | "gitlab") => {
+    const r = await run(`connect ${provider}`, "git_connect", { provider });
+    const init = (r as any)?.initial;
+    if (init?.verification_uri && init?.user_code) {
+      setSess({ id: init.sessionId, code: init.user_code });
+      Linking.openURL(init.verification_uri).catch(() => {});
+      setOut(`open browser, enter ${init.user_code}, then Check`);
+    }
+  };
+  const check = async () => {
+    if (!sess) return;
+    setBusy("check");
+    const r = await quicClient.callOps("git_connect_status", { sessionId: sess.id, deviceId });
+    setBusy(null);
+    const st = (r as any)?.initial?.state;
+    setOut(st === "done" ? "✓ git connected" : `state: ${st ?? "?"}`);
+    if (st === "done") setSess(null);
+  };
+  const Btn = ({ id, label, onPress }: { id: string; label: string; onPress: () => void }) => (
+    <Pressable
+      disabled={busy !== null}
+      onPress={onPress}
+      style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: c.border, opacity: busy ? 0.5 : 1 }}
+    >
+      <Text style={{ fontSize: 10, color: c.textMuted }}>{busy === id ? "…" : label}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+      <Btn id="connect github" label="Connect GitHub" onPress={() => void connect("github")} />
+      <Btn id="connect gitlab" label="Connect GitLab" onPress={() => void connect("gitlab")} />
+      {sess ? <Btn id="check" label={`✓ authorized ${sess.code}`} onPress={() => void check()} /> : null}
+      <Btn id="push git" label="Push git" onPress={() => void run("push git", "git_push", {})} />
+      <Btn id="reload" label="Reload" onPress={() => void run("reload", "reload", {})} />
+      <Btn id="web preview" label="Web preview" onPress={() => void run("web preview", "web-preview", {})} />
+      <Btn id="deploy" label="Deploy" onPress={() => void run("deploy", "deploy", {})} />
+      {out ? <Text style={{ fontSize: 10, color: out.startsWith("✗") ? "#fca5a5" : c.textMuted }}>{out}</Text> : null}
+    </View>
+  );
+}
+
 function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -115,16 +175,19 @@ function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
       {machines.length > 0 ? (
         <View style={{ gap: 4, marginTop: 4 }}>
           {machines.map((m: any) => (
-            <View key={String(m?._id)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={{ fontSize: 10, fontWeight: "700", color: m?.status === "error" ? "#fca5a5" : "#7dd3fc" }}>
-                {String(m?.origin ?? "managed").toUpperCase()}
-              </Text>
-              <Text style={{ fontSize: 11, color: c.textMuted }}>
-                srv {String(m?.hetznerServerId ?? "—")} · {String(m?.region ?? "eu")} ·{" "}
-                <Text style={{ color: m?.status === "error" ? "#fca5a5" : c.textMuted, fontWeight: "600" }}>
-                  {String(m?.status ?? "?")}
+            <View key={String(m?._id)} style={{ gap: 4 }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text style={{ fontSize: 10, fontWeight: "700", color: m?.status === "error" ? "#fca5a5" : "#7dd3fc" }}>
+                  {String(m?.origin ?? "managed").toUpperCase()}
                 </Text>
-              </Text>
+                <Text style={{ fontSize: 11, color: c.textMuted }}>
+                  srv {String(m?.hetznerServerId ?? "—")} · {String(m?.region ?? "eu")} ·{" "}
+                  <Text style={{ color: m?.status === "error" ? "#fca5a5" : c.textMuted, fontWeight: "600" }}>
+                    {String(m?.status ?? "?")}
+                  </Text>
+                </Text>
+              </View>
+              <ManagedMachineActionsMobile deviceId={m?.deviceId} c={c} />
             </View>
           ))}
           {machines.some((m: any) => m?.status === "provisioning") ? (
