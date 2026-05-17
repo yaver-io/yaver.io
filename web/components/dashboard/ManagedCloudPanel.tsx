@@ -32,6 +32,33 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [machineType, setMachineType] = useState("cpu");
+  const [region, setRegion] = useState("eu");
+
+  async function buy() {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await fetch(`${CONVEX_URL}/billing/yaver-cloud/checkout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ machineType, region }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.url) {
+        // 403 = private preview (not owner-allowlisted); 500 =
+        // LemonSqueezy env not configured. Surface verbatim.
+        setError(data?.error || `checkout failed: ${res.status}`);
+        return;
+      }
+      window.location.href = data.url; // → LemonSqueezy
+    } catch (e: any) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const load = useCallback(async () => {
     if (!token) return;
@@ -88,7 +115,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between text-left text-sm font-semibold text-slate-700 dark:text-surface-200"
       >
-        <span>☁ Managed cloud (owner) — adopt / decommission</span>
+        <span>☁ Managed cloud — buy / adopt / decommission</span>
         <span className="text-xs opacity-60">{open ? "▾" : "▸"}</span>
       </button>
 
@@ -100,6 +127,49 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             Hetzner / hardware). Adopt imitates a managed purchase for an
             existing box; Decommission snapshots then deletes it.
           </p>
+
+          <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
+            <p className="mb-2 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+              Buy a managed box
+            </p>
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="text-[11px] text-slate-500 dark:text-surface-400">
+                Machine
+                <select
+                  value={machineType}
+                  onChange={(e) => setMachineType(e.target.value)}
+                  className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
+                >
+                  <option value="cpu">CPU — React Native/Hermes + web + deploy (default)</option>
+                  <option value="gpu">GPU — AI / Ollama workloads</option>
+                  <option value="kvm" disabled>Flutter/Kotlin emulator — coming soon</option>
+                  <option value="ios" disabled>iOS (Mac) — coming soon</option>
+                </select>
+              </label>
+              <label className="text-[11px] text-slate-500 dark:text-surface-400">
+                Region
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
+                >
+                  <option value="eu">eu</option>
+                  <option value="us">us</option>
+                </select>
+              </label>
+              <button
+                disabled={busy}
+                onClick={() => void buy()}
+                className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+              >
+                {busy ? "…" : "Buy → checkout"}
+              </button>
+            </div>
+            <p className="mt-1.5 text-[10px] text-slate-400">
+              Opens LemonSqueezy; the box auto-provisions on payment. Private
+              preview — non-owner accounts get a 403 until launch.
+            </p>
+          </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <input

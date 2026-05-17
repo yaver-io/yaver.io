@@ -13,7 +13,15 @@ package main
 // handler in-process rather than pointing at the domain tool. For
 // now the pointer pattern is enough for an agent to wire a flow.
 
-import "encoding/json"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
 
 type opsProvisionPayload struct {
 	Plan    string `json:"plan"`
@@ -107,6 +115,72 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_checkout",
+		Description: "Start buying a Yaver managed-cloud box: returns a LemonSqueezy checkout URL to open in a browser. machineType=cpu (RN/Hermes + web + deploy, default) | gpu. Proxies the Convex /billing/yaver-cloud/checkout route with the user's token; the token never appears in the payload.",
+		Schema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"machineType": map[string]interface{}{"type": "string", "description": "cpu (default) | gpu"},
+				"region":      map[string]interface{}{"type": "string", "description": "eu (default) | us"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudCheckoutHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudCheckoutHandler proxies the Convex checkout route so an
+// agent can hand the user a pay link. The Convex route is owner/
+// preview-gated (isCloudPreviewUser) + needs LemonSqueezy env — a 403
+// or config error is surfaced verbatim, never swallowed.
+func opsCloudCheckoutHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		MachineType string `json:"machineType"`
+		Region      string `json:"region"`
+	}
+	if len(payload) > 0 {
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+		}
+	}
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.ConvexSiteURL) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+		return OpsResult{OK: false, Code: "not_authed", Error: "agent not authed (missing convex site url / token) — run `yaver auth`"}
+	}
+	body, _ := json.Marshal(map[string]string{
+		"machineType": p.MachineType,
+		"region":      p.Region,
+	})
+	req, err := newBearerRequest("POST", cfg.ConvexSiteURL+"/billing/yaver-cloud/checkout", cfg.AuthToken, bytes.NewReader(body))
+	if err != nil {
+		return OpsResult{OK: false, Code: "request_error", Error: err.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return OpsResult{OK: false, Code: "convex_unreachable", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return OpsResult{OK: false, Code: "checkout_failed", Error: fmt.Sprintf("checkout HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))}
+	}
+	var out struct {
+		URL  string `json:"url"`
+		Mode string `json:"mode"`
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out.URL == "" {
+		return OpsResult{OK: false, Code: "checkout_failed", Error: "checkout returned no url"}
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{
+		"checkoutUrl": out.URL,
+		"mode":        out.Mode,
+		"hint":        "open checkoutUrl in a browser to pay; the box auto-provisions on the LemonSqueezy webhook",
+	}}
 }
 
 // opsRecycleHandler runs the BYO host-recycle state machine in-process
