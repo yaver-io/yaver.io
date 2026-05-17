@@ -51,7 +51,7 @@ What already exists:
 | Device register | EXISTS (`/devices/bootstrap-pending` + claim) |
 | Set primary | EXISTS (`yaver primary set`) |
 | Lifecycle orchestration (old→new→cutover→reap) | MISSING |
-| Web-UI trigger | MISSING (no managed-cloud surface) |
+| Web + mobile UI trigger | MISSING (no managed-cloud surface in either) |
 | Token handling | OK by design (vault, agent-side only) |
 
 **Biggest gap:** there is no orchestration that sequences
@@ -102,13 +102,31 @@ snapshot old → `hetznerCreateServer` (cloud-init: npm install +
 reachable as same user → snapshot+delete old. Self-destruct guard,
 idempotent, rollback, orphan label/reaper. Dry-run mode.
 
-### Phase C — web managed-cloud surface (task #11, needs B)
-`DevicesView.tsx`: "Provision new box" + per-card
-"Recycle / Decommission" (cloud devices only). Web → relay → agent
-`/ops` (or `/managed-cloud/recycle`); progress streamed
-(create→bootstrap→claim→primary→old-deleted). Reuse
-`usePendingClaims()`. Confirm dialog + cost note on destroy. Zero
-infra IP/token in any Convex payload.
+### Phase C — web **and mobile** managed-cloud surface (task #11, needs B)
+Same agent contract (`/ops` verb `provision`/`destroy` or
+`/managed-cloud/recycle`) wired into **both** clients — the agent
+endpoint is the single source of truth; each UI is a thin trigger +
+progress view. Zero infra IP/token in any Convex payload; both
+clients reach the agent over their normal transport (web = relay
+only; mobile = LAN beacon → Convex-known IP → relay, per CLAUDE.md
+connection strategy).
+
+- **Web:** `web/app/dashboard/DevicesView.tsx` — "Provision new box"
+  + per-card "Recycle / Decommission" (cloud devices only). Reuse
+  `web/lib/use-devices.ts:626 usePendingClaims()` for the new box
+  appearing.
+- **Mobile:** `mobile/app/(tabs)/devices.tsx` +
+  `mobile/src/components/DeviceDetailsModal.tsx` — add the same
+  "Recycle / Decommission" action to the per-device modal (next to
+  PingRow) and a "Provision new box" entry; reuse the mobile
+  pending-claim path already wired in `devices.tsx`/`settings.tsx`
+  (`/devices/bootstrap-pending`). `mobile/src/context/DeviceContext.tsx`
+  is the data seam.
+
+Both surfaces: confirm dialog + cost note on destroy; progress
+streamed (create→bootstrap→claim→primary→old-snapshotted-deleted);
+self-destruct guard is enforced agent-side (Phase B) so neither UI
+can footgun it. Build once on the agent, wire twice.
 
 ## 5. Immediate bridge (today, no new code)
 
@@ -132,6 +150,9 @@ this sequence.
   `primary_cmd.go:109/832`
 - device register: `backend/convex/schema.ts:201/343`,
   `web/lib/use-devices.ts:626`
+- mobile UI seam: `mobile/app/(tabs)/devices.tsx`,
+  `mobile/src/components/DeviceDetailsModal.tsx`,
+  `mobile/src/context/DeviceContext.tsx`
 - privacy: `vault.go:26`, `convex_privacy_test.go`
 - CI scripts: `ci/hcloud/{create,delete,snapshot}-server.sh`,
   `ci/remote/bootstrap.sh`
