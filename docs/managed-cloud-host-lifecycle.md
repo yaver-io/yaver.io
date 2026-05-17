@@ -1,7 +1,13 @@
 # Managed-Cloud Host Lifecycle — Audit + Plan
 
-> **Status: Phase A + money-safety landed in code 2026-05-17 (not
-> prod-deployed). Code is the source of truth — re-grep; this drifts.**
+> **Status: Phases A+B+C + money-safety all landed 2026-05-17. Code
+> is the source of truth — re-grep; this drifts.** Phase A
+> `b71201c1`, money-safety `96c29a5c` (DEPLOYED to Convex prod
+> perceptive-minnow-557), cloud_destroy wiring `52dcee9c`, Phase B
+> host-recycle `bf4e0840` (5 guards unit-tested), Phase C web+mobile
+> recycle UI `ebefd462`. Remaining: real-infra end-to-end recycle is
+> the documented out-of-session step (logic+guards fully covered);
+> Convex-test harness coverage for the billing gate is test-debt.
 >
 > **Two distinct products — do not conflate:**
 > - **BYO / self-hosted** (agent): the *user's own* vault-backed
