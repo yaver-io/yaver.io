@@ -87,6 +87,47 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "recycle",
+		Description: "Recycle a BYO Hetzner box: create a fresh box, health-check it, then snapshot+delete the old one (zero-downtime; rolls back keeping the old box if the new one is unhealthy). Refuses to recycle the device this agent runs on. Destructive — confirm=true required; without it returns the plan (dry-run).",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"targetDeviceId", "oldServerId", "newName"},
+			"properties": map[string]interface{}{
+				"targetDeviceId": map[string]interface{}{"type": "string"},
+				"oldServerId":    map[string]interface{}{"type": "string", "description": "Hetzner numeric id of the box being retired (explicit — never fuzzy-matched)"},
+				"newName":        map[string]interface{}{"type": "string"},
+				"plan":           map[string]interface{}{"type": "string"},
+				"region":         map[string]interface{}{"type": "string"},
+				"confirm":        map[string]interface{}{"type": "boolean"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsRecycleHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsRecycleHandler runs the BYO host-recycle state machine in-process
+// (unlike provision/destroy which hand off to MCP tools — recycle is
+// the whole orchestration and its safety guards must run server-side,
+// never be re-implemented by each UI). Token is the user's vault
+// Hetzner account token, never a payload field.
+func opsRecycleHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	var req recycleRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	token := accountField(ProviderHetzner, "token")
+	if token == "" {
+		return OpsResult{OK: false, Code: "no_account", Error: "Hetzner not connected — /accounts/connect first (BYO token)"}
+	}
+	res := recycleHost(liveRecycleBackend{token: token}, req)
+	if !res.OK {
+		return OpsResult{OK: false, Code: "recycle_failed", Error: res.Error, Initial: res}
+	}
+	return OpsResult{OK: true, Initial: res}
 }
 
 func opsProvisionHandler(_ OpsContext, payload json.RawMessage) OpsResult {
