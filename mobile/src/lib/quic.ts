@@ -262,54 +262,6 @@ function normalizeHealthTarget(raw: any): HealthMonitorTarget {
   };
 }
 
-// Hybrid Mode — see desktop/agent/hybrid.go. The shapes are a 1:1
-// mirror of HybridSpec / HybridSubtask / HybridStepResult / HybridReport
-// so the mobile form maps cleanly onto the Go struct's JSON tags.
-export interface HybridRunRequest {
-  planner?: string;
-  implementer?: string;
-  model?: string;
-  baseUrl?: string;
-  workDir: string;
-  prompt: string;
-  maxSubtasks?: number;
-  timeoutSec?: number;
-}
-
-export interface HybridSubtask {
-  title: string;
-  files: string[];
-  prompt: string;
-}
-
-export interface HybridStepResult {
-  subtask: HybridSubtask;
-  status: "ok" | "error" | "skipped";
-  output?: string;
-  error?: string;
-  durationMs: number;
-}
-
-export interface HybridPlanResult {
-  spec: HybridRunRequest;
-  subtasks: HybridSubtask[];
-  planOutput?: string;
-}
-
-export interface HybridReport {
-  spec: HybridRunRequest;
-  subtasks: HybridSubtask[];
-  results: HybridStepResult[];
-  planOutput?: string;
-  planError?: string;
-  replanned?: boolean;
-  retries?: number;
-  startedAt: string;
-  finishedAt: string;
-  ok: boolean;
-  failedSteps: number;
-}
-
 export interface ConversationImportPlan {
   sourceLabel: string;
   sourceUrl?: string;
@@ -329,27 +281,6 @@ export interface ConversationImportPlan {
   assumptions?: string[];
   nextPrompt?: string;
   generatedPrompt: string;
-}
-
-export interface HybridEvent {
-  type:
-    | "plan_started"
-    | "plan_done"
-    | "subtask_started"
-    | "subtask_done"
-    | "replan_started"
-    | "replan_done"
-    | "run_done"
-    | "error";
-  at?: string;
-  message?: string;
-  index?: number;
-  total?: number;
-  subtask?: HybridSubtask;
-  result?: HybridStepResult;
-  plan?: HybridSubtask[];
-  report?: HybridReport;
-  retry?: number;
 }
 
 // Mirrors desktop/agent/opencode_config.go OpenCodeConfigSummary.
@@ -428,7 +359,7 @@ export interface Task {
 
 export type AgentGraphStatus = "queued" | "running" | "completed" | "failed" | "stopped";
 export type AgentNodeStatus = "pending" | "running" | "completed" | "failed" | "blocked" | "stopped";
-export type AgentNodeKind = "chat" | "autodev" | "autoideas" | "autotest";
+export type AgentNodeKind = "chat" | "autoideas" | "autotest";
 
 export interface AgentGraphNode {
   spec: {
@@ -1634,99 +1565,6 @@ export class QuicClient {
     return { taskId: data.taskId, title: data.title };
   }
 
-  // ── Hybrid Mode API ──────────────────────────────────────────────
-  // Planner + implementer orchestration across yaver's three first-class
-  // runners (claude, codex, opencode). Endpoints live in
-  // desktop/agent/hybrid_http.go. See CLAUDE.md "Hybrid Mode" for why
-  // (cost: cheap planner + token-leaner implementer) and how. We
-  // intentionally keep these as ad-hoc methods rather than the Task
-  // subsystem — hybrid runs block for minutes and return a structured
-  // report, not a stream.
-
-  async hybridPlan(req: HybridRunRequest): Promise<HybridPlanResult> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/plan`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`hybrid/plan ${res.status}: ${body}`);
-    }
-    return res.json();
-  }
-
-  async hybridRun(req: HybridRunRequest): Promise<HybridReport> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/run`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(req),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok && !data?.subtasks) {
-      throw new Error(data?.error || `hybrid/run ${res.status}`);
-    }
-    return data;
-  }
-
-  /**
-   * SSE-streamed hybrid run. onEvent fires once per plan/subtask/run
-   * event so the UI can render progress live instead of blocking for
-   * minutes. Returns the final HybridReport when `run_done` fires.
-   *
-   * Hand-rolled SSE parser because React Native fetch streams work,
-   * but EventSource is a browser-only API and doesn't support POST
-   * or custom auth headers anyway.
-   */
-  async hybridStream(
-    req: HybridRunRequest,
-    onEvent: (ev: HybridEvent) => void,
-  ): Promise<HybridReport | undefined> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/stream`, {
-      method: "POST",
-      headers: {
-        ...this.authHeaders,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok || !res.body) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`hybrid/stream ${res.status}: ${body}`);
-    }
-    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let final: HybridReport | undefined;
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const dataLines = frame
-          .split("\n")
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).trimStart());
-        if (dataLines.length === 0) continue;
-        try {
-          const ev: HybridEvent = JSON.parse(dataLines.join("\n"));
-          onEvent(ev);
-          if (ev.type === "run_done") final = ev.report;
-        } catch {
-          // malformed frame — drop silently
-        }
-      }
-    }
-    return final;
-  }
-
   /**
    * Subscribe to the dev server's SSE event stream (/dev/events).
    * onEvent fires once per event ({type, framework, logLine, message, ...}).
@@ -2264,10 +2102,12 @@ export class QuicClient {
     }
   }
 
-  // ── SSE Log Stream (autodev / loop chat events) ─────────────────
+  // ── SSE Log Stream (loop chat events) ───────────────────────────
 
   /**
-   * Subscribe to a daemon-hosted log stream (e.g. "autodev:sfmg-autodev").
+   * Subscribe to a daemon-hosted log stream (e.g. "autodev:sfmg" —
+   * the "autodev:" prefix is the legacy namespace still used by
+   * autoideas/autoinit streams).
    * Yields one parsed structured event per onEvent call. Backwards-
    * compatible with legacy "line" frames (rendered as a runner_text-ish
    * shape with no runner). Returns an abort function.
@@ -2398,7 +2238,7 @@ export class QuicClient {
     return await res.json();
   }
 
-  /** POST /autoideas/select — turns picked lines into an autodev run */
+  /** POST /autoideas/select — turns picked lines into an implementation run */
   async autoideasSelect(body: {
     work_dir: string;
     output?: string;
@@ -4865,10 +4705,10 @@ export class QuicClient {
   }
 
   /** Public wrapper around the internal auth-header builder. Used by
-   *  free helpers in this file (morning/* fetches, video stream
-   *  headers) that need the same bearer + relay-password combo a
-   *  regular task call uses but live outside the class. */
-  morningAuthHeaders(): Record<string, string> {
+   *  free helpers (phone backend, etc.) that need the same bearer +
+   *  relay-password combo a regular task call uses but live outside
+   *  the class. */
+  publicAuthHeaders(): Record<string, string> {
     return this.authHeaders;
   }
 
@@ -7259,6 +7099,32 @@ export class QuicClient {
   // secret is what we're actually trusting here, so we keep it in the mobile
   // keychain (see DeviceContext) rather than over the wire every call.
 
+  /** callOps invokes an agent ops verb (recycle / provision / …) on
+   *  the active connection. Mirrors web AgentClient.callOps. The
+   *  agent owns every safety guard (recycle's no-self-destruct +
+   *  snapshot-before-delete); the app is a thin trigger. Destructive
+   *  verbs honour a dry-run: pass payload.confirm=false for the plan. */
+  async callOps(
+    verb: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ ok?: boolean; error?: string; code?: string; initial?: any }> {
+    if (!this.baseUrl) {
+      return { ok: false, error: "no active agent connection — open the device first" };
+    }
+    try {
+      const res = await fetch(`${this.baseUrl}/ops`, {
+        method: "POST",
+        headers: { ...this.authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ verb, payload }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error || `ops ${verb} failed: ${res.status}` };
+      return data;
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) };
+    }
+  }
+
   /** Factory-reset a remote device's agent auth. Mirrors the web
    *  AgentClient.factoryResetDeviceAuth — agent verifies ownership
    *  via Convex round-trip in its handler (NOT against its local
@@ -7708,175 +7574,6 @@ export class QuicClient {
     }
   }
 
-  // ---- Auto Dev (M8) -----------------------------------------------------
-
-  /** Kick off a new Auto Dev run. Mirrors POST /autodev/start body
-   *  shape on the Go side (autodev_reports_http.go). Returns the
-   *  spawned loop name and the server's echoed plan metadata. */
-  async autodevStart(params: {
-    project?: string;
-    workDir: string;
-    hours?: string;
-    load?: string;
-    prompt?: string;
-    deploy?: string;
-    runner?: string;
-    branch?: string;
-    target?: string;
-    remainedPath?: string;
-    remainedContent?: string;
-    noAutotest?: boolean;
-    maxIterations?: number;
-    // Morning match-report toggles. Undefined = agent default (both
-    // on). Pass false to opt out explicitly. Video is advisory — the
-    // agent skips capture gracefully when no iOS sim / Android emu
-    // is available.
-    createSummary?: boolean;
-    createVideo?: boolean;
-  }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
-    try {
-      const res = await fetch(`${this.baseUrl}/autodev/start`, {
-        method: "POST",
-        headers: { ...this.authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project: params.project ?? "",
-          work_dir: params.workDir,
-          hours: params.hours ?? "",
-          load: params.load ?? "",
-          prompt: params.prompt ?? "",
-          deploy: params.deploy ?? "",
-          runner: params.runner ?? "",
-          branch: params.branch ?? "",
-          target: params.target ?? "",
-          remained_path: params.remainedPath ?? "",
-          remained_content: params.remainedContent ?? "",
-          no_autotest: params.noAutotest ?? false,
-          max_iterations: params.maxIterations ?? 0,
-          ...(params.createSummary !== undefined && { create_summary: params.createSummary }),
-          ...(params.createVideo !== undefined && { create_video: params.createVideo }),
-        }),
-      });
-      if (!res.ok && res.status !== 202) {
-        const text = await res.text().catch(() => "");
-        return { ok: false, error: text || `HTTP ${res.status}` };
-      }
-      const data = await res.json();
-      return {
-        ok: true,
-        loopName: data.loop_name,
-        workDir: data.work_dir,
-        hours: data.hours,
-        deploy: data.deploy,
-      };
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? "network error" };
-    }
-  }
-
-  /** Fetch all registered Auto Dev loops. */
-  async autodevLoops(): Promise<AutoDevLoop[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/autodev/loops`, {
-        headers: this.authHeaders,
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.loops || [];
-    } catch {
-      return [];
-    }
-  }
-
-  /** Kick one iteration of a loop. Returns immediately — the kick
-   *  runs in the background on the agent; poll autodevLoops() for
-   *  status updates. */
-  async autodevRun(name: string): Promise<{ ok: boolean; reason?: string }> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/run`,
-        { method: "POST", headers: this.authHeaders },
-      );
-      if (res.ok || res.status === 202) return { ok: true };
-      return { ok: false, reason: `HTTP ${res.status}` };
-    } catch (e: any) {
-      return { ok: false, reason: e?.message ?? "network error" };
-    }
-  }
-
-  /** Stop a loop — drops the STOP file and marks it stopped. */
-  async autodevStop(name: string): Promise<boolean> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/stop`,
-        { method: "POST", headers: this.authHeaders },
-      );
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Read a loop's latest ideas.json. Returns an empty list if the
-   *  ideas loop has not been run yet. */
-  async autodevIdeas(name: string): Promise<AutoDevIdeasPayload | null> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/ideas`,
-        { headers: this.authHeaders },
-      );
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }
-
-  /** Set a loop's runtime inline prompt. Pass an empty string to
-   *  clear the override. */
-  async autodevSetPrompt(name: string, prompt: string): Promise<boolean> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/prompt`,
-        {
-          method: "POST",
-          headers: { ...this.authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt }),
-        },
-      );
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Pick an idea by ID and stash its prompt as the target loop's
-   *  inline prompt. Optionally kick immediately. */
-  async autodevPickIdea(
-    name: string,
-    ideaId: string,
-    opts: { source?: string; run?: boolean } = {},
-  ): Promise<{ ok: boolean; title?: string; reason?: string }> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/prompt/pick`,
-        {
-          method: "POST",
-          headers: { ...this.authHeaders, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ideaId,
-            source: opts.source,
-            run: opts.run ?? false,
-          }),
-        },
-      );
-      if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
-      const data = await res.json();
-      return { ok: true, title: data.title };
-    } catch (e: any) {
-      return { ok: false, reason: e?.message ?? "network error" };
-    }
-  }
-
   async agentGraphs(): Promise<AgentGraphRun[]> {
     try {
       const res = await fetch(`${this.baseUrl}/agent/graphs`, {
@@ -8232,77 +7929,6 @@ export interface YaverFlag {
   updatedAt?: string;
 }
 
-/** Auto Dev loop row — wire shape of GET /autodev/loops. */
-export interface AutoDevLoop {
-  id: string;
-  name: string;
-  mode: "fix" | "auto-fix" | "develop" | "ideas" | "auto-test";
-  status:
-    | "idle"
-    | "running"
-    | "paused"
-    | "stopped"
-    | "stuck"
-    | "budget_hit"
-    | "needs_human";
-  iterationCount: number;
-  lastSummary?: string;
-  branch: string;
-  tone?: string;
-  radicalnessUi?: number;
-  radicalnessFeatures?: number;
-  promptInline?: string;
-  commitsToday: number;
-  patchesToday: number;
-  testflightToday: number;
-  lastIterationAt?: string;
-  runner?: string;
-  releaseTrain?: AutoDevReleaseTrain;
-  sessionUsage?: AutoDevProviderUsage[];
-  testRoot?: string;
-}
-
-/** Release-train state — only populated when the spec has
- *  ship.release_train configured. `greenRunSinceLastDeploy` is the
- *  live counter the runtime maintains. */
-export interface AutoDevReleaseTrain {
-  enabled: boolean;
-  n: number;
-  greenRunSinceLastDeploy: number;
-  paused: boolean;
-  target?: string;
-  maxTestFlightPerDay?: number;
-}
-
-/** Per-runner session-window usage for a loop. `sessionWindow` is
- *  a duration string ("5h", "1h"); empty means unlimited. */
-export interface AutoDevProviderUsage {
-  runner: string;
-  usedSeconds: number;
-  capSeconds: number;
-  sessionWindow: string;
-  windowStartedAt?: string;
-  overCap: boolean;
-}
-
-/** Shape of a loop's ideas.json — the runner writes this, the
- *  mobile tab reads it verbatim. */
-export interface AutoDevIdeasPayload {
-  generated_at?: string;
-  loop_name?: string;
-  persona?: string;
-  ideas: Array<{
-    id: string;
-    title: string;
-    description?: string;
-    prompt: string;
-    radicalness?: number;
-    effort?: "small" | "medium" | "large";
-    whyPersona?: string;
-    whyNot?: string;
-  }>;
-}
-
 export interface TestkitUSBDevice {
   Platform: "ios" | "android";
   UDID: string;
@@ -8556,58 +8182,6 @@ export interface BlackBoxCommandEnvelope {
   message?: string;
 }
 
-// ── Morning match-report types & helpers ──────────────────────────────
-// Mirror the Go structs in desktop/agent/morning.go. Kept here rather
-// than in a separate file so the mobile app's single quic.ts has all
-// agent-HTTP surface types co-located (matches the pattern for tasks,
-// guests, sandbox, etc. already in this file).
-
-export type MorningTaskStatus = "shipped" | "failed" | "skipped" | "rolled-back";
-
-export interface MorningTaskHighlight {
-  taskId: string;
-  runnerId?: string;
-  title: string;
-  oneLineSummary?: string;
-  status: MorningTaskStatus;
-  startedAt: string;
-  finishedAt: string;
-  costUsd?: number;
-  baseSha?: string;
-  headSha?: string;
-  commitShas?: string[];
-  workDir?: string;
-  filesChanged?: number;
-  linesAdded?: number;
-  linesRemoved?: number;
-  hasVideo: boolean;
-  videoDurationMs?: number;
-  videoSizeBytes?: number;
-  rolledBackAt?: string;
-  revertSha?: string;
-  failureNote?: string;
-}
-
-export interface MorningRunStats {
-  tasksShipped: number;
-  tasksFailed: number;
-  tasksRolledBack: number;
-  tasksTotal: number;
-  totalCostUsd: number;
-  totalMinutes: number;
-}
-
-export interface MorningRunSummary {
-  runId: string;
-  project: string;
-  workDir: string;
-  startedAt: string;
-  finishedAt?: string;
-  tasks: MorningTaskHighlight[];
-  stats: MorningRunStats;
-  note?: string;
-}
-
 // Fresh-instance factory. Used by the multi-device connection manager
 // (`./connectionManager.ts`) so each device the user has signed into
 // can keep its own QUIC connection in parallel — the same factory the
@@ -8662,69 +8236,3 @@ export const quicClient: QuicClient = new Proxy({} as QuicClient, {
   },
 });
 
-// Morning endpoints use the same relay-aware baseUrl + auth that tasks
-// do, so a user vibing at the beach gets their overnight report over
-// the same QUIC/relay channel as everything else — no new transport.
-// These helpers live at file scope so screens can import them without
-// having to know about the internal QuicClient layout.
-
-function morningAuthHeaders(): Record<string, string> | null {
-  return quicClient.isConnected ? quicClient.morningAuthHeaders() : null;
-}
-
-export async function morningListRuns(limit = 20): Promise<MorningRunSummary[]> {
-  const headers = morningAuthHeaders();
-  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return [];
-  try {
-    const res = await fetch(`${quicClient.baseUrl}/morning/runs?limit=${limit}`, { headers });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data?.runs) ? data.runs : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function morningGetRun(runId: string): Promise<MorningRunSummary | null> {
-  const headers = morningAuthHeaders();
-  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return null;
-  try {
-    const res = await fetch(`${quicClient.baseUrl}/morning/runs/${encodeURIComponent(runId)}`, { headers });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return (data?.run as MorningRunSummary) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-export async function morningRollback(
-  runId: string,
-  taskId: string
-): Promise<{ ok: boolean; revertSha?: string; error?: string }> {
-  const headers = morningAuthHeaders();
-  if (!headers || !quicClient.isConnected || !quicClient.baseUrl) return { ok: false, error: "not connected" };
-  try {
-    const res = await fetch(
-      `${quicClient.baseUrl}/morning/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/rollback`,
-      { method: "POST", headers }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false, error: data?.error ?? `HTTP ${res.status}` };
-    return { ok: true, revertSha: data?.revertSha };
-  } catch (e: unknown) {
-    return { ok: false, error: e instanceof Error ? e.message : "rollback failed" };
-  }
-}
-
-/** Build a video URL + bearer header the native Video element can
- *  pipe into expo-av / expo-video. The agent emits byte-range on mp4
- *  so the player handles seek natively. */
-export function morningVideoRequest(runId: string, taskId: string): { uri: string; headers: Record<string, string> } | null {
-  const headers = morningAuthHeaders();
-  if (!headers || !quicClient.baseUrl) return null;
-  return {
-    uri: `${quicClient.baseUrl}/recordings/${encodeURIComponent(runId)}/${encodeURIComponent(taskId)}/video.mp4`,
-    headers,
-  };
-}

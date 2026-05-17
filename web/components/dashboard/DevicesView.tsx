@@ -4,6 +4,7 @@ import Link from "next/link";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
+import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
@@ -1801,6 +1802,10 @@ export default function DevicesView({
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
+  // Phase C: which device (if any) has the recycle dialog open. The
+  // dialog is a fixed overlay so it can render inline next to the
+  // trigger button; the agent owns every safety guard.
+  const [recycleFor, setRecycleFor] = useState<{ id: string; name: string } | null>(null);
   // Backfill provider/model for opencode devices whose Convex row is
   // half-populated (runnerId only). Reads opencode.json over the relay
   // so the dropdowns show the device's actual model (e.g. zai/glm-4.7)
@@ -2065,6 +2070,22 @@ export default function DevicesView({
                         </svg>
                         {primaryDeviceId === device.id ? "Primary" : "Set Primary"}
                       </button>
+                    ) : null}
+                    {!device.isGuest && token ? (
+                      <button
+                        onClick={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-700 transition-colors hover:border-amber-500/50 hover:text-amber-600 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/50 dark:hover:text-amber-400"
+                        title="Recycle this box: provision a fresh Hetzner box, health-check, then snapshot+delete the old one (dry-run first)"
+                      >
+                        ♻ Recycle box
+                      </button>
+                    ) : null}
+                    {recycleFor?.id === device.id ? (
+                      <RecycleBoxDialog
+                        deviceId={recycleFor.id}
+                        deviceName={recycleFor.name}
+                        onClose={() => setRecycleFor(null)}
+                      />
                     ) : null}
                     {!device.isGuest && token && primaryDeviceId !== device.id ? (
                       <button

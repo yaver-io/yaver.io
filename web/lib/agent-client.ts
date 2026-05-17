@@ -118,75 +118,6 @@ export interface EnvironmentProfileApplyResult {
   removedGitHosts?: string[];
 }
 
-// Hybrid Mode — mirror of Go structs in desktop/agent/hybrid.go.
-export interface HybridRunRequest {
-  planner?: string;
-  implementer?: string;
-  model?: string;
-  baseUrl?: string;
-  workDir: string;
-  prompt: string;
-  maxSubtasks?: number;
-  timeoutSec?: number;
-}
-
-export interface HybridSubtask {
-  title: string;
-  files: string[];
-  prompt: string;
-}
-
-export interface HybridStepResult {
-  subtask: HybridSubtask;
-  status: "ok" | "error" | "skipped";
-  output?: string;
-  error?: string;
-  durationMs: number;
-}
-
-export interface HybridPlanResult {
-  spec: HybridRunRequest;
-  subtasks: HybridSubtask[];
-  planOutput?: string;
-}
-
-export interface HybridReport {
-  spec: HybridRunRequest;
-  subtasks: HybridSubtask[];
-  results: HybridStepResult[];
-  planOutput?: string;
-  planError?: string;
-  replanned?: boolean;
-  retries?: number;
-  startedAt: string;
-  finishedAt: string;
-  ok: boolean;
-  failedSteps: number;
-}
-
-// HybridEvent mirrors HybridEvent in desktop/agent/hybrid.go. Consumed
-// by the SSE /hybrid/stream subscriber so the UI can render live.
-export interface HybridEvent {
-  type:
-    | "plan_started"
-    | "plan_done"
-    | "subtask_started"
-    | "subtask_done"
-    | "replan_started"
-    | "replan_done"
-    | "run_done"
-    | "error";
-  at?: string;
-  message?: string;
-  index?: number;
-  total?: number;
-  subtask?: HybridSubtask;
-  result?: HybridStepResult;
-  plan?: HybridSubtask[];
-  report?: HybridReport;
-  retry?: number;
-}
-
 export interface ConversationImportPlan {
   sourceLabel: string;
   sourceUrl?: string;
@@ -232,7 +163,7 @@ export interface DevTargetPreference {
   targetDeviceClass?: string;
 }
 
-export type DevServerKind = "web" | "mobile" | "hybrid";
+export type DevServerKind = "web" | "mobile";
 
 /** One app from the monorepo workspace manifest, as returned by /workspace/apps. */
 export interface WorkspaceAppView {
@@ -726,7 +657,7 @@ export interface AgentGraphNode {
   spec: {
     id: string;
     title: string;
-    kind: "chat" | "autodev" | "autoideas" | "autotest";
+    kind: "chat" | "autoideas";
     prompt?: string;
     dependsOn?: string[];
     runner?: string;
@@ -1082,69 +1013,6 @@ export interface GuestUsageEntry {
   guestName: string;
   date: string;
   secondsUsed: number;
-}
-
-export interface AutoDevReleaseTrain {
-  enabled: boolean;
-  n: number;
-  greenRunSinceLastDeploy: number;
-  paused: boolean;
-  target?: string;
-  maxTestFlightPerDay?: number;
-}
-
-export interface AutoDevProviderUsage {
-  runner: string;
-  usedSeconds: number;
-  capSeconds: number;
-  sessionWindow: string;
-  windowStartedAt?: string;
-  overCap: boolean;
-}
-
-export interface AutoDevLoop {
-  id: string;
-  name: string;
-  mode: "fix" | "auto-fix" | "develop" | "ideas" | "auto-test";
-  status:
-    | "idle"
-    | "running"
-    | "paused"
-    | "stopped"
-    | "stuck"
-    | "budget_hit"
-    | "needs_human";
-  iterationCount: number;
-  lastSummary?: string;
-  branch: string;
-  tone?: string;
-  radicalnessUi?: number;
-  radicalnessFeatures?: number;
-  promptInline?: string;
-  commitsToday: number;
-  patchesToday: number;
-  testflightToday: number;
-  lastIterationAt?: string;
-  runner?: string;
-  releaseTrain?: AutoDevReleaseTrain;
-  sessionUsage?: AutoDevProviderUsage[];
-  testRoot?: string;
-}
-
-export interface AutoDevIdeasPayload {
-  generated_at?: string;
-  loop_name?: string;
-  persona?: string;
-  ideas: Array<{
-    id: string;
-    title: string;
-    description?: string;
-    prompt: string;
-    radicalness?: number;
-    effort?: "small" | "medium" | "large";
-    whyPersona?: string;
-    whyNot?: string;
-  }>;
 }
 
 export interface GuestInfo {
@@ -1524,103 +1392,6 @@ export class AgentClient {
     if (!res.ok) throw new Error(`Failed to delete task: ${res.status}`);
   }
 
-  // ── Hybrid Mode API ─────────────────────────────────────────────────
-  // Pair an expensive planner (Claude/Codex) with a cheap local
-  // implementer (aider + Ollama/Qwen) to cut API cost ~20x on feature
-  // work. Endpoints defined in desktop/agent/hybrid_http.go.
-
-  async hybridPlan(req: HybridRunRequest): Promise<HybridPlanResult> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/plan`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`hybrid/plan ${res.status}: ${body}`);
-    }
-    return res.json();
-  }
-
-  async hybridRun(req: HybridRunRequest): Promise<HybridReport> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/run`, {
-      method: "POST",
-      headers: { ...this.authHeaders, "Content-Type": "application/json" },
-      body: JSON.stringify(req),
-    });
-    // hybrid/run always returns a JSON body; keep it even on 4xx/5xx
-    // so the UI can render the partial report.
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok && !data?.subtasks) {
-      throw new Error(data?.error || `hybrid/run ${res.status}`);
-    }
-    return data;
-  }
-
-  /**
-   * Stream a hybrid run over SSE. Resolves when the server emits
-   * `run_done` (or `error`); rejects on network failure. Use this
-   * instead of hybridRun when the UI needs live progress — the
-   * callback fires once per event (plan_started, subtask_started,
-   * subtask_done, etc).
-   *
-   * Implementation detail: EventSource does not support POST or
-   * custom headers, so we do the SSE parse by hand on a fetch stream.
-   * This is the same pattern Claude Code uses for its own
-   * `--output-format stream-json` parser.
-   */
-  async hybridStream(
-    req: HybridRunRequest,
-    onEvent: (ev: HybridEvent) => void,
-  ): Promise<HybridReport | undefined> {
-    this.assertConnected();
-    const res = await fetch(`${this.baseUrl}/hybrid/stream`, {
-      method: "POST",
-      headers: {
-        ...this.authHeaders,
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-      },
-      body: JSON.stringify(req),
-    });
-    if (!res.ok || !res.body) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`hybrid/stream ${res.status}: ${body}`);
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    let final: HybridReport | undefined;
-    // Parser: SSE frames are separated by a blank line; each frame
-    // has one or more `data:`-prefixed lines (we only emit one) and
-    // optional `:`-prefixed heartbeat comment lines we ignore.
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        const dataLines = frame
-          .split("\n")
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).trimStart());
-        if (dataLines.length === 0) continue;
-        try {
-          const ev: HybridEvent = JSON.parse(dataLines.join("\n"));
-          onEvent(ev);
-          if (ev.type === "run_done") final = ev.report;
-        } catch {
-          // malformed frame — drop silently; heartbeat/noise.
-        }
-      }
-    }
-    return final;
-  }
-
   async stopAllTasks(): Promise<number> {
     this.assertConnected();
     const res = await fetch(`${this.baseUrl}/tasks/stop-all`, {
@@ -1652,6 +1423,29 @@ export class AgentClient {
     });
     if (!res.ok) throw new Error(`Failed to get info: ${res.status}`);
     return res.json();
+  }
+
+  /**
+   * callOps invokes an agent ops verb (provision / destroy / recycle /
+   * …) on the *connected* agent. The agent owns all the safety guards
+   * (e.g. recycle's no-self-destruct + snapshot-before-delete) — the
+   * UI is a thin trigger, never re-implements them. Returns the raw
+   * OpsResult ({ ok, error, initial }). Destructive verbs honour a
+   * dry-run: call with payload.confirm=false to get the plan back.
+   */
+  async callOps(
+    verb: string,
+    payload: Record<string, unknown>,
+  ): Promise<{ ok?: boolean; error?: string; code?: string; initial?: any }> {
+    this.assertConnected();
+    const res = await fetch(`${this.baseUrl}/ops`, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ verb, payload }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data?.error || `ops ${verb} failed: ${res.status}`);
+    return data;
   }
 
   async getAgentUpdateStatus(): Promise<AgentUpdateStatus> {
@@ -2328,7 +2122,7 @@ export class AgentClient {
   }
 
   /**
-   * Subscribe to a daemon-hosted log stream (e.g. "autodev:sfmg-autodev").
+   * Subscribe to a daemon-hosted log stream.
    * Yields one parsed structured event per onEvent call. Backwards-
    * compatible with legacy "line" frames. Returns an abort function.
    *
@@ -2440,7 +2234,7 @@ export class AgentClient {
     return await res.json();
   }
 
-  /** POST /autoideas/select — picks → autodev kick */
+  /** POST /autoideas/select — picks → kick */
   async autoideasSelect(body: {
     work_dir: string;
     output?: string;
@@ -2458,104 +2252,6 @@ export class AgentClient {
       body: JSON.stringify(body),
     });
     return await res.json();
-  }
-
-  async autodevStart(params: {
-    project?: string;
-    workDir: string;
-    hours?: string;
-    load?: string;
-    prompt?: string;
-    deploy?: string;
-    runner?: string;
-    branch?: string;
-    target?: string;
-    remainedPath?: string;
-    remainedContent?: string;
-    noAutotest?: boolean;
-    maxIterations?: number;
-    // Morning match-report toggles. Undefined = agent default (both
-    // on). Pass false to opt out; pass true to be explicit. Video is
-    // advisory — the agent skips capture gracefully when no iOS sim /
-    // Android emu is available.
-    createSummary?: boolean;
-    createVideo?: boolean;
-  }): Promise<{ ok: boolean; loopName?: string; workDir?: string; hours?: string; deploy?: string; error?: string }> {
-    try {
-      const res = await fetch(`${this.baseUrl}/autodev/start`, {
-        method: "POST",
-        headers: { ...this.authHeaders, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project: params.project ?? "",
-          work_dir: params.workDir,
-          hours: params.hours ?? "",
-          load: params.load ?? "",
-          prompt: params.prompt ?? "",
-          deploy: params.deploy ?? "",
-          runner: params.runner ?? "",
-          branch: params.branch ?? "",
-          target: params.target ?? "",
-          remained_path: params.remainedPath ?? "",
-          remained_content: params.remainedContent ?? "",
-          no_autotest: params.noAutotest ?? false,
-          max_iterations: params.maxIterations ?? 0,
-          ...(params.createSummary !== undefined && { create_summary: params.createSummary }),
-          ...(params.createVideo !== undefined && { create_video: params.createVideo }),
-        }),
-      });
-      if (!res.ok && res.status !== 202) {
-        const text = await res.text().catch(() => "");
-        return { ok: false, error: text || `HTTP ${res.status}` };
-      }
-      const data = await res.json();
-      return {
-        ok: true,
-        loopName: data.loop_name,
-        workDir: data.work_dir,
-        hours: data.hours,
-        deploy: data.deploy,
-      };
-    } catch (e: any) {
-      return { ok: false, error: e?.message ?? "network error" };
-    }
-  }
-
-  async autodevLoops(): Promise<AutoDevLoop[]> {
-    try {
-      const res = await fetch(`${this.baseUrl}/autodev/loops`, {
-        headers: this.authHeaders,
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return data.loops || [];
-    } catch {
-      return [];
-    }
-  }
-
-  async autodevStop(name: string): Promise<boolean> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/stop`,
-        { method: "POST", headers: this.authHeaders },
-      );
-      return res.ok;
-    } catch {
-      return false;
-    }
-  }
-
-  async autodevIdeas(name: string): Promise<AutoDevIdeasPayload | null> {
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/autodev/loops/${encodeURIComponent(name)}/ideas`,
-        { headers: this.authHeaders },
-      );
-      if (!res.ok) return null;
-      return await res.json();
-    } catch {
-      return null;
-    }
   }
 
   // ── EventEmitter ───────────────────────────────────────────────────
@@ -6344,84 +6040,6 @@ export class AgentClient {
     }
   }
 
-  // ── Morning match-report ───────────────────────────────────────────
-  //
-  // These methods go through the same relay-aware base URL as everything
-  // else, so a yaver-to-yaver viewer on a paired Mac hits the same
-  // endpoints the mobile app does. The match-report UI renders only
-  // what the agent serves; there is no client-side enrichment.
-
-  async listMorningRuns(limit = 20): Promise<MorningRunSummary[]> {
-    if (!this.isConnected || !this.baseUrl) return [];
-    try {
-      const res = await fetch(`${this.baseUrl}/morning/runs?limit=${limit}`, {
-        headers: this.authHeaders,
-      });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data?.runs) ? data.runs : [];
-    } catch {
-      return [];
-    }
-  }
-
-  async getMorningRun(runId: string): Promise<MorningRunSummary | null> {
-    if (!this.isConnected || !this.baseUrl) return null;
-    try {
-      const res = await fetch(`${this.baseUrl}/morning/runs/${encodeURIComponent(runId)}`, {
-        headers: this.authHeaders,
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      return (data?.run as MorningRunSummary) ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  async rollbackMorningTask(runId: string, taskId: string): Promise<{ ok: boolean; revertSha?: string; error?: string }> {
-    if (!this.isConnected || !this.baseUrl) {
-      return { ok: false, error: "not connected" };
-    }
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/morning/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/rollback`,
-        { method: "POST", headers: this.authHeaders }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return { ok: false, error: data?.error ?? `HTTP ${res.status}` };
-      return { ok: true, revertSha: data?.revertSha };
-    } catch (e: unknown) {
-      return { ok: false, error: e instanceof Error ? e.message : "rollback failed" };
-    }
-  }
-
-  /**
-   * Absolute URL the `<video>` element can point its `src` at. The
-   * element issues byte-range requests directly; the browser is good
-   * at this and doesn't need us to stream manually.
-   *
-   * Returns null when not connected — the caller should hide the
-   * video layer and render the card's diff panel instead.
-   */
-  morningVideoUrl(runId: string, taskId: string): string | null {
-    if (!this.baseUrl) return null;
-    return `${this.baseUrl}/recordings/${encodeURIComponent(runId)}/${encodeURIComponent(taskId)}/video.mp4`;
-  }
-
-  async recordingDrivers(): Promise<RecordingDriverStatus[]> {
-    if (!this.isConnected || !this.baseUrl) return [];
-    try {
-      const res = await fetch(`${this.baseUrl}/morning/drivers`, { headers: this.authHeaders });
-      if (!res.ok) return [];
-      const data = await res.json();
-      const raw = data?.drivers ?? {};
-      return Object.values(raw) as RecordingDriverStatus[];
-    } catch {
-      return [];
-    }
-  }
-
   // ── Phone-first mini backend ───────────────────────────────────────
   //
   // Mirrors desktop/agent/phone_backend_http.go. Each phone project is a
@@ -6882,63 +6500,6 @@ export interface PhonePromoteResult {
     rollbackExpiresAt?: string;
   };
   error?: string;
-}
-
-// ── Morning match-report types ─────────────────────────────────────────
-// Mirror the Go structs in morning.go. Clients render whatever fields
-// exist; the agent is authoritative for which are populated.
-
-export type MorningTaskStatus = "shipped" | "failed" | "skipped" | "rolled-back";
-
-export interface MorningTaskHighlight {
-  taskId: string;
-  runnerId?: string;
-  title: string;
-  oneLineSummary?: string;
-  status: MorningTaskStatus;
-  startedAt: string;
-  finishedAt: string;
-  costUsd?: number;
-  baseSha?: string;
-  headSha?: string;
-  commitShas?: string[];
-  workDir?: string;
-  filesChanged?: number;
-  linesAdded?: number;
-  linesRemoved?: number;
-  hasVideo: boolean;
-  videoDurationMs?: number;
-  videoSizeBytes?: number;
-  rolledBackAt?: string;
-  revertSha?: string;
-  failureNote?: string;
-}
-
-export interface MorningRunStats {
-  tasksShipped: number;
-  tasksFailed: number;
-  tasksRolledBack: number;
-  tasksTotal: number;
-  totalCostUsd: number;
-  totalMinutes: number;
-}
-
-export interface MorningRunSummary {
-  runId: string;
-  project: string;
-  workDir: string;
-  startedAt: string;
-  finishedAt?: string;
-  tasks: MorningTaskHighlight[];
-  stats: MorningRunStats;
-  note?: string;
-}
-
-export interface RecordingDriverStatus {
-  driver: string;
-  target: string;
-  available: boolean;
-  reason?: string;
 }
 
 export interface ProjectRuntimeProviderInput {
