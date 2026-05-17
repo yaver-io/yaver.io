@@ -28,3 +28,28 @@ func TestOpsGitPushRequiresDeviceId(t *testing.T) {
 		t.Fatalf("invalid JSON must be bad_payload, got %+v", bad)
 	}
 }
+
+func TestOpsGitConnectRegistered(t *testing.T) {
+	for _, v := range []string{"git_connect", "git_connect_status"} {
+		opsRegistryMu.RLock()
+		spec, ok := opsRegistry[v]
+		opsRegistryMu.RUnlock()
+		if !ok || spec.Handler == nil {
+			t.Fatalf("%s ops verb not registered / no handler", v)
+		}
+		if spec.AllowGuest {
+			t.Errorf("%s must not be guest-allowed (OAuth → credentials)", v)
+		}
+	}
+}
+
+func TestOpsGitConnectGuards(t *testing.T) {
+	// provider required before any device-flow start.
+	if r := opsGitConnectHandler(OpsContext{}, json.RawMessage(`{}`)); r.OK || r.Code != "bad_payload" {
+		t.Fatalf("git_connect needs provider, got %+v", r)
+	}
+	// sessionId required before any poll.
+	if r := opsGitConnectStatusHandler(OpsContext{}, json.RawMessage(`{}`)); r.OK || r.Code != "bad_payload" {
+		t.Fatalf("git_connect_status needs sessionId, got %+v", r)
+	}
+}
