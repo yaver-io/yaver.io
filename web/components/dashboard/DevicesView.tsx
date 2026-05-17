@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
+import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
@@ -1902,6 +1903,7 @@ export default function DevicesView({
               {dormantDevices.length} stale device{dormantDevices.length === 1 ? "" : "s"} hidden because they have no recent agent signal and no usable relay/tunnel path.
             </div>
           ) : null}
+          <ManagedCloudPanel token={token} />
           {renderedDevices.map((device) => {
             const shareSummary = deviceShareSummary(device);
             const isActiveWorkspace = activeWorkspaceDeviceId === device.id;
