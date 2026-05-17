@@ -438,6 +438,7 @@ export const adoptExisting = internalMutation({
     region: v.optional(v.string()),
     serverIp: v.optional(v.string()),
     hostname: v.optional(v.string()),
+    deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const spec = MACHINE_SPECS["cpu" as keyof typeof MACHINE_SPECS];
@@ -451,6 +452,7 @@ export const adoptExisting = internalMutation({
       hetznerServerId: args.hetznerServerId,
       serverIp: args.serverIp,
       hostname: args.hostname,
+      deviceId: args.deviceId,
       region: args.region ?? "eu",
       tools: [],
       specs: {
@@ -504,6 +506,7 @@ export const setProvisioned = internalMutation({
     serverIp: v.string(),
     hostname: v.string(),
     machineTokenHash: v.optional(v.string()),
+    deviceId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -513,6 +516,7 @@ export const setProvisioned = internalMutation({
       updatedAt: Date.now(),
     };
     if (args.machineTokenHash) patch.machineTokenHash = args.machineTokenHash;
+    if (args.deviceId) patch.deviceId = args.deviceId;
     await ctx.db.patch(args.machineId, patch);
   },
 });
@@ -738,6 +742,7 @@ export const provision = internalAction({
         serverIp,
         hostname: autoDomain,
         machineTokenHash,
+        deviceId, // deterministic cloud-<shortId> the box registers as
       });
 
       // ── 5. Health check in 5 minutes ────────────────────────────

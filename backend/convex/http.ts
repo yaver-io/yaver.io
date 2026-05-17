@@ -3146,7 +3146,7 @@ http.route({
     if (!isCloudPreviewUser(session.email)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
-    let body: { hetznerServerId?: string; region?: string; serverIp?: string; hostname?: string } = {};
+    let body: { hetznerServerId?: string; region?: string; serverIp?: string; hostname?: string; deviceId?: string } = {};
     try {
       body = await request.json();
     } catch {
@@ -3161,6 +3161,7 @@ http.route({
         region: (body.region ?? "eu").trim() || "eu",
         serverIp: body.serverIp,
         hostname: body.hostname,
+        deviceId: (body.deviceId ?? "").toString().trim() || undefined,
       });
       return jsonResponse({ ok: true, machineId, origin: "managed", mode: "dev-adopt" });
     } catch (error) {

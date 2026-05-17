@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
+import { agentClient } from "@/lib/agent-client";
 
 interface ManagedMachine {
   _id: string;
@@ -23,6 +24,97 @@ interface ManagedMachine {
   region?: string;
   serverIp?: string;
   errorMessage?: string;
+  deviceId?: string;
+}
+
+// Per-machine actions (D3 git connect/push, D4 dev-loop, D5 deploy).
+// Every action targets the box's EXPLICIT agent deviceId — never a
+// guessed/fuzzy target (credentials + exec). Disabled until the box
+// has registered (deviceId present). Ops verbs run on the connected
+// agent and are routed P2P to the box; tokens never touch Convex.
+function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [out, setOut] = useState<string | null>(null);
+  const [gitSession, setGitSession] = useState<{ id: string; uri: string; code: string } | null>(null);
+
+  if (!deviceId) {
+    return (
+      <p className="mt-1 text-[10px] text-slate-400">
+        Actions appear once the box has registered its agent (deviceId pending).
+      </p>
+    );
+  }
+
+  const run = async (label: string, verb: string, payload: Record<string, unknown>) => {
+    setBusy(label);
+    setOut(null);
+    try {
+      const r = await agentClient.callOps(verb, { ...payload, deviceId });
+      if (r.ok === false || (r as any)?.error) {
+        setOut(`✗ ${(r as any)?.error || "failed"}`);
+      } else {
+        setOut(`✓ ${label}`);
+      }
+      return r;
+    } catch (e: any) {
+      setOut(`✗ ${e?.message || String(e)}`);
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const connectGit = async (provider: "github" | "gitlab") => {
+    const r = await run(`connect ${provider}`, "git_connect", { provider });
+    const init = (r as any)?.initial;
+    if (init?.user_code && init?.verification_uri) {
+      setGitSession({ id: init.sessionId, uri: init.verification_uri, code: init.user_code });
+      window.open(init.verification_uri, "_blank", "noopener");
+    }
+  };
+  const checkGit = async () => {
+    if (!gitSession) return;
+    setBusy("check");
+    try {
+      const r = await agentClient.callOps("git_connect_status", { sessionId: gitSession.id, deviceId });
+      const st = (r as any)?.initial?.state;
+      setOut(st === "done" ? `✓ git connected (${(r as any)?.initial?.username ?? "ok"})` : `state: ${st ?? "?"}`);
+      if (st === "done") setGitSession(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const Btn = ({ id, onClick, children }: { id: string; onClick: () => void; children: any }) => (
+    <button
+      disabled={busy !== null}
+      onClick={onClick}
+      className="rounded border border-slate-300 px-2 py-0.5 text-[10px] font-medium disabled:opacity-50 dark:border-surface-700"
+    >
+      {busy === id ? "…" : children}
+    </button>
+  );
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <Btn id="connect github" onClick={() => void connectGit("github")}>Connect GitHub</Btn>
+      <Btn id="connect gitlab" onClick={() => void connectGit("gitlab")}>Connect GitLab</Btn>
+      {gitSession ? (
+        <Btn id="check" onClick={() => void checkGit()}>
+          ✓ I authorized {gitSession.code}
+        </Btn>
+      ) : null}
+      <Btn id="push git" onClick={() => void run("push git", "git_push", {})}>Push git creds</Btn>
+      <Btn id="reload" onClick={() => void run("reload", "reload", {})}>Reload</Btn>
+      <Btn id="web preview" onClick={() => void run("web preview", "web-preview", {})}>Web preview</Btn>
+      <Btn id="deploy" onClick={() => void run("deploy", "deploy", {})}>Deploy</Btn>
+      {out ? (
+        <span className={`text-[10px] ${out.startsWith("✗") ? "text-rose-500" : "text-slate-500 dark:text-surface-400"}`}>
+          {out}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 export function ManagedCloudPanel({ token }: { token: string | null | undefined }) {
@@ -249,6 +341,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.errorMessage}
                     </p>
                   ) : null}
+                  <ManagedMachineActions deviceId={m.deviceId} />
                 </div>
               ))
             )}

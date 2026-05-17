@@ -772,6 +772,13 @@ export default defineSchema({
     hetznerServerId: v.optional(v.string()),
     serverIp: v.optional(v.string()),
     hostname: v.optional(v.string()),
+    // The box's Yaver agent deviceId. For provisioned boxes this is
+    // the deterministic `cloud-<machineIdPrefix>` written into the
+    // box's config by cloud-init; for adopted boxes it's the existing
+    // box's real deviceId supplied at adopt time. Stored so web/mobile
+    // can target git/dev-loop/deploy ops at the exact owned device —
+    // a credentials/exec op must never fuzzy-guess its target.
+    deviceId: v.optional(v.string()),
     region: v.string(),               // "eu" | "us"
     tools: v.array(v.string()),       // ["nodejs", "python", "go", "docker", ...]
     repoUrl: v.optional(v.string()),  // cloned on provisioning
