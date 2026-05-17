@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -50,6 +50,53 @@ function fmtUptime(seconds?: number) {
 }
 
 type InstallEntry = { name: string; installed: boolean; description: string };
+
+// Phase D1 mobile front door — thin: routes through the agent's
+// `cloud_checkout` ops verb (authed Convex proxy; token never leaves
+// the agent) and opens the LemonSqueezy URL. Owner/preview-gated
+// server-side; non-owner = a verbatim 403.
+function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const buy = async () => {
+    setBusy(true);
+    setMsg(null);
+    const res = await quicClient.callOps("cloud_checkout", { machineType: "cpu", region: "eu" });
+    setBusy(false);
+    const url = (res?.initial as any)?.checkoutUrl;
+    if (res?.ok && url) {
+      Linking.openURL(url).catch((e) => setMsg(`✗ ${e?.message ?? e}`));
+      setMsg("Opening checkout…");
+    } else {
+      setMsg(`✗ ${res?.error || "checkout failed"}`);
+    }
+  };
+  return (
+    <View style={[card(c), { gap: 8, borderColor: "rgba(16,185,129,0.45)", backgroundColor: "rgba(16,185,129,0.08)" }]}>
+      <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 14 }}>☁ Buy a managed cloud box</Text>
+      <Text style={{ color: c.textMuted, fontSize: 12 }}>
+        CPU box — React Native/Hermes + web + deploy. Opens LemonSqueezy; the
+        box auto-provisions on payment. Private preview (non-owner = 403).
+      </Text>
+      <Pressable
+        disabled={busy}
+        onPress={() => void buy()}
+        style={{
+          alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 9,
+          borderRadius: 8, backgroundColor: "rgba(16,185,129,0.15)",
+          borderWidth: 1, borderColor: "rgba(16,185,129,0.5)", opacity: busy ? 0.5 : 1,
+        }}
+      >
+        <Text style={{ color: "#6ee7b7", fontWeight: "700", fontSize: 13 }}>
+          {busy ? "…" : "Buy → checkout"}
+        </Text>
+      </Pressable>
+      {msg ? (
+        <Text style={{ fontSize: 11, color: msg.startsWith("✗") ? "#fecaca" : c.textMuted }}>{msg}</Text>
+      ) : null}
+    </View>
+  );
+}
 
 export default function InfraScreen() {
   const c = useColors();
@@ -279,6 +326,7 @@ export default function InfraScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32, gap: 12 }, tabletContent]}>
+          <BuyManagedCloudCard c={c} />
           {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
             <View style={[card(c), { gap: 6, borderColor: "#7f1d1d", backgroundColor: "#2b1212" }]}>
               <Text style={{ color: "#fecaca", fontSize: 13, fontWeight: "700" }}>Remote preview blocked</Text>
