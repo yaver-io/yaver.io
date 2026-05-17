@@ -1,10 +1,29 @@
 # Managed-Cloud Host Lifecycle — Audit + Plan
 
-> **Status: design doc, NOT yet implemented (2026-05-17). Code is the
-> source of truth — re-grep before acting; this drifts.** Goal:
-> decommission + re-provision a Hetzner Cloud box fully
-> programmatically, triggered from the Yaver web UI (web → relay →
-> agent → hcloud), with the hcloud token never leaving the agent.
+> **Status: Phase A + money-safety landed in code 2026-05-17 (not
+> prod-deployed). Code is the source of truth — re-grep; this drifts.**
+>
+> **Two distinct products — do not conflate:**
+> - **BYO / self-hosted** (agent): the *user's own* vault-backed
+>   Hetzner token (`accountField(ProviderHetzner)`). User pays Hetzner
+>   directly → **no LemonSqueezy gate**. `provisionHetzner` /
+>   `mcpCloudDestroy` in `desktop/agent/cloud_provisioners.go`
+>   (commit `b71201c1`).
+> - **Managed cloud** (Convex): *Yaver's platform* Hetzner token, in
+>   Convex env only (`process.env.HCLOUD_TOKEN` — never repo/tables/
+>   payload; secret audit 2026-05-17 found zero token literals in the
+>   tree). Any user, but **NEVER provisioned without an active
+>   LemonSqueezy subscription** — fail-closed gate
+>   (`subscriptions.isActive`) in `provisionRelay.provision` +
+>   `cloudMachines.provision`; signed webhook is primary proof,
+>   gate is defense-in-depth. Cancel **and** expiry now tear the box
+>   down (grace-snapshot first). Commit `96c29a5c`; **not deployed —
+>   prod is live billing, needs explicit owner go-ahead.**
+>
+> Original goal stands: decommission + re-provision from web **and
+> mobile** UI (web → relay → agent → hcloud for BYO; LemonSqueezy
+> webhook → Convex → platform hcloud for managed). Token never leaves
+> its trust boundary (agent vault for BYO, Convex env for managed).
 
 ## 1. The seam is sound, the parts mostly exist
 
