@@ -868,26 +868,56 @@ export const destroy = internalAction({
     const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId });
     if (!machine) return;
 
-    if (HCLOUD_TOKEN && machine.hetznerServerId) {
+    // No platform token → we CANNOT delete the real box. Never lie
+    // with status:"stopped" (row says gone, box still billing). Set
+    // an explicit error the UI surfaces verbatim.
+    if (!HCLOUD_TOKEN) {
+      await ctx.runMutation(internal.cloudMachines.setStatus, {
+        machineId,
+        status: "error",
+        errorMessage:
+          "Platform HCLOUD_TOKEN is not configured on this Convex deployment — the Hetzner box was NOT deleted. Set it with `npx convex env set HCLOUD_TOKEN <token> --prod`, then Decommission again.",
+      });
+      return;
+    }
+
+    let warn = "";
+    if (machine.hetznerServerId) {
       // Grace snapshot before delete (CLAUDE.md: never delete
-      // un-snapshotted) so a resubscribe is restorable. Best-effort:
-      // never let a failed snapshot leave a paid box running.
+      // un-snapshotted). Best-effort — a failed snapshot must not
+      // strand a paid box — but record it so it's visible.
       try {
-        await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
+        const snap = await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
           method: "POST",
           headers: { Authorization: `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-machine-${machineId}-${Date.now()}` }),
         });
+        if (!snap.ok) warn = `grace snapshot returned HTTP ${snap.status} (continued with delete); `;
       } catch (e) {
-        console.error("[cloudMachines.destroy] grace snapshot failed (continuing with delete):", e);
+        warn = `grace snapshot failed (${e instanceof Error ? e.message : String(e)}); continued with delete; `;
       }
+      // Delete. Surface a real failure as status:error — do NOT fall
+      // through to "stopped" while the box is still alive.
       try {
-        await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}`, {
+        const del = await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${HCLOUD_TOKEN}` },
         });
+        if (!del.ok && del.status !== 404) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId,
+            status: "error",
+            errorMessage: `${warn}Hetzner delete returned HTTP ${del.status} — box may still be running. Check the Hetzner console / token project scope, then retry.`,
+          });
+          return;
+        }
       } catch (e) {
-        console.error("[cloudMachines.destroy] hetzner delete error:", e);
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId,
+          status: "error",
+          errorMessage: `${warn}Hetzner delete failed: ${e instanceof Error ? e.message : String(e)} — box may still be running.`,
+        });
+        return;
       }
     }
 

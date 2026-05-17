@@ -22,6 +22,7 @@ interface ManagedMachine {
   hetznerServerId?: string;
   region?: string;
   serverIp?: string;
+  errorMessage?: string;
 }
 
 export function ManagedCloudPanel({ token }: { token: string | null | undefined }) {
@@ -65,6 +66,12 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
       } else {
         setNote(data?.note || data?.mode || "ok");
         await load();
+        // deprovision schedules an async destroy action — poll so the
+        // final row state (stopped, or error w/ the missing-token
+        // message) surfaces without a manual refresh.
+        if (path.includes("dev-deprovision")) {
+          [2000, 5000, 9000].forEach((ms) => setTimeout(() => void load(), ms));
+        }
       }
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -117,8 +124,9 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
               machines.map((m) => (
                 <div
                   key={m._id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
+                  className="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
                 >
+                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
@@ -130,7 +138,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.origin ?? "managed"}
                     </span>
                     <span className="font-mono opacity-80">
-                      {m.machineType ?? "cpu"} · srv {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} · {m.status ?? "?"}
+                      {m.machineType ?? "cpu"} · srv {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
+                      <span className={m.status === "error" ? "font-semibold text-rose-600 dark:text-rose-400" : ""}>
+                        {m.status ?? "?"}
+                      </span>
                     </span>
                   </div>
                   <button
@@ -143,6 +154,12 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                   >
                     Decommission
                   </button>
+                 </div>
+                  {m.errorMessage ? (
+                    <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">
+                      {m.errorMessage}
+                    </p>
+                  ) : null}
                 </div>
               ))
             )}

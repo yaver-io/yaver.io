@@ -319,9 +319,22 @@ export const deprovision = internalAction({
     const CF_API_TOKEN = process.env.CF_API_TOKEN;
     const CF_ZONE_ID = process.env.CF_ZONE_ID;
 
-    if (!HCLOUD_TOKEN || !CF_API_TOKEN || !CF_ZONE_ID) {
-      console.error("[deprovision] Missing credentials");
+    if (!HCLOUD_TOKEN) {
+      // Never silently return leaving the row in a stale state while
+      // the box still bills — surface it so the operator sets the
+      // platform token (--prod) and retries.
+      await ctx.runMutation(internal.managedRelays.setStatus, {
+        relayId: args.relayId,
+        status: "error",
+        errorMessage:
+          "Platform HCLOUD_TOKEN is not configured on this Convex deployment — the relay box was NOT deleted. Set it with `npx convex env set HCLOUD_TOKEN <token> --prod`, then retry.",
+      });
       return;
+    }
+    if (!CF_API_TOKEN || !CF_ZONE_ID) {
+      // DNS cleanup is secondary — proceed to delete the box anyway,
+      // just skip the Cloudflare record removal below.
+      console.error("[deprovision] CF creds missing — deleting box, skipping DNS cleanup");
     }
 
     try {
@@ -346,22 +359,24 @@ export const deprovision = internalAction({
         headers: { "Authorization": `Bearer ${HCLOUD_TOKEN}` },
       });
 
-      // Find and delete Cloudflare DNS record
-      const shortDomain = args.domain.replace(".yaver.io", "");
-      const listResp = await fetch(
-        `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${args.domain}`,
-        { headers: { "Authorization": `Bearer ${CF_API_TOKEN}` } }
-      );
-      const listData = await listResp.json() as any;
-      if (listData.result?.length > 0) {
-        const recordId = listData.result[0].id;
-        await fetch(
-          `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${recordId}`,
-          {
-            method: "DELETE",
-            headers: { "Authorization": `Bearer ${CF_API_TOKEN}` },
-          }
+      // Find and delete Cloudflare DNS record (only if CF creds are
+      // configured — DNS cleanup is secondary to deleting the box).
+      if (CF_API_TOKEN && CF_ZONE_ID) {
+        const listResp = await fetch(
+          `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records?name=${args.domain}`,
+          { headers: { "Authorization": `Bearer ${CF_API_TOKEN}` } }
         );
+        const listData = await listResp.json() as any;
+        if (listData.result?.length > 0) {
+          const recordId = listData.result[0].id;
+          await fetch(
+            `https://api.cloudflare.com/client/v4/zones/${CF_ZONE_ID}/dns_records/${recordId}`,
+            {
+              method: "DELETE",
+              headers: { "Authorization": `Bearer ${CF_API_TOKEN}` },
+            }
+          );
+        }
       }
 
       // Update status
