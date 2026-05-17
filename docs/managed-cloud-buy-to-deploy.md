@@ -21,33 +21,26 @@ this session:
 - **Flutter / Kotlin native** WebRTC remote-runtime needs a real
   **Android emulator** ⇒ **KVM** ⇒ Hetzner **Robot bare-metal x86**
   (Hetzner **Cloud** can't: no linux-arm64 emulator binary + no
-  `/dev/kvm` on any Cloud plan, TCG unusable). The decision below
-  makes this KVM box the **single default** because it is a strict
-  superset (also does RN/Hermes + web + deploy) — one SKU, not a
-  premium add-on.
+  `/dev/kvm` on any Cloud plan, TCG unusable). Per the revised
+  decision below this is a **deferred premium SKU** (Phase D0), NOT
+  the launch default.
 - **iOS** (Simulator or `ios-device`/WDA) is **macOS-only**. UIKit/
   SwiftUI/iOS-Simulator do not exist on Linux; Swift-on-Linux is
   server-side only; GTK/Darling cannot host an iOS app. ⇒ **Mac SKU
   (Mac mini / Mac cloud), later — NOT Hetzner.** Do not build toward
   iOS-on-Linux; it is impossible.
 
-**SKU plan (decided 2026-05-17): single default = emulator-capable
-KVM bare-metal.** A KVM box is a **superset** — it runs the Android
-emulator (Flutter/Kotlin WebRTC) **and** Metro/Hermes (RN) **and**
-web **and** deploy. One SKU, no tier confusion, covers every
-non-iOS case. GPU tier unchanged. iOS = Mac SKU, deferred.
+**SKU plan (decided 2026-05-17, revised): launch default = the
+RN/Hermes Hetzner Cloud box.** It covers **React Native / Hermes +
+web + builds + deploy** and **works on the current code today**
+(`cloudMachines.provision` already uses the Hetzner Cloud API). No
+D0, no new infra — fastest path to a real buyable product.
 
-**Honest implementation cost of that decision (Phase D0, blocks D1):**
-`cloudMachines.provision` today calls the **Hetzner Cloud API**
-(`api.hetzner.cloud/v1`, cx/cax types) — Hetzner Cloud exposes
-**no `/dev/kvm` on any plan** (shared or dedicated vCPU). KVM ⇒
-Hetzner **Robot / dedicated bare-metal**, which is a **different API**
-(hrobot / Robot webservice), **not instant** to provision, and
-**~€30–40+/mo vs €5–15** Cloud. So "make the emulator box the
-default" is a new provisioner workstream (Robot bring-up + slower
-ready-poll + price), not a config flip. The cheaper "RN/Hermes-only
-Cloud box" remains a possible *downsell* later, but the default is
-the KVM box per owner decision.
+The **KVM / emulator box** (Flutter/Kotlin-native WebRTC, Android
+emulator) is a **deferred premium SKU** — Phase D0 (a Hetzner Robot/
+bare-metal provisioner: different API, non-instant, ~€30–40+/mo) is
+**out of the launch path**, revisited after the Cloud-box product
+ships. GPU tier unchanged. iOS = Mac SKU, deferred (Linux impossible).
 
 ## 1. Audit — backend is wired, the front door is missing
 
@@ -99,9 +92,9 @@ Key backend anchors: `backend/convex/http.ts:3071` checkout,
   web view / external browser; subscription state from `/subscription`).
 - MCP/ops: `cloud_checkout` verb returning the checkout URL (so an
   agent can hand the user a pay link).
-- Single default SKU = the KVM bare-metal box (does Android emulator
-  + RN/Hermes + web + deploy). No tier picker beyond GPU; iOS shown
-  "coming soon (Mac)". Depends on Phase D0 (Robot provisioner).
+- Launch SKU = the RN/Hermes Hetzner **Cloud** box (current
+  provision code, no D0). GPU tier as-is; Flutter/Kotlin-emulator &
+  iOS shown "coming soon". **D1 no longer depends on D0.**
 
 ### Phase D2 — Provision status + ready handoff
 - `GET /subscription` already returns machines+status. Add light
