@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
+import { isOwnerEmail } from "./ownerAllowlist";
 
 const http = httpRouter();
 
@@ -25,20 +26,10 @@ function errorMessageIncludes(err: any, code: string): boolean {
   return String(err?.message || "").includes(code);
 }
 
+// Owner / private-preview check. Delegates to the single source of
+// truth in ownerAllowlist.ts (env-var allowlist, never hardcoded).
 function isCloudPreviewUser(email?: string | null): boolean {
-  const normalized = (email ?? "").trim().toLowerCase();
-  if (!normalized) return false;
-  const raw =
-    process.env.CLOUD_PREVIEW_OWNER_EMAIL ||
-    process.env.YAVER_CLOUD_PREVIEW_EMAILS ||
-    process.env.NEXT_PUBLIC_YAVER_CLOUD_PREVIEW_EMAILS ||
-    "";
-  const allowed = raw
-    .split(",")
-    .map((item) => item.trim().toLowerCase())
-    .filter(Boolean);
-  if (allowed.length === 0) return false;
-  return allowed.includes(normalized);
+  return isOwnerEmail(email);
 }
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {

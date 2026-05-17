@@ -52,10 +52,13 @@ export const provision = internalAction({
     }
 
     // Fail-closed billing gate — NEVER create a Hetzner server unless
-    // the subscription is active. Defense-in-depth behind the signed
-    // webhook so no replay/mis-schedule can spend Yaver's money.
-    const entitled = await ctx.runQuery(internal.subscriptions.isActive, {
+    // the subscription is active OR the owner is on the env allowlist
+    // (lets the repo owner develop the managed Hetzner flow without
+    // LemonSqueezy; env unset ⇒ pure fail-closed). Defense-in-depth
+    // behind the signed webhook so no replay can spend Yaver's money.
+    const entitled = await ctx.runQuery(internal.subscriptions.canProvisionManaged, {
       subscriptionId: args.subscriptionId,
+      userId: args.userId,
     });
     if (!entitled) {
       await ctx.runMutation(internal.managedRelays.setStatus, {

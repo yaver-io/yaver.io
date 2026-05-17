@@ -538,21 +538,25 @@ export const provision = internalAction({
     });
     if (!machine) return;
 
-    // Fail-closed billing gate — a real managed machine (linked to a
-    // subscription) is NEVER provisioned on Yaver's Hetzner account
-    // unless that subscription is active. Machines without a
-    // subscriptionId are the explicitly-guarded dev-activate path
-    // (isCloudPreviewUser) and keep their own gate; we don't touch it.
-    if (machine.subscriptionId) {
-      const entitled = await ctx.runQuery(internal.subscriptions.isActive, {
-        subscriptionId: machine.subscriptionId,
+    // Fail-closed billing gate — a managed machine is NEVER
+    // provisioned on Yaver's Hetzner account unless the subscription
+    // is active OR the owner is on the env allowlist (lets the repo
+    // owner develop the full Hetzner flow without LemonSqueezy; env
+    // unset ⇒ pure fail-closed). dev-activate machines never reach
+    // this action (they attach to a shared box, no Hetzner create),
+    // so gating unconditionally here is safe and closes the old
+    // subscription-less hole.
+    {
+      const entitled = await ctx.runQuery(internal.subscriptions.canProvisionManaged, {
+        subscriptionId: machine.subscriptionId ?? undefined,
+        userId: machine.userId,
       });
       if (!entitled) {
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId: args.machineId,
           status: "error",
           errorMessage:
-            "Subscription not active — provisioning denied (fail-closed billing gate)",
+            "Not entitled — managed provisioning denied (active subscription or owner allowlist required)",
         });
         return;
       }

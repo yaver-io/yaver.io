@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { isOwnerEmail } from "./ownerAllowlist";
 
 // Get user's active subscription
 export const getByUser = query({
@@ -33,6 +34,33 @@ export const isActive = internalQuery({
   handler: async (ctx, { subscriptionId }) => {
     const sub = await ctx.db.get(subscriptionId);
     return !!sub && sub.status === "active";
+  },
+});
+
+// canProvisionManaged is the gate the managed-provision actions
+// actually call. It passes if the subscription is active OR the
+// owning user is on the owner allowlist (CLOUD_PREVIEW_OWNER_EMAIL
+// env). The owner bypass lets the repo owner develop the full
+// Hetzner create/remove flow without a LemonSqueezy subscription
+// (the email is Convex ENV config, never hardcoded — see
+// ownerAllowlist.ts). With the env unset this is exactly isActive
+// (fail-closed for everyone), so deploying it changes nothing until
+// the owner opts in.
+export const canProvisionManaged = internalQuery({
+  args: {
+    subscriptionId: v.optional(v.id("subscriptions")),
+    userId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, { subscriptionId, userId }) => {
+    if (subscriptionId) {
+      const sub = await ctx.db.get(subscriptionId);
+      if (sub && sub.status === "active") return true;
+    }
+    if (userId) {
+      const user = await ctx.db.get(userId);
+      if (user && isOwnerEmail((user as any).email)) return true;
+    }
+    return false;
   },
 });
 
