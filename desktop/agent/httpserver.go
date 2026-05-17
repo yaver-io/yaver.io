@@ -109,7 +109,7 @@ type HTTPServer struct {
 	// FeedbackOverlay.handleSend in 1.18.34) can fall back to "the
 	// project we just pushed to your phone."
 	// Without this, the resolver would fall through to taskMgr.workDir
-	// (typically /root or the agent's cwd), and the autodev fix would
+	// (typically /root or the agent's cwd), and the fix would
 	// run in the wrong directory.
 	lastNativeBundleProjectPath string
 	lastNativeBundleProjectName string
@@ -168,14 +168,9 @@ type HTTPServer struct {
 	remoteRuntimeMgr *RemoteRuntimeManager
 
 	// Named log streams for fan-out of long-running CLI ops
-	// (autodev, autotest, etc.) to mobile + web subscribers.
+	// to mobile + web subscribers.
 	streams *LogStreamRegistry
 
-	// Morning match-report + recording state. Lazy-initialized so
-	// tests and the production agent share the same code path.
-	morningMu             sync.Mutex
-	morningStoreRef       *MorningStore
-	recordingMgrRef       *RecordingManager
 	hostShareWorkspaceMgr *HostShareWorkspaceManager
 
 	// Lets handlers that change reportable state (e.g. runner auth just
@@ -241,9 +236,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// Authenticated
 	mux.HandleFunc("/tasks", s.auth(s.handleTasks))
 	mux.HandleFunc("/tasks/", s.auth(s.handleTaskByID))
-	mux.HandleFunc("/hybrid/run", s.auth(s.handleHybridRun))
-	mux.HandleFunc("/hybrid/plan", s.auth(s.handleHybridPlan))
-	mux.HandleFunc("/hybrid/stream", s.auth(s.handleHybridStream))
 	mux.HandleFunc("/chain", s.auth(s.handleChainCreate))
 	mux.HandleFunc("/chain/", s.auth(s.handleChainStatus))
 	mux.HandleFunc("/deploy", s.auth(s.handleDeploy))
@@ -311,9 +303,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/code/dev", s.auth(s.handleCodeDev))
 	mux.HandleFunc("/code/deploy", s.auth(s.handleCodeDeploy))
 
-	// Morning match-report + recording video byte-range streamer.
-	// Owner-only; deliberately NOT in guestAllowedPrefixes.
-	s.RegisterMorningRoutes(mux)
 	mux.HandleFunc("/agent/runner/restart", s.auth(s.handleRunnerRestart))
 	mux.HandleFunc("/agent/runner/switch", s.authSDKOrGuest(s.handleRunnerSwitch))
 	mux.HandleFunc("/agent/update", s.auth(s.handleAgentUpdate))
@@ -329,31 +318,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/schedules/", s.auth(s.handleScheduleByID))
 	mux.HandleFunc("/streams", s.auth(s.handleStreams))
 	mux.HandleFunc("/streams/", s.auth(s.handleStreamByName))
-	mux.HandleFunc("/autodev/loops", s.auth(s.handleAutodevLoops))
-	mux.HandleFunc("/autodev/loops/", s.auth(s.handleAutodevLoopAction))
-	mux.HandleFunc("/autodev/reports", s.auth(s.handleAutodevReports))
-	mux.HandleFunc("/autodev/reports/revert", s.auth(s.handleAutodevRevert))
-	mux.HandleFunc("/autodev/start", s.auth(s.handleAutodevStart))
-	mux.HandleFunc("/autodev/options", s.auth(s.handleAutodevOptions))
 	mux.HandleFunc("/autoideas/start", s.auth(s.handleAutoIdeasStart))
 	mux.HandleFunc("/autoideas/file", s.auth(s.handleAutoIdeasFile))
-	mux.HandleFunc("/autoideas/select", s.auth(s.handleAutoIdeasSelect))
 	mux.HandleFunc("/autoinit/start", s.auth(s.handleAutoInitStart))
 	mux.HandleFunc("/autoinit/status", s.auth(s.handleAutoInitStatus))
-	mux.HandleFunc("/autodev/cost", s.auth(func(w http.ResponseWriter, r *http.Request) {
-		usd, kicks := RunCostSnapshot()
-		jsonReply(w, http.StatusOK, map[string]interface{}{
-			"ok":        true,
-			"total_usd": usd,
-			"kicks":     kicks,
-			"avg_usd_per_kick": func() float64 {
-				if kicks == 0 {
-					return 0
-				}
-				return usd / float64(kicks)
-			}(),
-		})
-	}))
 	mux.HandleFunc("/releases/list", s.auth(s.handleReleaseList))
 	mux.HandleFunc("/releases/latest", s.auth(s.handleReleaseLatest))
 	mux.HandleFunc("/releases/bundle", s.auth(s.handleReleaseBundle))
@@ -615,8 +583,6 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/session/list", s.auth(s.handleSessionList))
 	mux.HandleFunc("/session/export", s.auth(s.handleSessionExport))
 	mux.HandleFunc("/session/import", s.auth(s.handleSessionImport))
-	mux.HandleFunc("/session/handoff", s.auth(s.handleSessionHandoff))
-	mux.HandleFunc("/session/complete", s.auth(s.handleSessionComplete))
 	mux.HandleFunc("/tmux/sessions", s.auth(s.handleTmuxSessions))
 	mux.HandleFunc("/tmux/adopt", s.auth(s.handleTmuxAdopt))
 	mux.HandleFunc("/tmux/detach", s.auth(s.handleTmuxDetach))
@@ -657,6 +623,16 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/testkit/integrations", s.auth(s.handleTestkitIntegrations))
 	mux.HandleFunc("/testkit/autofix", s.auth(s.handleTestkitAutoFix))
 	mux.HandleFunc("/testkit/autofix/", s.auth(s.handleTestkitAutoFixAction))
+
+	// Auto Test: autonomous phase-1 web flow driver. Thin wrappers over
+	// the ops verb so mobile, web, and CLI share one local-only path.
+	mux.HandleFunc("/autotest/start", s.auth(s.handleAutotestStart))
+	mux.HandleFunc("/autotest/status", s.auth(s.handleAutotestStatus))
+	mux.HandleFunc("/autotest/stop", s.auth(s.handleAutotestStop))
+	mux.HandleFunc("/autotest/results", s.auth(s.handleAutotestResults))
+	mux.HandleFunc("/autotest/results/", s.auth(s.handleAutotestResults))
+	mux.HandleFunc("/autotest/approve", s.auth(s.handleAutotestApprove))
+	mux.HandleFunc("/autotest/suite", s.auth(s.handleAutotestSuite))
 
 	// Feedback (visual bug reports from device testing) — SDK-accessible
 	mux.HandleFunc("/feedback", s.authSDK(s.handleFeedback))
@@ -3180,9 +3156,9 @@ func (s *HTTPServer) taskInfoFromTask(task *Task, r *http.Request) TaskInfo {
 		// Echo the model + deviceName so mobile UIs can render the
 		// task's authoritative target instead of inferring from the
 		// focused-device picker state.
-		Model:      task.Model,
-		DeviceName: hostname,
-		SessionID:  task.SessionID,
+		Model:          task.Model,
+		DeviceName:     hostname,
+		SessionID:      task.SessionID,
 		Output:         output,
 		ResultText:     task.ResultText,
 		CostUSD:        task.CostUSD,
@@ -4276,64 +4252,6 @@ func (s *HTTPServer) handleSessionImport(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-func (s *HTTPServer) handleSessionHandoff(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "use POST")
-		return
-	}
-	var spec HandoffSpec
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	res, err := RunHandoff(s, spec)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":           res.OK,
-		"localTaskId":  res.LocalTaskID,
-		"loopName":     res.LoopName,
-		"engine":       res.Engine,
-		"runner":       res.Runner,
-		"sentinelFile": res.SentinelFile,
-		"warnings":     res.Warnings,
-		"message":      res.Message,
-		"exitNow":      res.ExitNow,
-	})
-}
-
-func (s *HTTPServer) handleSessionComplete(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		jsonError(w, http.StatusMethodNotAllowed, "use POST")
-		return
-	}
-	var spec HandoffSpec
-	if err := json.NewDecoder(r.Body).Decode(&spec); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid JSON")
-		return
-	}
-	spec = normalizeSessionCompleteSpec(spec)
-	res, err := RunHandoff(s, spec)
-	if err != nil {
-		jsonError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	jsonReply(w, http.StatusOK, map[string]interface{}{
-		"ok":           res.OK,
-		"mode":         "session-complete",
-		"localTaskId":  res.LocalTaskID,
-		"loopName":     res.LoopName,
-		"engine":       res.Engine,
-		"runner":       res.Runner,
-		"sentinelFile": res.SentinelFile,
-		"warnings":     res.Warnings,
-		"message":      res.Message,
-		"exitNow":      res.ExitNow,
-	})
-}
-
 // ---------------------------------------------------------------------------
 // Notifications handlers
 // ---------------------------------------------------------------------------
@@ -5025,278 +4943,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		return mcpToolResult(sb.String())
 
-	case "session_handoff":
-		var args struct {
-			SourceTaskID      string `json:"source_task_id"`
-			SourceSessionFile string `json:"source_session_file"`
-			Target            string `json:"target"`
-			Engine            string `json:"engine"`
-			Runner            string `json:"runner"`
-			WorkDir           string `json:"workdir"`
-			MaxKicks          int    `json:"max_kicks"`
-			DeadlineSec       int    `json:"deadline_sec"`
-			Message           string `json:"message"`
-			StopSource        *bool  `json:"stop_source"`
-			Autodev           bool   `json:"autodev"`
-			CallerPID         int    `json:"caller_pid"`
-			Hours             string `json:"hours"`
-			Load              string `json:"load"`
-			Prompt            string `json:"prompt"`
-			LoopTarget        string `json:"loop_target"`
-			Branch            string `json:"branch"`
-			AutoBranch        bool   `json:"auto_branch"`
-			Deploy            string `json:"deploy"`
-			Notify            bool   `json:"notify"`
-			NoAutotest        bool   `json:"no_autotest"`
-			AutoIdeas         int    `json:"auto_ideas"`
-			RemainedFile      string `json:"remained_file"`
-			Harden            string `json:"harden"`
-			Model             string `json:"model"`
-			Planner           string `json:"planner"`
-			Implementer       string `json:"implementer"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		stopSource := true
-		if args.StopSource != nil {
-			stopSource = *args.StopSource
-		}
-		// Remote handoff: export the source bundle locally, ship it to
-		// the named device's daemon, return the result. Lets a Claude
-		// Code session running on the user's laptop hand its work
-		// over to a remote yaver agent (e.g. the dev's Mac mini)
-		// without leaving the MCP-wrapped tool call.
-		if args.Target != "" {
-			cfg, _ := LoadConfig()
-			if cfg == nil || cfg.AuthToken == "" {
-				return mcpToolError("remote handoff: agent not authenticated — run `yaver auth`")
-			}
-			runnerID, err := resolveHandoffRunner(args.Engine, args.Runner)
-			if err != nil {
-				return mcpToolError(err.Error())
-			}
-			bundle, err := ResolveHandoffBundle(s.taskMgr, HandoffSpec{
-				SourceTaskID:      args.SourceTaskID,
-				SourceSessionFile: args.SourceSessionFile,
-				WorkDir:           args.WorkDir,
-			}, runnerID)
-			if err != nil {
-				return mcpToolError(fmt.Sprintf("remote handoff export failed: %v", err))
-			}
-			body := map[string]interface{}{
-				"sourceBundle": bundle,
-				"engine":       args.Engine,
-				"runner":       args.Runner,
-				"workDir":      args.WorkDir,
-				"maxKicks":     args.MaxKicks,
-				"deadlineSec":  args.DeadlineSec,
-				"extraPrompt":  args.Message,
-				"stopSource":   stopSource,
-				"autodev":      args.Autodev,
-				"hours":        args.Hours,
-				"load":         args.Load,
-				"prompt":       args.Prompt,
-				"loopTarget":   args.LoopTarget,
-				"branch":       args.Branch,
-				"autoBranch":   args.AutoBranch,
-				"deploy":       args.Deploy,
-				"notify":       args.Notify,
-				"noAutotest":   args.NoAutotest,
-				"autoIdeas":    args.AutoIdeas,
-				"remainedFile": args.RemainedFile,
-				"harden":       args.Harden,
-				"model":        args.Model,
-				"planner":      args.Planner,
-				"implementer":  args.Implementer,
-			}
-			target := resolveDeviceURL(cfg, args.Target, true)
-			payload, _ := json.Marshal(body)
-			req, _ := http.NewRequest("POST", target+"/session/handoff", bytes.NewReader(payload))
-			req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-			req.Header.Set("Content-Type", "application/json")
-			httpc := &http.Client{Timeout: 60 * time.Second}
-			resp, err := httpc.Do(req)
-			if err != nil {
-				return mcpToolError(fmt.Sprintf("remote handoff: %v", err))
-			}
-			defer resp.Body.Close()
-			var out map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&out)
-			if ok, _ := out["ok"].(bool); !ok {
-				return mcpToolError(fmt.Sprintf("remote handoff failed: %v", out["error"]))
-			}
-			return mcpToolJSON(out)
-		}
-		spec := HandoffSpec{
-			SourceTaskID:      args.SourceTaskID,
-			SourceSessionFile: args.SourceSessionFile,
-			Engine:            args.Engine,
-			Runner:            args.Runner,
-			WorkDir:           args.WorkDir,
-			MaxKicks:          args.MaxKicks,
-			DeadlineSec:       args.DeadlineSec,
-			ExtraPrompt:       args.Message,
-			StopSource:        stopSource,
-			Autodev:           args.Autodev,
-			Hours:             args.Hours,
-			Load:              args.Load,
-			CallerPID:         resolveCallerPID(args.CallerPID, clientAddr),
-			Prompt:            args.Prompt,
-			LoopTarget:        args.LoopTarget,
-			Branch:            args.Branch,
-			AutoBranch:        args.AutoBranch,
-			Deploy:            args.Deploy,
-			Notify:            args.Notify,
-			NoAutotest:        args.NoAutotest,
-			AutoIdeas:         args.AutoIdeas,
-			RemainedFile:      args.RemainedFile,
-			Harden:            args.Harden,
-			Model:             args.Model,
-			Planner:           args.Planner,
-			Implementer:       args.Implementer,
-		}
-		res, err := RunHandoff(s, spec)
-		if err != nil {
-			return mcpToolError(fmt.Sprintf("handoff failed: %v", err))
-		}
-		log.Printf("[MCP] session handed off: loop=%s task=%s engine=%s runner=%s",
-			res.LoopName, res.LocalTaskID, res.Engine, res.Runner)
-		text := fmt.Sprintf("%s\n\nLoop: %s\nTask: %s\nEngine: %s\nRunner: %s\nSentinel: %s\nexitNow: true — please terminate this session; Yaver is taking over.",
-			res.Message, res.LoopName, res.LocalTaskID, res.Engine, res.Runner, res.SentinelFile)
-		return mcpToolResult(text)
-
-	case "session_complete":
-		var args struct {
-			SourceTaskID      string `json:"source_task_id"`
-			SourceSessionFile string `json:"source_session_file"`
-			Target            string `json:"target"`
-			Engine            string `json:"engine"`
-			Runner            string `json:"runner"`
-			WorkDir           string `json:"workdir"`
-			MaxKicks          int    `json:"max_kicks"`
-			DeadlineSec       int    `json:"deadline_sec"`
-			Message           string `json:"message"`
-			StopSource        *bool  `json:"stop_source"`
-			CallerPID         int    `json:"caller_pid"`
-			Hours             string `json:"hours"`
-			Load              string `json:"load"`
-			Prompt            string `json:"prompt"`
-			LoopTarget        string `json:"loop_target"`
-			Branch            string `json:"branch"`
-			AutoBranch        bool   `json:"auto_branch"`
-			Deploy            string `json:"deploy"`
-			Notify            bool   `json:"notify"`
-			NoAutotest        bool   `json:"no_autotest"`
-			RemainedFile      string `json:"remained_file"`
-			Harden            string `json:"harden"`
-			Model             string `json:"model"`
-			Planner           string `json:"planner"`
-			Implementer       string `json:"implementer"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		stopSource := true
-		if args.StopSource != nil {
-			stopSource = *args.StopSource
-		}
-		spec := normalizeSessionCompleteSpec(HandoffSpec{
-			SourceTaskID:      args.SourceTaskID,
-			SourceSessionFile: args.SourceSessionFile,
-			Target:            args.Target,
-			Engine:            args.Engine,
-			Runner:            args.Runner,
-			WorkDir:           args.WorkDir,
-			MaxKicks:          args.MaxKicks,
-			DeadlineSec:       args.DeadlineSec,
-			ExtraPrompt:       args.Message,
-			StopSource:        stopSource,
-			Hours:             args.Hours,
-			Load:              args.Load,
-			CallerPID:         resolveCallerPID(args.CallerPID, clientAddr),
-			Prompt:            args.Prompt,
-			LoopTarget:        args.LoopTarget,
-			Branch:            args.Branch,
-			AutoBranch:        args.AutoBranch,
-			Deploy:            args.Deploy,
-			Notify:            args.Notify,
-			NoAutotest:        args.NoAutotest,
-			RemainedFile:      args.RemainedFile,
-			Harden:            args.Harden,
-			Model:             args.Model,
-			Planner:           args.Planner,
-			Implementer:       args.Implementer,
-		})
-		if spec.Target != "" {
-			cfg, _ := LoadConfig()
-			if cfg == nil || cfg.AuthToken == "" {
-				return mcpToolError("remote session_complete: agent not authenticated — run `yaver auth`")
-			}
-			runnerID, err := resolveHandoffRunner(spec.Engine, spec.Runner)
-			if err != nil {
-				return mcpToolError(err.Error())
-			}
-			bundle, err := ResolveHandoffBundle(s.taskMgr, spec, runnerID)
-			if err != nil {
-				return mcpToolError(fmt.Sprintf("remote session_complete export failed: %v", err))
-			}
-			body := map[string]interface{}{
-				"sourceBundle": bundle,
-				"engine":       spec.Engine,
-				"runner":       spec.Runner,
-				"workDir":      spec.WorkDir,
-				"maxKicks":     spec.MaxKicks,
-				"deadlineSec":  spec.DeadlineSec,
-				"extraPrompt":  spec.ExtraPrompt,
-				"stopSource":   spec.StopSource,
-				"hours":        spec.Hours,
-				"load":         spec.Load,
-				"prompt":       spec.Prompt,
-				"loopTarget":   spec.LoopTarget,
-				"branch":       spec.Branch,
-				"autoBranch":   spec.AutoBranch,
-				"deploy":       spec.Deploy,
-				"notify":       spec.Notify,
-				"noAutotest":   spec.NoAutotest,
-				"autoIdeas":    spec.AutoIdeas,
-				"remainedFile": spec.RemainedFile,
-				"harden":       spec.Harden,
-				"model":        spec.Model,
-				"planner":      spec.Planner,
-				"implementer":  spec.Implementer,
-			}
-			target := resolveDeviceURL(cfg, spec.Target, true)
-			payload, _ := json.Marshal(body)
-			req, _ := http.NewRequest("POST", target+"/session/complete", bytes.NewReader(payload))
-			req.Header.Set("Authorization", "Bearer "+cfg.AuthToken)
-			req.Header.Set("Content-Type", "application/json")
-			httpc := &http.Client{Timeout: 60 * time.Second}
-			resp, err := httpc.Do(req)
-			if err != nil {
-				return mcpToolError(fmt.Sprintf("remote session_complete: %v", err))
-			}
-			defer resp.Body.Close()
-			var out map[string]interface{}
-			json.NewDecoder(resp.Body).Decode(&out)
-			if ok, _ := out["ok"].(bool); !ok {
-				return mcpToolError(fmt.Sprintf("remote session_complete failed: %v", out["error"]))
-			}
-			return mcpToolJSON(out)
-		}
-		res, err := RunHandoff(s, spec)
-		if err != nil {
-			return mcpToolError(fmt.Sprintf("session_complete failed: %v", err))
-		}
-		return mcpToolJSON(map[string]interface{}{
-			"ok":           res.OK,
-			"mode":         "session-complete",
-			"localTaskId":  res.LocalTaskID,
-			"loopName":     res.LoopName,
-			"engine":       res.Engine,
-			"runner":       res.Runner,
-			"sentinelFile": res.SentinelFile,
-			"warnings":     res.Warnings,
-			"message":      res.Message,
-			"exitNow":      res.ExitNow,
-		})
-
 	// --- Runner Management ---
 	case "list_runners":
 		var sb strings.Builder
@@ -5609,133 +5255,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		sb.WriteString("\nUse agent_graph_show with graph_id=" + run.ID + " to follow progress.")
 		return mcpToolResult(strings.TrimSpace(sb.String()))
-
-	// --- Two-Factor Authentication (optional) ---
-	case "morning_latest":
-		runs := s.morningStore().List(1)
-		if len(runs) == 0 {
-			return mcpToolResult("No runs yet. Try `yaver autodev --morning`.")
-		}
-		return mcpToolJSON(map[string]interface{}{"ok": true, "run": runs[0]})
-
-	case "morning_list":
-		var args struct {
-			Limit int `json:"limit"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if args.Limit <= 0 {
-			args.Limit = 20
-		}
-		return mcpToolJSON(map[string]interface{}{"ok": true, "runs": s.morningStore().List(args.Limit)})
-
-	case "morning_show":
-		var args struct {
-			RunID string `json:"run_id"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if strings.TrimSpace(args.RunID) == "" {
-			return mcpToolError("run_id is required")
-		}
-		run, ok := s.morningStore().Load(args.RunID)
-		if !ok {
-			return mcpToolError("run not found: " + args.RunID)
-		}
-		return mcpToolJSON(map[string]interface{}{"ok": true, "run": run})
-
-	case "morning_rollback":
-		var args struct {
-			RunID  string `json:"run_id"`
-			TaskID string `json:"task_id"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if args.RunID == "" || args.TaskID == "" {
-			return mcpToolError("run_id and task_id required")
-		}
-		summary, ok := s.morningStore().Load(args.RunID)
-		if !ok {
-			return mcpToolError("run not found: " + args.RunID)
-		}
-		var task *TaskHighlight
-		for i := range summary.Tasks {
-			if summary.Tasks[i].TaskID == args.TaskID {
-				task = &summary.Tasks[i]
-				break
-			}
-		}
-		if task == nil {
-			return mcpToolError("task not found: " + args.TaskID)
-		}
-		if task.Status == TaskStatusHighlightRolledBack {
-			return mcpToolError("task already rolled back")
-		}
-		if len(task.CommitSHAs) == 0 {
-			return mcpToolError("no commits recorded for this task — nothing to revert")
-		}
-		workDir := task.WorkDir
-		if workDir == "" {
-			workDir = summary.WorkDir
-		}
-		revertSHA, err := gitRevertCommits(context.Background(), workDir, task.CommitSHAs)
-		if err != nil {
-			return mcpToolError(err.Error())
-		}
-		if _, err := s.morningStore().MarkRollback(args.RunID, args.TaskID, revertSHA); err != nil {
-			return mcpToolError(err.Error())
-		}
-		return mcpToolResult(fmt.Sprintf("Rolled back task %s — new revert commit %s", args.TaskID, revertSHA))
-
-	case "record_drivers":
-		return mcpToolJSON(map[string]interface{}{
-			"ok":       true,
-			"platform": platformDescription(),
-			"drivers":  s.recordingManager().Drivers(),
-		})
-
-	case "record_start":
-		var args struct {
-			RunID  string `json:"run_id"`
-			TaskID string `json:"task_id"`
-			Target string `json:"target"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if args.RunID == "" || args.TaskID == "" {
-			return mcpToolError("run_id and task_id required")
-		}
-		handle, err := s.recordingManager().Start(context.Background(), args.RunID, args.TaskID, RecordingTarget(args.Target))
-		if err != nil {
-			return mcpToolError(err.Error())
-		}
-		return mcpToolJSON(map[string]interface{}{
-			"ok":     true,
-			"handle": handle,
-		})
-
-	case "record_stop":
-		var args struct {
-			RunID  string `json:"run_id"`
-			TaskID string `json:"task_id"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if args.RunID == "" || args.TaskID == "" {
-			return mcpToolError("run_id and task_id required")
-		}
-		result, err := s.recordingManager().Stop(args.RunID, args.TaskID)
-		if err != nil {
-			return mcpToolError(err.Error())
-		}
-		// Also stamp video metadata onto the task highlight so mobile
-		// clients see hasVideo=true on their next poll.
-		_, _ = s.morningStore().UpsertTask(args.RunID, "", "", TaskHighlight{
-			TaskID:          args.TaskID,
-			HasVideo:        true,
-			VideoDurationMs: result.DurationMs,
-			VideoSizeBytes:  result.SizeBytes,
-		})
-		return mcpToolJSON(map[string]interface{}{
-			"ok":       true,
-			"result":   result,
-			"streamAt": fmt.Sprintf("/recordings/%s/%s/video.mp4", args.RunID, args.TaskID),
-		})
 
 	case "totp_status":
 		cfg, err := LoadConfig()
@@ -10021,6 +9540,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		}
 		json.Unmarshal(call.Arguments, &a)
 		return mcpToolJSON(mcpCloudProvision(a.Host, a.Name, a.Opts))
+	case "cloud_destroy":
+		var a struct {
+			Host string `json:"host"`
+			ID   string `json:"id"`
+			Opts string `json:"opts"`
+		}
+		json.Unmarshal(call.Arguments, &a)
+		return mcpToolJSON(mcpCloudDestroy(a.Host, a.ID, a.Opts))
 	case "studio_list":
 		return mcpToolJSON(mcpStudioList())
 	case "switch_cost":
@@ -11739,7 +11266,7 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		views := buildAppViews(root, m)
 		kindFilter := strings.TrimSpace(args.Kind)
 		if kindFilter == "" {
-			kindFilter = "web,hybrid"
+			kindFilter = "web"
 		}
 		wanted := map[DevServerKind]bool{}
 		for _, k := range strings.Split(kindFilter, ",") {
@@ -12258,56 +11785,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 				u.GuestEmail, u.GuestName, u.SecondsUsed, u.Date))
 		}
 		return mcpToolResult(sb.String())
-
-	case "hybrid_check":
-		var args struct {
-			Planner     string `json:"planner"`
-			Implementer string `json:"implementer"`
-		}
-		json.Unmarshal(call.Arguments, &args)
-		if args.Planner == "" {
-			args.Planner = "claude"
-		}
-		if args.Implementer == "" {
-			args.Implementer = "opencode"
-		}
-		return mcpToolJSON(checkHybrid(args.Planner, args.Implementer))
-
-	case "hybrid_plan":
-		var req hybridRunRequest
-		if err := json.Unmarshal(call.Arguments, &req); err != nil {
-			return mcpToolError("invalid arguments: " + err.Error())
-		}
-		spec := req.toSpec()
-		if err := applyHybridDefaults(&spec); err != nil {
-			return mcpToolError(err.Error())
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), spec.Timeout)
-		defer cancel()
-		planOut, err := runPlanner(ctx, spec)
-		if err != nil {
-			return mcpToolError("planner failed: " + err.Error())
-		}
-		subtasks, perr := parseHybridPlan(planOut, spec.MaxSubtasks)
-		if perr != nil {
-			return mcpToolError(perr.Error())
-		}
-		return mcpToolJSON(map[string]any{"spec": spec, "subtasks": subtasks})
-
-	case "hybrid_run":
-		var req hybridRunRequest
-		if err := json.Unmarshal(call.Arguments, &req); err != nil {
-			return mcpToolError("invalid arguments: " + err.Error())
-		}
-		spec := req.toSpec()
-		rep, err := RunHybrid(context.Background(), spec)
-		if err != nil {
-			if rep != nil {
-				return mcpToolJSON(map[string]any{"error": err.Error(), "report": rep})
-			}
-			return mcpToolError(err.Error())
-		}
-		return mcpToolJSON(rep)
 
 	case "forgot_password":
 		var args struct {
@@ -13440,217 +12917,6 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		_ = json.Unmarshal(rec.Body(), &payload)
 		return mcpToolJSON(payload)
 
-	case "autoideas_select":
-		// Just forward the JSON args through to the HTTP handler.
-		req, _ := http.NewRequest("POST", "/autoideas/select",
-			bytes.NewReader(call.Arguments))
-		req.Header.Set("Content-Type", "application/json")
-		rec := newCapturingResponseWriter()
-		s.handleAutoIdeasSelect(rec, req)
-		var payload interface{}
-		_ = json.Unmarshal(rec.Body(), &payload)
-		return mcpToolJSON(payload)
-
-	case "autodev_options":
-		return mcpToolJSON(BuildAutodevOptions())
-
-	case "autodev_start":
-		// Same JSON shape as the POST /autodev/start HTTP endpoint.
-		// We reuse handleAutodevStart by synthesising a request — but
-		// that's more ceremony than value, so inline the minimal logic
-		// here: write any remained_content, scaffold the plan, spawn
-		// the loop in a goroutine, return the loop name.
-		var args struct {
-			Project         string `json:"project"`
-			WorkDir         string `json:"work_dir"`
-			Hours           string `json:"hours"`
-			Load            string `json:"load"`
-			Prompt          string `json:"prompt"`
-			Deploy          string `json:"deploy"`
-			Runner          string `json:"runner"`
-			Engine          string `json:"engine"`
-			AutoIdeas       *int   `json:"auto_ideas"`
-			AutoBranch      bool   `json:"auto_branch"`
-			Harden          string `json:"harden"`
-			Model           string `json:"model"`
-			Planner         string `json:"planner"`
-			Implementer     string `json:"implementer"`
-			Branch          string `json:"branch"`
-			Target          string `json:"target"`
-			RemainedPath    string `json:"remained_path"`
-			RemainedContent string `json:"remained_content"`
-			NoAutotest      bool   `json:"no_autotest"`
-			MaxIterations   int    `json:"max_iterations"`
-		}
-		_ = json.Unmarshal(call.Arguments, &args)
-		switch strings.ToLower(strings.TrimSpace(args.Engine)) {
-		case "", "claude", "claude-code":
-			// keep args.Runner
-		case "codex":
-			args.Runner = "codex"
-		case "hybrid":
-			args.Runner = "hybrid"
-		default:
-			return mcpToolError("unknown engine: " + args.Engine + " (want claude|codex|hybrid)")
-		}
-		// Hybrid layering: per-tier overrides force hybrid.
-		if args.Planner != "" || args.Implementer != "" {
-			args.Runner = "hybrid"
-			if args.Planner != "" {
-				os.Setenv("YAVER_HYBRID_PLANNER", args.Planner)
-			}
-			if args.Implementer != "" {
-				os.Setenv("YAVER_HYBRID_IMPLEMENTER", args.Implementer)
-			}
-		}
-		if args.Model != "" {
-			os.Setenv("YAVER_CLAUDE_MODEL", args.Model)
-		}
-		autoIdeasMCP := 999
-		if args.AutoIdeas != nil {
-			autoIdeasMCP = *args.AutoIdeas
-			if autoIdeasMCP < 0 {
-				autoIdeasMCP = 0
-			}
-		}
-		if args.WorkDir == "" {
-			return mcpToolError("work_dir required")
-		}
-		if _, err := os.Stat(args.WorkDir); err != nil {
-			return mcpToolError("work_dir does not exist: " + args.WorkDir)
-		}
-		remainedPath := args.RemainedPath
-		if args.RemainedContent != "" && remainedPath == "" {
-			remainedPath = "remained.md"
-		}
-		if args.RemainedContent != "" {
-			full := remainedPath
-			if !filepath.IsAbs(full) {
-				full = filepath.Join(args.WorkDir, full)
-			}
-			if err := os.WriteFile(full, []byte(args.RemainedContent), 0o644); err != nil {
-				return mcpToolError("write remained file: " + err.Error())
-			}
-		}
-		project := args.Project
-		if project == "" {
-			project = filepath.Base(args.WorkDir)
-		}
-		resolvedPromptMCP := args.Prompt
-		if hp := autodevHardenPrompt(args.Harden); hp != "" {
-			if strings.TrimSpace(resolvedPromptMCP) == "" {
-				resolvedPromptMCP = hp
-			} else {
-				resolvedPromptMCP = hp + "\n\n" + resolvedPromptMCP
-			}
-		}
-		args.Prompt = resolvedPromptMCP
-
-		resolvedBranchMCP := args.Branch
-		if args.AutoBranch && resolvedBranchMCP == "" {
-			resolvedBranchMCP = "autodev/" + project + "-autodev-" + time.Now().Format("20060102")
-			ensureAutodevBranch(args.WorkDir, resolvedBranchMCP)
-		}
-		d := autodevDefaults{
-			hours: args.Hours, load: args.Load, deploy: args.Deploy,
-			prompt: args.Prompt, project: project, runner: args.Runner,
-			branch: resolvedBranchMCP, target: args.Target,
-			maxIter: args.MaxIterations, noAutotest: args.NoAutotest,
-			remained:  remainedPath,
-			autoIdeas: autoIdeasMCP,
-		}
-		if d.hours == "" {
-			d.hours = autodevSleepHours
-		}
-		if d.load == "" {
-			d.load = autodevSleepLoad
-		}
-		d = applyAutodevDefaults(d, "autodev", args.WorkDir)
-		plan := buildAutodevPlan("autodev", d, args.WorkDir)
-		origWd, _ := os.Getwd()
-		if err := os.Chdir(args.WorkDir); err != nil {
-			return mcpToolError("chdir: " + err.Error())
-		}
-		if err := ensureAutodevSpec(plan); err != nil {
-			_ = os.Chdir(origWd)
-			return mcpToolError("scaffold spec: " + err.Error())
-		}
-		if plan.IncludeAutotest {
-			if err := ensureAutodevRegressionSpec(plan); err != nil {
-				_ = os.Chdir(origWd)
-				return mcpToolError("scaffold regression: " + err.Error())
-			}
-		}
-		if d.prompt != "" {
-			loopPrompt([]string{"set", plan.LoopName, d.prompt})
-		}
-		go func(wd string, p autodevPlan) {
-			_ = os.Chdir(wd)
-			runAutodevLoop(p)
-			runAutodevDeploy(p)
-		}(args.WorkDir, plan)
-		_ = os.Chdir(origWd)
-		return mcpToolJSON(map[string]interface{}{
-			"ok":        true,
-			"loop_name": plan.LoopName,
-			"hours":     plan.Hours,
-			"deploy":    plan.Deploy,
-			"remained":  plan.RemainedFile,
-			"work_dir":  args.WorkDir,
-		})
-
-	case "autodev_status":
-		loops, err := loadLoops()
-		if err != nil {
-			return mcpToolError(err.Error())
-		}
-		out := []map[string]interface{}{}
-		for name, l := range loops {
-			if !strings.HasSuffix(name, "-autodev") && !strings.HasSuffix(name, "-autotest") && !strings.HasSuffix(name, "-autodev-regression") {
-				continue
-			}
-			out = append(out, map[string]interface{}{
-				"name":     name,
-				"status":   l.Status,
-				"mode":     string(l.Spec.Mode),
-				"work_dir": l.WorkDir,
-				"prompt":   l.PromptInline,
-			})
-		}
-		return mcpToolJSON(map[string]interface{}{"loops": out})
-
-	case "autodev_reports":
-		var args struct {
-			Name string `json:"name"`
-		}
-		_ = json.Unmarshal(call.Arguments, &args)
-		if args.Name != "" {
-			rep, err := LoadAutodevReport(args.Name)
-			if err != nil {
-				return mcpToolError(err.Error())
-			}
-			return mcpToolJSON(rep)
-		}
-		reps, err := ListAutodevReports()
-		if err != nil {
-			return mcpToolError(err.Error())
-		}
-		return mcpToolJSON(map[string]interface{}{"reports": reps})
-
-	case "autodev_revert":
-		var args struct {
-			Name       string   `json:"name"`
-			CommitSHAs []string `json:"commit_shas"`
-		}
-		_ = json.Unmarshal(call.Arguments, &args)
-		if args.Name == "" || len(args.CommitSHAs) == 0 {
-			return mcpToolError("name and commit_shas required")
-		}
-		if err := RevertAutodevCommits(args.Name, args.CommitSHAs); err != nil {
-			return mcpToolError(err.Error())
-		}
-		return mcpToolJSON(map[string]interface{}{"ok": true, "reverted": args.CommitSHAs})
-
 	// --- Browser Automation ---
 	case "browser_open":
 		if s.browserMgr == nil {
@@ -14735,7 +14001,7 @@ func buildAgentGraphNodesFromMCP(args []mcpAgentGraphNodeArg) ([]AgentGraphNodeS
 			kind = AgentNodeChat
 		}
 		switch kind {
-		case AgentNodeChat, AgentNodeAutodev, AgentNodeAutoIdeas, AgentNodeAutotest:
+		case AgentNodeChat, AgentNodeAutoIdeas:
 		default:
 			return nil, fmt.Errorf("invalid graph node kind %q", arg.Kind)
 		}

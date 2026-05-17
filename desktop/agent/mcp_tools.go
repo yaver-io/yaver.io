@@ -373,76 +373,6 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
-			"name":        "session_handoff",
-			"description": "Pass the current AI session to Yaver. Yaver imports the session, optionally stops the source agent, and starts an autodev multi-kick loop to finish remaining work. Returns exitNow=true so the calling agent can terminate. Watch the sentinel file (~/.yaver/handoff/<loopName>.json) to confirm Yaver has taken over. Engine controls how Yaver continues: 'claude' (frontier model end-to-end), 'hybrid' (planner + cheap local implementer), 'runner' (single arbitrary runner via runner field). Works on the local machine or a remote dev machine via target.",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"source_task_id":      map[string]interface{}{"type": "string", "description": "Yaver task id to hand off (optional)"},
-					"source_session_file": map[string]interface{}{"type": "string", "description": "Path to a session file (e.g. ~/.claude/sessions/*.jsonl) — optional"},
-					"target":              map[string]interface{}{"type": "string", "description": "Remote device id/hostname; empty = local"},
-					"engine":              map[string]interface{}{"type": "string", "enum": []string{"claude", "codex", "opencode", "runner"}, "description": "claude | codex | opencode | runner", "default": "claude"},
-					"runner":              map[string]interface{}{"type": "string", "enum": []string{"", "claude", "codex", "opencode"}, "description": "Runner id when engine=runner (claude, codex, opencode)."},
-					"workdir":             map[string]interface{}{"type": "string", "description": "Working directory for the resumed loop"},
-					"max_kicks":           map[string]interface{}{"type": "integer", "description": "Max autodev kicks (default 20)"},
-					"deadline_sec":        map[string]interface{}{"type": "integer", "description": "Wall-clock cap in seconds (0 = none)"},
-					"message":             map[string]interface{}{"type": "string", "description": "Extra prompt appended to the resume instructions"},
-					"stop_source":         map[string]interface{}{"type": "boolean", "description": "Stop the source Yaver task before kicking the new loop", "default": true},
-					"autodev":             map[string]interface{}{"type": "boolean", "description": "Autodev mode: also mine the session for new ideas, missing tests, and follow-ups; implement small/safe ones."},
-					"caller_pid":          map[string]interface{}{"type": "integer", "description": "PID of the calling AI agent. Yaver SIGTERMs it after the response and SIGKILLs 5s later. If omitted, Yaver auto-detects: stdio MCP → parent PID; HTTP MCP → loopback peer port via lsof. Set to 0 to disable termination."},
-					"hours":               map[string]interface{}{"type": "string", "description": "Wall-clock cap for the resumed loop, e.g. '8' or 'inf'. Default 'inf'."},
-					"load":                map[string]interface{}{"type": "string", "description": "lite (default, respects Claude/Codex 5h windows, 5min ticks) | burst (30s ticks, no respect)"},
-					"prompt":              map[string]interface{}{"type": "string", "description": "Explicit focus prompt for the loop (replaces the auto-generated resume prompt; ExtraPrompt becomes additional context)"},
-					"loop_target":         map[string]interface{}{"type": "string", "description": "web | ios-sim | android-emu (default: auto-detect from workdir). Separate from `target` (device routing hint)."},
-					"branch":              map[string]interface{}{"type": "string", "description": "Git branch the loop ships to (default: main)"},
-					"auto_branch":         map[string]interface{}{"type": "boolean", "description": "Use a dedicated autodev/<loop>-<YYYYMMDD> branch off main (overnight-safe)"},
-					"deploy":              map[string]interface{}{"type": "string", "description": "Deploy on done. Default = 'both' (ship to every configured platform). Disable with 'false'/'no'/'0'/'none'. Restrict with 'testflight'/'playstore'/'web'."},
-					"notify":              map[string]interface{}{"type": "boolean", "description": "Send a mobile notification when the loop ends"},
-					"no_autotest":         map[string]interface{}{"type": "boolean", "description": "Skip the interleaved autotest regression pass after each kick"},
-					"auto_ideas":          map[string]interface{}{"type": "integer", "description": "Max idea-refill batches when the checklist runs dry (0 = stop on empty, 999 = effectively unlimited)"},
-					"remained_file":       map[string]interface{}{"type": "string", "description": "Path to a remained.md checklist file the loop pulls items from"},
-					"harden":              map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}, "description": "Autodev hardening preset — sets a curated focus prompt (security audit, leak hunt, perf passes, code-quality cleanup, or all four)."},
-					"model":               map[string]interface{}{"type": "string", "description": "Model alias (sonnet|opus|haiku) or full id. Sonnet burns the Max weekly bucket ~5x slower than Opus."},
-					"planner":             map[string]interface{}{"type": "string", "description": "Hybrid layering: planner agent[:model], e.g. 'claude:opus'. Set this OR implementer to force engine=hybrid."},
-					"implementer":         map[string]interface{}{"type": "string", "description": "Hybrid layering: implementer agent[:model], e.g. 'claude:sonnet', 'codex', or 'opencode:<provider>/<model>'."},
-				},
-			},
-		},
-		{
-			"name":        "session_complete",
-			"description": "Tell Yaver to take over the current AI session and continue until the imported session's current objective is actually complete. Unlike session_handoff autodev mode, this does not branch into recommendations, market research, or speculative next-step ideas. It finishes the existing objective, then stops. Returns exitNow=true so the calling agent can terminate.",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"source_task_id":      map[string]interface{}{"type": "string", "description": "Yaver task id to complete (optional)"},
-					"source_session_file": map[string]interface{}{"type": "string", "description": "Path to a session file to import and complete (optional)"},
-					"target":              map[string]interface{}{"type": "string", "description": "Remote device id/hostname; empty = local"},
-					"engine":              map[string]interface{}{"type": "string", "description": "claude | hybrid | runner", "default": "claude"},
-					"runner":              map[string]interface{}{"type": "string", "description": "Runner id when engine=runner"},
-					"workdir":             map[string]interface{}{"type": "string", "description": "Working directory for the resumed loop"},
-					"max_kicks":           map[string]interface{}{"type": "integer", "description": "Max kicks before giving up (default 200 in this mode)"},
-					"deadline_sec":        map[string]interface{}{"type": "integer", "description": "Wall-clock cap in seconds (0 = none)"},
-					"message":             map[string]interface{}{"type": "string", "description": "Additional context appended after Yaver's built-in completion directive"},
-					"stop_source":         map[string]interface{}{"type": "boolean", "description": "Stop the source Yaver task before kicking the new loop", "default": true},
-					"caller_pid":          map[string]interface{}{"type": "integer", "description": "PID of the calling AI agent for post-takeover termination"},
-					"hours":               map[string]interface{}{"type": "string", "description": "Wall-clock cap for the resumed loop, e.g. '8' or 'inf'. Default 'inf'."},
-					"load":                map[string]interface{}{"type": "string", "description": "lite (default) | burst"},
-					"prompt":              map[string]interface{}{"type": "string", "description": "Explicit focus prompt override"},
-					"loop_target":         map[string]interface{}{"type": "string", "description": "web | ios-sim | android-emu (default: auto-detect from workdir)"},
-					"branch":              map[string]interface{}{"type": "string", "description": "Git branch the loop ships to (default: main)"},
-					"auto_branch":         map[string]interface{}{"type": "boolean", "description": "Use a dedicated autodev/<loop>-<YYYYMMDD> branch off main"},
-					"deploy":              map[string]interface{}{"type": "string", "description": "Deploy on done. Default = both; disable with no/false/none"},
-					"notify":              map[string]interface{}{"type": "boolean", "description": "Send a mobile notification when the loop ends"},
-					"no_autotest":         map[string]interface{}{"type": "boolean", "description": "Skip the interleaved autotest regression pass"},
-					"remained_file":       map[string]interface{}{"type": "string", "description": "Path to a remained.md checklist file the loop pulls work items from"},
-					"harden":              map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}},
-					"model":               map[string]interface{}{"type": "string", "description": "Model alias or full id"},
-					"planner":             map[string]interface{}{"type": "string", "description": "Hybrid planner agent[:model]"},
-					"implementer":         map[string]interface{}{"type": "string", "description": "Hybrid implementer agent[:model]"},
-				},
-			},
-		},
-		{
 			"name":        "web_search",
 			"description": "Search the web. Use this for current information: competitor research, market gaps, library docs, error messages, news. Provider defaults to DuckDuckGo (free, no key); set provider=google or provider=bing to use paid backends if GOOGLE_CSE_KEY+GOOGLE_CSE_CX or BING_API_KEY are configured. Returns title/url/snippet for each hit.",
 			"inputSchema": map[string]interface{}{
@@ -1871,6 +1801,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "git_oauth_status", "description": "Poll the state of an in-flight GitHub/GitLab Device Flow session started via git_oauth_start. Returns state ∈ {pending, done, error, expired, unknown} plus the username on success. Safe to call repeatedly at the interval the start call returned.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"session_id"}, "properties": map[string]interface{}{"session_id": map[string]interface{}{"type": "string"}, "device_id": map[string]interface{}{"type": "string", "description": "Optional remote device ID/alias — checks the session on that peer"}}}},
 		// Cloud provisioning
 		{"name": "cloud_provision", "description": "Provision a resource on a cloud provider using stored credentials. Hosts: neon, supabase-cloud, turso, cloudflare-d1, vercel, hetzner, railway.", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"host", "name"}, "properties": map[string]interface{}{"host": map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "opts": map[string]interface{}{"type": "string", "description": "JSON options"}}}},
+		{"name": "cloud_destroy", "description": "Snapshot then delete a managed cloud box (host=hetzner). Vault-backed token, never from payload. Requires opts JSON with confirm=\"true\"; always snapshots first unless opts skipSnapshot=\"true\".", "inputSchema": map[string]interface{}{"type": "object", "required": []string{"host", "id"}, "properties": map[string]interface{}{"host": map[string]interface{}{"type": "string"}, "id": map[string]interface{}{"type": "string", "description": "provider numeric server id"}, "opts": map[string]interface{}{"type": "string", "description": "JSON options incl. confirm"}}}},
 		// Studio proxy
 		{"name": "studio_list", "description": "List native DB dashboards (Drizzle, Supabase, Convex, PocketBase, MinIO, Mailpit, Firebase) with live-probe.", "inputSchema": map[string]interface{}{"type": "object"}},
 		// Cost comparison
@@ -3105,61 +3036,6 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	}
 	tools = append(tools, sandboxTools...)
 
-	// --- Hybrid Mode (planner + implementer) ---
-	hybridTools := []map[string]interface{}{
-		{
-			"name":        "hybrid_check",
-			"description": "Preflight the hybrid runner chain — verifies the planner and implementer CLIs are on PATH. Returns an actionable hint if anything is missing.",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"planner": map[string]interface{}{
-						"type":        "string",
-						"description": "Planner runner ID (claude | codex | opencode). Default: claude.",
-					},
-					"implementer": map[string]interface{}{
-						"type":        "string",
-						"description": "Implementer runner ID (claude | codex | opencode). Default: opencode.",
-					},
-				},
-			},
-		},
-		{
-			"name":        "hybrid_plan",
-			"description": "Ask the planner (default: claude) to decompose a feature request into file-scoped subtasks for the implementer (default: opencode). Does NOT execute — returns the subtask list for preview/editing before calling hybrid_run.",
-			"inputSchema": map[string]interface{}{
-				"type":     "object",
-				"required": []string{"workDir", "prompt"},
-				"properties": map[string]interface{}{
-					"planner":     map[string]interface{}{"type": "string", "description": "Planner runner ID (claude | codex | opencode). Default: claude."},
-					"implementer": map[string]interface{}{"type": "string", "description": "Implementer runner ID (claude | codex | opencode). Default: opencode."},
-					"model":       map[string]interface{}{"type": "string", "description": "Override implementer model (forwarded as --model)"},
-					"workDir":     map[string]interface{}{"type": "string", "description": "Absolute path to the project root"},
-					"prompt":      map[string]interface{}{"type": "string", "description": "The feature request in plain English"},
-					"maxSubtasks": map[string]interface{}{"type": "integer", "description": "Cap on subtasks the planner emits (default: 20)"},
-				},
-			},
-		},
-		{
-			"name":        "hybrid_run",
-			"description": "Plan AND execute a hybrid run end-to-end. The planner (default: claude) emits subtasks; the implementer (default: opencode) executes each one. Returns a report with per-step status, output, and duration. Can take many minutes — use hybrid_plan first if you want to review the plan before committing.",
-			"inputSchema": map[string]interface{}{
-				"type":     "object",
-				"required": []string{"workDir", "prompt"},
-				"properties": map[string]interface{}{
-					"planner":     map[string]interface{}{"type": "string"},
-					"implementer": map[string]interface{}{"type": "string"},
-					"model":       map[string]interface{}{"type": "string"},
-					"workDir":     map[string]interface{}{"type": "string"},
-					"prompt":      map[string]interface{}{"type": "string"},
-					"maxSubtasks": map[string]interface{}{"type": "integer"},
-					"timeoutSec":  map[string]interface{}{"type": "integer", "description": "Overall run timeout in seconds (default: 1800)"},
-				},
-			},
-		},
-	}
-	tools = append(tools, hybridTools...)
-
 	// --- Password Management ---
 	passwordTools := []map[string]interface{}{
 		{
@@ -3403,37 +3279,8 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 
 	autodevTools := []map[string]interface{}{
 		{
-			"name":        "autodev_start",
-			"description": "Start a yaver autodev run against a local project. Scaffolds a develop-mode AI loop that kicks the runner until a deadline, interleaving a smart-regression autotest pass after each successful dev kick. Optionally accepts a remained.md checklist — each kick picks the next unchecked item, does it, checks it off, commits. Progress is visible via autodev_status and autodev_reports.",
-			"inputSchema": map[string]interface{}{
-				"type":     "object",
-				"required": []string{"work_dir"},
-				"properties": map[string]interface{}{
-					"project":          map[string]interface{}{"type": "string", "description": "Loop name suffix (default: basename of work_dir)"},
-					"work_dir":         map[string]interface{}{"type": "string", "description": "Absolute path to the repo"},
-					"hours":            map[string]interface{}{"type": "string", "description": "Duration: int hours, or 'infinite' (default: 8)"},
-					"load":             map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}, "description": "lite respects AI session limits (default), high burns through them"},
-					"prompt":           map[string]interface{}{"type": "string", "description": "Focus prompt for this run (optional)"},
-					"deploy":           map[string]interface{}{"type": "string", "enum": []string{"testflight", "playstore", "both", "none"}, "description": "Deploy target at end of run (default: auto-detected)"},
-					"runner":           map[string]interface{}{"type": "string", "enum": []string{"", "claude", "codex", "opencode"}, "description": "Primary AI runner (default: claude-code). Direct runner override; usually leave this empty and use 'engine' instead."},
-					"engine":           map[string]interface{}{"type": "string", "enum": []string{"claude", "codex", "opencode"}, "description": "High-level engine. 'claude' (default) uses Claude Code end-to-end. 'codex' uses OpenAI Codex. 'opencode' uses the configured OpenCode provider (Anthropic / OpenAI / OpenRouter / GLM, or local Ollama)."},
-					"auto_ideas":       map[string]interface{}{"type": "integer", "description": "When the remained.md checklist empties, ask the runner to generate that many fresh batches of ideas before exiting. Default 1; set 0 to exit immediately when the list empties."},
-					"branch":           map[string]interface{}{"type": "string", "description": "Git branch to ship to (default: main)"},
-					"auto_branch":      map[string]interface{}{"type": "boolean", "description": "Work on a dedicated 'autodev/<project>-autodev-<YYYYMMDD>' branch instead of main. Created from origin/main if missing. Useful when you want to PR-review the overnight run."},
-					"harden":           map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}, "description": "Run a hardening-focused loop on a specific area. Sets a curated focus prompt so the user doesn't have to write one. Combine with 'prompt' to layer the user theme on top."},
-					"model":            map[string]interface{}{"type": "string", "description": "Model alias (sonnet|opus|haiku) or full id (claude-opus-4-6). Sonnet burns the Max weekly bucket ~5x slower than Opus. Default: runner picks."},
-					"planner":          map[string]interface{}{"type": "string", "description": "Optional planner agent[:model], e.g. 'claude:opus', 'codex', or 'opencode'."},
-					"implementer":      map[string]interface{}{"type": "string", "description": "Optional implementer agent[:model], e.g. 'claude:sonnet', 'codex', or 'opencode'."},
-					"remained_content": map[string]interface{}{"type": "string", "description": "Inline markdown checklist content; writes to remained_path before starting the loop"},
-					"remained_path":    map[string]interface{}{"type": "string", "description": "Path of the checklist file (default: remained.md)"},
-					"no_autotest":      map[string]interface{}{"type": "boolean", "description": "Skip the interleaved regression autotest pass (default: false — autotest is on)"},
-					"max_iterations":   map[string]interface{}{"type": "integer", "description": "Hard cap on total kicks (0 = no cap)"},
-				},
-			},
-		},
-		{
 			"name":        "autoinit_start",
-			"description": "Bootstrap a project init.md (cached project context for autonomous yaver runs). Drastically cuts the per-kick token + wall-clock cost of autodev / autoideas / autotest because runners read init.md instead of re-grepping the project on every kick. Idempotent — re-runs replace only the AI-generated section, preserving any human-edited prose between markers.",
+			"description": "Bootstrap a project init.md (cached project context for autonomous yaver runs). Drastically cuts the per-kick token + wall-clock cost of autoideas because runners read init.md instead of re-grepping the project on every kick. Idempotent — re-runs replace only the AI-generated section, preserving any human-edited prose between markers.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"work_dir"},
@@ -3441,7 +3288,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"project":  map[string]interface{}{"type": "string"},
 					"work_dir": map[string]interface{}{"type": "string"},
 					"prompt":   map[string]interface{}{"type": "string", "description": "extra context to bias the description"},
-					"engine":   map[string]interface{}{"type": "string", "enum": []string{"claude", "codex", "hybrid"}},
+					"engine":   map[string]interface{}{"type": "string", "enum": []string{"claude", "codex"}},
 					"output":   map[string]interface{}{"type": "string", "description": "default init.md"},
 					"force":    map[string]interface{}{"type": "boolean", "description": "regenerate even if init.md already has a generated section"},
 				},
@@ -3460,7 +3307,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "autoideas_start",
-			"description": "Start a yaver autoideas run on a local project. Long-lived loop that asks the AI for fresh single-PR-sized ideas every tick and appends them as `- [ ] <title>` lines to ideas.md (or --output). Mobile/web renders them as checkboxes; the user picks ones to implement and triggers autoideas_select which materialises a curated checklist and starts an autodev run with --remained pointed at it. Generation continues in parallel with implementation.",
+			"description": "Start a yaver autoideas run on a local project. Long-lived loop that asks the AI for fresh single-PR-sized ideas every tick and appends them as `- [ ] <title>` lines to ideas.md (or --output). Mobile/web renders them as checkboxes the user can use as a prompt source for /tasks runs.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"work_dir"},
@@ -3471,7 +3318,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"load":        map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}},
 					"prompt":      map[string]interface{}{"type": "string"},
 					"harden":      map[string]interface{}{"type": "string", "enum": []string{"", "security", "memory", "perf", "quality", "all"}},
-					"engine":      map[string]interface{}{"type": "string", "enum": []string{"claude", "codex", "hybrid"}},
+					"engine":      map[string]interface{}{"type": "string", "enum": []string{"claude", "codex"}},
 					"output":      map[string]interface{}{"type": "string", "description": "default ideas.md"},
 					"max_batches": map[string]interface{}{"type": "integer"},
 					"tick":        map[string]interface{}{"type": "integer"},
@@ -3487,63 +3334,6 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 				"properties": map[string]interface{}{
 					"work_dir": map[string]interface{}{"type": "string"},
 					"output":   map[string]interface{}{"type": "string"},
-				},
-			},
-		},
-		{
-			"name":        "autoideas_select",
-			"description": "Materialise selected ideas as a checklist + start an autodev run with --remained pointed at it. Marks the picked lines checked in the source file.",
-			"inputSchema": map[string]interface{}{
-				"type":     "object",
-				"required": []string{"work_dir", "lines"},
-				"properties": map[string]interface{}{
-					"work_dir":    map[string]interface{}{"type": "string"},
-					"output":      map[string]interface{}{"type": "string"},
-					"project":     map[string]interface{}{"type": "string"},
-					"lines":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "integer"}},
-					"engine":      map[string]interface{}{"type": "string", "enum": []string{"claude", "codex", "hybrid"}},
-					"hours":       map[string]interface{}{"type": "string"},
-					"load":        map[string]interface{}{"type": "string", "enum": []string{"lite", "high"}},
-					"auto_branch": map[string]interface{}{"type": "boolean"},
-					"deploy":      map[string]interface{}{"type": "string"},
-				},
-			},
-		},
-		{
-			"name":        "autodev_options",
-			"description": "Discover what autodev settings the remote dev machine supports — which engines (claude / hybrid) are usable, which underlying runners are installed, and the defaults the UI should pre-fill (engine=claude, hours=8, load=lite, auto_ideas=1, autotest=on). Mobile/web/MCP clients should call this before showing an autodev start form so they only offer what's actually available.",
-			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		},
-		{
-			"name":        "autodev_status",
-			"description": "List all autodev / autotest loops on this machine with their current status, prompt, work directory, and last run timestamp.",
-			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{},
-			},
-		},
-		{
-			"name":        "autodev_reports",
-			"description": "List all autodev per-run reports saved to ~/.yaver/autodev-reports. Each report contains the plan, per-kick git SHAs, commit subjects, and deploy outcome. Pass name to get one report in full.",
-			"inputSchema": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name": map[string]interface{}{"type": "string", "description": "Loop name (optional — omit to list all)"},
-				},
-			},
-		},
-		{
-			"name":        "autodev_revert",
-			"description": "Revert a subset of commits produced by an autodev run. Runs `git revert --no-edit <sha>` for each SHA in the loop's work dir, then pushes.",
-			"inputSchema": map[string]interface{}{
-				"type":     "object",
-				"required": []string{"name", "commit_shas"},
-				"properties": map[string]interface{}{
-					"name":        map[string]interface{}{"type": "string", "description": "Loop name (e.g. sfmg-autodev)"},
-					"commit_shas": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Git SHAs to revert"},
 				},
 			},
 		},
