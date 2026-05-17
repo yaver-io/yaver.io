@@ -184,6 +184,16 @@ func runRelease(args []string) {
 		releaseRollout(args[1:])
 	case "delete", "rm":
 		releaseDelete(args[1:])
+	// Mobile store release — friendly alias for the native
+	// build+upload path (iOS → TestFlight, Android → Play). Same
+	// pipeline as `yaver ios-native`/`android-native`; `yaver build
+	// ios|android` stays artifact-only (.ipa/.aab, no upload).
+	case "ios":
+		runNativeIOS(args[1:])
+	case "android":
+		runNativeAndroid(args[1:])
+	case "flutter":
+		runNativeFlutter(args[1:])
 	case "help", "--help", "-h":
 		printReleaseUsage()
 	default:
@@ -202,6 +212,12 @@ Usage:
   yaver release rollback <channel> <semver>   Flip the channel's "latest" back to <semver>
   yaver release rollout <channel> <pct>    Set the rollout percentage (0..100)
   yaver release delete <channel> <semver>  Remove a specific release
+
+Native store release (build + upload; alias of ios-native/android-native):
+  yaver release ios     [repo-or-project-dir]   Build + ship to TestFlight
+  yaver release android [repo-or-project-dir]   Build + ship to Play
+  yaver release flutter [repo-or-project-dir]   Flutter → store for the detected platform
+  (artifact-only? use 'yaver build ios|android' → .ipa/.aab, no upload)
 
 Publish flags:
   --channel, -c <name>     Channel to publish into (default: production)
