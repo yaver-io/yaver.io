@@ -22,6 +22,8 @@ test.describe("vibe preview dashboard tab", () => {
     await page.route("**/*", async (route) => {
       const url = route.request().url();
       const method = route.request().method();
+      const parsed = new URL(url);
+      const path = parsed.pathname;
 
       if (url.endsWith("/auth/validate")) {
         await route.fulfill({
@@ -64,12 +66,12 @@ test.describe("vibe preview dashboard tab", () => {
         return;
       }
 
-      if (url === "http://127.0.0.1:18080/health") {
+      if (parsed.host === "127.0.0.1:18080" && path === "/health") {
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
         return;
       }
 
-      if (url === "http://127.0.0.1:18080/info") {
+      if (parsed.host === "127.0.0.1:18080" && path === "/info") {
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -79,7 +81,7 @@ test.describe("vibe preview dashboard tab", () => {
       }
 
       // Vibe-preview agent endpoints
-      if (url === "http://127.0.0.1:18080/vibing/preview/start" && method === "POST") {
+      if (parsed.host === "127.0.0.1:18080" && path === "/vibing/preview/start" && method === "POST") {
         const body = JSON.parse(route.request().postData() || "{}");
         activeProject = body.project;
         await route.fulfill({
@@ -105,12 +107,12 @@ test.describe("vibe preview dashboard tab", () => {
         return;
       }
 
-      if (url.startsWith("http://127.0.0.1:18080/vibing/preview/clips")) {
+      if (parsed.host === "127.0.0.1:18080" && path === "/vibing/preview/clips") {
         await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, clips: [] }) });
         return;
       }
 
-      if (url.startsWith("http://127.0.0.1:18080/vibing/preview/events")) {
+      if (parsed.host === "127.0.0.1:18080" && path === "/vibing/preview/events") {
         // SSE stream — emit one started + one frame event so the tab
         // updates state, then keep the stream open with a keepalive
         // (Playwright closes the route on test teardown).
@@ -128,7 +130,7 @@ test.describe("vibe preview dashboard tab", () => {
         return;
       }
 
-      if (url.startsWith("http://127.0.0.1:18080/vibing/preview/frames/")) {
+      if (parsed.host === "127.0.0.1:18080" && path.startsWith("/vibing/preview/frames/")) {
         // Tiny 1x1 PNG so the blob shim resolves to something playable.
         const png = Buffer.from(
           "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489" +
@@ -147,6 +149,16 @@ test.describe("vibe preview dashboard tab", () => {
     });
 
     await page.goto("/dashboard");
+
+    // Vibe Preview talks to the selected agent. Connect the mocked
+    // device first, then open the standalone preview tab.
+    await Promise.all([
+      page.waitForResponse((res) => {
+        const parsed = new URL(res.url());
+        return parsed.host === "127.0.0.1:18080" && parsed.pathname === "/info" && res.status() === 200;
+      }),
+      page.getByRole("button", { name: /^test mac$/i }).click(),
+    ]);
 
     // Open the new tab.
     await page.getByRole("button", { name: /vibe preview/i }).first().click();

@@ -1,16 +1,96 @@
 package main
 
-// autodev_harden.go — curated focus prompts for "harden the codebase"
-// modes. Used when the user runs `yaver autodev --harden <area>` (or
-// the equivalent HTTP / MCP field) without — or alongside — their
-// own --prompt. The point is letting a tired user say "harden the
-// security overnight" and get a meaningful run, no prompt-engineering.
+// runner_helpers.go — small shared helpers used by survivors (autoideas,
+// autoinit, ai_generator) that originally lived in the deleted autodev
+// loop machinery.
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
-// autodevHardenPrompt returns the prompt body for a hardening area.
-// Empty input or unknown values return "". Plural / synonym aliases
-// are accepted so the user doesn't have to remember the exact noun.
+// shortSHA returns the first 8 chars of a git SHA, or the original
+// string if it's already short.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
+}
+
+// looksLikeGitRepo reports whether dir contains a .git entry (file
+// or directory — both forms are valid git worktrees).
+func looksLikeGitRepo(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
+const autodevRefillBatchSize = 5
+
+// splitAgentSpec parses a "<agent>[:<model>]" spec. Recognises Claude
+// model aliases (sonnet/opus/haiku) and normalises them to full IDs.
+func splitAgentSpec(spec string) (agent, model string) {
+	spec = strings.TrimSpace(spec)
+	if spec == "" {
+		return "", ""
+	}
+	parts := strings.SplitN(spec, ":", 2)
+	agent = strings.ToLower(parts[0])
+	if len(parts) == 1 {
+		return agent, ""
+	}
+	model = parts[1]
+	if agent == "claude" || agent == "claude-code" {
+		switch strings.ToLower(model) {
+		case "sonnet":
+			model = "claude-sonnet-4-6"
+		case "opus":
+			model = "claude-opus-4-6"
+		case "haiku":
+			model = "claude-haiku-4-5"
+		}
+	}
+	return agent, model
+}
+
+// splitAutodevArgs splits positional args from flag args at the first
+// flag-shaped argument (legacy name preserved for autoideas_cmd.go).
+func splitAutodevArgs(args []string) (positional, flags []string) {
+	seenFlag := false
+	for _, a := range args {
+		if !seenFlag && !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+		} else {
+			seenFlag = true
+			flags = append(flags, a)
+		}
+	}
+	return
+}
+
+// envOr returns the env var value or fallback when unset/empty.
+func envOr(name, def string) string {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+// defaultStr returns v unless empty, in which case fallback.
+func defaultStr(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return v
+}
+
+// autodevHardenPrompt returns the curated focus prompt for a hardening
+// area (security / memory / perf / quality / all). Used by autoideas
+// when the user passes --harden.
 func autodevHardenPrompt(area string) string {
 	switch strings.ToLower(strings.TrimSpace(area)) {
 	case "":
@@ -37,5 +117,28 @@ func autodevHardenPrompt(area string) string {
 		}, "\n")
 	default:
 		return ""
+	}
+}
+
+// extractRefillTitles finds the last JSON string-array in Claude's
+// stdout. We scan from the end so any prose preamble is ignored.
+func extractRefillTitles(out string) ([]string, error) {
+	out = strings.ReplaceAll(out, "```json", "```")
+	for {
+		idx := strings.LastIndex(out, "[")
+		if idx < 0 {
+			return nil, fmt.Errorf("no JSON array in output")
+		}
+		end := strings.Index(out[idx:], "]")
+		if end < 0 {
+			out = out[:idx]
+			continue
+		}
+		candidate := out[idx : idx+end+1]
+		var arr []string
+		if err := json.Unmarshal([]byte(candidate), &arr); err == nil && len(arr) > 0 {
+			return arr, nil
+		}
+		out = out[:idx]
 	}
 }

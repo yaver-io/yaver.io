@@ -661,7 +661,6 @@ export default function AppsScreen() {
         if (a.type === "deploy" || a.label === "Deploy Backend") return false;
         if (a.type === "vibing" || a.label === "Vibing") return false;
         if (a.type === "agent" || a.label === "Agent Mode") return false;
-        if (a.type === "autodev" || a.label === "Auto Dev") return false;
         if (a.type === "autotest" || a.label === "Auto Test" || a.label === "Agent Test") return false;
         return true;
       }).map((a: any) => {
@@ -770,14 +769,6 @@ export default function AppsScreen() {
 
     if (action.type === "agent") {
       router.navigate({ pathname: "/(tabs)/agent", params: { project, path } } as any);
-      return;
-    }
-
-    if (action.type === "autodev") {
-      // Jump to the Auto Dev screen (manages develop-mode loops). The
-      // screen shows all loops across projects; the user picks or starts
-      // one targeted at this path from there.
-      router.navigate({ pathname: "/(tabs)/autodev", params: { project, path } } as any);
       return;
     }
 

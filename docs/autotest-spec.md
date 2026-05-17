@@ -1,782 +1,450 @@
-# Yaver Autotest — Self-Growing Regression Test Suite
+# Yaver Auto Test — RN-Web/CDP Autonomous App Testing
 
-## Overview
-
-Yaver Autotest is a self-growing, autonomous app testing system for solo developers. It uses the Feedback SDK (already embedded in the target app) as a test driver that navigates the app in an emulator or physical device, captures errors via BlackBox streaming, delegates bug fixes to AI coding agents (Claude Code, Codex, Aider, etc.), and codifies every finding into a permanent, version-controlled test suite that syncs to GitHub Actions CI.
-
-**Core promise:** Drop the Feedback SDK in your app, run one command (or tap one button on your phone), and get a test suite that grows automatically — forever. No test files to write. No config. No QA team needed.
+> **Status:** architecture plan (2026-05-16). Supersedes the prior
+> emulator/SDK-driven draft of this file — that version referenced the
+> now-deleted `recording*.go` / `loop_autotest.go` infra and Aider, and
+> predates the shipped WebRTC runtime. This rewrite is grounded in the
+> code that exists today (file:line anchors throughout). Per CLAUDE.md:
+> code is the source of truth; if an anchor below has drifted, fix the
+> anchor in the same change.
 
 ---
 
-## Architecture
+## 1. What the user asked for
 
-### System Diagram
+> User requests tests for their React Native app. A remote dev machine
+> runs Chrome (wrapped with `--remote-debugging-port=9222
+> --user-data-dir=…`) and traverses the app fully — every add / update /
+> get (CRUD) path — while an AI agent reads the codebase to enumerate
+> flows and find bugs. The session streams live to the end user over
+> WebRTC if they opt in. Everything P2P. User can pick a tablet/phone
+> viewport. Simple UI on mobile **and** web.
+
+### Locked decisions (asked & answered 2026-05-16)
+
+| Decision | Choice |
+|---|---|
+| Chrome automation stack | **CDP-direct (chromedp) is the default**, zero extra npm weight; **Selenium is lazily installed opt-in** per project. |
+| v1 test surface | **RN-web via Chrome/CDP is the fast inner-loop pass.** The existing emulator/device WebRTC runtime is the **pluggable deep pass** (phase 2), not built in v1. |
+| Bug handling in v1 | **Discover → test → propose, approval-gated.** Agent writes proposed fixes + regression tests on a branch; it does **not** auto-apply or self-loop in v1. |
+
+---
+
+## 2. Differentiation thesis (why this shape wins)
+
+From the competitive scan (Maestro/mobile.dev, camelQA, QA Wolf,
+testRigor, Waldo/Tricentis, Mabl, Octomind, Autonoma, Meticulous,
+computer-use agents):
+
+- **Codebase-derived CRUD enumeration for mobile is an empty quadrant.**
+  Autonoma does "Planner reads the repo → derives flows" but **web only**.
+  Every mobile player (camelQA, Waldo, testRigor) markets *no source
+  access* as an enterprise-security feature precisely because they run in
+  *their* cloud. Yaver reads the repo **because** nothing leaves the
+  machine. That inversion is the wedge.
+- **Zero marginal test cost.** Competitors meter cloud device-minutes
+  (QA Wolf $40+/test/mo; BrowserStack/Sauce per-minute farms). Yaver runs
+  on the developer's own box on the developer's existing Claude/Codex
+  subscription → marginal cost ≈ $0. Never meter test runs; there is
+  nothing to meter (see [[project_business_model.md]],
+  [[feedback_no_api_keys_subscription_only.md]]).
+- **P2P live test stream to the dev's browser is unique.** Incumbents
+  stream *their* cloud devices with a datacenter round-trip. Yaver
+  streams a test running on *your* hardware over WebRTC on rails that
+  **already exist** (`remote_runtime_webrtc.go`).
+- **Honest scoping is the trust play.** RN-web/CDP cannot exercise
+  Hermes-specific behavior, native modules, gestures, biometrics, or
+  `Platform.OS`-branched native paths. We **say so in the UI** and flag
+  those code paths — and offer the emulator deep pass as the pluggable
+  follow-up rather than pretending RN-web == device fidelity.
+
+**Wedge one-liner:** *"Point Yaver at your RN repo. Your machine runs the
+whole add/edit/delete surface in a real browser, your Claude subscription
+finds the bugs, you watch it live. Zero cloud, zero per-test cost,
+nothing leaves your laptop."*
+
+**Do NOT build:** real-device matrix coverage, cloud test runners,
+enterprise managed-service/compliance, or "smartest agent" — the agent is
+commoditizing; the P2P harness + RN-aware enumeration + free execution is
+the moat.
+
+---
+
+## 3. The feature sits on rails that already exist
+
+| Capability the feature needs | Already in the codebase | Anchor |
+|---|---|---|
+| WebRTC H.264-RTP + JPEG-DC fan-out, control channel (tap/swipe/text/key) | `RemoteRuntimeManager` / `ApplyWebRTCOffer` / `ExecuteControl` | `desktop/agent/remote_runtime_webrtc.go:224,616`; session model `remote_runtime.go:70,254,282,462` |
+| Browser viewer component (WebRTC `<video>` + JPEG fallback + events DC) | `RemoteRuntimeViewer.tsx` | `web/components/dashboard/RemoteRuntimeViewer.tsx` |
+| CDP automation (chromedp speaks Chrome CDP directly) | testkit already imports `chromedp` (a11y, firefox driver note) | `desktop/agent/testkit/a11y.go:11`, `testkit/driver_firefox.go:18` |
+| Driver pattern (Boot/Install/Launch/Screenshot/Tap/Text/Swipe/Key) | `IOSSimDriver`, `AndroidEmuDriver` | `testkit/driver_iossim.go:28`, `testkit/driver_androidemu.go:17` |
+| RN-web surface (Expo web sibling already produced by dev server) | `DevServer` Expo web, `WebPort` | `desktop/agent/devserver.go:99,838,886` |
+| Streaming verb pattern (`{ok,streamId,initial}`, `/streams/<id>`) | `registerOpsVerb` / ops dispatcher | `desktop/agent/ops.go:79,98,100`; example `ops_testrun.go:26` ("test" verb) |
+| Long-running CLI → daemon stream + publish helpers | `runner_stream.go` (`AutodevPublishRunner*`) | `desktop/agent/runner_stream.go` |
+| Agent runner spawn (claude/codex/opencode, interactive, subscription) | runner infra | see [[feedback_no_headless_p_mode.md]], [[feedback_no_api_keys_subscription_only.md]] |
+| In-repo versioned test store concept | prior spec's `.yaver/tests/` (kept) | this doc §7 |
+| Chrome install recipe (brew/apt/dnf) | `install_cmd.go` chrome entry | `desktop/agent/install_cmd.go:18` |
+| npm postinstall runner bootstrap hook | `cli/src/postinstall.js` | `cli/src/postinstall.js` |
+
+**Net new code is small and surgical:** one testkit CDP driver, one
+`web-chrome` target branch in the runtime manager, one `autotest` ops
+verb + orchestrator, the CRUD-enumeration prompt/agent glue, the
+`.yaver/tests` codifier, the npm Chrome/Selenium bootstrap, and two simple
+UI surfaces. Everything streaming/transport is **reuse**.
+
+---
+
+## 4. End-to-end architecture
 
 ```
-┌────────────────────────────────────────────────────────────────────────────┐
-│                                                                            │
-│   TRIGGER                    EXECUTE                    VIEW               │
-│                                                                            │
-│   ┌──────────┐              ┌──────────────┐           ┌──────────┐       │
-│   │  Yaver   │──────────────│              │──────────►│  Yaver   │       │
-│   │  Mobile  │   P2P/relay  │  Yaver Agent │  push     │  Mobile  │       │
-│   │  App     │              │  (Go CLI)    │  results  │  App     │       │
-│   └──────────┘              │              │           └──────────┘       │
-│                             │  ┌────────┐  │                              │
-│   ┌──────────┐              │  │AI Agent│  │           ┌──────────┐       │
-│   │ Feedback │──────────────│  │Claude/ │  │──────────►│ Feedback │       │
-│   │ SDK (in  │   localhost  │  │Codex   │  │  push     │ SDK (in  │       │
-│   │ app)     │              │  └────────┘  │  results  │ app)     │       │
-│   └──────────┘              │              │           └──────────┘       │
-│                             │  ┌────────┐  │                              │
-│   ┌──────────┐              │  │Emulator│  │           ┌──────────┐       │
-│   │  CLI     │──────────────│  │or      │  │──────────►│  CLI     │       │
-│   │ terminal │   local      │  │Device  │  │  stdout   │ terminal │       │
-│   └──────────┘              │  └────────┘  │           └──────────┘       │
-│                             │              │                              │
-│                             │  ┌────────┐  │           ┌──────────┐       │
-│                             │  │GitHub  │◄─┼──────────►│  GitHub  │       │
-│                             │  │Actions │  │  sync-ci  │  CI      │       │
-│                             │  └────────┘  │           └──────────┘       │
-│                             └──────────────┘                              │
-│                                                                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Autotest Lifecycle
-
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ DISCOVER │───►│  TEST    │───►│   FIX    │───►│ CODIFY   │───►│ CI SYNC  │
-│          │    │          │    │          │    │          │    │          │
-│ AI reads │    │ SDK runs │    │ AI agent │    │ AI turns │    │ Promote  │
-│ code,git,│    │ tests in │    │ patches  │    │ findings │    │ tests to │
-│ Jira,old │    │ emulator │    │ code,    │    │ into     │    │ GitHub   │
-│ results  │    │ captures │    │ hot-     │    │ permanent│    │ Actions  │
-│ → plan   │    │ errors   │    │ reloads  │    │ test     │    │ workflow │
-│          │    │          │    │          │    │ cases    │    │          │
-└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
-     │                                               │               │
-     │              LOOP (iterations)                 │               │
-     └───────────────────────────────────────────────►│               │
-                                                      │               │
-                                  each run grows ─────┘    user       │
-                                  the suite              approves ────┘
-```
-
-### Growth Flywheel
-
-```
-  New feature merged
-        │
+ END USER (mobile app OR web dashboard)
+        │  POST /ops {verb:"autotest", payload:{workDir,scope,viewport,stream,target:"web-chrome"}}
         ▼
-  Autotest runs (triggered from phone, SDK, CLI, or cron)
-        │
-        ▼
-  AI discovers untested paths ──────────────────────┐
-        │                                            │
-        ▼                                            │
-  SDK navigates app in emulator or physical device   │
-        │                                            │
-        ├── No bugs found → new test cases codified  │
-        │                    into .yaver/tests/       │
-        │                                            │
-        └── Bugs found → AI fixes → re-test          │
-                │                                    │
-                ▼                                    │
-        Fixed bugs become regression tests ──────────┤
-                                                     │
-                                                     ▼
-                                          .yaver/tests/ grows
-                                                     │
-                                                     ▼
-                                          yaver autotest sync-ci
-                                                     │
-                                                     ▼
-                                          GitHub Actions runs
-                                          growing suite on every PR
+ ┌─────────────────────────── Yaver Agent (remote dev machine) ───────────────────────────┐
+ │                                                                                        │
+ │  ops_autotest.go ── returns streamId ──►  client subscribes /streams/<id> (progress)    │
+ │      │                                                                                  │
+ │      ▼                                                                                  │
+ │  autotest orchestrator (autotest.go)                                                    │
+ │   1. DISCOVER  spawn interactive runner (claude/codex) → enumerate CRUD flows from repo │
+ │   2. SERVE     ensure RN-web: DevServerManager Expo-web sibling (devserver.go WebPort)  │
+ │   3. DRIVE     ChromeCDPDriver: launch Chrome --remote-debugging-port=9222              │
+ │                --user-data-dir=<tmp>  --window-size=<viewport>  → chromedp traversal    │
+ │   4. OBSERVE   per flow: assert add/update/get; capture DOM+console+network+screenshot  │
+ │   5. PROPOSE   bugs → runner writes fix + regression test on branch autotest/<ts>       │
+ │                (NO auto-apply, NO self-loop in v1 — approval-gated)                      │
+ │   6. CODIFY    findings → .yaver/tests/ manifest (ciEnabled:false)                      │
+ │      │                                                                                  │
+ │      ▼ (only if user opted into live view)                                              │
+ │  RemoteRuntimeManager target "web-chrome"  ── WebRTC ──►  viewer (web <video> / mobile) │
+ │      (reuses remote_runtime_webrtc.go: H.264 RTP fan-out, JPEG-DC fallback, events DC)  │
+ └────────────────────────────────────────────────────────────────────────────────────────┘
+        ▲                                                                     │
+        └── P2P: direct LAN / QUIC / relay (web = relay-only, per CLAUDE.md) ──┘
 ```
 
----
+### 4.1 The Chrome wrapper (honoring the user's exact ask)
 
-## Three Trigger Points
-
-### 1. Yaver Mobile App
-
-The primary trigger for solo heroes. After vibe-coding a feature from their phone, they tap "Autotest" to test it.
+`testkit/driver_chromecdp.go` (new) launches:
 
 ```
-Yaver App → Devices tab → MacBook → "Autotest" button
-
-┌─────────────────────────────┐
-│  MacBook-Air  ●  online     │
-│─────────────────────────────│
-│  [Tasks]  [Terminal]  [Test]│
-│─────────────────────────────│
-│                             │
-│  Run Autotest               │
-│                             │
-│  Target:                    │
-│  ┌─────────────────────┐   │
-│  │ ○ Emulator (iOS Sim)│   │
-│  │ ○ Emulator (Android)│   │
-│  │ ● Physical (iPhone) │   │
-│  │ ○ Both              │   │
-│  └─────────────────────┘   │
-│                             │
-│  Scope:                     │
-│  ┌─────────────────────┐   │
-│  │ ● Full suite        │   │
-│  │ ○ Changed files only│   │
-│  │ ○ Specific screen   │   │
-│  └─────────────────────┘   │
-│                             │
-│  ☑ Auto-fix bugs            │
-│  ☑ Add new test cases       │
-│  ☐ Sync to CI after         │
-│                             │
-│  [ ▶ Start Autotest ]       │
-│                             │
-└─────────────────────────────┘
+google-chrome \
+  --remote-debugging-port=<ephemeral, default 9222 if free else allocated> \
+  --user-data-dir=<os.MkdirTemp "yaver-autotest-chrome-*"> \
+  --window-size=<viewport.w,viewport.h> \
+  --force-device-scale-factor=<viewport.dpr> \
+  --headless=new            # unless live-stream opted in → headful for the WebRTC capture
+  <RN-web URL from DevServer WebPort>
 ```
 
-Live results stream in:
+- **CDP default:** the driver attaches to `:9222` and drives via
+  `chromedp` — already a testkit dependency (`testkit/a11y.go:11`), zero
+  new npm weight, no Java, no ChromeDriver. CDP `Page.captureScreenshot`
+  feeds the existing JPEG/RTP pump.
+- **Selenium opt-in:** if `.yaver/autotest.json` sets `"driver":
+  "selenium"`, the agent lazily ensures ChromeDriver + Selenium server
+  (downloaded on first opt-in use, **not** at `npm install`). Same
+  `--remote-debugging-port` Chrome; Selenium just becomes the command
+  layer. One interface, two backends:
 
-```
-┌─────────────────────────────┐
-│  Autotest Running ◉ live    │
-│─────────────────────────────│
-│  Iteration 2 of 3           │
-│  ████████████░░░ 73%        │
-│                             │
-│  ✓ HomeScreen        0.4s   │
-│  ✓ ProductList       1.2s   │
-│  ✗ CartScreen        0.8s   │
-│    → crash on empty cart    │
-│    → fixing...              │
-│  ◌ CheckoutFlow      —     │
-│  ◌ ProfileScreen     —     │
-│                             │
-│  Found: 2 bugs              │
-│  Fixed: 1                   │
-│  New tests: +8              │
-│                             │
-│  [Stop]  [Skip to results]  │
-└─────────────────────────────┘
-```
-
-Results tab:
-
-```
-┌─────────────────────────────────┐
-│  Autotest Results               │
-│─────────────────────────────────│
-│                                 │
-│  ▼ Mar 25, 14:30 (22 min)      │
-│    3 iterations • 1 bug fixed   │
-│    +16 new tests • 47 total     │
-│    Branch: autotest/run-0325    │
-│                                 │
-│    [Approve Fixes] [View Diff]  │
-│    [Sync to CI]    [Re-run]     │
-│                                 │
-│  ▶ Mar 22, 09:15 (18 min)      │
-│    2 iterations • 2 bugs fixed  │
-│                                 │
-│  ▶ Mar 20, 11:00 (25 min)      │
-│    4 iterations • 4 bugs fixed  │
-│                                 │
-│─────────────────────────────────│
-│  Suite: 47 tests │ CI: 38 │ 81%│
-│  [Growth Chart]                 │
-└─────────────────────────────────┘
-```
-
-### 2. Feedback SDK (Inside the Target App)
-
-Dev is testing manually, wants to run full autotest from right there:
-
-```
-┌─────────────────────────────┐
-│  Feedback SDK Panel         │
-│─────────────────────────────│
-│  [Bug Report] [Screenshot]  │
-│  [BlackBox]   [Autotest ▶]  │
-│─────────────────────────────│
-│                             │
-│  "Run autotest on this app?"│
-│                             │
-│  Target:                    │
-│  ● This device (physical)   │
-│  ○ Emulator on dev machine  │
-│                             │
-│  [ Start ]  [ Cancel ]      │
-└─────────────────────────────┘
-```
-
-When running on the same physical device, the SDK takes over navigation. When targeting emulator, the SDK tells the agent to spin up an emulator and run there — the physical device just shows results.
-
-Results overlay inside the app:
-
-```
-┌─────────────────────────────────┐
-│  Autotest Results  ✓ Complete   │
-│─────────────────────────────────│
-│                                 │
-│  ✓ HomeScreen           pass    │
-│  ✓ ProductList          pass    │
-│  ✗ CartScreen      fixed ✓     │
-│  ✓ CheckoutFlow         pass    │
-│  ✓ ProfileScreen        pass    │
-│                                 │
-│  1 bug fixed • +16 tests        │
-│                                 │
-│  [Approve]  [Details in App]    │
-└─────────────────────────────────┘
-```
-
-"Details in App" deep-links to full results in the Yaver mobile app.
-
-### 3. Yaver CLI (Terminal)
-
-```bash
-yaver autotest start                          # AI generates plan + runs (emulator default)
-yaver autotest start --target device          # Target connected physical device
-yaver autotest start --target "iPhone 15 Pro" # Target specific device by name
-yaver autotest start --target emulator:android # Android emulator
-yaver autotest start --target all             # All available targets
-yaver autotest start --stories ./my-tests/    # User-provided test stories
-yaver autotest start --context jira,git       # Pull context from integrations
-yaver autotest start --no-fix                 # Report only, don't fix
-yaver autotest start --iterations 5           # Max fix-retest iterations
-```
-
-### Target Selection Logic
-
-```
-                    POST /autotest/start
-                    { target: "emulator:ios" | "device" | "emulator:android" | "all" }
-                            │
-                            ▼
-                    ┌───────────────┐
-                    │ Yaver Agent   │
-                    │ (orchestrator)│
-                    └───────┬───────┘
-                            │
-              ┌─────────────┼─────────────┐
-              ▼             ▼             ▼
-     ┌──────────────┐ ┌──────────┐ ┌──────────────┐
-     │ iOS Simulator│ │ Physical │ │ Android Emu  │
-     │              │ │ Device   │ │              │
-     │ Agent starts │ │ App has  │ │ Agent starts │
-     │ simulator,   │ │ SDK,     │ │ emulator,    │
-     │ builds app,  │ │ agent    │ │ builds app,  │
-     │ installs,    │ │ sends    │ │ installs,    │
-     │ SDK takes    │ │ commands │ │ SDK takes    │
-     │ over nav     │ │ directly │ │ over nav     │
-     └──────────────┘ └──────────┘ └──────────────┘
-```
-
----
-
-## Test Case Sources
-
-Test cases can come from multiple sources. The system gets smarter over time as more sources feed in.
-
-| Source | How | When |
-|--------|-----|------|
-| **User-written stories** | Markdown files in `.yaver/tests/stories/user/` | User writes test scenarios manually |
-| **AI-generated from code** | AI reads components, screens, navigation graph | Every run — AI finds untested paths |
-| **AI-generated from git diff** | AI reads recent changes, generates tests for new code | When new features are merged |
-| **AI-generated from Jira/Linear** | AI reads ticket descriptions, acceptance criteria | When connected to issue tracker |
-| **Discovered from bugs** | Every bug found in a run becomes a regression test | Automatic — every run |
-| **Crash replays** | Real crashes (from Feedback SDK) converted to test cases | When users hit crashes |
-| **Production learning** | Anonymized error patterns from opt-in production SDK | When app has real users |
-| **Previous run gaps** | Coverage map shows untested screen × state combos | AI prioritizes gaps each run |
-
----
-
-## Test Suite Structure
-
-In-repo, version-controlled, grows automatically:
-
-```
-.yaver/
-  tests/
-    manifest.json              # master index of all test cases
-    config.json                # emulator config, timeouts, retry policy
-    stories/
-      user/                    # user-written test stories
-        checkout-flow.md
-        cart-edge-cases.md
-      generated/               # AI-generated from code analysis
-        product-detail-nav.md
-        empty-states.md
-      discovered/              # auto-discovered from test runs
-        cart-crash-empty.md    # was a bug, now a regression test
-        image-404-fallback.md
-    snapshots/                 # expected UI state snapshots (visual regression)
-      cart-screen-empty.png
-      product-detail-loaded.png
-    ci/
-      autotest.yml             # generated GitHub Actions workflow
-      runner.sh                # CI-compatible test runner script
-  results/                     # gitignored — local only
-    runs/
-      2026-03-25T14-30-00/
-        results.json
-        results.md
-        screenshots/
-        fixes/
-```
-
-### manifest.json
-
-```json
-{
-  "version": 1,
-  "lastRun": "2026-03-25T14:52:00Z",
-  "totalCases": 47,
-  "sources": {
-    "user": 5,
-    "generated": 28,
-    "discovered": 14
-  },
-  "cases": [
-    {
-      "id": "tc-001",
-      "name": "Empty cart shows placeholder",
-      "source": "discovered",
-      "discoveredAt": "2026-03-20T10:00:00Z",
-      "discoveredFrom": "run-2026-03-20T10-00",
-      "originalBug": "CartScreen crash on empty cart array",
-      "fixCommit": "abc1234",
-      "screens": ["CartScreen"],
-      "steps": [
-        {"action": "navigate", "target": "CartScreen"},
-        {"action": "assert", "condition": "visible", "element": "empty-cart-placeholder"}
-      ],
-      "severity": "critical",
-      "ciEnabled": true
-    }
-  ]
+```go
+// testkit/driver_chromecdp.go
+type WebDriver interface {            // satisfied by cdpBackend & seleniumBackend
+    Launch(ctx, ChromeOpts) (Session, error)
+    Navigate(ctx, url string) error
+    Snapshot(ctx) (DOMTree, error)    // a11y tree + visible interactables
+    Click(ctx, sel string) error
+    Fill(ctx, sel, val string) error
+    Screenshot(ctx) ([]byte, error)   // PNG → reused by JPEG/RTP pump
+    Console(ctx) ([]ConsoleMsg, error)
+    Network(ctx) ([]NetEvent, error)
+    Close() error
 }
 ```
 
-### Test Case Lifecycle
+### 4.2 New target on the existing WebRTC runtime — not a new transport
 
-```
-                    ┌─────────────────────────┐
-                    │     NEW TEST CASE        │
-                    │                          │
-                    │  Sources:                │
-                    │  • User writes story     │
-                    │  • AI analyzes new code  │
-                    │  • Bug found in run      │
-                    │  • Git diff → new screen │
-                    │  • Jira ticket context   │
-                    │  • Crash replay          │
-                    │  • Production patterns   │
-                    └───────────┬──────────────┘
-                                │
-                                ▼
-                    ┌─────────────────────────┐
-                    │   DRAFT (local only)     │
-                    │   .yaver/tests/stories/  │
-                    └───────────┬──────────────┘
-                                │
-                         autotest run validates
-                                │
-                                ▼
-                    ┌─────────────────────────┐
-                    │   VALIDATED              │
-                    │   Added to manifest.json │
-                    │   ciEnabled: false       │
-                    └───────────┬──────────────┘
-                                │
-                     yaver autotest sync-ci
-                     (user approves)
-                                │
-                                ▼
-                    ┌─────────────────────────┐
-                    │   IN CI                  │
-                    │   ciEnabled: true        │
-                    │   Runs on every PR       │
-                    └──────────────────────────┘
-```
+`remote_runtime.go` builds targets at `:254` (`ios-simulator`) and `:282`
+(`android-emulator`); `Create()` at `:462`; `Attach()` switches on
+`session.TargetID` at `remote_runtime_webrtc.go:102`; capture switches at
+`:536`; control switches at `:690`.
+
+Add a third arm **`web-chrome`** to those three switches:
+
+- `Attach`: instead of `IOSSimDriver.Boot`, start/locate the
+  `ChromeCDPDriver` session and record a synthetic `deviceID` =
+  CDP target id; dims = the chosen viewport (no `ProbeDeviceDims`).
+- `captureJPEGFrame`: `case "web-chrome":` → `chromedp` full-page
+  screenshot instead of `testkit.IOSSimDriver{}.Screenshot`. The H.264
+  RTP pump, JPEG-DC fallback, multi-viewer fan-out, events channel — **all
+  unchanged** (`remote_runtime_webrtc.go:273-408`).
+- `ExecuteControl` (`:616`): `case "web-chrome":` maps tap→CDP
+  `Input.dispatchMouseEvent`, text→`Input.insertText`, swipe→wheel/scroll.
+  Lets a human grab the wheel mid-run from the live viewer — same UX the
+  emulator target already gives.
+
+Result: the web dashboard's `RemoteRuntimeViewer.tsx` and the mobile
+viewer render an Auto Test session **with zero viewer changes** — it is
+just another remote-runtime session whose `targetId` is `web-chrome`.
+
+### 4.3 Streaming is opt-in and free when off
+
+If the user does **not** opt into live view, **no WebRTC session is
+created** — the orchestrator runs headless Chrome and only emits
+text/progress events on `/streams/<id>`. Opting in flips Chrome to
+`--headless=new` off (headful) and creates the remote-runtime session so
+the existing pump captures frames. This keeps the default path cheap and
+matches "stream … if end user prefers".
 
 ---
 
-## Codify Phase
+## 5. CRUD / add-update-get enumeration (the differentiator)
 
-After each run, before reporting results, the AI agent runs a codify step:
+The DISCOVER phase spawns an **interactive** runner (claude-code / codex /
+opencode — never `-p`/headless, subscription auth only;
+[[feedback_no_headless_p_mode.md]], [[feedback_no_api_keys_subscription_only.md]])
+with a structured prompt that makes it emit a machine-readable flow plan:
 
-1. **Diff the test suite** — compare what was tested vs. what's in `manifest.json`
-2. **Extract new cases** from:
-   - Bugs found → regression test (so it never happens again)
-   - Screens navigated that had no existing tests → coverage gap test
-   - Edge cases discovered (empty states, error responses, slow loads)
-   - New code since last run (`git diff` → new components/screens → new tests)
-3. **Write test story** as markdown in `discovered/` or update `generated/`
-4. **Add to manifest** with `ciEnabled: false` (not in CI until user approves sync)
-5. **Report to user**: "Added N new test cases from this run"
+```
+Read this React Native repo. Enumerate every user-facing CRUD flow.
+For each: { id, screen, navPath[], kind: create|read|update|delete,
+            entrypointSelector, inputs[], successAssertion,
+            apiHooks[] (the data hooks/mutations it exercises),
+            nativeOnly: bool (true if it depends on a native module,
+            Hermes-specific API, biometric, camera, push, or a
+            Platform.OS-branched path CDP on RN-web cannot exercise) }
+Emit as JSON to .yaver/tests/plan.json. Do not modify code.
+```
+
+- `nativeOnly: true` flows are **listed but skipped** on the web-chrome
+  pass and surfaced in the UI as *"3 native-only flows need the device
+  deep pass"* — honest scoping, and the hook for the phase-2 emulator
+  pass to pick up.
+- Plan is cached and **diffed against `git diff`** on subsequent runs so
+  re-runs prioritize changed/new flows (cheap incremental runs).
+- Sources of flows (kept from prior design): AI-from-code (every run),
+  AI-from-git-diff (new features), discovered-from-bugs (regression),
+  user-written stories in `.yaver/tests/stories/user/`.
 
 ---
 
-## CI Sync
+## 6. Orchestrator state machine (`autotest.go`)
 
-`yaver autotest sync-ci` promotes the local test suite into GitHub Actions:
-
-```bash
-yaver autotest sync-ci          # AI reviews suite, generates/updates CI workflow
-yaver autotest sync-ci --dry    # Show what would change, don't write
-yaver autotest sync-ci --all    # Promote ALL validated tests to CI
-yaver autotest sync-ci --pick   # Interactive: choose which tests to promote
+```
+ DISCOVER ─► SERVE ─► DRIVE ─► OBSERVE ─┐
+    ▲                                   │  per flow
+    └──────────  next flow  ◄───────────┘
+                                        │ all flows done
+                                        ▼
+                       PROPOSE (bugs → branch, approval-gated)
+                                        ▼
+                       CODIFY (.yaver/tests manifest, ciEnabled:false)
+                                        ▼
+                       REPORT (push summary to user; await approve)
 ```
 
-What it does:
-
-1. Reads manifest — finds all `ciEnabled: false` validated tests
-2. Asks AI agent to review them:
-   - "Are these tests CI-appropriate?" (some need emulator, some can be unit tests)
-   - "Can any be converted to simpler unit/integration tests?" (faster in CI)
-   - "Are there redundant tests to merge?"
-3. Generates/updates `.github/workflows/yaver-autotest.yml`
-4. Marks tests as `ciEnabled: true` in manifest
-5. Stages changes — user reviews and approves the PR
-
-### Generated CI Workflow
-
-```yaml
-# .github/workflows/yaver-autotest.yml
-# AUTO-GENERATED by yaver autotest sync-ci
-# Edit .yaver/tests/ to modify — this file is regenerated on sync
-name: Yaver Autotest Suite
-on:
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 2 * * *'  # nightly full run
-
-jobs:
-  autotest-unit:
-    # Tests converted to unit tests by AI (no emulator needed)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm install
-      - run: npx jest --config .yaver/tests/ci/jest.config.js
-
-  autotest-ios:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: futureware-tech/simulator-action@v3
-        with: { model: 'iPhone 16' }
-      - run: npm install && npx expo prebuild --platform ios
-      - run: .yaver/tests/ci/runner.sh --ci --platform ios
-
-  autotest-android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          script: .yaver/tests/ci/runner.sh --ci --platform android
-```
+- **No FIX self-loop in v1.** PROPOSE writes patches + regression tests
+  to branch `autotest/<repo>-<ts>` and stops. User reviews via existing
+  approve flow; this matches [[project_autotest.md]] / [[project_todolist_queue.md]]
+  ("user approves before push") and the existing
+  `/autotest/approve` shape kept from the prior spec (§9).
+- Budget guard: max flows, max wall-clock, AC-power check (mirrors
+  `testkit` `ac_power_only`). Visible failure over silent retry
+  ([[feedback_visible_failure_over_silent_retry.md]]).
+- Progress events reuse `runner_stream.go` publish helpers so the same
+  envelope the rest of Yaver streams shows up on `/streams/<id>`.
 
 ---
 
-## Agent HTTP Endpoints
-
-New endpoints on the Yaver Agent HTTP server:
+## 7. In-repo test store (kept from prior design, unchanged shape)
 
 ```
-POST   /autotest/start           # Start a run
-  body: { target, scope, autoFix, addTests, syncCi }
-
-GET    /autotest/status           # Current run status (SSE stream)
-  → { phase, iteration, progress, currentScreen, bugsFound, bugsFixed, newTests }
-
-POST   /autotest/stop             # Stop current run
-
-GET    /autotest/results          # List all runs
-GET    /autotest/results/:runId   # Specific run details
-GET    /autotest/results/latest   # Latest run
-
-POST   /autotest/approve          # Approve fixes + tests
-  body: { runId, fixes: [ids], tests: [ids] }
-
-POST   /autotest/sync-ci          # Promote tests to CI
-  body: { runId, testIds: [] | "all" }
-
-GET    /autotest/suite            # Current test suite stats
-GET    /autotest/suite/coverage   # Coverage matrix (screen × state)
-GET    /autotest/suite/growth     # Growth over time
+.yaver/
+  autotest.json            # driver: cdp|selenium, budgets, viewport presets
+  tests/
+    plan.json              # latest enumerated CRUD flow plan (git-diffable)
+    manifest.json          # master index (cases, sources, ciEnabled)
+    stories/{user,generated,discovered}/*.md
+    snapshots/*.png         # visual baseline (phase 3)
+  results/                  # gitignored — local only
+    runs/<ts>/{results.json,results.md,screenshots/,fixes/}
 ```
+
+`manifest.json` case shape and the test-case lifecycle
+(DRAFT→VALIDATED→IN-CI) are unchanged from the prior revision of this
+doc; CI-sync (`yaver autotest sync-ci`) stays a **phase-2** concern and
+keeps the user-owned-runner-first rule
+([[feedback_no_github_ci_executor.md]]).
 
 ---
 
-## CLI Commands
+## 8. Privacy contract compliance (hard requirement)
 
-```bash
-# === Run Tests ===
-yaver autotest start                        # AI generates plan + runs in emulator
-yaver autotest start --target device        # Run on connected physical device
-yaver autotest start --target emulator:android
-yaver autotest start --target all           # All available targets
-yaver autotest start --stories ./my-tests/  # User-provided stories
-yaver autotest start --context jira,git     # Pull context from integrations
-yaver autotest start --no-fix               # Report only, don't fix
-yaver autotest start --iterations 5         # Max fix-retest iterations
+Per CLAUDE.md privacy contract + `convex_privacy_test.go`:
 
-# === Results ===
-yaver autotest results                      # Last run summary
-yaver autotest results --detail             # Full details with screenshots
-yaver autotest results --all                # All runs for current repo
-yaver autotest results --json               # Machine-readable
-
-# === Test Suite Management ===
-yaver autotest suite                        # Show current test suite stats
-yaver autotest suite --coverage             # Screen × state coverage matrix
-yaver autotest suite --gaps                 # What's NOT covered yet
-
-# === CI Sync ===
-yaver autotest sync-ci                      # Promote validated tests to CI
-yaver autotest sync-ci --dry                # Preview changes
-yaver autotest sync-ci --all                # Promote everything
-yaver autotest sync-ci --pick               # Choose which tests
-
-# === Approve Fixes ===
-yaver autotest approve                      # Approve all pending fixes + new tests
-yaver autotest approve --fixes-only         # Approve fixes, skip new tests
-yaver autotest approve --tests-only         # Approve new tests, skip fixes
-yaver autotest approve --cherry-pick 1,3    # Specific items
-
-# === Growth Analysis ===
-yaver autotest growth                       # Show how suite has grown over time
-```
+- Flow plans, DOM snapshots, console/network logs, screenshots, fixes →
+  **device-local only** (`.yaver/results/` gitignored) and P2P frames.
+  **Never** to Convex.
+- Convex may only see an activity audit summary: `action:"autotest.run"`,
+  target = repo slug, outcome, timestamp. No paths, no stdout, no frame
+  bytes. Add the autotest payload fields to
+  `fieldsWeForbidInAnyConvexPayload` + a `convex_privacy_test.go` case in
+  Phase 1 ([[feedback_p2p_only.md]]).
+- Web dashboard reaches the agent **relay-only** (browser CORS); the
+  WebRTC offer/answer rides the existing `/remote-runtime/sessions/*`
+  routes already proxied through relay.
 
 ---
 
-## Notification Format
+## 9. Agent surface
 
-Sent to user on completion (via mobile push + in-app):
+**New ops verb** (`desktop/agent/ops_autotest.go`, mirrors
+`ops_testrun.go:26`):
 
-```markdown
-## Autotest Run Complete — BentoApp
-
-**Run**: 2026-03-25 14:30 → 14:52 (22 min, 3 iterations)
-
-### Bugs Found & Fixed
-- [x] `CartScreen` — crash on empty cart (fixed, iteration 1)
-- [x] `ProfileScreen` — unhandled null user.avatar (fixed, iteration 2)
-- [ ] `PaymentFlow` — Stripe timeout (needs manual review)
-
-### New Test Cases Added (16)
-| # | Test Case | Source | Screen | CI Ready |
-|---|-----------|--------|--------|----------|
-| 1 | Empty cart placeholder | discovered (was bug) | CartScreen | yes |
-| 2 | Null avatar fallback | discovered (was bug) | ProfileScreen | yes |
-| 3 | Product search empty query | generated | SearchScreen | yes |
-| 4 | Deep link to deleted product | generated | ProductDetail | yes |
-| ... | +12 more | | | |
-
-### Suite Stats
-- **Before**: 31 cases (20 in CI)
-- **After**: 47 cases (38 in CI after sync)
-- **Coverage**: 14/16 screens covered
-
-### Next Steps
-- `yaver autotest approve` — approve fixes + new tests
-- `yaver autotest sync-ci` — push 9 new tests to GitHub Actions
-- Branch: `autotest/run-20260325-1430` (2 fix commits, 1 test update commit)
 ```
+verb "autotest"  (Streaming: true)
+  payload: { workDir, scope: "full"|"changed"|"screen:<name>",
+             viewport: "<presetId>", driver?: "cdp"|"selenium",
+             stream: bool, propose: bool }
+  → { ok, streamId }      # subscribe /streams/<streamId>
+```
+
+**HTTP routes** (kept from prior spec, thin wrappers over the verb so
+mobile/web/CLI share one path):
+
+```
+POST /autotest/start     {workDir,scope,viewport,stream,propose} → {runId,streamId}
+GET  /autotest/status?runId=    SSE: {phase,flow,progress,bugsFound,proposed,nativeSkipped}
+POST /autotest/stop      {runId}
+GET  /autotest/results[/:runId|/latest]
+POST /autotest/approve   {runId, fixes:[], tests:[]}     # phase-1: approve = merge branch
+POST /autotest/sync-ci   {runId, testIds|"all"}          # phase-2
+GET  /autotest/suite[/coverage|/growth]                  # phase-2/3
+```
+
+**CLI** (`yaver autotest …`) wraps the same verb: `start`,
+`results`, `approve`, `suite`, `sync-ci` (phase-2), `--viewport`,
+`--driver cdp|selenium`, `--no-stream`, `--scope changed`.
 
 ---
 
-## Additional Capabilities (by phase)
+## 10. UI — deliberately minimal
 
-### Phase 1: Core Loop
-- **SDK Test Driver Mode**: `YaverFeedback.enableAutoTest()` — SDK navigates app autonomously, receives commands from agent, captures everything via BlackBox
-- **Autotest Orchestrator**: Go subsystem in agent, manages the discover → test → fix → codify loop
-- **Bug Fix Loop**: AI agent patches code, hot-reloads, re-tests, iterates
-- **Test Codification**: Every finding → permanent test case in `.yaver/tests/`
-- **Results & Notifications**: Structured results, stored locally, pushed to user's phone
+Design system to match (audited): mobile = `Pressable` + `useColors()` +
+`AppScreenHeader` (`mobile/src/components/AppScreenHeader.tsx:14`),
+tokens `mobile/src/theme/tokens.ts` (tablet bp 600 / 900); web =
+`web/components/ui/Button.tsx` + `Card.tsx`, `surface-*`/`brand` tokens.
+Audience = solo founders, keep it one screen ([[user_target_audience.md]]).
 
-### Phase 2: CI Promotion
-- **CI Sync**: `yaver autotest sync-ci` generates GitHub Actions workflow from test suite
-- **PR-Aware Targeted Runs**: AI reads PR diff → picks only relevant tests (saves CI minutes for solo devs paying for runners)
-- **Coverage Map**: Screen × state matrix showing what's tested and what's not, AI prioritizes gaps
+### 10.1 Viewport selection (one sticky picker, presets only)
 
-### Phase 3: Regression Safety
-- **Visual Regression**: Golden screenshots stored from passing runs. Next run diffs against them. AI reviews: intentional UI change or regression? If regression → fix. If intentional → update golden.
-- **Performance Regression**: SDK measures render times, navigation durations, API response times. If screen X went from 200ms to 800ms → new test case with perf budget assertion.
-- **API Contract Testing**: BlackBox captures all network requests. AI builds implicit contracts from observed responses. If response shape changes → flag + generate contract test. Lightweight enough for CI without emulator.
-- **Crash Replay**: Real crash from testing/production → AI converts BlackBox event stream into reproducible test case. The crash literally becomes a permanent regression test.
+Reuse the existing `VIEW_MODE_KEY = "@yaver/tablet/view_mode"` pattern
+(`mobile/app/(tabs)/hotreload.tsx:135`). Presets (drive Chrome
+`--window-size` / `--force-device-scale-factor`):
 
-### Phase 4: Self-Maintenance
-- **Flaky Test Self-Healing**: Test passes 9/10 runs → AI rewrites it to be deterministic (longer waits, retry logic, etc.). Suite heals itself.
-- **Test Pruning**: Two tests cover same code path → AI suggests merge. Tested code deleted → test auto-deprecated. Keeps suite lean.
-- **Dependency-Triggered Runs**: `package.json`/`Podfile`/`build.gradle` changed → full suite auto-runs to catch breakage from dependency bumps.
-- **Dead Code Detection**: Coverage map reveals screens the test driver can never reach. Either dead code (flag for removal) or broken navigation (bug).
+| Preset | px (CSS) | DPR |
+|---|---|---|
+| Phone (iPhone 15) | 393 × 852 | 3 |
+| Phone (Pixel 7) | 412 × 915 | 2.6 |
+| Tablet (iPad 11") | 834 × 1194 | 2 |
+| Tablet (landscape) | 1194 × 834 | 2 |
 
-### Phase 5: Growth Path
-- **Multi-Device Matrix**: Same suite across iPhone SE / iPhone 16 Pro Max / Android old / Android new / dark mode / RTL. Device-specific bugs get tagged.
-- **Production Learning Loop**: Feedback SDK in production (opt-in) feeds anonymized error patterns back into test suite. Real user crashes → test cases → fixes → CI. Users unknowingly contribute to QA.
+### 10.2 Mobile entry — Devices tab device card (no new tab)
+
+```
+┌─────────────────────────────┐   tap "Auto Test" on the device card
+│  MacBook-Air  ●  online     │
+│  [Tasks] [Terminal] [Test]  │
+└─────────────────────────────┘
+        ▼  bottom sheet (simple)
+┌─────────────────────────────┐
+│  Auto Test                  │
+│  Scope   ● Full  ○ Changed  │
+│  Viewport ▾ Phone (iPhone)  │
+│  ☐ Watch live (uses WebRTC) │
+│  ☑ Propose fixes on a branch│
+│  [ ▶ Run Auto Test ]        │
+└─────────────────────────────┘
+        ▼  live (text by default; video only if "Watch live")
+┌─────────────────────────────┐
+│  Auto Test ◉ running        │
+│  ███████░░░ 12/18 flows     │
+│  ✓ Create Todo      0.6s    │
+│  ✓ Edit Todo        0.9s    │
+│  ✗ Delete Todo  bug found   │
+│  ⤳ 3 native-only skipped    │
+│  Found 1 · Proposed 1       │
+│  [Stop]  [Open results]     │
+└─────────────────────────────┘
+```
+
+Live video, when opted in, embeds the **existing** mobile remote-runtime
+viewer pointed at the `web-chrome` session — no new streaming UI.
+
+### 10.3 Web entry — `web/components/dashboard/AutoTestView.tsx` (new)
+
+`<UICard>` with the same three controls; live pane **renders the existing
+`RemoteRuntimeViewer`** with `targetId="web-chrome"` (H.264 `<video>` when
+LAN/Tailscale, JPEG-DC fallback over relay — already implemented). Results
+list + "Approve branch" / "View diff" buttons using `<Button>`.
 
 ---
 
-## Coverage Map
+## 11. npm install bootstrap (`cli/src/postinstall.js` + `install_cmd.go`)
 
-```
-$ yaver autotest suite --coverage
-
-Screen Coverage Matrix — BentoApp
-═══════════════════════════════════════════════════════
-  Screen            Empty  Loaded  Error  Offline  Auth
-───────────────────────────────────────────────────────
-  HomeScreen          ✓      ✓      ✓      ✓       —
-  ProductList         ✓      ✓      ✗      ✗       —
-  ProductDetail       ✓      ✓      ✗      ✗       —
-  CartScreen          ✓      ✓      ✗      ✗       —
-  CheckoutFlow        ✗      ✓      ✗      ✗       ✓
-  ProfileScreen       ✗      ✓      ✗      ✗       ✓
-  SettingsScreen      ✗      ✗      ✗      ✗       ✗
-═══════════════════════════════════════════════════════
-  Coverage: 14/35 states (40%)
-  Next run will prioritize: SettingsScreen, offline states
-```
+- **Chrome:** on global install, detect Chrome; if missing, *offer* the
+  existing `install_cmd.go:18` recipe (brew cask / apt / dnf). Do not
+  hard-fail install — Auto Test is opt-in; surface a one-line hint.
+- **CDP path: nothing to install** — `chromedp` is already compiled into
+  the agent binary. This is the default and keeps `npm install -g
+  yaver-cli` lean (CLAUDE.md lean-stack rule).
+- **Selenium path: lazy.** Only when a project sets `"driver":"selenium"`
+  does the agent download ChromeDriver (+ Selenium server) into
+  `~/.yaver/autotest/selenium/` at first use. Never at `npm install`, no
+  JVM on the default path.
 
 ---
 
-## Growth Tracking
+## 12. Phased delivery
 
-```
-$ yaver autotest growth
+**Phase 1 (v1 — this plan):**
+1. `testkit/driver_chromecdp.go` — `WebDriver` iface, CDP backend
+   (chromedp), Selenium backend stub behind opt-in flag.
+2. `web-chrome` arm in `remote_runtime.go` Create + the three switches in
+   `remote_runtime_webrtc.go` (Attach/capture/control).
+3. `autotest.go` orchestrator (DISCOVER→SERVE→DRIVE→OBSERVE→PROPOSE→
+   CODIFY→REPORT, no self-loop) + `ops_autotest.go` verb + `/autotest/*`
+   routes + `yaver autotest` CLI.
+4. `.yaver/tests` codifier + `convex_privacy_test.go` forbidden-fields
+   case.
+5. Mobile bottom-sheet entry + web `AutoTestView.tsx`, both reusing the
+   existing remote-runtime viewer for opt-in live stream.
+6. npm Chrome detect/offer; CDP zero-dep; Selenium lazy.
+7. Tests: real CDP against a throwaway static RN-web build on a random
+   port, real `httptest` servers, no mocks (convention:
+   `desktop/agent/*_test.go`, e.g. `ops_testrun.go` peers). Per
+   [[feedback_no_full_test_suite.md]] run focused `-run TestAutotest…`.
 
-Autotest Suite Growth — BentoApp
-═══════════════════════════════════════════════════
-  Run Date       Cases   New   Bugs   Fixed   CI
-───────────────────────────────────────────────────
-  Mar 15, 2026      8    +8      3      3      0
-  Mar 18, 2026     14    +6      1      1      5
-  Mar 20, 2026     23    +9      4      4     12
-  Mar 22, 2026     31    +8      2      2     20
-  Mar 25, 2026     47   +16      1      1     38
-═══════════════════════════════════════════════════
-  Total growth: 8 → 47 cases in 10 days
-  CI coverage: 38/47 tests (81%) promoted
-  Bugs caught & fixed: 11
-  Zero-effort test cases: 42 (89% AI-generated)
-```
+**Phase 2 (pluggable deep pass):** wire the existing
+`ios-simulator`/`android-emulator` runtime as the device pass for
+`nativeOnly` flows; consider orchestrating local Maestro via its MCP
+rather than reimplementing device drivers (Yaver = orchestrator,
+[[project_yaver_is_orchestrator.md]]). CI-sync (`sync-ci`,
+user-owned-runner-first).
 
----
-
-## Solo Dev Timeline
-
-```
-Week 1:  npm install @yaver/feedback-sdk
-         Add <YaverFeedback /> to app root
-         yaver autotest start (or tap Autotest on phone)
-         → 15 tests generated, 3 bugs found and fixed
-         → "holy shit, it just tested my whole app"
-
-Week 2:  yaver autotest start (again, or set up nightly cron)
-         → 28 tests now, 2 new bugs from last week's feature
-         yaver autotest sync-ci
-         → GitHub Actions running 28 tests on every PR
-
-Week 4:  Suite at 50+ tests, running on every PR
-         Visual regression catches a CSS break
-         Perf regression catches a slow list render
-         → Solo dev has better QA than most funded startups
-
-Week 8:  Suite at 100+ tests, self-maintaining
-         Flaky tests auto-healed
-         Dead tests auto-pruned
-         → Zero test maintenance overhead
-
-Month 6: Production learning loop active
-         Real user crashes → test cases → fixes → CI
-         → Users are unknowingly contributing to QA
-```
+**Phase 3:** visual + perf + API-contract regression, crash replay,
+self-healing/pruning (kept from prior spec, unchanged intent).
 
 ---
 
-## What Already Exists vs. What's New
+## 13. Risks & mitigations
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Feedback SDK error capture | **Exists** | BlackBox, wrapErrorHandler, attachError |
-| BlackBox streaming | **Exists** | Ring buffer, `/blackbox/events`, SSE subscribe |
-| Screenshot capture | **Exists** | In FeedbackModal |
-| Hot-reload trigger | **Exists** | FeedbackModal has reload button |
-| SDK ↔ Agent communication | **Exists** | P2PClient, HTTP endpoints |
-| Mobile app device management | **Exists** | Device list, connect, task management |
-| **SDK test driver mode** | **New** | Navigation commands, view hierarchy, auto-screenshot |
-| **Agent autotest orchestrator** | **New** | Go subsystem for test loop management |
-| **AI agent delegation for tests** | **New** | Yaver agent → Claude Code for test/fix generation |
-| **Test suite storage (.yaver/tests/)** | **New** | In-repo, version-controlled, manifest.json |
-| **Local results storage** | **New** | Per-repo autotest results in ~/.config/yaver/ |
-| **CI sync** | **New** | Generate GitHub Actions from test suite |
-| **Mobile app autotest UI** | **New** | Trigger, live status, results, approve from phone |
-| **SDK autotest button + results overlay** | **New** | Trigger + view inside target app |
-| **Visual regression** | **New** | Golden screenshots, pixel diffing |
-| **Perf regression** | **New** | Render time tracking, perf budget assertions |
-| **API contract testing** | **New** | Implicit contracts from observed network traffic |
-| **Crash replay** | **New** | Real crashes → reproducible test cases |
-| **Flaky self-healing** | **New** | AI rewrites flaky tests |
-| **Test pruning** | **New** | AI merges/removes redundant tests |
-| **Multi-device matrix** | **New** | Same suite across device configs |
-| **Production learning loop** | **New** | Real user patterns → test cases |
-
----
-
-## Sources of Test Suite Growth
-
-```
-                         ┌──────────────────────────┐
-                         │     SOURCES OF GROWTH     │
-                         ├──────────────────────────┤
-                         │ • New features (git diff) │
-                         │ • Bugs found in runs      │
-                         │ • User-written stories     │
-                         │ • Production crashes       │
-                         │ • API contract changes     │
-                         │ • Dependency bumps         │
-                         │ • Coverage gap analysis    │
-                         │ • Perf regression catches  │
-                         │ • Visual diff catches      │
-                         │ • Crash replays            │
-                         │ • Multi-device findings    │
-                         │ • Jira/Linear tickets      │
-                         └────────────┬─────────────┘
-                                      │
-                                      ▼
-                         ┌──────────────────────────┐
-                    ┌───►│   .yaver/tests/manifest   │◄───┐
-                    │    │   (growing test suite)     │    │
-                    │    └────────────┬─────────────┘    │
-                    │                 │                    │
-                    │    sync-ci      │     autotest run   │
-                    │                 ▼                    │
-                    │    ┌──────────────────────────┐    │
-                    │    │   GitHub Actions CI       │    │
-                    │    │   (runs on every PR)      │    │
-                    │    │                          │    │
-                    │    │   • Unit tests (fast)     │    │
-                    │    │   • Emulator tests (full) │    │
-                    │    │   • Visual regression     │    │
-                    │    │   • Perf budgets          │    │
-                    │    │   • API contracts         │    │
-                    │    └──────────────────────────┘    │
-                    │                                      │
-                    │         SELF-MAINTENANCE              │
-                    │    • Prune redundant tests            │
-                    │    • Heal flaky tests                 │
-                    │    • Deprecate dead-code tests        │
-                    │    • Merge overlapping tests          │
-                    └──────────────────────────────────────┘
-```
+| Risk | Mitigation |
+|---|---|
+| RN-web ≠ shipped artifact (Hermes/native gaps) | `nativeOnly` flagging + explicit UI copy + phase-2 device pass. Position as fast inner-loop, not certification. |
+| Chrome `:9222` port already in use | Allocate ephemeral port if 9222 busy; never assume. |
+| Headful Chrome needed for live capture but heavier | Headless by default; headful only when "Watch live" opted in. |
+| Selenium bloating `npm install` | Lazy, opt-in, post-install, off the default path entirely. |
+| Privacy leak via results/frames | Device-local + P2P only; Convex audit-summary only; privacy test gate in Phase 1. |
+| Self-recursion / runner billing | Interactive runners only, subscription auth, no `-p`; sha-compare not version-exec ([[feedback_yaver_self_recursion_macos.md]]). |
+| Doc drift | Anchors are file:line; fix in same change when they move (CLAUDE.md). |

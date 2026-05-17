@@ -3025,21 +3025,6 @@ export default function MoreScreen() {
           </Pressable>
         )}
 
-        {/* Morning — overnight match reports */}
-        {connected && (
-          <Pressable
-            style={[s.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
-            onPress={() => router.navigate("/morning" as any)}
-          >
-            <Text style={[s.icon, { color: c.textMuted }]}>{"\u2600"}</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.label, { color: c.textPrimary }]}>Morning Report</Text>
-              <Text style={[s.desc, { color: c.textMuted }]} numberOfLines={1}>Overnight summaries</Text>
-            </View>
-            <Text style={{ color: c.textMuted, fontSize: 16 }}>{"\u203A"}</Text>
-          </Pressable>
-        )}
-
         {/* Monitor — errors + releases + uptime + events + flags */}
         {connected && (
           <Pressable

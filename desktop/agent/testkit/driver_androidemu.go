@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -60,12 +61,12 @@ func (d *AndroidEmuDriver) Boot(ctx context.Context) (string, error) {
 	// pass `-accel tcg` explicitly plus a modest `-cores 2` cap (TCG
 	// is CPU-hungry and otherwise starves the agent + encoder). With
 	// KVM (bare metal / kvm-passthrough) we let the emulator's default
-	// acceleration win — it auto-picks KVM (~10s boot vs the minutes
-	// TCG takes). NOTE: this path is unreachable on linux/arm64 —
-	// Google publishes no emulator host binary for that arch, so
-	// Available() fails first. TCG only ever matters on x86-64 Linux.
+	// acceleration win — it auto-picks KVM on Linux and HVF on macOS.
+	// NOTE: this path is unreachable on linux/arm64 — Google publishes
+	// no emulator host binary for that arch, so Available() fails first.
+	// TCG only ever matters on x86-64 Linux.
 	args := []string{"-avd", d.AVD, "-no-snapshot-save", "-no-window", "-no-boot-anim", "-noaudio"}
-	if !kvmAvailable() {
+	if runtime.GOOS == "linux" && !kvmAvailable() {
 		args = append(args, "-accel", "tcg", "-cores", "2")
 	}
 	cmd := exec.CommandContext(ctx, resolveTestkitCommandPath("emulator"), args...)

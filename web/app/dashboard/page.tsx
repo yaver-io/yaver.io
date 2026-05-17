@@ -19,7 +19,6 @@ import ConvexView from "@/components/dashboard/ConvexView";
 import DataView from "@/components/dashboard/DataView";
 import SwitchView from "@/components/dashboard/SwitchView";
 import AccountsView from "@/components/dashboard/AccountsView";
-import ConsoleView from "@/components/dashboard/ConsoleView";
 import ObservabilityView from "@/components/dashboard/ObservabilityView";
 import OpsView from "@/components/dashboard/OpsView";
 import OverviewView from "@/components/dashboard/OverviewView";
@@ -30,7 +29,6 @@ import InfraView from "@/components/dashboard/InfraView";
 import ConnectivityView from "@/components/dashboard/ConnectivityView";
 import ToolsView from "@/components/dashboard/ToolsView";
 import TwoFactorView from "@/components/dashboard/TwoFactorView";
-import MorningView from "@/components/dashboard/MorningView";
 import VaultView from "@/components/dashboard/VaultView";
 import APIKeysView from "@/components/dashboard/APIKeysView";
 import StorageView from "@/components/dashboard/StorageView";
@@ -783,7 +781,7 @@ export default function DashboardPage() {
   // pointed at it; if not it offers a "Connect & open shell" affordance
   // instead of silently opening a WS against the wrong baseUrl.
   const [shellDevice, setShellDevice] = useState<Device | null>(null);
-  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "console" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "morning" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings">("devices");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "projects" | "vibe" | "devices" | "git" | "todos" | "builds" | "webview" | "preview" | "web-reload" | "health" | "quality" | "convex" | "data" | "switch" | "accounts" | "observ" | "ops" | "extras" | "share" | "guests" | "infra" | "connect" | "tools" | "security" | "storage" | "vault" | "apikeys" | "schedules" | "exec" | "phone" | "vibe-preview" | "domains" | "settings">("devices");
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [todoCount, setTodoCount] = useState(0);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -1872,7 +1870,6 @@ export default function DashboardPage() {
     { id: "data", label: "Data", icon: "\uD83D\uDDC4\uFE0F" },
     { id: "switch", label: "Switch", icon: "\uD83D\uDD04" },
     { id: "accounts", label: "Accounts", icon: "\uD83D\uDD11" },
-    { id: "console", label: "Console", icon: "\uD83D\uDCBB" },
     { id: "infra", label: "Infra", icon: "\uD83D\uDEE0\uFE0F" },
     { id: "connect", label: "Connect", icon: "\uD83C\uDF10" },
     { id: "tools", label: "Tools", icon: "\uD83E\uDDE9" },
@@ -1891,7 +1888,6 @@ export default function DashboardPage() {
     { id: "domains", label: "Domains", icon: "\uD83C\uDF10" },
     { id: "exec", label: "Exec", icon: "\u2699\uFE0F" },
     { id: "security", label: "Security", icon: "\uD83D\uDD10" },
-    { id: "morning", label: "Morning", icon: "\u2600\uFE0F" },
   ];
 
   return (
@@ -1952,6 +1948,7 @@ export default function DashboardPage() {
               { id: "projects", label: "Projects", icon: "📁" },
               { id: "git",      label: "Git",      icon: "⎇" },
               { id: "webview",  label: "Webview", icon: "📱" },
+              { id: "vibe-preview", label: "Vibe Preview", icon: "🎬" },
               { id: "guests",   label: "Guests",   icon: "👥" },
               { id: "vault",    label: "Vault",    icon: "🔐" },
             ] as const).map((it) => (
@@ -2616,8 +2613,6 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><SwitchView /></div>
           ) : activeTab === "accounts" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full"><AccountsView /></div>
-          ) : activeTab === "console" ? (
-            <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><ConsoleView /></div>
           ) : activeTab === "infra" ? (
             <div className="flex-1 overflow-y-auto p-6 max-w-6xl mx-auto w-full"><InfraView /></div>
           ) : activeTab === "connect" ? (
@@ -2650,8 +2645,6 @@ export default function DashboardPage() {
             <div className="flex-1 overflow-y-auto p-6 max-w-3xl mx-auto w-full">
               <SettingsView user={user as any} onLogout={logout} />
             </div>
-          ) : activeTab === "morning" ? (
-            <div className="flex-1 overflow-hidden w-full"><MorningView /></div>
           ) : activeTab === "storage" ? (
             <div className="flex-1 min-h-0 w-full"><StorageView /></div>
           ) : activeTab === "vault" ? (

@@ -101,7 +101,7 @@ export default function AgentModeScreen() {
       >
         <Text style={[styles.title, { color: c.textPrimary }]}>Agent Mode</Text>
         <Text style={[styles.subtitle, { color: c.textSecondary }]}>
-          Dependency-aware orchestration across chat, autoideas, autodev, and autotest.
+          Dependency-aware orchestration across chat, autoideas, and autotest.
         </Text>
 
         <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>

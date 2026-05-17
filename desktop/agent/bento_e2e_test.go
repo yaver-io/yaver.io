@@ -287,9 +287,9 @@ func TestBentoE2E_MobileFlow(t *testing.T) {
 		t.Fatalf("POST /tasks: no taskId in %v", taskResp)
 	}
 
-	// Poll until completed (dummy task is ~3s). The endpoint returns
+	// Poll until terminal (dummy task is ~3s). The endpoint returns
 	// `{"ok":true,"task":{...}}`, so unwrap before looking at status.
-	t.Log("Step 7: GET /tasks/{id} — wait for completion")
+	t.Log("Step 7: GET /tasks/{id} — wait for terminal task state")
 	deadline := time.Now().Add(12 * time.Second)
 	var final map[string]interface{}
 	var task map[string]interface{}
@@ -300,14 +300,15 @@ func TestBentoE2E_MobileFlow(t *testing.T) {
 		} else {
 			task = final
 		}
-		if status, _ := task["status"].(string); status == "completed" ||
+		if status, _ := task["status"].(string); status == "review" ||
+			status == "completed" ||
 			status == "failed" || status == "stopped" {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if status, _ := task["status"].(string); status != "completed" {
-		t.Fatalf("task didn't reach completed (got %q): %v", status, task)
+	if status, _ := task["status"].(string); status != "review" && status != "completed" {
+		t.Fatalf("task didn't reach successful terminal state (got %q): %v", status, task)
 	}
 
 	// --- Step 8: Gap 4 — auto hot-reload fires on task done -----------

@@ -213,7 +213,6 @@ yaver ssh <alias|primary>            # OpenSSH wrap, resolves LAN-on-subnet → 
 # code
 yaver code                           # local TUI on this machine
 yaver code --attach <device>         # remote machine via QUIC tunnel
-yaver autodev <slug>                 # autonomous loop on remained.md
 yaver insert <app>                   # tell the paired mobile to load <app> via Hermes push
 
 # cable
@@ -556,9 +555,7 @@ matters.
 | Account linking + merge | `backend/convex/auth.ts::mergeUserInto`; `desktop/agent/account_cmd.go`, `mcp_auth_link_tools.go` |
 | Phone-first mini backend | `desktop/agent/phone_backend.go`, `phone_backend_http.go`; mobile `app/phone-projects*` |
 | Switch engine (target migrations) | `desktop/agent/switch_*.go` — 19 targets, snapshots, 7-day rollback |
-| Hybrid mode (planner + implementer) | `desktop/agent/hybrid.go`, `hybrid_cmd.go`, `loop_exec_hybrid.go` |
-| Autodev / loop | `desktop/agent/autodev_cmd.go`, `loop_cmd.go`, `loop_exec.go` |
-| Session transfer / handoff | `desktop/agent/session_*.go`, `handoff_cmd.go`, `transfer.go` |
+| Session transfer | `desktop/agent/session_*.go`, `transfer.go` |
 | Feedback SDK + black box | `sdk/feedback/{react-native,web,flutter}/`; `desktop/agent/blackbox*.go`, `feedback*.go` |
 | Support sessions (TeamViewer-style) | `desktop/agent/support*.go` |
 | SDK token security | `desktop/agent/auth.go::ValidateSdkToken*`, `sdk_token.go`, `tls.go` |

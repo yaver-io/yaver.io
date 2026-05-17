@@ -93,7 +93,6 @@ const (
 	RunnerNotifyNone    RunnerNotifyKind = "none"
 	RunnerNotifyMobile  RunnerNotifyKind = "mobile_push"
 	RunnerNotifyWebhook RunnerNotifyKind = "webhook"
-	RunnerNotifyAutoDev RunnerNotifyKind = "autodev_kick"
 	RunnerNotifyEmail   RunnerNotifyKind = "email"
 )
 
@@ -156,7 +155,7 @@ type RunnerSchedule struct {
 type RunnerNotifySpec struct {
 	Kind   RunnerNotifyKind `json:"kind"`
 	On     string           `json:"on,omitempty"`     // "fail" | "success" | "always" — default "fail"
-	Target string           `json:"target,omitempty"` // webhook URL / email / autodev prompt
+	Target string           `json:"target,omitempty"` // webhook URL / email
 }
 
 // RunnerRun is one historical execution of a RunnerJob. Same

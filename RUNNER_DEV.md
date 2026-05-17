@@ -11,7 +11,7 @@ on a machine that isn't yours." Yaver already has the four
 ingredients to collapse most of these into a self-hosted free
 substitute — fleet of user-owned machines, P2P transport, vault for
 secrets, and coding-agent runners — but they are wired only into
-end-to-end flows (autodev, deploy-ship), not exposed as a generic
+end-to-end flows (deploy-ship), not exposed as a generic
 runner primitive. This doc proposes a unified `runner` abstraction
 (`Pool × Job × Schedule × Result × Notify`), shipped behind a new
 `ops runner` verb, and a 6-phase build plan that brings CI, build
@@ -179,10 +179,9 @@ Why we can collapse most of section 1 into self-hosted free.
 | **User-owned fleet** | A typical Yaver user has laptop + Mac mini + Hetzner test box + (maybe) GPU box. That's 4 free runners with 3 OS variants and a Mac for iOS builds. |
 | **P2P transport** | Runners don't need public IPs; mobile/web can reach them via relay. No "configure ingress + TLS + auth" tax. |
 | **Vault** | Secrets live on the host, never in a runner config file or env var pasted into a SaaS UI. |
-| **Already has coding agents** | claude-code / codex / aider / hybrid / aider-ollama are wired runners. The "agent runner" category is half-shipped. |
+| **Already has coding agents** | claude-code / codex / opencode are wired runners. The "agent runner" category is half-shipped. |
 | **Workspace manifest** | `yaver.workspace.yaml` already declares per-app stack, env, depends. One more field (`runner:`) closes the loop. |
 | **Container sandbox** | `container_runner.go` + `Dockerfile.sandbox` exist for guest-isolated tasks — directly reusable for sandbox/e2b-style work. |
-| **Hybrid mode** | Cheap-tier execution (planner=Claude, implementer=local Aider+Ollama) is a free Devin substitute. |
 | **Multi-surface parity** | MCP + HTTP + CLI + mobile + web + `yaver code` already share the same control plane via `ops`. |
 
 The thing nobody else can do: **route a job to a specific named
@@ -200,14 +199,12 @@ re-invent them.
 | Primitive | File(s) | What it does |
 |---|---|---|
 | `TaskManager` | `desktop/agent/tasks.go` | Queues + executes coding-agent tasks. Foundational. |
-| Runner registry | `desktop/agent/loop_exec.go` | `spawnClaudeCode`, `spawnCodex`, `spawnAider`, hybrid spawners. |
+| Runner registry | `desktop/agent/runner_*.go` | `spawnClaudeCode`, `spawnCodex`, `spawnOpenCode` spawners. |
 | Container sandbox | `desktop/agent/container_runner.go`, `Dockerfile.sandbox` | Docker isolation per task; build caches via named volumes. |
-| `autodev` loop | `desktop/agent/autodev_*.go` | Cron-like coding loop with engine selector. |
 | `/deploy/ship` | `desktop/agent/deploy_run.go` | Vault-aware deploy runner with composite targets, history, webhooks, error classification. |
 | `/schedules` | hinted in CLAUDE.md guest scope | Owner-only scheduler; primitive exists, surface incomplete. |
 | `/dev/start` | `desktop/agent/devserver.go` | Per-framework dev-server runners (Expo / Flutter / Vite / Next). |
 | `RemoteTrigger` MCP | exposed via `RemoteTrigger` tool | Already routes work to a remote machine. |
-| Hybrid orchestrator | `desktop/agent/hybrid.go` | Planner+implementer split. |
 | Workspace manifest | `yaver.workspace.yaml` | Declarative app catalogue with depends + env + provider. |
 | `ops` verb registry | `desktop/agent/ops*.go` | 20 verbs; uniform MCP/HTTP/CLI surface. |
 | Hetzner test ephemeral | `ci/hcloud/`, `ci/remote/` | Snapshot+recreate Linux box used for remote integration tests. Working blueprint for "burst" capacity. |
@@ -235,7 +232,7 @@ primitive without reinventing.
 | 1.5 Cron / jobs | **Extend** `/schedules` | Promote to first-class — see §6.5 |
 | 1.6 GPU / ML | **Build** | `pkg/runner/gpu/` — register GPU machines in fleet, route inference jobs |
 | 1.7 Cloud dev env | **Build (small)** | Wrap existing remote-worker into a "dev session" lifecycle |
-| 1.8 Agentic | **Extend** autodev + tasks | `ops runner agent` — Devin-shape API into existing runners |
+| 1.8 Agentic | **Extend** tasks | `ops runner agent` — Devin-shape API into existing runners |
 | 1.9 Deploy | **Already done** | `/deploy/ship` covers the case |
 | 1.10 Test parallel | **Skip v0** | Add only if v0 CI is too slow |
 
@@ -261,8 +258,7 @@ Runner = Pool × Job × Schedule × Result × Notify
     `container_runner.go`.
   - `workflow` — declarative steps (a list of shell or docker steps,
     sequential or parallel). GitHub-Actions-shaped but flatter.
-  - `agent` — prompt + runner (`claude-code` / `codex` / `aider` /
-    `aider-ollama` / `hybrid`). Already the autodev primitive.
+  - `agent` — prompt + runner (`claude-code` / `codex` / `opencode`).
   - `playwright` — script + browser + assertions. v0 special case.
   - `gpu` — image + GPU constraints + entrypoint. Routes to
     GPU-tagged pool.
@@ -271,8 +267,7 @@ Runner = Pool × Job × Schedule × Result × Notify
 - **Result** — typed: exit code, structured outputs, log path,
   artifacts (paths to files in `~/.yaver/runner/runs/<id>/out/`),
   durations, classification (reuse `deploy_classify.go`'s shape).
-- **Notify** — `mobile_push` / `email` / `slack` / `webhook` /
-  `autodev_kick(prompt)` / `none`.
+- **Notify** — `mobile_push` / `email` / `slack` / `webhook` / `none`.
 
 A run is the join of all five plus an ID. Stored in
 `~/.yaver/runner/runs/<id>/` with the same on-disk shape as
@@ -474,7 +469,6 @@ schedule:
 notify:
   on_fail:
     - mobile_push
-    - autodev_kick: "checkout E2E broke. fix."
 ```
 
 Runs on whichever pooled machine has Playwright installed (capability
@@ -530,8 +524,7 @@ under my desk."
 For LLM serving specifically: ship a `yaver runner gpu serve <model>`
 that fronts Ollama / vLLM / TGI behind the agent's auth + relay,
 making the user's GPU box a private LLM endpoint reachable from any
-Yaver client. This dovetails directly with Hybrid mode — the
-implementer's `OLLAMA_API_BASE` already points to a configurable URL.
+Yaver client.
 
 **Files:**
 - `desktop/agent/runner_gpu.go`
@@ -575,20 +568,18 @@ GET  /runner/agent/sessions/{id}
 POST /runner/agent/sessions/{id}/message {text}
 ```
 
-Internally, this is `LoopSpec{Mode: develop, Think.Runner: <runner>}`
-— exactly what `yaver autodev` does. The runner registry already
-covers claude-code / codex / aider / hybrid / aider-ollama. The new
-piece is the session API + mid-flight steering (which today exists
-only as the autodev queue).
+Internally, this is a `TaskSpec` wrapping the existing task runner.
+The runner registry already covers claude-code / codex / opencode.
+The new piece is the session API + mid-flight steering.
 
 **Cost vs Devin:** Devin = $500/mo unlimited agentic runs (with
-their model bill on top). Hybrid mode (`--engine hybrid` =
-Claude-Opus plans, qwen2.5-coder:14b implements) is ~$5/mo for the
-same workload — and runs on hardware you own.
+their model bill on top). Routing through a user-owned Claude Code /
+Codex subscription is the same workload at the user's existing
+subscription rate — and runs on hardware they own.
 
 **Files:**
 - `desktop/agent/runner_agent_session.go` — API surface
-- Reuses `loop_exec*.go`, `autodev*.go`, `tasks.go`
+- Reuses `tasks.go`
 
 ### 6.9 Deploy farm (already shipped)
 
@@ -664,8 +655,7 @@ gets all paths.
 `POST /runner/webhooks/{slug}` with HMAC verification (reuse the
 deploy webhook signing primitives). Triggers a job by name when the
 HMAC validates and the slug matches a registered hook. Use case: a
-GitHub PR webhook fires a Yaver CI job; a Sentry alert fires an
-autodev kick.
+GitHub PR webhook fires a Yaver CI job.
 
 ---
 
@@ -684,7 +674,7 @@ yaver runner sandbox start [--label foo]
 yaver runner sandbox exec <id> -- <cmd>
 yaver runner sandbox stop <id>
 yaver runner build mobile --target=ios-archive
-yaver runner agent session start <workdir> --prompt "..." --engine hybrid
+yaver runner agent session start <workdir> --prompt "..." --runner claude-code
 yaver runner agent session msg <id> "tighten the test for empty input"
 yaver runner github setup            # registers a self-hosted GHA runner
 yaver runner gpu serve qwen2.5-coder:14b --pool linux-gpu
@@ -706,7 +696,7 @@ New "Runner" tab. Sections:
 - **Runs** — flat history with filters; tap to see log + artifacts.
 - **Sandboxes** — active sandboxes with quick-attach to terminal via existing `/exec` path.
 - **Pools** — fleet view with load + capabilities; tap to inspect.
-- **Push** — failed runs trigger a mobile notification with a "kick autodev" action.
+- **Push** — failed runs trigger a mobile notification with a "rerun" action.
 
 ### 8.5 Web
 
@@ -785,7 +775,7 @@ What we are NOT cheaper at:
 | Sleeping laptop = missed runs | UI surfaces "agent offline" state explicitly per pool; recommend Hetzner-test-ephemeral pattern; opt-in caffeinate hook for laptops the user marks "always on" |
 | Apple developer signing locked to one machine | Vault holds the API key; runner_build_mobile uses the same `APP_STORE_KEY_*` as `/deploy/ship`. Solved. |
 | Capability drift (machine X claims it has Xcode-15 but doesn't) | Periodic capability reverification job built into the heartbeat. If a job fails with a "tool not found" classifier, the agent self-demotes that capability tag and notifies. |
-| Long-running runs eating the queue | Per-pool concurrency + per-job timeout + `concurrency: skip` policy default. Same shape autodev already enforces. |
+| Long-running runs eating the queue | Per-pool concurrency + per-job timeout + `concurrency: skip` policy default. |
 | Privacy contract regression | Add `runner_*` keys to the forbidden list in `convex_privacy_test.go` upfront so any new sync path catches it in CI. |
 | Self-hosted GHA runner security | Use [GitHub's ephemeral mode](https://docs.github.com/en/actions/hosting-your-own-runners) — runner registers with a token, processes one job, dies. No persistent inbound auth. Requires `--just-in-time` token from GitHub. |
 | Sandbox escape | We already have the sandbox primitive in production for guest tasks. Extend the same hardening: read-only by default, named-volume cache only, opt-in egress, syscall allowlist via `--security-opt`. |
@@ -814,7 +804,7 @@ its log, GC it.
 ### Phase 2 — Sandbox + agent sessions (1 week)
 
 - [ ] `runner sandbox start/exec/files/stop` on top of `container_runner.go`.
-- [ ] `runner agent session` API wrapping autodev's `LoopSpec`.
+- [ ] `runner agent session` API wrapping the task runner.
 - [ ] MCP tools `sandbox_*`, `runner_agent_session_*`.
 - [ ] Mobile UI: Sandboxes tab.
 
@@ -826,11 +816,11 @@ sandbox, exec Python in it, and tear it down via MCP.
 - [ ] Promote `/schedules` to first-class with retry, DLQ, timeout,
   concurrency policy.
 - [ ] `POST /schedules/{name}/beat` heartbeat receiver.
-- [ ] Integrate with `notify:` block (push / autodev / webhook).
+- [ ] Integrate with `notify:` block (push / webhook).
 - [ ] Mobile UI: Schedules section in Runner tab.
 
-**Done when:** a `*/15` cron with `notify.on_fail.autodev_kick`
-demonstrably auto-files a fix task.
+**Done when:** a `*/15` cron with `notify.on_fail.mobile_push`
+demonstrably fires a push notification.
 
 ### Phase 4 — CI runner (2 weeks)
 
@@ -853,13 +843,13 @@ $/mo before vs. after.
 - [ ] Capability-tag heartbeat extension.
 
 **Done when:** Yaver's own marketing site has a 3-region Playwright
-synthetic check running on user-owned machines, and Hybrid mode's
-`OLLAMA_API_BASE` points at a `runner gpu serve` endpoint.
+synthetic check running on user-owned machines, and an Ollama-backed
+client points at a `runner gpu serve` endpoint.
 
 ### Phase 6 — Polish + status pages (1 week)
 
 - [ ] Public read-only status page (`/runners/<slug>`).
-- [ ] Mobile push round-trip with "kick autodev" quick action.
+- [ ] Mobile push round-trip with "rerun" quick action.
 - [ ] Prometheus metrics endpoint.
 - [ ] Docs (`docs/runner.md`).
 

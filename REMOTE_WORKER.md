@@ -1,26 +1,9 @@
 # Yaver as a Plug-in Tool for Existing Coding Agents
 
-This doc specs **one of Yaver's modes**: the plug-in mode, where Yaver acts as
-an MCP tool server for an existing Claude Code / Codex / Cursor / Windsurf /
-Zed install. In this mode the coding agent drives and Yaver provides
-capabilities (builds, deploys, Hermes push, containerization, remote workers).
-
-It is **additive to Yaver's existing wrapper modes** (`yaver autodev`,
-`yaver loop`, `yaver handoff`, `yaver hybrid`), where Yaver itself spawns
-`claude` / `codex` / `aider` as subprocesses. Those keep working unchanged.
-Nothing in this doc replaces, refactors, or touches those code paths.
-
-## Yaver's two operating modes
-
-| Mode | Who drives? | Who is spawned? | Existing code | Doc |
-|---|---|---|---|---|
-| **Wrapper mode** | Yaver (loop / autodev / handoff / hybrid) | `claude` / `codex` / `aider` / `ollama` subprocesses via `builtinRunners` | `loop_exec.go`, `handoff.go`, `hybrid.go`, `autodev_cmd.go` | `CLAUDE.md` (Autodev, Handoff, Hybrid sections) |
-| **Plug-in mode** *(this doc)* | Claude Code / Codex / Cursor / … | Yaver's MCP stdio server (`yaver mcp`) | `mcp-setup.go`, `runMCPStdio` in `main.go` | This doc |
-
-**Critical rule:** the plug-in work in this doc must not touch `loop_exec.go`,
-`handoff.go`, `hybrid.go`, `autodev_cmd.go`, `builtinRunners`, or any of the
-subprocess-wrapping logic. Those flows already work end-to-end and users
-depend on them.
+This doc specs Yaver's plug-in mode, where Yaver acts as an MCP tool server
+for an existing Claude Code / Codex / Cursor / Windsurf / Zed install. In
+this mode the coding agent drives and Yaver provides capabilities (builds,
+deploys, Hermes push, containerization, remote workers).
 
 ## What this doc adds (scope)
 
@@ -72,7 +55,6 @@ Verified by reading the code:
 | Relay re-targeting by device id | `{relay}/d/{deviceId}/…` used by web + mobile today | **Exists** |
 | Cross-device auth (one token owns all user's agents) | `auth.go`, `httpserver.go::auth()` | **Exists** |
 | Guest token rejection prefixes | `httpserver.go::guestAllowedPrefixes` | **Exists** |
-| Wrapper-mode runners | `builtinRunners` in `tasks.go`, `loop_exec.go`, `hybrid.go` | **Exists — do not touch** |
 
 ## What's missing (the actual work)
 
@@ -220,8 +202,6 @@ Same tool, same signature, only `device_id` differs.
 - **Secrets stay on the worker**: Layer 4 tools refuse `device_id`. Apple /
   Play / npm / Cloudflare credentials never leave the machine they were set
   on.
-- **No coupling to wrapper mode**: none of this touches
-  `loop_exec.go` / `handoff.go` / `hybrid.go` / `builtinRunners`.
 - **Additivity**: uninstall Yaver (`npm uninstall -g yaver-cli`) and Claude
   Code works as before. `yaver mcp unregister` guarantees no ghost entries.
 
@@ -264,15 +244,12 @@ Same tool, same signature, only `device_id` differs.
 
 - [ ] `README.md` — lead with "Install in two commands"
 - [ ] `CLAUDE.md` — new "Plug-in mode (MCP with device_id)" section linking
-      this doc; explicit note that wrapper mode is unchanged
+      this doc
 - [ ] `AI_ARCH.md` — diagram: Coding agent → `yaver mcp` stdio → daemon
       → local handler OR `{relay}/d/<id>/…`
 
 ## Non-goals (explicitly out of scope)
 
-- Touching `loop_exec.go`, `handoff.go`, `hybrid.go`, `autodev_cmd.go`,
-  `autodev_stream.go`, or `builtinRunners`. Wrapper mode stays exactly as it
-  is today.
 - Replacing the Claude Code mobile app. The vibe-coder uses both Yaver
   mobile and Claude Code mobile side by side.
 - A scheduler / job queue for single tool calls. `agent_mesh.go` already
@@ -309,8 +286,7 @@ Claude Code calls (no user intervention):
 
 Same afternoon the vibe-coder edits their own RN app — Claude Code calls
 `dev_reload(mode="bundle")` dozens of times, each round-trip under 2s. Fans
-stay quiet. Wrapper-mode `yaver autodev` is still available if they want it,
-completely unaffected.
+stay quiet.
 
 Next week they add a Mac mini, run `yaver auth` on it, and Claude Code on
 the laptop starts offloading builds with `device_id="mac-mini"` — no new

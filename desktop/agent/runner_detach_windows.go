@@ -2,11 +2,11 @@
 
 package main
 
-// autodev_detach_windows.go — Windows stub. The detach mechanism
+// runner_detach_windows.go — Windows stub. The detach mechanism
 // uses POSIX setsid + signal(0) liveness which don't exist on
 // Windows. Until a CreateProcess(DETACHED_PROCESS) port lands,
-// `yaver autodev` on Windows runs in the foreground and is tied
-// to the controlling console — Ctrl-C ends the kick loop.
+// detached subcommands on Windows run in the foreground and are
+// tied to the controlling console.
 
 import (
 	"fmt"

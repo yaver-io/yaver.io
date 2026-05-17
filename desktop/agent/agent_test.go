@@ -25,6 +25,10 @@ func getFreePort(t *testing.T) int {
 }
 
 // startTestServer spins up an HTTPServer with a fake token and returns the base URL.
+// currentTestHTTPServer is a hook so tests can reach into the server
+// instance started by startTestServer. Set on startTestServer.
+var currentTestHTTPServer *HTTPServer
+
 func startTestServer(t *testing.T, token string, taskMgr *TaskManager) (string, context.CancelFunc) {
 	t.Helper()
 	port := getFreePort(t)
@@ -33,9 +37,8 @@ func startTestServer(t *testing.T, token string, taskMgr *TaskManager) (string, 
 	srv.execMgr = NewExecManager(taskMgr.workDir, nil)
 	srv.agentGraphMgr = NewAgentGraphManager(taskMgr)
 	// Expose the server to tests that need to reach into its internal
-	// managers (morning store, recording manager, etc.). Safe to set
-	// here because Go tests run serially within a package unless
-	// -parallel is passed; nothing in this file calls t.Parallel().
+	// managers. Safe to set here because Go tests run serially within a
+	// package unless -parallel is passed.
 	currentTestHTTPServer = srv
 
 	ctx, cancel := context.WithCancel(context.Background())

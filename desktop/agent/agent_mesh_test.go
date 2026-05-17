@@ -36,7 +36,7 @@ func TestChooseNodePlacementPrefersPinnedMachine(t *testing.T) {
 func TestChooseNodePlacementPrefersIOSMachineForTestFlight(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "ship-ios",
-		Kind:   AgentNodeAutodev,
+		Kind:   AgentNodeAutoIdeas,
 		Prompt: "Build and deploy the app to TestFlight",
 	}
 	machines := []MachineInfo{
@@ -70,7 +70,7 @@ func TestChooseNodePlacementPrefersIOSMachineForTestFlight(t *testing.T) {
 func TestChooseNodePlacementPrefersAndroidMachine(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "ship-android",
-		Kind:   AgentNodeAutodev,
+		Kind:   AgentNodeAutoIdeas,
 		Prompt: "Prepare the Android release and Play Store rollout",
 	}
 	machines := []MachineInfo{
@@ -104,7 +104,7 @@ func TestChooseNodePlacementPrefersAndroidMachine(t *testing.T) {
 func TestChooseNodePlacementPrefersLocalLLMWhenRequested(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "local-dev",
-		Kind:   AgentNodeAutodev,
+		Kind:   AgentNodeAutoIdeas,
 		Prompt: "Use opencode with local LLM (BYOK) for the coding pass",
 	}
 	machines := []MachineInfo{
@@ -170,9 +170,9 @@ func TestPlanGraphPlacementsBalancesAcrossAllowedMachines(t *testing.T) {
 		machineAssignments: map[string]int{},
 		runnerAssignments:  map[string]int{},
 	}
-	first := chooseNodePlacement(req, AgentGraphNodeSpec{ID: "n1", Kind: AgentNodeAutodev, Prompt: "Implement settings screen"}, machines, state)
+	first := chooseNodePlacement(req, AgentGraphNodeSpec{ID: "n1", Kind: AgentNodeAutoIdeas, Prompt: "Implement settings screen"}, machines, state)
 	state.reserve(first)
-	second := chooseNodePlacement(req, AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutodev, Prompt: "Implement billing flow"}, machines, state)
+	second := chooseNodePlacement(req, AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutoIdeas, Prompt: "Implement billing flow"}, machines, state)
 	if first.DeviceID == second.DeviceID {
 		t.Fatalf("expected balanced placement across machines, got both on %q", first.DeviceID)
 	}
@@ -197,7 +197,7 @@ func TestAllowedDevicesMatchesMachineNameAndPrefix(t *testing.T) {
 func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
 	node := AgentGraphNodeSpec{
 		ID:     "local-dev",
-		Kind:   AgentNodeAutodev,
+		Kind:   AgentNodeAutoIdeas,
 		Prompt: "Use opencode with local LLM (BYOK) for the coding pass",
 	}
 	machines := []MachineInfo{
@@ -233,8 +233,8 @@ func TestChooseNodePlacementPrefersOwnOverSharedSpareCapacity(t *testing.T) {
 
 func TestChooseNodePlacementFallsThroughToSharedWhenOwnSaturated(t *testing.T) {
 	req := AgentGraphCreateRequest{}
-	node1 := AgentGraphNodeSpec{ID: "n1", Kind: AgentNodeAutodev, Prompt: "Implement local LLM pass A"}
-	node2 := AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutodev, Prompt: "Implement local LLM pass B"}
+	node1 := AgentGraphNodeSpec{ID: "n1", Kind: AgentNodeAutoIdeas, Prompt: "Implement local LLM pass A"}
+	node2 := AgentGraphNodeSpec{ID: "n2", Kind: AgentNodeAutoIdeas, Prompt: "Implement local LLM pass B"}
 	machines := []MachineInfo{
 		{
 			DeviceID: "my-linux",

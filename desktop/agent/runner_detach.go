@@ -2,20 +2,22 @@
 
 package main
 
-// autodev_detach.go — turns `yaver autodev sfmg` into a "set and
-// forget" command. The CLI fork-execs itself as a detached child
-// (own session, no controlling terminal) that runs the actual
-// kick loop. The original CLI then tails the daemon-hosted log
-// stream over SSE so the user sees live output exactly as today —
+// runner_detach.go — turns long-running CLI subcommands (autoideas,
+// autoinit, …) into "set and forget" commands. The CLI fork-execs
+// itself as a detached child (own session, no controlling terminal)
+// that runs the actual loop. The original CLI then tails the
+// daemon-hosted log stream over SSE so the user sees live output —
 // but Ctrl-C just detaches the tail; the loop keeps running. Same
 // applies if the terminal closes, the SSH session drops, the laptop
 // lid closes after re-open, etc. The loop is parented to PID 1.
 //
 // IPC layout:
-//   parent CLI  --(spawn)-->  detached autodev process  --(stream)-->  daemon
-//        `--(SSE tail)<--------------------------------------'
+//   parent CLI  --(spawn)-->  detached child process  --(stream)-->  daemon
+//        `--(SSE tail)<-----------------------------------------'
 //
-// State files:
+// State files (legacy `autodev` prefix in paths is preserved for
+// backward compatibility with tail tooling — the mechanism itself
+// is generic):
 //   /tmp/yaver/autodev-<loop>.pid   — pid of the detached process
 //   /tmp/yaver/autodev_<loop>-*.log — per-run log (timestamped)
 //   /tmp/yaver/autodev_<loop>-latest.log — symlink to most recent

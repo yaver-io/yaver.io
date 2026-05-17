@@ -199,6 +199,23 @@ func TestApplyWebRTCOffer_VideoTransceiverPicksRTPH264Path(t *testing.T) {
 	}
 }
 
+func TestSelectRemoteRuntimeStreamerFallsBackWhenRTPUnavailable(t *testing.T) {
+	prev := agentCanEncodeRTPH264
+	t.Cleanup(func() { agentCanEncodeRTPH264 = prev })
+
+	offerSDP := "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 102\r\n"
+
+	agentCanEncodeRTPH264 = func(string) bool { return true }
+	if got := selectRemoteRuntimeStreamer("android-emulator", offerSDP).Transport(); got != remoteRuntimeTransportRTPH264 {
+		t.Fatalf("transport with RTP-capable target = %q, want %q", got, remoteRuntimeTransportRTPH264)
+	}
+
+	agentCanEncodeRTPH264 = func(string) bool { return false }
+	if got := selectRemoteRuntimeStreamer("ios-simulator", offerSDP).Transport(); got != remoteRuntimeTransportJPEGDC {
+		t.Fatalf("transport without RTP-capable target = %q, want %q", got, remoteRuntimeTransportJPEGDC)
+	}
+}
+
 func TestApplyWebRTCOffer_VideoTransceiverFallsBackWhenAgentCannotEncode(t *testing.T) {
 	// If the viewer asks for RTP but the host can't encode (no adb,
 	// or iOS without the MP4 parser), we silently fall back to

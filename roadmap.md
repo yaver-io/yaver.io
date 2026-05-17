@@ -94,8 +94,6 @@ Keep in the repo, remove from the launch pitch:
 - Mobile worker fleet (retention hook, mention in one line)
 - Guest access
 - Voice AI providers
-- Hybrid mode / planner-implementer layering
-- Session handoff
 - Container sandbox
 - Browser automation
 - Distributed inference
@@ -110,7 +108,7 @@ CLAUDE.md is 3× too big for the pitch. It stays in the repo — but the landing
 
 | Date | Ship | Done when | Status |
 |---|---|---|---|
-| Apr 17 (Fri) | Scope + `remained.md` for mini-backend MVP (collections, CRUD, auth personas, seed data). | Checklist exists, autodev kicks first item. | ✅ shipped (`MOBILE_BACKEND_EXPORT.md` + `PHONE_EXPORT_PIPELINE.md` + `MOBILE_WORKER.md §"Mini Backend"`) |
+| Apr 17 (Fri) | Scope + `remained.md` for mini-backend MVP (collections, CRUD, auth personas, seed data). | Checklist exists, first item kicks. | ✅ shipped (`MOBILE_BACKEND_EXPORT.md` + `PHONE_EXPORT_PIPELINE.md` + `MOBILE_WORKER.md §"Mini Backend"`) |
 | Apr 18 (Sat) | Mini-backend runtime in Yaver mobile app — SQLite + schema DSL + query/mutation API. Local-only. | Phone app can define a collection and CRUD it. | ✅ shipped agent-side (`desktop/agent/phone_backend.go`, `PhoneAdapter`, 12 tests) — true on-device `expo-sqlite` still pending, not a demo-blocker |
 | Apr 19 (Sun) | Mini-backend persistence + fixtures. Portable project manifest (schema.json). | Project manifest round-trips import/export on phone. | ✅ shipped (`ExportPhoneProject` + `ImportPhoneProject`, round-trip test green) |
 | Apr 20 (Mon) | "Create project from phone" flow: prompt → agent scaffolds RN + mini-backend on user's Mac. | Voice/text prompt on phone produces a running RN project on the dev Mac. | 🟡 partial — 3-mode picker ships (`mobile/app/phone-projects.tsx`); AI-prompt-to-scaffold still pending (see §Handoff items 1.2) |

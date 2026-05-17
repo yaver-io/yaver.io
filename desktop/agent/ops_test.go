@@ -298,7 +298,7 @@ func TestListOpsVerbs(t *testing.T) {
 		prev = v.Name
 		got[v.Name] = true
 	}
-	for _, want := range []string{"info", "run"} {
+	for _, want := range []string{"autotest", "info", "run"} {
 		if !got[want] {
 			t.Errorf("verb %q missing from registry", want)
 		}

@@ -479,7 +479,7 @@
       "hostApp": true,
       "cliPush": true,
       "agentOpenInYaver": true,
-      "pluginEnabled": false
+      "pluginEnabled": true
     },
     "expo-sharing": {
       "version": "14.0.8",

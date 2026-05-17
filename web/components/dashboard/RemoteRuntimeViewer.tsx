@@ -236,6 +236,12 @@ export default function RemoteRuntimeViewer({
       const pc = new RTCPeerConnection({ iceServers });
       pcRef.current = pc;
 
+      // Ensure the offer has an SCTP m-line. The agent creates the
+      // "frames" and "events" channels from its side; without a local
+      // channel here, video-only offers cannot negotiate those channels
+      // when the agent falls back to JPEG data-channel streaming.
+      pc.createDataChannel("primer");
+
       // Always offer a video transceiver. The agent inspects the
       // SDP for m=video and decides whether to attach an H.264
       // track. If the agent can't encode (or it's an old binary),

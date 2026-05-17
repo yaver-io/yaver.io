@@ -25,8 +25,10 @@ import { AuthProvider } from "../src/context/AuthContext";
 import { DeviceProvider } from "../src/context/DeviceContext";
 import { ThemeProvider, useTheme } from "../src/context/ThemeContext";
 import { FeedbackOverlay } from "../src/components/FeedbackOverlay";
+import { ShareComposeModal } from "../src/components/ShareComposeModal";
 import { RunningTasksPill } from "../src/components/RunningTasksPill";
 import { PairLinkHandler } from "../src/lib/pairLinkHandler";
+import { ShareIntentReceiver } from "../src/lib/shareReceiver";
 import { registerNativeScreenRecorder } from "../src/lib/screenRecorder";
 import { startFeedbackShakeBridge } from "../src/lib/feedbackTrigger";
 import { useAuth } from "../src/context/AuthContext";
@@ -109,6 +111,8 @@ function InnerLayout() {
       <FeedbackOverlay />
       <RunningTasksPill />
       <PairLinkHandler />
+      <ShareIntentReceiver />
+      <ShareComposeModal />
     </>
   );
 }

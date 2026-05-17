@@ -117,10 +117,8 @@ func TestGuestScopeAllowList(t *testing.T) {
 		"/session/export",
 		"/tmux/new",
 		"/agent/shutdown",
-		"/autodev/start",
 		"/apikeys",
 		"/sdk/token",
-		"/morning/runs",
 	}
 	for _, path := range mustBlockAll {
 		for _, scope := range []string{GuestScopeFeedbackOnly, GuestScopeFull} {

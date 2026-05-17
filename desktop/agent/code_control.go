@@ -1233,7 +1233,7 @@ func runCodeSetAgent(args []string) error {
 	case "claude", "codex", "opencode":
 		// supported
 	default:
-		return fmt.Errorf("runner %q is not a first-class agent (only claude, codex, opencode are supported through `yaver code`). Power-user runners stay accessible from `yaver autodev --runner <id>`", runner)
+		return fmt.Errorf("runner %q is not a first-class agent (only claude, codex, opencode are supported through `yaver code`)", runner)
 	}
 	cfg, profile, err := loadCodeConfig()
 	if err != nil {

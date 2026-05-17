@@ -299,15 +299,6 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 			score += 90
 			reasons = append(reasons, "planning/classification favors Claude")
 		}
-	case AgentNodeAutodev, AgentNodeAutotest:
-		if runner == "codex" || runner == "opencode" {
-			score += 140
-			reasons = append(reasons, "implementation path prefers token-leaner runner")
-		}
-		if m.Capabilities != nil && m.Capabilities.LowPower {
-			score -= 70
-			reasons = append(reasons, "low-power machine penalized for build/test work")
-		}
 	}
 
 	if m.Capabilities != nil {
@@ -331,17 +322,7 @@ func scoreNodePlacement(req AgentGraphCreateRequest, node AgentGraphNodeSpec, m 
 		}
 	}
 
-	limits := defaultProviderLimits(runner)
-	if limits.SharedWithInteractive && m.IsLocal && (node.Kind == AgentNodeAutodev || node.Kind == AgentNodeAutotest) {
-		score -= 40
-		reasons = append(reasons, "shared interactive budget penalized on primary machine")
-	}
-	if limits.SessionWindow == "" {
-		score += 40
-		reasons = append(reasons, "runner has effectively no session-window cap")
-	}
-
-	if m.IsShared {
+if m.IsShared {
 		hostLabel := firstNonEmpty(m.HostName, m.HostEmail, "a shared host")
 		if runnerNeedsHostedAPIKey(runner) && !m.UseHostAPIKeys && !m.AllowGuestProvidedAPIKeys {
 			score -= 1500
@@ -445,8 +426,6 @@ func inferPreferredRunnerCandidates(node AgentGraphNodeSpec) []string {
 		return []string{"claude-code", "codex", "opencode"}
 	case AgentNodeAutoIdeas:
 		return []string{"claude-code", "codex", "opencode"}
-	case AgentNodeAutodev, AgentNodeAutotest:
-		return []string{"codex", "claude-code", "opencode"}
 	default:
 		return []string{"claude-code", "codex"}
 	}

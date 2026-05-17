@@ -288,7 +288,7 @@ export function WebReloadView({
     (async () => {
       try {
         const [list, scanned] = await Promise.all([
-          agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
+          agentClient.getWorkspaceApps("web", workspaceRootHint),
           loadWebPreviewProjects(),
         ]);
         if (cancelled) return;
@@ -341,7 +341,7 @@ export function WebReloadView({
         // Retry the workspace load now that the password is fresh.
         try {
           const [list, scanned] = await Promise.all([
-            agentClient.getWorkspaceApps("web,hybrid", workspaceRootHint),
+            agentClient.getWorkspaceApps("web", workspaceRootHint),
             loadWebPreviewProjects(),
           ]);
           setApps(list);

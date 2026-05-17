@@ -1,4 +1,4 @@
-// Connection-status helpers shared across tabs (apps, autodev, agent, more…).
+// Connection-status helpers shared across tabs (apps, agent, more…).
 //
 // The raw values the QUIC client / DeviceContext emit ("error" /
 // "disconnected" / "connecting") are useful for branching logic but terrible

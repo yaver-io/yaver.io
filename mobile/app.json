@@ -133,7 +133,18 @@
       "expo-mail-composer",
       "expo-updates",
       "expo-video",
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-share-intent",
+        {
+          "iosActivationRules": {
+            "NSExtensionActivationSupportsImageWithMaxCount": 5
+          },
+          "androidIntentFilters": [
+            "image/*"
+          ]
+        }
+      ]
     ]
   }
 }

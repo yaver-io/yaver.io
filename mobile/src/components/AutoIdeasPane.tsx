@@ -1,6 +1,6 @@
 // AutoIdeasPane — checkbox UI over /autoideas/file. User picks
-// items, hits "Implement selected" → /autoideas/select kicks
-// autodev with a curated --remained checklist. Generation
+// items, hits "Implement selected" → /autoideas/select kicks an
+// implementation run with a curated --remained checklist. Generation
 // continues in parallel with implementation.
 //
 // Polls every 5s while the user is on the pane so newly-generated
@@ -25,7 +25,7 @@ type Props = {
   workDir: string;
   project?: string;
   output?: string;
-  /** Default engine for the implementation autodev triggered by Select. */
+  /** Default engine for the implementation run triggered by Select. */
   defaultEngine?: string;
   onStarted?: (res: { loopName?: string; streamName?: string }) => void;
 };
@@ -103,7 +103,7 @@ export function AutoIdeasPane({
 
   const implementSelected = async () => {
     if (picked.size === 0) return;
-    setBusy(`Starting autodev on ${picked.size} item(s)…`);
+    setBusy(`Starting implementation on ${picked.size} item(s)…`);
     try {
       const res = await quicClient.autoideasSelect({
         work_dir: workDir,

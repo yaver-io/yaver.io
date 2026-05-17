@@ -41,7 +41,6 @@ The current codebase already has the beginnings of the right shape:
 - remote browser auth flows for Claude/Codex in `desktop/agent/runner_auth_browser_http.go`
 - open-code config APIs already exposed through `/runner/opencode/config`
 - graph / mesh execution primitives in `desktop/agent/agent_mode.go`
-- planner/implementer orchestration in `desktop/agent/hybrid.go` and `desktop/agent/hybrid_http.go`
 
 Recent work in the tree already pushes toward this plan:
 
@@ -233,8 +232,6 @@ Rules:
 - preserve error strings exactly if they matter
 - preserve code blocks verbatim if included
 - otherwise compress aggressively
-
-The current `desktop/agent/code_hybrid_session.go` is the seed of this layer.
 
 ## Remote / Headless Auth
 

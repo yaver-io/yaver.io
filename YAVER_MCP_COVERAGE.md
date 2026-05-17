@@ -67,11 +67,11 @@ wrapping a bash CLI:
 
 2. **Single source of truth for semantics.** Input schemas for MCP
    tools are generated from the same Go structs the HTTP handlers
-   validate against. An agent that calls `autodev_start` with the
+   validate against. An agent that calls `create_task` with the
    wrong shape gets the same validation error a CLI user would.
 
 3. **Streaming by default.** Anything that takes more than a second
-   (install, build, deploy, hot-reload, autodev kick, AI run) exposes
+   (install, build, deploy, hot-reload, AI run) exposes
    an SSE/stream channel (`/streams/<name>`). MCP tools return the
    stream handle; the agent subscribes and sees live lines, subprocess
    stdout, sudo prompts, success/failure frames — exactly what the
@@ -220,8 +220,7 @@ primitive is MCP-exposed.
 | **Guest access (share your machine)** | `guest_invite`, `guest_list`, `guest_revoke`, `guest_config`, `guest_usage` |
 | **Teams (shared machine mode)** | `cloud_provision --multi-user --team=<id>`, team membership management via Convex |
 | **Remote support (TeamViewer-style)** | `support_start`, `support_status`, `support_stop` |
-| **AI session transfer** (Claude Code ⇄ Aider ⇄ Codex ⇄ Goose ⇄ Amp ⇄ Opencode) | `session_transfer`, `session_export`, `session_import`, `session_handoff`, `session_list` |
-| **Handoff mid-vibe** | `yaver handoff` CLI + `session_handoff` MCP tool (writes a sentinel file, lets an in-progress session exit gracefully while yaver takes over) |
+| **AI session transfer** (Claude Code ⇄ Codex ⇄ Opencode) | `session_transfer`, `session_export`, `session_import`, `session_list` |
 | **Chat / comms** | `chat_conversations`, `chat_history`, `chat_reply`, `email_send`, `email_get`, `email_list_inbox`, `email_search`, `email_sync`, `mail_inbox`, `mail_draft`, `mail_dev_*` (7 tools) |
 
 ### 8. Edge workers & the "mobile is a dev machine too" story
@@ -237,7 +236,7 @@ run small models or background jobs while their user sleeps.
 | **Ollama / local inference** | `copilot_complete`, `copilot_models` (Qwen / DeepSeek / …) |
 | **Voice (on-prem or cloud)** | `voice_*` suite in agent (via `/voice/providers`, `/voice/transcribe`) — PersonaPlex 7B, OpenAI Realtime, Whisper, Deepgram, AssemblyAI |
 
-### 9. AI runners & auto-dev
+### 9. AI runners
 
 Yaver wraps *every* major AI coding CLI, so a MCP caller can pick the
 one that fits the task + budget + privacy posture.
@@ -245,13 +244,9 @@ one that fits the task + budget + privacy posture.
 | Capability | Tools |
 |---|---|
 | **Kick a one-shot task on a runner** | `create_task`, `continue_task`, `stop_task`, `get_task`, `list_tasks` |
-| **Engine selection** | `autodev_start` supports `--engine claude|codex|hybrid`, `autodev_options` lists available engines, runners, models |
-| **Hybrid (planner + local implementer)** | `hybrid_plan`, `hybrid_run`, `hybrid_check` — Claude plans, Aider+Ollama implements |
-| **Autodev long-running loop** | `autodev_start`, `autodev_status`, `autodev_reports`, `autodev_revert`, `autodev_options`, `autoideas_*`, `autoinit_start`, `autoinit_status` |
-| **Hybrid check for one-off fix** | `hybrid_check`, `hybrid_run` |
+| **Idea / init scaffolding** | `autoideas_*`, `autoinit_start`, `autoinit_status` |
 | **Stream subprocess output** | any MCP tool that runs a long job returns a stream name; subscribe via `/streams/<name>` for real-time frames |
 | **Model + runner management** | `models_list`, `models_pull`, `models_run`, `models_serve` |
-| **Reports** | `autodev_reports`, `morning_latest`, `morning_list`, `morning_show`, `morning_rollback` |
 
 ### 10. Security, secrets, auth
 
@@ -365,7 +360,6 @@ Phone session (voice input + mobile-headless-driven)
   -> mcp__yaver__session_export {format:"zip"}
 Desktop (agent pulls via relay)
   -> mcp__yaver__session_import {bundle:...}
-  -> mcp__yaver__session_handoff {to:"claude-code", workDir:"./apps/bento"}
 ```
 
 All four flows are **already possible today** via the MCP tools listed
@@ -389,9 +383,8 @@ table is the scoring board — it should only ever get more green.
 | Phone-first mini backend | ✅ | ✅ | ✅ | ✅ | |
 | Cloud provision / deploy | ✅ | ✅ | ✅ | ✅ | Hetzner CPU/GPU |
 | Guests / teams / support | ✅ | ✅ | ✅ | ✅ | 5 tools each |
-| Session transfer / handoff | ✅ | ⚠️ | — | ✅ | Mobile has a "handoff" button gate; web pending |
-| Autodev / autotest / autoideas | ✅ | ✅ | ✅ | ✅ | |
-| Hybrid planner+implementer | ✅ | ✅ | — | ✅ | Web dashboard pending |
+| Session transfer | ✅ | ⚠️ | — | ✅ | Web pending |
+| Autoideas / autoinit | ✅ | ✅ | ✅ | ✅ | |
 | Black-box streaming | ✅ | ✅ | ✅ | ✅ | SDK provides ring buffer |
 | Voice (STT + S2S) | ✅ | ✅ | ⚠️ | ✅ | Web lacks mic UI |
 | Vault | ✅ | ✅ | ⚠️ | ✅ | Web cannot decrypt — on-device only |
@@ -422,7 +415,7 @@ These are non-negotiable. If an MCP tool violates one, we fix the tool.
    one tool — agents can't reason about it.
 
 2. **Every long-running tool returns a stream handle.** `install`,
-   `autodev_start`, `cloud_deploy`, `hybrid_run`, `mobile_project_build`
+   `cloud_deploy`, `mobile_project_build`
    all immediately return `{streamId}`; the agent follows via
    `/streams/<id>` SSE. The stream event schema is normalised: `line`,
    `sudo_prompt`, `result`, `event`. No tool blocks the agent loop for
@@ -501,8 +494,8 @@ work.
    without mobile needing to poll.
 
 8. **A unified search MCP tool.** "Find everything named X in my
-   Yaver universe" — across projects, devices, tasks, morning
-   reports, phone projects, guests, runners, etc.
+   Yaver universe" — across projects, devices, tasks, phone projects,
+   guests, runners, etc.
 
 9. **Declarative multi-project setup.** A monorepo with 12 apps today
    needs `init_project` per app. A `monorepo_init` or
@@ -512,7 +505,7 @@ work.
 
 10. **TUI dashboard mode for CLI.** Right now the CLI is command-
     line-only; a `yaver tui` with tabs for Devices / Tasks /
-    AutoDev would mirror the mobile app's information density.
+    Projects would mirror the mobile app's information density.
 
 ---
 
@@ -562,7 +555,6 @@ matching MCP tool family:
 | `yaver connect` | `account_connect`, `account_disconnect` | |
 | `yaver devices` | `adb_devices`, `yaver_devices` | |
 | `yaver factory-reset` | `yaver_auth_factory_reset` | |
-| `yaver handoff` | `session_handoff` | |
 | `yaver install` | `cmake_install`, `convex_install_helper`, `get_ios_install_method`, `pkg_install`, `pod_install`, `set_ios_install_method`, `uv_install` | plus streamed installer via `mobile_api_install` |
 | `yaver logs` | `convex_logs`, `docker_logs`, `fly_logs`, `k8s_logs`, `lambda_logs`, `platform_logs`, `vercel_logs`, `yaver_logs` | |
 | `yaver machine` | `agent_machine_inventory`, `console_machines` | |
@@ -584,13 +576,11 @@ Each one is a concrete work item.
 | CLI command | What it does | Why it matters for vibe-coding |
 |---|---|---|
 | `yaver apikey` | Manage provider API keys in the local keychain | Agent can't rotate its own keys over MCP today |
-| `yaver autotest` | Run SDK-driven autonomous UI testing loop | An MCP caller can kick autodev but not autotest |
 | `yaver backup` | Snapshot config + vault + projects | Can't back up from a remote agent driving this one |
 | `yaver blob` | Manage blob storage (`~/.yaver/blobs/`) | Blob attachments invisible to MCP callers |
 | `yaver debug` | Toggle debug logging, dump diagnostics | Remote diagnostics require SSH today |
 | `yaver feedback` | Fire a Feedback-SDK bug report from CLI | Agents can create tasks but not proper feedback reports |
 | `yaver flags` | Feature-flag evaluate / list / set | Works in-process but can't be driven by another agent |
-| `yaver loop` | Run a prompt on an interval | The *other* agent can't schedule a yaver-side loop |
 | `yaver pair` | Pair a fresh agent via relay passkey | Bootstrap flow is manual-only |
 | `yaver permissions` | Request macOS accessibility/automation perms | N/A via MCP — intrinsically GUI |
 | `yaver phone` | Phone-first project operations (distinct from `phone_project_*`) | Only the `phone_project_*` CRUD is MCP; the compound flow isn't |
@@ -678,7 +668,7 @@ a specialisation.
 | `secrets` | Manage secrets (vault, 1Password) | `{scope, op, key?, value?}` | `op_get`, `op_list`, vault CLI (needs MCP wire-up) |
 | `files` | Read / list / write / delete | `{path, op, content?}` | `read_file`, `write_file`, `list_directory`, `search_files`, `search_content` |
 | `stream` | Subscribe to a named stream | `{name}` | `/streams/<name>` SSE (currently `mobile_api_get` raw) |
-| `session` | Transfer / handoff an AI coding session | `{op, to?, from?, runner?, workDir?}` | `session_transfer`, `session_handoff`, `session_export`, `session_import` |
+| `session` | Transfer an AI coding session | `{op, to?, from?, runner?, workDir?}` | `session_transfer`, `session_export`, `session_import` |
 | `scale` | Resize a cloud machine | `{deviceId, cpu?, ram?, gpu?}` | `cloud_scale` |
 | `provision` | Create a new Yaver-managed machine | `{plan, region?, sshKey?}` | `cloud_provision`, `remote_provision` |
 | `destroy` | Decommission a machine | `{deviceId, confirm}` | `cloud_destroy`, `remote_destroy` |
@@ -739,7 +729,7 @@ mcp__yaver__ops { machine: "devx-9c71", verb: "destroy",
                   payload: { confirm: true } }
 ```
 
-**Flow 4: Handoff from phone to GPU machine mid-session**
+**Flow 4: Move a session from phone to GPU machine**
 
 ```
 # Phone is running Claude Code inside yaver-mobile-headless
@@ -749,12 +739,7 @@ mcp__yaver__ops { machine: "iphone-15", verb: "session",
 
 mcp__yaver__ops { machine: "gpu", verb: "session",
                   payload: { op: "import", bundle: "..." } }
-
-mcp__yaver__ops { machine: "gpu", verb: "session",
-                  payload: { op: "handoff", runner: "claude-code",
-                             workDir: "/workspace/repo" } }
-  -> Yaver writes the sentinel file; phone's session exits gracefully
-     while gpu starts a fresh loop from imported context
+  -> gpu picks up the imported context for the next task
 ```
 
 ### Why this surface is better than today's 744 tools
@@ -888,7 +873,7 @@ MCP: `workspace_init`, `workspace_list`, `workspace_status`,
 Engine (`workspace_engine.go`):
 - Path check per app
 - Env-var check (per-app `env:` + workspace `shared.env`)
-- `init.md` scaffold (autodev/autoideas/autotest read it as cached
+- `init.md` scaffold (autoideas / autoinit read it as cached
   context — saves minutes of re-grepping every kick)
 - Optional `yaver autoinit` hint per app
 

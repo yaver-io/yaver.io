@@ -1,14 +1,15 @@
 package main
 
 // stream_cmd.go — `yaver stream <name>` tails a daemon-hosted log
-// stream over SSE and prints lines as they arrive. The same channel
-// the mobile app and web dashboard subscribe to, exposed in the
-// terminal for instant live visibility into a running autodev / loop.
+// stream over SSE and prints lines as they arrive. Same channel the
+// mobile app and web dashboard subscribe to, exposed in the terminal
+// for instant live visibility into a running autoideas / autoinit /
+// build / deploy.
 //
-//   yaver stream                          # list active stream names
-//   yaver stream autodev:sfmg-autodev     # tail one
-//   yaver stream sfmg-autodev             # shorthand: prepends "autodev:"
-//                                         # if no exact match exists
+//   yaver stream                            # list active stream names
+//   yaver stream autodev:sfmg-autoideas     # tail one
+//   yaver stream sfmg-autoideas             # shorthand: prepends "autodev:"
+//                                           # (legacy namespace) if no exact match
 //
 // The command auto-uses the local daemon's auth token, so no flags
 // or env vars are needed. SIGINT / Ctrl-C exits cleanly.
@@ -75,7 +76,7 @@ func listStreams() {
 	}
 	names, _ := resp["streams"].([]interface{})
 	if len(names) == 0 {
-		fmt.Println("No active streams. Start one with `yaver autodev <project>`.")
+		fmt.Println("No active streams. Start one with `yaver autoideas <project>` or `yaver autoinit <project>`.")
 		return
 	}
 	fmt.Println("Active streams:")

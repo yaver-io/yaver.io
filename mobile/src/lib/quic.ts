@@ -1515,6 +1515,46 @@ export class QuicClient {
   }
 
   /**
+   * Fan-out a shared-screenshot bug report to ONE specific device as a
+   * feedback task, without switching the active client.
+   *
+   * `peerEndpoint` collapses to `${baseUrl}/tasks` when `deviceId` is the
+   * already-attached device, and to `${baseUrl}/peer/<id>/tasks` (the
+   * agent's re-signed peer proxy, httpserver.go::handlePeerProxy) for any
+   * other of the user's devices — so the WhatsApp-style "send to N
+   * machines" picker just loops over this. `source: "native-guest-shake"`
+   * makes the remote agent run it through vibingifyFeedbackTaskBody
+   * (project resolved from its last-loaded guest / workspace, ready
+   * runner picked, runner auto-started, auto-reload on commit).
+   */
+  async createFeedbackTaskOnDevice(
+    deviceId: string,
+    opts: { title: string; images?: ImageAttachment[] },
+  ): Promise<{ id: string; status?: string; deviceName?: string }> {
+    this.assertConnected();
+    const url = this.peerEndpoint(deviceId, "/tasks");
+    const res = await this.fetchWithTimeout(url, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: opts.title,
+        source: "native-guest-shake",
+        ...(opts.images?.length ? { images: opts.images } : {}),
+      }),
+    }, 30000);
+    if (!res.ok) {
+      let msg = `Failed to send to device: ${res.status}`;
+      try {
+        const err = await res.json();
+        if (err?.error) msg = err.error;
+      } catch {}
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    return { id: data.taskId ?? data.id, status: data.status, deviceName: data.deviceName };
+  }
+
+  /**
    * Ask the Go agent to craft a recovery prompt for a known failure kind and
    * hand it to the wrapped AI agent (Claude Code / Codex / Aider / …).
    *

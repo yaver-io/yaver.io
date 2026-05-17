@@ -45,9 +45,7 @@ type AgentNodeKind string
 
 const (
 	AgentNodeChat      AgentNodeKind = "chat"
-	AgentNodeAutodev   AgentNodeKind = "autodev"
 	AgentNodeAutoIdeas AgentNodeKind = "autoideas"
-	AgentNodeAutotest  AgentNodeKind = "autotest"
 )
 
 type AgentGraphNodeSpec struct {
@@ -350,11 +348,6 @@ func buildAgentGraphTemplate(req AgentGraphCreateRequest) []AgentGraphNodeSpec {
 				PreferredVideoMode: "browser",
 			},
 		}
-	case "ship":
-		return []AgentGraphNodeSpec{
-			{ID: "dev", Title: "Auto Dev", Kind: AgentNodeAutodev, Prompt: prompt, WorkDir: workDir, Project: project, MaxIterations: 2, Toughness: 1.0, BuildPoints: 1.0, ResourceModes: []string{"build"}},
-			{ID: "test", Title: "Auto Test", Kind: AgentNodeAutotest, Prompt: "Run a focused regression pass for the changes produced by this graph and fix any breakage before reporting done.", WorkDir: workDir, Project: project, DependsOn: []string{"dev"}, MaxIterations: 1, Toughness: 0.8, VerifyPoints: 1.0, ResourceModes: []string{"proof-video", "video-summary"}, PreferredVideoMode: "browser"},
-		}
 	default:
 		return nil
 	}
@@ -428,10 +421,6 @@ func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
 		switch node.Kind {
 		case AgentNodeChat:
 			node.Toughness = 0.6
-		case AgentNodeAutodev:
-			node.Toughness = 1.0
-		case AgentNodeAutotest:
-			node.Toughness = 0.8
 		default:
 			node.Toughness = 0.5
 		}
@@ -449,9 +438,6 @@ func applyAgentNodeExecutionPolicy(node AgentGraphNodeSpec) AgentGraphNodeSpec {
 		fallbackModel = "claude-opus-4-6"
 	case AgentNodeAutoIdeas:
 		candidates = [][2]string{{"claude", "claude-sonnet-4-6"}, {"codex", ""}, {"opencode", ""}}
-		fallbackModel = "claude-sonnet-4-6"
-	case AgentNodeAutodev, AgentNodeAutotest:
-		candidates = [][2]string{{"codex", ""}, {"claude", "claude-sonnet-4-6"}, {"opencode", ""}}
 		fallbackModel = "claude-sonnet-4-6"
 	}
 
@@ -554,7 +540,9 @@ func validateAgentGraphNodes(nodes []AgentGraphNodeSpec) error {
 	index := map[string]AgentGraphNodeSpec{}
 	for _, node := range nodes {
 		switch node.Kind {
-		case AgentNodeChat, AgentNodeAutodev, AgentNodeAutoIdeas, AgentNodeAutotest:
+		case AgentNodeChat, AgentNodeAutoIdeas:
+		case "autodev", "autotest":
+			return errors.New("autodev/autotest node kinds are no longer supported")
 		default:
 			return fmt.Errorf("unknown node kind %q", node.Kind)
 		}
@@ -799,8 +787,8 @@ func (gm *AgentGraphManager) executeNode(ctx context.Context, runID, nodeID stri
 	switch node.Spec.Kind {
 	case AgentNodeChat:
 		summary, err = gm.executeChatNode(ctx, runID, node)
-	case AgentNodeAutodev, AgentNodeAutoIdeas, AgentNodeAutotest:
-		summary, err = gm.executeLoopNode(ctx, runID, node)
+	case AgentNodeAutoIdeas:
+		summary, err = gm.executeAutoIdeasNode(ctx, runID, node)
 	default:
 		err = fmt.Errorf("unsupported node kind %s", node.Spec.Kind)
 	}
@@ -924,37 +912,11 @@ func (gm *AgentGraphManager) attachTaskIDByTask(nodeID, taskID string) {
 	}
 }
 
-func (gm *AgentGraphManager) executeLoopNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+func (gm *AgentGraphManager) executeAutoIdeasNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
 	if node.Placement != nil && node.Placement.DeviceID != "" && node.Placement.DeviceID != "local" {
-		return gm.executeRemoteLoopNode(ctx, runID, node)
+		return gm.executeRemoteAutoIdeasNode(ctx, runID, node)
 	}
-	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
-	if err != nil {
-		return "", err
-	}
-	loopState, err := buildGraphLoopState(runID, node.Spec, workDir, contract)
-	if err != nil {
-		return "", err
-	}
-	result := runLoopIteration(ctx, loopState, nil)
-	if result == nil {
-		return "", errors.New("loop returned no result")
-	}
-	switch result.Status {
-	case "done", "completed":
-		return strings.TrimSpace(result.Summary), nil
-	case "stopped":
-		return strings.TrimSpace(result.Summary), ctx.Err()
-	default:
-		msg := strings.TrimSpace(result.Summary)
-		if msg == "" {
-			msg = strings.TrimSpace(result.Err)
-		}
-		if msg == "" {
-			msg = "loop node failed"
-		}
-		return msg, errors.New(msg)
-	}
+	return "", errors.New("local autoideas execution is no longer supported; specify a remote device placement")
 }
 
 func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
@@ -1020,7 +982,7 @@ func (gm *AgentGraphManager) executeRemoteChatNode(ctx context.Context, runID st
 	}
 }
 
-func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
+func (gm *AgentGraphManager) executeRemoteAutoIdeasNode(ctx context.Context, runID string, node *AgentGraphNodeState) (string, error) {
 	workDir, contract, err := prepareGraphNodeSlice(ctx, runID, node.Spec, node.Placement)
 	if err != nil {
 		return "", err
@@ -1028,38 +990,15 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 	if strings.TrimSpace(workDir) == "" {
 		workDir = firstNonEmpty(resolveRemoteCurrentWorkDir(ctx, node.Placement.DeviceID), ".")
 	}
-	kind := "autodev"
-	path := "/autodev/start"
 	body := map[string]interface{}{
-		"project":        graphRemoteProjectName(runID, node.Spec),
-		"work_dir":       workDir,
-		"hours":          firstGraphNonEmpty(node.Spec.Hours, "1"),
-		"load":           firstGraphNonEmpty(node.Spec.Load, "lite"),
-		"prompt":         firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
-		"runner":         firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
-		"model":          firstGraphNonEmpty(node.Placement.Model, node.Spec.Model),
-		"target":         node.Spec.Target,
-		"max_iterations": max(1, node.Spec.MaxIterations),
-		"no_autotest":    true,
-	}
-	switch node.Spec.Kind {
-	case AgentNodeAutoIdeas:
-		path = "/autoideas/start"
-		body = map[string]interface{}{
-			"project":     graphRemoteProjectName(runID, node.Spec),
-			"work_dir":    workDir,
-			"hours":       firstGraphNonEmpty(node.Spec.Hours, "1"),
-			"load":        firstGraphNonEmpty(node.Spec.Load, "lite"),
-			"prompt":      firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
-			"engine":      graphAutoIdeasEngine(firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner)),
-			"runner":      firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
-			"max_batches": max(1, node.Spec.MaxIterations),
-		}
-	case AgentNodeAutotest:
-		kind = "autotest"
-		body["kind"] = "autotest"
-	default:
-		body["kind"] = "autodev"
+		"project":     graphRemoteProjectName(runID, node.Spec),
+		"work_dir":    workDir,
+		"hours":       firstGraphNonEmpty(node.Spec.Hours, "1"),
+		"load":        firstGraphNonEmpty(node.Spec.Load, "lite"),
+		"prompt":      firstGraphNonEmpty(strings.TrimSpace(node.Spec.Prompt), node.Spec.Title) + formatTaskSliceContract(contract),
+		"engine":      graphAutoIdeasEngine(firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner)),
+		"runner":      firstGraphNonEmpty(node.Placement.Runner, node.Spec.Runner),
+		"max_batches": max(1, node.Spec.MaxIterations),
 	}
 	var createResp struct {
 		OK       bool   `json:"ok"`
@@ -1067,55 +1006,10 @@ func (gm *AgentGraphManager) executeRemoteLoopNode(ctx context.Context, runID st
 		Output   string `json:"output"`
 		WorkDir  string `json:"work_dir"`
 	}
-	if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodPost, path, body, &createResp); err != nil {
+	if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodPost, "/autoideas/start", body, &createResp); err != nil {
 		return "", err
 	}
-	loopName := createResp.LoopName
-	if loopName == "" {
-		loopName = graphRemoteProjectName(runID, node.Spec) + "-" + kind
-	}
-	if node.Spec.Kind == AgentNodeAutoIdeas {
-		return waitForRemoteAutoIdeasForDevice(ctx, node.Placement.DeviceID, firstGraphNonEmpty(createResp.WorkDir, workDir), createResp.Output)
-	}
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			_ = remoteAgentJSONForDevice(context.Background(), node.Placement.DeviceID, http.MethodPost, "/autodev/loops/"+loopName+"/stop", map[string]interface{}{}, nil)
-			return "", ctx.Err()
-		case <-ticker.C:
-			var loopsResp struct {
-				OK    bool             `json:"ok"`
-				Loops []autodevLoopRow `json:"loops"`
-			}
-			if err := remoteAgentJSONForDevice(ctx, node.Placement.DeviceID, http.MethodGet, "/autodev/loops", nil, &loopsResp); err != nil {
-				return "", err
-			}
-			for _, loop := range loopsResp.Loops {
-				if loop.Name != loopName {
-					continue
-				}
-				switch loop.Status {
-				case string(LoopStatusRunning):
-					goto waitNext
-				case string(LoopStatusIdle):
-					return strings.TrimSpace(loop.LastSummary), nil
-				case string(LoopStatusStopped):
-					return "", errors.New("remote loop stopped")
-				case string(LoopStatusNeedsHuman), string(LoopStatusBudgetHit), string(LoopStatusStuck):
-					msg := strings.TrimSpace(loop.LastSummary)
-					if msg == "" {
-						msg = "remote loop failed"
-					}
-					return msg, errors.New(msg)
-				default:
-					return strings.TrimSpace(loop.LastSummary), nil
-				}
-			}
-		waitNext:
-		}
-	}
+	return waitForRemoteAutoIdeasForDevice(ctx, node.Placement.DeviceID, firstGraphNonEmpty(createResp.WorkDir, workDir), createResp.Output)
 }
 
 func waitForRemoteAutoIdeasForDevice(ctx context.Context, deviceID, workDir, outputName string) (string, error) {
@@ -1219,8 +1113,6 @@ func graphAutoIdeasEngine(runner string) string {
 		return "codex"
 	case "claude-code":
 		return "claude"
-	case "hybrid":
-		return "hybrid"
 	default:
 		return ""
 	}
@@ -1233,86 +1125,6 @@ func firstGraphNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func buildGraphLoopState(runID string, spec AgentGraphNodeSpec, workDir string, contract *TaskSliceContract) (*LoopState, error) {
-	if workDir == "" {
-		return nil, errors.New("node workDir required")
-	}
-	target := spec.Target
-	if target == "" {
-		if fileExists(filepath.Join(workDir, "mobile", "ios")) {
-			target = "ios-sim"
-		} else {
-			target = "web"
-		}
-	}
-	runner := spec.Runner
-	if runner == "" {
-		runner = "claude-code"
-	}
-	mode := LoopModeDevelop
-	switch spec.Kind {
-	case AgentNodeAutodev:
-		mode = LoopModeDevelop
-	case AgentNodeAutoIdeas:
-		mode = LoopModeIdeas
-	case AgentNodeAutotest:
-		mode = LoopModeAutoTest
-	}
-	loopSpec := LoopSpec{
-		Name:   fmt.Sprintf("agent-%s-%s", runID, spec.ID),
-		Mode:   mode,
-		Target: target,
-		Schedule: LoopSchedule{
-			Every:         "1m",
-			MaxIterations: 1,
-			Timeout:       "30m",
-		},
-		Playtest: LoopPlaytest{
-			Enabled: func() *bool {
-				v := spec.Kind != AgentNodeAutoIdeas
-				return &v
-			}(),
-			Duration: "2m",
-			Fuzzer:   "heuristic",
-		},
-		Think: LoopThink{
-			Runner:         runner,
-			Model:          spec.Model,
-			PromptInline:   firstGraphNonEmpty(strings.TrimSpace(spec.Prompt), spec.Title) + formatTaskSliceContract(contract),
-			MaxEdits:       1,
-			MaxKicksPerRun: max(1, spec.MaxIterations),
-			RequireGreen:   []string{"typecheck"},
-		},
-		Ship: LoopShip{
-			Branch:       "main",
-			CommitPrefix: "agent:",
-		},
-		Budget: LoopBudget{
-			MaxPatchesPerDay:          10,
-			MaxCommitsPerDay:          10,
-			StopAfterConsecutiveStuck: 2,
-		},
-		Knobs: LoopKnobs{
-			Tone: "neutral",
-		},
-	}
-	if mode == LoopModeAutoTest {
-		loopSpec.Think.RequireGreen = []string{"typecheck", "test"}
-		loopSpec.Test = LoopTest{Root: "yaver-tests"}
-	}
-	if err := validateLoopSpec(&loopSpec); err != nil {
-		return nil, err
-	}
-	applyLoopDefaults(&loopSpec)
-	return &LoopState{
-		ID:        uuid.New().String(),
-		Spec:      loopSpec,
-		Status:    LoopStatusRunning,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-		WorkDir:   workDir,
-	}, nil
 }
 
 func (gm *AgentGraphManager) finishRun(id string, status AgentGraphStatus, summary string) {
@@ -1386,7 +1198,7 @@ func runAgentMode(args []string) {
 		prompt := fs.String("prompt", "", "top-level user goal")
 		runner := fs.String("runner", "", "default runner")
 		model := fs.String("model", "", "default model")
-		template := fs.String("template", "full", "full|ship")
+		template := fs.String("template", "full", "full")
 		maxParallel := fs.Int("max-parallel", 2, "max concurrent ready nodes")
 		_ = fs.Parse(args[1:])
 		if strings.TrimSpace(*prompt) == "" {
@@ -1451,7 +1263,7 @@ func runAgentModeViaDaemon(args []string) {
 		prompt := fs.String("prompt", "", "top-level user goal")
 		runner := fs.String("runner", "", "default runner")
 		model := fs.String("model", "", "default model")
-		template := fs.String("template", "full", "full|ship")
+		template := fs.String("template", "full", "full")
 		maxParallel := fs.Int("max-parallel", 2, "max concurrent ready nodes")
 		_ = fs.Parse(args[1:])
 		if strings.TrimSpace(*prompt) == "" {
@@ -1479,10 +1291,10 @@ func runAgentModeViaDaemon(args []string) {
 }
 
 func printAgentUsage() {
-	fmt.Print(`Yaver agent mode — dependency-aware graph orchestration for chat / autoideas / autodev / autotest.
+	fmt.Print(`Yaver agent mode — dependency-aware graph orchestration for chat / autoideas.
 
 Usage:
-  yaver agent run --work-dir <path> --prompt "<goal>" [--template full|ship] [--runner codex] [--max-parallel 2]
+  yaver agent run --work-dir <path> --prompt "<goal>" [--template full] [--runner codex] [--max-parallel 2]
   yaver agent mesh-smoke [--device <id-or-name>]
   yaver agent list
   yaver agent show <id>

@@ -12,12 +12,12 @@ import (
 func TestAutoIdeasBuildArgsIncludesRunner(t *testing.T) {
 	args := autoIdeasBuildArgs("demo", AutoIdeasStart{
 		Runner:     "codex",
-		Engine:     "hybrid",
+		Engine:     "claude",
 		Output:     "ideas.md",
 		MaxBatches: 2,
 	})
 	got := strings.Join(args, " ")
-	for _, want := range []string{"demo", "--runner codex", "--engine hybrid", "--output ideas.md", "--max-batches 2"} {
+	for _, want := range []string{"demo", "--runner codex", "--engine claude", "--output ideas.md", "--max-batches 2"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("autoIdeasBuildArgs() = %q, want substring %q", got, want)
 		}

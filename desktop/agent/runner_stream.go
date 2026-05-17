@@ -1,9 +1,9 @@
 package main
 
-// autodev_stream.go — bridges a long-running CLI command's stdout/stderr
-// to the local daemon's named log-stream so the mobile app and web
-// dashboard can watch the run in real time, while the original
-// terminal still sees everything as before.
+// runner_stream.go — bridges a long-running CLI command's stdout/stderr
+// to the local daemon's named log-stream so subscribers can watch the
+// run in real time, while the original terminal still sees everything
+// as before. Used by autoideas / autoinit / any future detached runner.
 
 import (
 	"bytes"
@@ -22,9 +22,8 @@ import (
 // best-effort: if the daemon is unreachable, drops are silent and
 // the CLI keeps running. We never block the producer.
 // activePublisher is set by teeStdoutToStream while a tee is in
-// effect so spawn functions (phaseThink, spawnClaudeCode, refill,
-// etc.) can publish structured chat events without threading a
-// publisher through every signature. Nil when no autodev run is
+// effect so spawn helpers can publish structured chat events without
+// threading a publisher through every signature. Nil when no run is
 // owning this process.
 var (
 	activePublisher   *streamPublisher
@@ -43,7 +42,7 @@ func getActivePublisher() *streamPublisher {
 }
 
 // Package-level chat-event helpers. Safe to call from anywhere; no-op
-// when no autodev run is active.
+// when no streaming run is active.
 func AutodevPublishYaverSay(text string) {
 	if p := getActivePublisher(); p != nil {
 		p.PublishYaverSay(text)

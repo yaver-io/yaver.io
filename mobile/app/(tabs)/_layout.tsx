@@ -270,7 +270,7 @@ export default function TabLayout() {
           // tab on a phone, while every other tab is single-word, so it
           // sticks out. Route + screen file name stay `hotreload` to
           // avoid breaking deeplinks (yaver://hotreload, sentry / convex
-          // event slugs, autodev session naming, etc.).
+          // event slugs, etc.).
           title: "Reload",
           tabBarIcon: ({ focused }) => (
             <TabIcon label="Reload" focused={focused} showGreenDot={devServerRunning} />
@@ -331,10 +331,6 @@ export default function TabLayout() {
       <Tabs.Screen
         name="runs"
         options={{ href: null, title: "Local CI", headerShown: true, headerLeft: backToMore }}
-      />
-      <Tabs.Screen
-        name="autodev"
-        options={{ href: null, title: "Auto Dev", headerShown: true, headerLeft: backToMore }}
       />
       <Tabs.Screen
         name="monitor"

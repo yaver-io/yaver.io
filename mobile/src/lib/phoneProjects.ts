@@ -467,7 +467,7 @@ const PHONE_BACKEND_BINDING_PREFIX = "@yaver/phone_backend_binding/";
 
 function headers(): Record<string, string> | null {
   if (!quicClient.isConnected) return null;
-  return quicClient.morningAuthHeaders();
+  return quicClient.publicAuthHeaders();
 }
 
 function baseUrl(): string | null {

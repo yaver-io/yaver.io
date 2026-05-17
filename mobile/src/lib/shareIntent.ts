@@ -1,11 +1,15 @@
 /**
- * Simple event emitter for passing shared images from _layout.tsx to tasks.tsx.
- * When images are shared via iOS Share Extension, they are decoded in _layout
- * and emitted here so the tasks screen can pick them up and open the new task modal.
+ * Event bus for OS-share-sheet payloads. The ShareIntentReceiver
+ * (mounted at app root) decodes images shared into Yaver from any app's
+ * share sheet and emits them here; ShareComposeModal subscribes and
+ * opens the WhatsApp-style "add a comment + pick machines" sheet.
+ *
+ * `text` carries any caption/text the user shared alongside the image
+ * (or shared text on its own) so the compose box can pre-fill it.
  */
 import type { ImageAttachment } from "./quic";
 
-type Listener = (images: ImageAttachment[]) => void;
+type Listener = (images: ImageAttachment[], text?: string) => void;
 
 class ShareIntentEmitter {
   private listeners: Listener[] = [];
@@ -17,9 +21,9 @@ class ShareIntentEmitter {
     };
   }
 
-  emit(images: ImageAttachment[]) {
+  emit(images: ImageAttachment[], text?: string) {
     for (const listener of this.listeners) {
-      listener(images);
+      listener(images, text);
     }
   }
 }

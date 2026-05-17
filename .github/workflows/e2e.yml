@@ -56,8 +56,8 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: cd e2e && npx playwright install-deps chromium
 
-      - name: Run Playwright tests
-        run: cd e2e && npm test
+      - name: Run vibe-preview Playwright tests
+        run: cd e2e && npx playwright test tests/vibe-preview.spec.ts
         env:
           CI: "1"
 

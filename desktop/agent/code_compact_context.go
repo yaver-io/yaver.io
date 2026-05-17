@@ -1,32 +1,18 @@
 package main
 
+// code_compact_context.go — bounded "compacted parent context" helpers
+// used by `code_control.go` when delegating part of a task to a
+// child runner. Originally lived in the deleted code_hybrid_session.go
+// (hybrid mode was removed); the compact-context shape is independent
+// of hybrid and still used by the runner-switch / change-runner path.
+
 import (
 	"fmt"
 	"strings"
 )
 
-// code_hybrid_session.go sketches the session-level orchestration model for
-// "one vibing terminal, many underlying runners". The key idea is that Yaver
-// owns the canonical task/session state and can fork bounded child work to a
-// different runner with a compacted context package instead of asking the user
-// to manually restate the whole thread.
-
-type CodeForkMode string
-
-const (
-	CodeForkOverlay CodeForkMode = "overlay"
-	CodeForkInline  CodeForkMode = "inline"
-)
-
-type CodeForkRequest struct {
-	ParentTaskID string       `json:"parentTaskId"`
-	RunnerID     string       `json:"runnerId"`
-	Model        string       `json:"model,omitempty"`
-	Prompt       string       `json:"prompt"`
-	Mode         CodeForkMode `json:"mode,omitempty"`
-	WorkDir      string       `json:"workDir,omitempty"`
-}
-
+// CodeCompactContext is the smallest useful package of context to
+// hand to another runner. Intentionally lossy.
 type CodeCompactContext struct {
 	TaskID         string   `json:"taskId"`
 	SessionID      string   `json:"sessionId,omitempty"`
@@ -40,9 +26,8 @@ type CodeCompactContext struct {
 	AttachmentHint []string `json:"attachmentHints,omitempty"`
 }
 
-// buildCodeCompactContext extracts the smallest useful package of context to
-// hand to another runner. This is intentionally lossy: frontier sessions can be
-// long, but delegated child work should be bounded and file-scoped.
+// buildCodeCompactContext extracts the smallest useful package of
+// context to hand to another runner.
 func buildCodeCompactContext(task *Task, maxTurns int) CodeCompactContext {
 	if task == nil {
 		return CodeCompactContext{}
@@ -133,4 +118,3 @@ func truncateCodeCompactField(s string, max int) string {
 	}
 	return strings.TrimSpace(s[:max]) + "..."
 }
-

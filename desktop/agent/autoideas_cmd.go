@@ -1,17 +1,13 @@
 package main
 
-// autoideas_cmd.go — `yaver autoideas <project>` is autodev's idea-
-// generator running standalone. Same UX shape as autodev (detached,
-// timer-based, lite/burst, hybrid engine, hardening preset, --hours
-// + --infinite, structured chat events, /tmp/yaver log, reattachable
-// stream) but instead of implementing each item it just keeps
-// appending fresh `- [ ] <title>` lines to ideas.md every tick.
+// autoideas_cmd.go — `yaver autoideas <project>` is a detached,
+// timer-based idea-generator. Each tick appends a fresh
+// `- [ ] <title>` line to ideas.md.
 //
 // Mobile picks up the file and renders checkboxes; the user selects
-// the ones they want and triggers a follow-up `yaver autodev` with
-// --remained pointed at the curated subset. Generation continues in
-// parallel — the user can keep checking new ideas while autodev
-// implements the previously-checked ones.
+// the ones they want and triggers a follow-up task with the curated
+// subset. Generation continues in parallel — the user can keep
+// checking new ideas while previously-checked ones get worked on.
 
 import (
 	"flag"
@@ -159,9 +155,8 @@ func runAutoIdeas(args []string) {
 		return
 	}
 
-	// Detach + tail, same trick as autodev. The detached child re-
-	// enters runAutoIdeas with YAVER_AUTODEV_DETACHED=1 and runs
-	// the actual generation loop.
+	// Detach + tail. The detached child re-enters runAutoIdeas with
+	// YAVER_AUTODEV_DETACHED=1 and runs the actual generation loop.
 	if !autodevDetachActive() {
 		_, sn := spawnDetachedAutodev("autoideas", args, loopName)
 		if sn != "" {
@@ -350,4 +345,28 @@ func durationLabel(hours string, deadline time.Time) string {
 		return "infinite (SIGINT to stop)"
 	}
 	return fmt.Sprintf("%s hour(s) — until %s", hours, deadline.Format("Mon 15:04"))
+}
+
+// loopKillFilePath returns the per-loop STOP sentinel path; touch the
+// file to cooperatively stop a detached run.
+func loopKillFilePath(name string) (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	loopDir := filepath.Join(dir, "loops", name)
+	if err := os.MkdirAll(loopDir, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(loopDir, "STOP"), nil
+}
+
+// oneLineAutodev compresses whitespace and truncates s for log lines.
+func oneLineAutodev(s string, max int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > max {
+		return s[:max-1] + "…"
+	}
+	return s
 }

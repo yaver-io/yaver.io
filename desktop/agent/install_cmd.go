@@ -321,18 +321,6 @@ var integrations = []installPlan{
 		},
 	},
 	{
-		name:        "hybrid",
-		description: "Everything needed for `yaver hybrid` — claude-code planner + opencode implementer (covers BYOK Ollama / OpenRouter / etc.). Meta-target.",
-		macOS: []string{
-			"npm install -g @anthropic-ai/claude-code",
-			"curl -fsSL https://opencode.ai/install | bash",
-		},
-		linux: []linuxStep{
-			{"npm", "npm install -g @anthropic-ai/claude-code && curl -fsSL https://opencode.ai/install | bash"},
-			{"curl", "curl -fsSL https://opencode.ai/install | bash"},
-		},
-	},
-	{
 		name:        "pre-commit",
 		description: "pre-commit — repo quality gates and fast local hook automation",
 		macOS:       []string{"python3 -m pip install --user --upgrade pre-commit"},
@@ -556,7 +544,6 @@ func checkInstalled(name string) string {
 		"appium":            {"appium"},
 		"maestro":           {"maestro"},
 		"opencode":          {"opencode"},
-		"hybrid":            {"opencode"}, // presence of opencode is our cheapest proxy
 		"pre-commit":        {"pre-commit"},
 		"pytest":            {"pytest"},
 		"ruff":              {"ruff"},
@@ -790,7 +777,7 @@ func runPiDevNodeInstall(ctx context.Context, progress func(string)) error {
 	}
 	if progress != nil {
 		progress("Pi dev-node base installed.")
-		progress("Optional next steps: `yaver install tailscale`, `yaver install cloudflared`, or `yaver install hybrid` to set up claude planner + opencode implementer.")
+		progress("Optional next steps: `yaver install tailscale` or `yaver install cloudflared`.")
 		progress("Recommended hardware: Raspberry Pi 5, 16 GB RAM, 256 GB storage, active cooling, Ethernet.")
 	}
 	return nil

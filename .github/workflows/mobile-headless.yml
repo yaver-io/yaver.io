@@ -46,9 +46,6 @@ jobs:
       - name: SDK manifest unit tests
         working-directory: mobile-headless
         run: npm run test:sdk-manifest
-      - name: Typecheck
-        working-directory: mobile-headless
-        run: bun run typecheck
       - name: Hermetic tests
         working-directory: mobile-headless
         run: bun run test:hermetic

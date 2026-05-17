@@ -147,12 +147,11 @@ var builtinRunners = map[string]RunnerConfig{
 		RunnerID: "claude",
 		Name:     "Claude Code",
 		Command:  "claude",
-		// NOTE: --model is intentionally NOT in Args; runImplementer
-		// (hybrid.go) and any future yaver-managed spawn prepends it
-		// from RunnerConfig.Model / HybridSpec.Model so the user's
+		// NOTE: --model is intentionally NOT in Args; yaver-managed
+		// spawn paths prepend it from RunnerConfig.Model so the user's
 		// chosen model wins. Hardcoding "sonnet" here would shadow
-		// --implementer claude:opus (sees --model twice, last one
-		// wins, depends on CLI parsing — flaky).
+		// per-task model overrides (sees --model twice, last one wins,
+		// depends on CLI parsing — flaky).
 		// claude-cli 2.1.138 (verified on the user's Mac mini)
 		// REJECTS --skip-git-repo-check with "error: unknown
 		// option" and exits non-zero. The agent's claude task
@@ -167,9 +166,8 @@ var builtinRunners = map[string]RunnerConfig{
 		// claude default = opus. Mirrors web/DevicesView.DEFAULT_MODEL_BY_RUNNER
 		// and mobile/DeviceContext.DEFAULT_MODEL_BY_RUNNER — surfaces stay in
 		// lockstep so a feedback task arriving with task.Model="" lands on
-		// opus regardless of which client picked it. HybridSpec /
-		// --implementer claude:X still wins because they prepend their own
-		// --model and CLI last-flag-wins applies.
+		// opus regardless of which client picked it. Per-task --model still
+		// wins because callers prepend it and CLI last-flag-wins applies.
 		Model:       "claude-opus-4-7",
 		OutputMode:  "stream-json",
 		ExitCommand: "/exit",

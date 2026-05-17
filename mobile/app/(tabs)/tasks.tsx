@@ -52,7 +52,6 @@ import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
 import { useAuth } from "../../src/context/AuthContext";
 import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS, speakText as speakConfiguredText } from "../../src/lib/speech";
-import { shareIntentEmitter } from "../../src/lib/shareIntent";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
 import { Badge } from "../../src/components/Badge";
@@ -2197,13 +2196,9 @@ export default function TasksScreen() {
     })();
   }, []);
 
-  // Listen for shared images from iOS Share Extension
-  useEffect(() => {
-    return shareIntentEmitter.on((images) => {
-      setAttachedImages(images.slice(0, 5));
-      setShowNewTask(true);
-    });
-  }, []);
+  // Shared screenshots now route to ShareComposeModal (the WhatsApp-style
+  // "comment + pick machines" sheet, mounted at app root) instead of the
+  // generic new-task modal — see src/components/ShareComposeModal.tsx.
 
   // target: which text field to write into ("task" = new task, "followup" = follow-up input)
   const recordingTargetRef = useRef<"task" | "followup">("task");
@@ -3005,7 +3000,7 @@ export default function TasksScreen() {
     }
   };
 
-  // Summary — show morning digest
+  // Summary — last 24h activity digest
   const handleShowSummary = async () => {
     try {
       const { text } = await quicClient.getSummary(24);

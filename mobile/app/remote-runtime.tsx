@@ -554,6 +554,7 @@ function buildRemoteRuntimeViewerHtml(baseUrl: string, headers: Record<string, s
           return;
         }
         const pc = new RTCPeerConnection();
+        pc.createDataChannel("primer");
         pc.onconnectionstatechange = () => setStatus("Peer state: " + pc.connectionState);
         pc.ondatachannel = (event) => {
           if (event.channel.label === "frames") {

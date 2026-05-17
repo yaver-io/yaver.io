@@ -116,10 +116,18 @@ func TestAutoinitAppendHistoryNoMarkersNoop(t *testing.T) {
 
 // --- autoinitContextBlock ----------------------------------------------------
 
-func TestAutoinitContextBlockEmptyDir(t *testing.T) {
+func TestAutoinitContextBlockEmptyDirIncludesHostCapabilities(t *testing.T) {
 	dir := t.TempDir()
-	if got := autoinitContextBlock(dir); got != "" {
-		t.Errorf("empty dir should return empty context, got %q", got)
+	got := autoinitContextBlock(dir)
+	for _, want := range []string{
+		"CACHED PROJECT CONTEXT",
+		"Host capabilities",
+		"Package managers available on this machine:",
+		"END CACHED CONTEXT",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in context block:\n%s", want, got)
+		}
 	}
 }
 

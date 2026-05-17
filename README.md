@@ -164,12 +164,9 @@ This is the motivation behind the `embedded/c-agent/` work in this repo and the 
 - **Chained Tasks** — Queue a whole feature: "build landing page, add Stripe, deploy." Tasks execute sequentially, next starts when previous succeeds.
 - **Auto-Retry** — Failed task? Agent retries with error context. Only pings you after 3 failures.
 - **Ship It Button** — One tap to deploy. Agent detects your project (Cloudflare, Vercel, TestFlight, Play Store, Fly.io, etc.) and ships.
-- **Morning Summary** — Daily digest at 9am: "3 tasks done, landing page live, 2 tests failing." Via Telegram, Discord, Slack, or email.
 - **Live Terminal Stream** — Watch Claude Code work in real-time from your phone via SSE. Full terminal output, not just status updates.
-- **Set-and-Forget Autodev** — `yaver autodev <project>` forks itself as a detached, session-leader child so the kick loop survives terminal close, ssh disconnect, or laptop lid. Kicks fire on a timer (5 min in lite, 30 s in burst), refill ideas when the checklist empties (`--auto-ideas`, default 999), optionally use a hardening preset (`--harden security|memory|perf|quality|all`), pin a roof theme (`--prompt`), work on a dedicated branch (`--auto-branch`), and ship to every shippable surface at the end (`--deploy auto` covers TestFlight, Play Store, Convex, Vercel). Re-attach the live tail any time with `yaver stream autodev:<loop>`.
-- **Autoinit (cached project context)** — `yaver autoinit <project>` writes a project `init.md` (stack, layout, conventions, build/test/deploy commands, recent direction) that every later autodev / autoideas / autotest kick reads as cached context, so Claude doesn't re-grep the repo from scratch every kick. Each successful run auto-appends to the file's history block so the next session knows what was just shipped. Available as CLI, HTTP (`POST /autoinit/start`, `GET /autoinit/status`), and MCP (`autoinit_start`, `autoinit_status`).
-- **Autoideas (overnight idea generator)** — `yaver autoideas <project>` runs a long-lived loop that asks the AI for fresh single-PR-sized improvement ideas every tick and appends them as `- [ ] <title>` lines to `ideas.md`. Mobile / web shows them as checkboxes; pick the ones you want and the daemon fires an `autodev` run with the curated subset as `--remained`. Generation continues in parallel with implementation. Same flag set as autodev (`--hours`, `--lite/--heavy`, `--prompt`, `--harden`, `--engine`, `--hybrid`).
-- **Live Chat Stream (terminal + mobile + web)** — autodev publishes structured events (`yaver_say`, `runner_action`, `runner_text`, `runner_result`) to `/streams/autodev:<loop>` so any client renders the run as a chat: yaver's voice on one side, the AI's on the other, tool uses inline. Generic across runners (Claude / Codex / Aider / Ollama). Mobile Auto Dev tab has a Chat section; CLI uses `yaver stream <name>` for ANSI-colored bubbles.
+- **Autoinit (cached project context)** — `yaver autoinit <project>` writes a project `init.md` (stack, layout, conventions, build/test/deploy commands, recent direction) that every later autoideas kick reads as cached context, so Claude doesn't re-grep the repo from scratch every kick. Each successful run auto-appends to the file's history block so the next session knows what was just shipped. Available as CLI, HTTP (`POST /autoinit/start`, `GET /autoinit/status`), and MCP (`autoinit_start`, `autoinit_status`).
+- **Autoideas (overnight idea generator)** — `yaver autoideas <project>` runs a long-lived loop that asks the AI for fresh single-PR-sized improvement ideas every tick and appends them as `- [ ] <title>` lines to `ideas.md`. Mobile / web shows them as checkboxes; pick the ones you want and the daemon dispatches tasks for the curated subset. Generation continues in parallel with implementation.
 - **Always Native, Never WebView** — React Native apps always load via Hermes bytecode into a native bridge with TurboModules + Fabric. WebView is never used for app loading.
 - **Task Scheduling** — Cron-like scheduling.
 - **Notifications** — Telegram, Discord, Slack, Teams, PagerDuty, Opsgenie, Linear, Jira, email.
@@ -195,7 +192,7 @@ Lunchtime:
   7. Tap "Ship It" — one tap, agent deploys to Cloudflare Workers
 
 Next morning:
-  8. Morning summary notification: "5 tasks completed, site live at myapp.com"
+  8. Push notification: "5 tasks completed, site live at myapp.com"
 ```
 
 ### Chained Tasks (queue a whole feature)
@@ -321,22 +318,6 @@ Read more:
 - [sdk/feedback/unity/README.md](./sdk/feedback/unity/README.md)
 - [UNITY_UNIFIED_YAVER.md](./UNITY_UNIFIED_YAVER.md)
 
-### Morning Summary
-
-Daily digest at 9am via all configured notification channels:
-
-```
-☀️ Morning Summary
-
-📊 5 tasks: 4 completed, 1 failed ($0.47)
-
-✅ Build landing page with pricing (34s)
-✅ Add Stripe checkout (89s)
-✅ Write payment tests (22s)
-✅ Deploy to Cloudflare (15s)
-❌ Add dark mode (failed after 3 retries)
-```
-
 ## Always Native, Never WebView
 
 React Native apps pushed to the Yaver phone app **always load natively** — never in a WebView. The pipeline:
@@ -436,15 +417,10 @@ yaver autoinit my-project
 
 # Generate ideas overnight (long-lived, detached, survives terminal close)
 yaver autoideas my-project --hours 8 --engine codex
-# Pick ideas later via mobile / web (checkboxes) → triggers autodev on the picks
+# Pick ideas later via mobile / web (checkboxes) → dispatches tasks for the picks
 
-# Or go straight to autodev — picks the next remained.md item every kick
-yaver autodev my-project --hours 8 --model sonnet      # cheap default
-yaver autodev my-project --hours 1 --model opus --max-iterations 1  # high-stakes one-shot
-yaver autodev my-project --planner claude:opus --implementer codex  # hybrid: premium plan, cheap impl
-
-# Watch the live chat from any terminal (or the mobile Auto Dev tab)
-yaver stream autodev:my-project-autodev
+# Watch the live chat from any terminal
+yaver stream autodev:my-project
 ```
 
 ### Headless machines (Mac mini upstairs, Hetzner VPS, Linux box over SSH)
@@ -529,7 +505,7 @@ What this does **not** mean:
 
 ### Raspberry Pi 5 dev-node image
 
-The download page also exposes a **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI assets. The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it. The Pi image is a **hybrid appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`claude-code`, `codex`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT).
+The download page also exposes a **Raspberry Pi 5 dev-node image** through the same Convex-backed public artifact pipeline as the CLI assets. The image build itself is Linux-native; from macOS use `./scripts/build-pi-image.sh --docker` once Docker is running, or let the `pi-image/vX.Y.Z` GitHub workflow build and publish it. The Pi image is a **two-stage appliance**: it bakes in the OS image, the `yaver` binary, first-boot provisioning, cloud-init, and systemd services, then uses first boot to install the heavier dev/backend stack (`claude-code`, `codex`, `opencode`, TDD tools, `sqlite3`, `vercel`, `convex`, PostgreSQL, Redis, Supabase, MQTT).
 
 ## Always-Up Mode (Boots Without Auth)
 
@@ -881,74 +857,7 @@ Yaver ships a built-in `web_search` MCP tool so any connected AI agent (Claude C
 | **Google** | Paid (free tier 100 q/day) | `export GOOGLE_CSE_KEY=… GOOGLE_CSE_CX=…` (Programmable Search Engine) |
 | **Bing** | Paid | `export BING_API_KEY=…` (Azure Bing Search v7) |
 
-Set `provider: "auto"` and Yaver picks the best available backend (Google → Bing → DuckDuckGo). Used directly by `yaver handoff autodev` for market-gap research during proactive-mode handoffs.
-
-## Pass Session to Yaver (Handoff)
-
-Hand off an in-progress AI session — Claude Code, Codex, Aider, anything — to Yaver, and let Yaver's autodev loop finish the remaining work autonomously. Works on the current machine, on a remote dev box, with hybrid (planner + cheap local implementer), or with a single arbitrary runner.
-
-```bash
-# Default: claude-code finishes the work locally
-yaver handoff
-
-# Cheap: planner + token-leaner implementer (Claude plans, opencode implements)
-yaver handoff --engine hybrid
-
-# Specific runner
-yaver handoff --engine runner --runner codex
-yaver handoff --engine runner --runner opencode
-
-# Hand a specific Yaver task or session file
-yaver handoff --from <taskId>
-yaver handoff --from ~/.claude/sessions/<uuid>.jsonl
-
-# Hand off to a remote dev machine
-yaver handoff --to my-mac-mini --engine hybrid
-
-# Add focus, set caps
-yaver handoff --message "finish the failing tests first" --max-kicks 50 --deadline 3600
-```
-
-**From inside an AI agent.** Any agent connected to Yaver's MCP server can call the `session_handoff` tool — say "pass session to yaver" and the agent invokes it. The tool returns `exitNow: true` plus a sentinel file path, signalling the agent to terminate cleanly. Yaver writes `~/.yaver/handoff/<loopName>.json` (and a stable `latest.json`) so external agents that can't be force-killed can poll for the takeover and exit on their own.
-
-**What Yaver does on handoff:**
-
-1. Exports the source session to a `TransferBundle` (conversation turns + agent-specific state files).
-2. Imports it into the target machine's TaskManager.
-3. Optionally stops the source Yaver task.
-4. Builds a develop-mode autodev loop with the chosen engine/runner. The resume prompt is synthesised from the bundle context plus pending items in the todo list plus any `--message`.
-5. Writes the sentinel and kicks the loop immediately.
-
-**Engine choices:**
-
-| Engine | Runner | When to use |
-|--------|--------|-------------|
-| `claude` (default) | `claude-code` | Highest quality, frontier model end-to-end |
-| `hybrid` | planner=claude, implementer=opencode | Cheaper on long feature loops; opencode routes to whichever provider you've BYOK'd |
-| `runner` | one of `claude-code` / `codex` / `opencode` | You know exactly which runner you want |
-
-**Surfaces:** CLI (`yaver handoff`), MCP tool (`session_handoff`), HTTP (`POST /session/handoff`). Same arguments across all three.
-
-**Hard takeover (vs cooperative).** Yaver doesn't just write a sentinel — it actually terminates the calling AI process. Caller PID is resolved in this order: explicit `--caller-pid` / `caller_pid` arg → stdio MCP parent PID (auto-set when Claude Code/Desktop spawns `yaver mcp`) → HTTP MCP loopback peer port via `lsof`. After the response is sent, Yaver sends SIGTERM and SIGKILLs 5s later if the process is still alive. Non-loopback HTTP clients are never killed.
-
-**Load + duration knobs (mirror `yaver autodev`).** `--load lite` (default) stretches kicks to one every 5min and respects the dev's Claude/Codex 5-hour windows. `--load burst` runs every 30s up to 200 iterations/day. `--hours 8` caps each individual kick at 8h so a runaway prompt can't burn the whole budget.
-
-**Verify takeover:** `yaver handoff status` prints the most recent sentinel + the live loop's iteration count and last summary.
-
-**Full autodev parity.** Everything `yaver autodev` exposes is also a handoff flag, so a session takeover can be configured exactly like a from-scratch autodev run:
-
-| Flag | Effect |
-|------|--------|
-| `--prompt "..."` | Explicit focus prompt (replaces the auto-resume prompt) |
-| `--target web\|ios-sim\|android-emu` | Loop target (default: auto-detect from workdir) |
-| `--branch <name>` / `--auto-branch` | Ship to named branch / `autodev/<loop>-<YYYYMMDD>` |
-| `--deploy` | Default = ship to **all** configured platforms. Disable with `--deploy false`/`no`/`0`/`none`. Restrict to one platform with `testflight`/`playstore`/`web`. |
-| `--notify` | Mobile notification when the loop ends |
-| `--no-autotest` | Skip interleaved regression test pass |
-| `--auto-ideas N` | Cap on idea-refill batches when checklist runs dry |
-| `--remained <path>` | Pull next item from a `remained.md` checklist |
-| `--lite` / `--heavy` | Shortcuts for `--load lite/burst` |
-| `--engine hybrid` / `--hybrid` | Cheap planner+local-implementer mode |
+Set `provider: "auto"` and Yaver picks the best available backend (Google → Bing → DuckDuckGo).
 
 ## Security Sandbox
 
@@ -1964,7 +1873,6 @@ yaver doctor        System health check (auth, runners, relay, network)
 yaver devices       List registered devices
 yaver exec          Execute a command on a remote device
 yaver session       Transfer AI agent sessions between machines
-yaver handoff       Pass the current AI session to Yaver (autodev takes over)
 yaver build         Build apps (Flutter, Gradle, Xcode, React Native)
 yaver test          Run tests (auto-detect framework)
 yaver deploy        Deploy to phone, TestFlight, Play Store, or CI

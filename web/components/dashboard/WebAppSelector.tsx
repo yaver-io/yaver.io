@@ -1,7 +1,7 @@
 "use client";
 
 // WebAppSelector — dropdown populated from /workspace/apps, filtered
-// to web + hybrid kinds. Surfaces each app's stack, monorepo path,
+// to web kinds. Surfaces each app's stack, monorepo path,
 // and missing env vars so the user knows what they're picking.
 
 import type { WorkspaceAppView } from "@/lib/agent-client";
@@ -96,9 +96,7 @@ export function WebAppSelector({ apps, selectedApp, activeApp, onSelect, loading
               <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase tracking-widest ${
                 app.kind === "web"
                   ? "bg-emerald-500/10 text-emerald-300"
-                  : app.kind === "hybrid"
-                    ? "bg-amber-500/10 text-amber-300"
-                    : "bg-surface-800 text-surface-400"
+                  : "bg-surface-800 text-surface-400"
               }`}>
                 {app.kind}
               </span>

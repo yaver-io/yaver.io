@@ -41,9 +41,8 @@ var wipeTargets = map[string][]string{
 	"apikeys":  {"apikeys/"},
 	"tasks":    {"tasks/", "agent-graphs.json"},
 	"blobs":    {"blobs/"},
-	"sessions": {"sessions/", "handoff/"},
+	"sessions": {"sessions/"},
 	"caches": {
-		"autodev-reports/",
 		"blackbox/",
 		"builds/",
 		"clips/",
