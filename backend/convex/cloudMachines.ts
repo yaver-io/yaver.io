@@ -538,6 +538,26 @@ export const provision = internalAction({
     });
     if (!machine) return;
 
+    // Fail-closed billing gate — a real managed machine (linked to a
+    // subscription) is NEVER provisioned on Yaver's Hetzner account
+    // unless that subscription is active. Machines without a
+    // subscriptionId are the explicitly-guarded dev-activate path
+    // (isCloudPreviewUser) and keep their own gate; we don't touch it.
+    if (machine.subscriptionId) {
+      const entitled = await ctx.runQuery(internal.subscriptions.isActive, {
+        subscriptionId: machine.subscriptionId,
+      });
+      if (!entitled) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId: args.machineId,
+          status: "error",
+          errorMessage:
+            "Subscription not active — provisioning denied (fail-closed billing gate)",
+        });
+        return;
+      }
+    }
+
     const specDef = MACHINE_SPECS[machine.machineType as keyof typeof MACHINE_SPECS];
     if (!specDef) {
       await ctx.runMutation(internal.cloudMachines.setStatus, {
@@ -803,6 +823,18 @@ export const destroy = internalAction({
     if (!machine) return;
 
     if (HCLOUD_TOKEN && machine.hetznerServerId) {
+      // Grace snapshot before delete (CLAUDE.md: never delete
+      // un-snapshotted) so a resubscribe is restorable. Best-effort:
+      // never let a failed snapshot leave a paid box running.
+      try {
+        await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-machine-${machineId}-${Date.now()}` }),
+        });
+      } catch (e) {
+        console.error("[cloudMachines.destroy] grace snapshot failed (continuing with delete):", e);
+      }
       try {
         await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}`, {
           method: "DELETE",

@@ -22,6 +22,20 @@ export const getByLemonId = internalQuery({
   },
 });
 
+// isActive is the fail-closed billing gate used before ANY managed
+// Hetzner server is created. Returns true ONLY if the subscription
+// row exists and status === "active". A signed LemonSqueezy webhook
+// is the primary proof of payment; this query is defense-in-depth so
+// no internal mis-trigger / replay can spend money on Yaver's Hetzner
+// account without an active subscription. Default deny.
+export const isActive = internalQuery({
+  args: { subscriptionId: v.id("subscriptions") },
+  handler: async (ctx, { subscriptionId }) => {
+    const sub = await ctx.db.get(subscriptionId);
+    return !!sub && sub.status === "active";
+  },
+});
+
 // Create or update subscription from LemonSqueezy webhook
 export const upsertFromWebhook = internalMutation({
   args: {

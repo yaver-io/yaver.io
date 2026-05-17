@@ -3023,7 +3023,13 @@ http.route({
       case "subscription_expired": {
         const sub = await ctx.runMutation(internal.subscriptions.cancel, { lemonSqueezyId });
 
-        if (sub && eventName === "subscription_expired") {
+        // Tear the box down on BOTH cancel and expiry. A managed box
+        // costs Yaver money every hour it runs; the moment the user
+        // cancels we stop that spend (deprovision snapshots first, so
+        // a resubscribe can be restored from the snapshot). Previously
+        // only `subscription_expired` deprovisioned, leaving a paid
+        // box running through the rest of a cancelled period.
+        if (sub && (eventName === "subscription_expired" || eventName === "subscription_cancelled")) {
           const [relays, machines] = await Promise.all([
             ctx.runQuery(internal.managedRelays.listBySubscription, { subscriptionId: sub }),
             ctx.runQuery(internal.cloudMachines.listBySubscription, { subscriptionId: sub }),

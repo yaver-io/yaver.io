@@ -51,6 +51,22 @@ export const provision = internalAction({
       return;
     }
 
+    // Fail-closed billing gate — NEVER create a Hetzner server unless
+    // the subscription is active. Defense-in-depth behind the signed
+    // webhook so no replay/mis-schedule can spend Yaver's money.
+    const entitled = await ctx.runQuery(internal.subscriptions.isActive, {
+      subscriptionId: args.subscriptionId,
+    });
+    if (!entitled) {
+      await ctx.runMutation(internal.managedRelays.setStatus, {
+        relayId: args.relayId,
+        status: "error",
+        errorMessage:
+          "Subscription not active — provisioning denied (fail-closed billing gate)",
+      });
+      return;
+    }
+
     const shortId = args.userId.substring(0, 8);
     const serverName = `relay-${shortId}`;
     const subdomain = `${shortId}.relay`;
@@ -306,6 +322,21 @@ export const deprovision = internalAction({
     }
 
     try {
+      // Grace snapshot before delete — a resubscribe can be restored
+      // from it (CLAUDE.md: never delete un-snapshotted). Best-effort:
+      // a failed snapshot must NOT leave a paid box running forever,
+      // so we log and still delete. Cost-safety wins for managed
+      // teardown (opposite tradeoff from the disposable dev box).
+      try {
+        await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}/actions/create_image`, {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-relay-${args.relayId}-${Date.now()}` }),
+        });
+      } catch (snapErr) {
+        console.error("[deprovision] grace snapshot failed (continuing with delete):", snapErr);
+      }
+
       // Delete Hetzner server
       await fetch(`https://api.hetzner.cloud/v1/servers/${args.hetznerServerId}`, {
         method: "DELETE",
