@@ -58,6 +58,24 @@ type InstallEntry = { name: string; installed: boolean; description: string };
 function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [machines, setMachines] = useState<any[]>([]);
+
+  // Poll the managed-box list via the cloud_status ops verb (agent
+  // proxies Convex /subscription; no Convex URL/token on mobile).
+  // Provision is async, so refresh so a bought box appears when ready.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      const res = await quicClient.callOps("cloud_status", {});
+      if (!alive) return;
+      const list = (res?.initial as any)?.machines;
+      setMachines(Array.isArray(list) ? list : []);
+    };
+    void load();
+    const iv = setInterval(() => void load(), 8000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
   const buy = async () => {
     setBusy(true);
     setMsg(null);
@@ -93,6 +111,26 @@ function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
       </Pressable>
       {msg ? (
         <Text style={{ fontSize: 11, color: msg.startsWith("✗") ? "#fecaca" : c.textMuted }}>{msg}</Text>
+      ) : null}
+      {machines.length > 0 ? (
+        <View style={{ gap: 4, marginTop: 4 }}>
+          {machines.map((m: any) => (
+            <View key={String(m?._id)} style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ fontSize: 10, fontWeight: "700", color: m?.status === "error" ? "#fca5a5" : "#7dd3fc" }}>
+                {String(m?.origin ?? "managed").toUpperCase()}
+              </Text>
+              <Text style={{ fontSize: 11, color: c.textMuted }}>
+                srv {String(m?.hetznerServerId ?? "—")} · {String(m?.region ?? "eu")} ·{" "}
+                <Text style={{ color: m?.status === "error" ? "#fca5a5" : c.textMuted, fontWeight: "600" }}>
+                  {String(m?.status ?? "?")}
+                </Text>
+              </Text>
+            </View>
+          ))}
+          {machines.some((m: any) => m?.status === "provisioning") ? (
+            <Text style={{ fontSize: 10, color: c.textMuted }}>auto-refreshing every 8s — box appears here when ready</Text>
+          ) : null}
+        </View>
       ) : null}
     </View>
   );
