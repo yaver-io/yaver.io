@@ -5,8 +5,13 @@
 > `b71201c1`, money-safety `96c29a5c` (DEPLOYED to Convex prod
 > perceptive-minnow-557), cloud_destroy wiring `52dcee9c`, Phase B
 > host-recycle `bf4e0840` (5 guards unit-tested), Phase C web+mobile
-> recycle UI `ebefd462`. Remaining: real-infra end-to-end recycle is
-> the documented out-of-session step (logic+guards fully covered);
+> recycle UI `ebefd462`. Owner bypass `a6bc9419` (prod-deployed +
+> `CLOUD_PREVIEW_OWNER_EMAIL` set on prod = owner only; env config,
+> not hardcoded — `ownerAllowlist.ts`/`subscriptions.canProvisionManaged`).
+> Owner's no-LemonSqueezy managed create entrypoint:
+> `POST /billing/yaver-cloud/dev-activate` (owner-gated) + recycle/
+> cloud_destroy for remove. Remaining: real-infra end-to-end recycle
+> is the documented out-of-session step (logic+guards fully covered);
 > Convex-test harness coverage for the billing gate is test-debt.
 >
 > **Two distinct products — do not conflate:**
