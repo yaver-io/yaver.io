@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -51,13 +54,68 @@ func TestRobotConfirmedIsDryRunByDefault(t *testing.T) {
 	}
 }
 
-func TestRobotLiveIsGuardedNotFaked(t *testing.T) {
-	t.Setenv("HROBOT_USER", "u")
-	t.Setenv("HROBOT_PASS", "p")
-	// live=true must hard-fail (unvalidated paid path) — never a
-	// silent fake success that implies a server was ordered.
-	_, err := provisionHetznerRobot("box", map[string]string{"confirmPaidOrder": "true", "live": "true"})
-	if err == nil || !strings.Contains(err.Error(), "not yet validated") {
-		t.Fatalf("live order path must fail-loud as unvalidated, got err=%v", err)
+// Live path against a FAKE Robot API (httptest) — never the real
+// robot-ws.your-server.de, never a real paid order. Verifies the
+// documented contract: list server_market → pick cheapest in-band →
+// POST transaction → return its id.
+func TestRobotLiveOrderAgainstFakeAPI(t *testing.T) {
+	var sawProductList, sawTxn bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, p, ok := r.BasicAuth(); !ok || u != "ru" || p != "rp" {
+			http.Error(w, "auth", 401)
+			return
+		}
+		switch {
+		case r.Method == "GET" && r.URL.Path == "/order/server_market/product":
+			sawProductList = true
+			io.WriteString(w, `[{"product":{"id":"991","name":"AX41 (too pricey)","price":{"recurring":"89.00"}}},
+			                    {"product":{"id":"42","name":"KVM box","price":{"recurring":"38.50"}}}]`)
+		case r.Method == "POST" && r.URL.Path == "/order/server_market/transaction":
+			sawTxn = true
+			b, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(b), "product_id=42") {
+				t.Errorf("expected cheapest in-band product_id=42, body=%s", b)
+			}
+			io.WriteString(w, `{"transaction":{"id":"B20240517-1","status":"in process"}}`)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, 400)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	orig := hetznerRobotAPIBase
+	hetznerRobotAPIBase = srv.URL
+	t.Cleanup(func() { hetznerRobotAPIBase = orig })
+
+	t.Setenv("HROBOT_USER", "ru")
+	t.Setenv("HROBOT_PASS", "rp")
+	res, err := provisionHetznerRobot("box", map[string]string{"confirmPaidOrder": "true", "live": "true"})
+	if err != nil {
+		t.Fatalf("live order against fake API failed: %v", err)
+	}
+	if !sawProductList || !sawTxn {
+		t.Fatalf("expected product list + transaction calls (list=%v txn=%v)", sawProductList, sawTxn)
+	}
+	if res == nil || !res.OK || res.ID != "B20240517-1" || res.Details["product"] != "KVM box" {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+}
+
+// Belt-and-braces: even with creds+confirm, live MUST NOT be reached
+// without opts.live (no order, no charge).
+func TestRobotConfirmedNoLiveNeverOrders(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	t.Cleanup(srv.Close)
+	orig := hetznerRobotAPIBase
+	hetznerRobotAPIBase = srv.URL
+	t.Cleanup(func() { hetznerRobotAPIBase = orig })
+	t.Setenv("HROBOT_USER", "ru")
+	t.Setenv("HROBOT_PASS", "rp")
+	res, err := provisionHetznerRobot("box", map[string]string{"confirmPaidOrder": "true"}) // no live
+	if err != nil || res == nil || !strings.Contains(res.Details["mode"], "dry-run") {
+		t.Fatalf("confirmed-no-live must be dry-run, got res=%+v err=%v", res, err)
+	}
+	if hits != 0 {
+		t.Fatalf("dry-run must make ZERO Robot API calls, got %d", hits)
 	}
 }
