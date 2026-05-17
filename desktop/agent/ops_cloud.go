@@ -130,6 +130,46 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_status",
+		Description: "List the user's Yaver managed-cloud boxes + subscription. Read-side counterpart to cloud_checkout: authed proxy to the Convex /subscription route (token from agent config, never payload). Returns {machines, subscription, relay}.",
+		Schema: map[string]interface{}{
+			"type":                 "object",
+			"properties":           map[string]interface{}{},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudStatusHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudStatusHandler proxies GET /subscription so MCP/mobile can
+// show managed boxes (status, origin tag, errorMessage) without their
+// own Convex URL/token. Same auth model as cloud_checkout.
+func opsCloudStatusHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.ConvexSiteURL) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+		return OpsResult{OK: false, Code: "not_authed", Error: "agent not authed (missing convex site url / token) — run `yaver auth`"}
+	}
+	req, err := newBearerRequest("GET", cfg.ConvexSiteURL+"/subscription", cfg.AuthToken, nil)
+	if err != nil {
+		return OpsResult{OK: false, Code: "request_error", Error: err.Error()}
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return OpsResult{OK: false, Code: "convex_unreachable", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return OpsResult{OK: false, Code: "status_failed", Error: fmt.Sprintf("subscription HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))}
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return OpsResult{OK: false, Code: "status_failed", Error: "subscription returned bad json"}
+	}
+	return OpsResult{OK: true, Initial: out}
 }
 
 // opsCloudCheckoutHandler proxies the Convex checkout route so an

@@ -35,3 +35,15 @@ func TestOpsCloudCheckoutBadPayload(t *testing.T) {
 		t.Fatalf("invalid JSON must be bad_payload, got %+v", res)
 	}
 }
+
+func TestOpsCloudStatusRegistered(t *testing.T) {
+	opsRegistryMu.RLock()
+	spec, ok := opsRegistry["cloud_status"]
+	opsRegistryMu.RUnlock()
+	if !ok || spec.Handler == nil {
+		t.Fatal("cloud_status ops verb not registered / no handler")
+	}
+	if spec.AllowGuest {
+		t.Error("cloud_status must not be guest-allowed (authed-as-owner proxy)")
+	}
+}
