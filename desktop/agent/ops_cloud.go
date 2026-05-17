@@ -142,6 +142,48 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_destroy",
+		Description: "Clean REMOVE of a BYO Hetzner box (no replacement): snapshot then delete, via the user's vault Hetzner token. Distinct from `recycle` (which creates a new box first). Requires serverId + confirm=true. Snapshot-before-delete always (recover-safety).",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"serverId", "confirm"},
+			"properties": map[string]interface{}{
+				"serverId": map[string]interface{}{"type": "string", "description": "Hetzner numeric server id (explicit — never fuzzy-matched)"},
+				"confirm":  map[string]interface{}{"type": "boolean"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudDestroyHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudDestroyHandler runs the BYO snapshot+delete in-process
+// (unlike the older `destroy` verb which only returns a hint). This
+// is the clean "remove this box" path — no new box, snapshot first.
+func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		ServerID string `json:"serverId"`
+		Confirm  bool   `json:"confirm"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	if strings.TrimSpace(p.ServerID) == "" {
+		return OpsResult{OK: false, Code: "bad_payload", Error: "serverId required (Hetzner numeric id — never fuzzy-matched for a delete)"}
+	}
+	if !p.Confirm {
+		return OpsResult{OK: false, Code: "unauthorized", Error: "remove requires confirm=true"}
+	}
+	res := mcpCloudDestroy(string(HostHetzner), strings.TrimSpace(p.ServerID), `{"confirm":"true"}`)
+	if m, ok := res.(map[string]interface{}); ok {
+		if e, has := m["error"]; has && e != nil {
+			return OpsResult{OK: false, Code: "destroy_failed", Error: fmt.Sprintf("%v", e), Initial: res}
+		}
+	}
+	return OpsResult{OK: true, Initial: res}
 }
 
 // opsCloudStatusHandler proxies GET /subscription so MCP/mobile can
