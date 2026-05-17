@@ -3246,6 +3246,12 @@ http.route({
             region: machine.region,
             errorMessage: machine.errorMessage,
             subscriptionId: machine.subscriptionId ? String(machine.subscriptionId) : null,
+            // Surfaced so the web Recycle/Remove dialog can resolve the
+            // exact Hetzner server id of a managed box from stored state
+            // — the user no longer has to recall it. Still an exact id
+            // (never fuzzy-matched); the dialog matches on deviceId/ip.
+            hetznerServerId: machine.hetznerServerId ?? null,
+            deviceId: machine.deviceId ?? null,
           }))
         : [],
     });

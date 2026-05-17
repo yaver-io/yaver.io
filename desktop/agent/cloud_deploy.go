@@ -976,6 +976,96 @@ func (m *CloudDeployManager) hetznerDeleteServer(token, id string) error {
 	return nil
 }
 
+// HetznerServerInfo is the resolved identity of one real server on
+// the user's Hetzner account. Returned by hetznerListServers so a UI
+// can let the user pick the EXACT box to recycle/remove by name+IP
+// instead of recalling a numeric id from memory. This is resolution
+// from the live account, never a fuzzy guess: the id is authoritative.
+type HetznerServerInfo struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	IP       string `json:"ip"`
+	Status   string `json:"status"`
+	Type     string `json:"type"`
+	Location string `json:"location"`
+	Created  string `json:"created"`
+}
+
+// hetznerListServers enumerates every server on the account (paginated)
+// via the same vault-backed Bearer token used for create/snapshot/
+// delete. Read-only. Used by the `cloud_list` ops verb to populate the
+// Recycle/Remove dialog's server picker.
+func (m *CloudDeployManager) hetznerListServers(token string) ([]HetznerServerInfo, error) {
+	out := []HetznerServerInfo{}
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/servers?per_page=50&page=%d", hetznerAPIBase, page)
+		req, err := http.NewRequest("GET", url, nil) //nolint:noctx
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("hetzner list: %w", err)
+		}
+		var result struct {
+			Servers []struct {
+				ID        int    `json:"id"`
+				Name      string `json:"name"`
+				Status    string `json:"status"`
+				Created   string `json:"created"`
+				PublicNet struct {
+					IPv4 struct {
+						IP string `json:"ip"`
+					} `json:"ipv4"`
+				} `json:"public_net"`
+				ServerType struct {
+					Name string `json:"name"`
+				} `json:"server_type"`
+				Datacenter struct {
+					Location struct {
+						Name string `json:"name"`
+					} `json:"location"`
+				} `json:"datacenter"`
+			} `json:"servers"`
+			Meta struct {
+				Pagination struct {
+					NextPage *int `json:"next_page"`
+				} `json:"pagination"`
+			} `json:"meta"`
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if derr != nil {
+			return nil, fmt.Errorf("parse hetzner list: %w", derr)
+		}
+		if result.Error != nil {
+			return nil, fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
+		}
+		for _, s := range result.Servers {
+			out = append(out, HetznerServerInfo{
+				ID:       fmt.Sprintf("%d", s.ID),
+				Name:     s.Name,
+				IP:       s.PublicNet.IPv4.IP,
+				Status:   s.Status,
+				Type:     s.ServerType.Name,
+				Location: s.Datacenter.Location.Name,
+				Created:  s.Created,
+			})
+		}
+		if result.Meta.Pagination.NextPage == nil {
+			break
+		}
+		page = *result.Meta.Pagination.NextPage
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal: project stack detection
 // ---------------------------------------------------------------------------

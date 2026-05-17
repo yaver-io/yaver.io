@@ -9,8 +9,18 @@
 // Thin trigger: every safety guard lives agent-side. Theme-aware
 // (Tailwind, light+dark) — no hardcoded dark surface.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { agentClient } from "@/lib/agent-client";
+
+interface HetznerServerInfo {
+  id: string;
+  name: string;
+  ip: string;
+  status: string;
+  type: string;
+  location: string;
+  created: string;
+}
 
 interface RecycleBoxDialogProps {
   deviceId: string;
@@ -31,6 +41,77 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Server-id resolution — so the user never has to recall it.
+  const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
+  const [servers, setServers] = useState<HetznerServerInfo[] | null>(null);
+  const [lookupBusy, setLookupBusy] = useState(false);
+  const [lookupNote, setLookupNote] = useState<string | null>(null);
+
+  // On open, try to resolve the exact Hetzner id of THIS box from the
+  // managed-box record (cloud_status → /subscription). Pure prefill;
+  // the field stays editable. Never overrides a value the user typed.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await agentClient.callOps("cloud_status", {});
+        if (cancelled || res.ok === false) return;
+        const machines: any[] = (res.initial as any)?.machines || [];
+        const hit =
+          machines.find((m) => m.deviceId && m.deviceId === deviceId) ||
+          machines.find((m) => m.hostname && m.hostname === deviceName);
+        if (hit?.hetznerServerId) {
+          setOldServerId((cur) => (cur.trim() === "" ? String(hit.hetznerServerId) : cur));
+          setResolvedFrom(
+            `managed box record${hit.hostname ? ` · ${hit.hostname}` : ""}${hit.serverIp ? ` · ${hit.serverIp}` : ""}`,
+          );
+        }
+      } catch {
+        /* best-effort prefill; manual entry / picker still available */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId, deviceName]);
+
+  // Live picker — list real account servers so the user picks the
+  // exact box by name+IP instead of recalling a numeric id. Resolution
+  // from the live account, not a fuzzy guess (user still selects).
+  async function lookupServers() {
+    setLookupBusy(true);
+    setLookupNote(null);
+    try {
+      const res = await agentClient.callOps("cloud_list", {});
+      if (res.ok === false) {
+        const code = (res as any).code || "";
+        setLookupNote(
+          code === "unknown_verb" || /unknown/i.test((res as any).error || "")
+            ? "This agent is too old for the server picker — update it. Managed boxes are still auto-resolved above."
+            : (res as any).error || "could not list servers",
+        );
+        return;
+      }
+      const list: HetznerServerInfo[] = (res.initial as any)?.servers || [];
+      setServers(list);
+      if (list.length === 0) {
+        setLookupNote("No servers on the connected Hetzner account.");
+        return;
+      }
+      // Auto-select the unambiguous match (by name, then current id).
+      const match =
+        list.find((s) => s.name && s.name === deviceName) ||
+        list.find((s) => s.id === oldServerId.trim());
+      if (match && oldServerId.trim() === "") {
+        setOldServerId(match.id);
+        setResolvedFrom(`live account · ${match.name} · ${match.ip}`);
+      }
+    } catch (e: any) {
+      setLookupNote(e?.message || String(e));
+    } finally {
+      setLookupBusy(false);
+    }
+  }
 
   async function runRecycle(confirm: boolean) {
     setBusy(true);
@@ -125,15 +206,53 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
         {phase !== "done" ? (
           <div className="grid gap-2.5">
             <label className="text-xs text-slate-600 dark:text-surface-400">
-              Old Hetzner server id (numeric — exact, never guessed)
+              Old Hetzner server id (exact — resolved for you, not guessed)
               <input
                 value={oldServerId}
-                onChange={(e) => setOldServerId(e.target.value)}
-                placeholder="e.g. 48211903"
+                onChange={(e) => { setOldServerId(e.target.value); setResolvedFrom(null); }}
+                placeholder="resolving… or pick / type the id"
                 disabled={phase === "preview"}
                 className={`mt-1 ${inputCls}`}
               />
             </label>
+            {resolvedFrom ? (
+              <p className="-mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
+                ✓ resolved from {resolvedFrom} — confirm it's the right box
+              </p>
+            ) : null}
+            {phase !== "preview" ? (
+              <div className="-mt-0.5 grid gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void lookupServers()}
+                  disabled={lookupBusy}
+                  className="justify-self-start rounded-md border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-700 disabled:opacity-50 dark:border-surface-700 dark:text-surface-300"
+                >
+                  {lookupBusy ? "Looking up…" : servers ? "Refresh server list" : "Look up my servers"}
+                </button>
+                {servers && servers.length > 0 ? (
+                  <select
+                    value={oldServerId}
+                    onChange={(e) => {
+                      const s = servers.find((x) => x.id === e.target.value);
+                      setOldServerId(e.target.value);
+                      setResolvedFrom(s ? `live account · ${s.name} · ${s.ip}` : null);
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="">— pick the box to {mode === "recycle" ? "recycle" : "remove"} —</option>
+                    {servers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} · {s.ip} · {s.type} · {s.status} (id {s.id})
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+                {lookupNote ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400">{lookupNote}</p>
+                ) : null}
+              </div>
+            ) : null}
             {mode === "recycle" ? (
               <>
                 <label className="text-xs text-slate-600 dark:text-surface-400">

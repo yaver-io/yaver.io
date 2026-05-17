@@ -158,6 +158,38 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_list",
+		Description: "List the user's real Hetzner servers (id, name, ip, status, type, location) via the vault Hetzner token. Read-only; no payload. Lets a UI resolve the EXACT server id to recycle/remove from the live account instead of asking the human to recall it — the user still picks the exact row, so this is resolution, not a fuzzy guess.",
+		Schema: map[string]interface{}{
+			"type":                 "object",
+			"properties":           map[string]interface{}{},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudListHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudListHandler returns the account's real servers so the
+// Recycle/Remove dialog can offer a pick-the-box UI. Read-only — the
+// vault Hetzner token never appears in the payload, and listing
+// cannot mutate or delete anything.
+func opsCloudListHandler(_ OpsContext, _ json.RawMessage) OpsResult {
+	token := accountField(ProviderHetzner, "token")
+	if token == "" {
+		return OpsResult{OK: false, Code: "no_account", Error: "Hetzner not connected — /accounts/connect first (BYO token)"}
+	}
+	m, err := NewCloudDeployManager(".")
+	if err != nil {
+		return OpsResult{OK: false, Code: "manager_error", Error: err.Error()}
+	}
+	servers, err := m.hetznerListServers(token)
+	if err != nil {
+		return OpsResult{OK: false, Code: "list_failed", Error: err.Error()}
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{"servers": servers}}
 }
 
 // opsCloudDestroyHandler runs the BYO snapshot+delete in-process
