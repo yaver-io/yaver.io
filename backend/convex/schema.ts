@@ -761,6 +761,12 @@ export default defineSchema({
     teamId: v.optional(v.string()),   // if team-owned, all team members can access
     subscriptionId: v.optional(v.id("subscriptions")),
     machineType: v.string(),          // "cpu" | "gpu"
+    // Provenance tag. "managed" = provisioned/adopted by Yaver (bought
+    // from us, billed via LemonSqueezy or owner dev-adopt). Plain BYO
+    // boxes are not cloudMachines rows at all, so they read as
+    // "self-hosted" at the device layer. Optional for back-compat:
+    // any existing cloudMachines row is Yaver-side ⇒ treat as managed.
+    origin: v.optional(v.union(v.literal("managed"), v.literal("self-hosted"))),
     status: v.string(),               // "provisioning" | "active" | "stopping" | "stopped" | "error"
     multiUser: v.optional(v.boolean()), // true for shared team machines
     hetznerServerId: v.optional(v.string()),

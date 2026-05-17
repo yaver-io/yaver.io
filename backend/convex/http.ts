@@ -345,6 +345,8 @@ for (const path of [
   "/devices/list", "/devices/owner-by-hardware", "/devices/pending-list", "/devices/pending-claim", "/devices/alias", "/config", "/settings", "/settings/repair-relay", "/packages",
   "/billing/yaver-cloud/checkout",
   "/billing/yaver-cloud/dev-activate",
+  "/billing/yaver-cloud/dev-adopt",
+  "/billing/yaver-cloud/dev-deprovision",
   "/guests/invite", "/guests/accept", "/guests/accept-code",
   "/guests/find-by-code", "/guests/revoke", "/guests/list", "/guests/hosts",
   "/guests/allowed", "/guests/config", "/guests/usage",
@@ -3129,6 +3131,71 @@ http.route({
       const message = error instanceof Error ? error.message : String(error);
       return errorResponse(message, 500);
     }
+  }),
+});
+
+/** POST /billing/yaver-cloud/dev-adopt — owner-only: register an
+ *  EXISTING Hetzner box as a managed machine (imitates a managed
+ *  purchase) without provisioning a new server or LemonSqueezy. */
+http.route({
+  path: "/billing/yaver-cloud/dev-adopt",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    let body: { hetznerServerId?: string; region?: string; serverIp?: string; hostname?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    const hetznerServerId = (body.hetznerServerId ?? "").toString().trim();
+    if (!hetznerServerId) return errorResponse("hetznerServerId is required", 400);
+    try {
+      const machineId = await ctx.runMutation(internal.cloudMachines.adoptExisting, {
+        userId: session.userDocId as any,
+        hetznerServerId,
+        region: (body.region ?? "eu").trim() || "eu",
+        serverIp: body.serverIp,
+        hostname: body.hostname,
+      });
+      return jsonResponse({ ok: true, machineId, origin: "managed", mode: "dev-adopt" });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : String(error), 500);
+    }
+  }),
+});
+
+/** POST /billing/yaver-cloud/dev-deprovision — owner-only: tear down
+ *  a managed machine the caller owns (snapshot+delete via the managed
+ *  destroy path). The web "Decommission" button for managed boxes. */
+http.route({
+  path: "/billing/yaver-cloud/dev-deprovision",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    let body: { machineId?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      return errorResponse("Invalid JSON", 400);
+    }
+    const machineId = (body.machineId ?? "").toString().trim();
+    if (!machineId) return errorResponse("machineId is required", 400);
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, { machineId: machineId as any });
+    if (!machine) return errorResponse("Machine not found", 404);
+    if (String(machine.userId) !== String(session.userDocId)) {
+      return errorResponse("Not your machine", 403);
+    }
+    await ctx.runMutation(api.cloudMachines.deprovision, { machineId: machineId as any });
+    return jsonResponse({ ok: true, machineId, mode: "dev-deprovision", note: "snapshot+delete scheduled" });
   }),
 });
 

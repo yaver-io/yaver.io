@@ -389,6 +389,7 @@ async function createCloudMachine(
     teamId: args.teamId,
     subscriptionId: args.subscriptionId,
     machineType: args.machineType,
+    origin: "managed", // every cloudMachines row is a Yaver-side box
     status: "provisioning",
     multiUser: !!args.teamId,
     region: args.region ?? "eu",
@@ -421,6 +422,47 @@ export const create = mutation({
     customDomain: v.optional(v.string()),
   },
   handler: async (ctx, args) => createCloudMachine(ctx, args),
+});
+
+// adoptExisting registers an ALREADY-RUNNING Hetzner box as a managed
+// cloudMachines row WITHOUT provisioning a new server. Used by the
+// owner-gated /billing/yaver-cloud/dev-adopt route to imitate "bought
+// from Yaver managed cloud" for an existing box (e.g. the test
+// ephemeral) so the managed teardown path can be exercised end-to-end
+// without LemonSqueezy. It deliberately does NOT schedule
+// internal.cloudMachines.provision (the box already exists).
+export const adoptExisting = internalMutation({
+  args: {
+    userId: v.id("users"),
+    hetznerServerId: v.string(),
+    region: v.optional(v.string()),
+    serverIp: v.optional(v.string()),
+    hostname: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const spec = MACHINE_SPECS["cpu" as keyof typeof MACHINE_SPECS];
+    const now = Date.now();
+    return await ctx.db.insert("cloudMachines", {
+      userId: args.userId,
+      machineType: "cpu",
+      origin: "managed",
+      status: "active",
+      multiUser: false,
+      hetznerServerId: args.hetznerServerId,
+      serverIp: args.serverIp,
+      hostname: args.hostname,
+      region: args.region ?? "eu",
+      tools: [],
+      specs: {
+        vcpu: spec.vcpu,
+        ramGb: spec.ramGb,
+        diskGb: spec.diskGb,
+        arch: spec.arch,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
 });
 
 export const ensureForSubscription = mutation({
