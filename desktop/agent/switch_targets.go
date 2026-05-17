@@ -30,6 +30,11 @@ const (
 	HostYaverCloud    TargetHost = "yaver-cloud"
 	HostVercel        TargetHost = "vercel"
 	HostCFWorkers     TargetHost = "cloudflare-workers"
+	// HostHetzner is the managed-cloud VPS target. Re-enabled
+	// 2026-05-17 for programmatic add/remove of managed boxes (see
+	// docs/managed-cloud-host-lifecycle.md Phase A); the API client
+	// in cloud_deploy.go always existed but was unwired 2026-04-28.
+	HostHetzner TargetHost = "hetzner"
 )
 
 type SwitchTarget struct {

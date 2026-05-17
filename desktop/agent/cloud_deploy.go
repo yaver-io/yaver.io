@@ -191,7 +191,7 @@ func (m *CloudDeployManager) Deploy(plan, region, name, domain string) (string, 
 	var serverIP string
 	if apiToken != "" {
 		step("Provisioning Hetzner server via API…")
-		serverIP, err = m.hetznerCreateServer(apiToken, name, plan, region)
+		serverIP, _, err = m.hetznerCreateServer(apiToken, name, plan, region)
 		if err != nil {
 			return progress.String(), fmt.Errorf("provision server: %w", err)
 		}
@@ -838,9 +838,19 @@ func (m *CloudDeployManager) cloudSCPString(ip, content, remotePath string) erro
 // Internal: Hetzner API
 // ---------------------------------------------------------------------------
 
+// Test seam (var, not const) so the httptest fake Hetzner API and the
+// no-sleep path are reachable without mocks or a 100s boot wait.
+// Production keeps the real API + readiness poll untouched.
+var (
+	hetznerAPIBase       = "https://api.hetzner.cloud/v1"
+	hetznerSkipReadyWait = false
+)
+
 // hetznerCreateServer provisions a CX server via Hetzner Cloud API.
-// Returns the public IPv4 address of the new server.
-func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region string) (string, error) {
+// Returns the public IPv4 address AND the numeric server id (as a
+// string) — the id is required to snapshot+delete the box later
+// (Phase A managed add/remove). The id was previously discarded.
+func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region string) (string, string, error) {
 	// Map Yaver plan → Hetzner server type
 	serverTypeMap := map[string]string{
 		"starter": "cx21",
@@ -869,16 +879,16 @@ func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region strin
 		"user_data":   cloudBootstrapScript(),
 	}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest("POST", "https://api.hetzner.cloud/v1/servers", bytes.NewReader(body)) //nolint:noctx
+	req, err := http.NewRequest("POST", hetznerAPIBase+"/servers", bytes.NewReader(body)) //nolint:noctx
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("hetzner API: %w", err)
+		return "", "", fmt.Errorf("hetzner API: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -897,30 +907,60 @@ func (m *CloudDeployManager) hetznerCreateServer(token, name, plan, region strin
 		} `json:"error"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("parse hetzner response: %w", err)
+		return "", "", fmt.Errorf("parse hetzner response: %w", err)
 	}
 	if result.Error != nil {
-		return "", fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
+		return "", "", fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
 	}
 
 	ip := result.Server.PublicNet.IPv4.IP
 	if ip == "" {
-		return "", fmt.Errorf("hetzner returned no IP for new server")
+		return "", "", fmt.Errorf("hetzner returned no IP for new server")
 	}
+	id := fmt.Sprintf("%d", result.Server.ID)
 
-	// Wait for SSH to become available (server needs ~30s to boot)
-	for i := 0; i < 20; i++ {
-		time.Sleep(5 * time.Second)
-		if err := m.cloudSSHExec(ip, "echo ready"); err == nil {
-			break
+	// Wait for SSH to become available (server needs ~30s to boot).
+	// Skipped under test (hetznerSkipReadyWait) so the fake API path
+	// doesn't sleep 100s.
+	if !hetznerSkipReadyWait {
+		for i := 0; i < 20; i++ {
+			time.Sleep(5 * time.Second)
+			if err := m.cloudSSHExec(ip, "echo ready"); err == nil {
+				break
+			}
 		}
 	}
-	return ip, nil
+	return ip, id, nil
+}
+
+// hetznerSnapshotServer creates a snapshot image of a server before
+// it is deleted. CLAUDE.md hard rule: a managed box is NEVER deleted
+// without a recoverable snapshot first (snapshot ≈ €0.10/mo vs
+// €6.49/mo running). Returns error so the caller can ABORT the delete
+// if the snapshot fails — never delete an un-snapshotted box.
+func (m *CloudDeployManager) hetznerSnapshotServer(token, id, label string) error {
+	payload := map[string]interface{}{"type": "snapshot", "description": label}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequest("POST", hetznerAPIBase+"/servers/"+id+"/actions/create_image", bytes.NewReader(body)) //nolint:noctx
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("hetzner snapshot: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("hetzner snapshot returned %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // hetznerDeleteServer deletes a server by its Hetzner numeric ID (stored as string).
 func (m *CloudDeployManager) hetznerDeleteServer(token, id string) error {
-	req, err := http.NewRequest("DELETE", "https://api.hetzner.cloud/v1/servers/"+id, nil) //nolint:noctx
+	req, err := http.NewRequest("DELETE", hetznerAPIBase+"/servers/"+id, nil) //nolint:noctx
 	if err != nil {
 		return err
 	}

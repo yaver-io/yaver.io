@@ -25,15 +25,93 @@ type ProvisionResult struct {
 type provisioner func(name string, opts map[string]string) (*ProvisionResult, error)
 
 // provisionerRegistry maps a target host to its provisioner function.
-// Lean target set (2026-04-28): Supabase + Vercel (export-only escape
-// routes). Convex Cloud, Cloudflare Workers, and Yaver Cloud are
-// first-class deploy targets but don't need automated provisioning —
-// the Convex/CF/Yaver CLIs / dashboards handle creation.
+// Supabase + Vercel are export-only escape routes. Hetzner is the
+// managed-cloud box target — re-added 2026-05-17 for programmatic
+// add/remove from web+mobile (docs/managed-cloud-host-lifecycle.md);
+// the API client always existed (cloud_deploy.go), it was just
+// unwired 2026-04-28. Convex/CF/Yaver Cloud need no auto-provision.
 func provisionerRegistry() map[TargetHost]provisioner {
 	return map[TargetHost]provisioner{
 		HostSupabaseCloud: provisionSupabase,
 		HostVercel:        provisionVercel,
+		HostHetzner:       provisionHetzner,
 	}
+}
+
+// provisionHetzner creates a managed Hetzner box. Token comes from
+// the vault-backed accounts store (accountField) — never from the
+// request payload or Convex, per the privacy contract. The numeric
+// server id is returned so cloud_destroy can snapshot+delete it.
+func provisionHetzner(name string, opts map[string]string) (*ProvisionResult, error) {
+	token := accountField(ProviderHetzner, "token")
+	if token == "" {
+		return &ProvisionResult{Provider: "hetzner", Manual: "Connect Hetzner first via /accounts/connect (Console → Security → API Tokens)."}, nil
+	}
+	plan := opts["plan"]
+	if plan == "" {
+		plan = "starter"
+	}
+	region := opts["region"]
+	if region == "" {
+		region = "eu"
+	}
+	workDir := opts["workDir"]
+	if workDir == "" {
+		workDir = "."
+	}
+	m, err := NewCloudDeployManager(workDir)
+	if err != nil {
+		return nil, err
+	}
+	ip, id, err := m.hetznerCreateServer(token, name, plan, region)
+	if err != nil {
+		return nil, err
+	}
+	return &ProvisionResult{
+		OK: true, Provider: "hetzner", Resource: "server", ID: id,
+		Details: map[string]string{"ip": ip, "plan": plan, "region": region, "name": name},
+		Notes:   "Box provisioning; cloud-init brings up the yaver agent — it will appear as a pending device to claim. Decommission via cloud_destroy (snapshots first).",
+	}, nil
+}
+
+// mcpCloudDestroy snapshots then deletes a managed Hetzner box.
+// confirm=true is mandatory; snapshot-before-delete is mandatory
+// (opts.skipSnapshot=true is the only, explicit, override). Token is
+// vault-backed. Self-destruct prevention (don't delete the box you
+// orchestrate from) is enforced one layer up in the recycle
+// orchestration (Phase B) — this primitive just destroys an id.
+func mcpCloudDestroy(host, id, optsJSON string) interface{} {
+	if TargetHost(host) != HostHetzner {
+		return map[string]interface{}{"error": fmt.Sprintf("cloud_destroy supports host %q only (got %q)", HostHetzner, host)}
+	}
+	if strings.TrimSpace(id) == "" {
+		return map[string]interface{}{"error": "id (hetzner numeric server id) is required"}
+	}
+	opts := map[string]string{}
+	for k, v := range parseJSONArgs(optsJSON) {
+		opts[k] = fmt.Sprintf("%v", v)
+	}
+	if opts["confirm"] != "true" {
+		return map[string]interface{}{"error": "destroy requires confirm=true"}
+	}
+	token := accountField(ProviderHetzner, "token")
+	if token == "" {
+		return map[string]interface{}{"error": "Hetzner not connected — /accounts/connect first"}
+	}
+	m, err := NewCloudDeployManager(".")
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	if opts["skipSnapshot"] != "true" {
+		label := fmt.Sprintf("yaver-predelete-%s-%d", id, time.Now().Unix())
+		if serr := m.hetznerSnapshotServer(token, id, label); serr != nil {
+			return map[string]interface{}{"error": "snapshot failed — NOT deleting (recover-safety): " + serr.Error()}
+		}
+	}
+	if derr := m.hetznerDeleteServer(token, id); derr != nil {
+		return map[string]interface{}{"error": derr.Error()}
+	}
+	return &ProvisionResult{OK: true, Provider: "hetzner", Resource: "server", ID: id, Notes: "snapshot taken, server deleted"}
 }
 
 var provisionHTTP = &http.Client{Timeout: 30 * time.Second}
