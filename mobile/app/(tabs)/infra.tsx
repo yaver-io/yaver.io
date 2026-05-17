@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
@@ -50,155 +50,6 @@ function fmtUptime(seconds?: number) {
 }
 
 type InstallEntry = { name: string; installed: boolean; description: string };
-
-// Phase D1 mobile front door — thin: routes through the agent's
-// `cloud_checkout` ops verb (authed Convex proxy; token never leaves
-// the agent) and opens the LemonSqueezy URL. Owner/preview-gated
-// server-side; non-owner = a verbatim 403.
-// Per-managed-machine actions (D3 git connect/push, D4 reload/web-
-// preview, D5 deploy). Targets the box's EXPLICIT deviceId only —
-// never guessed. P2P via the agent ops verbs; tokens never Convex.
-function ManagedMachineActionsMobile({ deviceId, c }: { deviceId?: string; c: ReturnType<typeof useColors> }) {
-  const [busy, setBusy] = useState<string | null>(null);
-  const [out, setOut] = useState<string | null>(null);
-  const [sess, setSess] = useState<{ id: string; code: string } | null>(null);
-  if (!deviceId) {
-    return <Text style={{ fontSize: 10, color: c.textMuted }}>actions appear once the box registers (deviceId pending)</Text>;
-  }
-  const run = async (label: string, verb: string, payload: Record<string, unknown>) => {
-    setBusy(label);
-    setOut(null);
-    const r = await quicClient.callOps(verb, { ...payload, deviceId });
-    setBusy(null);
-    if (r?.ok === false || (r as any)?.error) { setOut(`✗ ${(r as any)?.error || "failed"}`); return r; }
-    setOut(`✓ ${label}`);
-    return r;
-  };
-  const connect = async (provider: "github" | "gitlab") => {
-    const r = await run(`connect ${provider}`, "git_connect", { provider });
-    const init = (r as any)?.initial;
-    if (init?.verification_uri && init?.user_code) {
-      setSess({ id: init.sessionId, code: init.user_code });
-      Linking.openURL(init.verification_uri).catch(() => {});
-      setOut(`open browser, enter ${init.user_code}, then Check`);
-    }
-  };
-  const check = async () => {
-    if (!sess) return;
-    setBusy("check");
-    const r = await quicClient.callOps("git_connect_status", { sessionId: sess.id, deviceId });
-    setBusy(null);
-    const st = (r as any)?.initial?.state;
-    setOut(st === "done" ? "✓ git connected" : `state: ${st ?? "?"}`);
-    if (st === "done") setSess(null);
-  };
-  const Btn = ({ id, label, onPress }: { id: string; label: string; onPress: () => void }) => (
-    <Pressable
-      disabled={busy !== null}
-      onPress={onPress}
-      style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: c.border, opacity: busy ? 0.5 : 1 }}
-    >
-      <Text style={{ fontSize: 10, color: c.textMuted }}>{busy === id ? "…" : label}</Text>
-    </Pressable>
-  );
-  return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-      <Btn id="connect github" label="Connect GitHub" onPress={() => void connect("github")} />
-      <Btn id="connect gitlab" label="Connect GitLab" onPress={() => void connect("gitlab")} />
-      {sess ? <Btn id="check" label={`✓ authorized ${sess.code}`} onPress={() => void check()} /> : null}
-      <Btn id="push git" label="Push git" onPress={() => void run("push git", "git_push", {})} />
-      <Btn id="reload" label="Reload" onPress={() => void run("reload", "reload", {})} />
-      <Btn id="web preview" label="Web preview" onPress={() => void run("web preview", "web-preview", {})} />
-      <Btn id="deploy" label="Deploy" onPress={() => void run("deploy", "deploy", {})} />
-      {out ? <Text style={{ fontSize: 10, color: out.startsWith("✗") ? "#fca5a5" : c.textMuted }}>{out}</Text> : null}
-    </View>
-  );
-}
-
-function BuyManagedCloudCard({ c }: { c: ReturnType<typeof useColors> }) {
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const [machines, setMachines] = useState<any[]>([]);
-
-  // Poll the managed-box list via the cloud_status ops verb (agent
-  // proxies Convex /subscription; no Convex URL/token on mobile).
-  // Provision is async, so refresh so a bought box appears when ready.
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      const res = await quicClient.callOps("cloud_status", {});
-      if (!alive) return;
-      const list = (res?.initial as any)?.machines;
-      setMachines(Array.isArray(list) ? list : []);
-    };
-    void load();
-    const iv = setInterval(() => void load(), 8000);
-    return () => { alive = false; clearInterval(iv); };
-  }, []);
-
-  const buy = async () => {
-    setBusy(true);
-    setMsg(null);
-    const res = await quicClient.callOps("cloud_checkout", { machineType: "cpu", region: "eu" });
-    setBusy(false);
-    const url = (res?.initial as any)?.checkoutUrl;
-    if (res?.ok && url) {
-      Linking.openURL(url).catch((e) => setMsg(`✗ ${e?.message ?? e}`));
-      setMsg("Opening checkout…");
-    } else {
-      setMsg(`✗ ${res?.error || "checkout failed"}`);
-    }
-  };
-  return (
-    <View style={[card(c), { gap: 8, borderColor: "rgba(16,185,129,0.45)", backgroundColor: "rgba(16,185,129,0.08)" }]}>
-      <Text style={{ color: c.textPrimary, fontWeight: "700", fontSize: 14 }}>☁ Buy a managed cloud box</Text>
-      <Text style={{ color: c.textMuted, fontSize: 12 }}>
-        CPU box — React Native/Hermes + web + deploy. Opens LemonSqueezy; the
-        box auto-provisions on payment. Private preview (non-owner = 403).
-      </Text>
-      <Pressable
-        disabled={busy}
-        onPress={() => void buy()}
-        style={{
-          alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 9,
-          borderRadius: 8, backgroundColor: "rgba(16,185,129,0.15)",
-          borderWidth: 1, borderColor: "rgba(16,185,129,0.5)", opacity: busy ? 0.5 : 1,
-        }}
-      >
-        <Text style={{ color: "#6ee7b7", fontWeight: "700", fontSize: 13 }}>
-          {busy ? "…" : "Buy → checkout"}
-        </Text>
-      </Pressable>
-      {msg ? (
-        <Text style={{ fontSize: 11, color: msg.startsWith("✗") ? "#fecaca" : c.textMuted }}>{msg}</Text>
-      ) : null}
-      {machines.length > 0 ? (
-        <View style={{ gap: 4, marginTop: 4 }}>
-          {machines.map((m: any) => (
-            <View key={String(m?._id)} style={{ gap: 4 }}>
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Text style={{ fontSize: 10, fontWeight: "700", color: m?.status === "error" ? "#fca5a5" : "#7dd3fc" }}>
-                  {String(m?.origin ?? "managed").toUpperCase()}
-                </Text>
-                <Text style={{ fontSize: 11, color: c.textMuted }}>
-                  srv {String(m?.hetznerServerId ?? "—")} · {String(m?.region ?? "eu")} ·{" "}
-                  <Text style={{ color: m?.status === "error" ? "#fca5a5" : c.textMuted, fontWeight: "600" }}>
-                    {String(m?.status ?? "?")}
-                  </Text>
-                </Text>
-              </View>
-              <ManagedMachineActionsMobile deviceId={m?.deviceId} c={c} />
-            </View>
-          ))}
-          {machines.some((m: any) => m?.status === "provisioning") ? (
-            <Text style={{ fontSize: 10, color: c.textMuted }}>auto-refreshing every 8s — box appears here when ready</Text>
-          ) : null}
-        </View>
-      ) : null}
-    </View>
-  );
-}
-
 export default function InfraScreen() {
   const c = useColors();
   const router = useRouter();
@@ -427,7 +278,6 @@ export default function InfraScreen() {
         </View>
       ) : (
         <ScrollView contentContainerStyle={[{ padding: 16, paddingBottom: 32, gap: 12 }, tabletContent]}>
-          <BuyManagedCloudCard c={c} />
           {!capabilitySnapshot?.targets?.["web-preview"]?.enabled && capabilitySnapshot?.targets?.["web-preview"]?.reason ? (
             <View style={[card(c), { gap: 6, borderColor: "#7f1d1d", backgroundColor: "#2b1212" }]}>
               <Text style={{ color: "#fecaca", fontSize: 13, fontWeight: "700" }}>Remote preview blocked</Text>
