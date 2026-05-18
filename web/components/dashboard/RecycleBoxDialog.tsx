@@ -106,6 +106,11 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   // Non-null while Yaver is auto-preparing a control agent (e.g.
   // updating a stale one) so the user never has to do it by hand.
   const [preparing, setPreparing] = useState<string | null>(null);
+  // True when the only viable executor is the target box itself, so a
+  // Remove makes it snapshot + delete itself (last-resort, Remove-only;
+  // Recycle never self-destructs). The Hetzner call completes on the
+  // control plane before the box terminates.
+  const [selfMode, setSelfMode] = useState(false);
 
   // Resource resolution — the user never has to recall an id.
   const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
@@ -279,6 +284,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
     setConnectError(null);
     setControlName(null);
     setPreparing(null);
+    setSelfMode(false);
 
     const candidates = controlCandidates();
     const reasons = new Set<SkipReason>();
@@ -291,6 +297,26 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
     if (!found && !cancelledRef.v && tooOld.length > 0) {
       found = await autoUpdateAndReprobe(tooOld[0], reasons, cancelledRef);
       if (!cancelledRef.v) setPreparing(null);
+    }
+
+    // Last resort (Remove-only): no other device can do it, but the box
+    // itself holds the cloud account. Let it snapshot + delete itself —
+    // the provider call returns before the box dies. Recycle never does
+    // this (it must stay alive to health-check the replacement).
+    let isSelf = false;
+    if (!found && !cancelledRef.v) {
+      const selfReasons = new Set<SkipReason>();
+      const selfTooOld: Device[] = [];
+      found = await probeForControl([device], selfReasons, selfTooOld, cancelledRef);
+      if (!found && !cancelledRef.v && selfTooOld.length > 0) {
+        found = await autoUpdateAndReprobe(device, selfReasons, cancelledRef);
+        if (!cancelledRef.v) setPreparing(null);
+      }
+      if (found) {
+        isSelf = true;
+      } else {
+        selfReasons.forEach((r) => reasons.add(r));
+      }
     }
 
     if (cancelledRef.v) {
@@ -310,7 +336,8 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
 
     const { client: chosen, device: chosenDevice, servers } = found;
     clientRef.current = chosen;
-    setControlName(chosenDevice.alias || chosenDevice.name || "another device");
+    setSelfMode(isSelf);
+    setControlName(isSelf ? `${deviceName} (itself)` : chosenDevice.alias || chosenDevice.name || "another device");
     setResources(servers);
 
     // Resolve the exact resource for this box. Managed record first
@@ -410,11 +437,14 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
     setBusy(true);
     setError(null);
     try {
-      // targetDeviceId is sent for the agent-side self-destruct guard
-      // (defense-in-depth); older agents ignore the extra field.
+      // Control-agent path: send targetDeviceId so the agent-side
+      // self-destruct guard fires if it IS the target (defense-in-
+      // depth; old agents ignore it). Self-decommission path (selfMode):
+      // omit it on purpose — the box deleting itself is intended here,
+      // and the user has confirmed via the destructive button.
       const res = await callOps("cloud_destroy", {
         serverId: resourceId.trim(),
-        targetDeviceId: deviceId,
+        ...(selfMode ? {} : { targetDeviceId: deviceId }),
         confirm: true,
       });
       const r: any = res.initial || {};
@@ -512,6 +542,13 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
                   Resolved from {resolvedFrom || "your connected cloud account"}
                   {controlName ? ` · runs via ${controlName}` : ""}.
                 </p>
+                {selfMode ? (
+                  <p className="m-0 mt-1 text-[11px] font-semibold">
+                    {mode === "recycle"
+                      ? "⚠ Recycle needs another of your devices online — it must keep this box serving while it builds the replacement. Switch to Remove to decommission this box now, or bring another device online for Recycle."
+                      : "No other device holds your cloud account, so this box will snapshot & delete itself. The provider call completes before it powers off; the snapshot is your recovery point."}
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   onClick={() => { setShowPicker(true); if (!resources) void lookupResources(); }}
@@ -619,7 +656,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
           >
             {phase === "done" ? "Close" : "Cancel"}
           </button>
-          {ready && mode === "recycle" && phase === "form" ? (
+          {ready && !selfMode && mode === "recycle" && phase === "form" ? (
             <button
               onClick={() => void runRecycle(false)}
               disabled={!resolved || newName.trim() === "" || busy}
@@ -628,7 +665,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
               {busy ? "Previewing…" : "Preview plan (dry-run)"}
             </button>
           ) : null}
-          {ready && mode === "recycle" && phase === "preview" ? (
+          {ready && !selfMode && mode === "recycle" && phase === "preview" ? (
             <button
               onClick={() => void runRecycle(true)}
               disabled={busy}
