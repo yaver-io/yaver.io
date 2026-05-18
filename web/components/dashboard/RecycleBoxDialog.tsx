@@ -111,6 +111,9 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   // Recycle never self-destructs). The Hetzner call completes on the
   // control plane before the box terminates.
   const [selfMode, setSelfMode] = useState(false);
+  // Snapshot before delete is opt-in (default OFF): it's a paid,
+  // lingering disk image — most decommissions don't want one.
+  const [snapshot, setSnapshot] = useState(false);
 
   // Resource resolution — the user never has to recall an id.
   const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
@@ -449,6 +452,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
       const res = await callOps("cloud_destroy", {
         serverId: resourceId.trim(),
         ...(selfMode ? {} : { targetDeviceId: deviceId }),
+        snapshot,
         confirm: true,
       });
       const r: any = res.initial || {};
@@ -456,7 +460,9 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         setError(r.error || (res as any).error || "remove failed");
         setPhase("form");
       } else {
-        setSteps([`Snapshot taken, cloud resource ${resolvedLabel || resourceId.trim()} deleted`]);
+        setSteps([
+          `${snapshot ? "Snapshot taken, then " : ""}cloud resource ${resolvedLabel || resourceId.trim()} deleted${snapshot ? "" : " (no snapshot)"}`,
+        ]);
         setPhase("done");
       }
     } catch (e: any) {
@@ -511,7 +517,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         <p className="mb-3 text-xs text-slate-500 dark:text-surface-400">
           {mode === "recycle"
             ? "Creates a fresh box, health-checks it, then snapshots & deletes the old one. The old box keeps serving until the new one is healthy — a failure rolls back with nothing destroyed."
-            : "Snapshots then deletes this box. No replacement. The snapshot is your recovery point. Runs from another of your devices, so it works even if this box is already offline."}
+            : "Deletes this box. No replacement. Optionally take a snapshot first as a recovery point (off by default — a snapshot is a paid, lingering disk image). Runs from another of your devices, so it works even if this box is already offline."}
         </p>
 
         <div className="mb-3 flex gap-1.5">
@@ -550,7 +556,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
                   <p className="m-0 mt-1 text-[11px] font-semibold">
                     {mode === "recycle"
                       ? "⚠ Recycle needs another of your devices online — it must keep this box serving while it builds the replacement. Switch to Remove to decommission this box now, or bring another device online for Recycle."
-                      : "No other device holds your cloud account, so this box will snapshot & delete itself. The provider call completes before it powers off; the snapshot is your recovery point."}
+                      : `No other device holds your cloud account, so this box will delete itself${snapshot ? " (snapshot first)" : " (no snapshot)"}. The provider call completes before it powers off.`}
                   </p>
                 ) : null}
                 <button
@@ -641,6 +647,22 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
                   </label>
                 </div>
               </>
+            ) : null}
+            {mode === "remove" ? (
+              <label className="flex items-start gap-2 text-xs text-slate-600 dark:text-surface-400">
+                <input
+                  type="checkbox"
+                  checked={snapshot}
+                  onChange={(e) => setSnapshot(e.target.checked)}
+                  className="mt-0.5 h-3.5 w-3.5"
+                />
+                <span>
+                  Take a snapshot first (recovery point).{" "}
+                  <span className="opacity-70">
+                    Off by default — a snapshot is a paid, lingering disk image in your cloud account; leave off for a disposable box.
+                  </span>
+                </span>
+              </label>
             ) : null}
           </div>
         ) : null}

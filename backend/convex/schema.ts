@@ -721,6 +721,11 @@ export default defineSchema({
     provider: v.optional(v.string()),
     cloudResourceId: v.optional(v.string()),
     hetznerServerId: v.optional(v.string()),
+    // Decommission policy + recovery pointer (see cloudMachines for the
+    // privacy/security rationale). snapshotOnDelete defaults OFF.
+    snapshotOnDelete: v.optional(v.boolean()),
+    lastSnapshotId: v.optional(v.string()),
+    lastSnapshotAt: v.optional(v.number()),
     serverIp: v.optional(v.string()),
     domain: v.optional(v.string()), // e.g. "abc123.relay.yaver.io"
     region: v.string(), // "eu" | "us" — datacenter region
@@ -784,6 +789,17 @@ export default defineSchema({
     // new code reads `cloudResourceId` (provider-agnostic) and falls back.
     cloudResourceId: v.optional(v.string()),
     hetznerServerId: v.optional(v.string()),
+    // Decommission policy + recovery pointer. snapshotOnDelete defaults
+    // OFF (a snapshot is a paid, lingering image). lastSnapshotId is an
+    // opaque provider resource id (NOT contents — snapshot data never
+    // touches Convex; privacy-safe, same class as hetznerServerId).
+    // SECURITY: managed boxes share Yaver's platform token, so any read
+    // of these MUST be scoped by this row's userId — one developer can
+    // never see another's snapshot. BYO is isolated by the user's own
+    // provider account.
+    snapshotOnDelete: v.optional(v.boolean()),
+    lastSnapshotId: v.optional(v.string()),
+    lastSnapshotAt: v.optional(v.number()),
     serverIp: v.optional(v.string()),
     hostname: v.optional(v.string()),
     // The box's Yaver agent deviceId. For provisioned boxes this is

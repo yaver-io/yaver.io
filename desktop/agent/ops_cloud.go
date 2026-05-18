@@ -144,13 +144,14 @@ func init() {
 	})
 	registerOpsVerb(opsVerbSpec{
 		Name:        "cloud_destroy",
-		Description: "Clean REMOVE of a BYO Hetzner box (no replacement): snapshot then delete, via the user's vault Hetzner token. Distinct from `recycle` (which creates a new box first). Requires serverId + confirm=true. Snapshot-before-delete always (recover-safety).",
+		Description: "Clean REMOVE of a BYO box (no replacement): optionally snapshot, then delete, via the caller's OWN vault provider token. Distinct from `recycle` (which creates a new box first). Requires serverId + confirm=true. snapshot defaults FALSE (a snapshot is a paid lingering image; opt in for a recovery point). BYO-token-only — cannot touch another user's resources.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"serverId", "confirm"},
 			"properties": map[string]interface{}{
-				"serverId":       map[string]interface{}{"type": "string", "description": "Hetzner numeric server id (explicit — never fuzzy-matched)"},
+				"serverId":       map[string]interface{}{"type": "string", "description": "Provider numeric server id (explicit — never fuzzy-matched)"},
 				"targetDeviceId": map[string]interface{}{"type": "string", "description": "Optional: Yaver deviceId of the box this resource belongs to. If it equals the agent running this verb, the remove is refused (self-destruct guard) — decommission must run from a different control device."},
+				"snapshot":       map[string]interface{}{"type": "boolean", "description": "Take a recovery snapshot before deleting. Default false — a snapshot is a paid, lingering disk image; opt in only if you want a recovery point."},
 				"confirm":        map[string]interface{}{"type": "boolean"},
 			},
 			"additionalProperties": false,
@@ -200,7 +201,16 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
 		ServerID       string `json:"serverId"`
 		TargetDeviceID string `json:"targetDeviceId"`
-		Confirm        bool   `json:"confirm"`
+		// Optional, default OFF. A Hetzner snapshot is a paid, lingering
+		// disk image; for a disposable box the user usually doesn't want
+		// one. Opt in explicitly. SECURITY: this verb only ever uses the
+		// caller's OWN BYO token (accountField below — per-agent vault,
+		// never the shared managed/platform token), so one developer can
+		// never list, snapshot, or delete another developer's resources
+		// through it. Managed-cloud teardown is a separate, Convex-
+		// ownership-checked path — never this raw verb.
+		Snapshot       bool `json:"snapshot"`
+		Confirm        bool `json:"confirm"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
@@ -219,7 +229,12 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if !p.Confirm {
 		return OpsResult{OK: false, Code: "unauthorized", Error: "remove requires confirm=true"}
 	}
-	res := mcpCloudDestroy(string(HostHetzner), strings.TrimSpace(p.ServerID), `{"confirm":"true"}`)
+	skipSnapshot := "true"
+	if p.Snapshot {
+		skipSnapshot = "false"
+	}
+	res := mcpCloudDestroy(string(HostHetzner), strings.TrimSpace(p.ServerID),
+		fmt.Sprintf(`{"confirm":"true","skipSnapshot":"%s"}`, skipSnapshot))
 	if m, ok := res.(map[string]interface{}); ok {
 		if e, has := m["error"]; has && e != nil {
 			return OpsResult{OK: false, Code: "destroy_failed", Error: fmt.Sprintf("%v", e), Initial: res}
