@@ -3247,9 +3247,13 @@ http.route({
             errorMessage: machine.errorMessage,
             subscriptionId: machine.subscriptionId ? String(machine.subscriptionId) : null,
             // Surfaced so the web Recycle/Remove dialog can resolve the
-            // exact Hetzner server id of a managed box from stored state
-            // — the user no longer has to recall it. Still an exact id
-            // (never fuzzy-matched); the dialog matches on deviceId/ip.
+            // exact cloud resource of a managed box from stored state —
+            // the user never has to recall it. Still an exact id (never
+            // fuzzy-matched); the dialog matches on deviceId/ip. The UI
+            // stays provider-neutral; `provider` tells the agent facade
+            // which API to call. hetznerServerId kept for back-compat.
+            provider: machine.provider ?? "hetzner",
+            cloudResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? null,
             hetznerServerId: machine.hetznerServerId ?? null,
             deviceId: machine.deviceId ?? null,
           }))
