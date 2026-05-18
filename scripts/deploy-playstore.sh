@@ -27,6 +27,19 @@ if command -v yaver >/dev/null 2>&1; then
   eval "$(yaver vault env --project mobile 2>/dev/null || true)"
 fi
 
+# Vault-locked fallback (mirrors deploy-testflight.sh's
+# ~/.appstoreconnect/yaver.env and deploy-web.sh's auto-source). After the
+# auth token rotates >1x, `yaver vault env` returns "wrong passphrase or
+# corrupted vault"; `yaver deploy all` runs this non-interactively so
+# YAVER_VAULT_PASSPHRASE can't be supplied. ~/.androidplay/yaver.env is
+# gitignored — pre-seed it with the Play exports the build/upload need
+# (PLAY_STORE_KEY_FILE, ANDROID_RELEASE_SHA256, any keystore overrides).
+# Vault values still win when readable; this only fills the gap.
+if [ -f "$HOME/.androidplay/yaver.env" ]; then
+  # shellcheck source=/dev/null
+  set -a; source "$HOME/.androidplay/yaver.env"; set +a
+fi
+
 if [ -x "./gradlew" ]; then
   GRADLE="./gradlew"
 elif command -v gradle >/dev/null 2>&1; then

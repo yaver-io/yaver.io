@@ -56,14 +56,47 @@ func SetAuthToken(cfg *Config, newToken string) error {
 	if oldToken != "" {
 		rekeyVaultBetweenTokens(oldToken, newToken)
 		cfg.PreviousAuthToken = oldToken
+		// Also push onto the bounded chain so a SECOND rotation before
+		// the next vault rekey doesn't strand vault.enc under a
+		// now-forgotten key. newToken is excluded defensively in case
+		// a caller re-rotates to a value that was used before.
+		cfg.PreviousAuthTokens = pushPrevAuthToken(cfg.PreviousAuthTokens, oldToken, newToken)
 	} else {
 		// First-ever token write: nothing to rekey from. Clear any
-		// stale PreviousAuthToken (e.g. left over from a deleted
+		// stale previous-token state (e.g. left over from a deleted
 		// vault that the user re-paired).
 		cfg.PreviousAuthToken = ""
+		cfg.PreviousAuthTokens = nil
 	}
 	cfg.AuthToken = newToken
 	return SaveConfig(cfg)
+}
+
+// maxPrevAuthTokens bounds the previous-token recovery chain. Big enough
+// to survive a burst of rotations (re-pair loops, multi-machine token
+// churn) between two vault writes; small enough to stay trivial.
+const maxPrevAuthTokens = 10
+
+// pushPrevAuthToken prepends tok to the newest-first chain, de-duplicates,
+// drops exclude (the new current token), and caps the length.
+func pushPrevAuthToken(chain []string, tok, exclude string) []string {
+	tok = strings.TrimSpace(tok)
+	if tok == "" {
+		return chain
+	}
+	out := make([]string, 0, len(chain)+1)
+	out = append(out, tok)
+	for _, t := range chain {
+		t = strings.TrimSpace(t)
+		if t == "" || t == tok || t == strings.TrimSpace(exclude) {
+			continue
+		}
+		out = append(out, t)
+	}
+	if len(out) > maxPrevAuthTokens {
+		out = out[:maxPrevAuthTokens]
+	}
+	return out
 }
 
 // rekeyVaultBetweenTokens opens vault.enc under the passphrase derived

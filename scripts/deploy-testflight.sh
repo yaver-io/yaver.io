@@ -12,8 +12,23 @@ if command -v yaver >/dev/null 2>&1; then
   eval "$(yaver vault env --project mobile 2>/dev/null || true)"
 fi
 
+# Vault-locked fallback (mirrors deploy-web.sh's ~/.androidplay/yaver.env).
+# After kivanc's auth token rotates more than once, `yaver vault env`
+# returns "wrong passphrase or corrupted vault" until YAVER_VAULT_PASSPHRASE
+# is supplied — and `yaver deploy all` runs this script non-interactively,
+# so there's no chance to set it. Without this, the script dies at the
+# APP_STORE_KEY_PATH:? guard below with a misleading "secret not set"
+# error when the real cause is a locked vault. `~/.appstoreconnect/yaver.env`
+# is gitignored and pre-seeded with all four App Store Connect exports
+# (see CLAUDE.md "iOS — TestFlight"). Vault values still win when readable;
+# this only fills the gap when the vault can't be opened.
+if [ -f "$HOME/.appstoreconnect/yaver.env" ]; then
+  # shellcheck source=/dev/null
+  set -a; source "$HOME/.appstoreconnect/yaver.env"; set +a
+fi
+
 # App Store Connect API key — set these env vars or in the Yaver vault.
-AUTH_KEY="${APP_STORE_KEY_PATH:?Set APP_STORE_KEY_PATH (env var or: yaver vault add APP_STORE_KEY_PATH --project mobile)}"
+AUTH_KEY="${APP_STORE_KEY_PATH:?APP_STORE_KEY_PATH unset. Likely cause: the Yaver vault is locked (auth token rotated >1x). Recover with ANY of: (1) pre-seed ~/.appstoreconnect/yaver.env (gitignored, 4 exports — see CLAUDE.md \"iOS — TestFlight\"); (2) YAVER_VAULT_PASSPHRASE=<old-token> before deploy; (3) re-add: yaver vault add APP_STORE_KEY_PATH --project mobile --value ...}"
 AUTH_KEY_ID="${APP_STORE_KEY_ID:?Set APP_STORE_KEY_ID (env or yaver vault)}"
 AUTH_KEY_ISSUER="${APP_STORE_KEY_ISSUER:?Set APP_STORE_KEY_ISSUER (env or yaver vault)}"
 

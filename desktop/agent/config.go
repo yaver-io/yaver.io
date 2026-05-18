@@ -21,22 +21,31 @@ type Config struct {
 	// that step is skipped (older code path, partial write, no vault on
 	// disk yet) openVault uses this field to recover and trigger a
 	// rekey. Cleared as soon as the rekey succeeds.
-	PreviousAuthToken string              `json:"previous_auth_token,omitempty"`
-	DeviceID          string              `json:"device_id,omitempty"`
-	ConvexSiteURL     string              `json:"convex_site_url,omitempty"`
-	WebBaseURL        string              `json:"web_base_url,omitempty"`
-	TLSCert           string              `json:"tls_cert,omitempty"`
-	TLSKey            string              `json:"tls_key,omitempty"`
-	AutoStart         bool                `json:"auto_start,omitempty"`
-	AutoUpdate        bool                `json:"auto_update,omitempty"`
-	HeadlessKeepAwake *bool               `json:"headless_keep_awake,omitempty"`
-	RelayPassword     string              `json:"relay_password,omitempty"`
-	RelayServers      []RelayServerConfig `json:"relay_servers,omitempty"`
+	PreviousAuthToken string `json:"previous_auth_token,omitempty"`
+	// PreviousAuthTokens is a bounded, newest-first chain of superseded
+	// AuthTokens (most recent at index 0). PreviousAuthToken alone only
+	// survives ONE rotation between vault writes — if the token rotates
+	// twice before the vault is rekeyed (e.g. the agent never ran a
+	// vault op in between), the original key is lost and vault.enc is
+	// permanently undecryptable. openVault walks this whole chain so the
+	// vault recovers as long as ANY token that ever encrypted it is
+	// still here. Capped at maxPrevAuthTokens; cleared on rekey success.
+	PreviousAuthTokens []string            `json:"previous_auth_tokens,omitempty"`
+	DeviceID           string              `json:"device_id,omitempty"`
+	ConvexSiteURL      string              `json:"convex_site_url,omitempty"`
+	WebBaseURL         string              `json:"web_base_url,omitempty"`
+	TLSCert            string              `json:"tls_cert,omitempty"`
+	TLSKey             string              `json:"tls_key,omitempty"`
+	AutoStart          bool                `json:"auto_start,omitempty"`
+	AutoUpdate         bool                `json:"auto_update,omitempty"`
+	HeadlessKeepAwake  *bool               `json:"headless_keep_awake,omitempty"`
+	RelayPassword      string              `json:"relay_password,omitempty"`
+	RelayServers       []RelayServerConfig `json:"relay_servers,omitempty"`
 	// Cached relay settings come from Convex/user settings and are used as a
 	// reboot-safe fallback when the agent's auth token has expired.
-	CachedRelayPassword           string                   `json:"cached_relay_password,omitempty"`
-	CachedRelayServers            []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
-	CloudflareTunnels             []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
+	CachedRelayPassword string                   `json:"cached_relay_password,omitempty"`
+	CachedRelayServers  []RelayServerConfig      `json:"cached_relay_servers,omitempty"`
+	CloudflareTunnels   []CloudflareTunnelConfig `json:"cloudflare_tunnels,omitempty"`
 	// PublicEndpoints is a manual list of hostnames or URLs that the
 	// agent advertises to Convex on top of Cloudflare-tunnel and
 	// relay-assigned URLs. Useful for headless boxes with a stable
@@ -45,13 +54,13 @@ type Config struct {
 	// without standing up a Cloudflare tunnel. Each entry can be a
 	// bare host (e.g. "198.51.100.20") or an https URL — the
 	// resolver strips schemes + trailing slashes for SSH use.
-	PublicEndpoints []string `json:"public_endpoints,omitempty"`
-	MacOSPermissionOnboardingDone bool                     `json:"macos_permission_onboarding_done,omitempty"`
-	HostShare                     *HostShareConfig         `json:"host_share,omitempty"`
-	Sandbox                       *SandboxConfig           `json:"sandbox,omitempty"`
-	Exec                          *ExecConfig              `json:"exec,omitempty"`
-	Email                         *EmailConfig             `json:"email,omitempty"`
-	ACLPeers                      []ACLPeerConfig          `json:"acl_peers,omitempty"`
+	PublicEndpoints               []string         `json:"public_endpoints,omitempty"`
+	MacOSPermissionOnboardingDone bool             `json:"macos_permission_onboarding_done,omitempty"`
+	HostShare                     *HostShareConfig `json:"host_share,omitempty"`
+	Sandbox                       *SandboxConfig   `json:"sandbox,omitempty"`
+	Exec                          *ExecConfig      `json:"exec,omitempty"`
+	Email                         *EmailConfig     `json:"email,omitempty"`
+	ACLPeers                      []ACLPeerConfig  `json:"acl_peers,omitempty"`
 	// Speech is an inert JSON field. The voice surface was killed
 	// 2026-04-28 (project_lean_stack_2026_04_28.md). This field is
 	// preserved only so a concurrent thread / older config.json

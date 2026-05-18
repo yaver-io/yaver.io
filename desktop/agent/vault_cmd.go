@@ -135,23 +135,39 @@ func openVaultE() (*VaultStore, error) {
 		return nil, fmt.Errorf("Error opening vault: %v", err)
 	}
 
-	// Current token didn't decrypt — try the most-recently-rotated
-	// previous token. Auto-rekey on success so we only ever fall
-	// through this path once per rotation.
+	// Current token didn't decrypt — walk the previous-token chain
+	// (newest first), trying each. The single PreviousAuthToken field
+	// is tried first for back-compat with configs written before the
+	// chain existed. Auto-rekey on the first success so we only ever
+	// fall through this path once per rotation burst.
+	seen := map[string]bool{}
+	candidates := make([]string, 0, 1+len(cfg.PreviousAuthTokens))
 	if cfg.PreviousAuthToken != "" {
-		prevPass := DerivePassphraseFromToken(cfg.PreviousAuthToken)
-		if vsPrev, prevErr := NewVaultStoreWithDevice(prevPass, cfg.DeviceID); prevErr == nil {
-			if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: auto-rekey failed (%v) — vault still readable; will retry next call.\n", rkErr)
-				return vsPrev, nil
-			}
-			cfg.PreviousAuthToken = ""
-			if sErr := SaveConfig(cfg); sErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not clear previous-auth-token from config: %v\n", sErr)
-			}
-			fmt.Fprintf(os.Stderr, "Vault rekeyed automatically using previous auth token.\n")
+		candidates = append(candidates, cfg.PreviousAuthToken)
+	}
+	candidates = append(candidates, cfg.PreviousAuthTokens...)
+	for _, tok := range candidates {
+		tok = strings.TrimSpace(tok)
+		if tok == "" || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		prevPass := DerivePassphraseFromToken(tok)
+		vsPrev, prevErr := NewVaultStoreWithDevice(prevPass, cfg.DeviceID)
+		if prevErr != nil {
+			continue
+		}
+		if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: auto-rekey failed (%v) — vault still readable; will retry next call.\n", rkErr)
 			return vsPrev, nil
 		}
+		cfg.PreviousAuthToken = ""
+		cfg.PreviousAuthTokens = nil
+		if sErr := SaveConfig(cfg); sErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not clear previous-auth-token state from config: %v\n", sErr)
+		}
+		fmt.Fprintf(os.Stderr, "Vault rekeyed automatically using a previous auth token.\n")
+		return vsPrev, nil
 	}
 
 	return nil, fmt.Errorf("Error: %v\nIf you changed your auth token before this build shipped, set YAVER_VAULT_PASSPHRASE to the previous token (or its passphrase).", err)
