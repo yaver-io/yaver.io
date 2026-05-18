@@ -193,13 +193,31 @@ export interface RefreshResult {
   networkError?: boolean;
 }
 
+// Single-flight: multiple independent triggers (app restore, app
+// resume, periodic) can call refreshToken concurrently. Rotation is
+// destructive — two refreshes racing on the same token means the
+// second presents an already-rotated (dead) token and the device gets
+// stranded → blanket 401. Coalesce concurrent calls for the same token
+// to ONE network round-trip so every caller observes the same result.
+const inflightRefreshes = new Map<string, Promise<RefreshResult>>();
+
+export function refreshToken(token: string): Promise<RefreshResult> {
+  const existing = inflightRefreshes.get(token);
+  if (existing) return existing;
+  const p = doRefreshToken(token).finally(() => {
+    inflightRefreshes.delete(token);
+  });
+  inflightRefreshes.set(token, p);
+  return p;
+}
+
 /**
  * Refresh the session token — extends expiry by 30 days. Opts in to
  * server-side token rotation (`X-Yaver-Rotate-Token: 1`); when the
  * backend rotates, we surface the new token so the caller can persist
  * it. Matches the Go agent's behavior (see `desktop/agent/auth.go`).
  */
-export async function refreshToken(token: string): Promise<RefreshResult> {
+async function doRefreshToken(token: string): Promise<RefreshResult> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);

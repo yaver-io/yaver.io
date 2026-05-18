@@ -883,6 +883,17 @@ function deriveRunnerBannerState(
     return make("blocked", `${current.name} blocked`);
   }
   if (current?.name) {
+    // The agent reports authoritative health (ready / authConfigured).
+    // Honor it — otherwise the banner says "ready" while the runner
+    // can't actually start a task, and the user only finds out when
+    // the task aborts. (Was the root of the "says ready, no response"
+    // UX bug.)
+    if (current.authConfigured === false) {
+      return make("authNeeded", `${current.name} needs sign-in`);
+    }
+    if (current.ready === false) {
+      return make("blocked", `${current.name} not ready`);
+    }
     return make(
       "ok",
       `${current.name} ready${agentStatus?.runningTasks ? ` · ${agentStatus.runningTasks} running` : ""}`,
@@ -891,6 +902,23 @@ function deriveRunnerBannerState(
   return make(
     "ok",
     `${runnable.length} agent${runnable.length > 1 ? "s" : ""} ready`,
+  );
+}
+
+// An agent call that fails because Convex rejected the bearer (token
+// expired / rotated-away / revoked) must NOT masquerade as a task
+// failure. The agent surfaces these as 401/403 or a "token validation"
+// message. Detect them so the UI says "sign in again" instead of the
+// misleading "Task failed / Aborted".
+function isAuthError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e || "")).toLowerCase();
+  return (
+    /\b401\b|\b403\b/.test(msg) ||
+    msg.includes("unauthorized") ||
+    msg.includes("token validation") ||
+    msg.includes("validate token") ||
+    msg.includes("session expired") ||
+    msg.includes("not signed in")
   );
 }
 
@@ -1539,7 +1567,7 @@ export default function TasksScreen() {
   const [todoDone, setTodoDone] = useState(0);
 
   // Speech state
-  const { token, user } = useAuth();
+  const { token, user, logout } = useAuth();
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
@@ -2637,8 +2665,19 @@ export default function TasksScreen() {
       setShowNewTask(false);
       fetchTasks();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      Alert.alert("Task failed", msg);
+      if (isAuthError(e)) {
+        Alert.alert(
+          "Session expired",
+          "Your sign-in is no longer valid, so the task could not be sent. Sign in again to continue — your work is safe.",
+          [
+            { text: "Not now", style: "cancel" },
+            { text: "Sign in again", onPress: () => { void logout(); } },
+          ],
+        );
+      } else {
+        const msg = e instanceof Error ? e.message : String(e);
+        Alert.alert("Task failed", msg);
+      }
     } finally {
       setIsSubmitting(false);
     }

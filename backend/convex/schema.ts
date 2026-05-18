@@ -193,10 +193,20 @@ export default defineSchema({
     deviceId: v.optional(v.string()),
     expiresAt: v.number(),
     createdAt: v.number(),
+    // Rotation grace: when a token is rotated (X-Yaver-Rotate-Token),
+    // the immediately-previous tokenHash stays valid until this time
+    // (~2 min). Token rotation is otherwise instant-and-permanent, so
+    // any client that rotates fire-and-forget (mobile has several
+    // independent triggers) could strand an in-flight/concurrent
+    // request on the now-dead token → blanket 401. This window lets
+    // the new token propagate without the old one dying mid-flight.
+    prevTokenHash: v.optional(v.string()),
+    prevTokenValidUntil: v.optional(v.number()),
   })
     .index("by_tokenHash", ["tokenHash"])
     .index("by_userId", ["userId"])
-    .index("by_deviceId", ["deviceId"]),
+    .index("by_deviceId", ["deviceId"])
+    .index("by_prevTokenHash", ["prevTokenHash"]),
 
   devices: defineTable({
     userId: v.id("users"),

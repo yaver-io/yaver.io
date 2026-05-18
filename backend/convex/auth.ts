@@ -544,10 +544,28 @@ export async function validateSessionInternal(
   };
   sessionId: Id<"sessions">;
 } | null> {
-  const session = await ctx.db
+  let session = await ctx.db
     .query("sessions")
     .withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
     .unique();
+
+  // Rotation grace: the presented token may be the immediately-previous
+  // one of a session that just rotated. Accept it until the grace
+  // window lapses so a fire-and-forget rotation can't 401 a concurrent
+  // / in-flight request before the new token propagates.
+  if (!session) {
+    const rotated = await ctx.db
+      .query("sessions")
+      .withIndex("by_prevTokenHash", (q) => q.eq("prevTokenHash", tokenHash))
+      .unique();
+    if (
+      rotated &&
+      rotated.prevTokenValidUntil !== undefined &&
+      rotated.prevTokenValidUntil > Date.now()
+    ) {
+      session = rotated;
+    }
+  }
 
   if (!session) return null;
   if (session.expiresAt < Date.now()) return null;
@@ -1234,7 +1252,16 @@ export const refreshSession = mutation({
     if (session.expiresAt < Date.now() - gracePeriod) return null;
 
     const newExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
-    const patch: { expiresAt: number; tokenHash?: string } = {
+    // ~2 min grace so the old token keeps validating while the rotated
+    // one propagates to every client/connection (mobile has several
+    // independent fire-and-forget refresh triggers).
+    const ROTATION_GRACE_MS = 2 * 60 * 1000;
+    const patch: {
+      expiresAt: number;
+      tokenHash?: string;
+      prevTokenHash?: string;
+      prevTokenValidUntil?: number;
+    } = {
       expiresAt: newExpiresAt,
     };
     if (args.newTokenHash && args.newTokenHash !== args.tokenHash) {
@@ -1246,6 +1273,9 @@ export const refreshSession = mutation({
         .unique();
       if (!collision) {
         patch.tokenHash = args.newTokenHash;
+        // Keep the just-rotated token alive for the grace window.
+        patch.prevTokenHash = args.tokenHash;
+        patch.prevTokenValidUntil = Date.now() + ROTATION_GRACE_MS;
       }
     }
     await ctx.db.patch(session._id, patch);
