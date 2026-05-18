@@ -18,6 +18,9 @@ func runDeploy(args []string) {
 	case "all":
 		runDeployAllCmd(args[1:])
 		return
+	case "npm", "cli":
+		runDeployNpmCmd(args[1:])
+		return
 	case "generate", "gen":
 		runDeployGenerateCmd(args[1:])
 		return
@@ -157,6 +160,11 @@ func printDeployUsage() {
   yaver deploy all --skip-testflight --skip-playstore  Per-stage skips.
   yaver deploy all --bump minor                        Bump cli minor (default: patch).
   yaver deploy all --dry-run                           Print what would run; no side effects.
+
+  # npm CLI release only (bump version → tag → push → CI publishes):
+  yaver deploy npm                                     Patch-bump + release the CLI to npm.
+  yaver deploy npm --bump minor|major                  Pick the bump level.
+  yaver deploy npm --dry-run                           Print what would happen; no push.
 
   # Script generation + shared-machine ship (vault-aware, runs locally):
   yaver deploy generate --app <name> --target <target> [--out <file>]

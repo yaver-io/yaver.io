@@ -344,7 +344,7 @@ func requireCleanRepoForRelease(repoRoot string) error {
 		return fmt.Errorf("git status: %w", err)
 	}
 	if strings.TrimSpace(string(sOut)) != "" {
-		return fmt.Errorf("working tree not clean — commit or stash before `yaver deploy all`:\n%s", string(sOut))
+		return fmt.Errorf("working tree not clean — commit or stash before releasing:\n%s", string(sOut))
 	}
 
 	return nil
