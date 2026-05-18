@@ -103,6 +103,9 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   const [connecting, setConnecting] = useState(true);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [controlName, setControlName] = useState<string | null>(null);
+  // Non-null while Yaver is auto-preparing a control agent (e.g.
+  // updating a stale one) so the user never has to do it by hand.
+  const [preparing, setPreparing] = useState<string | null>(null);
 
   // Resource resolution — the user never has to recall an id.
   const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
@@ -157,10 +160,10 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
       return "Removing a box runs from one of your other devices — not the box itself. None of your other devices is online right now. Bring one online (your primary is best), then try again.";
     }
     if (reasons.has("no-account")) {
-      return "None of your online devices has your cloud account connected, so Yaver can't reach the provider to delete this box. Connect it once (Vault → Accounts, on your primary device) and removing or recycling any box works from anywhere.";
+      return "Yaver prepared a device but none of them has your cloud account connected, so it can't reach the provider to delete this box. Connect it once (Vault → Accounts) and removing or recycling any box works from anywhere — no per-box setup again.";
     }
     if (reasons.has("too-old")) {
-      return "Your other devices' agents are too old to manage cloud resources. Update one — your primary is easiest (`yaver primary auth` then it self-updates) — and try again.";
+      return "Yaver tried to update one of your devices so it could manage cloud resources, but it didn't come back in time. It may still be updating — wait a moment and press Try again.";
     }
     return "Couldn't reach any device able to manage cloud resources. Check that another of your devices is online and try again.";
   }
@@ -187,32 +190,29 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   // — the first that returns ok both proves it has the cloud account
   // AND hands back the resource list to resolve the target), then
   // auto-resolve this box's exact resource. Provider-neutral throughout.
-  async function discoverAndResolve(cancelledRef: { v: boolean }) {
-    setConnecting(true);
-    setConnectError(null);
-    setControlName(null);
-
-    const candidates = controlCandidates();
-    const reasons = new Set<SkipReason>();
-    let chosen: AgentClient | null = null;
-    let chosenDevice: Device | null = null;
-    let servers: CloudResourceInfo[] = [];
-
+  // Probe candidates once. Returns the first capable one; records why
+  // the others were skipped, and which were merely too old (so Yaver
+  // can auto-update one instead of dead-ending on the user).
+  async function probeForControl(
+    candidates: Device[],
+    reasons: Set<SkipReason>,
+    tooOld: Device[],
+    cancelledRef: { v: boolean },
+  ): Promise<{ client: AgentClient; device: Device; servers: CloudResourceInfo[] } | null> {
     for (const cand of candidates) {
-      if (cancelledRef.v) return;
+      if (cancelledRef.v) return null;
       let client: AgentClient | null = null;
       try {
         client = await connectTo(cand);
         const res = await client.callOps("cloud_list", {});
         if (res.ok === false) {
-          reasons.add(classifyOpsError(res));
+          const why = classifyOpsError(res);
+          reasons.add(why);
+          if (why === "too-old") tooOld.push(cand);
           client.disconnect();
           continue;
         }
-        chosen = client;
-        chosenDevice = cand;
-        servers = ((res.initial as any)?.servers || []) as CloudResourceInfo[];
-        break;
+        return { client, device: cand, servers: ((res.initial as any)?.servers || []) as CloudResourceInfo[] };
       } catch {
         reasons.add("unreachable");
         try {
@@ -222,22 +222,93 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         }
       }
     }
+    return null;
+  }
+
+  // Yaver is the orchestrator: rather than telling the user "go update
+  // an agent and retry", update the best stale candidate ourselves and
+  // wait for it to come back with the cloud verbs. Bounded ~5 min.
+  async function autoUpdateAndReprobe(
+    target: Device,
+    reasons: Set<SkipReason>,
+    cancelledRef: { v: boolean },
+  ): Promise<{ client: AgentClient; device: Device; servers: CloudResourceInfo[] } | null> {
+    const label = target.alias || target.name || "a device";
+    setPreparing(`Updating ${label} so it can manage cloud resources — about a minute…`);
+    try {
+      const c = await connectTo(target);
+      try {
+        await c.triggerAgentUpdate();
+      } finally {
+        try { c.disconnect(); } catch { /* noop */ }
+      }
+    } catch {
+      return null; // couldn't even reach it to start the update
+    }
+
+    const deadline = Date.now() + 5 * 60_000;
+    while (Date.now() < deadline) {
+      if (cancelledRef.v) return null;
+      await new Promise((r) => setTimeout(r, 12_000));
+      if (cancelledRef.v) return null;
+      let client: AgentClient | null = null;
+      try {
+        client = await connectTo(target);
+        const res = await client.callOps("cloud_list", {});
+        if (res.ok === false) {
+          const why = classifyOpsError(res);
+          if (why === "too-old") {
+            client.disconnect();
+            continue; // still restarting / not swapped yet
+          }
+          reasons.add(why); // updated, but e.g. no account — real blocker
+          client.disconnect();
+          return null;
+        }
+        return { client, device: target, servers: ((res.initial as any)?.servers || []) as CloudResourceInfo[] };
+      } catch {
+        try { client?.disconnect(); } catch { /* noop */ }
+        // agent restarting mid-update — keep waiting
+      }
+    }
+    return null;
+  }
+
+  async function discoverAndResolve(cancelledRef: { v: boolean }) {
+    setConnecting(true);
+    setConnectError(null);
+    setControlName(null);
+    setPreparing(null);
+
+    const candidates = controlCandidates();
+    const reasons = new Set<SkipReason>();
+    const tooOld: Device[] = [];
+
+    let found = await probeForControl(candidates, reasons, tooOld, cancelledRef);
+
+    // Nothing capable yet, but some device just needs a newer agent →
+    // update it for the user (primary first, already ordered) and wait.
+    if (!found && !cancelledRef.v && tooOld.length > 0) {
+      found = await autoUpdateAndReprobe(tooOld[0], reasons, cancelledRef);
+      if (!cancelledRef.v) setPreparing(null);
+    }
 
     if (cancelledRef.v) {
       try {
-        chosen?.disconnect();
+        found?.client.disconnect();
       } catch {
         /* noop */
       }
       return;
     }
 
-    if (!chosen || !chosenDevice) {
+    if (!found) {
       setConnectError(noControlMessage(reasons, candidates.length > 0));
       setConnecting(false);
       return;
     }
 
+    const { client: chosen, device: chosenDevice, servers } = found;
     clientRef.current = chosen;
     setControlName(chosenDevice.alias || chosenDevice.name || "another device");
     setResources(servers);
@@ -417,7 +488,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         {connecting ? (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-3 py-2.5 text-xs text-slate-600 dark:bg-[rgba(12,12,16,0.9)] dark:text-surface-300">
             <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-            Finding a device that can manage this box, and resolving its cloud resource…
+            {preparing || "Finding a device that can manage this box, and resolving its cloud resource…"}
           </div>
         ) : connectError ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400">
