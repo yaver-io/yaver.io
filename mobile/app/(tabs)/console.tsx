@@ -127,16 +127,15 @@ function Sparkline({ c, title, series, color }: { c: any; title: string; series:
 
 function MachinesTab({ c }: { c: any }) {
   const [list, setList] = useState<any[]>([]);
-  const [multiOpen, setMultiOpen] = useState(false);
   useEffect(() => { refresh(); const i = setInterval(refresh, 10000); return () => clearInterval(i); }, []);
   async function refresh() { try { setList((await call("/console/machines")).machines || []); } catch {} }
+  // Read-only on mobile, like WhatsApp Web: you see and connect to
+  // machines that already exist. Provisioning / teardown / billing all
+  // live on the web dashboard — never in-app (App Store 3.1.3 + keeps
+  // the phone a thin companion).
   return (
     <View style={{ gap: 8 }}>
-      <Text style={{ color: c.textMuted, fontSize: 11 }}>Hybrid view — own hardware + cloud VPSes as one list.</Text>
-      <Pressable onPress={() => setMultiOpen(!multiOpen)} style={[actionBtn(c), { backgroundColor: c.accent }]}>
-        <Text style={{ color: "#fff", fontWeight: "700" }}>{multiOpen ? "Close" : "🌍 Deploy Multi-Region"}</Text>
-      </Pressable>
-      {multiOpen && <MultiRegionForm c={c} onDone={() => { setMultiOpen(false); refresh(); }} />}
+      <Text style={{ color: c.textMuted, fontSize: 11 }}>Your machines — own hardware and cloud boxes as one list. Add or remove machines from the web dashboard.</Text>
       {list.map((m) => (
         <View key={m.deviceId} style={[card(c), m.isLocal && { borderColor: c.accent, borderWidth: 2 }]}>
           <View style={{ flexDirection: "row", gap: 8, alignItems: "center" }}>
@@ -148,7 +147,6 @@ function MachinesTab({ c }: { c: any }) {
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: m.isOnline ? "#10b981" : "#ef4444" }} />
           </View>
           <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-            <Pill c={c} text={m.provider || "unknown"} tone="accent" />
             {m.isLocal && <Pill c={c} text="this machine" tone="accent" />}
             {m.arch && <Pill c={c} text={m.arch} tone="muted" />}
             {m.cost && <Pill c={c} text={m.cost} tone="muted" />}
@@ -260,50 +258,10 @@ function CatalogTab({ c }: { c: any }) {
   );
 }
 
-function MultiRegionForm({ c, onDone }: { c: any; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [regions, setRegions] = useState("nbg1,fsn1");
-  const [domain, setDomain] = useState("");
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState<any>(null);
-
-  async function deploy() {
-    if (!name) { Alert.alert("Name required"); return; }
-    const regionList = regions.split(",").map((r) => r.trim()).filter(Boolean);
-    if (regionList.length < 2) { Alert.alert("Need 2+ regions"); return; }
-    Alert.alert(
-      "Provision real VPSes?",
-      `This will create ${regionList.length} billable Hetzner VPSes in ${regionList.join(", ")}.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Provision", style: "destructive", onPress: async () => {
-          setRunning(true);
-          const r = await call("/multiregion/orchestrate", { method: "POST", body: JSON.stringify({ name, regions: regionList, domain, gitRepo: "" }) });
-          setRunning(false);
-          setResult(r);
-        }},
-      ],
-    );
-  }
-
-  return (
-    <View style={{ padding: 12, backgroundColor: c.bgCard, borderColor: c.border, borderWidth: 1, borderRadius: 8, gap: 8 }}>
-      <TextInput value={name} onChangeText={setName} placeholder="deployment name" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
-      <TextInput value={regions} onChangeText={setRegions} placeholder="regions csv (nbg1,fsn1,hel1)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
-      <TextInput value={domain} onChangeText={setDomain} placeholder="domain (optional)" placeholderTextColor={c.textMuted} autoCapitalize="none" style={[inputStyle(c), { fontFamily: "Menlo", fontSize: 12 }]} />
-      <Pressable onPress={deploy} disabled={running} style={[actionBtn(c), { backgroundColor: "#ef4444" }]}>
-        {running ? <ActivityIndicator color="#fff" /> : <Text style={{ color: "#fff", fontWeight: "700" }}>Deploy (billable)</Text>}
-      </Pressable>
-      {result?.error && <Text style={{ color: "#ef4444", fontSize: 11 }}>{result.error}</Text>}
-      {result?.orchestrate?.servers?.map((os: any, i: number) => (
-        <View key={i} style={[card(c)]}>
-          <Text style={{ color: os.status === "ready" ? "#10b981" : "#ef4444", fontSize: 11, fontWeight: "700" }}>{os.status.toUpperCase()}</Text>
-          <Text style={{ color: c.textPrimary, fontFamily: "Menlo", fontSize: 11 }}>{os.ip} · {os.region}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
+// MultiRegionForm removed from mobile: provisioning billable cloud
+// boxes from the phone is web-dashboard-only (App Store 3.1.3 — no
+// in-app purchase of digital infra — and the phone stays a thin
+// WhatsApp-Web-style companion to machines that already exist).
 
 function MailpitTab({ c }: { c: any }) {
   const [list, setList] = useState<any[]>([]);
@@ -408,14 +366,13 @@ function Pill({ c, text, tone }: { c: any; text: string; tone: "ok" | "muted" | 
   );
 }
 
+// Provider-agnostic on purpose: the phone never names the underlying
+// IaaS. Local hardware vs a cloud box is the only distinction shown.
 function providerIcon(p: string): string {
   switch (p) {
-    case "hetzner": return "🖥️";
-    case "aws": return "☁️";
-    case "gcp": return "🌩️";
     case "local-mac": return "🍎";
     case "yaver-cloud": return "⚡";
-    default: return "💻";
+    default: return "🖥️";
   }
 }
 

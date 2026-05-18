@@ -162,7 +162,7 @@ const deviceListTool: YaverAgentTool<Record<string, never>, { devices: DeviceSum
   description:
     "List every Yaver device registered to the current user, with online state, " +
     "auth state, and which one is primary/secondary. Always call this first when " +
-    "the user references a device by name (e.g. \"mac mini\", \"hetzner\") — it " +
+    "the user references a device by name (e.g. \"mac mini\", \"cloud box\") — it " +
     "gives you the deviceId and aliases needed by other tools.",
   parameters: { type: "object", properties: {}, additionalProperties: false },
   async invoke(_args, ctx) {

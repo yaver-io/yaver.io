@@ -418,116 +418,10 @@ function FactoryResetAuthRow({ device }: { device: Device }) {
   );
 }
 
-// RecycleBoxRow — Phase C mobile surface for BYO host-recycle. Thin
-// trigger: every safety guard (no self-destruct, snapshot-before-
-// delete, rollback-keep-old) lives in the agent's `recycle` ops verb.
-// Dry-run first → show the plan → explicit destructive confirm.
-function RecycleBoxRow({ device }: { device: Device }) {
-  const c = useColors();
-  const [open, setOpen] = useState(false);
-  const [oldId, setOldId] = useState("");
-  const [newName, setNewName] = useState(`${device.name || "box"}-new`);
-  const [busy, setBusy] = useState(false);
-  const [steps, setSteps] = useState<string[]>([]);
-  const [previewed, setPreviewed] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-
-  const callRecycle = async (confirm: boolean) => {
-    setBusy(true);
-    setMsg(null);
-    const res = await quicClient.callOps("recycle", {
-      targetDeviceId: device.id,
-      oldServerId: oldId.trim(),
-      newName: newName.trim(),
-      plan: "starter",
-      region: "eu",
-      confirm,
-    });
-    setBusy(false);
-    const r: any = res.initial || {};
-    setSteps(Array.isArray(r.steps) ? r.steps : []);
-    if (res.ok === false || r.error) {
-      setMsg(`✗ ${r.error || res.error || "recycle failed"}`);
-      setPreviewed(false);
-    } else if (!confirm) {
-      setPreviewed(true);
-      setMsg("Dry-run OK — review the plan, then Confirm.");
-    } else {
-      setPreviewed(false);
-      setMsg("✓ recycle complete");
-    }
-  };
-
-  const inputStyle = {
-    borderWidth: 1, borderColor: c.border, borderRadius: 8,
-    paddingHorizontal: 10, paddingVertical: 8, color: c.textPrimary,
-    fontSize: 13, marginTop: 8,
-  } as const;
-  const pill = (bg: string, bc: string) => ({
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8,
-    backgroundColor: bg, borderWidth: 1, borderColor: bc,
-  } as const);
-
-  if (!open) {
-    return (
-      <Pressable onPress={() => setOpen(true)} style={{ alignSelf: "flex-start", ...pill("rgba(245,158,11,0.12)", "rgba(245,158,11,0.45)") }}>
-        <Text style={{ color: "#fcd34d", fontSize: 12, fontWeight: "700" }}>♻ Recycle box…</Text>
-      </Pressable>
-    );
-  }
-  return (
-    <View>
-      <TextInput
-        value={oldId}
-        onChangeText={(t) => { setOldId(t); setPreviewed(false); }}
-        placeholder="Old Hetzner server id (numeric — exact)"
-        placeholderTextColor={c.textMuted}
-        keyboardType="number-pad"
-        style={inputStyle}
-      />
-      <TextInput
-        value={newName}
-        onChangeText={(t) => { setNewName(t); setPreviewed(false); }}
-        placeholder="New box name"
-        placeholderTextColor={c.textMuted}
-        style={inputStyle}
-      />
-      <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
-        <Pressable
-          disabled={busy || oldId.trim() === "" || newName.trim() === ""}
-          onPress={() => void callRecycle(false)}
-          style={{ opacity: busy || oldId.trim() === "" ? 0.5 : 1, ...pill("rgba(75,85,99,0.12)", c.border) }}
-        >
-          <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>{busy ? "…" : "Preview (dry-run)"}</Text>
-        </Pressable>
-        <Pressable
-          disabled={busy || !previewed}
-          onPress={() => Alert.alert(
-            `Recycle "${device.name}"?`,
-            "Creates a fresh box, health-checks it, then snapshots & deletes the old one. The old box is kept if the new one is unhealthy. Destructive.",
-            [
-              { text: "Cancel", style: "cancel" },
-              { text: "Recycle", style: "destructive", onPress: () => void callRecycle(true) },
-            ],
-          )}
-          style={{ opacity: busy || !previewed ? 0.5 : 1, ...pill("rgba(244,63,94,0.12)", "rgba(244,63,94,0.45)") }}
-        >
-          <Text style={{ color: "#fecdd3", fontSize: 12, fontWeight: "700" }}>Confirm &amp; recycle</Text>
-        </Pressable>
-      </View>
-      {steps.length > 0 ? (
-        <Text style={{ marginTop: 10, fontSize: 11, color: c.textMuted, fontFamily: "monospace" }}>
-          {steps.join("\n")}
-        </Text>
-      ) : null}
-      {msg ? (
-        <Text style={{ marginTop: 8, fontSize: 11, color: msg.startsWith("✓") ? "#a7f3d0" : msg.startsWith("✗") ? "#fecdd3" : c.textMuted }}>
-          {msg}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
+// RecycleBoxRow removed from mobile: provisioning/recycling/removing a
+// cloud box is web-dashboard-only (App Store 3.1.3 — no in-app
+// management of paid infra — and the phone stays a thin WhatsApp-Web
+// companion). The agent `recycle` verb is still driven from web/CLI.
 
 export interface DeviceDetailsModalProps {
   device: Device | null;
@@ -1538,14 +1432,12 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
                 Wipe the agent's local auth + device id and put it back into bootstrap mode. Use this only when normal Yaver recovery fails or the machine belongs to a different account. Projects, vault, and workspace files are preserved.
               </Text>
               <FactoryResetAuthRow device={device} />
-              <View style={{ height: 18 }} />
-              <Text style={{ color: c.textMuted, fontSize: 11, fontWeight: "600", marginBottom: 4 }}>
-                Recycle this box (BYO Hetzner)
-              </Text>
-              <Text style={{ color: c.textMuted, fontSize: 12, marginBottom: 10 }}>
-                Provision a fresh Hetzner box, health-check it, then snapshot &amp; delete the old one. Zero-downtime — the old box is kept if the new one is unhealthy. Runs via the connected agent; it refuses if you target the device it runs on.
-              </Text>
-              <RecycleBoxRow device={device} />
+              {/* Recycle/replace a cloud box is intentionally NOT on
+                  mobile — adding or removing infrastructure is a
+                  web-dashboard-only action (App Store 3.1.3; the phone
+                  stays a thin WhatsApp-Web-style companion). Recovery
+                  (re-auth, watchdog, factory-reset) stays — it mutates
+                  agent state, never provisions or tears down a box. */}
             </View>
           ) : null}
 
