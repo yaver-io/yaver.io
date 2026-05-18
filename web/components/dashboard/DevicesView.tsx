@@ -2139,6 +2139,8 @@ export default function DevicesView({
                     {recycleFor?.id === device.id && token ? (
                       <RecycleBoxDialog
                         device={device}
+                        devices={devices}
+                        primaryDeviceId={primaryDeviceId}
                         token={token}
                         onClose={() => setRecycleFor(null)}
                       />

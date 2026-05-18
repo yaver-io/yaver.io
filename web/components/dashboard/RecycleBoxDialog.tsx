@@ -7,22 +7,37 @@
 //   • Remove (decommission): clean snapshot+delete, NO replacement.
 //     Agent `cloud_destroy` verb.
 //
-// "Yaver-level connect": this dialog opens its own short-lived agent
-// connection (relay → tunnel → direct, same path the rest of the
-// dashboard uses) instead of leaning on whatever workspace happens to
-// be open. The user never sees "AgentClient is not connected" — either
-// it auto-connects and auto-resolves the exact resource, or it says
-// plainly that the box can't be reached.
+// CONTROL-AGENT MODEL. You can't reliably decommission a box by running
+// the teardown *on that box* — its agent may be old, offline, or it's
+// the very box being deleted (self-destruct). The provider delete is an
+// API call that needs the user's cloud credential, which lives in ONE
+// agent's local vault (whichever machine ran `accounts connect`) — not
+// on every box. So this dialog never connects to the target. It scans
+// the user's other online devices, finds the one that (a) is new enough
+// to have the cloud verbs and (b) actually holds the cloud account, and
+// runs everything there, targeting the box by resource id. The target
+// box can be powered off, wiped, or unreachable — irrelevant.
 //
-// The UI is provider-neutral on purpose ("cloud resource", not the
-// IaaS name). Yaver's facade layer (agent ops_cloud.go) is the only
-// place that knows the resource lives on a specific provider and how
-// to delete it there. The Convex `provider` column records which one.
-// Theme-aware (Tailwind, light+dark) — no hardcoded dark surface.
+// The UI is provider-neutral ("cloud resource", not the IaaS name).
+// Yaver's facade layer (agent ops_cloud.go) is the only place that
+// knows the provider and how to delete there. Theme-aware (light+dark).
 
 import { useEffect, useRef, useState } from "react";
 import { AgentClient, agentClient } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+
+// Local, dependency-free version ordering (avoids a circular import
+// with DevicesView). Only used to rank control-agent candidates —
+// newest agent first — so loose parsing is fine.
+function cmpVer(a: string, b: string): number {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
 
 interface CloudResourceInfo {
   id: string;
@@ -35,7 +50,9 @@ interface CloudResourceInfo {
 }
 
 interface RecycleBoxDialogProps {
-  device: Device;
+  device: Device; // the box being recycled/removed (the target)
+  devices: Device[]; // all of the user's devices, to pick a control agent
+  primaryDeviceId: string | null;
   token: string;
   onClose: () => void;
 }
@@ -43,11 +60,32 @@ interface RecycleBoxDialogProps {
 type Mode = "recycle" | "remove";
 type Phase = "form" | "preview" | "running" | "done";
 
-function friendlyConnectError(name: string): string {
-  return `Couldn't reach "${name}" to manage its cloud resource — the box looks offline or unreachable right now. It may already be gone, or this will work once it's back online.`;
+// Why a candidate couldn't be the control agent — drives a precise,
+// provider-neutral message instead of a raw client error.
+type SkipReason = "unreachable" | "too-old" | "no-account";
+
+function ipsOf(device: Device): string[] {
+  const raw = [device.host, ...(device.publicEndpoints || []), device.tunnelUrl || ""];
+  const ips = new Set<string>();
+  for (const s of raw) {
+    for (const m of String(s || "").matchAll(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g)) {
+      ips.add(m[0]);
+    }
+  }
+  return Array.from(ips);
 }
 
-export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogProps) {
+// Match the target device to a row from the live cloud account. Name
+// first (user-set, usually identical), then public IP (strong).
+function matchResource(servers: CloudResourceInfo[], target: Device): CloudResourceInfo | undefined {
+  const names = [target.name, target.alias].filter(Boolean).map((s) => String(s));
+  const byName = servers.find((s) => s.name && names.includes(s.name));
+  if (byName) return byName;
+  const ips = new Set(ipsOf(target));
+  return servers.find((s) => s.ip && ips.has(s.ip));
+}
+
+export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onClose }: RecycleBoxDialogProps) {
   const deviceId = device.id;
   const deviceName = device.alias || device.name || device.id;
 
@@ -61,9 +99,10 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Yaver-level connect state.
+  // Control-agent connect state.
   const [connecting, setConnecting] = useState(true);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [controlName, setControlName] = useState<string | null>(null);
 
   // Resource resolution — the user never has to recall an id.
   const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
@@ -73,38 +112,66 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
   const [lookupNote, setLookupNote] = useState<string | null>(null);
   const [showPicker, setShowPicker] = useState(false);
 
-  // Short-lived client scoped to this dialog. We don't touch the shared
-  // workspace agentClient — this connects, does the cloud op, and is
-  // disconnected on unmount. Same connect recipe the rest of the
-  // dashboard uses (relay candidates + tunnel URLs).
+  // The connected control client (NOT the target box). Held for the
+  // dialog's lifetime, disconnected on unmount.
   const clientRef = useRef<AgentClient | null>(null);
 
-  async function ensureClient(): Promise<AgentClient> {
-    const existing = clientRef.current;
-    if (existing && existing.isConnected) return existing;
-    const client = existing ?? new AgentClient();
+  // Devices that could act as the control agent, best first: never the
+  // target, never a guest, must be online. Primary first, then newest
+  // agent version (more likely to have the cloud verbs).
+  function controlCandidates(): Device[] {
+    return devices
+      .filter((d) => d.id !== deviceId && !d.isGuest && d.online)
+      .sort((a, b) => {
+        if (a.id === primaryDeviceId) return -1;
+        if (b.id === primaryDeviceId) return 1;
+        const av = String(a.agentVersion || "0").replace(/^v/i, "");
+        const bv = String(b.agentVersion || "0").replace(/^v/i, "");
+        return -cmpVer(av, bv);
+      });
+  }
+
+  function connectTo(d: Device): Promise<AgentClient> {
+    const client = new AgentClient();
     client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
     const tunnelUrls = Array.from(
       new Set(
-        [
-          ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
-          ...(device.tunnelUrl ? [device.tunnelUrl] : []),
-        ]
+        [...(Array.isArray(d.publicEndpoints) ? d.publicEndpoints : []), ...(d.tunnelUrl ? [d.tunnelUrl] : [])]
           .map((u) => String(u || "").trim())
           .filter(Boolean),
       ),
     );
-    await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
-    clientRef.current = client;
-    return client;
+    return client.connect(d.host, d.port, token, d.id, { tunnelUrls }).then(() => client);
+  }
+
+  function classifyOpsError(res: any): SkipReason {
+    const code = String(res?.code || "");
+    const err = String(res?.error || "");
+    if (code === "no_account" || /not connected|connect first|no account/i.test(err)) return "no-account";
+    if (code === "unknown_verb" || /unknown/i.test(err)) return "too-old";
+    return "too-old";
+  }
+
+  function noControlMessage(reasons: Set<SkipReason>, sawAny: boolean): string {
+    if (!sawAny) {
+      return "Removing a box runs from one of your other devices — not the box itself. None of your other devices is online right now. Bring one online (your primary is best), then try again.";
+    }
+    if (reasons.has("no-account")) {
+      return "None of your online devices has your cloud account connected, so Yaver can't reach the provider to delete this box. Connect it once (Vault → Accounts, on your primary device) and removing or recycling any box works from anywhere.";
+    }
+    if (reasons.has("too-old")) {
+      return "Your other devices' agents are too old to manage cloud resources. Update one — your primary is easiest (`yaver primary auth` then it self-updates) — and try again.";
+    }
+    return "Couldn't reach any device able to manage cloud resources. Check that another of your devices is online and try again.";
   }
 
   async function callOps(verb: string, payload: Record<string, unknown>) {
-    const client = await ensureClient();
+    const client = clientRef.current;
+    if (!client) throw new Error("no control agent");
     return client.callOps(verb, payload);
   }
 
-  // Disconnect the throwaway client when the dialog closes.
+  // Disconnect the control client when the dialog closes.
   useEffect(() => {
     return () => {
       try {
@@ -116,85 +183,113 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
     };
   }, []);
 
-  // On open: connect, then auto-resolve THIS box's exact resource so
-  // the user never types or recalls an id. Best-effort; failures fall
-  // back to the manual picker but never to a raw client error.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setConnecting(true);
-      setConnectError(null);
+  // On open: find a control agent (probe each candidate with cloud_list
+  // — the first that returns ok both proves it has the cloud account
+  // AND hands back the resource list to resolve the target), then
+  // auto-resolve this box's exact resource. Provider-neutral throughout.
+  async function discoverAndResolve(cancelledRef: { v: boolean }) {
+    setConnecting(true);
+    setConnectError(null);
+    setControlName(null);
+
+    const candidates = controlCandidates();
+    const reasons = new Set<SkipReason>();
+    let chosen: AgentClient | null = null;
+    let chosenDevice: Device | null = null;
+    let servers: CloudResourceInfo[] = [];
+
+    for (const cand of candidates) {
+      if (cancelledRef.v) return;
+      let client: AgentClient | null = null;
       try {
-        await ensureClient();
-        if (cancelled) return;
-
-        // 1. Managed-box record → exact resource id for this device.
-        try {
-          const res = await callOps("cloud_status", {});
-          if (!cancelled && res.ok !== false) {
-            const machines: any[] = (res.initial as any)?.machines || [];
-            const hit =
-              machines.find((m) => m.deviceId && m.deviceId === deviceId) ||
-              machines.find((m) => m.hostname && m.hostname === deviceName);
-            const rid = hit?.cloudResourceId || hit?.hetznerServerId;
-            if (rid) {
-              setResourceId(String(rid));
-              setResolvedFrom("this box's cloud record");
-              setResolvedLabel(
-                `${hit.hostname || deviceName}${hit.serverIp ? ` · ${hit.serverIp}` : ""}`,
-              );
-            }
-          }
-        } catch {
-          /* fall through to the live list */
+        client = await connectTo(cand);
+        const res = await client.callOps("cloud_list", {});
+        if (res.ok === false) {
+          reasons.add(classifyOpsError(res));
+          client.disconnect();
+          continue;
         }
-
-        // 2. Live account list → auto-select the unambiguous match.
-        try {
-          const res = await callOps("cloud_list", {});
-          if (!cancelled && res.ok !== false) {
-            const list: CloudResourceInfo[] = (res.initial as any)?.servers || [];
-            setResources(list);
-            const match =
-              list.find((s) => s.name && s.name === deviceName) ||
-              list.find((s) => s.id === resourceId.trim());
-            if (match) {
-              setResourceId((cur) => (cur.trim() === "" ? match.id : cur));
-              setResolvedFrom((cur) => cur ?? "your connected cloud account");
-              setResolvedLabel(
-                (cur) => cur ?? `${match.name} · ${match.ip} · ${match.status}`,
-              );
-            }
-          }
-        } catch {
-          /* manual picker still available */
-        }
+        chosen = client;
+        chosenDevice = cand;
+        servers = ((res.initial as any)?.servers || []) as CloudResourceInfo[];
+        break;
       } catch {
-        if (!cancelled) setConnectError(friendlyConnectError(deviceName));
-      } finally {
-        if (!cancelled) setConnecting(false);
+        reasons.add("unreachable");
+        try {
+          client?.disconnect();
+        } catch {
+          /* noop */
+        }
       }
-    })();
+    }
+
+    if (cancelledRef.v) {
+      try {
+        chosen?.disconnect();
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+
+    if (!chosen || !chosenDevice) {
+      setConnectError(noControlMessage(reasons, candidates.length > 0));
+      setConnecting(false);
+      return;
+    }
+
+    clientRef.current = chosen;
+    setControlName(chosenDevice.alias || chosenDevice.name || "another device");
+    setResources(servers);
+
+    // Resolve the exact resource for this box. Managed record first
+    // (cloud_status), then live-account match by name/IP.
+    try {
+      const st = await chosen.callOps("cloud_status", {});
+      if (!cancelledRef.v && st.ok !== false) {
+        const machines: any[] = (st.initial as any)?.machines || [];
+        const hit =
+          machines.find((m) => m.deviceId && m.deviceId === deviceId) ||
+          machines.find((m) => m.hostname && m.hostname === deviceName);
+        const rid = hit?.cloudResourceId || hit?.hetznerServerId;
+        if (rid) {
+          setResourceId(String(rid));
+          setResolvedFrom("this box's cloud record");
+          setResolvedLabel(`${hit.hostname || deviceName}${hit.serverIp ? ` · ${hit.serverIp}` : ""}`);
+        }
+      }
+    } catch {
+      /* fall through to live-list match */
+    }
+
+    if (!cancelledRef.v) {
+      const match = matchResource(servers, device);
+      if (match) {
+        setResourceId((cur) => (cur.trim() === "" ? match.id : cur));
+        setResolvedFrom((cur) => cur ?? "your connected cloud account");
+        setResolvedLabel((cur) => cur ?? `${match.name} · ${match.ip} · ${match.status}`);
+      }
+      setConnecting(false);
+    }
+  }
+
+  useEffect(() => {
+    const cancelledRef = { v: false };
+    void discoverAndResolve(cancelledRef);
     return () => {
-      cancelled = true;
+      cancelledRef.v = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceId, deviceName]);
+  }, [deviceId]);
 
-  // Manual refresh of the live resource list (rare — only when the
-  // auto-resolved match is wrong or ambiguous).
+  // Manual refresh of the live resource list (rare — ambiguous match).
   async function lookupResources() {
     setLookupBusy(true);
     setLookupNote(null);
     try {
       const res = await callOps("cloud_list", {});
       if (res.ok === false) {
-        const code = (res as any).code || "";
-        setLookupNote(
-          code === "unknown_verb" || /unknown/i.test((res as any).error || "")
-            ? "This agent is too old for the resource picker — update it. The box's own record is still auto-resolved above."
-            : (res as any).error || "could not list cloud resources",
-        );
+        setLookupNote((res as any).error || "could not list cloud resources");
         return;
       }
       const list: CloudResourceInfo[] = (res.initial as any)?.servers || [];
@@ -213,6 +308,9 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
     setBusy(true);
     setError(null);
     try {
+      // Runs on the control agent; targetDeviceId is the box being
+      // retired. The agent's self-destruct guard passes because the
+      // control agent is never the target.
       const res = await callOps("recycle", {
         targetDeviceId: deviceId,
         oldServerId: resourceId.trim(),
@@ -230,7 +328,7 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
         setPhase(confirm ? "done" : "preview");
       }
     } catch (e: any) {
-      setError(e?.message || friendlyConnectError(deviceName));
+      setError(e?.message || "recycle failed");
       setPhase("form");
     } finally {
       setBusy(false);
@@ -241,8 +339,11 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
     setBusy(true);
     setError(null);
     try {
+      // targetDeviceId is sent for the agent-side self-destruct guard
+      // (defense-in-depth); older agents ignore the extra field.
       const res = await callOps("cloud_destroy", {
         serverId: resourceId.trim(),
+        targetDeviceId: deviceId,
         confirm: true,
       });
       const r: any = res.initial || {};
@@ -254,7 +355,7 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
         setPhase("done");
       }
     } catch (e: any) {
-      setError(e?.message || friendlyConnectError(deviceName));
+      setError(e?.message || "remove failed");
       setPhase("form");
     } finally {
       setBusy(false);
@@ -262,26 +363,14 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
   }
 
   function retryConnect() {
-    setConnectError(null);
-    setConnecting(true);
-    // Re-run the resolve effect by toggling a fresh client.
     try {
       clientRef.current?.disconnect();
     } catch {
       /* noop */
     }
     clientRef.current = null;
-    (async () => {
-      try {
-        await ensureClient();
-        await lookupResources();
-        setConnectError(null);
-      } catch {
-        setConnectError(friendlyConnectError(deviceName));
-      } finally {
-        setConnecting(false);
-      }
-    })();
+    const cancelledRef = { v: false };
+    void discoverAndResolve(cancelledRef);
   }
 
   const inputCls =
@@ -317,7 +406,7 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
         <p className="mb-3 text-xs text-slate-500 dark:text-surface-400">
           {mode === "recycle"
             ? "Creates a fresh box, health-checks it, then snapshots & deletes the old one. The old box keeps serving until the new one is healthy — a failure rolls back with nothing destroyed."
-            : "Snapshots then deletes this box. No replacement. The snapshot is your recovery point. The agent refuses to remove the device it runs on."}
+            : "Snapshots then deletes this box. No replacement. The snapshot is your recovery point. Runs from another of your devices, so it works even if this box is already offline."}
         </p>
 
         <div className="mb-3 flex gap-1.5">
@@ -328,7 +417,7 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
         {connecting ? (
           <div className="flex items-center gap-2 rounded-md bg-slate-100 px-3 py-2.5 text-xs text-slate-600 dark:bg-[rgba(12,12,16,0.9)] dark:text-surface-300">
             <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
-            Connecting to {deviceName} and resolving its cloud resource…
+            Finding a device that can manage this box, and resolving its cloud resource…
           </div>
         ) : connectError ? (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400">
@@ -349,7 +438,8 @@ export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogPro
                   {mode === "recycle" ? "Will recycle" : "Will remove"}: {resolvedLabel || resourceId.trim()}
                 </p>
                 <p className="m-0 mt-0.5 text-[11px] opacity-80">
-                  Resolved automatically from {resolvedFrom || "your connected cloud account"}.
+                  Resolved from {resolvedFrom || "your connected cloud account"}
+                  {controlName ? ` · runs via ${controlName}` : ""}.
                 </p>
                 <button
                   type="button"

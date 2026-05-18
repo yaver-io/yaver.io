@@ -149,8 +149,9 @@ func init() {
 			"type":     "object",
 			"required": []string{"serverId", "confirm"},
 			"properties": map[string]interface{}{
-				"serverId": map[string]interface{}{"type": "string", "description": "Hetzner numeric server id (explicit — never fuzzy-matched)"},
-				"confirm":  map[string]interface{}{"type": "boolean"},
+				"serverId":       map[string]interface{}{"type": "string", "description": "Hetzner numeric server id (explicit — never fuzzy-matched)"},
+				"targetDeviceId": map[string]interface{}{"type": "string", "description": "Optional: Yaver deviceId of the box this resource belongs to. If it equals the agent running this verb, the remove is refused (self-destruct guard) — decommission must run from a different control device."},
+				"confirm":        map[string]interface{}{"type": "boolean"},
 			},
 			"additionalProperties": false,
 		},
@@ -197,14 +198,23 @@ func opsCloudListHandler(_ OpsContext, _ json.RawMessage) OpsResult {
 // is the clean "remove this box" path — no new box, snapshot first.
 func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	var p struct {
-		ServerID string `json:"serverId"`
-		Confirm  bool   `json:"confirm"`
+		ServerID       string `json:"serverId"`
+		TargetDeviceID string `json:"targetDeviceId"`
+		Confirm        bool   `json:"confirm"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
 	}
 	if strings.TrimSpace(p.ServerID) == "" {
 		return OpsResult{OK: false, Code: "bad_payload", Error: "serverId required (Hetzner numeric id — never fuzzy-matched for a delete)"}
+	}
+	// Self-destruct guard (mirrors recycle): refuse to delete the cloud
+	// resource of the very box this agent runs on. Decommission must run
+	// from a different control device that holds the cloud account.
+	if tgt := strings.TrimSpace(p.TargetDeviceID); tgt != "" {
+		if self := strings.TrimSpace(localDeviceID()); self != "" && self == tgt {
+			return OpsResult{OK: false, Code: "unauthorized", Error: "refusing to remove the cloud resource of the device this agent runs on (self-destruct guard) — run remove from a different control device"}
+		}
 	}
 	if !p.Confirm {
 		return OpsResult{OK: false, Code: "unauthorized", Error: "remove requires confirm=true"}
