@@ -1,12 +1,18 @@
 "use client";
 
-// ManagedCloudPanel — owner/dev surface for the managed-cloud
-// lifecycle (docs/managed-cloud-host-lifecycle.md). Lets the owner
-// (allowlist-gated server-side, no LemonSqueezy) ADOPT an existing
-// Hetzner box as a managed machine and DECOMMISSION it (snapshot +
-// delete via the managed teardown path). Every managed row carries
-// the `origin` provenance tag ("managed" = bought from / adopted by
-// Yaver; plain BYO devices in the list above are "self-hosted").
+// ManagedCloudPanel — owner/dev surface for ADDING managed-cloud
+// boxes (docs/managed-cloud-host-lifecycle.md): buy one via
+// LemonSqueezy, or ADOPT an existing Hetzner box as a managed machine
+// (allowlist-gated server-side). Every managed row carries the
+// `origin` provenance tag ("managed" = bought from / adopted by
+// Yaver; plain BYO devices in the list above are "self-hosted"), and
+// each device card now shows that same Self-hosted / Yaver Cloud
+// label inline.
+//
+// Removal is intentionally NOT here — the per-device "♻ Recycle box"
+// action on each card owns teardown (snapshot + delete, dry-run
+// first). Keeping decommission in one place avoids two divergent
+// destroy paths.
 //
 // Non-owners just see an empty list / 403s — the gate is the server
 // (isCloudPreviewUser), never the client.
@@ -197,12 +203,6 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
       } else {
         setNote(data?.note || data?.mode || "ok");
         await load();
-        // deprovision schedules an async destroy action — poll so the
-        // final row state (stopped, or error w/ the missing-token
-        // message) surfaces without a manual refresh.
-        if (path.includes("dev-deprovision")) {
-          [2000, 5000, 9000].forEach((ms) => setTimeout(() => void load(), ms));
-        }
       }
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -219,17 +219,19 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between text-left text-sm font-semibold text-slate-700 dark:text-surface-200"
       >
-        <span>☁ Managed cloud — buy / adopt / decommission</span>
+        <span>☁ Managed cloud — buy / adopt</span>
         <span className="text-xs opacity-60">{open ? "▾" : "▸"}</span>
       </button>
 
       {open ? (
         <div className="mt-3 space-y-3">
           <p className="text-xs text-slate-500 dark:text-surface-400">
-            Boxes here are <b>managed</b> (provisioned/adopted by Yaver). Every
-            other device in the list above is <b>self-hosted</b> (your own
-            Hetzner / hardware). Adopt imitates a managed purchase for an
-            existing box; Decommission snapshots then deletes it.
+            Boxes here are <b>managed</b> (provisioned/adopted by Yaver) — each
+            device card shows a <b>Yaver Cloud</b> badge. Every other device is{" "}
+            <b>self-hosted</b> (your own cloud box or hardware). Adopt imitates a
+            managed purchase for an existing box. To remove a box, use the{" "}
+            <b>♻ Recycle box</b> action on its device card — that owns teardown
+            (snapshot + delete, dry-run first).
           </p>
 
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
@@ -279,7 +281,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             <input
               value={adoptId}
               onChange={(e) => setAdoptId(e.target.value)}
-              placeholder="Existing Hetzner server id to adopt"
+              placeholder="Existing cloud resource id to adopt"
               className="flex-1 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
             />
             <button
@@ -325,16 +327,9 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       </span>
                     </span>
                   </div>
-                  <button
-                    disabled={busy}
-                    onClick={() => {
-                      if (!window.confirm(`Decommission managed machine ${m._id}?\nSnapshots then deletes the Hetzner box.`)) return;
-                      void post("/billing/yaver-cloud/dev-deprovision", { machineId: m._id });
-                    }}
-                    className="rounded-md border border-rose-400/50 px-2.5 py-1 text-[11px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-300"
-                  >
-                    Decommission
-                  </button>
+                  <span className="text-[10px] text-slate-400">
+                    Remove via ♻ Recycle box on the device card
+                  </span>
                  </div>
                   {m.errorMessage ? (
                     <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">

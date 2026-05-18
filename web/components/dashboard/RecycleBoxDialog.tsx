@@ -1,18 +1,30 @@
 "use client";
 
-// RecycleBoxDialog — BYO box lifecycle. Two modes:
-//   • Recycle (replace): create a fresh Hetzner box, health-check,
-//     then snapshot+delete the old one (zero-downtime; rollback keeps
-//     the old box if the new one is unhealthy). Agent `recycle` verb.
-//   • Remove (decommission): clean snapshot+delete of the box, NO
-//     replacement. Agent `cloud_destroy` verb.
-// Thin trigger: every safety guard lives agent-side. Theme-aware
-// (Tailwind, light+dark) — no hardcoded dark surface.
+// RecycleBoxDialog — cloud-box lifecycle, provider-agnostic UI.
+//   • Recycle (replace): create a fresh box, health-check, then
+//     snapshot+delete the old one (zero-downtime; rollback keeps the
+//     old box if the new one is unhealthy). Agent `recycle` verb.
+//   • Remove (decommission): clean snapshot+delete, NO replacement.
+//     Agent `cloud_destroy` verb.
+//
+// "Yaver-level connect": this dialog opens its own short-lived agent
+// connection (relay → tunnel → direct, same path the rest of the
+// dashboard uses) instead of leaning on whatever workspace happens to
+// be open. The user never sees "AgentClient is not connected" — either
+// it auto-connects and auto-resolves the exact resource, or it says
+// plainly that the box can't be reached.
+//
+// The UI is provider-neutral on purpose ("cloud resource", not the
+// IaaS name). Yaver's facade layer (agent ops_cloud.go) is the only
+// place that knows the resource lives on a specific provider and how
+// to delete it there. The Convex `provider` column records which one.
+// Theme-aware (Tailwind, light+dark) — no hardcoded dark surface.
 
-import { useEffect, useState } from "react";
-import { agentClient } from "@/lib/agent-client";
+import { useEffect, useRef, useState } from "react";
+import { AgentClient, agentClient } from "@/lib/agent-client";
+import type { Device } from "@/lib/use-devices";
 
-interface HetznerServerInfo {
+interface CloudResourceInfo {
   id: string;
   name: string;
   ip: string;
@@ -23,17 +35,24 @@ interface HetznerServerInfo {
 }
 
 interface RecycleBoxDialogProps {
-  deviceId: string;
-  deviceName: string;
+  device: Device;
+  token: string;
   onClose: () => void;
 }
 
 type Mode = "recycle" | "remove";
 type Phase = "form" | "preview" | "running" | "done";
 
-export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDialogProps) {
+function friendlyConnectError(name: string): string {
+  return `Couldn't reach "${name}" to manage its cloud resource — the box looks offline or unreachable right now. It may already be gone, or this will work once it's back online.`;
+}
+
+export function RecycleBoxDialog({ device, token, onClose }: RecycleBoxDialogProps) {
+  const deviceId = device.id;
+  const deviceName = device.alias || device.name || device.id;
+
   const [mode, setMode] = useState<Mode>("recycle");
-  const [oldServerId, setOldServerId] = useState("");
+  const [resourceId, setResourceId] = useState("");
   const [newName, setNewName] = useState(`${deviceName || "box"}-new`);
   const [plan, setPlan] = useState("starter");
   const [region, setRegion] = useState("eu");
@@ -41,70 +60,147 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
   const [steps, setSteps] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Server-id resolution — so the user never has to recall it.
+
+  // Yaver-level connect state.
+  const [connecting, setConnecting] = useState(true);
+  const [connectError, setConnectError] = useState<string | null>(null);
+
+  // Resource resolution — the user never has to recall an id.
   const [resolvedFrom, setResolvedFrom] = useState<string | null>(null);
-  const [servers, setServers] = useState<HetznerServerInfo[] | null>(null);
+  const [resolvedLabel, setResolvedLabel] = useState<string | null>(null);
+  const [resources, setResources] = useState<CloudResourceInfo[] | null>(null);
   const [lookupBusy, setLookupBusy] = useState(false);
   const [lookupNote, setLookupNote] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
 
-  // On open, try to resolve the exact Hetzner id of THIS box from the
-  // managed-box record (cloud_status → /subscription). Pure prefill;
-  // the field stays editable. Never overrides a value the user typed.
+  // Short-lived client scoped to this dialog. We don't touch the shared
+  // workspace agentClient — this connects, does the cloud op, and is
+  // disconnected on unmount. Same connect recipe the rest of the
+  // dashboard uses (relay candidates + tunnel URLs).
+  const clientRef = useRef<AgentClient | null>(null);
+
+  async function ensureClient(): Promise<AgentClient> {
+    const existing = clientRef.current;
+    if (existing && existing.isConnected) return existing;
+    const client = existing ?? new AgentClient();
+    client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
+    const tunnelUrls = Array.from(
+      new Set(
+        [
+          ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+          ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+        ]
+          .map((u) => String(u || "").trim())
+          .filter(Boolean),
+      ),
+    );
+    await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+    clientRef.current = client;
+    return client;
+  }
+
+  async function callOps(verb: string, payload: Record<string, unknown>) {
+    const client = await ensureClient();
+    return client.callOps(verb, payload);
+  }
+
+  // Disconnect the throwaway client when the dialog closes.
+  useEffect(() => {
+    return () => {
+      try {
+        clientRef.current?.disconnect();
+      } catch {
+        /* noop */
+      }
+      clientRef.current = null;
+    };
+  }, []);
+
+  // On open: connect, then auto-resolve THIS box's exact resource so
+  // the user never types or recalls an id. Best-effort; failures fall
+  // back to the manual picker but never to a raw client error.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setConnecting(true);
+      setConnectError(null);
       try {
-        const res = await agentClient.callOps("cloud_status", {});
-        if (cancelled || res.ok === false) return;
-        const machines: any[] = (res.initial as any)?.machines || [];
-        const hit =
-          machines.find((m) => m.deviceId && m.deviceId === deviceId) ||
-          machines.find((m) => m.hostname && m.hostname === deviceName);
-        if (hit?.hetznerServerId) {
-          setOldServerId((cur) => (cur.trim() === "" ? String(hit.hetznerServerId) : cur));
-          setResolvedFrom(
-            `managed box record${hit.hostname ? ` · ${hit.hostname}` : ""}${hit.serverIp ? ` · ${hit.serverIp}` : ""}`,
-          );
+        await ensureClient();
+        if (cancelled) return;
+
+        // 1. Managed-box record → exact resource id for this device.
+        try {
+          const res = await callOps("cloud_status", {});
+          if (!cancelled && res.ok !== false) {
+            const machines: any[] = (res.initial as any)?.machines || [];
+            const hit =
+              machines.find((m) => m.deviceId && m.deviceId === deviceId) ||
+              machines.find((m) => m.hostname && m.hostname === deviceName);
+            const rid = hit?.cloudResourceId || hit?.hetznerServerId;
+            if (rid) {
+              setResourceId(String(rid));
+              setResolvedFrom("this box's cloud record");
+              setResolvedLabel(
+                `${hit.hostname || deviceName}${hit.serverIp ? ` · ${hit.serverIp}` : ""}`,
+              );
+            }
+          }
+        } catch {
+          /* fall through to the live list */
+        }
+
+        // 2. Live account list → auto-select the unambiguous match.
+        try {
+          const res = await callOps("cloud_list", {});
+          if (!cancelled && res.ok !== false) {
+            const list: CloudResourceInfo[] = (res.initial as any)?.servers || [];
+            setResources(list);
+            const match =
+              list.find((s) => s.name && s.name === deviceName) ||
+              list.find((s) => s.id === resourceId.trim());
+            if (match) {
+              setResourceId((cur) => (cur.trim() === "" ? match.id : cur));
+              setResolvedFrom((cur) => cur ?? "your connected cloud account");
+              setResolvedLabel(
+                (cur) => cur ?? `${match.name} · ${match.ip} · ${match.status}`,
+              );
+            }
+          }
+        } catch {
+          /* manual picker still available */
         }
       } catch {
-        /* best-effort prefill; manual entry / picker still available */
+        if (!cancelled) setConnectError(friendlyConnectError(deviceName));
+      } finally {
+        if (!cancelled) setConnecting(false);
       }
     })();
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deviceId, deviceName]);
 
-  // Live picker — list real account servers so the user picks the
-  // exact box by name+IP instead of recalling a numeric id. Resolution
-  // from the live account, not a fuzzy guess (user still selects).
-  async function lookupServers() {
+  // Manual refresh of the live resource list (rare — only when the
+  // auto-resolved match is wrong or ambiguous).
+  async function lookupResources() {
     setLookupBusy(true);
     setLookupNote(null);
     try {
-      const res = await agentClient.callOps("cloud_list", {});
+      const res = await callOps("cloud_list", {});
       if (res.ok === false) {
         const code = (res as any).code || "";
         setLookupNote(
           code === "unknown_verb" || /unknown/i.test((res as any).error || "")
-            ? "This agent is too old for the server picker — update it. Managed boxes are still auto-resolved above."
-            : (res as any).error || "could not list servers",
+            ? "This agent is too old for the resource picker — update it. The box's own record is still auto-resolved above."
+            : (res as any).error || "could not list cloud resources",
         );
         return;
       }
-      const list: HetznerServerInfo[] = (res.initial as any)?.servers || [];
-      setServers(list);
+      const list: CloudResourceInfo[] = (res.initial as any)?.servers || [];
+      setResources(list);
       if (list.length === 0) {
-        setLookupNote("No servers on the connected Hetzner account.");
-        return;
-      }
-      // Auto-select the unambiguous match (by name, then current id).
-      const match =
-        list.find((s) => s.name && s.name === deviceName) ||
-        list.find((s) => s.id === oldServerId.trim());
-      if (match && oldServerId.trim() === "") {
-        setOldServerId(match.id);
-        setResolvedFrom(`live account · ${match.name} · ${match.ip}`);
+        setLookupNote("No cloud resources found on your connected account.");
       }
     } catch (e: any) {
       setLookupNote(e?.message || String(e));
@@ -117,9 +213,9 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
     setBusy(true);
     setError(null);
     try {
-      const res = await agentClient.callOps("recycle", {
+      const res = await callOps("recycle", {
         targetDeviceId: deviceId,
-        oldServerId: oldServerId.trim(),
+        oldServerId: resourceId.trim(),
         newName: newName.trim(),
         plan,
         region,
@@ -134,7 +230,7 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
         setPhase(confirm ? "done" : "preview");
       }
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setError(e?.message || friendlyConnectError(deviceName));
       setPhase("form");
     } finally {
       setBusy(false);
@@ -145,8 +241,8 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
     setBusy(true);
     setError(null);
     try {
-      const res = await agentClient.callOps("cloud_destroy", {
-        serverId: oldServerId.trim(),
+      const res = await callOps("cloud_destroy", {
+        serverId: resourceId.trim(),
         confirm: true,
       });
       const r: any = res.initial || {};
@@ -154,15 +250,38 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
         setError(r.error || (res as any).error || "remove failed");
         setPhase("form");
       } else {
-        setSteps([`snapshot taken, server ${oldServerId.trim()} deleted`]);
+        setSteps([`Snapshot taken, cloud resource ${resolvedLabel || resourceId.trim()} deleted`]);
         setPhase("done");
       }
     } catch (e: any) {
-      setError(e?.message || String(e));
+      setError(e?.message || friendlyConnectError(deviceName));
       setPhase("form");
     } finally {
       setBusy(false);
     }
+  }
+
+  function retryConnect() {
+    setConnectError(null);
+    setConnecting(true);
+    // Re-run the resolve effect by toggling a fresh client.
+    try {
+      clientRef.current?.disconnect();
+    } catch {
+      /* noop */
+    }
+    clientRef.current = null;
+    (async () => {
+      try {
+        await ensureClient();
+        await lookupResources();
+        setConnectError(null);
+      } catch {
+        setConnectError(friendlyConnectError(deviceName));
+      } finally {
+        setConnecting(false);
+      }
+    })();
   }
 
   const inputCls =
@@ -179,6 +298,9 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
       {label}
     </button>
   );
+
+  const ready = !connecting && !connectError;
+  const resolved = resourceId.trim() !== "";
 
   return (
     <div
@@ -203,47 +325,86 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
           {tab("remove", "Remove (decommission)")}
         </div>
 
-        {phase !== "done" ? (
+        {connecting ? (
+          <div className="flex items-center gap-2 rounded-md bg-slate-100 px-3 py-2.5 text-xs text-slate-600 dark:bg-[rgba(12,12,16,0.9)] dark:text-surface-300">
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-slate-400 border-t-transparent" />
+            Connecting to {deviceName} and resolving its cloud resource…
+          </div>
+        ) : connectError ? (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400">
+            <p className="m-0">{connectError}</p>
+            <button
+              type="button"
+              onClick={retryConnect}
+              className="mt-2 rounded-md border border-amber-400 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
+            >
+              Try again
+            </button>
+          </div>
+        ) : phase !== "done" ? (
           <div className="grid gap-2.5">
-            <label className="text-xs text-slate-600 dark:text-surface-400">
-              Old Hetzner server id (exact — resolved for you, not guessed)
-              <input
-                value={oldServerId}
-                onChange={(e) => { setOldServerId(e.target.value); setResolvedFrom(null); }}
-                placeholder="resolving… or pick / type the id"
-                disabled={phase === "preview"}
-                className={`mt-1 ${inputCls}`}
-              />
-            </label>
-            {resolvedFrom ? (
-              <p className="-mt-1 text-[11px] text-emerald-600 dark:text-emerald-400">
-                ✓ resolved from {resolvedFrom} — confirm it's the right box
-              </p>
-            ) : null}
-            {phase !== "preview" ? (
-              <div className="-mt-0.5 grid gap-1.5">
+            {resolved && !showPicker ? (
+              <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2.5 text-xs text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-400">
+                <p className="m-0 font-medium">
+                  {mode === "recycle" ? "Will recycle" : "Will remove"}: {resolvedLabel || resourceId.trim()}
+                </p>
+                <p className="m-0 mt-0.5 text-[11px] opacity-80">
+                  Resolved automatically from {resolvedFrom || "your connected cloud account"}.
+                </p>
                 <button
                   type="button"
-                  onClick={() => void lookupServers()}
-                  disabled={lookupBusy}
-                  className="justify-self-start rounded-md border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-700 disabled:opacity-50 dark:border-surface-700 dark:text-surface-300"
+                  onClick={() => { setShowPicker(true); if (!resources) void lookupResources(); }}
+                  className="mt-1.5 text-[11px] font-medium underline underline-offset-2"
                 >
-                  {lookupBusy ? "Looking up…" : servers ? "Refresh server list" : "Look up my servers"}
+                  Use a different resource
                 </button>
-                {servers && servers.length > 0 ? (
+              </div>
+            ) : (
+              <div className="grid gap-1.5">
+                <label className="text-xs text-slate-600 dark:text-surface-400">
+                  Cloud resource to {mode === "recycle" ? "recycle" : "remove"}
+                  <input
+                    value={resourceId}
+                    onChange={(e) => { setResourceId(e.target.value); setResolvedFrom(null); setResolvedLabel(null); }}
+                    placeholder={connecting ? "resolving…" : "pick below, or paste a resource id"}
+                    disabled={phase === "preview"}
+                    className={`mt-1 ${inputCls}`}
+                  />
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void lookupResources()}
+                    disabled={lookupBusy}
+                    className="rounded-md border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-700 disabled:opacity-50 dark:border-surface-700 dark:text-surface-300"
+                  >
+                    {lookupBusy ? "Loading…" : resources ? "Refresh list" : "Show all my cloud resources"}
+                  </button>
+                  {resolved ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowPicker(false)}
+                      className="text-[11px] font-medium text-slate-500 underline underline-offset-2 dark:text-surface-400"
+                    >
+                      back to resolved
+                    </button>
+                  ) : null}
+                </div>
+                {resources && resources.length > 0 ? (
                   <select
-                    value={oldServerId}
+                    value={resourceId}
                     onChange={(e) => {
-                      const s = servers.find((x) => x.id === e.target.value);
-                      setOldServerId(e.target.value);
-                      setResolvedFrom(s ? `live account · ${s.name} · ${s.ip}` : null);
+                      const s = resources.find((x) => x.id === e.target.value);
+                      setResourceId(e.target.value);
+                      setResolvedFrom(s ? "your connected cloud account" : null);
+                      setResolvedLabel(s ? `${s.name} · ${s.ip} · ${s.status}` : null);
                     }}
                     className={inputCls}
                   >
                     <option value="">— pick the box to {mode === "recycle" ? "recycle" : "remove"} —</option>
-                    {servers.map((s) => (
+                    {resources.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name} · {s.ip} · {s.type} · {s.status} (id {s.id})
+                        {s.name} · {s.ip} · {s.type} · {s.status}
                       </option>
                     ))}
                   </select>
@@ -252,7 +413,8 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
                   <p className="text-[11px] text-amber-600 dark:text-amber-400">{lookupNote}</p>
                 ) : null}
               </div>
-            ) : null}
+            )}
+
             {mode === "recycle" ? (
               <>
                 <label className="text-xs text-slate-600 dark:text-surface-400">
@@ -296,16 +458,16 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
           >
             {phase === "done" ? "Close" : "Cancel"}
           </button>
-          {mode === "recycle" && phase === "form" ? (
+          {ready && mode === "recycle" && phase === "form" ? (
             <button
               onClick={() => void runRecycle(false)}
-              disabled={oldServerId.trim() === "" || newName.trim() === "" || busy}
+              disabled={!resolved || newName.trim() === "" || busy}
               className="rounded-md border border-slate-300 bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-50 dark:bg-surface-100 dark:text-surface-900"
             >
               {busy ? "Previewing…" : "Preview plan (dry-run)"}
             </button>
           ) : null}
-          {mode === "recycle" && phase === "preview" ? (
+          {ready && mode === "recycle" && phase === "preview" ? (
             <button
               onClick={() => void runRecycle(true)}
               disabled={busy}
@@ -314,10 +476,10 @@ export function RecycleBoxDialog({ deviceId, deviceName, onClose }: RecycleBoxDi
               {busy ? "Recycling…" : "Confirm & recycle (destructive)"}
             </button>
           ) : null}
-          {mode === "remove" && phase === "form" ? (
+          {ready && mode === "remove" && phase === "form" ? (
             <button
               onClick={() => void runRemove()}
-              disabled={oldServerId.trim() === "" || busy}
+              disabled={!resolved || busy}
               className="rounded-md border border-rose-500 bg-rose-600 px-3.5 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
               {busy ? "Removing…" : "Snapshot & remove (destructive)"}

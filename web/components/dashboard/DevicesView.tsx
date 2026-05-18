@@ -1789,6 +1789,43 @@ export const MODEL_OPTIONS_BY_RUNNER: Record<string, Array<{ id: string; label: 
   ],
 };
 
+// Managed-cloud provenance. Every `cloudMachines` row is a Yaver-side
+// box (origin "managed" — see backend/convex/cloudMachines.ts). We
+// fetch the user's managed-machine list once and key it by the agent
+// deviceId so each device card can label itself "Yaver Cloud" vs
+// "Self-hosted". Purely informational; the entitlement gate is always
+// server-side. A failed fetch just falls back to "Self-hosted".
+function useManagedDeviceIds(token: string | null | undefined) {
+  const [ids, setIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/subscription`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const next = new Set<string>(
+          (Array.isArray(data?.machines) ? data.machines : [])
+            .map((m: { deviceId?: unknown }) =>
+              typeof m?.deviceId === "string" ? m.deviceId : null,
+            )
+            .filter(Boolean) as string[],
+        );
+        if (!cancelled) setIds(next);
+      } catch {
+        /* non-fatal — badge falls back to self-hosted */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+  return ids;
+}
+
 export default function DevicesView({
   devices,
   onRefresh,
@@ -1802,6 +1839,7 @@ export default function DevicesView({
 }: DevicesViewProps) {
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
+  const managedDeviceIds = useManagedDeviceIds(token);
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Phase C: which device (if any) has the recycle dialog open. The
   // dialog is a fixed overlay so it can render inline next to the
@@ -1951,6 +1989,22 @@ export default function DevicesView({
                           {device.sessionBinding === "dedicated" ? "Dedicated Session" : "Legacy Shared Session"}
                         </span>
                       ) : null}
+                      {!device.isGuest ? (
+                        <span
+                          className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                            managedDeviceIds.has(device.id)
+                              ? "border-sky-300 bg-sky-50 text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-200"
+                              : "border-slate-300 bg-slate-50 text-slate-600 dark:border-surface-700 dark:bg-surface-800/40 dark:text-surface-300"
+                          }`}
+                          title={
+                            managedDeviceIds.has(device.id)
+                              ? "Provisioned or adopted by Yaver managed cloud"
+                              : "Your own hardware or cloud box (self-hosted)"
+                          }
+                        >
+                          {managedDeviceIds.has(device.id) ? "Yaver Cloud" : "Self-hosted"}
+                        </span>
+                      ) : null}
                       {(() => {
                         const lifecycle = deriveDeviceLifecycleState(device);
                         const dotClass =
@@ -2077,15 +2131,15 @@ export default function DevicesView({
                       <button
                         onClick={() => setRecycleFor({ id: device.id, name: device.alias || device.name || device.id })}
                         className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-300 bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-700 transition-colors hover:border-amber-500/50 hover:text-amber-600 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-300 dark:hover:border-amber-500/50 dark:hover:text-amber-400"
-                        title="Recycle this box: provision a fresh Hetzner box, health-check, then snapshot+delete the old one (dry-run first)"
+                        title="Recycle this box: provision a fresh box, health-check, then snapshot+delete the old one (dry-run first)"
                       >
                         ♻ Recycle box
                       </button>
                     ) : null}
-                    {recycleFor?.id === device.id ? (
+                    {recycleFor?.id === device.id && token ? (
                       <RecycleBoxDialog
-                        deviceId={recycleFor.id}
-                        deviceName={recycleFor.name}
+                        device={device}
+                        token={token}
                         onClose={() => setRecycleFor(null)}
                       />
                     ) : null}
@@ -2131,7 +2185,7 @@ export default function DevicesView({
                     <button
                       onClick={() => setShellDevice(device)}
                       className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium leading-none text-slate-700 hover:border-slate-400 hover:bg-slate-50 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.82)] dark:text-surface-200 dark:hover:border-surface-600 dark:hover:bg-[rgba(31,33,41,0.94)] dark:hover:text-surface-50 transition-colors"
-                      title="Open a browser shell on this device (PTY over relay) — Hetzner / GCP-style"
+                      title="Open a browser shell on this device (PTY over relay) — cloud-console style"
                     >
                       <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                         <path d="M4 17l6-6-6-6" />

@@ -716,10 +716,14 @@ export default defineSchema({
     userId: v.id("users"),
     subscriptionId: v.id("subscriptions"),
     status: v.string(), // "provisioning" | "active" | "stopping" | "stopped" | "error"
+    // Underlying IaaS (provider-agnostic above the facade). Absent ⇒
+    // "hetzner". See cloudMachines.provider for the rationale.
+    provider: v.optional(v.string()),
+    cloudResourceId: v.optional(v.string()),
     hetznerServerId: v.optional(v.string()),
     serverIp: v.optional(v.string()),
     domain: v.optional(v.string()), // e.g. "abc123.relay.yaver.io"
-    region: v.string(), // "eu" | "us" — Hetzner datacenter
+    region: v.string(), // "eu" | "us" — datacenter region
     password: v.string(), // relay password (auto-generated)
     quicPort: v.number(),
     httpPort: v.number(),
@@ -769,6 +773,16 @@ export default defineSchema({
     origin: v.optional(v.union(v.literal("managed"), v.literal("self-hosted"))),
     status: v.string(),               // "provisioning" | "active" | "stopping" | "stopped" | "error"
     multiUser: v.optional(v.boolean()), // true for shared team machines
+    // Underlying IaaS this resource lives on. The whole stack above this
+    // record stays provider-agnostic ("cloud resource"); only Yaver's
+    // facade layer (agent ops_cloud.go) knows the concrete API to call.
+    // Absent ⇒ "hetzner" (every existing row predates multi-provider).
+    // Future: "gcp" | "aws" | "digitalocean" | … — recorded now so the
+    // schema doesn't need a migration when we add a second provider.
+    provider: v.optional(v.string()),
+    // Provider-native resource id. `hetznerServerId` kept for back-compat;
+    // new code reads `cloudResourceId` (provider-agnostic) and falls back.
+    cloudResourceId: v.optional(v.string()),
     hetznerServerId: v.optional(v.string()),
     serverIp: v.optional(v.string()),
     hostname: v.optional(v.string()),
