@@ -678,8 +678,64 @@ export async function saveKeyStoragePreference(pref: KeyStorage): Promise<void> 
   await SecureStore.setItemAsync(`${LOCAL_KEY_PREFIX}storage_pref`, pref);
 }
 
-export type SpeechProvider = "on-device" | "openai" | "deepgram" | "assemblyai";
-export type TtsProvider = "device" | "openai";
+export type SpeechProvider = "on-device" | "openai" | "openrouter" | "deepgram" | "assemblyai";
+export type TtsProvider = "device" | "openai" | "openrouter";
+
+/**
+ * Speech config is LOCAL ONLY by product decision — neither the audio,
+ * the transcripts, nor the provider/key/model selection are ever sent
+ * to Convex. These SecureStore-only helpers are the single source of
+ * truth so no caller can accidentally route speech config through
+ * saveUserSettings (which syncs to the cloud).
+ */
+export interface LocalSpeechConfig {
+  sttProvider: SpeechProvider;
+  sttModel: string;
+  ttsProvider: TtsProvider;
+  ttsModel: string;
+  ttsVoice: string;
+  apiKey: string;
+}
+
+const SPEECH_LK = {
+  sttProvider: `${LOCAL_KEY_PREFIX}speech_stt_provider`,
+  sttModel: `${LOCAL_KEY_PREFIX}speech_stt_model`,
+  ttsProvider: `${LOCAL_KEY_PREFIX}speech_tts_provider`,
+  ttsModel: `${LOCAL_KEY_PREFIX}speech_tts_model`,
+  ttsVoice: `${LOCAL_KEY_PREFIX}speech_tts_voice`,
+} as const;
+
+export async function loadLocalSpeechConfig(): Promise<Partial<LocalSpeechConfig>> {
+  const [sttProvider, sttModel, ttsProvider, ttsModel, ttsVoice, apiKey] = await Promise.all([
+    getLocalSecret(SPEECH_LK.sttProvider),
+    getLocalSecret(SPEECH_LK.sttModel),
+    getLocalSecret(SPEECH_LK.ttsProvider),
+    getLocalSecret(SPEECH_LK.ttsModel),
+    getLocalSecret(SPEECH_LK.ttsVoice),
+    getLocalSecret(LOCAL_KEYS.speechApiKey),
+  ]);
+  return {
+    sttProvider: (sttProvider as SpeechProvider) || undefined,
+    sttModel: sttModel || undefined,
+    ttsProvider: (ttsProvider as TtsProvider) || undefined,
+    ttsModel: ttsModel || undefined,
+    ttsVoice: ttsVoice || undefined,
+    apiKey: apiKey || undefined,
+  };
+}
+
+export async function saveLocalSpeechConfig(cfg: LocalSpeechConfig): Promise<void> {
+  await Promise.all([
+    saveLocalSecret(SPEECH_LK.sttProvider, cfg.sttProvider),
+    saveLocalSecret(SPEECH_LK.sttModel, cfg.sttModel),
+    saveLocalSecret(SPEECH_LK.ttsProvider, cfg.ttsProvider),
+    saveLocalSecret(SPEECH_LK.ttsModel, cfg.ttsModel),
+    saveLocalSecret(SPEECH_LK.ttsVoice, cfg.ttsVoice),
+    cfg.apiKey
+      ? saveLocalSecret(LOCAL_KEYS.speechApiKey, cfg.apiKey)
+      : deleteLocalSecret(LOCAL_KEYS.speechApiKey),
+  ]);
+}
 
 export interface AiRunner {
   runnerId: string;

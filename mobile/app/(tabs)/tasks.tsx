@@ -50,7 +50,7 @@ import {
 import { connectionManager } from "../../src/lib/connectionManager";
 import { markTaskDeleted, getDeletedTaskIds } from "../../src/lib/storage";
 import { useAuth } from "../../src/context/AuthContext";
-import { getUserSettings, getLocalSecret, LOCAL_KEYS, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
+import { getUserSettings, getLocalSecret, LOCAL_KEYS, loadLocalSpeechConfig, type SpeechProvider, type TtsProvider } from "../../src/lib/auth";
 import { transcribe, initWhisper, isWhisperReady, startRealtimeTranscribe, SPEECH_PROVIDERS, speakText as speakConfiguredText } from "../../src/lib/speech";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { DevPreview } from "../../src/components/DevPreview";
@@ -1579,6 +1579,9 @@ export default function TasksScreen() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
   const [speechApiKey, setSpeechApiKey] = useState<string | undefined>();
+  const [sttModel, setSttModel] = useState<string | undefined>();
+  const [ttsModel, setTtsModel] = useState<string | undefined>();
+  const [ttsVoice, setTtsVoice] = useState<string | undefined>();
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsProvider, setTtsProvider] = useState<TtsProvider>("device");
   const [verbosity, setVerbosity] = useState(10);
@@ -1620,21 +1623,22 @@ export default function TasksScreen() {
         console.warn("[speech] whisper init failed:", msg);
         setWhisperInitError(msg);
       });
+    // Speech config is LOCAL ONLY — provider / key / model / voice are
+    // read from SecureStore via loadLocalSpeechConfig and are NEVER
+    // fetched from or written to Convex. Non-speech prefs (ttsEnabled,
+    // verbosity) still come from getUserSettings.
+    loadLocalSpeechConfig().then((sc) => {
+      if (sc.sttProvider) setSpeechProvider(sc.sttProvider);
+      if (sc.sttModel) setSttModel(sc.sttModel);
+      if (sc.ttsProvider) setTtsProvider(sc.ttsProvider);
+      if (sc.ttsModel) setTtsModel(sc.ttsModel);
+      if (sc.ttsVoice) setTtsVoice(sc.ttsVoice);
+      if (sc.apiKey) setSpeechApiKey(sc.apiKey);
+    }).catch(() => {});
     if (!token) return;
-    getUserSettings(token).then(async (s) => {
-      if (s.speechProvider) setSpeechProvider(s.speechProvider);
+    getUserSettings(token).then((s) => {
       if (s.ttsEnabled) setTtsEnabled(s.ttsEnabled);
-      if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
       if (s.verbosity !== undefined) setVerbosity(s.verbosity);
-      // Load speech API key — prefer local Keychain, fall back to cloud
-      const localKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
-      if (localKey) setSpeechApiKey(localKey);
-      else if (s.speechApiKey) setSpeechApiKey(s.speechApiKey);
-      else if (s.ttsProvider === "openai") {
-        const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
-        if (localOpenAi) setSpeechApiKey(localOpenAi);
-        else if (s.openAiApiKey) setSpeechApiKey(s.openAiApiKey);
-      }
     }).catch((e: unknown) => {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn("[speech] getUserSettings failed:", msg);
@@ -2374,7 +2378,7 @@ export default function TasksScreen() {
       if (!uri) throw new Error("No recording URI");
       if (!speechProvider) throw new Error("No speech provider configured.");
 
-      const result = await transcribe(uri, { provider: speechProvider, apiKey: speechApiKey });
+      const result = await transcribe(uri, { provider: speechProvider, apiKey: speechApiKey, model: sttModel });
       if (result.text) {
         setText((prev) => (prev ? prev + " " + result.text : result.text));
         setInputFromSpeech(true);
@@ -2450,7 +2454,7 @@ export default function TasksScreen() {
 
   const speakTaskResult = (text: string) => {
     if (!ttsEnabled) return;
-    speakConfiguredText(text, { provider: ttsProvider, apiKey: speechApiKey }).catch((err: unknown) => {
+    speakConfiguredText(text, { provider: ttsProvider, apiKey: speechApiKey, model: ttsModel, voice: ttsVoice }).catch((err: unknown) => {
       console.warn("[speech] TTS failed:", err instanceof Error ? err.message : String(err));
     });
   };

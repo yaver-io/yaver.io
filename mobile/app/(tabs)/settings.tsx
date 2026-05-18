@@ -30,8 +30,8 @@ import { OpenCodeConfigModal } from "../../src/components/OpenCodeConfigModal";
 import { CodingAgentsSection } from "../../src/components/DeviceDetailsModal";
 import { YaverAgentSettings } from "../../src/components/YaverAgentSettings";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
-import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
-import { SPEECH_PROVIDERS, TTS_PROVIDERS } from "../../src/lib/speech";
+import { deleteAccount as deleteAccountApi, updateProfile, changePassword as changePasswordApi, getUserSettings, saveUserSettings, getDeviceMetrics, getDeviceEvents, type DeviceMetric, type DeviceEvent, getUsageSummary, type UsageSummary, type SpeechProvider, type TtsProvider, type KeyStorage, LOCAL_KEYS, getLocalSecret, saveLocalSecret, deleteLocalSecret, getKeyStoragePreference, saveKeyStoragePreference, loadLocalSpeechConfig, saveLocalSpeechConfig, listAuthIdentities, startLinkIntent, unlinkProvider as unlinkProviderApi, startMergeIntent, cancelMergeIntent, type AuthIdentity, type OAuthProvider, type MergeIntent } from "../../src/lib/auth";
+import { SPEECH_PROVIDERS, TTS_PROVIDERS, STT_MODELS, TTS_MODELS, TTS_VOICES, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL, DEFAULT_TTS_VOICE } from "../../src/lib/speech";
 import { clearCache } from "../../src/lib/storage";
 import * as ExpoClipboard from "expo-clipboard";
 import * as ExpoLinking from "expo-linking";
@@ -222,6 +222,9 @@ export default function SettingsScreen() {
   // Speech settings
   const [speechProvider, setSpeechProvider] = useState<SpeechProvider | null>("on-device");
   const [speechApiKey, setSpeechApiKey] = useState("");
+  const [sttModel, setSttModel] = useState(DEFAULT_STT_MODEL);
+  const [ttsModel, setTtsModel] = useState(DEFAULT_TTS_MODEL);
+  const [ttsVoice, setTtsVoice] = useState(DEFAULT_TTS_VOICE);
   const [openAiApiKey, setOpenAiApiKey] = useState("");
   const [glmApiKey, setGlmApiKey] = useState("");
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
@@ -721,24 +724,25 @@ export default function SettingsScreen() {
         // users whose userSettings was saved before the rename.
         setSelectedRunner(s.runnerId === "claude" ? "claude-code" : s.runnerId);
       }
-      if (s.speechProvider) setSpeechProvider(s.speechProvider);
       if (s.ttsEnabled !== undefined) setTtsEnabled(s.ttsEnabled);
-      if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
       if (s.verbosity !== undefined) setVerbosity(s.verbosity);
-      // Load speech API key — prefer local, fall back to cloud
-      const localSpeechKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
-      if (localSpeechKey) {
-        setSpeechApiKey(localSpeechKey);
-      } else if (s.speechApiKey) {
-        setSpeechApiKey(s.speechApiKey);
-      }
+      // Speech config is LOCAL ONLY (provider / key / model / voice in
+      // SecureStore, never Convex). loadLocalSpeechConfig is the single
+      // source of truth — we deliberately ignore s.speechProvider /
+      // s.speechApiKey / s.ttsProvider from the cloud settings.
+      const sc = await loadLocalSpeechConfig();
+      if (sc.sttProvider) setSpeechProvider(sc.sttProvider);
+      if (sc.sttModel) setSttModel(sc.sttModel);
+      if (sc.ttsProvider) setTtsProvider(sc.ttsProvider);
+      if (sc.ttsModel) setTtsModel(sc.ttsModel);
+      if (sc.ttsVoice) setTtsVoice(sc.ttsVoice);
+      if (sc.apiKey) setSpeechApiKey(sc.apiKey);
       const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
       if (localOpenAi) {
         setOpenAiApiKey(localOpenAi);
-        if (!localSpeechKey && !s.speechApiKey && s.ttsProvider === "openai") setSpeechApiKey(localOpenAi);
+        if (!sc.apiKey && (sc.sttProvider === "openai" || sc.ttsProvider === "openai")) setSpeechApiKey(localOpenAi);
       } else if (typeof s.openAiApiKey === "string") {
         setOpenAiApiKey(s.openAiApiKey);
-        if (!localSpeechKey && !s.speechApiKey && s.ttsProvider === "openai") setSpeechApiKey(s.openAiApiKey);
       }
       const localGlm = await getLocalSecret(LOCAL_KEYS.glmApiKey);
       if (localGlm) setGlmApiKey(localGlm);
@@ -2101,14 +2105,14 @@ export default function SettingsScreen() {
                   </Text>
                 </Pressable>
 
-                {(speechProvider && SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.requiresKey) || ttsProvider === "openai" ? (
+                {(speechProvider && SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.requiresKey) || ttsProvider === "openai" || ttsProvider === "openrouter" ? (
                   <TextInput
                     style={[{
                       borderWidth: 1, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12,
                       fontSize: 14, marginTop: 10,
                       backgroundColor: c.bg, borderColor: c.border, color: c.textPrimary,
                     }]}
-                    placeholder={ttsProvider === "openai" && speechProvider !== "openai" ? "OpenAI API key" : SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.keyPlaceholder ?? "API Key"}
+                    placeholder={SPEECH_PROVIDERS.find(p => p.id === speechProvider)?.keyPlaceholder ?? ((ttsProvider === "openrouter") ? "sk-or-..." : "OpenAI API key")}
                     placeholderTextColor={c.textMuted}
                     value={speechApiKey}
                     onChangeText={setSpeechApiKey}
@@ -2116,6 +2120,32 @@ export default function SettingsScreen() {
                     autoCorrect={false}
                     secureTextEntry
                   />
+                ) : null}
+
+                {/* STT model — only OpenAI/OpenRouter expose a model
+                    choice; on-device/deepgram/assemblyai are fixed. */}
+                {speechProvider === "openai" || speechProvider === "openrouter" ? (
+                  <View style={{ marginTop: 10 }}>
+                    <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 6 }]}>Transcription model</Text>
+                    <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                      {STT_MODELS.map((m) => {
+                        const sel = (sttModel || DEFAULT_STT_MODEL) === m.id;
+                        return (
+                          <Pressable
+                            key={m.id}
+                            onPress={() => setSttModel(m.id)}
+                            style={{
+                              paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1,
+                              backgroundColor: sel ? c.accent + "30" : c.bgInput,
+                              borderColor: sel ? c.accent : c.border,
+                            }}
+                          >
+                            <Text style={{ color: sel ? c.accent : c.textSecondary, fontSize: 12, fontWeight: "600" }}>{m.label}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
                 ) : null}
 
                 <Pressable
@@ -2131,21 +2161,20 @@ export default function SettingsScreen() {
                     if (!token) return;
                     setIsSavingSpeech(true);
                     try {
-                      const cloudSettings: Record<string, any> = {
-                        speechProvider: speechProvider ?? undefined,
-                        ttsEnabled,
+                      // Speech config is LOCAL ONLY — provider, key,
+                      // model and voice go to SecureStore via
+                      // saveLocalSpeechConfig and are NEVER sent to
+                      // Convex. Only the non-speech prefs (ttsEnabled,
+                      // verbosity) are synced to the cloud.
+                      await saveLocalSpeechConfig({
+                        sttProvider: speechProvider ?? "on-device",
+                        sttModel: sttModel || DEFAULT_STT_MODEL,
                         ttsProvider,
-                        verbosity,
-                      };
-                      if (keyStorage === "cloud" && speechApiKey) {
-                        cloudSettings.speechApiKey = speechApiKey;
-                        await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
-                      } else {
-                        if (speechApiKey) await saveLocalSecret(LOCAL_KEYS.speechApiKey, speechApiKey);
-                        else await deleteLocalSecret(LOCAL_KEYS.speechApiKey);
-                        cloudSettings.speechApiKey = "";
-                      }
-                      await saveUserSettings(token, cloudSettings);
+                        ttsModel: ttsModel || DEFAULT_TTS_MODEL,
+                        ttsVoice: ttsVoice || DEFAULT_TTS_VOICE,
+                        apiKey: speechApiKey,
+                      });
+                      await saveUserSettings(token, { ttsEnabled, verbosity });
                       setShowSpeechConfig(false);
                     } catch {}
                     setIsSavingSpeech(false);
@@ -2170,7 +2199,7 @@ export default function SettingsScreen() {
                 value={ttsEnabled}
                 onValueChange={async (val) => {
                   setTtsEnabled(val);
-                  if (token) saveUserSettings(token, { ttsEnabled: val, ttsProvider }).catch(() => {});
+                  if (token) saveUserSettings(token, { ttsEnabled: val }).catch(() => {});
                 }}
                 trackColor={{ false: c.border, true: c.accent }}
               />
@@ -2185,7 +2214,16 @@ export default function SettingsScreen() {
                       key={provider.id}
                       onPress={() => {
                         setTtsProvider(provider.id);
-                        if (token) saveUserSettings(token, { ttsProvider: provider.id, ttsEnabled: true }).catch(() => {});
+                        // ttsProvider is speech config → local only.
+                        void saveLocalSpeechConfig({
+                          sttProvider: speechProvider ?? "on-device",
+                          sttModel: sttModel || DEFAULT_STT_MODEL,
+                          ttsProvider: provider.id,
+                          ttsModel: ttsModel || DEFAULT_TTS_MODEL,
+                          ttsVoice: ttsVoice || DEFAULT_TTS_VOICE,
+                          apiKey: speechApiKey,
+                        });
+                        if (token) saveUserSettings(token, { ttsEnabled: true }).catch(() => {});
                       }}
                       style={{
                         flex: 1,
@@ -2201,6 +2239,56 @@ export default function SettingsScreen() {
                     </Pressable>
                   );
                 })}
+              </View>
+            )}
+
+            {ttsEnabled && (ttsProvider === "openai" || ttsProvider === "openrouter") && (
+              <View style={{ paddingHorizontal: 16, paddingBottom: 12, gap: 10 }}>
+                <View>
+                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 6 }]}>Voice model</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {TTS_MODELS.map((m) => {
+                      const sel = (ttsModel || DEFAULT_TTS_MODEL) === m.id;
+                      return (
+                        <Pressable
+                          key={m.id}
+                          onPress={() => setTtsModel(m.id)}
+                          style={{
+                            paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1,
+                            backgroundColor: sel ? c.accent + "30" : c.bgInput,
+                            borderColor: sel ? c.accent : c.border,
+                          }}
+                        >
+                          <Text style={{ color: sel ? c.accent : c.textSecondary, fontSize: 12, fontWeight: "600" }}>{m.label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+                <View>
+                  <Text style={[styles.sectionLabel, { color: c.textMuted, marginBottom: 6 }]}>Voice</Text>
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                    {TTS_VOICES.map((v) => {
+                      const sel = (ttsVoice || DEFAULT_TTS_VOICE) === v;
+                      return (
+                        <Pressable
+                          key={v}
+                          onPress={() => setTtsVoice(v)}
+                          style={{
+                            paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+                            backgroundColor: sel ? c.accent + "30" : c.bgInput,
+                            borderColor: sel ? c.accent : c.border,
+                          }}
+                        >
+                          <Text style={{ color: sel ? c.accent : c.textSecondary, fontSize: 12, fontWeight: "600" }}>{v}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </View>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  Speech provider, key, model and voice are stored only on this device — never synced to the cloud.
+                </Text>
               </View>
             )}
 

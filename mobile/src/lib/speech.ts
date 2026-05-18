@@ -21,12 +21,51 @@ export interface TranscriptionResult {
 export interface SpeechConfig {
   provider: SpeechProvider;
   apiKey?: string;
+  /** STT model id. Defaults to gpt-4o-mini-transcribe when omitted. */
+  model?: string;
 }
 
 export interface TextToSpeechConfig {
   provider: TtsProvider;
   apiKey?: string;
+  /** TTS model id. Defaults to gpt-4o-mini-tts when omitted. */
+  model?: string;
+  /** TTS voice id. Defaults to "alloy" when omitted. */
+  voice?: string;
 }
+
+// ── Model / voice catalogues (settings UI reads these) ───────────────
+// Only OpenAI + OpenRouter are supported, per product decision. Both
+// speak the OpenAI audio API shape; OpenRouter just swaps the base URL.
+
+/** OpenAI-compatible base URL for a given provider. */
+export function openAiCompatBaseUrl(
+  provider: SpeechProvider | TtsProvider,
+): string {
+  return provider === "openrouter"
+    ? "https://openrouter.ai/api/v1"
+    : "https://api.openai.com/v1";
+}
+
+export const STT_MODELS: { id: string; label: string }[] = [
+  { id: "gpt-4o-mini-transcribe", label: "gpt-4o-mini-transcribe (fast, cheap)" },
+  { id: "gpt-4o-transcribe", label: "gpt-4o-transcribe (most accurate)" },
+  { id: "whisper-1", label: "whisper-1 (classic)" },
+];
+
+export const TTS_MODELS: { id: string; label: string }[] = [
+  { id: "gpt-4o-mini-tts", label: "gpt-4o-mini-tts (fast, cheap)" },
+  { id: "tts-1", label: "tts-1 (low latency)" },
+  { id: "tts-1-hd", label: "tts-1-hd (higher quality)" },
+];
+
+export const TTS_VOICES: string[] = [
+  "alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer",
+];
+
+export const DEFAULT_STT_MODEL = "gpt-4o-mini-transcribe";
+export const DEFAULT_TTS_MODEL = "gpt-4o-mini-tts";
+export const DEFAULT_TTS_VOICE = "alloy";
 
 // ── On-device (whisper.rn) ───────────────────────────────────────────
 
@@ -142,9 +181,14 @@ async function transcribeWithWhisper(audioUri: string): Promise<string> {
 
 // ── Cloud: OpenAI ────────────────────────────────────────────────────
 
-async function transcribeWithOpenAI(
+// OpenAI-compatible transcription (OpenAI + OpenRouter). Both expose
+// POST {base}/audio/transcriptions with the same multipart shape.
+async function transcribeWithOpenAICompat(
   audioUri: string,
-  apiKey: string
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+  label: string,
 ): Promise<string> {
   const formData = new FormData();
   formData.append("file", {
@@ -152,21 +196,18 @@ async function transcribeWithOpenAI(
     type: "audio/m4a",
     name: "audio.m4a",
   } as any);
-  formData.append("model", "gpt-4o-mini-transcribe");
+  formData.append("model", model || DEFAULT_STT_MODEL);
   formData.append("language", "en");
 
-  const response = await fetch(
-    "https://api.openai.com/v1/audio/transcriptions",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: formData,
-    }
-  );
+  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: formData,
+  });
 
   if (!response.ok) {
     const err = await response.text().catch(() => "Unknown error");
-    throw new Error(`OpenAI STT failed (${response.status}): ${err}`);
+    throw new Error(`${label} STT failed (${response.status}): ${err}`);
   }
 
   const data = await response.json();
@@ -292,7 +333,11 @@ export async function transcribe(
       break;
     case "openai":
       if (!config.apiKey) throw new Error("OpenAI API key required");
-      text = await transcribeWithOpenAI(audioUri, config.apiKey);
+      text = await transcribeWithOpenAICompat(audioUri, config.apiKey, openAiCompatBaseUrl("openai"), config.model || DEFAULT_STT_MODEL, "OpenAI");
+      break;
+    case "openrouter":
+      if (!config.apiKey) throw new Error("OpenRouter API key required");
+      text = await transcribeWithOpenAICompat(audioUri, config.apiKey, openAiCompatBaseUrl("openrouter"), config.model || DEFAULT_STT_MODEL, "OpenRouter");
       break;
     case "deepgram":
       if (!config.apiKey) throw new Error("Deepgram API key required");
@@ -330,10 +375,18 @@ export const SPEECH_PROVIDERS: SpeechProviderInfo[] = [
   {
     id: "openai",
     name: "OpenAI",
-    description: "GPT-4o Mini Transcribe. Fast, accurate. $0.003/min.",
+    description: "Whisper / gpt-4o transcribe. Fast, accurate. Non-realtime.",
     requiresKey: true,
     keyPlaceholder: "sk-...",
     keyHint: "Get your key at platform.openai.com/api-keys",
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter",
+    description: "OpenAI-compatible audio transcription via your OpenRouter key.",
+    requiresKey: true,
+    keyPlaceholder: "sk-or-...",
+    keyHint: "Get your key at openrouter.ai/keys",
   },
   {
     id: "deepgram",
@@ -370,7 +423,13 @@ export const TTS_PROVIDERS: TtsProviderInfo[] = [
   {
     id: "openai",
     name: "OpenAI Voice",
-    description: "Uses OpenAI text-to-speech with your API key.",
+    description: "OpenAI text-to-speech with your API key. Non-realtime.",
+    requiresKey: true,
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter Voice",
+    description: "OpenAI-compatible text-to-speech via your OpenRouter key.",
     requiresKey: true,
   },
 ];
@@ -379,23 +438,32 @@ function stripSpeechMarkdown(text: string): string {
   return text.replace(/[#*`_~\[\]()>|\\-]/g, "").replace(/\n+/g, ". ").trim();
 }
 
-async function speakWithOpenAI(text: string, apiKey: string): Promise<void> {
-  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+// OpenAI-compatible speech synthesis (OpenAI + OpenRouter). Same
+// POST {base}/audio/speech JSON shape; only the base URL differs.
+async function speakWithOpenAICompat(
+  text: string,
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+  voice: string,
+  label: string,
+): Promise<void> {
+  const response = await fetch(`${baseUrl}/audio/speech`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini-tts",
-      voice: "alloy",
+      model: model || DEFAULT_TTS_MODEL,
+      voice: voice || DEFAULT_TTS_VOICE,
       input: stripSpeechMarkdown(text).slice(0, 4000),
       response_format: "mp3",
     }),
   });
   if (!response.ok) {
     const err = await response.text().catch(() => "Unknown error");
-    throw new Error(`OpenAI TTS failed (${response.status}): ${err}`);
+    throw new Error(`${label} TTS failed (${response.status}): ${err}`);
   }
 
   const FileSystem = require("expo-file-system/legacy");
@@ -427,9 +495,20 @@ export async function speakText(
 ): Promise<void> {
   const plain = stripSpeechMarkdown(text);
   if (!plain) return;
-  if (config.provider === "openai") {
-    if (!config.apiKey) throw new Error("OpenAI API key required");
-    await speakWithOpenAI(plain, config.apiKey);
+  if (config.provider === "openai" || config.provider === "openrouter") {
+    if (!config.apiKey) {
+      throw new Error(
+        `${config.provider === "openrouter" ? "OpenRouter" : "OpenAI"} API key required`,
+      );
+    }
+    await speakWithOpenAICompat(
+      plain,
+      config.apiKey,
+      openAiCompatBaseUrl(config.provider),
+      config.model || DEFAULT_TTS_MODEL,
+      config.voice || DEFAULT_TTS_VOICE,
+      config.provider === "openrouter" ? "OpenRouter" : "OpenAI",
+    );
     return;
   }
   const Speech = require("expo-speech");
