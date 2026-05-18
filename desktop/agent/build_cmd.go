@@ -25,9 +25,13 @@ func runBuild(args []string) {
 	}
 
 	switch args[0] {
-	case "ios":
+	case "ios", "ipa":
+		// `yaver build ipa` ≡ `yaver build ios` — detect the project
+		// stack and produce a .ipa (artifact-only, no upload).
 		runNativeReleaseBuild(NativeIOS, args[1:])
-	case "android":
+	case "android", "aab":
+		// `yaver build aab` ≡ `yaver build android` — detect the
+		// stack and produce a .aab (artifact-only, no upload).
 		runNativeReleaseBuild(NativeAndroid, args[1:])
 	case "flutter":
 		// `yaver build flutter <apk|aab|ipa>` is the legacy form; bare
@@ -75,7 +79,9 @@ func printBuildUsage() {
   yaver build flutter aab [--dir <path>]     Build Flutter App Bundle
   yaver build flutter ipa [--dir <path>]     Build Flutter IPA (iOS)
   yaver build ios [repo-or-project-dir]      Discover iOS project and build IPA
+  yaver build ipa [repo-or-project-dir]      Alias of 'build ios' (→ .ipa, no upload)
   yaver build android [repo-or-project-dir]  Discover Android project and build AAB
+  yaver build aab [repo-or-project-dir]      Alias of 'build android' (→ .aab, no upload)
   yaver build gradle apk [--dir <path>]      Build Android APK via Gradle
   yaver build gradle aab [--dir <path>]      Build Android App Bundle via Gradle
   yaver build xcode ipa [--scheme <name>] [--dir <path>]  Build iOS IPA via Xcode
