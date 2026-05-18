@@ -75,6 +75,7 @@ type BuildSummary struct {
 	ID           string        `json:"id"`
 	Platform     BuildPlatform `json:"platform"`
 	Status       BuildStatus   `json:"status"`
+	WorkDir      string        `json:"workDir,omitempty"`
 	ArtifactName string        `json:"artifactName,omitempty"`
 	ArtifactSize int64         `json:"artifactSize,omitempty"`
 	StartedAt    string        `json:"startedAt"`
@@ -609,6 +610,7 @@ func (bm *BuildManager) ListBuilds() []BuildSummary {
 			ID:           b.ID,
 			Platform:     b.Platform,
 			Status:       b.Status,
+			WorkDir:      b.WorkDir,
 			ArtifactName: b.ArtifactName,
 			ArtifactSize: b.ArtifactSize,
 			StartedAt:    b.StartedAt,
