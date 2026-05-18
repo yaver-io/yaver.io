@@ -3,7 +3,7 @@ import { cn } from "@/lib/cn";
 export type CardTone = "default" | "success" | "warning" | "danger" | "info";
 
 const TONE: Record<CardTone, string> = {
-  default: "border-surface-700/60 dark:border-surface-700/70",
+  default: "border-surface-800 dark:border-surface-700/70",
   success:
     "border-success/40 ring-1 ring-success/15 dark:border-success/30 dark:ring-success/10",
   warning:
@@ -36,7 +36,7 @@ export function UICard({
   return (
     <div
       className={cn(
-        "rounded-xl border bg-surface-900/40 dark:bg-surface-850/60",
+        "rounded-xl border bg-surface-900 dark:bg-surface-850/60",
         "shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.4)]",
         "transition-colors duration-200",
         PADDING[padding],

@@ -14,7 +14,7 @@ const VARIANT: Record<ButtonVariant, string> = {
   primary:
     "bg-brand text-brand-fg hover:bg-brand/90 active:bg-brand/85 disabled:opacity-50",
   secondary:
-    "border border-surface-700/70 text-surface-100 bg-transparent hover:border-surface-500 hover:bg-surface-800/40 dark:hover:bg-surface-700/30 disabled:opacity-50",
+    "border border-surface-700 text-surface-100 bg-surface-900 dark:bg-transparent hover:bg-surface-850 hover:border-surface-600 dark:hover:bg-surface-700/30 disabled:opacity-50",
   ghost:
     "text-surface-200 hover:text-surface-50 hover:bg-surface-800/40 dark:hover:bg-surface-700/30 disabled:opacity-50",
   danger:

@@ -10,18 +10,23 @@ body.dashboard-mode main { flex: 1; }
 
 @layer base {
   :root {
-    --surface-50: 10 10 10;
-    --surface-100: 23 23 23;
-    --surface-200: 38 38 38;
-    --surface-300: 64 64 64;
-    --surface-400: 82 82 82;
-    --surface-500: 115 115 115;
-    --surface-600: 163 163 163;
-    --surface-700: 212 212 212;
-    --surface-800: 229 229 229;
-    --surface-850: 240 240 240;
-    --surface-900: 245 245 245;
-    --surface-950: 255 255 255;
+    /* Warm neutral ramp. Position-semantic: low index = foreground
+       (strong text), high index = background. Light mode mirrors the
+       dark inversion — the page (950) is a warm off-white and cards
+       (900) are pure white so they separate cleanly. Pure #000/#FFF
+       are intentionally avoided (harsh on warm off-white). */
+    --surface-50: 33 33 31;       /* strongest text */
+    --surface-100: 44 44 42;      /* #2C2C2A — headings / primary text */
+    --surface-200: 64 63 59;      /* body text (≈7:1 on white) */
+    --surface-300: 95 94 90;      /* #5F5E5A — secondary text */
+    --surface-400: 136 135 128;   /* #888780 — tertiary / placeholder */
+    --surface-500: 160 158 149;   /* muted icon */
+    --surface-600: 184 182 172;   /* faint */
+    --surface-700: 209 206 196;   /* strong border / input border */
+    --surface-800: 226 224 214;   /* card border (≈ rgba(0,0,0,0.08)) */
+    --surface-850: 238 236 228;   /* recessed / secondary surface */
+    --surface-900: 255 255 255;   /* card / primary surface */
+    --surface-950: 247 246 242;   /* #F7F6F2 — page background */
     --selection-bg: rgba(0, 0, 0, 0.08);
 
     /* Semantic tokens — light. <fg> = solid badge text on solid bg.
@@ -119,26 +124,31 @@ body.dashboard-mode main { flex: 1; }
       radial-gradient(circle at top right, rgba(45, 212, 191, 0.05) 0%, transparent 28%);
   }
 
+  /* Chrome surfaces consume the surface scale so they re-theme with
+     the ramp. Light: sidebar/topbar sit one step back from the page
+     (surface-850) so they read as chrome, not content. */
   .dashboard-mobilebar {
     @apply border-b backdrop-blur-xl;
+    background: rgb(var(--surface-850) / 0.92);
+    border-color: rgb(var(--surface-800));
   }
 
   .dashboard-sidebar {
     @apply backdrop-blur-xl;
-    background: rgba(251, 252, 255, 0.96);
-    border-color: rgba(214, 221, 234, 0.95);
-    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.42);
+    background: rgb(var(--surface-850) / 0.96);
+    border-color: rgb(var(--surface-800));
+    box-shadow: inset -1px 0 0 rgb(var(--surface-900) / 0.5);
   }
 
   .dashboard-main {
     @apply relative;
-    background: linear-gradient(180deg, rgba(244, 247, 252, 0.98) 0%, rgba(239, 243, 250, 0.98) 100%);
+    background: rgb(var(--surface-950));
   }
 
   .dashboard-topbar {
     @apply backdrop-blur-xl;
-    background: rgba(248, 250, 255, 0.9);
-    border-color: rgba(214, 221, 234, 0.92);
+    background: rgb(var(--surface-950) / 0.9);
+    border-color: rgb(var(--surface-800));
   }
 
   .dark .dashboard-mobilebar {
