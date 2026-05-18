@@ -761,5 +761,8 @@
       "agentOpenInYaver": true,
       "pluginEnabled": false
     }
+  },
+  "nativeModuleCompanions": {
+    "react-native-iap": ["react-native-nitro-modules"]
   }
 }

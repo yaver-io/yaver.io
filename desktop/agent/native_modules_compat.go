@@ -29,6 +29,12 @@ type sdkManifest struct {
 	ModuleSupport      map[string]struct {
 		Version string `json:"version"`
 	} `json:"moduleSupport"`
+	// NativeModuleCompanions maps a host native module to runtime peers it
+	// hard-imports but guest package.json files almost never declare
+	// (react-native-iap 14.7.x → react-native-nitro-modules). When the align
+	// step pins/keeps the key module, every companion must also be installed
+	// at the host version or Metro fails to resolve it at bundle time.
+	NativeModuleCompanions map[string][]string `json:"nativeModuleCompanions"`
 	Hermes struct {
 		Version         string `json:"version"`
 		BytecodeVersion int    `json:"bytecodeVersion"`
@@ -667,6 +673,37 @@ func detectNativeModuleVersionMismatch(name, projectVersion string, host *sdkMan
 		HostVersion:    mismatch.HostVersion,
 		Reason:         mismatch.Reason,
 	}
+}
+
+// hostNativeModuleCompanions returns the runtime peers that must be installed
+// alongside `name` (resolved to their host manifest versions). Empty when the
+// module declares no companions or the manifest can't be read. Read-only.
+func hostNativeModuleCompanions(name string) map[string]string {
+	m, err := loadHostSDKManifest()
+	if err != nil || m == nil {
+		return nil
+	}
+	companions := m.NativeModuleCompanions[name]
+	if len(companions) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, c := range companions {
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
+		}
+		v := strings.TrimSpace(m.NativeModules[c])
+		if v == "" {
+			if ms, ok := m.ModuleSupport[c]; ok {
+				v = strings.TrimSpace(ms.Version)
+			}
+		}
+		if v != "" {
+			out[c] = v
+		}
+	}
+	return out
 }
 
 func detectVersionMismatch(projectVersion, hostVersion string) *VersionMismatch {

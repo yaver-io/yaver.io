@@ -552,6 +552,71 @@ func TestAlignProjectNativeModulesPinsMismatchedDirectDep(t *testing.T) {
 	}
 }
 
+// TestAlignProjectNativeModulesPinsCompanion guards the talos regression:
+// react-native-iap 14.7.x hard-imports react-native-nitro-modules, which
+// guest package.json files don't declare. When the align step pins iap to
+// the host version it MUST also inject the manifest-declared companion or
+// `expo export:embed` fails with "Unable to resolve module
+// react-native-nitro-modules". The companion is the one sanctioned
+// exception to the "only rewrite declared deps" rule.
+func TestAlignProjectNativeModulesPinsCompanion(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+  "name": "talos",
+  "dependencies": {
+    "react": "18.3.1",
+    "react-native": "0.76.5",
+    "expo": "52.0.0",
+    "react-native-iap": "12.10.0"
+  }
+}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mismatches := []NativeModuleMismatch{
+		{Name: "react-native-iap", ProjectVersion: "12.10.0", HostVersion: "14.7.20", Reason: "major version differs"},
+	}
+
+	// Cancelled ctx: package.json rewrite + report.Pins happen before the
+	// npm install round-trip, so we can assert without network.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	report := alignProjectNativeModulesIfNeeded(ctx, dir, mismatches, true)
+	if !report.Attempted {
+		t.Fatalf("expected Attempted=true, got %#v", report)
+	}
+
+	wantCompanion := hostNativeModuleCompanions("react-native-iap")["react-native-nitro-modules"]
+	if wantCompanion == "" {
+		t.Fatal("sdk-manifest.json must declare react-native-iap → react-native-nitro-modules companion at a resolvable version")
+	}
+	if report.Pins["react-native-iap"] != "14.7.20" {
+		t.Fatalf("Pins[react-native-iap] = %q, want 14.7.20", report.Pins["react-native-iap"])
+	}
+	if report.Pins["react-native-nitro-modules"] != wantCompanion {
+		t.Fatalf("Pins[react-native-nitro-modules] = %q, want %q — companion peer was not injected", report.Pins["react-native-nitro-modules"], wantCompanion)
+	}
+
+	pkgRaw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkg map[string]json.RawMessage
+	if err := json.Unmarshal(pkgRaw, &pkg); err != nil {
+		t.Fatalf("post-align package.json unparseable: %v", err)
+	}
+	var deps map[string]string
+	if err := json.Unmarshal(pkg["dependencies"], &deps); err != nil {
+		t.Fatal(err)
+	}
+	if deps["react-native-iap"] != "14.7.20" {
+		t.Fatalf("dependencies.react-native-iap = %q, want 14.7.20", deps["react-native-iap"])
+	}
+	if deps["react-native-nitro-modules"] != wantCompanion {
+		t.Fatalf("dependencies.react-native-nitro-modules = %q, want %q — companion must be added to dependencies so it survives a plain `npm install`", deps["react-native-nitro-modules"], wantCompanion)
+	}
+}
+
 // TestAlignProjectNativeModulesNoMismatchIsNoop ensures the function does
 // nothing when the compat report has no mismatches — this is the
 // yaver-test-ephemeral fast path. We MUST NOT regress hosts where the

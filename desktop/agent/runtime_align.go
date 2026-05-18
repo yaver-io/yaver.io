@@ -763,6 +763,59 @@ func alignProjectNativeModulesIfNeeded(ctx context.Context, workDir string, mism
 		return report
 	}
 
+	// Companion deps: some host native modules hard-import a runtime peer the
+	// guest package.json never declares (react-native-iap 14.7.x →
+	// react-native-nitro-modules). Once we pin/keep such a module the peer
+	// must be present at the host version too, or `expo export:embed` fails
+	// with "Unable to resolve module <peer>". This is the one sanctioned
+	// exception to the "only rewrite declared deps" rule — the manifest, not
+	// a heuristic, decides which peers get injected.
+	companionPins := map[string]string{}
+	for trigger := range declaredAnywhere {
+		for cname, cver := range hostNativeModuleCompanions(trigger) {
+			if _, already := pins[cname]; already {
+				continue
+			}
+			companionPins[cname] = cver
+		}
+	}
+	if len(companionPins) > 0 {
+		var deps map[string]json.RawMessage
+		if rawDeps, ok := pkgObj["dependencies"]; ok {
+			_ = json.Unmarshal(rawDeps, &deps)
+		}
+		if deps == nil {
+			deps = map[string]json.RawMessage{}
+		}
+		depsChanged := false
+		for cname, cver := range companionPins {
+			var cur string
+			if rc, ok := deps[cname]; ok {
+				_ = json.Unmarshal(rc, &cur)
+			}
+			// Always route the companion through the install/verify path so
+			// it lands in node_modules even if package.json already lists it.
+			pins[cname] = cver
+			depsRewrites[cname] = cver
+			declaredAnywhere[cname] = true
+			if strings.TrimSpace(cur) == cver {
+				continue
+			}
+			b, _ := json.Marshal(cver)
+			deps[cname] = b
+			depsChanged = true
+		}
+		if depsChanged {
+			out, err := json.MarshalIndent(orderedRawMap(deps), "  ", "  ")
+			if err != nil {
+				report.Error = fmt.Sprintf("marshal companion dependencies: %v", err)
+				return report
+			}
+			pkgObj["dependencies"] = out
+			report.Notes = append(report.Notes, "Added companion deps to dependencies: "+strings.Join(sortedKeys(companionPins), ", "))
+		}
+	}
+
 	// Patch overrides at the right level (workspace root in a workspace,
 	// project itself otherwise). Overrides matter because npm install with
 	// explicit specs only pins the named pkg; transitive deps that pull a
