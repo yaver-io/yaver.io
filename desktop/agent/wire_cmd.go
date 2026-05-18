@@ -626,10 +626,11 @@ func isAdbWirelessSerial(serial string) bool {
 // ---------- push ----------
 
 type wirePushOpts struct {
-	device   string
-	platform string
-	config   string // "Debug" | "Release"
-	noLaunch bool
+	device      string
+	platform    string
+	config      string // "Debug" | "Release"
+	noLaunch    bool
+	installDeps bool // approval to auto-install a missing JDK/Android SDK
 }
 
 // release reports whether the current build configuration is Release.
@@ -646,6 +647,7 @@ func runWirePush(args []string) {
 	fs.StringVar(&opts.platform, "platform", "", "ios|android — force platform when both are supported")
 	fs.StringVar(&opts.config, "config", "Release", "xcode/gradle build configuration: Debug|Release")
 	fs.BoolVar(&opts.noLaunch, "no-launch", false, "install without launching")
+	fs.BoolVar(&opts.installDeps, "install-deps", false, "approve auto-download+install of a missing JDK 17 / Android SDK")
 	_ = fs.Parse(args)
 	// Normalise + validate the config name.
 	switch strings.ToLower(opts.config) {
@@ -889,6 +891,15 @@ func displayName(d wireDevice) string {
 }
 
 func dispatchWirePush(ctx context.Context, root, stack, platform string, dev wireDevice, opts wirePushOpts) error {
+	// Platform + dependency gate, same contract as ops build/deploy:
+	// refuse an iOS push on non-macOS up front, and block an Android
+	// push when JDK 17 / Android SDK is missing — installing them only
+	// when the user passed --install-deps. Progress streams to stdout.
+	if pf := runBuildPreflight(ctx, wireNativeClass(stack, platform), opts.installDeps,
+		func(l string) { fmt.Println(l) }); !pf.OK {
+		return preflightCLIError(pf)
+	}
+
 	switch stack {
 	case "expo", "react-native":
 		return wirePushExpoOrRN(ctx, root, stack, platform, dev, opts)

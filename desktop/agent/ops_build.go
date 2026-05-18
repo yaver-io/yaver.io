@@ -31,19 +31,25 @@ type opsBuildPayload struct {
 	Env map[string]string `json:"env,omitempty"`
 	// TimeoutSec: kill the build after this many seconds. 0 = no limit.
 	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// InstallDeps: caller approval to download + install a missing
+	// toolchain (JDK 17 / Android SDK) before building. Off by default —
+	// a missing dep returns deps_missing with a plan; nothing is ever
+	// installed without this flag. Xcode is never auto-installed.
+	InstallDeps bool `json:"installDeps,omitempty"`
 }
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "build",
-		Description: "Build the project in workDir. Detects go / node / rust / flutter / android / iOS / make and runs the canonical build command via exec manager. Returns streamId for live stdout/stderr.",
+		Description: "Build the project in workDir. Detects go / node / rust / flutter / android / iOS / make and runs the canonical build command via exec manager. Platform-aware (iOS builds refuse on non-macOS) and dependency-aware (missing JDK/Android SDK returns deps_missing; pass installDeps:true to install with approval). Returns streamId for live stdout/stderr.",
 		Schema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"workDir":    map[string]interface{}{"type": "string"},
-				"target":     map[string]interface{}{"type": "string"},
-				"env":        map[string]interface{}{"type": "object"},
-				"timeoutSec": map[string]interface{}{"type": "integer"},
+				"workDir":     map[string]interface{}{"type": "string"},
+				"target":      map[string]interface{}{"type": "string"},
+				"env":         map[string]interface{}{"type": "object"},
+				"timeoutSec":  map[string]interface{}{"type": "integer"},
+				"installDeps": map[string]interface{}{"type": "boolean"},
 			},
 			"additionalProperties": false,
 		},
@@ -71,11 +77,20 @@ func opsBuildHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	cmd, tool := detectBuildCommand(workDir, p.Target)
 	if cmd == "" {
 		return OpsResult{
-			OK:   false,
-			Code: "unsupported",
+			OK:    false,
+			Code:  "unsupported",
 			Error: fmt.Sprintf("no recognised build manifest in %q — expected one of: go.mod, package.json, Cargo.toml, pubspec.yaml, build.gradle, *.xcodeproj, Makefile", workDir),
 		}
 	}
+	// Platform + dependency gate. Refuses an iOS build on non-macOS and
+	// blocks an Android build when JDK 17 / Android SDK is missing —
+	// before we burn minutes in a build that can only fail. installDeps
+	// is the caller's approval to download + install the toolchain.
+	pf := runBuildPreflight(c.Ctx, classifyNative("build", p.Target, workDir), p.InstallDeps, nil)
+	if !pf.OK {
+		return OpsResult{OK: false, Code: pf.Code, Error: pf.Error, Initial: preflightInitial(pf)}
+	}
+
 	if c.Server == nil || c.Server.execMgr == nil {
 		return OpsResult{OK: false, Code: "unavailable", Error: "exec manager not initialised"}
 	}
@@ -83,17 +98,17 @@ func opsBuildHandler(c OpsContext, payload json.RawMessage) OpsResult {
 	if err != nil {
 		return OpsResult{OK: false, Code: "exec_failed", Error: err.Error()}
 	}
-	return OpsResult{
-		OK:       true,
-		StreamID: sess.ID,
-		Initial: map[string]interface{}{
-			"sessionId": sess.ID,
-			"tool":      tool,
-			"command":   cmd,
-			"workDir":   workDir,
-			"sseHint":   fmt.Sprintf("/exec/%s/stream for live output, /exec/%s for snapshot", sess.ID, sess.ID),
-		},
+	initial := map[string]interface{}{
+		"sessionId": sess.ID,
+		"tool":      tool,
+		"command":   cmd,
+		"workDir":   workDir,
+		"sseHint":   fmt.Sprintf("/exec/%s/stream for live output, /exec/%s for snapshot", sess.ID, sess.ID),
 	}
+	if len(pf.Installed) > 0 {
+		initial["installedDeps"] = pf.Installed
+	}
+	return OpsResult{OK: true, StreamID: sess.ID, Initial: initial}
 }
 
 // detectBuildCommand inspects workDir and returns (command, tool-name).

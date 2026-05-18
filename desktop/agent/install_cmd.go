@@ -825,7 +825,10 @@ func runVibePreviewInstall(ctx context.Context, progress func(string)) error {
 }
 
 func runAndroidSDKInstall(ctx context.Context, progress func(string)) error {
-	return installAndroidSDKRuntime(ctx, progress)
+	// Reached only via an explicit `yaver install android-sdk` /
+	// remote-runtime / vibe-preview command — that user action IS the
+	// approval.
+	return installAndroidSDKRuntime(ctx, true /* explicit yaver install */, progress)
 }
 
 // runWebRTCInstall provisions the WebRTC remote-runtime pipeline.

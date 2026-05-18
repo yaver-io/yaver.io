@@ -383,6 +383,13 @@ func (bm *BuildManager) StartBuild(platform BuildPlatform, workDir string, extra
 		return nil, fmt.Errorf("unknown build platform: %s", platform)
 	}
 
+	// Host-OS hard gate: an iOS / Xcode build cannot run anywhere but
+	// macOS. Fail here with a clear message instead of letting the
+	// build crash hundreds of lines deep on "xcodebuild: not found".
+	if err := hostOSGate(buildPlatformClass(platform)); err != nil {
+		return nil, err
+	}
+
 	// Start via ExecManager (1 hour timeout for builds)
 	session, err := bm.execMgr.StartExec(command, workDir, "", nil, 3600)
 	if err != nil {

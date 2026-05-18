@@ -24,21 +24,27 @@ type opsDeployPayload struct {
 	Args []string `json:"args,omitempty"`
 	// TimeoutSec: kill the deploy after this many seconds. 0 = none.
 	TimeoutSec int `json:"timeoutSec,omitempty"`
+	// InstallDeps: caller approval to download + install a missing
+	// toolchain before deploying (e.g. JDK 17 / Android SDK for the
+	// playstore target). testflight on a non-macOS host is impossible
+	// and is rejected regardless of this flag.
+	InstallDeps bool `json:"installDeps,omitempty"`
 }
 
 func init() {
 	registerOpsVerb(opsVerbSpec{
 		Name:        "deploy",
-		Description: "Deploy the project at workDir to a hosting target. target=cloud (Yaver cloud), cloudflare, vercel, fly, netlify, railway, firebase, platform (Yaver platform), convex, eas (Expo), testflight, playstore. Streams provider output.",
+		Description: "Deploy the project at workDir to a hosting target. target=cloud (Yaver cloud), cloudflare, vercel, fly, netlify, railway, firebase, platform (Yaver platform), convex, eas (Expo), testflight, playstore. Platform-aware (testflight refuses on non-macOS) and dependency-aware (playstore returns deps_missing if JDK/Android SDK absent; pass installDeps:true to install with approval). Streams provider output.",
 		Schema: map[string]interface{}{
 			"type":     "object",
 			"required": []string{"target"},
 			"properties": map[string]interface{}{
-				"target":     map[string]interface{}{"type": "string"},
-				"workDir":    map[string]interface{}{"type": "string"},
-				"env":        map[string]interface{}{"type": "string"},
-				"args":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
-				"timeoutSec": map[string]interface{}{"type": "integer"},
+				"target":      map[string]interface{}{"type": "string"},
+				"workDir":     map[string]interface{}{"type": "string"},
+				"env":         map[string]interface{}{"type": "string"},
+				"args":        map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+				"timeoutSec":  map[string]interface{}{"type": "integer"},
+				"installDeps": map[string]interface{}{"type": "boolean"},
 			},
 			"additionalProperties": false,
 		},
@@ -85,6 +91,16 @@ func opsDeployHandler(c OpsContext, payload json.RawMessage) OpsResult {
 		// entrypoint with full project resolution; for ops/deploy we
 		// keep behaviour conservative.
 		workDir = "."
+	}
+
+	// Platform + dependency gate. For testflight this rejects non-macOS
+	// hosts up front (it is impossible, not merely missing a tool); for
+	// playstore it blocks until JDK 17 + Android SDK are present, with
+	// installDeps:true the caller's approval to install them. Cloud /
+	// web / backend targets classify as nativeNone and pass straight
+	// through.
+	if pf := runBuildPreflight(c.Ctx, classifyNative("deploy", p.Target, workDir), p.InstallDeps, nil); !pf.OK {
+		return OpsResult{OK: false, Code: pf.Code, Error: pf.Error, Initial: preflightInitial(pf)}
 	}
 
 	extra := strings.Join(p.Args, " ")

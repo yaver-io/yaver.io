@@ -187,11 +187,23 @@ func androidSystemImagePackage() string {
 	return fmt.Sprintf("system-images;android-%s;google_atd;%s", androidRemoteRuntimeAPILevel, arch)
 }
 
-func installAndroidSDKRuntime(ctx context.Context, progress func(string)) error {
+// installAndroidSDKRuntime downloads + installs OpenJDK 17 (if absent)
+// and the Android command-line tools + SDK packages. It pulls hundreds
+// of MB and mutates the user's shell PATH, so it MUST NOT run unprompted:
+// `approved` is the structural enforcement of the never-install-without-
+// approval contract. The only callers are (a) the build/deploy preflight
+// after installDeps:true, and (b) an explicit `yaver install` command —
+// both pass approved=true. Anything else gets a hard refusal.
+func installAndroidSDKRuntime(ctx context.Context, approved bool, progress func(string)) error {
 	logf := func(s string) {
 		if progress != nil {
 			progress(s)
 		}
+	}
+
+	if !approved {
+		return fmt.Errorf("android sdk install requires explicit approval — " +
+			"re-invoke build/deploy with installDeps:true, or run `yaver install android-sdk`")
 	}
 
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
