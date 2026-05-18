@@ -78,8 +78,10 @@ func (s *HTTPServer) registerTaskQuestion(w http.ResponseWriter, r *http.Request
 	}
 	var body struct {
 		Prompt     string   `json:"prompt"`
+		Header     string   `json:"header"`
 		Kind       string   `json:"kind"`
 		Choices    []string `json:"choices"`
+		Multi      bool     `json:"multi"`
 		VaultHint  string   `json:"vault_hint"`
 		TimeoutSec int      `json:"timeoutSec"`
 	}
@@ -89,8 +91,10 @@ func (s *HTTPServer) registerTaskQuestion(w http.ResponseWriter, r *http.Request
 	}
 	registered, answerCh, err := globalQuestionRegistry.Register(taskID, AgentQuestion{
 		Prompt:     body.Prompt,
+		Header:     body.Header,
 		Kind:       body.Kind,
 		Choices:    body.Choices,
+		Multi:      body.Multi,
 		VaultHint:  body.VaultHint,
 		TimeoutSec: body.TimeoutSec,
 	})

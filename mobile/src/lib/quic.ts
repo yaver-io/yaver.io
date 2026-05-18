@@ -2123,8 +2123,10 @@ export class QuicClient {
     id: string;
     taskId: string;
     prompt: string;
+    header?: string;
     kind: "text" | "choice" | "secret";
     choices?: string[];
+    multi?: boolean;
     vaultHint?: string;
     createdAtMs: number;
     timeoutSec: number;

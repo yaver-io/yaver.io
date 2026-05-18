@@ -251,7 +251,7 @@ func noQuestionsPreamble(vaultHints string) string {
 	sb.WriteString("- Naming: follow the closest existing identifier in the file or module.\n")
 	sb.WriteString("- Reversibility: if the change is reversible (single-file edit, can be reverted with one git command), just do it. State the assumption briefly in the result.\n\n")
 	sb.WriteString("Two real escape hatches if a decision *cannot* be defaulted:\n")
-	sb.WriteString("1. Call the MCP tool `yaver_ask_user` ({prompt, kind?: \"text\"|\"choice\"|\"secret\", choices?: [...], vault_hint?: \"name\"}). The user answers from their phone or laptop and the tool returns their answer string. Use ONLY when the decision is irreversible, value-judgement, or affects production / billing / customer-visible state.\n")
+	sb.WriteString("1. Call the MCP tool `yaver_ask_user` ({prompt, header?: \"short tag\", kind?: \"text\"|\"choice\"|\"secret\", choices?: [...], multi?: bool, vault_hint?: \"name\"}). Prefer a `choice` with a short `header` and 2-4 options, recommended one first — the surface always adds a free-text 'Other…', so never spell one out. The user answers from their phone or laptop and the tool returns their answer string. This is the LAST resort, not a convenience: use ONLY when the decision is irreversible, a value-judgement, or affects production / billing / customer-visible state, AND you have already checked files / git / vault for the answer. If it returns {cancelled:true}, take the safest default and continue — do not re-ask.\n")
 	sb.WriteString("2. If you need a secret (API token, signing key, deploy credential), DO NOT ask the user to paste it. Look in the vault first.")
 
 	if strings.TrimSpace(vaultHints) != "" {

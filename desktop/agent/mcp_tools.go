@@ -106,24 +106,32 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name": "yaver_ask_user",
-			"description": "Ask the human running this Yaver task for input when a decision genuinely cannot be defaulted. The question is delivered to whichever Yaver surface the user is on (mobile app, web dashboard, CLI), they answer, and the answer string is returned to you as the tool result. Blocks until answered or until 5 min timeout (configurable via timeout_sec, max 30 min). USE SPARINGLY: prefer picking a sensible default and stating your assumption. Only call this for irreversible actions, value judgements, or production / billing / customer-visible state. Never call it for things you could look up (vault, project files, git log). Result on timeout / cancel: {cancelled:true} — handle it by picking the safest default and proceeding. Requires the agent to be running inside a Yaver task (YAVER_TASK_ID env var must be set by the spawning daemon).",
+			"description": "Ask the human running this Yaver task a single structured question (Claude-Code-style: short 'header' chip + 2-4 'choices', optional multi-select, free-text 'Other' is always offered by the surface). The question is delivered to whichever Yaver surface the user is on (mobile app, web dashboard, CLI); the answer string is returned as the tool result. Blocks until answered or until the timeout (default 5 min, max 30). DEFAULT TO NOT CALLING THIS. Asking is the slow path — the user is on a phone and may have walked away, so an unanswered question stalls the whole run until it times out. Before calling, you must have already: (1) checked the project files / git log / vault for the answer, and (2) confirmed no sensible default exists. Only ask for genuinely irreversible actions, value judgements, or production / billing / customer-visible state. For everything else pick the most reasonable default, state the assumption in one line, and proceed — a reversible wrong guess is cheaper than a stalled run. Result on timeout / cancel: {cancelled:true} — handle it by taking the safest default and continuing, never by re-asking. Requires the agent to be running inside a Yaver task (YAVER_TASK_ID env var must be set by the spawning daemon).",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"prompt"},
 				"properties": map[string]interface{}{
 					"prompt": map[string]interface{}{
 						"type":        "string",
-						"description": "The question to show the user. Be specific and brief — the user is on a phone or laptop and may have walked away. Include the consequences of each option if asking for a choice.",
+						"description": "The question to show the user. Be specific and brief — the user is on a phone or laptop and may have walked away. Include the consequence of each option if asking for a choice.",
+					},
+					"header": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional short tag (≤12 chars, e.g. 'Auth method', 'DB', 'Deploy target') rendered as a chip above the prompt — the Claude-Code AskUserQuestion style. Omit for a plain question.",
 					},
 					"kind": map[string]interface{}{
 						"type":        "string",
 						"enum":        []string{"text", "choice", "secret"},
-						"description": "How to render the input on the user's surface. 'text' = free-form text input (default). 'choice' = picker over the choices array. 'secret' = password-style input; the answer is NOT echoed in any SSE event so neighbouring devices can't see it. The runner still receives it in the tool result.",
+						"description": "How to render the input on the user's surface. 'text' = free-form text input (default). 'choice' = pick from the choices array (the surface ALWAYS also offers a free-text 'Other…' so you never need to add one). 'secret' = password-style input; the answer is NOT echoed in any SSE event so neighbouring devices can't see it. The runner still receives it in the tool result.",
 					},
 					"choices": map[string]interface{}{
 						"type":        "array",
 						"items":       map[string]interface{}{"type": "string"},
-						"description": "Required when kind=choice. Each entry is one option label. Keep to 2-5 short options.",
+						"description": "Required when kind=choice. Each entry is one option label. Keep to 2-4 short, mutually-exclusive options (a free-text 'Other…' is appended automatically). Put your recommended option first.",
+					},
+					"multi": map[string]interface{}{
+						"type":        "boolean",
+						"description": "kind=choice only. true = the user may select multiple options; the answer comes back as the picked labels joined by '; '. Default false (single pick).",
 					},
 					"vault_hint": map[string]interface{}{
 						"type":        "string",

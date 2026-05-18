@@ -53,8 +53,10 @@ type AgentQuestion struct {
 	ID          string   `json:"id"`
 	TaskID      string   `json:"taskId"`
 	Prompt      string   `json:"prompt"`
+	Header      string   `json:"header,omitempty"`      // short chip label (≤12 chars), Claude-Code-style; UI renders it as a tag above the prompt
 	Kind        string   `json:"kind"`                  // "text" (default) | "choice" | "secret"
 	Choices     []string `json:"choices,omitempty"`     // populated only when kind=choice
+	Multi       bool     `json:"multi,omitempty"`       // kind=choice only: allow selecting multiple options; answer is the picks joined by "; "
 	VaultHint   string   `json:"vaultHint,omitempty"`   // suggested vault entry name; UI offers "use stored value"
 	CreatedAtMs int64    `json:"createdAtMs"`
 	TimeoutSec  int      `json:"timeoutSec"`

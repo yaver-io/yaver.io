@@ -40,8 +40,10 @@ import (
 func forwardYaverAskUser(rawArgs json.RawMessage) interface{} {
 	var args struct {
 		Prompt     string   `json:"prompt"`
+		Header     string   `json:"header"`
 		Kind       string   `json:"kind"`
 		Choices    []string `json:"choices"`
+		Multi      bool     `json:"multi"`
 		VaultHint  string   `json:"vault_hint"`
 		TimeoutSec int      `json:"timeout_sec"`
 	}
@@ -63,8 +65,10 @@ func forwardYaverAskUser(rawArgs json.RawMessage) interface{} {
 
 	body, _ := json.Marshal(map[string]interface{}{
 		"prompt":     args.Prompt,
+		"header":     args.Header,
 		"kind":       args.Kind,
 		"choices":    args.Choices,
+		"multi":      args.Multi,
 		"vault_hint": args.VaultHint,
 		"timeoutSec": args.TimeoutSec,
 	})

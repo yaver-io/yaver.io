@@ -1490,11 +1490,18 @@ export default function TasksScreen() {
     id: string;
     taskId: string;
     prompt: string;
+    header?: string;
     kind: "text" | "choice" | "secret";
     choices?: string[];
+    multi?: boolean;
     vaultHint?: string;
   } | null>(null);
   const [agentAnswerText, setAgentAnswerText] = useState("");
+  // Claude-Code-style choice state: which options are checked (multi)
+  // and whether the free-text "Other…" row is expanded. Reset every
+  // time a new question opens (see the stream consumer + late-join).
+  const [agentMultiPicks, setAgentMultiPicks] = useState<string[]>([]);
+  const [agentOtherOpen, setAgentOtherOpen] = useState(false);
   const [submittingAgentAnswer, setSubmittingAgentAnswer] = useState(false);
   const [attachedImages, setAttachedImages] = useState<ImageAttachment[]>([]);
   const [followUpImages, setFollowUpImages] = useState<ImageAttachment[]>([]);
@@ -2010,12 +2017,16 @@ export default function TasksScreen() {
             id: string;
             taskId: string;
             prompt: string;
+            header?: string;
             kind: "text" | "choice" | "secret";
             choices?: string[];
+            multi?: boolean;
             vaultHint?: string;
           };
           setAgentQuestion(q);
           setAgentAnswerText("");
+          setAgentMultiPicks([]);
+          setAgentOtherOpen(false);
         } else if (evt.type === "agent_answered" || evt.type === "agent_question_cancelled") {
           const qid = (evt as { questionId?: string }).questionId;
           setAgentQuestion((cur) => (cur && (!qid || cur.id === qid) ? null : cur));
@@ -2034,11 +2045,35 @@ export default function TasksScreen() {
       if (q && q.taskId === selectedTask.id) {
         setAgentQuestion(q);
         setAgentAnswerText("");
+        setAgentMultiPicks([]);
+        setAgentOtherOpen(false);
       }
     });
 
     return () => abort();
   }, [selectedTask?.id, selectedTask?.status]);
+
+  // Single submit path for the agent-question sheet — shared by the
+  // per-choice tap, the multi-select "Send", the "Other…" free text,
+  // and the text/secret kinds. Keeps the POST + error + close logic
+  // in one place so the four entry points can't drift apart.
+  const submitAgentAnswer = useCallback(
+    async (answer: string) => {
+      if (!agentQuestion || !answer.trim()) return;
+      setSubmittingAgentAnswer(true);
+      const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, answer);
+      setSubmittingAgentAnswer(false);
+      if (!res.ok) {
+        Alert.alert("Could not deliver answer", res.error || "Unknown error");
+        return;
+      }
+      setAgentQuestion(null);
+      setAgentAnswerText("");
+      setAgentMultiPicks([]);
+      setAgentOtherOpen(false);
+    },
+    [agentQuestion],
+  );
 
   const flushOutputBuffer = () => {
     const buffer = outputBufferRef.current;
@@ -4057,39 +4092,114 @@ export default function TasksScreen() {
               <Text style={{ color: c.textMuted, fontSize: 12, fontWeight: "600", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 8 }}>
                 Agent needs your input
               </Text>
+              {agentQuestion?.header ? (
+                <View style={{ alignSelf: "flex-start", backgroundColor: c.accent + "22", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, marginBottom: 8 }}>
+                  <Text style={{ color: c.accent, fontSize: 11, fontWeight: "700", letterSpacing: 0.3 }}>
+                    {agentQuestion.header}
+                  </Text>
+                </View>
+              ) : null}
               <Text style={{ color: c.textPrimary, fontSize: 16, lineHeight: 22, marginBottom: 16 }}>
                 {agentQuestion?.prompt}
               </Text>
 
               {agentQuestion?.kind === "choice" && (agentQuestion?.choices || []).length > 0 ? (
                 <View style={{ gap: 8 }}>
-                  {(agentQuestion?.choices || []).map((choice) => (
-                    <Pressable
-                      key={choice}
-                      disabled={submittingAgentAnswer}
-                      onPress={async () => {
-                        if (!agentQuestion) return;
-                        setSubmittingAgentAnswer(true);
-                        const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, choice);
-                        setSubmittingAgentAnswer(false);
-                        if (!res.ok) {
-                          Alert.alert("Could not deliver answer", res.error || "Unknown error");
-                          return;
-                        }
-                        setAgentQuestion(null);
-                      }}
+                  {(agentQuestion?.choices || []).map((choice) => {
+                    const picked = agentMultiPicks.includes(choice);
+                    return (
+                      <Pressable
+                        key={choice}
+                        disabled={submittingAgentAnswer}
+                        onPress={() => {
+                          if (!agentQuestion) return;
+                          if (agentQuestion.multi) {
+                            // Multi-select: toggle, don't submit — the
+                            // footer "Send" commits the joined picks.
+                            setAgentMultiPicks((prev) =>
+                              prev.includes(choice) ? prev.filter((x) => x !== choice) : [...prev, choice],
+                            );
+                          } else {
+                            // Single-select: tap commits immediately
+                            // (Claude-Code behaviour).
+                            void submitAgentAnswer(choice);
+                          }
+                        }}
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 10,
+                          backgroundColor: picked ? c.accent + "1A" : c.surface,
+                          borderRadius: 12,
+                          paddingVertical: 14,
+                          paddingHorizontal: 16,
+                          borderWidth: 1,
+                          borderColor: picked ? c.accent : c.border,
+                        }}
+                      >
+                        {agentQuestion?.multi ? (
+                          <View
+                            style={{
+                              width: 20,
+                              height: 20,
+                              borderRadius: 5,
+                              borderWidth: 2,
+                              borderColor: picked ? c.accent : c.border,
+                              backgroundColor: picked ? c.accent : "transparent",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            {picked ? <Text style={{ color: "#fff", fontSize: 13, fontWeight: "800" }}>✓</Text> : null}
+                          </View>
+                        ) : null}
+                        <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "500", flex: 1 }}>{choice}</Text>
+                      </Pressable>
+                    );
+                  })}
+                  {/* Claude-Code parity: a free-text "Other…" is ALWAYS
+                      offered for choice questions, so the agent never
+                      has to spell one out. Tapping expands an inline
+                      text field; the footer "Send" commits it. */}
+                  <Pressable
+                    disabled={submittingAgentAnswer}
+                    onPress={() => setAgentOtherOpen((v) => !v)}
+                    style={{
+                      backgroundColor: agentOtherOpen ? c.accent + "1A" : "transparent",
+                      borderRadius: 12,
+                      paddingVertical: 14,
+                      paddingHorizontal: 16,
+                      borderWidth: 1,
+                      borderColor: agentOtherOpen ? c.accent : c.border,
+                      borderStyle: "dashed",
+                    }}
+                  >
+                    <Text style={{ color: agentOtherOpen ? c.accent : c.textMuted, fontSize: 15, fontWeight: "500" }}>
+                      {agentOtherOpen ? "Other (typing below)" : "Other…"}
+                    </Text>
+                  </Pressable>
+                  {agentOtherOpen ? (
+                    <TextInput
+                      value={agentAnswerText}
+                      onChangeText={setAgentAnswerText}
+                      placeholder="Type your own answer…"
+                      placeholderTextColor={c.textMuted}
+                      autoFocus
+                      multiline
                       style={{
                         backgroundColor: c.surface,
+                        color: c.textPrimary,
                         borderRadius: 12,
-                        paddingVertical: 14,
-                        paddingHorizontal: 16,
+                        paddingHorizontal: 14,
+                        paddingVertical: 12,
+                        fontSize: 15,
                         borderWidth: 1,
                         borderColor: c.border,
+                        minHeight: 64,
+                        textAlignVertical: "top",
                       }}
-                    >
-                      <Text style={{ color: c.textPrimary, fontSize: 15, fontWeight: "500" }}>{choice}</Text>
-                    </Pressable>
-                  ))}
+                    />
+                  ) : null}
                 </View>
               ) : (
                 <View>
@@ -4162,33 +4272,37 @@ export default function TasksScreen() {
                 <Pressable disabled={submittingAgentAnswer} onPress={() => setAgentQuestion(null)} style={{ paddingVertical: 12, paddingHorizontal: 18 }}>
                   <Text style={{ color: c.textMuted, fontSize: 15 }}>Dismiss</Text>
                 </Pressable>
-                {agentQuestion?.kind !== "choice" ? (
-                  <Pressable
-                    disabled={submittingAgentAnswer || !agentAnswerText.trim()}
-                    onPress={async () => {
-                      if (!agentQuestion) return;
-                      setSubmittingAgentAnswer(true);
-                      const res = await quicClient.answerTaskQuestion(agentQuestion.taskId, agentQuestion.id, agentAnswerText);
-                      setSubmittingAgentAnswer(false);
-                      if (!res.ok) {
-                        Alert.alert("Could not deliver answer", res.error || "Unknown error");
-                        return;
-                      }
-                      setAgentQuestion(null);
-                      setAgentAnswerText("");
-                    }}
-                    style={{
-                      backgroundColor: !agentAnswerText.trim() || submittingAgentAnswer ? c.surface : c.accent,
-                      paddingVertical: 12,
-                      paddingHorizontal: 22,
-                      borderRadius: 10,
-                    }}
-                  >
-                    <Text style={{ color: !agentAnswerText.trim() || submittingAgentAnswer ? c.textMuted : "#fff", fontSize: 15, fontWeight: "600" }}>
-                      {submittingAgentAnswer ? "Sending…" : "Send"}
-                    </Text>
-                  </Pressable>
-                ) : null}
+                {(() => {
+                  const isChoice = agentQuestion?.kind === "choice";
+                  const multi = !!agentQuestion?.multi;
+                  // Single-select choices commit on tap, so the footer
+                  // Send only appears for text/secret, multi-select, or
+                  // when the "Other…" free text is open.
+                  const showSend = !isChoice || multi || agentOtherOpen;
+                  if (!showSend) return null;
+                  const otherText = agentAnswerText.trim();
+                  const answer =
+                    isChoice && multi
+                      ? [...agentMultiPicks, ...(agentOtherOpen && otherText ? [otherText] : [])].join("; ")
+                      : agentAnswerText;
+                  const enabled = !submittingAgentAnswer && answer.trim().length > 0;
+                  return (
+                    <Pressable
+                      disabled={!enabled}
+                      onPress={() => void submitAgentAnswer(answer)}
+                      style={{
+                        backgroundColor: enabled ? c.accent : c.surface,
+                        paddingVertical: 12,
+                        paddingHorizontal: 22,
+                        borderRadius: 10,
+                      }}
+                    >
+                      <Text style={{ color: enabled ? "#fff" : c.textMuted, fontSize: 15, fontWeight: "600" }}>
+                        {submittingAgentAnswer ? "Sending…" : multi ? `Send${agentMultiPicks.length ? ` (${agentMultiPicks.length})` : ""}` : "Send"}
+                      </Text>
+                    </Pressable>
+                  );
+                })()}
               </View>
             </View>
           </View>
