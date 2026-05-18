@@ -290,33 +290,37 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
     const reasons = new Set<SkipReason>();
     const tooOld: Device[] = [];
 
+    // 1. Fast pass: a real control agent that already works (preferred —
+    //    non-destructive routing, the box stays untouched until delete).
     let found = await probeForControl(candidates, reasons, tooOld, cancelledRef);
 
-    // Nothing capable yet, but some device just needs a newer agent →
-    // update it for the user (primary first, already ordered) and wait.
-    if (!found && !cancelledRef.v && tooOld.length > 0) {
-      found = await autoUpdateAndReprobe(tooOld[0], reasons, cancelledRef);
-      if (!cancelledRef.v) setPreparing(null);
-    }
-
-    // Last resort (Remove-only): no other device can do it, but the box
-    // itself holds the cloud account. Let it snapshot + delete itself —
-    // the provider call returns before the box dies. Recycle never does
-    // this (it must stay alive to health-check the replacement).
+    // 2. Fast pass: the box itself can do it (it holds the cloud
+    //    account). Tried BEFORE any slow auto-update so the common
+    //    "decommission this box now" case is instant, not a 5-min wait.
     let isSelf = false;
+    const selfTooOld: Device[] = [];
     if (!found && !cancelledRef.v) {
       const selfReasons = new Set<SkipReason>();
-      const selfTooOld: Device[] = [];
       found = await probeForControl([device], selfReasons, selfTooOld, cancelledRef);
-      if (!found && !cancelledRef.v && selfTooOld.length > 0) {
-        found = await autoUpdateAndReprobe(device, selfReasons, cancelledRef);
-        if (!cancelledRef.v) setPreparing(null);
-      }
       if (found) {
         isSelf = true;
       } else {
         selfReasons.forEach((r) => reasons.add(r));
       }
+    }
+
+    // 3. Slow last resort: nothing works yet, but a device just needs a
+    //    newer agent. Update one for the user and wait. Prefer a real
+    //    control agent; fall back to updating the box itself (Remove
+    //    self-decommission). Recycle never self-destructs.
+    if (!found && !cancelledRef.v && tooOld.length > 0) {
+      found = await autoUpdateAndReprobe(tooOld[0], reasons, cancelledRef);
+      if (!cancelledRef.v) setPreparing(null);
+    }
+    if (!found && !cancelledRef.v && selfTooOld.length > 0) {
+      found = await autoUpdateAndReprobe(device, reasons, cancelledRef);
+      if (!cancelledRef.v) setPreparing(null);
+      if (found) isSelf = true;
     }
 
     if (cancelledRef.v) {
