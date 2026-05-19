@@ -36,6 +36,10 @@ type ManagedCloudBootstrapSpec = {
   yaverReleaseUrl: string;
   repoUrl?: string;
   gpu: boolean;
+  // "hosted" ⇒ also run a self-hosted Convex (Docker) on the box so
+  // deploys target the box itself (no Convex Cloud, no BYOK keys).
+  // Absent/"byok" leaves the cloud-init byte-identical.
+  tier?: "byok" | "hosted";
 };
 
 type CreateCloudMachineArgs = {
@@ -47,6 +51,7 @@ type CreateCloudMachineArgs = {
   sshPublicKey?: string;
   subscriptionId?: string;
   customDomain?: string;
+  tier?: "byok" | "hosted";
 };
 
 function shellSingleQuote(value: string): string {
@@ -67,6 +72,45 @@ export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
     fi
 `
     : "";
+
+  // Hosted tier: run a self-hosted Convex on the box (Docker, official
+  // image). Deploys then target the box itself — no Convex Cloud
+  // account, no BYOK key. Best-effort + loud logging (spike): the
+  // health check / verification step surfaces a half-start. The
+  // tenant's data lives in the yaver-convex-data volume on THEIR own
+  // dedicated box — central Convex never sees it (privacy contract).
+  const hostedSnippet =
+    spec.tier === "hosted"
+      ? `  # ── Hosted tier: self-hosted Convex (Docker) ──────────────────
+  - |
+    INSTANCE_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \\n')
+    docker volume create yaver-convex-data >/dev/null 2>&1 || true
+    docker rm -f yaver-convex >/dev/null 2>&1 || true
+    docker run -d --name yaver-convex --restart always \\
+      -p 127.0.0.1:3210:3210 -p 127.0.0.1:3211:3211 \\
+      -v yaver-convex-data:/convex/data \\
+      -e INSTANCE_NAME=yaver \\
+      -e INSTANCE_SECRET="$INSTANCE_SECRET" \\
+      -e CONVEX_CLOUD_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-api`)} \\
+      -e CONVEX_SITE_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-http`)} \\
+      ghcr.io/get-convex/convex-backend:latest \\
+      || echo "[cloud-init] convex-backend start skipped"
+  - |
+    # Wait for the backend port, then mint an admin key the deploy
+    # path (Phase 2) reads. 0600, root-only — never leaves the box.
+    for i in $(seq 1 40); do
+      (echo > /dev/tcp/127.0.0.1/3210) >/dev/null 2>&1 && break
+      sleep 5
+    done
+    ADMIN_KEY=$(docker exec yaver-convex ./generate_admin_key.sh 2>/dev/null | tail -n1 || true)
+    mkdir -p /etc/yaver
+    cat > /etc/yaver/convex-selfhosted.json <<EOF
+    {"url":"https://${spec.hostname}/_convex-api","adminKey":"$ADMIN_KEY"}
+    EOF
+    chmod 0600 /etc/yaver/convex-selfhosted.json
+    echo "[cloud-init] self-hosted Convex bootstrap done (key bytes: \${#ADMIN_KEY})"
+`
+      : "";
 
   const gpuSnippet = spec.gpu
     ? `  # GPU tier: NVIDIA drivers + Ollama
@@ -210,6 +254,27 @@ ${repoCloneSnippet}  - systemctl daemon-reload
     server {
         listen 80;
         server_name $d;
+        # Hosted-tier self-hosted Convex (Docker) lives on loopback
+        # 3210 (API, WebSocket) / 3211 (HTTP actions). On a byok box
+        # nothing listens there — these paths just 502 and are never
+        # used, so the block is safe to always emit (one nginx path).
+        location /_convex-api/ {
+            proxy_pass http://127.0.0.1:3210/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 600s;
+            proxy_buffering off;
+        }
+        location /_convex-http/ {
+            proxy_pass http://127.0.0.1:3211/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 600s;
+            proxy_buffering off;
+        }
         location / {
             proxy_pass http://127.0.0.1:18080;
             proxy_set_header Host \$host;
@@ -262,7 +327,7 @@ ${repoCloneSnippet}  - systemctl daemon-reload
   - systemctl daemon-reload
   - systemctl enable --now yaver-tls.timer
 
-${gpuSnippet}`;
+${hostedSnippet}${gpuSnippet}`;
 }
 
 // ─── Queries ────────────────────────────────────────────────────
@@ -397,6 +462,7 @@ async function createCloudMachine(
     subscriptionId: args.subscriptionId,
     machineType: args.machineType,
     origin: "managed", // every cloudMachines row is a Yaver-side box
+    tier: args.tier ?? "byok",
     status: "provisioning",
     multiUser: !!args.teamId,
     region: args.region ?? "eu",
@@ -667,6 +733,7 @@ export const provision = internalAction({
       yaverReleaseUrl,
       repoUrl: machine.repoUrl,
       gpu: isGpu,
+      tier: machine.tier === "hosted" ? "hosted" : "byok",
     });
 
     try {

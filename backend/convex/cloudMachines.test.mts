@@ -73,3 +73,41 @@ test("buildManagedCloudInit includes GPU bootstrap only for GPU machines", () =>
   assert.match(cloudInit, /nvidia-driver-550/);
   assert.match(cloudInit, /ollama\.com\/install\.sh/);
 });
+
+test("buildManagedCloudInit runs self-hosted Convex only for the hosted tier", () => {
+  const base = {
+    convexSite: "https://example.convex.site",
+    machineId: "machine_tier",
+    machineToken: "machine-token-tier",
+    userSessionToken: "session-token-tier",
+    deviceId: "cloud-tier",
+    hostname: "tier.cloud.yaver.io",
+    yaverArch: "amd64" as const,
+    yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+    gpu: false,
+  };
+
+  // byok (default / absent) — byte-identical: no Convex container.
+  const byok = buildManagedCloudInit(base);
+  assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);
+  assert.doesNotMatch(byok, /\/etc\/yaver\/convex-selfhosted\.json/);
+  assert.equal(byok, buildManagedCloudInit({ ...base, tier: "byok" }));
+
+  // hosted — Convex container + admin-key capture, origins point at
+  // the box's own public hostname (no Convex Cloud).
+  const hosted = buildManagedCloudInit({ ...base, tier: "hosted" });
+  assert.match(hosted, /docker run -d --name yaver-convex/);
+  assert.match(hosted, /ghcr\.io\/get-convex\/convex-backend:latest/);
+  assert.match(hosted, /-v yaver-convex-data:\/convex\/data/);
+  assert.match(hosted, /generate_admin_key\.sh/);
+  assert.match(hosted, /chmod 0600 \/etc\/yaver\/convex-selfhosted\.json/);
+  assert.match(hosted, /https:\/\/tier\.cloud\.yaver\.io\/_convex-api/);
+
+  // The nginx Convex reverse-proxy is always emitted (internal-only
+  // upstreams), so a byok box's config is unchanged but valid.
+  for (const ci of [byok, hosted]) {
+    assert.match(ci, /location \/_convex-api\/ \{/);
+    assert.match(ci, /proxy_pass http:\/\/127\.0\.0\.1:3210\//);
+    assert.match(ci, /location \/_convex-http\/ \{/);
+  }
+});

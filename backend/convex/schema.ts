@@ -786,6 +786,18 @@ export default defineSchema({
     // "self-hosted" at the device layer. Optional for back-compat:
     // any existing cloudMachines row is Yaver-side ⇒ treat as managed.
     origin: v.optional(v.union(v.literal("managed"), v.literal("self-hosted"))),
+    // Backend-hosting model. "byok" (default, absent ⇒ byok): the box
+    // runs the user's deploys against THEIR own Convex/Cloudflare via
+    // vault-stored keys. "hosted": the box additionally runs a
+    // self-hosted Convex (Docker) so deploy targets the box itself —
+    // no Convex Cloud account, no tokens. Privacy-safe: the tenant's
+    // data lives in the Convex on their own dedicated box; central
+    // Convex still sees only identity. Flag/URL only — never secrets.
+    tier: v.optional(v.union(v.literal("byok"), v.literal("hosted"))),
+    // Self-hosted Convex public API origin on this box (e.g.
+    // https://<id>.cloud.yaver.io/_convex-api). Set once the hosted
+    // backend is up. Plain URL — privacy-safe (no key, no path).
+    hostedConvexUrl: v.optional(v.string()),
     status: v.string(),               // "provisioning" | "active" | "stopping" | "stopped" | "error"
     multiUser: v.optional(v.boolean()), // true for shared team machines
     // Underlying IaaS this resource lives on. The whole stack above this
