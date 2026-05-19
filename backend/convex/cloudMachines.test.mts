@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildManagedCloudInit,
+  buildManagedCloudInitContainer,
   planDeprovision,
   snapshotIsMandatory,
   HOSTED_GRACE_MS,
@@ -141,4 +142,48 @@ test("snapshotIsMandatory: only hosted (the user's only data copy)", () => {
   assert.equal(snapshotIsMandatory("hosted"), true);
   assert.equal(snapshotIsMandatory("byok"), false);
   assert.equal(snapshotIsMandatory(undefined), false);
+});
+
+test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self-hosted Convex", () => {
+  const base = {
+    convexSite: "https://example.convex.site",
+    machineId: "machine_ctr",
+    machineToken: "machine-token-ctr",
+    userSessionToken: "session-token-ctr",
+    deviceId: "cloud-ctr",
+    hostname: "ctr.cloud.yaver.io",
+    yaverArch: "amd64" as const,
+    yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+    gpu: false,
+  };
+  const IMG = "ghcr.io/kivanccakmak/yaver-cloud:latest";
+
+  // byok — agent container only, NO Convex sidecar; snippet truncated.
+  const byok = buildManagedCloudInitContainer({ ...base, tier: "byok" }, IMG);
+  assert.match(byok, /docker run -d --name yaver --restart always/);
+  assert.match(byok, /docker pull '.*yaver-cloud:latest'/);
+  assert.match(byok, /CONVEX_SELFHOSTED_FILE=\/root\/\.yaver\/convex-selfhosted\.json/);
+  assert.doesNotMatch(byok, /ghcr\.io\/get-convex\/convex-backend/);
+  assert.doesNotMatch(byok, /docker run -d --name yaver-convex/);
+  assert.match(byok, /: > \/etc\/nginx\/snippets\/yaver-convex\.conf/);
+  // tier absent ⇒ identical to explicit byok (byte-identical default).
+  assert.equal(byok, buildManagedCloudInitContainer(base, IMG));
+
+  // hosted — agent container + Convex sidecar + admin-key on the
+  // PERSISTED volume (so the in-container agent reads it) + nginx WS.
+  const hosted = buildManagedCloudInitContainer({ ...base, tier: "hosted" }, IMG);
+  assert.match(hosted, /docker run -d --name yaver-convex --restart always/);
+  assert.match(hosted, /ghcr\.io\/get-convex\/convex-backend:latest/);
+  assert.match(hosted, /-v yaver-convex-data:\/convex\/data/);
+  assert.match(hosted, /generate_admin_key\.sh/);
+  assert.match(
+    hosted,
+    /cat > \/srv\/yaver\/state\/\.yaver\/convex-selfhosted\.json/,
+  );
+  assert.match(hosted, /chmod 0600 \/srv\/yaver\/state\/\.yaver\/convex-selfhosted\.json/);
+  assert.match(hosted, /https:\/\/ctr\.cloud\.yaver\.io\/_convex-api/);
+  assert.match(hosted, /location \/_convex-api\/ \{/);
+  assert.match(hosted, /proxy_pass http:\/\/127\.0\.0\.1:3210\//);
+  assert.match(hosted, /location \/_convex-http\/ \{/);
+  assert.match(hosted, /include \/etc\/nginx\/snippets\/yaver-convex\.conf;/);
 });

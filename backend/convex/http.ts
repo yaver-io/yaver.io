@@ -356,6 +356,7 @@ for (const path of [
   "/host-share/peer-access",
   "/users/lookup",
   "/agent-rescue/queue", "/agent-rescue/list",
+  "/publish-jobs/queue", "/publish-jobs/list",
 ]) {
   http.route({
     path,
@@ -1644,6 +1645,11 @@ http.route({
       edgeProfile: body.edgeProfile || undefined,
       recoveryPosture: body.recoveryPosture || undefined,
       agentVersion: typeof body.agentVersion === "string" ? body.agentVersion : undefined,
+      publishCapabilities: Array.isArray(body.publishCapabilities)
+        ? body.publishCapabilities
+        : body.publishCapabilities === null
+          ? []
+          : undefined,
     });
 
     return jsonResponse({ ok: true });
@@ -1776,6 +1782,177 @@ http.route({
         limit,
       });
       return jsonResponse({ ok: true, commands: rows ?? [] });
+    } catch (e: any) {
+      return errorResponse(e?.message || "list failed", 400);
+    }
+  }),
+});
+
+// ── Publish-job queue (Phase 2 — async "tap Publish, walk away"). ──
+// Same shape as /agent-rescue/* above, pairing with publishJobs.ts +
+// desktop/agent/publish_worker.go. Privacy: app NAME + targets only,
+// never a path or build log.
+
+/** POST /publish-jobs/queue — CLI/mobile/web: enqueue a publish for a
+ *  Mac-farm node. Owner-only. Returns the existing job if an
+ *  identical one is still in flight. */
+http.route({
+  path: "/publish-jobs/queue",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (
+      !body ||
+      typeof body.deviceId !== "string" ||
+      typeof body.app !== "string" ||
+      typeof body.stack !== "string" ||
+      !Array.isArray(body.targets)
+    ) {
+      return errorResponse("deviceId + app + stack + targets[] required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.publishJobs.queuePublishJob, {
+        tokenHash,
+        deviceId: body.deviceId,
+        app: body.app,
+        stack: body.stack,
+        targets: body.targets.map((t: any) => String(t)),
+        sourceSurface:
+          typeof body.sourceSurface === "string" ? body.sourceSurface : undefined,
+      });
+      return jsonResponse({ ...out, ok: true });
+    } catch (e: any) {
+      return errorResponse(e?.message || "queue failed", 400);
+    }
+  }),
+});
+
+/** POST /publish-jobs/claim — Farm node: pull next queued job for its
+ *  own device. Atomic queued → claimed. Called from the heartbeat
+ *  loop; null is the steady state. */
+http.route({
+  path: "/publish-jobs/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.deviceId !== "string") {
+      return errorResponse("deviceId required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.publishJobs.claimNextPublishJob, {
+        tokenHash,
+        deviceId: body.deviceId,
+      });
+      return jsonResponse({ ok: true, job: out });
+    } catch (e: any) {
+      return errorResponse(e?.message || "claim failed", 400);
+    }
+  }),
+});
+
+/** POST /publish-jobs/progress — Farm node: keep a long build alive
+ *  (refreshes lastProgressAt; claimed → running). Short message only,
+ *  never log output. */
+http.route({
+  path: "/publish-jobs/progress",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.jobId !== "string") {
+      return errorResponse("jobId required", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.publishJobs.reportPublishJobProgress, {
+        tokenHash,
+        jobId: body.jobId,
+        message:
+          typeof body.message === "string" ? body.message.slice(0, 200) : undefined,
+      });
+      return jsonResponse({ ...out, ok: true });
+    } catch (e: any) {
+      return errorResponse(e?.message || "progress failed", 400);
+    }
+  }),
+});
+
+/** POST /publish-jobs/report — Farm node: terminal outcome
+ *  (done|failed + per-target metadata). Idempotent. */
+http.route({
+  path: "/publish-jobs/report",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body.jobId !== "string" || typeof body.status !== "string") {
+      return errorResponse("jobId + status required", 400);
+    }
+    if (!["done", "failed"].includes(body.status)) {
+      return errorResponse("status must be done|failed", 400);
+    }
+    try {
+      const out = await ctx.runMutation(api.publishJobs.reportPublishJobResult, {
+        tokenHash,
+        jobId: body.jobId,
+        status: body.status,
+        result: Array.isArray(body.result) ? body.result : undefined,
+        message:
+          typeof body.message === "string" ? body.message.slice(0, 500) : undefined,
+      });
+      return jsonResponse({ ...out, ok: true });
+    } catch (e: any) {
+      return errorResponse(e?.message || "report failed", 400);
+    }
+  }),
+});
+
+/** GET /publish-jobs/list?deviceId=... — UI/CLI: recent publish jobs
+ *  for the caller. Owner-only. */
+http.route({
+  path: "/publish-jobs/list",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const authHeader = request.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return errorResponse("Unauthorized", 401);
+    }
+    const token = authHeader.slice(7);
+    const tokenHash = await sha256Hex(token);
+    const url = new URL(request.url);
+    const deviceId = url.searchParams.get("deviceId") || undefined;
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam
+      ? Math.max(1, Math.min(parseInt(limitParam, 10) || 20, 100))
+      : 20;
+    try {
+      const rows = await ctx.runQuery(api.publishJobs.listPublishJobsForOwner, {
+        tokenHash,
+        deviceId,
+        limit,
+      });
+      return jsonResponse({ ok: true, jobs: rows ?? [] });
     } catch (e: any) {
       return errorResponse(e?.message || "list failed", 400);
     }
@@ -2985,6 +3162,14 @@ http.route({
               teamId,
               region,
               subscriptionId: subId,
+              // Hosted SKU opts in via checkout custom_data.tier="hosted"
+              // (SANDBOX_HOSTED_HANDOFF.md §5). Absent ⇒ byok, so the
+              // current single SKU is unchanged until a hosted variant
+              // sets it. createCloudMachine already accepts `tier`.
+              tier:
+                payload.meta?.custom_data?.tier === "hosted"
+                  ? "hosted"
+                  : "byok",
             });
             // SECURITY (per-tenant isolation): do NOT attach a PAID
             // subscription to the shared preview box.

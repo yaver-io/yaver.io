@@ -98,6 +98,70 @@ export function buildManagedCloudInitContainer(
     fi
 `
     : "";
+
+  // Hosted tier in the container model (SANDBOX_HOSTED_HANDOFF.md
+  // §convergence). A self-hosted Convex runs as a HOST-side sibling
+  // container (publishes 127.0.0.1:3210/3211). The admin-key file goes
+  // on the PERSISTED state volume (/srv/yaver/state/.yaver/...) so the
+  // agent — which runs INSIDE the yaver container with /root mounted
+  // from that volume — reads it at /root/.yaver/convex-selfhosted.json
+  // (passed via CONVEX_SELFHOSTED_FILE). It survives container
+  // restarts / image upgrades. byok ⇒ empty (byte-identical path).
+  // The admin key NEVER leaves the box (privacy contract).
+  const hostedConvex =
+    spec.tier === "hosted"
+      ? `  # ── Hosted tier: self-hosted Convex (HOST-side sibling) ───────────
+  - |
+    INSTANCE_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \\n')
+    docker volume create yaver-convex-data >/dev/null 2>&1 || true
+    docker rm -f yaver-convex >/dev/null 2>&1 || true
+    docker run -d --name yaver-convex --restart always \\
+      -p 127.0.0.1:3210:3210 -p 127.0.0.1:3211:3211 \\
+      -v yaver-convex-data:/convex/data \\
+      -e INSTANCE_NAME=yaver \\
+      -e INSTANCE_SECRET="$INSTANCE_SECRET" \\
+      -e CONVEX_CLOUD_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-api`)} \\
+      -e CONVEX_SITE_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-http`)} \\
+      ghcr.io/get-convex/convex-backend:latest \\
+      || echo "[cloud-init] convex-backend start skipped"
+  - |
+    for i in $(seq 1 40); do
+      (echo > /dev/tcp/127.0.0.1/3210) >/dev/null 2>&1 && break
+      sleep 5
+    done
+    ADMIN_KEY=$(docker exec yaver-convex ./generate_admin_key.sh 2>/dev/null | tail -n1 || true)
+    mkdir -p /srv/yaver/state/.yaver
+    cat > /srv/yaver/state/.yaver/convex-selfhosted.json <<EOF
+    {"url":"https://${spec.hostname}/_convex-api","adminKey":"$ADMIN_KEY"}
+    EOF
+    chmod 0600 /srv/yaver/state/.yaver/convex-selfhosted.json
+    echo "[cloud-init] self-hosted Convex bootstrap done (key bytes: \${#ADMIN_KEY})"
+  # nginx snippet (WS on /_convex-api) — included by every server block.
+  - |
+    cat > /etc/nginx/snippets/yaver-convex.conf <<'NGINX'
+    location /_convex-api/ {
+      proxy_pass http://127.0.0.1:3210/;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $host;
+      proxy_read_timeout 600s; proxy_buffering off;
+    }
+    location /_convex-http/ {
+      proxy_pass http://127.0.0.1:3211/;
+      proxy_set_header Host $host;
+      proxy_read_timeout 600s; proxy_buffering off;
+    }
+    NGINX
+`
+      : `  - mkdir -p /etc/nginx/snippets
+  - ': > /etc/nginx/snippets/yaver-convex.conf'
+`;
+  // The yaver container always gets CONVEX_SELFHOSTED_FILE; the agent
+  // only acts on it when the file exists (hosted), so byok is unaffected.
+  const selfhostedEnv =
+    `-e CONVEX_SELFHOSTED_FILE=/root/.yaver/convex-selfhosted.json`;
+
   return `#cloud-config
 package_update: true
 packages:
@@ -133,9 +197,11 @@ ${repoClone}  # ── run the yaver image (the box IS this container) ───
     docker run -d --name yaver --restart always \
       -p 18080:18080 \
       -e YAVER_HOSTNAME=${shellSingleQuote(spec.hostname)} \
+      ${selfhostedEnv} \
       -v /srv/yaver/state:/root \
       ${shellSingleQuote(image)}
-  # ── host TLS reconciler (same contract as the VM path) ─────────────
+  - mkdir -p /etc/nginx/snippets
+${hostedConvex}  # ── host TLS reconciler (same contract as the VM path) ─────────────
   - |
     cat > /etc/yaver/machine.json <<'EOF'
     {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)}}
@@ -154,6 +220,7 @@ ${repoClone}  # ── run the yaver image (the box IS this container) ───
       if [ ! -f "$cf" ]; then
         cat > "$cf" <<NGINX
     server { listen 80; server_name $d;
+      include /etc/nginx/snippets/yaver-convex.conf;
       location / { proxy_pass http://127.0.0.1:18080; proxy_set_header Host \\$host;
         proxy_set_header X-Real-IP \\$remote_addr; proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \\$scheme; proxy_read_timeout 300s; proxy_buffering off; } }
@@ -624,6 +691,7 @@ export const create = mutation({
     sshPublicKey: v.optional(v.string()),
     subscriptionId: v.optional(v.id("subscriptions")),
     customDomain: v.optional(v.string()),
+    tier: v.optional(v.union(v.literal("byok"), v.literal("hosted"))),
   },
   handler: async (ctx, args) => createCloudMachine(ctx, args),
 });
@@ -681,6 +749,7 @@ export const ensureForSubscription = mutation({
     sshPublicKey: v.optional(v.string()),
     subscriptionId: v.id("subscriptions"),
     customDomain: v.optional(v.string()),
+    tier: v.optional(v.union(v.literal("byok"), v.literal("hosted"))),
   },
   handler: async (ctx, args) => {
     const existing = (await ctx.db
@@ -898,19 +967,16 @@ export const provision = internalAction({
       // doesn't thread tier yet); hosted once the SKU is wired.
       tier: machine.tier === "hosted" ? "hosted" : "byok",
     } as const;
-    // "yaver image" model: when YAVER_CLOUD_IMAGE is set, BYOK boxes
-    // use the thin Docker cloud-init (fast, identical env, future
-    // per-tenant boundary). HOSTED still uses the legacy in-VM
-    // cloud-init because only that path carries the self-hosted-Convex
-    // + admin-key + nginx /_convex-* bootstrap. Porting hostedSnippet
-    // into buildManagedCloudInitContainer is the tracked convergence
-    // (SANDBOX_HOSTED_HANDOFF.md §convergence); until then hosted
-    // falls back here so it never silently ships a Convex-less box.
+    // "yaver image" model: when YAVER_CLOUD_IMAGE is set, the thin
+    // Docker cloud-init handles BOTH tiers — byok (agent container
+    // only) and hosted (agent container + self-hosted-Convex sibling +
+    // admin-key on the persisted volume + nginx /_convex-*). Unset ⇒
+    // legacy in-VM cloud-init. Both paths assert byte-identical byok
+    // in cloudMachines.test.mts.
     const cloudImage = process.env.YAVER_CLOUD_IMAGE;
-    const cloudInit =
-      cloudImage && bootstrapSpec.tier !== "hosted"
-        ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
-        : buildManagedCloudInit(bootstrapSpec);
+    const cloudInit = cloudImage
+      ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
+      : buildManagedCloudInit(bootstrapSpec);
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
