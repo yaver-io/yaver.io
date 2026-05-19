@@ -988,7 +988,15 @@ export const provision = internalAction({
         },
         body: JSON.stringify({
           name: serverName,
-          server_type: specDef.hetznerType,
+          // Test-only cost override: YAVER_CLOUD_CPU_TYPE swaps the cpu
+          // SKU's Hetzner type (e.g. cpx22 €9.49 vs cpx42 €29.99) so
+          // headless/e2e provisions are cheap throwaways. Unset ⇒ the
+          // real SKU type. Only applies to machineType "cpu". Must be a
+          // non-deprecated type orderable in the resolved location.
+          server_type:
+            machine.machineType === "cpu" && process.env.YAVER_CLOUD_CPU_TYPE
+              ? process.env.YAVER_CLOUD_CPU_TYPE
+              : specDef.hetznerType,
           image: "ubuntu-24.04",
           location,
           labels: {
