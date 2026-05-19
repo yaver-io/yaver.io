@@ -880,6 +880,12 @@ export default defineSchema({
     provisionPhase: v.optional(v.string()), // creating|booting|installing-docker|pulling-image|starting-agent|registering|authorizing-runners|ready|error
     provisionProgress: v.optional(v.number()), // 0-100
     provisionPhaseAt: v.optional(v.number()),
+    // Last failure string the box itself reported via /machine/phase
+    // (phase="error") — e.g. "agent-health-unreachable-300s". Short
+    // curated label only: NEVER raw logs, paths, or secrets (the SSH
+    // debug key, not Convex, is how real logs are read). Cleared the
+    // moment the box ticks a healthy phase. project_managed_cloud_onboarding_gap.
+    provisionError: v.optional(v.string()),
     // Has the user's runner OAuth (claude/codex/opencode subscription)
     // been pushed to this dedicated box? absent/false ⇒ device shows
     // "Unauthorized — Authorize runners" so the user triggers the
@@ -1311,4 +1317,41 @@ export default defineSchema({
     error: v.optional(v.string()),
     timestamp: v.number(),
   }).index("by_user", ["userId", "timestamp"]),
+
+  // ── Managed-cloud prepaid wallet (metered stop/start) ──────────────
+  // Bookkeeping counters only — Convex-allowed (same class as
+  // runnerUsage/dailyTaskCounts; convex_privacy_test.go bans
+  // secrets/output/paths, NOT balances). All money in integer cents to
+  // avoid float drift. Owned by cloudLifecycle.ts; cloudMachines.ts
+  // (parallel session) is NOT edited — read-only seam.
+  prepaidCredits: defineTable({
+    userId: v.id("users"),
+    subscriptionId: v.optional(v.id("subscriptions")),
+    balanceCents: v.number(),       // current spendable balance
+    totalAddedCents: v.number(),    // lifetime topped up
+    totalUsedCents: v.number(),     // lifetime metered out
+    currency: v.string(),           // "usd" (display only; math is cents)
+    lastTopupAt: v.optional(v.number()),
+    lastMeteredAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user", ["userId"])
+    .index("by_subscription", ["subscriptionId"]),
+
+  // One row per metering tick (cron) or transition. Append-only ledger
+  // so balance is auditable. `chargedCents` = 2x `hetznerCostCents`
+  // (100% margin, both live and stopped/snapshot states).
+  creditUsage: defineTable({
+    userId: v.id("users"),
+    machineId: v.optional(v.id("cloudMachines")),
+    date: v.string(),                 // "YYYY-MM-DD" (UTC)
+    state: v.string(),                // "live" | "stopped"
+    seconds: v.number(),              // billable seconds in this tick
+    hetznerCostCents: v.number(),     // raw provider cost (our COGS)
+    chargedCents: v.number(),         // user-facing (2x markup)
+    ratePerHourCents: v.number(),     // effective user rate this tick
+    dryRun: v.boolean(),              // true = simulated, no real spend
+    createdAt: v.number(),
+  }).index("by_user_date", ["userId", "date"])
+    .index("by_machine", ["machineId", "createdAt"]),
 });

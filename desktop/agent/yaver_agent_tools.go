@@ -22,6 +22,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -49,12 +50,24 @@ type YaverAgentRecommendation struct {
 	Action   string `json:"action,omitempty"` // tool name the agent should call
 }
 
+// YaverAgentReadiness is the first-boot readiness contract used by
+// managed-cloud provisioning. State is deliberately coarse so Convex/web/mobile
+// can branch without parsing prose.
+type YaverAgentReadiness struct {
+	State   string   `json:"state"` // ready | needs-reauth
+	Reasons []string `json:"reasons,omitempty"`
+	Vault   string   `json:"vault"`  // open | missing | locked
+	Runner  string   `json:"runner"` // ready | needs-reauth
+	Git     string   `json:"git"`    // ready | needs-reauth
+}
+
 // YaverAgentDeviceAudit is the full audit response.
 type YaverAgentDeviceAudit struct {
 	DeviceID        string                     `json:"deviceId,omitempty"`
 	LifecycleState  string                     `json:"lifecycleState"` // mirrors AgentLifecycleInfo.State
 	Usable          bool                       `json:"usable"`
 	NeedsAuth       bool                       `json:"needsAuth"` // true when LifecycleState != ready-to-connect
+	Readiness       YaverAgentReadiness        `json:"readiness"`
 	Runners         []YaverAgentRunnerAudit    `json:"runners"`
 	Recommendations []YaverAgentRecommendation `json:"recommendations"`
 }
@@ -111,8 +124,68 @@ func (s *HTTPServer) buildYaverAgentDeviceAudit(workDir string) YaverAgentDevice
 		out.Runners = append(out.Runners, audit)
 	}
 
+	out.Readiness = s.buildYaverAgentReadiness(out.Runners)
 	out.Recommendations = recommendNextActions(out)
 	return out
+}
+
+func (s *HTTPServer) buildYaverAgentReadiness(runners []YaverAgentRunnerAudit) YaverAgentReadiness {
+	out := YaverAgentReadiness{
+		State:  "ready",
+		Vault:  probeYaverAgentVaultReadiness(s),
+		Runner: "needs-reauth",
+		Git:    "needs-reauth",
+	}
+	for _, runner := range runners {
+		if runner.Installed && runner.Ready && runner.AuthConfigured {
+			out.Runner = "ready"
+			break
+		}
+	}
+	if out.Vault == "locked" {
+		out.Reasons = append(out.Reasons, "vault")
+	}
+	if out.Runner != "ready" {
+		out.Reasons = append(out.Reasons, "runner")
+	}
+	if machineOnboardingGitReady(collectMachineOnboardingStatus()) {
+		out.Git = "ready"
+	} else {
+		out.Reasons = append(out.Reasons, "git")
+	}
+	if len(out.Reasons) > 0 {
+		out.State = "needs-reauth"
+	}
+	return out
+}
+
+func probeYaverAgentVaultReadiness(s *HTTPServer) string {
+	if s != nil && s.vaultStore != nil {
+		return "open"
+	}
+	if currentRuntimeVaultStore() != nil {
+		return "open"
+	}
+	path, err := VaultPath()
+	if err != nil {
+		return "locked"
+	}
+	if _, statErr := os.Stat(path); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return "missing"
+		}
+		return "locked"
+	}
+	return "locked"
+}
+
+func machineOnboardingGitReady(status machineOnboardingStatus) bool {
+	for _, p := range status.Providers {
+		if (p.ID == "github" || p.ID == "gitlab") && p.CloneReady {
+			return true
+		}
+	}
+	return false
 }
 
 // recommendNextActions produces an ordered list of suggestions. The
@@ -147,6 +220,29 @@ func recommendNextActions(audit YaverAgentDeviceAudit) []YaverAgentRecommendatio
 			Action:   "yaver.start_auth",
 		})
 		return out
+	}
+
+	for _, reason := range audit.Readiness.Reasons {
+		switch reason {
+		case "vault":
+			out = append(out, YaverAgentRecommendation{
+				Kind:     "vault_reauth_required",
+				Target:   "vault",
+				Severity: "warn",
+				Title:    "Vault is locked",
+				Body:     "The encrypted Yaver vault exists but could not be opened. Re-auth or provide the vault passphrase before first use.",
+				Action:   "yaver.start_auth",
+			})
+		case "git":
+			out = append(out, YaverAgentRecommendation{
+				Kind:     "git_auth_required",
+				Target:   "git",
+				Severity: "warn",
+				Title:    "Git credentials are missing",
+				Body:     "This machine needs GitHub or GitLab clone credentials before it can pull private projects.",
+				Action:   "git.connect",
+			})
+		}
 	}
 
 	for _, r := range audit.Runners {

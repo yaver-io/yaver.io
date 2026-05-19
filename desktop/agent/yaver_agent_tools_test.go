@@ -66,6 +66,57 @@ func TestRecommendNextActions_AllConfigured(t *testing.T) {
 	}
 }
 
+func TestBuildYaverAgentReadiness_OpenVaultRunnerGitReady(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	vs, err := NewVaultStore("test-pass")
+	if err != nil {
+		t.Fatalf("NewVaultStore: %v", err)
+	}
+	setRuntimeVaultStore(vs)
+	t.Cleanup(func() { setRuntimeVaultStore(nil) })
+
+	got := (&HTTPServer{vaultStore: vs}).buildYaverAgentReadiness([]YaverAgentRunnerAudit{
+		{ID: "codex", Installed: true, Ready: true, AuthConfigured: true},
+	})
+	if got.Vault != "open" {
+		t.Fatalf("vault=%q, want open", got.Vault)
+	}
+	if got.Runner != "ready" {
+		t.Fatalf("runner=%q, want ready", got.Runner)
+	}
+}
+
+func TestMachineOnboardingGitReadyAcceptsCloneCredential(t *testing.T) {
+	status := machineOnboardingStatus{Providers: []machineOnboardingProviderStatus{
+		{ID: "github", CloneReady: true, CIReady: false},
+	}}
+	if !machineOnboardingGitReady(status) {
+		t.Fatal("expected clone-ready GitHub to satisfy first-boot git readiness")
+	}
+}
+
+func TestRecommendNextActions_ReadinessGitWarning(t *testing.T) {
+	audit := YaverAgentDeviceAudit{
+		LifecycleState: string(AgentLifecycleReadyToConnect),
+		Usable:         true,
+		NeedsAuth:      false,
+		Readiness: YaverAgentReadiness{
+			State:   "needs-reauth",
+			Reasons: []string{"git"},
+			Vault:   "open",
+			Runner:  "ready",
+			Git:     "needs-reauth",
+		},
+		Runners: []YaverAgentRunnerAudit{
+			{ID: "codex", Name: "Codex", Installed: true, Ready: true, AuthConfigured: true},
+		},
+	}
+	recs := recommendNextActions(audit)
+	if len(recs) != 1 || recs[0].Kind != "git_auth_required" {
+		t.Fatalf("expected git_auth_required, got %+v", recs)
+	}
+}
+
 func TestHandleYaverAgentDeviceAudit_HTTPShape(t *testing.T) {
 	srv := &HTTPServer{deviceID: "test-device-id"}
 
@@ -100,6 +151,10 @@ func TestHandleYaverAgentDeviceAudit_HTTPShape(t *testing.T) {
 	// Recommendations array always populated.
 	if len(resp.Recommendations) == 0 {
 		t.Errorf("expected at least one recommendation")
+	}
+
+	if resp.Readiness.State == "" {
+		t.Errorf("expected readiness state")
 	}
 }
 
