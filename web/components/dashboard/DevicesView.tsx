@@ -147,7 +147,8 @@ function platformLabel(platform: string): string {
 // (set from /proc/version + WSL_DISTRO_NAME on the host itself, see
 // agent's hardware_profile.go) when present. The earlier IP-based
 // heuristic (172.16-31.x.y → "WSL NAT") false-positived on every
-// real Linux box that picks a Docker bridge as its LAN IP — Hetzner
+// real Linux box that picks a Docker bridge as its LAN IP — common on
+// remote VPSes
 // VMs, Pi devices with docker0, plain VPS — labelling them all as
 // "Linux (likely WSL)". Hostname suffixes like "DESKTOP-" remain a
 // soft fallback for older agents that haven't yet shipped isWsl.

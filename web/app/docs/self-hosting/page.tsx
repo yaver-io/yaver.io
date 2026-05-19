@@ -370,7 +370,7 @@ export default function SelfHostingPage() {
             </h3>
             <ul className="space-y-2 text-sm text-surface-400">
               <li>
-                &bull; VPS with public IP (Hetzner, DigitalOcean, AWS, Linode,
+                &bull; VPS with public IP (DigitalOcean, AWS, Linode, Vultr,
                 etc.)
               </li>
               <li>&bull; 1 vCPU, 512 MB RAM minimum</li>

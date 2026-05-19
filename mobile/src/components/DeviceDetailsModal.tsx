@@ -1285,7 +1285,7 @@ export default function DeviceDetailsModal({ device, agentVersion, visible, onCl
           </Pressable>
         </View>
 
-        {/* Quick actions row — Hetzner-style "open shell from console".
+        {/* Quick actions row — cloud-console-style "open shell from console".
             Mobile shell only works when this device is the active
             connection (the WS rides quicClient.baseUrl). For non-active
             devices we still show the button but it'll route through

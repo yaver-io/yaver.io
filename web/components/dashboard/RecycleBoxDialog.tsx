@@ -117,7 +117,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   const [preparing, setPreparing] = useState<string | null>(null);
   // True when the only viable executor is the target box itself, so a
   // Remove makes it snapshot + delete itself (last-resort, Remove-only;
-  // Recycle never self-destructs). The Hetzner call completes on the
+  // Recycle never self-destructs). The provider call completes on the
   // control plane before the box terminates.
   const [selfMode, setSelfMode] = useState(false);
   // Snapshot before delete is opt-in (default OFF): it's a paid,

@@ -101,7 +101,7 @@ export default function RelaySetupManual() {
               <tbody className="text-surface-400">
                 <tr className="border-b border-surface-800/60">
                   <td className="py-3 pr-6 text-surface-300">VPS with public IP</td>
-                  <td className="py-3">Any provider: Hetzner, DigitalOcean, AWS Lightsail, Linode, Vultr, etc.</td>
+                  <td className="py-3">Any provider: DigitalOcean, AWS Lightsail, Linode, Vultr, etc.</td>
                 </tr>
                 <tr className="border-b border-surface-800/60">
                   <td className="py-3 pr-6 text-surface-300">Specs</td>

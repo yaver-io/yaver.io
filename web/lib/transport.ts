@@ -55,7 +55,7 @@ export interface TransportInput {
   /** True if THIS device is the one the dashboard is currently
    *  connected to. Without this, every device in the list would
    *  inherit the active connection's transport label, which is
-   *  wrong — see the original bug where a Hetzner box showed
+   *  wrong — see the original bug where a remote Linux box showed
    *  "Tailscale" because the dashboard happened to reach the
    *  current device via Tailscale. */
   isActiveDevice?: boolean;
@@ -170,7 +170,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
 
   // 4. WSL2 NAT — require BOTH the 172.16-31 IP AND a Windows-
   // shaped hostname. The IP alone is also Docker bridge networks
-  // (172.17/16, 172.18/16, …), so a Linux Hetzner box running
+  // (172.17/16, 172.18/16, …), so a remote Linux box running
   // Docker would false-positive as WSL2. Only WSL2's Hyper-V
   // bridge AND a DESKTOP-/LAPTOP-/WIN- hostname combination is
   // a high-confidence signal.

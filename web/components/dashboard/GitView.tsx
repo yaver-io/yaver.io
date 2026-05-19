@@ -42,7 +42,7 @@ type Props = {
   onVibePrompt?: (projectPath: string, prompt: string) => void;
   /** Paired devices — used to populate the "Configure on" picker so the
    *  user can push GitHub/GitLab creds onto any owned online machine
-   *  (Hetzner runner, managed cloud, …) without first reconnecting to
+   *  (remote runner, managed cloud, …) without first reconnecting to
    *  it as primary. When absent the view targets only the connected
    *  agent. */
   devices?: Device[];

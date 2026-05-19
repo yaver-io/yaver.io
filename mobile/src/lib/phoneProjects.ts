@@ -1674,7 +1674,7 @@ function resolveTargetBase(target: PhonePushTarget): string {
  *
  * - `dev-hw` — another of the user's machines running `yaver serve`. Goes
  *   through the same relay we're already talking to.
- * - `yaver-cloud` — Yaver's managed Hetzner tenant. Same endpoint, different
+ * - `yaver-cloud` — Yaver's managed cloud tenant. Same endpoint, different
  *   base URL. Paid tier.
  */
 export async function pushPhoneProject(

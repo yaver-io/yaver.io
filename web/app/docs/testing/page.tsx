@@ -16,16 +16,15 @@ export default function TestingPage() {
       </div>
       <h1 className="mb-2 text-3xl font-bold text-surface-50">Test Suite</h1>
       <p className="mb-8 text-sm text-surface-400">
-        Headless tests against the live <Code>yaver-test-ephemeral</Code> Hetzner box
+        Headless tests against the live <Code>yaver-test-ephemeral</Code> remote Linux box
         prove the critical user flows end-to-end. Local tests run unit + integration
         on this machine.
       </p>
 
       <Section title="Critical-path headless tests">
         <p className="mb-3 text-[14px] text-surface-300">
-          Every release tag fires these via GitHub Actions. They use{" "}
-          <Code>secrets.HCLOUD_SSH_PRIVATE_KEY</Code> +{" "}
-          <Code>secrets.HETZNER_TEST_SERVER_IP</Code> to drive the test box.
+          Every release tag fires these via GitHub Actions. They use configured
+          remote-test SSH credentials to drive the test box.
         </p>
         <table className="w-full text-[12px] text-surface-400">
           <thead className="text-left text-surface-500">

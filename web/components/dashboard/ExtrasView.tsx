@@ -256,7 +256,7 @@ function RotatePanel() {
         <option value="stripe">Stripe — webhook signing secret</option>
         <option value="aws">AWS IAM — access key</option>
         <option value="cloudflare">Cloudflare — API token</option>
-        <option value="hetzner">Hetzner — API token (manual)</option>
+        <option value="hetzner">Cloud server — API token (manual)</option>
         <option value="vercel">Vercel — token (manual)</option>
         <option value="github">GitHub — PAT (manual)</option>
       </select>

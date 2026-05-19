@@ -163,7 +163,7 @@ export default function OpenCodeProvidersAndOllamaBlogPage() {
             refactor across forty files the way Sonnet 4.6 will. But for &ldquo;rename this
             symbol everywhere,&rdquo; &ldquo;write the docstring,&rdquo; or &ldquo;sketch a unit
             test for this function,&rdquo; local Ollama is fast, free, and offline. It&apos;s also
-            the right default when the dev machine is a Hetzner box you&apos;re paying for by the
+            the right default when the dev machine is a metered cloud box you&apos;re paying for by the
             hour and you don&apos;t want to compound that with API spend.
           </p>
         </section>

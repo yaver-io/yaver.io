@@ -776,7 +776,7 @@ export default function DevelopersPage() {
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
                 Lightweight QUIC relay server in Go. Pass-through proxy for NAT
-                traversal &mdash; stores nothing. Deployed to Hetzner VPS via
+                traversal &mdash; stores nothing. Deployed to a standard VPS via
                 Docker.
               </p>
             </div>
@@ -2334,8 +2334,8 @@ CLI Agent ◄──QUIC──────────────── Relay (:
               </h4>
               <p className="mb-3 text-sm text-surface-400">
                 <InlineCode>--relay-docker</InlineCode>, <InlineCode>--relay-binary</InlineCode>,
-                and <InlineCode>--tailscale</InlineCode> SSH into a remote Linux server
-                (e.g. Hetzner VPS), deploy binaries, test cross-network connectivity,
+                and <InlineCode>--tailscale</InlineCode> SSH into a remote Linux server,
+                deploy binaries, test cross-network connectivity,
                 then tear everything down. Auto-detects CPU architecture (amd64 vs arm64).
               </p>
               <Terminal title="credentials setup">

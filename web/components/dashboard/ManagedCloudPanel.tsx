@@ -2,7 +2,7 @@
 
 // ManagedCloudPanel — owner/dev surface for ADDING managed-cloud
 // boxes (docs/managed-cloud-host-lifecycle.md): buy one via
-// LemonSqueezy, or ADOPT an existing Hetzner box as a managed machine
+// LemonSqueezy, or ADOPT an existing cloud box as a managed machine
 // (allowlist-gated server-side). Every managed row carries the
 // `origin` provenance tag ("managed" = bought from / adopted by
 // Yaver; plain BYO devices in the list above are "self-hosted"), and
@@ -345,7 +345,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     }
   }, [token]);
 
-  // Provision is async (LemonSqueezy webhook → Hetzner → cloud-init →
+  // Provision is async (LemonSqueezy webhook → provider → cloud-init →
   // agent heartbeat). Poll while the panel is open so a freshly
   // bought/adopted box flips provisioning → active without a manual
   // refresh. 8s is gentle; stops when the panel is closed.
@@ -441,7 +441,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             <b>self-hosted</b> (your own cloud box or hardware). Adopt imitates a
             managed purchase for an existing box. To remove a box, use the{" "}
             <b>♻ Delete box</b> button on its row below — it snapshots, then
-            destroys the Hetzner server and stops billing.
+            decommissions the cloud resource and stops billing.
           </p>
 
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
@@ -531,7 +531,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.origin ?? "managed"}
                     </span>
                     <span className="font-mono opacity-80">
-                      {m.machineType ?? "cpu"} · srv {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
+                      {m.machineType ?? "cpu"} · resource {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
                       <span className={m.status === "error" ? "font-semibold text-rose-600 dark:text-rose-400" : ""}>
                         {m.status ?? "?"}
                       </span>
@@ -542,8 +542,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `Delete this managed box (srv ${m.hetznerServerId ?? "—"})? ` +
-                            `It snapshots first, then destroys the Hetzner server and stops billing. This cannot be undone.`,
+                          `Delete this managed box (resource ${m.hetznerServerId ?? "—"})? ` +
+                            `It snapshots first, then decommissions the cloud resource and stops billing. This cannot be undone.`,
                         )
                       )
                         return;

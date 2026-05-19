@@ -61,10 +61,10 @@ export default function ManagedCloudCard({
   const machines = (data?.machines ?? []).filter((m) => m.status !== "stopped");
   const sub = data?.subscription ?? null;
 
-  const decommission = (id: string, srv?: string) => {
+  const decommission = (id: string, resourceId?: string) => {
     Alert.alert(
       "Decommission box?",
-      `Destroys the server (srv ${srv ?? "—"}), stops billing, and cancels the subscription. Cannot be undone.`,
+      `Decommissions the cloud resource (${resourceId ?? "—"}), stops billing, and cancels the subscription. Cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {

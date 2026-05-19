@@ -105,7 +105,7 @@ export function classifyTransport(d: TransportInput): TransportInfo {
 
   // WSL2 NAT requires Windows-shaped hostname AND Linux platform.
   // 172.16-31 IP alone is also Docker bridge networks; without the
-  // hostname check, a Hetzner Linux box running Docker false-
+  // hostname check, a remote Linux box running Docker false-
   // positives as WSL2.
   const wslIp = ips.find((ip) => WSL_NAT.test(ip));
   const platform = String(d.platform || "").toLowerCase();
