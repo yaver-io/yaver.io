@@ -871,6 +871,20 @@ export default defineSchema({
     deprovisionAt: v.optional(v.number()),
     scheduledDestroyId: v.optional(v.id("_scheduled_functions")),
     status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "error"
+    // First-class onboarding (project_managed_cloud_onboarding_gap).
+    // Granular phase + 0-100 progress so web/mobile show a real
+    // "setting up your box" bar, not a binary provisioning/active.
+    // The box cloud-init POSTs ticks to /machine/phase (machine-token
+    // authed); provision()/healthCheck set the server-side bookends.
+    // Privacy-safe: label + percent + timestamp only.
+    provisionPhase: v.optional(v.string()), // creating|booting|installing-docker|pulling-image|starting-agent|registering|authorizing-runners|ready|error
+    provisionProgress: v.optional(v.number()), // 0-100
+    provisionPhaseAt: v.optional(v.number()),
+    // Has the user's runner OAuth (claude/codex/opencode subscription)
+    // been pushed to this dedicated box? absent/false ⇒ device shows
+    // "Unauthorized — Authorize runners" so the user triggers the
+    // remote-OAuth push from web/mobile. Never an API key.
+    runnersAuthorized: v.optional(v.boolean()),
     multiUser: v.optional(v.boolean()), // true for shared team machines
     // Underlying IaaS this resource lives on. The whole stack above this
     // record stays provider-agnostic ("cloud resource"); only Yaver's

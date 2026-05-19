@@ -162,6 +162,15 @@ export function buildManagedCloudInitContainer(
   const selfhostedEnv =
     `-e CONVEX_SELFHOSTED_FILE=/root/.yaver/convex-selfhosted.json`;
 
+  // Non-fatal onboarding-phase tick → /machine/phase (machine-token
+  // authed). Values inlined at build time (no machine.json timing
+  // dependency); `|| true` so a reporting hiccup never breaks the
+  // proven provision. Drives the web/mobile progress bar.
+  const phasePost = (phase: string) =>
+    `  - 'curl -fsS -m 8 -X POST -H "X-Machine-Token: ${spec.machineToken}" -H "Content-Type: application/json" -d ${shellSingleQuote(
+      JSON.stringify({ machineId: spec.machineId, phase }),
+    )} ${spec.convexSite}/machine/phase >/dev/null 2>&1 || true'\n`;
+
   return `#cloud-config
 package_update: true
 packages:
@@ -173,7 +182,7 @@ packages:
   - python3-certbot-nginx
   - ufw
 runcmd:
-  - curl -fsSL https://get.docker.com | sh
+${phasePost("installing-docker")}  - curl -fsSL https://get.docker.com | sh
   - systemctl enable --now docker
   - ufw allow 22/tcp
   - ufw allow 80/tcp
@@ -191,7 +200,7 @@ runcmd:
     EOF
   - chmod 0600 /srv/yaver/state/.yaver/config.json
 ${repoClone}  # ── run the yaver image (the box IS this container) ────────────────
-  - docker pull ${shellSingleQuote(image)}
+${phasePost("pulling-image")}  - docker pull ${shellSingleQuote(image)}
   - |
     docker rm -f yaver 2>/dev/null || true
     docker run -d --name yaver --restart always \
@@ -200,7 +209,7 @@ ${repoClone}  # ── run the yaver image (the box IS this container) ───
       ${selfhostedEnv} \
       -v /srv/yaver/state:/root \
       ${shellSingleQuote(image)}
-  - mkdir -p /etc/nginx/snippets
+${phasePost("registering")}  - mkdir -p /etc/nginx/snippets
 ${hostedConvex}  # ── host TLS reconciler (same contract as the VM path) ─────────────
   - |
     cat > /etc/yaver/machine.json <<'EOF'
@@ -662,6 +671,10 @@ async function createCloudMachine(
     origin: "managed", // every cloudMachines row is a Yaver-side box
     tier: args.tier ?? "byok",
     status: "provisioning",
+    provisionPhase: "creating",
+    provisionProgress: 5,
+    provisionPhaseAt: now,
+    runnersAuthorized: false,
     multiUser: !!args.teamId,
     region: args.region ?? "eu",
     tools,
@@ -834,6 +847,40 @@ export const setStatus = internalMutation({
     if (args.lastSnapshotId) {
       patch.lastSnapshotId = args.lastSnapshotId;
       patch.lastSnapshotAt = Date.now();
+    }
+    await ctx.db.patch(args.machineId, patch);
+  },
+});
+
+// First-class onboarding phase. Called server-side (provision /
+// healthCheck bookends) AND by the box cloud-init via the
+// machine-token /machine/phase route between steps. Idempotent /
+// monotonic-ish: callers pass increasing progress. phase "ready"
+// implies status active; phase fields are privacy-safe (label +
+// percent only). project_managed_cloud_onboarding_gap.
+export const PROVISION_PHASES = [
+  "creating", "booting", "installing-docker", "pulling-image",
+  "starting-agent", "registering", "authorizing-runners", "ready", "error",
+] as const;
+
+export const setPhase = internalMutation({
+  args: {
+    machineId: v.id("cloudMachines"),
+    phase: v.string(),
+    progress: v.optional(v.number()),
+    runnersAuthorized: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const patch: Record<string, unknown> = {
+      provisionPhase: args.phase,
+      provisionPhaseAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (typeof args.progress === "number") {
+      patch.provisionProgress = Math.max(0, Math.min(100, args.progress));
+    }
+    if (typeof args.runnersAuthorized === "boolean") {
+      patch.runnersAuthorized = args.runnersAuthorized;
     }
     await ctx.db.patch(args.machineId, patch);
   },
@@ -1071,6 +1118,15 @@ export const provision = internalAction({
         deviceId, // deterministic cloud-<shortId> the box registers as
       });
 
+      // Server-side bookend: box exists, now booting + cloud-init
+      // (the box itself POSTs the granular installing-docker /
+      // pulling-image / registering ticks to /machine/phase).
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId: args.machineId,
+        phase: "booting",
+        progress: 30,
+      });
+
       // ── 5. Health check in 5 minutes ────────────────────────────
       await ctx.scheduler.runAfter(5 * 60 * 1000, internal.cloudMachines.healthCheck, {
         machineId: args.machineId,
@@ -1087,6 +1143,10 @@ export const provision = internalAction({
         machineId: args.machineId,
         status: "error",
         errorMessage: msg,
+      });
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId: args.machineId,
+        phase: "error",
       });
     }
   },
@@ -1126,6 +1186,14 @@ export const healthCheck = internalAction({
         machineId,
         status: "active",
       });
+      // Agent is up. NOT "ready" yet — runner OAuth still has to be
+      // pushed; the device shows "Unauthorized — Authorize runners"
+      // until then (runnersAuthorized stays false).
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "authorizing-runners",
+        progress: 90,
+      });
       console.log(`[cloudMachines.healthCheck] active: ${machine.hostname}`);
       return;
     }
@@ -1134,6 +1202,10 @@ export const healthCheck = internalAction({
         machineId,
         status: "error",
         errorMessage: "Health check timed out after 10 attempts",
+      });
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId,
+        phase: "error",
       });
       return;
     }

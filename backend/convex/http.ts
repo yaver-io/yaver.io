@@ -3452,6 +3452,15 @@ http.route({
             cloudResourceId: machine.cloudResourceId ?? machine.hetznerServerId ?? null,
             hetznerServerId: machine.hetznerServerId ?? null,
             deviceId: machine.deviceId ?? null,
+            // First-class onboarding: web/mobile render an
+            // initializing state + progress bar + "Authorize runners"
+            // from these (project_managed_cloud_onboarding_gap).
+            provisionPhase: machine.provisionPhase ?? null,
+            provisionProgress:
+              typeof machine.provisionProgress === "number"
+                ? machine.provisionProgress
+                : null,
+            runnersAuthorized: machine.runnersAuthorized ?? false,
           }))
         : [],
     });
@@ -4661,6 +4670,39 @@ http.route({
     return jsonResponse({
       domains: rows.map((r: any) => ({ domain: r.domain, domainId: r._id.toString() })),
     });
+  }),
+});
+
+/** POST /machine/phase — box cloud-init reports its onboarding phase
+ *  (installing-docker / pulling-image / registering) so web/mobile
+ *  show a real progress bar. Machine-token authed; privacy-safe
+ *  (label + percent only). project_managed_cloud_onboarding_gap. */
+http.route({
+  path: "/machine/phase",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const body = await request.json().catch(() => ({}));
+    const auth = await authenticateMachineRequest(ctx, request, body.machineId ?? null);
+    if (!auth.ok) return errorResponse(auth.error, auth.status);
+    const phase = String(body.phase ?? "").trim();
+    // Default progress per phase so the box only has to send a label.
+    const PCT: Record<string, number> = {
+      "installing-docker": 45,
+      "pulling-image": 60,
+      "starting-agent": 75,
+      "registering": 85,
+    };
+    if (!phase || !(phase in PCT)) {
+      return errorResponse("Unknown or missing phase", 400);
+    }
+    const progress =
+      typeof body.progress === "number" ? body.progress : PCT[phase];
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId: auth.machine._id,
+      phase,
+      progress,
+    });
+    return jsonResponse({ ok: true });
   }),
 });
 
