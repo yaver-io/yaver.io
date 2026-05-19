@@ -3475,6 +3475,16 @@ http.route({
     ]);
 
     return jsonResponse({
+      // Owner-allowlist flag (server is the source of truth — the
+      // CLOUD_PREVIEW_OWNER_EMAIL gate, never a hardcoded name). The
+      // web hides the entire managed-cloud panel/billing for
+      // non-owners; this is COSMETIC only — every money-spending
+      // route is independently 403'd by isCloudPreviewUser and
+      // provisioning is fail-closed behind canProvisionManaged, so a
+      // non-owner reading this open-source code still cannot spend
+      // Yaver's Hetzner. Private preview until LemonSqueezy is fully
+      // integrated; owner-only purchases for now.
+      cloudPreviewOwner: isCloudPreviewUser(session.email),
       subscription: subscription ? {
         plan: subscription.plan,
         status: subscription.status,

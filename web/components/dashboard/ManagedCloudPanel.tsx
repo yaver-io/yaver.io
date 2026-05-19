@@ -247,6 +247,13 @@ function RunnerAuthCTA({
 export function ManagedCloudPanel({ token }: { token: string | null | undefined }) {
   const [machines, setMachines] = useState<ManagedMachine[]>([]);
   const [open, setOpen] = useState(false);
+  // Owner-only private preview. Server (/subscription cloudPreviewOwner
+  // = isCloudPreviewUser allowlist) is the source of truth — never a
+  // hardcoded name. null = unknown (render nothing, don't flash the
+  // panel to non-owners); false = hide entirely; true = show. This is
+  // cosmetic — every buy/provision route is independently 403'd
+  // server-side, so hiding is UX, not the security boundary.
+  const [owner, setOwner] = useState<boolean | null>(null);
   const [adoptId, setAdoptId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -286,6 +293,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await res.json().catch(() => ({}));
+      setOwner(data?.cloudPreviewOwner === true);
       setMachines(Array.isArray(data?.machines) ? data.machines : []);
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -316,6 +324,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await res.json().catch(() => ({}));
+        if (alive) setOwner(data?.cloudPreviewOwner === true);
         const ms = Array.isArray(data?.machines) ? data.machines : [];
         if (alive && ms.length > 0) {
           setMachines(ms);
@@ -360,6 +369,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   }
 
   if (!token) return null;
+  // Owner-only private preview: render NOTHING for non-owners (and
+  // while ownership is still unknown, so the panel never flashes to a
+  // non-owner). Server independently 403s every action regardless.
+  if (owner !== true) return null;
 
   return (
     <div className="mt-4 rounded-xl border border-slate-300 bg-white/60 p-4 dark:border-surface-700 dark:bg-[rgba(20,21,27,0.6)]">
