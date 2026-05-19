@@ -29,6 +29,7 @@ interface ManagedMachine {
   hetznerServerId?: string;
   region?: string;
   serverIp?: string;
+  hostname?: string;
   errorMessage?: string;
   deviceId?: string;
   // First-class onboarding (project_managed_cloud_onboarding_gap):
@@ -43,7 +44,43 @@ interface ManagedMachine {
 // guessed/fuzzy target (credentials + exec). Disabled until the box
 // has registered (deviceId present). Ops verbs run on the connected
 // agent and are routed P2P to the box; tokens never touch Convex.
-function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
+// Managed boxes aren't auto-connected to the dashboard's agentClient
+// (the panel row has no "Open Workspace"), so callOps would throw
+// "AgentClient is not connected". Connect to the box itself — its
+// public serverIp:18080 (direct, no cert wait) with https://hostname
+// as a tunnel fallback — using the user's session token + the box's
+// explicit deviceId, before any ops. Idempotent: skips if already
+// connected to this box. This is what makes GitHub/GitLab/Codex/
+// Claude auth actually run on the managed box.
+async function ensureBoxConnected(
+  deviceId?: string,
+  serverIp?: string,
+  hostname?: string,
+  token?: string | null,
+): Promise<void> {
+  if (!deviceId) throw new Error("box agent not registered yet");
+  if (!token) throw new Error("not signed in");
+  if (agentClient.isConnected && agentClient.connectedDeviceId === deviceId) return;
+  const host = serverIp || hostname;
+  if (!host) throw new Error("box has no address yet (still provisioning)");
+  const tunnelUrls = [
+    hostname ? `https://${hostname}` : "",
+    serverIp ? `http://${serverIp}:18080` : "",
+  ].filter(Boolean);
+  await agentClient.connect(host, 18080, token, deviceId, { tunnelUrls });
+}
+
+function ManagedMachineActions({
+  deviceId,
+  serverIp,
+  hostname,
+  token,
+}: {
+  deviceId?: string;
+  serverIp?: string;
+  hostname?: string;
+  token?: string | null;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [out, setOut] = useState<string | null>(null);
   const [gitSession, setGitSession] = useState<{ id: string; uri: string; code: string } | null>(null);
@@ -60,6 +97,7 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
     setBusy(label);
     setOut(null);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps(verb, { ...payload, deviceId });
       if (r.ok === false || (r as any)?.error) {
         setOut(`✗ ${(r as any)?.error || "failed"}`);
@@ -87,6 +125,7 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
     if (!gitSession) return;
     setBusy("check");
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("git_connect_status", { sessionId: gitSession.id, deviceId });
       const st = (r as any)?.initial?.state;
       setOut(st === "done" ? `✓ git connected (${(r as any)?.initial?.username ?? "ok"})` : `state: ${st ?? "?"}`);
@@ -136,11 +175,15 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
 function RunnerAuthCTA({
   deviceId,
   machineId,
+  serverIp,
+  hostname,
   token,
   onAuthorized,
 }: {
   deviceId?: string;
   machineId: string;
+  serverIp?: string;
+  hostname?: string;
   token: string | null | undefined;
   onAuthorized: () => void;
 }) {
@@ -160,6 +203,7 @@ function RunnerAuthCTA({
     setBusy(true);
     setMsg(null);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("runner_auth", { op: "browser_start", runner, deviceId });
       const init = (r as any)?.initial ?? {};
       const uri = init.verification_uri || init.verificationUri;
@@ -182,6 +226,7 @@ function RunnerAuthCTA({
     if (!sess) return;
     setBusy(true);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("runner_auth", { op: "browser_status", sessionId: sess.id, deviceId });
       const st = (r as any)?.initial?.state ?? (r as any)?.initial?.status;
       if (st === "done" || st === "authorized") {
@@ -565,6 +610,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                           <RunnerAuthCTA
                             deviceId={m.deviceId}
                             machineId={m.id}
+                            serverIp={m.serverIp}
+                            hostname={m.hostname}
                             token={token}
                             onAuthorized={() => void load()}
                           />
@@ -578,7 +625,12 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.errorMessage}
                     </p>
                   ) : null}
-                  <ManagedMachineActions deviceId={m.deviceId} />
+                  <ManagedMachineActions
+                    deviceId={m.deviceId}
+                    serverIp={m.serverIp}
+                    hostname={m.hostname}
+                    token={token}
+                  />
                 </div>
               ))
             )}
