@@ -1,6 +1,6 @@
 {
   "name": "yaver-cli",
-  "version": "1.99.219",
+  "version": "1.99.220",
   "mcpName": "io.github.kivanccakmak/yaver",
   "description": "Unified npm bootstrap for the Yaver agent, SDK injection, and local-first developer runtime",
   "bin": {
@@ -21,6 +21,14 @@
     "sdk-manifest.json"
   ],
   "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "claude-code",
+    "codex",
+    "ai-agent",
+    "developer-tools",
+    "local-first",
     "react-native",
     "testing",
     "mobile",

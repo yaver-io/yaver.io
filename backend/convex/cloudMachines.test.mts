@@ -187,3 +187,166 @@ test("buildManagedCloudInitContainer: byok runs only the agent; hosted adds self
   assert.match(hosted, /location \/_convex-http\/ \{/);
   assert.match(hosted, /include \/etc\/nginx\/snippets\/yaver-convex\.conf;/);
 });
+
+test("buildManagedCloudInitContainer: observability beacon + optional ssh/relay", () => {
+  const base = {
+    convexSite: "https://example.convex.site",
+    machineId: "machine_obs",
+    machineToken: "machine-token-obs",
+    userSessionToken: "session-token-obs",
+    deviceId: "cloud-obs",
+    hostname: "obs.cloud.yaver.io",
+    yaverArch: "amd64" as const,
+    yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+    gpu: false,
+  };
+  const IMG = "ghcr.io/kivanccakmak/yaver-cloud:latest";
+
+  // Default (no ssh key, no relay password): the health beacon is
+  // ALWAYS emitted, but ssh_authorized_keys / relay_password are NOT —
+  // and the absent-tier default stays byte-identical to explicit byok.
+  const plain = buildManagedCloudInitContainer(base, IMG);
+  assert.match(plain, /phase=registering/);
+  assert.match(plain, /phase=error&error=agent-health-unreachable-300s/);
+  assert.match(plain, /curl -fsS -m 4 http:\/\/127\.0\.0\.1:18080\/health/);
+  assert.match(plain, /phase=starting-agent/);
+  assert.doesNotMatch(plain, /ssh_authorized_keys:/);
+  assert.doesNotMatch(plain, /"relay_password":/);
+  assert.equal(plain, buildManagedCloudInitContainer({ ...base, tier: "byok" }, IMG));
+
+  // Operator debug key → top-level cloud-config ssh_authorized_keys
+  // (JSON-quoted ⇒ YAML-safe), still byte-stable for the same inputs.
+  const withSsh = buildManagedCloudInitContainer(
+    { ...base, sshAuthorizedKey: "ssh-ed25519 AAAAC3NzaC1 operator@debug" },
+    IMG,
+  );
+  assert.match(withSsh, /#cloud-config\nssh_authorized_keys:\n  - "ssh-ed25519 AAAAC3NzaC1 operator@debug"/);
+  assert.equal(
+    withSsh,
+    buildManagedCloudInitContainer(
+      { ...base, sshAuthorizedKey: "ssh-ed25519 AAAAC3NzaC1 operator@debug" },
+      IMG,
+    ),
+  );
+
+  // Relay password → config.json relay_password (defensive fallback now
+  // that auto-cert + public_endpoints is the primary path).
+  const withRelay = buildManagedCloudInitContainer(
+    { ...base, relayPassword: "s3cr3t-relay-pw" },
+    IMG,
+  );
+  assert.match(withRelay, /"relay_password": "s3cr3t-relay-pw"/);
+  // config.json must stay valid JSON with the extra field (no dangling
+  // comma): public_endpoints (always-present) then comma then relay_password.
+  assert.match(
+    withRelay,
+    /"public_endpoints": \["https:\/\/obs\.cloud\.yaver\.io"\],\n {6}"relay_password": "s3cr3t-relay-pw"/,
+  );
+});
+
+test("buildManagedCloudInitContainer: auto-cert the box's own subdomain (no shared relay needed)", () => {
+  const base = {
+    convexSite: "https://example.convex.site",
+    machineId: "machine_cert",
+    machineToken: "machine-token-cert",
+    userSessionToken: "session-token-cert",
+    deviceId: "cloud-cert",
+    hostname: "cert42.cloud.yaver.io",
+    yaverArch: "amd64" as const,
+    yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+    gpu: false,
+  };
+  const IMG = "ghcr.io/kivanccakmak/yaver-cloud:latest";
+  const ci = buildManagedCloudInitContainer(base, IMG);
+
+  // (1) config.json advertises HTTPS via public_endpoints so the agent
+  // registers it in PublicEndpoints and the browser dashboard skips
+  // the shared relay for this box's own traffic.
+  assert.match(ci, /"public_endpoints": \["https:\/\/cert42\.cloud\.yaver\.io"\]/);
+
+  // (2) machine.json carries hostname so the on-box reconciler can
+  // process the auto domain (not just user custom domains).
+  assert.match(
+    ci,
+    /\{"machineId":"machine_cert","machineToken":"machine-token-cert","convexSite":"https:\/\/example\.convex\.site","hostname":"cert42\.cloud\.yaver\.io"\}/,
+  );
+
+  // (3) Reconciler script reads HOST + ensures nginx server block +
+  // certbot for the auto subdomain. Idempotent (cf existence guard,
+  // certbot self-skips if not due, || true non-fatal). No
+  // /machine/tls-issued POST for the auto domain (that's userDomains-only).
+  assert.match(ci, /HOST=\$\(jq -r \.hostname "\$conf"/);
+  assert.match(ci, /if \[ -n "\$HOST" \] && \[ "\$HOST" != "null" \]/);
+  assert.match(ci, /certbot --nginx -d "\$HOST"/);
+  // The auto-domain block is BEFORE the user-custom-domain loop.
+  const reconcilerStart = ci.indexOf("yaver-tls-reconciler");
+  const autoCertIdx = ci.indexOf('certbot --nginx -d "$HOST"', reconcilerStart);
+  const customLoopIdx = ci.indexOf("pending-tls?machineId=", reconcilerStart);
+  assert.ok(autoCertIdx > 0 && customLoopIdx > 0, "both blocks present");
+  assert.ok(
+    autoCertIdx < customLoopIdx,
+    "auto-cert must run before the custom-domain loop",
+  );
+
+  // (4) byte-identical default still holds — every new field above is
+  // tier-independent and unconditional, so byok == default still passes.
+  assert.equal(ci, buildManagedCloudInitContainer({ ...base, tier: "byok" }, IMG));
+});
+
+test("buildManagedCloudInitContainer: Phase 2 — bundled yaver-relay (in-image, not sidecar) when boxRelayPassword set", () => {
+  const base = {
+    convexSite: "https://example.convex.site",
+    machineId: "machine_relay",
+    machineToken: "machine-token-relay",
+    userSessionToken: "session-token-relay",
+    deviceId: "cloud-relay",
+    hostname: "relay42.cloud.yaver.io",
+    yaverArch: "amd64" as const,
+    yaverReleaseUrl: "https://example.invalid/yaver-linux-amd64.tar.gz",
+    gpu: false,
+  };
+  const IMG = "ghcr.io/kivanccakmak/yaver-cloud:latest";
+
+  // Absent boxRelayPassword ⇒ no relay ports on the main yaver run,
+  // no RELAY_PASSWORD env, no ufw 4433/8443. The entrypoint wrapper
+  // inside the image will see RELAY_PASSWORD unset and skip starting
+  // yaver-relay (Dockerfile.yaver-cloud entrypoint).
+  const plain = buildManagedCloudInitContainer(base, IMG);
+  assert.doesNotMatch(plain, /-p 4433:4433\/udp/);
+  assert.doesNotMatch(plain, /RELAY_PASSWORD/);
+  assert.doesNotMatch(plain, /ufw allow 4433\/udp/);
+  assert.doesNotMatch(plain, /ufw allow 8443\/tcp/);
+  // tier absent ⇒ identical to explicit byok (byte-identical default).
+  assert.equal(plain, buildManagedCloudInitContainer({ ...base, tier: "byok" }, IMG));
+  // And critically NO separate yaver-relay container is launched —
+  // it's bundled INTO the yaver image (Phase 2 design call).
+  assert.doesNotMatch(plain, /--name yaver-relay\b/);
+
+  // Set ⇒ ports + env are folded into the SAME yaver docker run (the
+  // image's entrypoint wrapper backgrounds yaver-relay when it sees
+  // RELAY_PASSWORD). ufw opens QUIC + admin ports BEFORE ufw enable.
+  const withRelay = buildManagedCloudInitContainer(
+    { ...base, boxRelayPassword: "relay-pw-abc123" },
+    IMG,
+  );
+  assert.match(withRelay, /ufw allow 4433\/udp/);
+  assert.match(withRelay, /ufw allow 8443\/tcp/);
+  // Single docker run with both port pairs (the agent + the bundled relay).
+  assert.match(withRelay, /docker run -d --name yaver --restart always/);
+  assert.match(withRelay, /-p 18080:18080/);
+  assert.match(withRelay, /-p 4433:4433\/udp -p 8443:8443\/tcp/);
+  assert.match(withRelay, /-e RELAY_PASSWORD='relay-pw-abc123'/);
+  // CONVEX_URL must also be passed when relay is bundled — the
+  // entrypoint wrapper threads it as `--convex-url` so the relay
+  // per-user-validates tunnel registrations instead of running in
+  // password-only mode.
+  assert.match(withRelay, /-e CONVEX_URL='https:\/\/example\.convex\.site'/);
+  // No separate yaver-relay container — bundled.
+  assert.doesNotMatch(withRelay, /--name yaver-relay\b/);
+
+  // The ufw rules must land BEFORE `ufw --force enable` (otherwise the
+  // ports never open).
+  const ufwEnableIdx = withRelay.indexOf("ufw --force enable");
+  const ufw4433Idx = withRelay.indexOf("ufw allow 4433/udp");
+  assert.ok(ufw4433Idx > 0 && ufw4433Idx < ufwEnableIdx, "4433 rule before ufw enable");
+});

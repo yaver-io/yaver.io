@@ -92,7 +92,7 @@ function DeviceIcon({ platform }: { platform: string }) {
 // derived from /proc/version + WSL_DISTRO_NAME on the host) when
 // reported. Hostname suffix is a soft fallback for older agents.
 // We deliberately do NOT use the IP-shape heuristic — Docker bridges
-// (172.16-31.x.y) on real Linux boxes (Hetzner, Pi, plain VPS)
+// (172.16-31.x.y) on real Linux boxes (Pi, plain VPS, etc.)
 // false-positived as WSL with that rule.
 function isLikelyWSLDevice(device: Pick<Device, "name" | "platform" | "hardwareProfile">): boolean {
   const platform = String(device.platform || "").trim().toLowerCase();
@@ -1029,7 +1029,7 @@ export default function DashboardPage() {
     previousActiveTabRef.current = activeTab;
     if (probedForCurrentTabOpenRef.current) return;
     // Wait until relay servers are loaded — without them probeDeviceStatus
-    // skips the relay branch and every cross-network device (Hetzner, etc.)
+    // skips the relay branch and every cross-network device (remote VPSes, etc.)
     // gets falsely marked Unreachable. Re-runs when relayReady flips.
     if (!token || devices.length === 0 || !relayReady) {
       return;

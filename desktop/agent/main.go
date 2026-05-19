@@ -16,6 +16,7 @@ import (
 	mathRand "math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -252,6 +253,36 @@ func relayHTTPURLsMatch(a, b string) bool {
 	a = normalizeRelayHTTPURL(a)
 	b = normalizeRelayHTTPURL(b)
 	return a != "" && b != "" && a == b
+}
+
+// synthRelayServerInfoFromURL parses a user-set relay HTTP URL into a
+// RelayServerInfo when the URL isn't in platformConfig (Phase 2D —
+// the user's managed-cloud box doubles as their own relay; per-user,
+// not global, so it never appears in /config). The yaver-cloud image
+// always publishes the bundled yaver-relay on QUIC 4433/UDP, so we
+// can derive the QuicAddr deterministically from the URL's host.
+// Returns ok=false for unparseable input — the caller falls back to
+// the platform list. Independent of the URL's port (the QUIC port is
+// a separate protocol on UDP; the HTTP URL is just for matching/display).
+func synthRelayServerInfoFromURL(rawURL string) (RelayServerInfo, bool) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u == nil {
+		return RelayServerInfo{}, false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return RelayServerInfo{}, false
+	}
+	return RelayServerInfo{
+		ID:       "user-managed-" + host,
+		HttpURL:  rawURL,
+		QuicAddr: host + ":4433",
+		Region:   "user",
+		// Priority 0 ⇒ tops the sorted list when the relay manager
+		// orders by priority; doesn't change selection for managers
+		// that broadcast to all relays, just informational ordering.
+		Priority: 0,
+	}, true
 }
 
 // restoreUserCwdFromNpmWrapper undoes the cwd-clobbering done by the npm
@@ -2499,7 +2530,23 @@ func runServe(args []string) {
 			}
 		}
 		if len(relayServers) == 0 {
-			log.Printf("User relay setting %s has no matching platform relay with QUIC info; falling back to platform relays", userSettings.RelayUrl)
+			// Phase 2D — the user's managed-cloud box doubles as their
+			// own relay (cloudMachines.provision Phase 2C wires
+			// userSettings → the box's hostname). It's per-user, never
+			// in platformConfig. Synth a RelayServerInfo from the URL
+			// + pair with userSettings.RelayPassword so this device
+			// prefers the user's own relay over the shared free list.
+			// On synth failure (garbage URL) we still fall back to the
+			// platform list below — never worse than today.
+			if synth, ok := synthRelayServerInfoFromURL(userSettings.RelayUrl); ok {
+				relayServers = append(relayServers, synth)
+				if userSettings.RelayPassword != "" {
+					relayPasswords[synth.QuicAddr] = userSettings.RelayPassword
+				}
+				log.Printf("Using user's managed relay (synthesised from settings): %s → QUIC %s", synth.HttpURL, synth.QuicAddr)
+			} else {
+				log.Printf("User relay setting %s could not be parsed; falling back to platform relays", userSettings.RelayUrl)
+			}
 		}
 	}
 

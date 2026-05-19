@@ -64,7 +64,7 @@ export default function DownloadPage() {
             <p className="mt-4 max-w-2xl text-sm leading-6 text-surface-400 md:text-base">
               Yaver ships exclusively through <code>npm install -g yaver-cli</code> on every supported
               platform: macOS (Apple Silicon and Intel), Linux (x64 and arm64 — Raspberry Pi, AWS Graviton,
-              Hetzner ARM, etc.), and Windows via WSL2. The npm package detects your platform and
+              ARM VPSes, etc.), and Windows via WSL2. The npm package detects your platform and
               downloads the matching, signed and notarized agent binary into <code>~/.yaver/bin/</code>.
             </p>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-surface-500">
@@ -127,7 +127,7 @@ export default function DownloadPage() {
           <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
             <h2 className="text-lg font-semibold text-surface-50">Linux (x64 and arm64)</h2>
             <p className="mt-3 text-sm leading-6 text-surface-400">
-              Ubuntu, Debian, Raspberry Pi 4/5, Hetzner ARM, AWS Graviton, Oracle Cloud ARM, etc.
+              Ubuntu, Debian, Raspberry Pi 4/5, AWS Graviton, Oracle Cloud ARM, ARM VPSes, etc.
               Once Node.js 18+ is present, install and update Yaver only with npm.
             </p>
             <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[13px] text-surface-300">
@@ -172,7 +172,7 @@ export default function DownloadPage() {
           <div className="rounded-2xl border border-surface-800 bg-surface-900 p-6">
             <h2 className="text-lg font-semibold text-surface-50">Headless / SSH-only</h2>
             <p className="mt-3 text-sm leading-6 text-surface-400">
-              Pi, VPS, Hetzner box: install via npm, then sign in via short code. No browser on the
+              Pi, VPS, remote Linux box: install via npm, then sign in via short code. No browser on the
               target machine required. Upgrades are still npm-only here too.
             </p>
             <div className="mt-5 rounded-xl bg-surface-950 p-4 font-mono text-[12px] text-surface-300">

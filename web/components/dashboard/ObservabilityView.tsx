@@ -200,7 +200,7 @@ function Storage({ directory }: { directory: string }) {
               <option value="local">Local folder</option>
               <option value="smb">SMB / NAS</option>
               <option value="webdav">WebDAV</option>
-              <option value="storagebox">Hetzner Storage Box</option>
+              <option value="storagebox">SFTP storage box</option>
               <option value="s3">S3-compatible bucket</option>
             </select>
             <input value={profileForm.name} onChange={(e) => setProfileForm((s: any) => ({ ...s, name: e.target.value }))} placeholder="Friendly name" className="w-full rounded-lg border border-surface-700 bg-surface-900 px-3 py-2 text-sm text-surface-200" />

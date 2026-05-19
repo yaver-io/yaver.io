@@ -118,7 +118,7 @@ export default function UnityDocsPage() {
             {[
               "Solo developer: Unity project on your own desktop or laptop, reachable through relay, Tailscale, or a tunnel.",
               "Home build machine: a stronger desktop or Mac mini that keeps working while you are away.",
-              "Studio runner: a shared workstation, Hetzner box, or GPU VPS with a private model and controlled costs.",
+              "Studio runner: a shared workstation, remote Linux box, or GPU VPS with a private model and controlled costs.",
             ].map((item) => (
               <div key={item} className="rounded-lg border border-surface-800 bg-surface-900/50 p-4 text-sm text-surface-400">
                 {item}

@@ -2,7 +2,7 @@
 
 // ManagedCloudPanel — owner/dev surface for ADDING managed-cloud
 // boxes (docs/managed-cloud-host-lifecycle.md): buy one via
-// LemonSqueezy, or ADOPT an existing Hetzner box as a managed machine
+// LemonSqueezy, or ADOPT an existing cloud box as a managed machine
 // (allowlist-gated server-side). Every managed row carries the
 // `origin` provenance tag ("managed" = bought from / adopted by
 // Yaver; plain BYO devices in the list above are "self-hosted"), and
@@ -29,6 +29,7 @@ interface ManagedMachine {
   hetznerServerId?: string;
   region?: string;
   serverIp?: string;
+  hostname?: string;
   errorMessage?: string;
   deviceId?: string;
   // First-class onboarding (project_managed_cloud_onboarding_gap):
@@ -43,7 +44,43 @@ interface ManagedMachine {
 // guessed/fuzzy target (credentials + exec). Disabled until the box
 // has registered (deviceId present). Ops verbs run on the connected
 // agent and are routed P2P to the box; tokens never touch Convex.
-function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
+// Managed boxes aren't auto-connected to the dashboard's agentClient
+// (the panel row has no "Open Workspace"), so callOps would throw
+// "AgentClient is not connected". Connect to the box itself — its
+// public serverIp:18080 (direct, no cert wait) with https://hostname
+// as a tunnel fallback — using the user's session token + the box's
+// explicit deviceId, before any ops. Idempotent: skips if already
+// connected to this box. This is what makes GitHub/GitLab/Codex/
+// Claude auth actually run on the managed box.
+async function ensureBoxConnected(
+  deviceId?: string,
+  serverIp?: string,
+  hostname?: string,
+  token?: string | null,
+): Promise<void> {
+  if (!deviceId) throw new Error("box agent not registered yet");
+  if (!token) throw new Error("not signed in");
+  if (agentClient.isConnected && agentClient.connectedDeviceId === deviceId) return;
+  const host = serverIp || hostname;
+  if (!host) throw new Error("box has no address yet (still provisioning)");
+  const tunnelUrls = [
+    hostname ? `https://${hostname}` : "",
+    serverIp ? `http://${serverIp}:18080` : "",
+  ].filter(Boolean);
+  await agentClient.connect(host, 18080, token, deviceId, { tunnelUrls });
+}
+
+function ManagedMachineActions({
+  deviceId,
+  serverIp,
+  hostname,
+  token,
+}: {
+  deviceId?: string;
+  serverIp?: string;
+  hostname?: string;
+  token?: string | null;
+}) {
   const [busy, setBusy] = useState<string | null>(null);
   const [out, setOut] = useState<string | null>(null);
   const [gitSession, setGitSession] = useState<{ id: string; uri: string; code: string } | null>(null);
@@ -60,6 +97,7 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
     setBusy(label);
     setOut(null);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps(verb, { ...payload, deviceId });
       if (r.ok === false || (r as any)?.error) {
         setOut(`✗ ${(r as any)?.error || "failed"}`);
@@ -87,6 +125,7 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
     if (!gitSession) return;
     setBusy("check");
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("git_connect_status", { sessionId: gitSession.id, deviceId });
       const st = (r as any)?.initial?.state;
       setOut(st === "done" ? `✓ git connected (${(r as any)?.initial?.username ?? "ok"})` : `state: ${st ?? "?"}`);
@@ -136,11 +175,15 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
 function RunnerAuthCTA({
   deviceId,
   machineId,
+  serverIp,
+  hostname,
   token,
   onAuthorized,
 }: {
   deviceId?: string;
   machineId: string;
+  serverIp?: string;
+  hostname?: string;
   token: string | null | undefined;
   onAuthorized: () => void;
 }) {
@@ -160,6 +203,7 @@ function RunnerAuthCTA({
     setBusy(true);
     setMsg(null);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("runner_auth", { op: "browser_start", runner, deviceId });
       const init = (r as any)?.initial ?? {};
       const uri = init.verification_uri || init.verificationUri;
@@ -182,6 +226,7 @@ function RunnerAuthCTA({
     if (!sess) return;
     setBusy(true);
     try {
+      await ensureBoxConnected(deviceId, serverIp, hostname, token);
       const r = await agentClient.callOps("runner_auth", { op: "browser_status", sessionId: sess.id, deviceId });
       const st = (r as any)?.initial?.state ?? (r as any)?.initial?.status;
       if (st === "done" || st === "authorized") {
@@ -300,7 +345,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     }
   }, [token]);
 
-  // Provision is async (LemonSqueezy webhook → Hetzner → cloud-init →
+  // Provision is async (LemonSqueezy webhook → provider → cloud-init →
   // agent heartbeat). Poll while the panel is open so a freshly
   // bought/adopted box flips provisioning → active without a manual
   // refresh. 8s is gentle; stops when the panel is closed.
@@ -343,6 +388,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     (m) => m.status === "provisioning" || m.status === "stopping",
   ).length;
   const active = machines.filter((m) => m.status === "active").length;
+  // A removed/decommissioned box is "stopped" — don't show dead boxes
+  // at all (they clutter the panel and confuse "is this still mine").
+  // Only live/in-flight machines are listed.
+  const liveMachines = machines.filter((m) => m.status !== "stopped");
 
   async function post(path: string, body: Record<string, unknown>) {
     setBusy(true);
@@ -392,7 +441,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             <b>self-hosted</b> (your own cloud box or hardware). Adopt imitates a
             managed purchase for an existing box. To remove a box, use the{" "}
             <b>♻ Delete box</b> button on its row below — it snapshots, then
-            destroys the Hetzner server and stops billing.
+            decommissions the cloud resource and stops billing.
           </p>
 
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
@@ -462,10 +511,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
           ) : null}
 
           <div className="space-y-2">
-            {machines.length === 0 ? (
+            {liveMachines.length === 0 ? (
               <p className="text-xs text-slate-400">No managed machines.</p>
             ) : (
-              machines.map((m) => (
+              liveMachines.map((m) => (
                 <div
                   key={m.id}
                   className="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
@@ -482,7 +531,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.origin ?? "managed"}
                     </span>
                     <span className="font-mono opacity-80">
-                      {m.machineType ?? "cpu"} · srv {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
+                      {m.machineType ?? "cpu"} · resource {m.hetznerServerId ?? "—"} · {m.region ?? "eu"} ·{" "}
                       <span className={m.status === "error" ? "font-semibold text-rose-600 dark:text-rose-400" : ""}>
                         {m.status ?? "?"}
                       </span>
@@ -493,8 +542,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `Delete this managed box (srv ${m.hetznerServerId ?? "—"})? ` +
-                            `It snapshots first, then destroys the Hetzner server and stops billing. This cannot be undone.`,
+                          `Delete this managed box (resource ${m.hetznerServerId ?? "—"})? ` +
+                            `It snapshots first, then decommissions the cloud resource and stops billing. This cannot be undone.`,
                         )
                       )
                         return;
@@ -561,6 +610,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                           <RunnerAuthCTA
                             deviceId={m.deviceId}
                             machineId={m.id}
+                            serverIp={m.serverIp}
+                            hostname={m.hostname}
                             token={token}
                             onAuthorized={() => void load()}
                           />
@@ -574,7 +625,12 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       {m.errorMessage}
                     </p>
                   ) : null}
-                  <ManagedMachineActions deviceId={m.deviceId} />
+                  <ManagedMachineActions
+                    deviceId={m.deviceId}
+                    serverIp={m.serverIp}
+                    hostname={m.hostname}
+                    token={token}
+                  />
                 </div>
               ))
             )}

@@ -727,7 +727,18 @@ No TestFlight queues. No Play Store reviews. Real-device testing in seconds. Wor
 
 ## MCP Integration
 
-Yaver implements the Model Context Protocol (MCP) with 473 tools. Its one-command setup path currently auto-registers with Claude Code, Codex, and opencode; other MCP clients can use the manual JSON config below.
+Yaver implements the Model Context Protocol (MCP) with 470+ tools. It is listed as `io.github.kivanccakmak/yaver` in the MCP Registry metadata and exposes agent-readable install instructions at [`https://yaver.io/llms.txt`](https://yaver.io/llms.txt).
+
+For the lowest-friction install, a user can paste one of these into the coding agent terminal before Yaver is installed globally:
+
+```bash
+claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp
+codex mcp add yaver -- npx -y yaver-cli yaver-mcp
+```
+
+Restart the agent session if the new tools do not appear immediately, then call MCP tool `yaver_lazy_setup`. That tool handles npm bootstrap, resumable phone sign-in, mobile-app links, local daemon startup, and registration with other detected agent CLIs.
+
+For first project capture, call MCP tool `project_self_host_create` after sign-in. It creates the default self-hosted monorepo: Convex backend, Cloudflare web UI, Cloudflare landing page, Expo React Native iOS/Android app, `packages/shared`, Yaver local service config, and mobile testing next steps. Managed Cloud comes later through `yaver_managed_cloud_onboarding` after explicit cost confirmation.
 
 ### One-Command Setup
 
@@ -738,7 +749,7 @@ yaver mcp setup opencode     # opencode MCP config
 yaver mcp setup show         # Show config JSON (copy/paste manually)
 ```
 
-The repo also ships registry metadata in [`server.json`](server.json) and [`glama.json`](glama.json) so Yaver can be indexed by the official MCP Registry and Glama.
+The repo also ships registry metadata in [`server.json`](server.json), [`glama.json`](glama.json), [`smithery.yaml`](smithery.yaml), and generated well-known discovery files under `web/public/.well-known/` so Yaver can be indexed by the official MCP Registry, Glama, Smithery-style installers, and web crawlers that probe MCP server cards.
 
 ### Manual Setup — Any MCP Client
 
@@ -748,8 +759,8 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "yaver": {
-      "command": "yaver",
-      "args": ["mcp"]
+      "command": "npx",
+      "args": ["-y", "yaver-cli", "yaver-mcp"]
     }
   }
 }

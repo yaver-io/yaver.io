@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "yaver": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "yaver-cli",
+        "yaver-mcp"
+      ]
+    }
+  },
+  "llmfeed_extension": "/.well-known/mcp.llmfeed.json"
+}

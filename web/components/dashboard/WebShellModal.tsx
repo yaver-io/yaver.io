@@ -1,6 +1,6 @@
 "use client";
 
-// Hetzner / GCP / AWS-style "open shell from console" modal.
+// Cloud-console-style "open shell from console" modal.
 // Hosts the existing TerminalView (xterm.js + agent /ws/terminal PTY
 // over relay) so the device's shell opens directly in the dashboard
 // without needing a local SSH or terminal app.

@@ -68,7 +68,10 @@ export default function BillingView({ token }: { token: string | null | undefine
   };
 
   const sub = data.subscription;
-  const machines = data.machines ?? [];
+  const allMachines = data.machines ?? [];
+  // Hide removed/decommissioned (stopped) boxes — they're gone, not
+  // billing, and clutter the view.
+  const machines = allMachines.filter((m) => m.status !== "stopped");
   const active = machines.filter((m) => m.status === "active").length;
 
   return (
@@ -145,7 +148,7 @@ export default function BillingView({ token }: { token: string | null | undefine
                 className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
               >
                 <span className="font-mono">
-                  {m.machineType ?? "cpu"} · {m.region ?? "eu"} · srv{" "}
+                  {m.machineType ?? "cpu"} · {m.region ?? "eu"} · resource{" "}
                   {m.hetznerServerId ?? "—"} ·{" "}
                   <span
                     className={
@@ -175,8 +178,8 @@ export default function BillingView({ token }: { token: string | null | undefine
                     onClick={() => {
                       if (
                         !window.confirm(
-                          `Decommission this box (srv ${m.hetznerServerId ?? "—"})? ` +
-                            `Destroys the server, stops billing, and cancels the subscription. Cannot be undone.`,
+                          `Decommission this box (resource ${m.hetznerServerId ?? "—"})? ` +
+                            `Decommissions the cloud resource, stops billing, and cancels the subscription. Cannot be undone.`,
                         )
                       )
                         return;

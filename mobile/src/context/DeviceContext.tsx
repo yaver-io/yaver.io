@@ -1518,7 +1518,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
   // iOS UserDefaults so the native YaverFeedbackPane reads the same
   // values the Tasks tab does. Without this, the shake-feedback flow
   // ignored the user's per-device pick and always defaulted to Claude
-  // — which on root-running agents (Hetzner test box) immediately
+  // — which on root-running agents (remote test box) immediately
   // failed because Claude Code refuses --dangerously-skip-permissions
   // under uid 0. The mirror is best-effort: if YaverInfo isn't bound
   // (Android, simulator without the native module loaded, …) we skip
@@ -2470,7 +2470,7 @@ export function DeviceProvider({ children }: { children: React.ReactNode }) {
 
     // Try mode=direct first — single round-trip that hands this
     // mobile's bearer to the agent as its new token. Verified
-    // end-to-end against the Hetzner test box from a host-authed
+    // end-to-end against the remote test box from a host-authed
     // CLI: 1 HTTP call flips lifecycleState from yaver-auth-expired
     // to ready-to-connect with no pair session, no OAuth, no user
     // interaction. The agent's /auth/recover requires the caller to

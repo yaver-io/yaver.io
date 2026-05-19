@@ -69,7 +69,7 @@ export default function InfraScreen() {
   // `target` is the deviceId we want to inspect / install onto. Defaults
   // to the active device; switching it forwards every /install call
   // through /peer/<id>/... so the phone can install onto a paired Mac
-  // Mini or Hetzner box without first rebinding to it.
+  // Mini or remote Linux box without first rebinding to it.
   const [target, setTarget] = useState<string | undefined>(undefined);
   const [catalogue, setCatalogue] = useState<InstallEntry[]>([]);
   const [installingTool, setInstallingTool] = useState<string | null>(null);

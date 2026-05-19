@@ -52,6 +52,26 @@ type ManagedCloudBootstrapSpec = {
   // deploys target the box itself (no Convex Cloud, no BYOK keys).
   // Absent/"byok" leaves the cloud-init byte-identical.
   tier?: "byok" | "hosted";
+  // Operator debug SSH public key (Convex env MANAGED_CLOUD_SSH_PUBKEY).
+  // NOT a user key and never in git — it lets the operator read
+  // `docker logs yaver` on a stuck box. Absent ⇒ no ssh_authorized_keys
+  // emitted (cloud-init byte-identical to before). Public-key material
+  // only; never a private key.
+  sshAuthorizedKey?: string;
+  // Platform relay password (Convex env MANAGED_CLOUD_RELAY_PASSWORD).
+  // The agent already auto-discovers relay SERVERS from /config; the
+  // only missing piece for a managed box to be web-dashboard-reachable
+  // (browser path is relay-only) is this password. Baked into
+  // config.json `relay_password`. Absent ⇒ omitted (no regression).
+  relayPassword?: string;
+  // Per-box self-relay password (Phase 2A). When set, cloud-init runs
+  // a `yaver-relay` sidecar Docker container on the box itself —
+  // ghcr.io/kivanccakmak/yaver-relay:latest on QUIC 4433/UDP +
+  // HTTP 8443/TCP — and ufw opens those ports. The user's OTHER
+  // self-hosted devices then prefer this user-owned relay (set in
+  // userSettings.relayUrl/relayPassword) over the shared free
+  // platform relay. Absent ⇒ no sidecar (byte-identical no-relay).
+  boxRelayPassword?: string;
 };
 
 type CreateCloudMachineArgs = {
@@ -163,16 +183,121 @@ export function buildManagedCloudInitContainer(
     `-e CONVEX_SELFHOSTED_FILE=/root/.yaver/convex-selfhosted.json`;
 
   // Non-fatal onboarding-phase tick → /machine/phase (machine-token
-  // authed). Values inlined at build time (no machine.json timing
-  // dependency); `|| true` so a reporting hiccup never breaks the
-  // proven provision. Drives the web/mobile progress bar.
+  // authed). MUST be cloud-init YAML **list form** ([sh, -c, "..."]):
+  // the earlier `- 'curl ... -d '{json}' ...'` had nested single
+  // quotes → invalid YAML → cloud-init dropped the ENTIRE runcmd →
+  // boxes stuck forever (no docker, no agent). List form has zero
+  // quoting fragility. machineId/phase go as URL query params (simple
+  // hex/kebab — no escaping); token in a header; `|| true` keeps it
+  // non-fatal. machineToken/machineId/convexSite are build-time-known
+  // simple strings (no quotes), safe in the double-quoted scalar.
   const phasePost = (phase: string) =>
-    `  - 'curl -fsS -m 8 -X POST -H "X-Machine-Token: ${spec.machineToken}" -H "Content-Type: application/json" -d ${shellSingleQuote(
-      JSON.stringify({ machineId: spec.machineId, phase }),
-    )} ${spec.convexSite}/machine/phase >/dev/null 2>&1 || true'\n`;
+    `  - [ sh, -c, "curl -fsS -m 8 -X POST -H 'X-Machine-Token: ${spec.machineToken}' '${spec.convexSite}/machine/phase?machineId=${spec.machineId}&phase=${phase}' >/dev/null 2>&1 || true" ]\n`;
+
+  // Operator debug key — top-level cloud-config `ssh_authorized_keys`
+  // (applies to the image default user, root on Hetzner Ubuntu). Only
+  // emitted when the env-sourced key is present, so byok stays
+  // byte-identical when unset. JSON.stringify ⇒ a YAML-safe flow scalar
+  // (public keys contain spaces; never special YAML chars).
+  const sshBlock = spec.sshAuthorizedKey
+    ? `ssh_authorized_keys:\n  - ${JSON.stringify(spec.sshAuthorizedKey)}\n`
+    : "";
+
+  // config.json fields built as a list so an optional relay_password
+  // can be appended without trailing-comma breakage. relay_password is
+  // the ONLY missing piece for a managed box to be web-reachable: the
+  // agent auto-discovers relay servers from /config, but the browser
+  // dashboard path is relay-only and the relay is password-gated.
+  const configFields = [
+    `      "auth_token": ${jsonString(spec.userSessionToken)}`,
+    `      "convex_site_url": ${jsonString(spec.convexSite)}`,
+    `      "device_id": ${jsonString(spec.deviceId)}`,
+    // Advertise the box's HTTPS endpoint so the browser dashboard
+    // (which can't call LAN due to CORS) can reach it directly via the
+    // Let's Encrypt-certed auto subdomain — no shared relay needed for
+    // a managed box's OWN traffic. The on-box yaver-tls-reconciler
+    // (below) issues the cert for ${spec.hostname}; the agent registers
+    // this list in PublicEndpoints (auth.go RegisterDeviceRequest), so
+    // every other surface (web, mobile, ops_connect) picks it up.
+    `      "public_endpoints": [${jsonString("https://" + spec.hostname)}]`,
+  ];
+  if (spec.relayPassword) {
+    // Defensive fallback: with auto-cert (preferred path) the box is
+    // directly https-reachable and never needs to use the shared free
+    // relay; relay_password stays as a last resort if cert issuance
+    // races (Let's Encrypt rate-limit, DNS lag, etc.). Absent ⇒ no
+    // baked password ⇒ agent uses userSettings/platform default only.
+    configFields.push(`      "relay_password": ${jsonString(spec.relayPassword)}`);
+  }
+  const configBody = `    {\n${configFields.join(",\n")}\n    }`;
+
+  // Phase 2 — yaver-relay BUNDLED into the same yaver-cloud container
+  // (not a sidecar). The image's entrypoint wrapper backgrounds
+  // `yaver-relay serve --quic-port=4433 --http-port=8443` when
+  // RELAY_PASSWORD is in the container env; the agent stays PID 1.
+  // Cloud-init's role here is just to (a) publish the relay ports and
+  // (b) pass the password — both conditional on boxRelayPassword being
+  // set (i.e. the user has a managed-cloud subscription). Absent ⇒
+  // ports closed + env unset ⇒ the wrapper skips the relay entirely
+  // (byte-identical no-relay behaviour).
+  const relayUfwRules = spec.boxRelayPassword
+    ? `  - ufw allow 4433/udp\n  - ufw allow 8443/tcp\n`
+    : "";
+  // docker run -p/-e flags are added conditionally so the byok / no-
+  // subscription path stays byte-identical to pre-Phase-2.
+  const yaverDockerRunLines = [
+    `    docker rm -f yaver 2>/dev/null || true`,
+    `    docker run -d --name yaver --restart always \\`,
+    `      -p 18080:18080 \\`,
+  ];
+  if (spec.boxRelayPassword) {
+    yaverDockerRunLines.push(`      -p 4433:4433/udp -p 8443:8443/tcp \\`);
+  }
+  yaverDockerRunLines.push(
+    `      -e YAVER_HOSTNAME=${shellSingleQuote(spec.hostname)} \\`,
+  );
+  if (spec.boxRelayPassword) {
+    yaverDockerRunLines.push(
+      `      -e RELAY_PASSWORD=${shellSingleQuote(spec.boxRelayPassword)} \\`,
+    );
+    // CONVEX_URL lets the bundled yaver-relay per-user-validate
+    // inbound tunnel registrations against managedRelays.password
+    // (relay/main.go --convex-url). Without it, the relay falls back
+    // to password-only mode — fine for a single-owner box but weaker
+    // for future multi-device cross-user scenarios. Same Convex
+    // deployment the agent uses for its session validation.
+    yaverDockerRunLines.push(
+      `      -e CONVEX_URL=${shellSingleQuote(spec.convexSite)} \\`,
+    );
+  }
+  yaverDockerRunLines.push(`      ${selfhostedEnv} \\`);
+  yaverDockerRunLines.push(`      -v /srv/yaver/state:/root \\`);
+  yaverDockerRunLines.push(`      ${shellSingleQuote(image)}`);
+  const yaverDockerRun = yaverDockerRunLines.join("\n");
+
+  // End-of-cloud-init observability beacon. Polls the in-container
+  // agent's /health for up to 5 min, then POSTs phase=registering on
+  // success or phase=error with a SHORT curated label on failure (no
+  // logs/paths/secrets — the SSH key is how real logs are read). A
+  // `- |` literal block, so the single-quote nesting that once broke
+  // phasePost cannot recur here. machineToken/convexSite/machineId are
+  // build-time-known simple strings.
+  const healthBeacon =
+    `  - |
+    ok=0
+    for i in $(seq 1 60); do
+      if curl -fsS -m 4 http://127.0.0.1:18080/health >/dev/null 2>&1; then ok=1; break; fi
+      sleep 5
+    done
+    if [ "$ok" = 1 ]; then
+      curl -fsS -m 8 -X POST -H "X-Machine-Token: ${spec.machineToken}" "${spec.convexSite}/machine/phase?machineId=${spec.machineId}&phase=registering" >/dev/null 2>&1 || true
+    else
+      curl -fsS -m 8 -X POST -H "X-Machine-Token: ${spec.machineToken}" "${spec.convexSite}/machine/phase?machineId=${spec.machineId}&phase=error&error=agent-health-unreachable-300s" >/dev/null 2>&1 || true
+    fi
+`;
 
   return `#cloud-config
-package_update: true
+${sshBlock}package_update: true
 packages:
   - ca-certificates
   - curl
@@ -187,33 +312,23 @@ ${phasePost("installing-docker")}  - curl -fsSL https://get.docker.com | sh
   - ufw allow 22/tcp
   - ufw allow 80/tcp
   - ufw allow 443/tcp
-  - ufw --force enable || true
+${relayUfwRules}  - ufw --force enable || true
   # ── per-user config into the container's /root volume ──────────────
   - mkdir -p /srv/yaver/state/.yaver /etc/yaver
   - |
     cat > /srv/yaver/state/.yaver/config.json <<'EOF'
-    {
-      "auth_token": ${jsonString(spec.userSessionToken)},
-      "convex_site_url": ${jsonString(spec.convexSite)},
-      "device_id": ${jsonString(spec.deviceId)}
-    }
+${configBody}
     EOF
   - chmod 0600 /srv/yaver/state/.yaver/config.json
 ${repoClone}  # ── run the yaver image (the box IS this container) ────────────────
 ${phasePost("pulling-image")}  - docker pull ${shellSingleQuote(image)}
-  - |
-    docker rm -f yaver 2>/dev/null || true
-    docker run -d --name yaver --restart always \
-      -p 18080:18080 \
-      -e YAVER_HOSTNAME=${shellSingleQuote(spec.hostname)} \
-      ${selfhostedEnv} \
-      -v /srv/yaver/state:/root \
-      ${shellSingleQuote(image)}
-${phasePost("registering")}  - mkdir -p /etc/nginx/snippets
+${phasePost("starting-agent")}  - |
+${yaverDockerRun}
+  - mkdir -p /etc/nginx/snippets
 ${hostedConvex}  # ── host TLS reconciler (same contract as the VM path) ─────────────
   - |
     cat > /etc/yaver/machine.json <<'EOF'
-    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)}}
+    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)},"hostname":${jsonString(spec.hostname)}}
     EOF
   - chmod 0600 /etc/yaver/machine.json
   - |
@@ -222,6 +337,27 @@ ${hostedConvex}  # ── host TLS reconciler (same contract as the VM path) ─
     set -euo pipefail
     conf=/etc/yaver/machine.json
     MID=$(jq -r .machineId "$conf"); MT=$(jq -r .machineToken "$conf"); CV=$(jq -r .convexSite "$conf")
+    HOST=$(jq -r .hostname "$conf" 2>/dev/null || echo "")
+    # Auto-cert the box's own subdomain (<id>.cloud.yaver.io). Browser
+    # dashboard hits https://<host> directly → managed traffic stays off
+    # the shared free relay. Idempotent: nginx server block created
+    # once, certbot refuses to re-issue if not due, || true keeps it
+    # non-fatal during early-boot DNS lag. NO /machine/tls-issued POST
+    # (that endpoint is for userDomains rows; the auto domain is not one).
+    if [ -n "$HOST" ] && [ "$HOST" != "null" ]; then
+      cf="/etc/nginx/sites-available/$HOST"
+      if [ ! -f "$cf" ]; then
+        cat > "$cf" <<NGINX
+    server { listen 80; server_name $HOST;
+      include /etc/nginx/snippets/yaver-convex.conf;
+      location / { proxy_pass http://127.0.0.1:18080; proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr; proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme; proxy_read_timeout 300s; proxy_buffering off; } }
+    NGINX
+        ln -sf "$cf" "/etc/nginx/sites-enabled/$HOST"; nginx -t && systemctl reload nginx
+      fi
+      certbot --nginx -d "$HOST" --non-interactive --agree-tos -m admin@yaver.io --redirect --no-eff-email || true
+    fi
     resp=$(curl -fsSL -H "X-Machine-Token: $MT" "$CV/machine/pending-tls?machineId=$MID" || echo '{"domains":[]}')
     echo "$resp" | jq -r '.domains[]?.domain' | while read -r d; do
       [ -z "$d" ] && continue
@@ -266,7 +402,7 @@ ${hostedConvex}  # ── host TLS reconciler (same contract as the VM path) ─
     EOF
   - systemctl daemon-reload
   - systemctl enable --now yaver-tls.timer
-`;
+${healthBeacon}`;
 }
 
 export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
@@ -439,7 +575,7 @@ ${repoCloneSnippet}  - systemctl daemon-reload
   # ── TLS reconciler ─────────────────────────────────────────────
   - |
     cat > /etc/yaver/machine.json <<'EOF'
-    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)}}
+    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)},"hostname":${jsonString(spec.hostname)}}
     EOF
   - chmod 0600 /etc/yaver/machine.json
   - |
@@ -869,6 +1005,9 @@ export const setPhase = internalMutation({
     phase: v.string(),
     progress: v.optional(v.number()),
     runnersAuthorized: v.optional(v.boolean()),
+    // Short curated failure label from the box's own beacon. Only
+    // honoured when phase === "error"; any healthy phase clears it.
+    error: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -881,6 +1020,14 @@ export const setPhase = internalMutation({
     }
     if (typeof args.runnersAuthorized === "boolean") {
       patch.runnersAuthorized = args.runnersAuthorized;
+    }
+    if (args.phase === "error") {
+      // Cap the label so a misbehaving box can't write an essay; it is
+      // a status string, never logs/paths/secrets (privacy contract).
+      patch.provisionError = (args.error ?? "provisioning failed").slice(0, 200);
+    } else {
+      // Any forward progress clears a stale error so the UI recovers.
+      patch.provisionError = undefined;
     }
     await ctx.db.patch(args.machineId, patch);
   },
@@ -997,6 +1144,23 @@ export const provision = internalAction({
     const deviceId = `cloud-${shortId}`;
     const sessionExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
 
+    // Operator-only injection points (same class as HCLOUD_TOKEN —
+    // Convex env, never git). Both optional: unset ⇒ cloud-init is
+    // byte-identical to before (no ssh key, no relay password). Set via
+    // `npx convex env set --prod MANAGED_CLOUD_SSH_PUBKEY "ssh-ed25519 …"`
+    // and `… MANAGED_CLOUD_RELAY_PASSWORD "<platform relay password>"`.
+    const sshAuthorizedKey = (process.env.MANAGED_CLOUD_SSH_PUBKEY || "").trim();
+    const relayPassword = (process.env.MANAGED_CLOUD_RELAY_PASSWORD || "").trim();
+    // Phase 2A — per-box self-relay password. Generated unconditionally
+    // (no env gate) for every managed box that has a subscription,
+    // because the relay sidecar is the whole point of the architecture:
+    // the box hosts a yaver-relay container so the user's OTHER
+    // self-hosted devices can use it (managedRelays row + userSettings
+    // pointers wired below, post-Hetzner). Dev-adopt boxes lacking a
+    // subscriptionId skip the sidecar (managedRelays.create requires
+    // subId), so we only thread the password when both sides will land.
+    const boxRelayPassword = machine.subscriptionId ? randomHex(24) : "";
+
     const bootstrapSpec = {
       convexSite,
       machineId: machineIdStr,
@@ -1008,6 +1172,9 @@ export const provision = internalAction({
       yaverReleaseUrl,
       repoUrl: machine.repoUrl,
       gpu: isGpu,
+      sshAuthorizedKey: sshAuthorizedKey || undefined,
+      relayPassword: relayPassword || undefined,
+      boxRelayPassword: boxRelayPassword || undefined,
       // Hosted-tier flag (Session B / SANDBOX_HOSTED_HANDOFF.md) —
       // drives the self-hosted-Convex + admin-key + nginx bootstrap
       // inside buildManagedCloudInit. byok today (ensureForSubscription
@@ -1117,6 +1284,55 @@ export const provision = internalAction({
         machineTokenHash,
         deviceId, // deterministic cloud-<shortId> the box registers as
       });
+
+      // ── 4b. Phase 2B+2C — managed box doubles as this user's relay ──
+      // Sidecar (yaver-relay) is launched by cloud-init when
+      // boxRelayPassword is set; here we mirror the same password into
+      // (i) a managedRelays row (so it's discoverable + auditable, same
+      // class as the historical separate-Hetzner-relay SKU but with the
+      // managed box AS the relay — no extra €/mo) and (ii) the user's
+      // userSettings.relayUrl/relayPassword, which every device fetches
+      // on serve start (FetchUserSettings, main.go:2478). Gated on
+      // machine.subscriptionId because managedRelays.create requires
+      // one — dev-adopt boxes skip cleanly.
+      // Phase 2D gap: the agent currently drops a userSettings.RelayUrl
+      // that doesn't match a platformConfig entry (main.go:2492-2503);
+      // until that synth-RelayServerInfo change ships in a cli/v*
+      // release, OTHER devices won't actually USE this relay even
+      // though everything is wired here. Box itself is reachable via
+      // its own auto-cert (Step 2b), so this gap is OTHER-device-only.
+      if (machine.subscriptionId && boxRelayPassword) {
+        try {
+          const relayId = await ctx.runMutation(internal.managedRelays.create, {
+            userId: machine.userId,
+            subscriptionId: machine.subscriptionId,
+            region: machine.region ?? "eu",
+            password: boxRelayPassword,
+          });
+          await ctx.runMutation(internal.managedRelays.updateProvisioned, {
+            relayId,
+            hetznerServerId,
+            serverIp,
+            domain: autoDomain,
+          });
+          await ctx.runMutation(internal.userSettings.setRelayForUser, {
+            userId: machine.userId,
+            relayUrl: `https://${autoDomain}`,
+            relayPassword: boxRelayPassword,
+          });
+          console.log(
+            `[cloudMachines.provision] managedRelay wired: ${autoDomain} (relayId=${relayId})`,
+          );
+        } catch (e: unknown) {
+          // Non-fatal — the box itself is still reachable via auto-cert.
+          // Phase 2 (OTHER devices using this box as relay) just doesn't
+          // light up for this provision. Logged for post-mortem.
+          console.error(
+            "[cloudMachines.provision] managedRelay wiring failed:",
+            e instanceof Error ? e.message : String(e),
+          );
+        }
+      }
 
       // Server-side bookend: box exists, now booting + cloud-init
       // (the box itself POSTs the granular installing-docker /

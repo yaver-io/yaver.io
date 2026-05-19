@@ -7082,6 +7082,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}
 		return mcpToolJSON(mobileProjectStatus(args.Directory))
+	case "mobile_hermes_doctor":
+		var args mobileHermesDoctorInput
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Directory) == "" {
+			args.Directory = s.taskMgr.workDir
+		}
+		return mcpToolJSON(mobileHermesDoctor(args))
 	case "mobile_project_build":
 		var args struct {
 			Directory string `json:"directory"`
@@ -11890,9 +11897,19 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolJSON(res)
 	case "project_new_quick":
 		return s.mcpProjectNewQuick(call.Arguments)
+	case "project_self_host_create":
+		return s.mcpProjectNewQuick(call.Arguments)
 
 	case "yaver_onboard":
 		return mcpToolResult(yaverOnboardChecklist())
+	case "yaver_self_host_onboarding":
+		var args yaverSelfHostOnboardingArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpYaverSelfHostOnboarding(args))
+	case "yaver_managed_cloud_onboarding":
+		var args yaverManagedCloudOnboardingArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpYaverManagedCloudOnboarding(args))
 
 	// --- Forms ---
 	case "form_list":
@@ -14300,9 +14317,17 @@ func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
 		Slug           string `json:"slug"`
 		Description    string `json:"description"`
 		Tagline        string `json:"tagline"`
+		AppTemplate    string `json:"appTemplate"`
+		AudienceType   string `json:"audienceType"`
+		Problem        string `json:"problem"`
+		UniqueAngle    string `json:"uniqueAngle"`
+		Monetization   string `json:"monetization"`
+		LaunchTimeline string `json:"launchTimeline"`
 		Domain         string `json:"domain"`
 		PrimaryColor   string `json:"primaryColor"`
+		SecondaryColor string `json:"secondaryColor"`
 		AccentColor    string `json:"accentColor"`
+		SurfaceColor   string `json:"surfaceColor"`
 		IncludeWeb     *bool  `json:"includeWeb"`
 		IncludeLanding *bool  `json:"includeLanding"`
 		IncludeMobile  *bool  `json:"includeMobile"`
@@ -14347,9 +14372,20 @@ func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
 	pref("slug", args.Slug)
 	pref("description", args.Description)
 	pref("tagline", args.Tagline)
+	pref("app_template", firstNonEmpty(args.AppTemplate, "saas-dashboard"))
+	pref("audience_type", firstNonEmpty(args.AudienceType, "consumers"))
+	pref("problem_statement", firstNonEmpty(args.Problem, args.Description))
+	pref("unique_angle", args.UniqueAngle)
+	pref("monetization", firstNonEmpty(args.Monetization, "free"))
+	pref("launch_timeline", firstNonEmpty(args.LaunchTimeline, "1-2-weeks"))
+	pref("success_metric", "daily-active-users")
+	pref("distribution_channel", "word-of-mouth")
+	pref("supported_languages", "English")
 	pref("domain", args.Domain)
 	pref("primary_color", firstNonEmpty(args.PrimaryColor, "#4F46E5"))
+	pref("secondary_color", firstNonEmpty(args.SecondaryColor, "#0EA5E9"))
 	pref("accent_color", firstNonEmpty(args.AccentColor, "#F59E0B"))
+	pref("surface_color", firstNonEmpty(args.SurfaceColor, "#111827"))
 	pref("tone", "system")
 	pref("include_web", boolStr(args.IncludeWeb, true))
 	pref("include_landing", boolStr(args.IncludeLanding, true))
@@ -14359,13 +14395,16 @@ func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
 	pref("web_host", firstNonEmpty(args.WebHost, "cloudflare"))
 	pref("backend", firstNonEmpty(args.Backend, "convex"))
 	pref("mobile_stack", "expo-rn")
+	pref("mobile_nav_style", "bottom-tabs")
+	pref("mobile_nav_count", "4")
+	pref("design_source", "prompt-only")
 	pref("oauth_apple", boolStr(args.OauthApple, true))
 	pref("oauth_google", boolStr(args.OauthGoogle, true))
 	pref("oauth_microsoft", boolStr(args.OauthMicrosoft, false))
 	pref("oauth_email", "true")
 	pref("payments", "stripe")
-	pref("ios_bundle_id", firstNonEmpty(args.IosBundleID, "com.myco."+args.Slug))
-	pref("android_package", firstNonEmpty(args.AndroidPackage, "com.myco."+args.Slug))
+	pref("ios_bundle_id", firstNonEmpty(args.IosBundleID, defaultAppIdentifier(args.Slug)))
+	pref("android_package", firstNonEmpty(args.AndroidPackage, defaultAppIdentifier(args.Slug)))
 	pref("apple_team_id", "")
 	pref("play_service_account", "")
 	pref("cloudflare_zone", "")
@@ -14374,10 +14413,39 @@ func (s *HTTPServer) mcpProjectNewQuick(raw json.RawMessage) interface{} {
 	pref("git_org", args.GitOrg)
 	pref("git_repo_name", args.Slug)
 	pref("confirm", "true")
+	finishWizardWithDefaults(sess)
 
 	res, err := GenerateProject(sess.ID, args.ParentDir)
 	if err != nil {
 		return mcpToolError(err.Error())
+	}
+	res.NextSteps = append([]string{
+		"Self-hosted first: `cd " + res.Directory + " && npm install && ./scripts/dev.sh`.",
+		"Web UI: `apps/web` is a Next.js Cloudflare app; mobile: `apps/mobile` is Expo React Native with iOS + Android identifiers; backend: `backend/convex` is local Convex and cloud-deployable.",
+		"From Claude Code or Codex, keep working through MCP: run `mobile_project_prepare` on `apps/mobile`, then `mobile_project_build` for Yaver phone testing.",
+		"Managed cloud is the upgrade path, not the first requirement: call `yaver_managed_cloud_onboarding` only when the user wants an hourly Yaver cloud machine.",
+	}, res.NextSteps...)
+	res.YaverOnboarding = map[string]interface{}{
+		"firstCapture": "self-hosted",
+		"stack": map[string]interface{}{
+			"repo":    "monorepo",
+			"web":     "apps/web Next.js on Cloudflare",
+			"landing": "apps/landing static Cloudflare Pages",
+			"mobile":  "apps/mobile Expo React Native for iOS and Android",
+			"backend": "backend/convex local dev and hosted Convex deploy",
+			"shared":  "packages/shared TypeScript",
+		},
+		"mcpLoop": []string{
+			"project_self_host_create creates the repo.",
+			"mobile_project_prepare installs mobile dependencies.",
+			"mobile_project_build builds the Hermes bundle for the Yaver phone app.",
+			"deploy_run can ship Cloudflare, Convex, TestFlight, or Play later.",
+		},
+		"managedCloudUpsell": map[string]interface{}{
+			"when":                        "Use after the self-hosted repo exists and the user wants an always-on hourly machine for vibing.",
+			"tool":                        "yaver_managed_cloud_onboarding",
+			"requiresExplicitCostConsent": true,
+		},
 	}
 	return mcpToolJSON(res)
 }
@@ -14389,6 +14457,24 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func defaultAppIdentifier(slug string) string {
+	segment := strings.ToLower(strings.TrimSpace(slug))
+	var b strings.Builder
+	for _, r := range segment {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	segment = b.String()
+	if segment == "" {
+		segment = "app"
+	}
+	if segment[0] >= '0' && segment[0] <= '9' {
+		segment = "app" + segment
+	}
+	return "com.myco." + segment
 }
 
 func firstNonEmptySlice[T any](vals ...[]T) []T {

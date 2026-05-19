@@ -105,7 +105,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
-			"name": "yaver_ask_user",
+			"name":        "yaver_ask_user",
 			"description": "Ask the human running this Yaver task a single structured question (Claude-Code-style: short 'header' chip + 2-4 'choices', optional multi-select, free-text 'Other' is always offered by the surface). The question is delivered to whichever Yaver surface the user is on (mobile app, web dashboard, CLI); the answer string is returned as the tool result. Blocks until answered or until the timeout (default 5 min, max 30). DEFAULT TO NOT CALLING THIS. Asking is the slow path — the user is on a phone and may have walked away, so an unanswered question stalls the whole run until it times out. Before calling, you must have already: (1) checked the project files / git log / vault for the answer, and (2) confirmed no sensible default exists. Only ask for genuinely irreversible actions, value judgements, or production / billing / customer-visible state. For everything else pick the most reasonable default, state the assumption in one line, and proceed — a reversible wrong guess is cheaper than a stalled run. Result on timeout / cancel: {cancelled:true} — handle it by taking the safest default and continuing, never by re-asking. Requires the agent to be running inside a Yaver task (YAVER_TASK_ID env var must be set by the spawning daemon).",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
@@ -244,7 +244,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "wireless_connect_android",
 			"description": "Reconnect a previously-paired Android phone over WiFi. Use this when wireless_detect shows the phone as visible-unpaired but it was paired in a past session (e.g. after a phone reboot). Empty ip_port = auto-discover via mDNS.",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"ip_port": map[string]interface{}{
 						"type":        "string",
@@ -891,6 +891,36 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
+			"name":        "yaver_self_host_onboarding",
+			"description": "High-level guided MCP flow for setting up Yaver on the user's own machine/VPS. Returns normie-friendly next steps for auth, serve, phone pairing, repo selection, runner setup, GitHub/GitLab credentials, and optional cloud upgrade. Can start GitHub/GitLab Device Flow when start_git_oauth=true.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_query":        map[string]interface{}{"type": "string", "description": "Optional app/repo name the user wants to use"},
+					"runner":            map[string]interface{}{"type": "string", "description": "Preferred coding runner: codex, claude-code, opencode"},
+					"git_provider":      map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "auto"}, "description": "Provider for optional Device Flow"},
+					"start_git_oauth":   map[string]interface{}{"type": "boolean", "description": "Start GitHub/GitLab Device Flow now; user approves in browser"},
+					"include_cloud_cta": map[string]interface{}{"type": "boolean", "description": "Include the managed-cloud upgrade path in the response"},
+				},
+			},
+		},
+		{
+			"name":        "yaver_managed_cloud_onboarding",
+			"description": "High-level guided MCP flow for buying and onboarding a Yaver managed cloud machine. Always returns status and post-purchase repo/credential sync steps. Only creates a checkout URL when confirm_checkout=true AND accept_cost=true, after explicit user approval.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_query":       map[string]interface{}{"type": "string", "description": "Optional app/repo name to deploy after the cloud machine is ready"},
+					"machine_type":     map[string]interface{}{"type": "string", "enum": []string{"cpu", "gpu"}, "description": "cpu default; gpu for heavier/model workloads"},
+					"region":           map[string]interface{}{"type": "string", "description": "eu default"},
+					"confirm_checkout": map[string]interface{}{"type": "boolean", "description": "Set true only after the user asks to buy/start checkout"},
+					"accept_cost":      map[string]interface{}{"type": "boolean", "description": "Must be true with confirm_checkout after explicit user approval of billable managed cloud"},
+					"start_git_oauth":  map[string]interface{}{"type": "boolean", "description": "Optionally start GitHub/GitLab Device Flow while preparing cloud onboarding"},
+					"git_provider":     map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "auto"}},
+				},
+			},
+		},
+		{
 			"name":        "yaver_ping",
 			"description": "Ping the agent to verify it's alive and measure round-trip time.",
 			"inputSchema": map[string]interface{}{
@@ -1309,6 +1339,26 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "deps_list", "description": "List installed project dependencies.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory"}, "manager": map[string]interface{}{"type": "string", "description": "Package manager (auto-detected if empty)"}}}},
 		{"name": "mobile_project_status", "description": "Inspect whether a React Native / Expo project on this machine is ready for Yaver iPhone testing. Reports package manager, missing local tools, dependency-install state, Hermes compiler availability, and whether Hermes has been built before.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
 		{"name": "mobile_project_prepare", "description": "Prepare a fresh React Native / Expo clone for Yaver testing by auto-installing project dependencies when the machine has the right package manager available. Returns readiness fields after the install attempt.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
+		{
+			"name":        "mobile_hermes_doctor",
+			"description": "Agent-friendly doctor for the common React Native / Expo phone reload path. Resolves the mobile project inside a monorepo, checks local tools, dependency install state, Hermes compiler readiness, prior bundle state, and native-module compatibility, then returns the exact MCP next actions to prepare/build before reloading in Yaver mobile.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory": map[string]interface{}{"type": "string", "description": "Project or monorepo directory (default: agent work dir)"},
+					"availableModules": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Optional native module names reported by the paired Yaver mobile runtime",
+					},
+					"availableModuleMap": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": map[string]interface{}{"type": "string"},
+						"description":          "Optional native module name to version map from the paired Yaver mobile runtime",
+					},
+				},
+			},
+		},
 		{"name": "mobile_project_build", "description": "Start the project's dev server if needed and build the Hermes bundle that Yaver loads on the phone. This is the MCP path for a contributor on WSL/Linux/macOS to prepare a fresh Expo / React Native clone for real iPhone testing without TestFlight.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}, "framework": map[string]interface{}{"type": "string", "description": "Optional framework override (expo or react-native)"}, "platform": map[string]interface{}{"type": "string", "description": "Target platform (default: ios)"}}}},
 		// GitHub
 		{"name": "github_prs", "description": "List pull requests from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, merged, all (default: open)"}}}},
@@ -2132,7 +2182,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{
 			"name":        "project_new_quick",
-			"description": "One-shot fullstack project scaffold. Skips the interactive wizard and creates a monorepo (apps/{web,landing,mobile}, packages/shared, backend/) at parentDir/<slug>. Uses the opinionated defaults unless overridden: Yaver SQLite-first backend + Next.js on Cloudflare + Expo RN + Apple/Google OAuth + native builds (xcodebuild + gradle, no EAS). Auto-inits git and pushes to GitHub/GitLab when git_provider is set.",
+			"description": "One-shot fullstack project scaffold. Skips the interactive wizard and creates a self-hosted-first monorepo (apps/{web,landing,mobile}, packages/shared, backend/) at parentDir/<slug>. Defaults are built for first-capture with Claude Code/Codex over MCP: local/dev Convex backend that can deploy to hosted Convex, Next.js web on Cloudflare, static landing on Cloudflare Pages, Expo React Native mobile for iOS + Android, Apple/Google/email auth, native builds (xcodebuild + gradle, no EAS). Auto-inits git and pushes to GitHub/GitLab when gitProvider is set.",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
 				"required": []string{"name", "slug", "description"},
@@ -2141,9 +2191,17 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"slug":           map[string]interface{}{"type": "string", "description": "URL-safe slug used for folder + package names"},
 					"description":    map[string]interface{}{"type": "string", "description": "One-paragraph description — goes into README, landing hero, AI context"},
 					"tagline":        map[string]interface{}{"type": "string"},
+					"appTemplate":    map[string]interface{}{"type": "string", "description": "Product template, e.g. saas-dashboard, consumer-social, commerce, dev-tool"},
+					"audienceType":   map[string]interface{}{"type": "string", "description": "consumers, developers, creators, internal-team, etc."},
+					"problem":        map[string]interface{}{"type": "string", "description": "One-sentence user problem; defaults to description"},
+					"uniqueAngle":    map[string]interface{}{"type": "string", "description": "What makes this different"},
+					"monetization":   map[string]interface{}{"type": "string", "description": "free, freemium, subscription, one-time-purchase, etc."},
+					"launchTimeline": map[string]interface{}{"type": "string", "description": "weekend, 1-2-weeks, 1-month, 3-months"},
 					"domain":         map[string]interface{}{"type": "string"},
 					"primaryColor":   map[string]interface{}{"type": "string", "description": "Hex e.g. #4F46E5"},
+					"secondaryColor": map[string]interface{}{"type": "string"},
 					"accentColor":    map[string]interface{}{"type": "string"},
+					"surfaceColor":   map[string]interface{}{"type": "string"},
 					"includeWeb":     map[string]interface{}{"type": "boolean", "description": "Default true"},
 					"includeLanding": map[string]interface{}{"type": "boolean", "description": "Default true"},
 					"includeMobile":  map[string]interface{}{"type": "boolean", "description": "Default true"},
@@ -2159,6 +2217,37 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"gitVisibility":  map[string]interface{}{"type": "string", "enum": []string{"private", "public"}},
 					"gitOrg":         map[string]interface{}{"type": "string"},
 					"parentDir":      map[string]interface{}{"type": "string", "description": "Default: agent working dir"},
+				},
+			},
+		},
+		{
+			"name":        "project_self_host_create",
+			"description": "First-capture MCP tool for a new Yaver user: create the default self-hosted monorepo without asking them to touch npm/yaver CLI. This is an alias of project_new_quick with the intended product defaults: Convex local/dev backend (cloud-deployable later), Next.js Cloudflare web UI, Cloudflare landing page, Expo React Native iOS/Android app, shared package, legal/store-review scaffolds, and next steps for Yaver phone testing. Use this before suggesting hourly Yaver Managed Cloud.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"name", "slug", "description"},
+				"properties": map[string]interface{}{
+					"name":           map[string]interface{}{"type": "string"},
+					"slug":           map[string]interface{}{"type": "string"},
+					"description":    map[string]interface{}{"type": "string"},
+					"tagline":        map[string]interface{}{"type": "string"},
+					"appTemplate":    map[string]interface{}{"type": "string"},
+					"audienceType":   map[string]interface{}{"type": "string"},
+					"problem":        map[string]interface{}{"type": "string"},
+					"uniqueAngle":    map[string]interface{}{"type": "string"},
+					"monetization":   map[string]interface{}{"type": "string"},
+					"launchTimeline": map[string]interface{}{"type": "string"},
+					"domain":         map[string]interface{}{"type": "string"},
+					"primaryColor":   map[string]interface{}{"type": "string"},
+					"secondaryColor": map[string]interface{}{"type": "string"},
+					"accentColor":    map[string]interface{}{"type": "string"},
+					"surfaceColor":   map[string]interface{}{"type": "string"},
+					"iosBundleId":    map[string]interface{}{"type": "string"},
+					"androidPackage": map[string]interface{}{"type": "string"},
+					"gitProvider":    map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "none"}},
+					"gitVisibility":  map[string]interface{}{"type": "string", "enum": []string{"private", "public"}},
+					"gitOrg":         map[string]interface{}{"type": "string"},
+					"parentDir":      map[string]interface{}{"type": "string"},
 				},
 			},
 		},

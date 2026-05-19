@@ -100,7 +100,7 @@ const LANDING_FAQ: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: "Do I need a powerful machine?",
-    a: "Any modern Mac or Linux machine works. 8 GB RAM is enough; 16 GB is comfortable once you have a few projects open at once. Yaver compiles Hermes bytecode on the fly when you push an app to your phone, which needs Node.js, Go, and a C/C++ toolchain — all installed automatically on first use. A $5/month Hetzner or DigitalOcean VPS works fine as a headless dev box you drive from your phone; disk is the only thing to size up (20+ GB for node_modules, Xcode-style caches, and hermesc build output).",
+    a: "Any modern Mac or Linux machine works. 8 GB RAM is enough; 16 GB is comfortable once you have a few projects open at once. Yaver compiles Hermes bytecode on the fly when you push an app to your phone, which needs Node.js, Go, and a C/C++ toolchain — all installed automatically on first use. A small Linux VPS works fine as a headless dev box you drive from your phone; disk is the only thing to size up (20+ GB for node_modules, Xcode-style caches, and hermesc build output).",
   },
   {
     q: "Is my code safe?",
@@ -1523,7 +1523,7 @@ return (
                 <div className="space-y-3">
                   <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
                     <p className="text-sm font-medium text-surface-100">{"\uD83D\uDDA5\uFE0F  Your VPS"}</p>
-                    <p className="mt-1 text-xs text-surface-400">Hetzner, DigitalOcean, Vultr &mdash; $5/mo. Docker + Caddy, auto SSL. Yaver deploys to it. You manage the server.</p>
+                    <p className="mt-1 text-xs text-surface-400">Any standard Linux VPS. Docker + Caddy, auto SSL. Yaver deploys to it. You manage the server.</p>
                   </div>
                   <div className="rounded-xl border border-surface-800 bg-surface-900/50 p-4">
                     <p className="text-sm font-medium text-surface-100">{"\uD83C\uDFE0  Your home server"}</p>

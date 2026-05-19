@@ -1,0 +1,28 @@
+{
+  "feed_type": "mcp",
+  "metadata": {
+    "title": "Yaver",
+    "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
+    "canonical": "https://yaver.io/.well-known/mcp.json",
+    "llms_txt": "https://yaver.io/llms.txt",
+    "official_registry_manifest": "https://yaver.io/.well-known/mcp/server.json"
+  },
+  "mcpServers": {
+    "yaver": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "yaver-cli",
+        "yaver-mcp"
+      ]
+    }
+  },
+  "install": {
+    "claude_code": "claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp",
+    "codex": "codex mcp add yaver -- npx -y yaver-cli yaver-mcp",
+    "opencode": "npm install -g yaver-cli && yaver mcp setup opencode"
+  },
+  "first_capture_tool": "project_self_host_create",
+  "phone_reload_doctor_tool": "mobile_hermes_doctor",
+  "first_capture_stack": "Convex backend + Cloudflare web + Expo React Native mobile + packages/shared"
+}

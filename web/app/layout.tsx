@@ -62,12 +62,20 @@ export const metadata: Metadata = {
     // instead of scraping React markup.
     types: {
       "text/plain": [{ url: "/llms.txt", title: "Yaver AI-agent install guide (llms.txt)" }],
+      "application/json": [
+        { url: "/.well-known/mcp/server.json", title: "Yaver MCP Registry server.json" },
+        { url: "/.well-known/mcp/server-card.json", title: "Yaver MCP server card" },
+        { url: "/.well-known/mcp.json", title: "Yaver MCP server card" },
+      ],
     },
   },
   other: {
     // Explicit pointer for agents that look at arbitrary <meta> tags.
     "ai:install-guide": "https://yaver.io/llms.txt",
     "ai:install-command": "npm install -g yaver-cli && yaver auth",
+    "mcp:server": "io.github.kivanccakmak/yaver",
+    "mcp:manifest": "https://yaver.io/.well-known/mcp/server.json",
+    "mcp:config": "https://yaver.io/.mcp.json",
   },
 };
 
