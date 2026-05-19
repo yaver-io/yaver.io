@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"database/sql"
@@ -968,6 +969,71 @@ func ExportPhoneProject(slug string) ([]byte, error) {
 
 // ExportPhoneProjectWithOptions returns a tgz bundle of the project. By
 // default only the portable manifest ships; IncludeData also bundles local.db.
+// phoneExportFile is one entry in the portable bundle. The tar and zip
+// writers share one list so the two archive formats can never drift.
+type phoneExportFile struct {
+	Name    string
+	Content []byte
+	Mode    int64
+}
+
+// collectPhoneExportFiles is the single source of truth for what an
+// exported sandbox contains — consumed by both the .tgz and .zip
+// writers so they stay identical.
+func collectPhoneExportFiles(p *PhoneProject, opts PhoneExportOptions) []phoneExportFile {
+	files := []phoneExportFile{}
+	add := func(name string, content []byte, mode int64) {
+		files = append(files, phoneExportFile{Name: name, Content: content, Mode: mode})
+	}
+	if b, err := os.ReadFile(filepath.Join(p.Dir, ".yaver", "config.yaml")); err == nil {
+		add(".yaver/config.yaml", b, 0o644)
+	}
+	if b, err := os.ReadFile(filepath.Join(p.Dir, ".yaver", "project.yaml")); err == nil {
+		add(".yaver/project.yaml", b, 0o644)
+	}
+	if b, err := os.ReadFile(schemaPath(p.Dir)); err == nil {
+		add("schema.yaml", b, 0o644)
+	}
+	if b, err := os.ReadFile(authPath(p.Dir)); err == nil {
+		add("auth.yaml", b, 0o644)
+	}
+	if b, err := os.ReadFile(seedPath(p.Dir)); err == nil {
+		add("seed.json", b, 0o644)
+	}
+	if b, err := os.ReadFile(appPath(p.Dir)); err == nil {
+		add("app.yaml", b, 0o644)
+	}
+	if opts.IncludeData {
+		if b, err := os.ReadFile(dbFilePath(p.Dir)); err == nil {
+			add("local.db", b, 0o600)
+		}
+	}
+	// OAuth provider config (client IDs + secrets). 0600 keeps it
+	// secret-grade after extraction. See phone_oauth.go.
+	if b, err := os.ReadFile(phoneOAuthPath(p.Dir)); err == nil {
+		add("oauth-providers.yaml", b, 0o600)
+	}
+	if ddl, err := generateSchemaSQL(p.Schema, "sqlite"); err == nil && ddl != "" {
+		add("schema.sql", []byte(ddl), 0o644)
+	}
+	if ddl, err := generateSchemaSQL(p.Schema, "postgres"); err == nil && ddl != "" {
+		add("schema.postgres.sql", []byte(ddl), 0o644)
+	}
+	if opts.Containerize {
+		add("Dockerfile", []byte(phoneContainerDockerfile()), 0o644)
+		add("docker-compose.yml", []byte(phoneContainerCompose()), 0o644)
+		add(".env.example", []byte(phoneContainerEnvExample(p)), 0o644)
+		add(".dockerignore", []byte(phoneDockerIgnore()), 0o644)
+	}
+	add(".gitignore", []byte(phoneGitIgnore()), 0o644)
+	add("README.md", []byte(phoneReadme(p, opts)), 0o644)
+	// AGENTS.md — machine-oriented handoff. Drop this bundle into
+	// claude-code / codex / opencode (or onto a Yaver Cloud box) and
+	// the agent picks the project up with full context, zero ramp-up.
+	add("AGENTS.md", []byte(phoneAgentsDoc(p, opts)), 0o644)
+	return files
+}
+
 func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte, error) {
 	p, err := LoadPhoneProject(slug)
 	if err != nil {
@@ -976,77 +1042,62 @@ func ExportPhoneProjectWithOptions(slug string, opts PhoneExportOptions) ([]byte
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gz)
-
-	add := func(name string, content []byte, mode int64) error {
+	for _, f := range collectPhoneExportFiles(p, opts) {
 		hdr := &tar.Header{
-			Name:    filepath.Join(p.Slug, name),
-			Size:    int64(len(content)),
-			Mode:    mode,
+			Name:    filepath.Join(p.Slug, f.Name),
+			Size:    int64(len(f.Content)),
+			Mode:    f.Mode,
 			ModTime: time.Now(),
 		}
 		if err := tw.WriteHeader(hdr); err != nil {
-			return err
+			return nil, err
 		}
-		_, err := tw.Write(content)
-		return err
-	}
-
-	if b, err := os.ReadFile(filepath.Join(p.Dir, ".yaver", "config.yaml")); err == nil {
-		_ = add(".yaver/config.yaml", b, 0o644)
-	}
-	if b, err := os.ReadFile(filepath.Join(p.Dir, ".yaver", "project.yaml")); err == nil {
-		_ = add(".yaver/project.yaml", b, 0o644)
-	}
-	if b, err := os.ReadFile(schemaPath(p.Dir)); err == nil {
-		_ = add("schema.yaml", b, 0o644)
-	}
-	if b, err := os.ReadFile(authPath(p.Dir)); err == nil {
-		_ = add("auth.yaml", b, 0o644)
-	}
-	if b, err := os.ReadFile(seedPath(p.Dir)); err == nil {
-		_ = add("seed.json", b, 0o644)
-	}
-	if b, err := os.ReadFile(appPath(p.Dir)); err == nil {
-		_ = add("app.yaml", b, 0o644)
-	}
-	if opts.IncludeData {
-		if b, err := os.ReadFile(dbFilePath(p.Dir)); err == nil {
-			_ = add("local.db", b, 0o600)
+		if _, err := tw.Write(f.Content); err != nil {
+			return nil, err
 		}
 	}
-	// OAuth provider config (Apple / Google / Microsoft client IDs + secrets).
-	// Travels with the project — the target agent will need these to serve
-	// OAuth from the deployed instance. Perms 0600 to keep the extracted
-	// file secret-grade even after untar. See phone_oauth.go.
-	if b, err := os.ReadFile(phoneOAuthPath(p.Dir)); err == nil {
-		_ = add("oauth-providers.yaml", b, 0o600)
-	}
-	// Generate CREATE TABLE statements so non-Yaver environments can import.
-	if ddl, err := generateSchemaSQL(p.Schema, "sqlite"); err == nil && ddl != "" {
-		_ = add("schema.sql", []byte(ddl), 0o644)
-	}
-	if ddl, err := generateSchemaSQL(p.Schema, "postgres"); err == nil && ddl != "" {
-		_ = add("schema.postgres.sql", []byte(ddl), 0o644)
-	}
-	if opts.Containerize {
-		_ = add("Dockerfile", []byte(phoneContainerDockerfile()), 0o644)
-		_ = add("docker-compose.yml", []byte(phoneContainerCompose()), 0o644)
-		_ = add(".env.example", []byte(phoneContainerEnvExample(p)), 0o644)
-		_ = add(".dockerignore", []byte(phoneDockerIgnore()), 0o644)
-	}
-	_ = add(".gitignore", []byte(phoneGitIgnore()), 0o644)
-	_ = add("README.md", []byte(phoneReadme(p, opts)), 0o644)
-
 	if err := tw.Close(); err != nil {
 		return nil, err
 	}
 	if err := gz.Close(); err != nil {
 		return nil, err
 	}
-	// Producer-side budget guard — refuses to even return the bundle if the
-	// user would spend more than they should on a deploy. Consumer side
-	// (handlePhoneReceive) enforces again so a malicious client can't bypass
-	// it by building the tgz themselves.
+	// Producer-side budget guard — consumer (handlePhoneReceive)
+	// enforces again so a crafted bundle can't bypass it.
+	if err := EnforcePhoneDeployBudget(int64(buf.Len()), opts.MaxBundleBytes); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// ExportPhoneProjectZip is the .zip twin of ExportPhoneProjectWithOptions
+// — byte-identical file set, broader compatibility (most coding-agent
+// intake flows and OS unzip want .zip, not .tgz). Same budget guard.
+func ExportPhoneProjectZip(slug string, opts PhoneExportOptions) ([]byte, error) {
+	p, err := LoadPhoneProject(slug)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range collectPhoneExportFiles(p, opts) {
+		hdr := &zip.FileHeader{
+			Name:     filepath.ToSlash(filepath.Join(p.Slug, f.Name)),
+			Method:   zip.Deflate,
+			Modified: time.Now(),
+		}
+		hdr.SetMode(os.FileMode(f.Mode))
+		fw, err := zw.CreateHeader(hdr)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fw.Write(f.Content); err != nil {
+			return nil, err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
 	if err := EnforcePhoneDeployBudget(int64(buf.Len()), opts.MaxBundleBytes); err != nil {
 		return nil, err
 	}
@@ -1085,6 +1136,70 @@ func phoneReadme(p *PhoneProject, opts PhoneExportOptions) string {
 		b.WriteString("```bash\ndocker compose up -d --build\n```\n\n")
 		b.WriteString("This runs the exported Yaver-lite backend in a container on your remote hardware or a Hetzner VM.\n")
 	}
+	return b.String()
+}
+
+// phoneAgentsDoc is the AI-coding-agent handoff. Unlike README.md
+// (human, "how to move this somewhere"), this tells an agent exactly
+// what the project IS and how to continue it — including the Yaver
+// Cloud / hosted-box backend story so an agent that resumes on a
+// provisioned box needs zero extra configuration.
+func phoneAgentsDoc(p *PhoneProject, opts PhoneExportOptions) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# AGENTS.md — %s\n\n", p.Name)
+	b.WriteString("You are a coding agent picking up an app built in the Yaver mobile sandbox. ")
+	b.WriteString("This bundle is the complete, runnable source of truth. Read it, then continue building.\n\n")
+
+	if p.App != nil && strings.TrimSpace(p.App.Summary) != "" {
+		fmt.Fprintf(&b, "## What it is\n\n%s\n\n", strings.TrimSpace(p.App.Summary))
+	}
+
+	b.WriteString("## Stack\n\n")
+	b.WriteString("- Frontend: React Native (Expo). Runs inside the Yaver container via Hermes push, or standalone.\n")
+	b.WriteString("- Backend: a portable mini-backend (SQLite now). Schema/auth/seed are declarative — see the files below.\n\n")
+
+	if p.Schema != nil && len(p.Schema.Tables) > 0 {
+		b.WriteString("## Data model\n\n")
+		for _, t := range p.Schema.Tables {
+			cols := make([]string, 0, len(t.Columns))
+			for _, c := range t.Columns {
+				cols = append(cols, c.Name)
+			}
+			fmt.Fprintf(&b, "- **%s**(%s)\n", t.Name, strings.Join(cols, ", "))
+		}
+		b.WriteString("\nFull definition in `schema.yaml`; ready-to-run DDL in `schema.sql` / `schema.postgres.sql`.\n\n")
+	}
+	if p.App != nil && len(p.App.Screens) > 0 {
+		b.WriteString("## Screens to build / extend\n\n")
+		for _, s := range p.App.Screens {
+			fmt.Fprintf(&b, "- **%s** (%s) — table `%s`\n", s.Title, s.Kind, s.Table)
+		}
+		b.WriteString("\nFull UI plan in `app.yaml`.\n\n")
+	}
+
+	b.WriteString("## Backend / runtime\n\n")
+	b.WriteString("- **Local / dev:** the Yaver agent serves the SQLite mini-backend; `local.db` (if present) holds real runtime rows.\n")
+	b.WriteString("- **Yaver Cloud / hosted box:** the box runs its own self-hosted Convex. The app reads its backend URL from the `EXPO_PUBLIC_CONVEX_URL` env var, which Yaver bakes into the bundle automatically on a hosted box — you do **not** hardcode a URL or manage a deploy key.\n")
+	b.WriteString("- **Deploy the backend (hosted, zero config):** `yaver deploy --target=selfhosted` (resolves the on-box admin key itself).\n")
+	b.WriteString("- **Deploy the backend (bring-your-own Convex Cloud):** set `CONVEX_DEPLOY_KEY`, then `yaver deploy --target=convex`.\n\n")
+
+	b.WriteString("## Files\n\n")
+	b.WriteString("- `schema.yaml` / `schema.sql` — data model (source of truth + DDL)\n")
+	b.WriteString("- `app.yaml` — screen/UI plan\n")
+	b.WriteString("- `auth.yaml` — auth personas\n")
+	b.WriteString("- `seed.json` — fixture rows\n")
+	if opts.IncludeData {
+		b.WriteString("- `local.db` — live SQLite state (zero-loss continuation)\n")
+	}
+	b.WriteString("- `.yaver/project.yaml` — declarative manifest (`yaver apply`)\n")
+	if opts.Containerize {
+		b.WriteString("- `Dockerfile` / `docker-compose.yml` — containerized backend\n")
+	}
+	b.WriteString("\n## How to continue (suggested)\n\n")
+	b.WriteString("1. `yaver apply` (or import `schema.sql`) to materialise the backend.\n")
+	b.WriteString("2. Implement/extend the screens listed above against the data model.\n")
+	b.WriteString("3. Keep the schema in `schema.yaml` authoritative — regenerate DDL, don't hand-edit `schema.sql`.\n")
+	b.WriteString("4. On a Yaver Cloud box, the backend is already wired (`EXPO_PUBLIC_CONVEX_URL`). Just build/Hermes-push to preview.\n")
 	return b.String()
 }
 

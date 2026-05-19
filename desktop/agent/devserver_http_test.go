@@ -2,9 +2,49 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// Phase 3: a hosted-tier box auto-bakes its own self-hosted Convex URL
+// into the RN bundle so the dev's app — and any friend's Hermes-loaded
+// copy — needs zero backend config. Project config wins over the
+// on-box file; neither ⇒ nil (byok/local unchanged).
+func TestHostedConvexBuildEnv(t *testing.T) {
+	// Neither source → no injection.
+	empty := t.TempDir()
+	if env := hostedConvexBuildEnv(empty); env != nil {
+		t.Errorf("expected nil for plain project, got %v", env)
+	}
+
+	// Hosted-tier box: cred file present (path overridable for tests).
+	credDir := t.TempDir()
+	credFile := filepath.Join(credDir, "convex-selfhosted.json")
+	if err := os.WriteFile(credFile,
+		[]byte(`{"url":"https://abc123.cloud.yaver.io/_convex-api","adminKey":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CONVEX_SELFHOSTED_FILE", credFile)
+	got := hostedConvexBuildEnv(empty)
+	if len(got) != 1 || got[0] != "EXPO_PUBLIC_CONVEX_URL=https://abc123.cloud.yaver.io/_convex-api" {
+		t.Errorf("hosted autodiscovery wrong: %v", got)
+	}
+
+	// Project .yaver/config.yaml override wins over the box file.
+	projDir := t.TempDir()
+	if err := SaveProjectConfig(projDir, &YaverProjectConfig{
+		Backend: "convex",
+		Env:     map[string]string{"EXPO_PUBLIC_CONVEX_URL": "https://override.example/_convex-api"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got = hostedConvexBuildEnv(projDir)
+	if len(got) != 1 || got[0] != "EXPO_PUBLIC_CONVEX_URL=https://override.example/_convex-api" {
+		t.Errorf("project override should win, got %v", got)
+	}
+}
 
 // TestBundleCommandHonoursContext proves the bundler subprocess we hand to
 // /dev/build-native is killed when its deadline expires. The real-world

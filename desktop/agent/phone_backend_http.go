@@ -378,17 +378,30 @@ func (s *HTTPServer) handlePhoneExport(w http.ResponseWriter, r *http.Request) {
 	}
 	includeData := r.URL.Query().Get("includeData") == "true" || r.URL.Query().Get("includeData") == "1"
 	containerize := r.URL.Query().Get("containerize") == "true" || r.URL.Query().Get("containerize") == "1"
-	data, err := ExportPhoneProjectWithOptions(slug, PhoneExportOptions{
-		IncludeData:  includeData,
-		Containerize: containerize,
-	})
+	opts := PhoneExportOptions{IncludeData: includeData, Containerize: containerize}
+	// format=zip → broad coding-agent / OS-unzip compatibility (drop
+	// the bundle into claude-code/codex/opencode). Default stays tgz so
+	// existing receive/push clients are unaffected.
+	zipFmt := r.URL.Query().Get("format") == "zip"
+	var data []byte
+	var err error
+	if zipFmt {
+		data, err = ExportPhoneProjectZip(slug, opts)
+	} else {
+		data, err = ExportPhoneProjectWithOptions(slug, opts)
+	}
 	if err != nil {
 		jsonError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	safe := strings.ReplaceAll(Slugify(slug), "/", "")
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tgz"`, safe))
+	if zipFmt {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.zip"`, safe))
+	} else {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.tgz"`, safe))
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

@@ -80,8 +80,18 @@ type DeployTokenTarget struct {
 func DeployTokenCatalogue() []DeployTokenTarget {
 	return []DeployTokenTarget{
 		{
+			ID:    "convex-selfhosted",
+			Label: "Convex (hosted on this box)",
+			Description: "This box runs your Convex backend — nothing to configure. " +
+				"`npx convex deploy` targets the on-box self-hosted Convex; the " +
+				"admin key is resolved on the box (never the vault, never you).",
+			// Zero BYOK: no fields. A UI walking the catalogue shows this
+			// as already-satisfied for hosted-tier boxes.
+			Fields: []DeployTokenField{},
+		},
+		{
 			ID:          "convex",
-			Label:       "Convex deploy",
+			Label:       "Convex deploy (bring your own Convex Cloud)",
 			Description: "Backend functions, schema, HTTP actions. The deploy key powers `npx convex deploy --yes` on this machine and in CI.",
 			Fields: []DeployTokenField{
 				{

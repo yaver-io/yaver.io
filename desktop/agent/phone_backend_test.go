@@ -1,14 +1,129 @@
 package main
 
 import (
+	"archive/tar"
+	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// readTgz returns name→content for a gzip+tar bundle.
+func readTgz(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	out := map[string]string{}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("tar: %v", err)
+		}
+		b, _ := io.ReadAll(tr)
+		out[h.Name] = string(b)
+	}
+	return out
+}
+
+// readZip returns name→content for a zip bundle (also proves it's a
+// valid archive a coding agent / OS unzip can open).
+func readZip(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("zip open: %v", err)
+	}
+	out := map[string]string{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("zip entry %s: %v", f.Name, err)
+		}
+		b, _ := io.ReadAll(rc)
+		rc.Close()
+		out[f.Name] = string(b)
+	}
+	return out
+}
+
+func keysOf(m map[string]string) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// The export must ship an AGENTS.md handoff and offer a .zip twin
+// (identical contents) so the sandbox is droppable into a coding agent
+// AND Yaver-Cloud-compatible (the handoff explains the hosted backend
+// wiring). Found wiring the "export to coding agent" ask.
+func TestPhoneExport_AgentsDocAndZipParity(t *testing.T) {
+	setupPhoneTestHome(t)
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "Agent Handoff", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	opts := PhoneExportOptions{IncludeData: true}
+
+	tgz, err := ExportPhoneProjectWithOptions(p.Slug, opts)
+	if err != nil {
+		t.Fatalf("tgz export: %v", err)
+	}
+	zipb, err := ExportPhoneProjectZip(p.Slug, opts)
+	if err != nil {
+		t.Fatalf("zip export: %v", err)
+	}
+	tf := readTgz(t, tgz)
+	zf := readZip(t, zipb)
+
+	agentsKey := filepath.ToSlash(filepath.Join(p.Slug, "AGENTS.md"))
+	tAgents, ok := tf[agentsKey]
+	if !ok || tAgents == "" {
+		t.Fatalf("AGENTS.md missing from .tgz (have %v)", keysOf(tf))
+	}
+	zAgents, ok := zf[agentsKey]
+	if !ok || zAgents == "" {
+		t.Fatalf("AGENTS.md missing from .zip (have %v)", keysOf(zf))
+	}
+	if tAgents != zAgents {
+		t.Error("AGENTS.md differs between .tgz and .zip — formats drifted")
+	}
+
+	// Handoff must be Yaver-Cloud-compatible + describe the real app.
+	for _, want := range []string{
+		"EXPO_PUBLIC_CONVEX_URL",
+		"Yaver Cloud",
+		"yaver deploy --target=selfhosted",
+		"todos",
+	} {
+		if !strings.Contains(tAgents, want) {
+			t.Errorf("AGENTS.md missing %q:\n%s", want, tAgents)
+		}
+	}
+
+	// Same file set in both archives.
+	if len(tf) != len(zf) {
+		t.Errorf("archive file count differs: tgz=%d zip=%d", len(tf), len(zf))
+	}
+	for k := range tf {
+		if _, ok := zf[k]; !ok {
+			t.Errorf("zip missing %q present in tgz", k)
+		}
+	}
+}
 
 func setupPhoneTestHome(t *testing.T) {
 	t.Helper()

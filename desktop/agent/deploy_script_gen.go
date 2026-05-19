@@ -285,10 +285,41 @@ npx convex deploy --yes
 echo "✓ Convex deployed."
 `,
 	},
+	// Hosted tier (Phase 2): deploy to THIS box's own self-hosted
+	// Convex — zero BYOK. Phase 1 cloud-init wrote the admin key to
+	// /etc/yaver/convex-selfhosted.json (root-only). The normie never
+	// sees a Convex Cloud account or a deploy key.
+	"convex:selfhosted": {
+		Stack:       "convex",
+		Target:      "selfhosted",
+		Description: "Deploy to this box's own self-hosted Convex (no Convex Cloud, no BYOK key).",
+		Body: `cd "{{.Path}}"
+
+# Hosted-tier creds are resolved ON the box (never vault, never the
+# user) — Phase 1 cloud-init wrote them root-only.
+CONVEX_SELFHOSTED_FILE="${CONVEX_SELFHOSTED_FILE:-/etc/yaver/convex-selfhosted.json}"
+if [ ! -r "$CONVEX_SELFHOSTED_FILE" ]; then
+  echo "This box has no self-hosted Convex (not a hosted-tier box). Provision a hosted box, or use the BYOK 'convex' target." >&2
+  exit 1
+fi
+CONVEX_SELF_HOSTED_URL="$(jq -r .url "$CONVEX_SELFHOSTED_FILE")"
+CONVEX_SELF_HOSTED_ADMIN_KEY="$(jq -r .adminKey "$CONVEX_SELFHOSTED_FILE")"
+: "${CONVEX_SELF_HOSTED_URL:?self-hosted Convex URL missing in $CONVEX_SELFHOSTED_FILE}"
+: "${CONVEX_SELF_HOSTED_ADMIN_KEY:?self-hosted Convex admin key missing in $CONVEX_SELFHOSTED_FILE}"
+export CONVEX_SELF_HOSTED_URL CONVEX_SELF_HOSTED_ADMIN_KEY
+
+if [ ! -d node_modules ]; then npm install; fi
+
+echo "Deploying to self-hosted Convex on this box ($CONVEX_SELF_HOSTED_URL)..."
+npx convex deploy --yes
+echo "✓ Convex deployed (self-hosted — this box, no Convex Cloud)."
+`,
+	},
 	// node:npm-publish + python:pypi-publish were dropped 2026-04-28
-	// per the lean-stack cut. The four supported deploy targets are
+	// per the lean-stack cut. The supported deploy targets are
 	// react-native-expo:testflight, react-native-expo:playstore,
-	// nextjs:cloudflare, and convex:convex. Re-add publishing
+	// nextjs:cloudflare, convex:convex (BYOK), and convex:selfhosted
+	// (hosted tier — this box's own Convex). Re-add publishing
 	// templates only if the lean stack expands again.
 }
 

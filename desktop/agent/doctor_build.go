@@ -78,6 +78,21 @@ var buildTargets = map[string]buildTarget{
 		// the deploy key already encodes the deployment target.
 		Secrets: []string{"CONVEX_DEPLOY_KEY_2"},
 	},
+	"convex-selfhosted": {
+		Name:        "convex-selfhosted",
+		Stack:       "convex",
+		Description: "Deploy to this box's own self-hosted Convex (hosted tier — no Convex Cloud, no BYOK key).",
+		Tools: []buildTool{
+			{Name: "node", VersionFlag: "--version", Required: true},
+			{Name: "npm", VersionFlag: "--version", Required: true},
+			{Name: "jq", VersionFlag: "--version", Required: true, InstallHint: "apt-get install -y jq (cloud-init installs this on managed boxes)"},
+		},
+		// No vault secrets: the admin key is the on-box file
+		// /etc/yaver/convex-selfhosted.json (root-only, written by
+		// Phase 1 cloud-init). The generated deploy script fails
+		// loudly if it's absent, so doctor stays secret-free here.
+		Secrets: nil,
+	},
 	"playstore": {
 		Name:        "playstore",
 		Stack:       "react-native-expo",

@@ -48,6 +48,10 @@ type ManagedCloudBootstrapSpec = {
   yaverReleaseUrl: string;
   repoUrl?: string;
   gpu: boolean;
+  // "hosted" ⇒ also run a self-hosted Convex (Docker) on the box so
+  // deploys target the box itself (no Convex Cloud, no BYOK keys).
+  // Absent/"byok" leaves the cloud-init byte-identical.
+  tier?: "byok" | "hosted";
 };
 
 type CreateCloudMachineArgs = {
@@ -59,6 +63,7 @@ type CreateCloudMachineArgs = {
   sshPublicKey?: string;
   subscriptionId?: string;
   customDomain?: string;
+  tier?: "byok" | "hosted";
 };
 
 function shellSingleQuote(value: string): string {
@@ -198,6 +203,45 @@ export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
     fi
 `
     : "";
+
+  // Hosted tier: run a self-hosted Convex on the box (Docker, official
+  // image). Deploys then target the box itself — no Convex Cloud
+  // account, no BYOK key. Best-effort + loud logging (spike): the
+  // health check / verification step surfaces a half-start. The
+  // tenant's data lives in the yaver-convex-data volume on THEIR own
+  // dedicated box — central Convex never sees it (privacy contract).
+  const hostedSnippet =
+    spec.tier === "hosted"
+      ? `  # ── Hosted tier: self-hosted Convex (Docker) ──────────────────
+  - |
+    INSTANCE_SECRET=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \\n')
+    docker volume create yaver-convex-data >/dev/null 2>&1 || true
+    docker rm -f yaver-convex >/dev/null 2>&1 || true
+    docker run -d --name yaver-convex --restart always \\
+      -p 127.0.0.1:3210:3210 -p 127.0.0.1:3211:3211 \\
+      -v yaver-convex-data:/convex/data \\
+      -e INSTANCE_NAME=yaver \\
+      -e INSTANCE_SECRET="$INSTANCE_SECRET" \\
+      -e CONVEX_CLOUD_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-api`)} \\
+      -e CONVEX_SITE_ORIGIN=${shellSingleQuote(`https://${spec.hostname}/_convex-http`)} \\
+      ghcr.io/get-convex/convex-backend:latest \\
+      || echo "[cloud-init] convex-backend start skipped"
+  - |
+    # Wait for the backend port, then mint an admin key the deploy
+    # path (Phase 2) reads. 0600, root-only — never leaves the box.
+    for i in $(seq 1 40); do
+      (echo > /dev/tcp/127.0.0.1/3210) >/dev/null 2>&1 && break
+      sleep 5
+    done
+    ADMIN_KEY=$(docker exec yaver-convex ./generate_admin_key.sh 2>/dev/null | tail -n1 || true)
+    mkdir -p /etc/yaver
+    cat > /etc/yaver/convex-selfhosted.json <<EOF
+    {"url":"https://${spec.hostname}/_convex-api","adminKey":"$ADMIN_KEY"}
+    EOF
+    chmod 0600 /etc/yaver/convex-selfhosted.json
+    echo "[cloud-init] self-hosted Convex bootstrap done (key bytes: \${#ADMIN_KEY})"
+`
+      : "";
 
   const gpuSnippet = spec.gpu
     ? `  # GPU tier: NVIDIA drivers + Ollama
@@ -341,6 +385,27 @@ ${repoCloneSnippet}  - systemctl daemon-reload
     server {
         listen 80;
         server_name $d;
+        # Hosted-tier self-hosted Convex (Docker) lives on loopback
+        # 3210 (API, WebSocket) / 3211 (HTTP actions). On a byok box
+        # nothing listens there — these paths just 502 and are never
+        # used, so the block is safe to always emit (one nginx path).
+        location /_convex-api/ {
+            proxy_pass http://127.0.0.1:3210/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 600s;
+            proxy_buffering off;
+        }
+        location /_convex-http/ {
+            proxy_pass http://127.0.0.1:3211/;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 600s;
+            proxy_buffering off;
+        }
         location / {
             proxy_pass http://127.0.0.1:18080;
             proxy_set_header Host \$host;
@@ -393,7 +458,7 @@ ${repoCloneSnippet}  - systemctl daemon-reload
   - systemctl daemon-reload
   - systemctl enable --now yaver-tls.timer
 
-${gpuSnippet}`;
+${hostedSnippet}${gpuSnippet}`;
 }
 
 // ─── Queries ────────────────────────────────────────────────────
@@ -528,6 +593,7 @@ async function createCloudMachine(
     subscriptionId: args.subscriptionId,
     machineType: args.machineType,
     origin: "managed", // every cloudMachines row is a Yaver-side box
+    tier: args.tier ?? "byok",
     status: "provisioning",
     multiUser: !!args.teamId,
     region: args.region ?? "eu",
@@ -628,7 +694,23 @@ export const ensureForSubscription = mutation({
           machine.status !== "stopped" &&
           machine.status !== "error",
       );
-    if (existing) return existing._id;
+    if (existing) {
+      // Resubscribe during the hosted grace window → cancel the
+      // pending destroy and bring the box back. Their app + DB never
+      // left the box, so this is a true resume, not a rebuild.
+      if (existing.status === "grace") {
+        if (existing.scheduledDestroyId) {
+          await ctx.scheduler.cancel(existing.scheduledDestroyId);
+        }
+        await ctx.db.patch(existing._id, {
+          status: "active",
+          deprovisionAt: undefined,
+          scheduledDestroyId: undefined,
+          updatedAt: Date.now(),
+        });
+      }
+      return existing._id;
+    }
 
     return await createCloudMachine(ctx, args);
   },
@@ -668,6 +750,7 @@ export const setStatus = internalMutation({
     machineId: v.id("cloudMachines"),
     status: v.string(),
     errorMessage: v.optional(v.string()),
+    lastSnapshotId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -679,6 +762,10 @@ export const setStatus = internalMutation({
     else if (args.status === "active" || args.status === "provisioning")
       patch.errorMessage = undefined;
     if (args.status === "active") patch.lastHealthCheck = Date.now();
+    if (args.lastSnapshotId) {
+      patch.lastSnapshotId = args.lastSnapshotId;
+      patch.lastSnapshotAt = Date.now();
+    }
     await ctx.db.patch(args.machineId, patch);
   },
 });
@@ -805,16 +892,25 @@ export const provision = internalAction({
       yaverReleaseUrl,
       repoUrl: machine.repoUrl,
       gpu: isGpu,
+      // Hosted-tier flag (Session B / SANDBOX_HOSTED_HANDOFF.md) —
+      // drives the self-hosted-Convex + admin-key + nginx bootstrap
+      // inside buildManagedCloudInit. byok today (ensureForSubscription
+      // doesn't thread tier yet); hosted once the SKU is wired.
+      tier: machine.tier === "hosted" ? "hosted" : "byok",
     } as const;
-    // "yaver image" model (preferred): when YAVER_CLOUD_IMAGE points at
-    // a ghcr.io/.../yaver-cloud tag, the VM just installs Docker and
-    // runs the image — fast provisions, identical env, container is
-    // the future per-tenant boundary. Unset ⇒ legacy in-VM cloud-init
-    // (apt/npm everything) so this is a safe, reversible rollout.
+    // "yaver image" model: when YAVER_CLOUD_IMAGE is set, BYOK boxes
+    // use the thin Docker cloud-init (fast, identical env, future
+    // per-tenant boundary). HOSTED still uses the legacy in-VM
+    // cloud-init because only that path carries the self-hosted-Convex
+    // + admin-key + nginx /_convex-* bootstrap. Porting hostedSnippet
+    // into buildManagedCloudInitContainer is the tracked convergence
+    // (SANDBOX_HOSTED_HANDOFF.md §convergence); until then hosted
+    // falls back here so it never silently ships a Convex-less box.
     const cloudImage = process.env.YAVER_CLOUD_IMAGE;
-    const cloudInit = cloudImage
-      ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
-      : buildManagedCloudInit(bootstrapSpec);
+    const cloudInit =
+      cloudImage && bootstrapSpec.tier !== "hosted"
+        ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
+        : buildManagedCloudInit(bootstrapSpec);
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────
@@ -1002,18 +1098,67 @@ export const updateStatus = mutation({
   },
 });
 
-/** Stop and deprovision a machine. */
+// ─── Phase 4: hosted-tier teardown safety (pure, unit-tested) ──────
+
+/** Grace window a hosted box is kept after subscription end. */
+export const HOSTED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * planDeprovision decides whether a teardown is immediate or deferred.
+ * A hosted box holds the user's entire app + DB — deleting it the
+ * instant a subscription lapses is data loss, so keep it for a grace
+ * window (resubscribe / export). byok boxes are disposable and an
+ * explicit force (user clicked "delete now") always deletes now.
+ */
+export function planDeprovision(
+  tier: string | undefined,
+  force: boolean,
+  now: number,
+): { grace: boolean; deprovisionAt?: number } {
+  if (tier === "hosted" && !force) {
+    return { grace: true, deprovisionAt: now + HOSTED_GRACE_MS };
+  }
+  return { grace: false };
+}
+
+/**
+ * snapshotIsMandatory: for a hosted box the pre-delete snapshot is the
+ * user's only data copy — a failed snapshot must ABORT the delete (not
+ * "best-effort continue"). byok boxes are disposable.
+ */
+export function snapshotIsMandatory(tier: string | undefined): boolean {
+  return tier === "hosted";
+}
+
+/** Stop and deprovision a machine. force=true skips the hosted grace. */
 export const deprovision = mutation({
-  args: { machineId: v.id("cloudMachines") },
-  handler: async (ctx, { machineId }) => {
+  args: { machineId: v.id("cloudMachines"), force: v.optional(v.boolean()) },
+  handler: async (ctx, { machineId, force }) => {
     const machine = await ctx.db.get(machineId);
     if (!machine) throw new Error("Machine not found");
 
-    await ctx.db.patch(machineId, {
-      status: "stopping",
-      updatedAt: Date.now(),
-    });
+    const now = Date.now();
+    const plan = planDeprovision(machine.tier, force === true, now);
 
+    if (plan.grace && plan.deprovisionAt) {
+      // Defer: keep the box serving through the grace window, schedule
+      // the real destroy at the deadline, remember the job so a
+      // resubscribe can cancel it.
+      const scheduledDestroyId = await ctx.scheduler.runAt(
+        plan.deprovisionAt,
+        internal.cloudMachines.destroy,
+        { machineId },
+      );
+      await ctx.db.patch(machineId, {
+        status: "grace",
+        deprovisionAt: plan.deprovisionAt,
+        scheduledDestroyId,
+        updatedAt: now,
+      });
+      return;
+    }
+
+    await ctx.db.patch(machineId, { status: "stopping", updatedAt: now });
     // Schedule the real destroy (Hetzner API call) in an action.
     await ctx.scheduler.runAfter(0, internal.cloudMachines.destroy, { machineId });
   },
@@ -1043,19 +1188,50 @@ export const destroy = internalAction({
     }
 
     let warn = "";
+    const mustSnapshot = snapshotIsMandatory(machine.tier);
     if (machine.hetznerServerId) {
-      // Grace snapshot before delete (CLAUDE.md: never delete
-      // un-snapshotted). Best-effort — a failed snapshot must not
-      // strand a paid box — but record it so it's visible.
+      // Pre-delete snapshot. For a hosted box this is the user's ONLY
+      // data copy → a failure ABORTS the delete (status:error, box
+      // kept). For byok it's disposable → best-effort, continue.
+      let snapshotId = "";
       try {
         const snap = await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
           method: "POST",
           headers: { Authorization: `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-machine-${machineId}-${Date.now()}` }),
         });
-        if (!snap.ok) warn = `grace snapshot returned HTTP ${snap.status} (continued with delete); `;
+        if (snap.ok) {
+          try {
+            const sj = (await snap.json()) as { image?: { id?: number } };
+            if (sj.image?.id) snapshotId = String(sj.image.id);
+          } catch { /* id is best-effort metadata */ }
+        } else if (mustSnapshot) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId,
+            status: "error",
+            errorMessage: `Hosted box NOT deleted: data snapshot failed (HTTP ${snap.status}). Your app + database are still on the box. Retry decommission, or contact support — we will not delete unrecoverable data.`,
+          });
+          return;
+        } else {
+          warn = `grace snapshot returned HTTP ${snap.status} (continued with delete); `;
+        }
       } catch (e) {
+        if (mustSnapshot) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId,
+            status: "error",
+            errorMessage: `Hosted box NOT deleted: data snapshot failed (${e instanceof Error ? e.message : String(e)}). Your app + database are still on the box. Retry decommission.`,
+          });
+          return;
+        }
         warn = `grace snapshot failed (${e instanceof Error ? e.message : String(e)}); continued with delete; `;
+      }
+      if (snapshotId) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId,
+          status: machine.status ?? "stopping",
+          lastSnapshotId: snapshotId,
+        });
       }
       // Delete. Surface a real failure as status:error — do NOT fall
       // through to "stopped" while the box is still alive.

@@ -212,3 +212,48 @@ func TestBuildDoctorWithVault(t *testing.T) {
 		t.Errorf("global fallback wrong: %+v", s)
 	}
 }
+
+// Phase 2: the hosted-tier Convex deploy target resolves creds ON the
+// box (root-only file written by Phase 1 cloud-init) — zero BYOK, no
+// Convex Cloud key, no vault. Distinct from the BYOK convex:convex.
+func TestGenerateDeployScriptConvexSelfHosted(t *testing.T) {
+	script, err := GenerateDeployScript(DeployScriptSpec{
+		App:    "myapp",
+		Stack:  "convex",
+		Target: "selfhosted",
+		Path:   "/srv/yaver/workspace",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployScript(selfhosted): %v", err)
+	}
+	mustContain := []string{
+		"/etc/yaver/convex-selfhosted.json",         // on-box cred file
+		"CONVEX_SELF_HOSTED_URL",                     // self-hosted env, not deploy key
+		"CONVEX_SELF_HOSTED_ADMIN_KEY",
+		"npx convex deploy --yes",
+		`cd "/srv/yaver/workspace"`,
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(script, s) {
+			t.Errorf("selfhosted script missing %q:\n%s", s, script)
+		}
+	}
+	// Zero-BYOK invariant: the hosted path must NOT demand a Convex
+	// Cloud deploy key or push the user at the Convex dashboard.
+	for _, banned := range []string{"CONVEX_DEPLOY_KEY", "dashboard.convex.dev"} {
+		if strings.Contains(script, banned) {
+			t.Errorf("hosted deploy must be zero-BYOK but references %q:\n%s", banned, script)
+		}
+	}
+	// Regression: the BYOK convex:convex target is unchanged and still
+	// requires the user's own deploy key.
+	byok, err := GenerateDeployScript(DeployScriptSpec{
+		App: "myapp", Stack: "convex", Target: "convex", Path: "/x",
+	})
+	if err != nil {
+		t.Fatalf("GenerateDeployScript(convex byok): %v", err)
+	}
+	if !strings.Contains(byok, "CONVEX_DEPLOY_KEY") {
+		t.Errorf("byok convex target should still require CONVEX_DEPLOY_KEY:\n%s", byok)
+	}
+}
