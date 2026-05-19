@@ -198,7 +198,10 @@ export default function McpPage() {
                 If the user is already inside a coding-agent terminal, register
                 Yaver through <InlineCode>npx</InlineCode>, restart the agent
                 session if needed, then call{" "}
-                <InlineCode>yaver_lazy_setup</InlineCode>.
+                <InlineCode>yaver_lazy_setup</InlineCode>. For a brand-new app,
+                call <InlineCode>project_self_host_create</InlineCode> after
+                sign-in; it creates the self-hosted monorepo before any managed
+                cloud upsell.
               </p>
               <Terminal title="agent-terminal">
                 <Cmd>
@@ -358,6 +361,25 @@ export default function McpPage() {
                 <InlineCode>/.well-known/mcp.json</InlineCode>, and{" "}
                 <InlineCode>/.mcp.json</InlineCode>. Agents that do not know
                 Yaver yet should fetch <InlineCode>/llms.txt</InlineCode> first.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                First Project Capture
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                The MCP-first product path is self-hosted first. After{" "}
+                <InlineCode>yaver_lazy_setup</InlineCode> reports signed in,
+                call <InlineCode>project_self_host_create</InlineCode>. It
+                creates <InlineCode>apps/web</InlineCode>,{" "}
+                <InlineCode>apps/landing</InlineCode>,{" "}
+                <InlineCode>apps/mobile</InlineCode>,{" "}
+                <InlineCode>backend/convex</InlineCode>, and{" "}
+                <InlineCode>packages/shared</InlineCode>, plus Yaver local
+                service config and mobile testing next steps. Use{" "}
+                <InlineCode>yaver_managed_cloud_onboarding</InlineCode> only
+                after the user explicitly wants hourly managed cloud.
               </p>
             </div>
           </div>

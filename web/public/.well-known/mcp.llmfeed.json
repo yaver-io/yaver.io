@@ -21,5 +21,7 @@
     "claude_code": "claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp",
     "codex": "codex mcp add yaver -- npx -y yaver-cli yaver-mcp",
     "opencode": "npm install -g yaver-cli && yaver mcp setup opencode"
-  }
+  },
+  "first_capture_tool": "project_self_host_create",
+  "first_capture_stack": "Convex backend + Cloudflare web + Expo React Native mobile + packages/shared"
 }

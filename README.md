@@ -738,6 +738,8 @@ codex mcp add yaver -- npx -y yaver-cli yaver-mcp
 
 Restart the agent session if the new tools do not appear immediately, then call MCP tool `yaver_lazy_setup`. That tool handles npm bootstrap, resumable phone sign-in, mobile-app links, local daemon startup, and registration with other detected agent CLIs.
 
+For first project capture, call MCP tool `project_self_host_create` after sign-in. It creates the default self-hosted monorepo: Convex backend, Cloudflare web UI, Cloudflare landing page, Expo React Native iOS/Android app, `packages/shared`, Yaver local service config, and mobile testing next steps. Managed Cloud comes later through `yaver_managed_cloud_onboarding` after explicit cost confirmation.
+
 ### One-Command Setup
 
 ```bash

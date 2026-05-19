@@ -93,7 +93,22 @@ case "$MODE" in
     ;;
   official|all)
     need mcp-publisher
-    (cd "$ROOT" && mcp-publisher publish)
+    publish_log="$(mktemp)"
+    if (cd "$ROOT" && mcp-publisher publish 2>&1 | tee "$publish_log"); then
+      echo "official MCP Registry publish completed"
+    elif grep -qi 'cannot publish duplicate version' "$publish_log"; then
+      echo "official MCP Registry already has $SERVER_NAME@$version; verifying it is active..."
+      if (cd "$ROOT" && mcp-publisher status --status active "$SERVER_NAME" "$version" 2>&1 | tee "$publish_log"); then
+        echo "official MCP Registry version is active"
+      elif grep -qi 'No changes to apply' "$publish_log"; then
+        echo "official MCP Registry version is already active"
+      else
+        exit 1
+      fi
+    else
+      exit 1
+    fi
+    rm -f "$publish_log"
     if [[ "$MODE" == "all" ]]; then
       echo
       echo "Running mcp-submit for secondary directories..."

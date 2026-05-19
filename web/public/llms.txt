@@ -57,6 +57,38 @@ The exact speech the AI should use on each step comes back in
 `next_action` — don't paraphrase, it's the version reviewed for
 non-developer readability.
 
+## First project capture (self-hosted monorepo)
+
+After `yaver_lazy_setup` reports `status == "signed_in"`, do not ask the
+human to choose infrastructure. Start self-hosted. Call MCP tool
+`project_self_host_create` with:
+
+```
+{
+  "name": "Human readable app name",
+  "slug": "url-safe-folder-name",
+  "description": "One paragraph product description",
+  "domain": "",
+  "gitProvider": "none"
+}
+```
+
+This creates a complete monorepo:
+
+- `apps/web` — Next.js web UI, Cloudflare Worker config
+- `apps/landing` — static Cloudflare Pages landing site
+- `apps/mobile` — Expo React Native app for iOS and Android
+- `backend/convex` — local Convex backend, deployable to hosted Convex
+- `packages/shared` — shared TypeScript types/utilities
+- `.yaver/config.yaml` and `.yaver/services.yaml` — local self-host wiring
+- legal, privacy, app-review, App Store, and Play Store starter files
+
+Then call `mobile_project_prepare` on `apps/mobile`, followed by
+`mobile_project_build` when the user wants to test on the Yaver phone app.
+Only mention Yaver Managed Cloud after the repo exists and the user wants
+an always-on hourly machine. Paid cloud flow must use
+`yaver_managed_cloud_onboarding` and requires explicit cost confirmation.
+
 ## Install (any OS with Node ≥ 18)
 
 Run, in order:

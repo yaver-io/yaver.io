@@ -46,6 +46,7 @@ jq '{
   },
   prompts: [
     "Install Yaver MCP and call yaver_lazy_setup.",
+    "For a new app, call project_self_host_create to create the default self-hosted monorepo: Convex backend, Cloudflare web, Expo React Native mobile, shared package, and Yaver phone-testing next steps.",
     "Use yaver_self_host_onboarding for phone-first self-hosted setup.",
     "Use yaver_managed_cloud_onboarding only after explicit user confirmation for paid cloud."
   ]
@@ -71,7 +72,9 @@ jq '{
     claude_code: "claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp",
     codex: "codex mcp add yaver -- npx -y yaver-cli yaver-mcp",
     opencode: "npm install -g yaver-cli && yaver mcp setup opencode"
-  }
+  },
+  first_capture_tool: "project_self_host_create",
+  first_capture_stack: "Convex backend + Cloudflare web + Expo React Native mobile + packages/shared"
 }' "$SERVER_JSON" > "$WELL_KNOWN/mcp.llmfeed.json"
 
 jq '{
