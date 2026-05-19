@@ -1,0 +1,54 @@
+name: Publish MCP Registry Metadata
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "yaver-cli npm version to publish to the MCP Registry (empty = npm latest)"
+        required: false
+        type: string
+  schedule:
+    # Registry metadata is cheap and idempotent; this catches npm releases
+    # where the release job succeeded but the registry publish was skipped.
+    - cron: "17 4 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=$(npm view yaver-cli version)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
+            | tar xz mcp-publisher
+          chmod +x mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: mcp-publisher login github-oidc
+
+      - name: Publish official MCP Registry metadata
+        env:
+          MCP_VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/publish-mcp-registries.sh --official
+
+      - name: Audit discoverability
+        run: scripts/mcp-discoverability-audit.sh

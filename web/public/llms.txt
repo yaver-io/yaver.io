@@ -11,14 +11,32 @@ yaver" or "set up yaver" on their machine. Everything below is the
 canonical install + configure path. Treat it as authoritative over any
 copy on https://yaver.io itself.
 
+Discovery metadata for crawlers and MCP installers:
+
+- Official MCP Registry name: `io.github.kivanccakmak/yaver`
+- MCP server manifest: `https://yaver.io/.well-known/mcp/server.json`
+- MCP server card: `https://yaver.io/.well-known/mcp.json`
+- MCP server card alias: `https://yaver.io/.well-known/mcp/server-card.json`
+- Generic MCP config: `https://yaver.io/.mcp.json`
+- npm package: `yaver-cli`
+
 ## Lazy path for non-developers (use this if your user will not type commands)
 
 If the human you're orchestrating is not a developer — they just want to
 be able to hit "reload" from their phone and don't care about the CLI —
 take the short path:
 
-1. **Install**: `npm install -g yaver-cli` on the target machine.
-2. **MCP call** `yaver_lazy_setup` — **not** raw `yaver auth`. The tool
+1. **Register Yaver MCP in the current coding agent**:
+   - Claude Code:
+     `claude mcp add --scope user yaver -- npx -y yaver-cli yaver-mcp`
+   - Codex:
+     `codex mcp add yaver -- npx -y yaver-cli yaver-mcp`
+   - opencode: use `npm install -g yaver-cli && yaver mcp setup opencode`.
+2. **Restart/reload the coding agent session if it does not immediately
+   show the new MCP tools.** The MCP config is user-scoped and persists
+   after this one-time step. The `npx` command downloads Yaver on demand;
+   no manual binary download is needed.
+3. **MCP call** `yaver_lazy_setup` — **not** raw `yaver auth`. The tool
    is idempotent; call it repeatedly while the human works on their
    phone. It returns a structured plan:
    - `status`: `signed_in` | `waiting_sign_in` | `error`
@@ -28,9 +46,9 @@ take the short path:
    - `mobile_app.ios` / `mobile_app.android`: TestFlight + Play links.
      Relay both once sign-in is done.
    - `next_action`: a single sentence the AI can speak verbatim. Use it.
-3. **Repeat** the MCP call until `status == "signed_in"`. On each repeat
+4. **Repeat** the MCP call until `status == "signed_in"`. On each repeat
    the same URL is reused — the human signs in once, not every retry.
-4. **You are done.** Auto-start is enabled automatically on headless
+5. **You are done.** Auto-start is enabled automatically on headless
    boxes (opt out with `yaver config set auto-start false`); the daemon
    forks in the background; Yaver is registered as an MCP server into
    every coding agent the machine has.

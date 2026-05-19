@@ -6,8 +6,8 @@
 # not in Smithery.
 #
 # When Smithery installs this server into a client, the client will
-# invoke `npx -y yaver-cli@latest`, which drops into the `yaver mcp`
-# stdio entry point.
+# invoke `npx -y yaver-cli@latest yaver-mcp`, which drops into the
+# Yaver MCP stdio entry point without requiring a prior global install.
 #
 # First-time flow for a new user on a fresh machine:
 #   1. `npm install -g yaver-cli` (one time)
@@ -32,6 +32,6 @@ startCommand:
   commandFunction: |-
     (config) => ({
       command: 'npx',
-      args: ['-y', 'yaver-cli@latest'],
+      args: ['-y', 'yaver-cli@latest', 'yaver-mcp'],
       env: Object.fromEntries(Object.entries(config || {}).filter(([_, v]) => v != null && v !== ''))
     })

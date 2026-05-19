@@ -111,7 +111,10 @@ func ensureClaudeCodeMCPConfig(yaverPath string) (bool, error) {
 
 	getCmd := exec.Command("claude", "mcp", "get", "yaver")
 	if err := getCmd.Run(); err == nil {
-		return false, nil
+		removeCmd := exec.Command("claude", "mcp", "remove", "--scope", "user", "yaver")
+		if out, err := removeCmd.CombinedOutput(); err != nil {
+			return false, fmt.Errorf("refresh existing Claude Code MCP entry: %v: %s", err, string(out))
+		}
 	}
 
 	addCmd := exec.Command("claude", "mcp", "add", "--scope", "user", "yaver", "--", yaverPath, "mcp")
@@ -163,7 +166,10 @@ func ensureCodexMCPConfig(yaverPath string) (bool, error) {
 
 	getCmd := exec.Command("codex", "mcp", "get", "yaver")
 	if err := getCmd.Run(); err == nil {
-		return false, nil
+		removeCmd := exec.Command("codex", "mcp", "remove", "yaver")
+		if out, err := removeCmd.CombinedOutput(); err != nil {
+			return false, fmt.Errorf("refresh existing Codex MCP entry: %v: %s", err, string(out))
+		}
 	}
 
 	addCmd := exec.Command("codex", "mcp", "add", "yaver", "--", yaverPath, "mcp")
@@ -233,14 +239,19 @@ func ensureOpenCodeMCPConfig(yaverPath string) (bool, error) {
 	if mcp == nil {
 		mcp = make(map[string]interface{})
 	}
-	if _, exists := mcp["yaver"]; exists {
-		return false, nil
-	}
-	mcp["yaver"] = map[string]interface{}{
+	entry := map[string]interface{}{
 		"type":    "local",
 		"command": []string{yaverPath, "mcp"},
 		"enabled": true,
 	}
+	if existing, exists := mcp["yaver"]; exists {
+		existingJSON, _ := json.Marshal(existing)
+		entryJSON, _ := json.Marshal(entry)
+		if string(existingJSON) == string(entryJSON) {
+			return false, nil
+		}
+	}
+	mcp["yaver"] = entry
 	cfg["mcp"] = mcp
 
 	out, err := json.MarshalIndent(cfg, "", "  ")

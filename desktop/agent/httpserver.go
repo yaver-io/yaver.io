@@ -11893,6 +11893,14 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 
 	case "yaver_onboard":
 		return mcpToolResult(yaverOnboardChecklist())
+	case "yaver_self_host_onboarding":
+		var args yaverSelfHostOnboardingArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpYaverSelfHostOnboarding(args))
+	case "yaver_managed_cloud_onboarding":
+		var args yaverManagedCloudOnboardingArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpYaverManagedCloudOnboarding(args))
 
 	// --- Forms ---
 	case "form_list":

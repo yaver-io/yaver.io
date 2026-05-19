@@ -138,7 +138,7 @@ export default function McpPage() {
               ["installation", "Installation"],
               ["local-mcp", "Local MCP (stdio) \u2014 Claude Code, Codex, opencode"],
               ["network-mcp", "Network MCP (HTTP) \u2014 Remote Access"],
-              ["available-tools", "Available Tools (111)"],
+              ["available-tools", "Available Tools (470+)"],
               ["email-setup", "Email Setup"],
               ["acl", "ACL \u2014 Connecting to Other MCP Servers"],
               ["standalone-mcp", "Standalone MCP Server"],
@@ -189,6 +189,28 @@ export default function McpPage() {
             auto-start and register itself with the local runner CLIs.
           </Prose>
 
+          <div className="mb-8">
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                No global install required for Claude Code and Codex
+              </h4>
+              <p className="mb-3 text-sm leading-relaxed text-surface-400">
+                If the user is already inside a coding-agent terminal, register
+                Yaver through <InlineCode>npx</InlineCode>, restart the agent
+                session if needed, then call{" "}
+                <InlineCode>yaver_lazy_setup</InlineCode>.
+              </p>
+              <Terminal title="agent-terminal">
+                <Cmd>
+                  claude mcp add --scope user yaver -- npx -y yaver-cli
+                  yaver-mcp
+                </Cmd>
+                <Divider />
+                <Cmd>codex mcp add yaver -- npx -y yaver-cli yaver-mcp</Cmd>
+              </Terminal>
+            </div>
+          </div>
+
           <div className="mb-6 space-y-4">
             <div className="mb-8">
               <Terminal title="install">
@@ -237,7 +259,7 @@ export default function McpPage() {
 
           <SubHeading>One-Command Setup</SubHeading>
           <Prose>
-            The fastest way to configure any editor:
+            If Yaver is already installed globally, use its setup helper:
           </Prose>
 
           <div className="mb-8">
@@ -254,7 +276,8 @@ export default function McpPage() {
           <SubHeading>Manual Configuration</SubHeading>
           <Prose>
             Or run the equivalent commands directly. Each runner has its own
-            config surface, but the JSON Yaver writes is shaped the same:
+            config surface. The most portable JSON uses{" "}
+            <InlineCode>npx</InlineCode> so the MCP server can bootstrap itself:
           </Prose>
 
           <div className="mb-8">
@@ -272,8 +295,8 @@ export default function McpPage() {
                   {`{
   "mcpServers": {
     "yaver": {
-      "command": "yaver",
-      "args": ["mcp"]
+      "command": "npx",
+      "args": ["-y", "yaver-cli", "yaver-mcp"]
     }
   }
 }`}
@@ -291,13 +314,14 @@ export default function McpPage() {
                 <li>
                   &bull; Claude Code:{" "}
                   <InlineCode>
-                    claude mcp add --scope user yaver -- yaver mcp
+                    claude mcp add --scope user yaver -- npx -y yaver-cli
+                    yaver-mcp
                   </InlineCode>
                 </li>
                 <li>
                   &bull; Codex:{" "}
                   <InlineCode>
-                    codex mcp add yaver -- yaver mcp
+                    codex mcp add yaver -- npx -y yaver-cli yaver-mcp
                   </InlineCode>
                 </li>
                 <li>
@@ -314,10 +338,26 @@ export default function McpPage() {
                 How it works
               </h4>
               <p className="text-sm leading-relaxed text-surface-400">
-                The runner CLI launches <InlineCode>yaver mcp</InlineCode> as a
-                child process. The MCP protocol runs over stdin/stdout using
-                JSON-RPC. No network ports are opened &mdash; everything stays
-                local.
+                The runner CLI launches Yaver&apos;s MCP stdio process as a child
+                process. The MCP protocol runs over stdin/stdout using JSON-RPC.
+                No network ports are opened for local stdio mode &mdash;
+                everything stays on the user&apos;s machine.
+              </p>
+            </div>
+
+            <div className="card">
+              <h4 className="mb-2 text-sm font-medium text-surface-200">
+                Discovery metadata
+              </h4>
+              <p className="text-sm leading-relaxed text-surface-400">
+                Yaver publishes official registry metadata as{" "}
+                <InlineCode>io.github.kivanccakmak/yaver</InlineCode> and also
+                serves machine-readable discovery files at{" "}
+                <InlineCode>/.well-known/mcp/server.json</InlineCode>,{" "}
+                <InlineCode>/.well-known/mcp/server-card.json</InlineCode>,{" "}
+                <InlineCode>/.well-known/mcp.json</InlineCode>, and{" "}
+                <InlineCode>/.mcp.json</InlineCode>. Agents that do not know
+                Yaver yet should fetch <InlineCode>/llms.txt</InlineCode> first.
               </p>
             </div>
           </div>
@@ -383,7 +423,7 @@ export default function McpPage() {
         {/* ─── Section 5: Available Tools ─── */}
         <section className="mb-20">
           <SectionHeading id="available-tools">
-            Available Tools (111)
+            Available Tools (470+)
           </SectionHeading>
           <Prose>
             Yaver exposes 473 tools through MCP, organized by category. AI

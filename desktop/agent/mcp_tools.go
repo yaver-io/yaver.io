@@ -105,7 +105,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{
-			"name": "yaver_ask_user",
+			"name":        "yaver_ask_user",
 			"description": "Ask the human running this Yaver task a single structured question (Claude-Code-style: short 'header' chip + 2-4 'choices', optional multi-select, free-text 'Other' is always offered by the surface). The question is delivered to whichever Yaver surface the user is on (mobile app, web dashboard, CLI); the answer string is returned as the tool result. Blocks until answered or until the timeout (default 5 min, max 30). DEFAULT TO NOT CALLING THIS. Asking is the slow path — the user is on a phone and may have walked away, so an unanswered question stalls the whole run until it times out. Before calling, you must have already: (1) checked the project files / git log / vault for the answer, and (2) confirmed no sensible default exists. Only ask for genuinely irreversible actions, value judgements, or production / billing / customer-visible state. For everything else pick the most reasonable default, state the assumption in one line, and proceed — a reversible wrong guess is cheaper than a stalled run. Result on timeout / cancel: {cancelled:true} — handle it by taking the safest default and continuing, never by re-asking. Requires the agent to be running inside a Yaver task (YAVER_TASK_ID env var must be set by the spawning daemon).",
 			"inputSchema": map[string]interface{}{
 				"type":     "object",
@@ -244,7 +244,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"name":        "wireless_connect_android",
 			"description": "Reconnect a previously-paired Android phone over WiFi. Use this when wireless_detect shows the phone as visible-unpaired but it was paired in a past session (e.g. after a phone reboot). Empty ip_port = auto-discover via mDNS.",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"ip_port": map[string]interface{}{
 						"type":        "string",
@@ -888,6 +888,36 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			"inputSchema": map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
+			},
+		},
+		{
+			"name":        "yaver_self_host_onboarding",
+			"description": "High-level guided MCP flow for setting up Yaver on the user's own machine/VPS. Returns normie-friendly next steps for auth, serve, phone pairing, repo selection, runner setup, GitHub/GitLab credentials, and optional cloud upgrade. Can start GitHub/GitLab Device Flow when start_git_oauth=true.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_query":        map[string]interface{}{"type": "string", "description": "Optional app/repo name the user wants to use"},
+					"runner":            map[string]interface{}{"type": "string", "description": "Preferred coding runner: codex, claude-code, opencode"},
+					"git_provider":      map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "auto"}, "description": "Provider for optional Device Flow"},
+					"start_git_oauth":   map[string]interface{}{"type": "boolean", "description": "Start GitHub/GitLab Device Flow now; user approves in browser"},
+					"include_cloud_cta": map[string]interface{}{"type": "boolean", "description": "Include the managed-cloud upgrade path in the response"},
+				},
+			},
+		},
+		{
+			"name":        "yaver_managed_cloud_onboarding",
+			"description": "High-level guided MCP flow for buying and onboarding a Yaver managed cloud machine. Always returns status and post-purchase repo/credential sync steps. Only creates a checkout URL when confirm_checkout=true AND accept_cost=true, after explicit user approval.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"repo_query":       map[string]interface{}{"type": "string", "description": "Optional app/repo name to deploy after the cloud machine is ready"},
+					"machine_type":     map[string]interface{}{"type": "string", "enum": []string{"cpu", "gpu"}, "description": "cpu default; gpu for heavier/model workloads"},
+					"region":           map[string]interface{}{"type": "string", "description": "eu default"},
+					"confirm_checkout": map[string]interface{}{"type": "boolean", "description": "Set true only after the user asks to buy/start checkout"},
+					"accept_cost":      map[string]interface{}{"type": "boolean", "description": "Must be true with confirm_checkout after explicit user approval of billable managed cloud"},
+					"start_git_oauth":  map[string]interface{}{"type": "boolean", "description": "Optionally start GitHub/GitLab Device Flow while preparing cloud onboarding"},
+					"git_provider":     map[string]interface{}{"type": "string", "enum": []string{"github", "gitlab", "auto"}},
+				},
 			},
 		},
 		{

@@ -21,6 +21,14 @@
     "sdk-manifest.json"
   ],
   "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "claude-code",
+    "codex",
+    "ai-agent",
+    "developer-tools",
+    "local-first",
     "react-native",
     "testing",
     "mobile",
