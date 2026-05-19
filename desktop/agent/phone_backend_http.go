@@ -30,6 +30,8 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/export", s.auth(s.handlePhoneExport))
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
+	mux.HandleFunc("/phone/projects/share", s.auth(s.handlePhoneShare))
+	mux.HandleFunc("/phone/projects/join", s.auth(s.handlePhoneJoin))
 	mux.HandleFunc("/phone/projects/oauth", s.auth(s.handlePhoneOAuth))
 	mux.HandleFunc("/phone/projects/cost-hint", s.auth(s.handlePhoneCostHint))
 }
