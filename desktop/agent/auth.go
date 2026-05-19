@@ -1599,6 +1599,11 @@ func SendHeartbeat(baseURL, token, deviceID string, runners []RunnerInfo, instal
 	}
 	payload["localIps"] = localIps
 	payload["publicEndpoints"] = publicEndpoints
+	// Publish-farm capability: which app stores this box can build for.
+	// A non-empty list makes this device a publish-farm node the UI can
+	// target. macOS does both (Xcode + Gradle); Linux does Android only;
+	// iOS is Mac-only, forever. Static + privacy-safe.
+	payload["publishCapabilities"] = computePublishCapabilities()
 	if recoveryPosture != nil {
 		payload["recoveryPosture"] = recoveryPosture
 	}

@@ -106,6 +106,7 @@ type ListedDevice = {
   sharedRunners?: string[];
   sessionBinding?: "dedicated" | "legacy-shared";
   deviceClass?: "desktop" | "edge-mobile" | "server";
+  publishCapabilities?: string[];
   edgeProfile?: Doc<"devices">["edgeProfile"];
   recoveryPosture?: Doc<"devices">["recoveryPosture"];
   hardwareProfile?: Doc<"devices">["hardwareProfile"];
@@ -638,6 +639,7 @@ export const heartbeat = mutation({
     })),
     recoveryPosture: v.optional(recoveryPostureValidator),
     agentVersion: v.optional(v.string()),
+    publishCapabilities: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     const session = await validateSessionInternal(ctx, args.tokenHash);
@@ -707,6 +709,9 @@ export const heartbeat = mutation({
     }
     if (args.recoveryPosture) {
       patch.recoveryPosture = args.recoveryPosture;
+    }
+    if (args.publishCapabilities !== undefined) {
+      patch.publishCapabilities = args.publishCapabilities;
     }
     await ctx.db.patch(device._id, patch);
   },
@@ -870,6 +875,7 @@ export const listMyDevices = query({
       name: d.name,
       alias: d.alias,
       platform: d.platform,
+      publishCapabilities: d.publishCapabilities,
       publicKey: d.publicKey,
       hardwareId: d.hardwareId,
       hardwareProfile: d.hardwareProfile,

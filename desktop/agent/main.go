@@ -9052,6 +9052,10 @@ func heartbeatLoop(ctx context.Context, baseURL, token, deviceID string, taskMgr
 		// reachable and our token is valid). Best-effort: errors are
 		// logged but never break the heartbeat loop.
 		go claimAndExecuteRescueCommandSingleFlight(baseURL, currentToken(), deviceID)
+		// Same gate: a successful heartbeat proves Convex + token are
+		// good, so this is also when we pull any queued publish job
+		// for this farm node. Best-effort, single-flight per tick.
+		go claimAndExecutePublishJobSingleFlight(baseURL, currentToken(), deviceID)
 	}
 
 	var kickChan <-chan struct{}

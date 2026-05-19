@@ -835,6 +835,14 @@ func runPublish(args []string) {
 		printPublishUsage()
 		return
 	}
+	// Normie façade: `yaver publish ios|android|both [...]` delegates to
+	// the existing /deploy/ship path (see publish_ship.go). Detected
+	// before the subcommand switch so the project-config subcommands
+	// (init/config/run/list/status) keep working unchanged.
+	if isPublishStoreWord(args[0]) {
+		runPublishStoreFacade(args)
+		return
+	}
 	switch args[0] {
 	case "init":
 		runPublishInit(args[1:])
@@ -855,14 +863,24 @@ func runPublish(args []string) {
 
 func printPublishUsage() {
 	fmt.Print(`Usage:
+  yaver publish ios     [--app <name>] [--machine <deviceId>] [--path <dir>]
+  yaver publish android [--app <name>] [--machine <deviceId>] [--path <dir>]
+  yaver publish both    [--app <name>] [--machine <deviceId>] [--path <dir>]
+
   yaver publish init [--dir <path>] [--force]
   yaver publish config [--dir <path>]
   yaver publish run [--dir <path>] [--target <id>] [--allow-github-fallback]
   yaver publish list
   yaver publish status <run-id>
 
-Project config lives at .yaver/publish.yaml. Local developer hardware is the
-primary executor. GitHub Actions fallback is opt-in per project/target.
+The store form (ios|android|both) is the simple path: one command ships to
+the App Store and/or Google Play. Add --machine <deviceId> to run the build
+on a Mac you own (a Mac-farm node) instead of this machine. Under the hood
+it is the same vault-aware, preflighted /deploy/ship path as
+'yaver deploy ship'.
+
+The init/config/run subcommands are the project-config publish system
+(.yaver/publish.yaml) for npm / PyPI / pub.dev and custom targets.
 `)
 }
 

@@ -41,6 +41,7 @@ import type * as pendingDeviceClaims from "../pendingDeviceClaims.js";
 import type * as platformConfig from "../platformConfig.js";
 import type * as privacyMigrations from "../privacyMigrations.js";
 import type * as provisionRelay from "../provisionRelay.js";
+import type * as publishJobs from "../publishJobs.js";
 import type * as runnerUsage from "../runnerUsage.js";
 import type * as seed from "../seed.js";
 import type * as subscriptions from "../subscriptions.js";
@@ -90,6 +91,7 @@ declare const fullApi: ApiFromModules<{
   platformConfig: typeof platformConfig;
   privacyMigrations: typeof privacyMigrations;
   provisionRelay: typeof provisionRelay;
+  publishJobs: typeof publishJobs;
   runnerUsage: typeof runnerUsage;
   seed: typeof seed;
   subscriptions: typeof subscriptions;

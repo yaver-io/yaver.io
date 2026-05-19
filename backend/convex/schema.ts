@@ -259,6 +259,13 @@ export default defineSchema({
         )
       ),
     })),
+    // Which app stores this device can build+publish to, e.g.
+    // ["ios","android"] on macOS, ["android"] on Linux. A device that
+    // advertises any of these IS a publish-farm node — there is no
+    // separate farmNodes table for self-hosted machines (the device
+    // row is the registration). Privacy-safe: a static capability
+    // list, never a path or secret.
+    publishCapabilities: v.optional(v.array(v.string())),
     publicKey: v.optional(v.string()),
     quicHost: v.string(),
     // Every reachable IPv4 address the agent has — preferred outbound
@@ -418,6 +425,64 @@ export default defineSchema({
   })
     .index("by_device_status", ["deviceId", "status"])
     .index("by_owner", ["ownerUserId"]),
+
+  // Publish-job queue — the async "tap Publish, close the app, come
+  // back to a green check" channel. Same 3-tier shape as
+  // agentRescueCommands (queue → claim → report) but the work is a
+  // /deploy/ship run on a Mac-farm node the owner owns.
+  //
+  // Privacy contract (enforced by convex_privacy_test.go): this table
+  // MUST NOT carry the project's absolute path, build logs, or
+  // secrets. Only app NAME + targets + stack travel. The farm node
+  // resolves the path itself, locally, from the app name — exactly
+  // like /deploy/ship's resolveDeployStackPath fallback. Live build
+  // output streams P2P (Phase 3), never through here. `result` is
+  // per-target metadata only (ok / exitCode / errorClass / ms).
+  publishJobs: defineTable({
+    jobId: v.string(), // external id (agent-friendly, not the _id)
+    deviceId: v.string(), // Mac-farm node that will run the build
+    ownerUserId: v.id("users"),
+    app: v.string(), // vault scope + label — NOT a path
+    stack: v.string(), // e.g. "react-native-expo"
+    // Canonical /deploy/ship target IDs, e.g. ["testflight","playstore"].
+    targets: v.array(v.string()),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("claimed"),
+      v.literal("running"),
+      v.literal("done"),
+      v.literal("failed"),
+      v.literal("expired"),
+    ),
+    // Per-target outcome metadata — NO logs/stdout. Mirrors the shape
+    // /deploy/ship's composite summary already emits.
+    result: v.optional(
+      v.array(
+        v.object({
+          target: v.string(),
+          ok: v.boolean(),
+          exitCode: v.number(),
+          errorClass: v.optional(v.string()),
+          durationMs: v.optional(v.number()),
+        }),
+      ),
+    ),
+    message: v.optional(v.string()), // short status line, not output
+    createdAt: v.number(),
+    claimedAt: v.optional(v.number()),
+    // Refreshed by the worker while a long build runs so a 20-min
+    // archive isn't reaped as a dead claim.
+    lastProgressAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    // Claim TTL is short (a queued job must be picked up promptly);
+    // once claimed, lastProgressAt + a longer running-grace governs
+    // reaping instead.
+    expiresAt: v.number(),
+    sourceSurface: v.optional(v.string()), // "cli" | "mobile" | "web"
+  })
+    .index("by_device_status", ["deviceId", "status"])
+    .index("by_owner", ["ownerUserId"])
+    .index("by_jobId", ["jobId"]),
 
   downloads: defineTable({
     platform: v.union(

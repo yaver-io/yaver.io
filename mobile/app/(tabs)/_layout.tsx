@@ -294,6 +294,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen name="builds" options={{ href: null, headerShown: false }} />
+      <Tabs.Screen name="publish" options={{ href: null, headerShown: false }} />
       <Tabs.Screen
         name="devices"
         options={{
