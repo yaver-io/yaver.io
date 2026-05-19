@@ -222,8 +222,18 @@ func (a *sqlAdapter) Query(q string, args map[string]interface{}) (interface{}, 
 		strings.HasPrefix(trimmed, "show") || strings.HasPrefix(trimmed, "explain") ||
 		strings.HasPrefix(trimmed, "pragma")
 
+	// Bind named args so parameterized queries actually work. Before
+	// this, args was accepted by the API but silently dropped — every
+	// `:name` placeholder failed ("missing named argument"), pushing
+	// callers toward string interpolation (injection). modernc sqlite
+	// and lib/pq both accept database/sql named parameters.
+	named := make([]interface{}, 0, len(args))
+	for k, v := range args {
+		named = append(named, sql.Named(k, v))
+	}
+
 	if !isSelect {
-		res, err := a.db.Exec(q)
+		res, err := a.db.Exec(q, named...)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +241,7 @@ func (a *sqlAdapter) Query(q string, args map[string]interface{}) (interface{}, 
 		return map[string]interface{}{"rowsAffected": affected}, nil
 	}
 
-	rows, err := a.db.Query(q)
+	rows, err := a.db.Query(q, named...)
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +298,55 @@ func (a *sqlAdapter) Insert(table string, doc map[string]interface{}) (string, e
 	if err != nil {
 		return "", err
 	}
-	id, _ := res.LastInsertId()
-	return fmt.Sprintf("%d", id), nil
+	rowid, _ := res.LastInsertId()
+	// LastInsertId is the integer rowid — NOT the real primary key when
+	// the PK is a TEXT column with a DEFAULT (e.g. uuid). Callers use
+	// the returned id to update/delete the row, so it must be the real
+	// PK. If the caller supplied the PK, return that; else resolve it
+	// from the just-inserted rowid.
+	if pk := a.sqlitePrimaryKey(table); pk != "" {
+		if v, ok := doc[pk]; ok && v != nil && fmt.Sprintf("%v", v) != "" {
+			return fmt.Sprintf("%v", v), nil
+		}
+		var idv interface{}
+		sel := fmt.Sprintf("SELECT %s FROM %s WHERE rowid = ?",
+			quoteIdent(a.driver, pk), quoteIdent(a.driver, table))
+		if e := a.db.QueryRow(sel, rowid).Scan(&idv); e == nil && idv != nil {
+			return fmt.Sprintf("%v", normalizeSQLValue(idv)), nil
+		}
+	}
+	return fmt.Sprintf("%d", rowid), nil
+}
+
+// sqlitePrimaryKey returns the single-column primary key name for a
+// SQLite table via PRAGMA table_info, or "" if none/composite/non-sqlite.
+func (a *sqlAdapter) sqlitePrimaryKey(table string) string {
+	if a.driver != "sqlite" {
+		return ""
+	}
+	rows, err := a.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", quoteIdent(a.driver, table)))
+	if err != nil {
+		return ""
+	}
+	defer rows.Close()
+	pkCol := ""
+	count := 0
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt interface{}
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return ""
+		}
+		if pk == 1 {
+			pkCol = name
+			count++
+		}
+	}
+	if count != 1 {
+		return "" // no PK or composite — fall back to rowid
+	}
+	return pkCol
 }
 
 func (a *sqlAdapter) Update(table, id string, fields map[string]interface{}) error {

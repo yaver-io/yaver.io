@@ -1,0 +1,113 @@
+# Yaver Cloud — the "yaver image" a bought managed box runs.
+#
+# A managed-cloud purchase provisions a cpx42 VM whose only job is:
+#   install Docker → `docker run ghcr.io/kivanccakmak/yaver-cloud`
+# with a per-user config volume mounted. The container IS the box:
+# the Yaver Go agent plus every tool a RN/Expo + web + deploy dev
+# loop needs, so cold provisions are fast and the env is identical
+# everywhere. For multi-tenant (Phase 2) the container is also the
+# per-tenant boundary — but plain Docker is NOT a strong boundary
+# for untrusted tenants; that phase swaps the runtime to Kata /
+# Firecracker (see backend task: secure multi-tenant runtime). For
+# single-user (one buyer, one dedicated VM) this image is sufficient.
+#
+# Build:  docker build -f Dockerfile.yaver-cloud \
+#           -t ghcr.io/kivanccakmak/yaver-cloud:latest .
+# Run  :  docker run -d --name yaver -p 18080:18080 \
+#           -v yaver-home:/root ghcr.io/kivanccakmak/yaver-cloud:latest
+#
+# The /root volume persists ~/.yaver, ~/.claude, ~/.codex,
+# ~/.config/opencode, ~/.config/gh, ~/.config/glab — so the agent's
+# remote-OAuth sync (yaver + claude-code + codex + opencode) and the
+# GLM api-key setting survive container restarts / image upgrades.
+
+FROM node:22-bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH="/usr/local/go/bin:/root/go/bin:/root/.cargo/bin:/usr/local/bin:${PATH}"
+ENV HOME=/root
+
+# ── System packages ──────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git curl wget ca-certificates gnupg2 openssh-client \
+      build-essential cmake pkg-config \
+      python3 python3-pip python3-venv \
+      zip unzip jq tree ripgrep tmux file \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── GitHub CLI (gh) ──────────────────────────────────────────────────
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── GitLab CLI (glab) ────────────────────────────────────────────────
+RUN ARCH=$(dpkg --print-architecture) \
+    && GLAB_VER=$(curl -fsSL https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases | \
+         python3 -c "import sys,json;print(json.load(sys.stdin)[0]['tag_name'].lstrip('v'))") \
+    && curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VER}/downloads/glab_${GLAB_VER}_linux_${ARCH}.deb" \
+         -o /tmp/glab.deb \
+    && apt-get update && apt-get install -y /tmp/glab.deb && rm -f /tmp/glab.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Go ───────────────────────────────────────────────────────────────
+ARG GO_VERSION=1.22.6
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /usr/local -xz
+
+# ── Rust ─────────────────────────────────────────────────────────────
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal
+
+# ── RN / Expo / Hermes bundling + deploy tooling ─────────────────────
+# hermesc ships per-project inside react-native; the toolchain needs
+# Node (above) + expo/eas + a global RN CLI for `yaver` /dev/build-native.
+RUN npm install -g expo-cli eas-cli @react-native-community/cli wrangler 2>/dev/null || true
+
+# ── Coding runners (subscription-OAuth at runtime, never API-key) ────
+# OAuth tokens are NOT baked in — they arrive via the mounted /root
+# volume + yaver's remote-auth sync. GLM api-key is an opencode setting
+# written to ~/.config/opencode at runtime, also on the volume.
+RUN npm install -g \
+      @anthropic-ai/claude-code@latest \
+      @openai/codex@latest \
+      opencode-ai@latest 2>/dev/null || true
+
+# ── Yaver Go agent ───────────────────────────────────────────────────
+# Pinned-at-build to the latest published release tarball (single file
+# `yaver` inside yaver-linux-<arch>.tar.gz — raw-asset path was removed,
+# see release-cli.yml). The VM cloud-init can `docker pull` a newer
+# image tag to upgrade; we deliberately do NOT self-update inside the
+# container so the running agent version is deterministic per image.
+RUN ARCH=$(dpkg --print-architecture) \
+    && case "$ARCH" in amd64) A=amd64;; arm64) A=arm64;; *) A=amd64;; esac \
+    && curl -fsSL "https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver-linux-${A}.tar.gz" \
+         -o /tmp/yaver.tgz \
+    && tar -xzf /tmp/yaver.tgz -C /usr/local/bin yaver \
+    && chmod +x /usr/local/bin/yaver \
+    && rm -f /tmp/yaver.tgz \
+    && /usr/local/bin/yaver --version >/dev/null 2>&1
+
+# Persisted dirs (remote-OAuth + caches) — mounted as a Docker volume
+# so claude/codex/opencode/gh/glab/yaver auth + GLM api-key survive
+# restarts and image upgrades.
+RUN mkdir -p /root/.yaver /root/.claude /root/.codex \
+      /root/.config/opencode /root/.config/gh /root/.config/glab \
+      /root/.npm /root/.cargo/registry /root/go/pkg/mod \
+      /srv/yaver/workspace
+
+WORKDIR /srv/yaver/workspace
+
+EXPOSE 18080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
+  CMD curl -fsS http://127.0.0.1:18080/health >/dev/null || exit 1
+
+# The agent reads /root/.yaver/config.json (auth_token,
+# convex_site_url, device_id) written by the VM cloud-init into the
+# mounted volume, then registers as the buyer's device and serves the
+# dev-server / Hermes / ops API on 18080.
+ENTRYPOINT ["/usr/local/bin/yaver"]
+CMD ["serve", "--debug", "--port", "18080"]

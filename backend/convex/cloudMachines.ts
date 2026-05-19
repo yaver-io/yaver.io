@@ -8,10 +8,22 @@ import { randomHex, sha256Hex } from "./auth";
 // to POST https://api.hetzner.cloud/v1/servers.
 const MACHINE_SPECS = {
   cpu: {
-    hetznerType: "cx42",     // 8 vCPU, 16 GB RAM, 160 GB NVMe, amd64
+    // History: cx42 DEPRECATED (422 "server type 106 is deprecated");
+    // cpx41 non-deprecated but US-only stock; ccx33 (dedicated) works
+    // EU+US but costs €73.99/mo — unviable vs the $/mo price.
+    // cpx42 (shared AMD, 8 vCPU/16 GB/320 GB, x86=amd64, €29.99/mo)
+    // is the chosen balance: enough RAM for RN/Hermes (Metro+hermesc,
+    // no swap) at a price the SKU can sustain. Orderable in fsn1,
+    // nbg1, hel1, sin — NOT ash/hil, so the eu→fsn1 map below works
+    // but a us-region purchase needs a separate type/location (see
+    // the region→location map; us currently falls back to ash which
+    // has NO cpx42 → must be handled before selling a us SKU).
+    // Re-verify with GET /v1/datacenters .server_types.available
+    // (by type id) before changing — "priced" != "orderable".
+    hetznerType: "cpx42",    // 8 vCPU, 16 GB RAM, 320 GB, amd64 (shared)
     vcpu: 8,
     ramGb: 16,
-    diskGb: 160,
+    diskGb: 320,
     arch: "amd64" as const,
   },
   gpu: {
@@ -55,6 +67,125 @@ function shellSingleQuote(value: string): string {
 
 function jsonString(value: string): string {
   return JSON.stringify(value);
+}
+
+// buildManagedCloudInitContainer — thin cloud-init for the "yaver
+// image" model: the VM only installs Docker, drops the per-user
+// config into a host dir, and `docker run`s ghcr.io/.../yaver-cloud
+// (the image already has the agent + every tool). The /srv/yaver/state
+// dir is the container's /root volume, so remote-OAuth tokens
+// (yaver/claude/codex/opencode/gh/glab) + the GLM api-key persist
+// across container restarts and image upgrades. nginx+certbot still
+// run on the HOST and proxy :443 → the container's published :18080.
+// Single-user safe (one buyer, one dedicated VM). Multi-tenant Phase 2
+// swaps `docker run` for a per-tenant Kata/Firecracker microVM — a
+// plain shared-kernel container is NOT a no-code-leak boundary for
+// untrusted tenants.
+export function buildManagedCloudInitContainer(
+  spec: ManagedCloudBootstrapSpec,
+  image: string,
+): string {
+  const repoClone = spec.repoUrl
+    ? `  - |
+    if [ ! -d /srv/yaver/state/srv/yaver/workspace/.git ]; then
+      mkdir -p /srv/yaver/state/srv/yaver/workspace
+      git clone ${shellSingleQuote(spec.repoUrl)} /srv/yaver/state/srv/yaver/workspace || echo "[cloud-init] repo clone skipped"
+    fi
+`
+    : "";
+  return `#cloud-config
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - jq
+  - nginx
+  - certbot
+  - python3-certbot-nginx
+  - ufw
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable || true
+  # ── per-user config into the container's /root volume ──────────────
+  - mkdir -p /srv/yaver/state/.yaver /etc/yaver
+  - |
+    cat > /srv/yaver/state/.yaver/config.json <<'EOF'
+    {
+      "auth_token": ${jsonString(spec.userSessionToken)},
+      "convex_site_url": ${jsonString(spec.convexSite)},
+      "device_id": ${jsonString(spec.deviceId)}
+    }
+    EOF
+  - chmod 0600 /srv/yaver/state/.yaver/config.json
+${repoClone}  # ── run the yaver image (the box IS this container) ────────────────
+  - docker pull ${shellSingleQuote(image)}
+  - |
+    docker rm -f yaver 2>/dev/null || true
+    docker run -d --name yaver --restart always \
+      -p 18080:18080 \
+      -e YAVER_HOSTNAME=${shellSingleQuote(spec.hostname)} \
+      -v /srv/yaver/state:/root \
+      ${shellSingleQuote(image)}
+  # ── host TLS reconciler (same contract as the VM path) ─────────────
+  - |
+    cat > /etc/yaver/machine.json <<'EOF'
+    {"machineId":${jsonString(spec.machineId)},"machineToken":${jsonString(spec.machineToken)},"convexSite":${jsonString(spec.convexSite)}}
+    EOF
+  - chmod 0600 /etc/yaver/machine.json
+  - |
+    cat > /usr/local/bin/yaver-tls-reconciler <<'SCRIPT'
+    #!/usr/bin/env bash
+    set -euo pipefail
+    conf=/etc/yaver/machine.json
+    MID=$(jq -r .machineId "$conf"); MT=$(jq -r .machineToken "$conf"); CV=$(jq -r .convexSite "$conf")
+    resp=$(curl -fsSL -H "X-Machine-Token: $MT" "$CV/machine/pending-tls?machineId=$MID" || echo '{"domains":[]}')
+    echo "$resp" | jq -r '.domains[]?.domain' | while read -r d; do
+      [ -z "$d" ] && continue
+      cf="/etc/nginx/sites-available/$d"
+      if [ ! -f "$cf" ]; then
+        cat > "$cf" <<NGINX
+    server { listen 80; server_name $d;
+      location / { proxy_pass http://127.0.0.1:18080; proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr; proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\$scheme; proxy_read_timeout 300s; proxy_buffering off; } }
+    NGINX
+        ln -sf "$cf" "/etc/nginx/sites-enabled/$d"; nginx -t && systemctl reload nginx
+      fi
+      certbot --nginx -d "$d" --non-interactive --agree-tos -m admin@yaver.io --redirect --no-eff-email \
+        && curl -fsSL -X POST "$CV/machine/tls-issued" -H "Content-Type: application/json" \
+             -H "X-Machine-Token: $MT" -d "{\\"machineId\\":\\"$MID\\",\\"domain\\":\\"$d\\"}" >/dev/null \
+        || curl -fsSL -X POST "$CV/machine/tls-error" -H "Content-Type: application/json" \
+             -H "X-Machine-Token: $MT" -d "{\\"machineId\\":\\"$MID\\",\\"domain\\":\\"$d\\",\\"error\\":\\"certbot failed\\"}" >/dev/null || true
+    done
+    SCRIPT
+  - chmod +x /usr/local/bin/yaver-tls-reconciler
+  - |
+    cat > /etc/systemd/system/yaver-tls.service <<'EOF'
+    [Unit]
+    Description=Yaver TLS reconciler
+    After=network-online.target nginx.service docker.service
+    [Service]
+    Type=oneshot
+    ExecStart=/usr/local/bin/yaver-tls-reconciler
+    EOF
+  - |
+    cat > /etc/systemd/system/yaver-tls.timer <<'EOF'
+    [Unit]
+    Description=Yaver TLS reconciler (5-min)
+    [Timer]
+    OnBootSec=3min
+    OnUnitActiveSec=5min
+    Unit=yaver-tls.service
+    [Install]
+    WantedBy=timers.target
+    EOF
+  - systemctl daemon-reload
+  - systemctl enable --now yaver-tls.timer
+`;
 }
 
 export function buildManagedCloudInit(spec: ManagedCloudBootstrapSpec): string {
@@ -520,6 +651,10 @@ export const setProvisioned = internalMutation({
       hetznerServerId: args.hetznerServerId,
       serverIp: args.serverIp,
       hostname: args.hostname,
+      // Clear any stale error from a prior failed attempt — this row
+      // just provisioned successfully, so a leftover errorMessage
+      // would render a scary (false) failure on the device card.
+      errorMessage: undefined,
       updatedAt: Date.now(),
     };
     if (args.machineTokenHash) patch.machineTokenHash = args.machineTokenHash;
@@ -540,6 +675,9 @@ export const setStatus = internalMutation({
       updatedAt: Date.now(),
     };
     if (args.errorMessage) patch.errorMessage = args.errorMessage;
+    // Healthy states clear a stale error from a prior failed attempt.
+    else if (args.status === "active" || args.status === "provisioning")
+      patch.errorMessage = undefined;
     if (args.status === "active") patch.lastHealthCheck = Date.now();
     await ctx.db.patch(args.machineId, patch);
   },
@@ -656,7 +794,7 @@ export const provision = internalAction({
     const deviceId = `cloud-${shortId}`;
     const sessionExpiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
 
-    const cloudInit = buildManagedCloudInit({
+    const bootstrapSpec = {
       convexSite,
       machineId: machineIdStr,
       machineToken,
@@ -667,7 +805,16 @@ export const provision = internalAction({
       yaverReleaseUrl,
       repoUrl: machine.repoUrl,
       gpu: isGpu,
-    });
+    } as const;
+    // "yaver image" model (preferred): when YAVER_CLOUD_IMAGE points at
+    // a ghcr.io/.../yaver-cloud tag, the VM just installs Docker and
+    // runs the image — fast provisions, identical env, container is
+    // the future per-tenant boundary. Unset ⇒ legacy in-VM cloud-init
+    // (apt/npm everything) so this is a safe, reversible rollout.
+    const cloudImage = process.env.YAVER_CLOUD_IMAGE;
+    const cloudInit = cloudImage
+      ? buildManagedCloudInitContainer(bootstrapSpec, cloudImage)
+      : buildManagedCloudInit(bootstrapSpec);
 
     try {
       // ── 1. Hetzner server ───────────────────────────────────────

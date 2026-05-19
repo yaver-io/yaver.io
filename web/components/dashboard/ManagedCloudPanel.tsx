@@ -230,8 +230,8 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             device card shows a <b>Yaver Cloud</b> badge. Every other device is{" "}
             <b>self-hosted</b> (your own cloud box or hardware). Adopt imitates a
             managed purchase for an existing box. To remove a box, use the{" "}
-            <b>♻ Recycle box</b> action on its device card — that owns teardown
-            (snapshot + delete, dry-run first).
+            <b>♻ Delete box</b> button on its row below — it snapshots, then
+            destroys the Hetzner server and stops billing.
           </p>
 
           <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
@@ -247,7 +247,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                   className="mt-1 block rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-surface-700 dark:bg-[rgba(12,12,16,0.9)]"
                 >
                   <option value="cpu">CPU — React Native/Hermes + web + deploy (default)</option>
-                  <option value="gpu">GPU — AI / Ollama workloads</option>
+                  <option value="gpu" disabled>GPU — AI / Ollama — coming soon</option>
                   <option value="kvm" disabled>Flutter/Kotlin emulator — coming soon</option>
                   <option value="ios" disabled>iOS (Mac) — coming soon</option>
                 </select>
@@ -327,9 +327,22 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       </span>
                     </span>
                   </div>
-                  <span className="text-[10px] text-slate-400">
-                    Remove via ♻ Recycle box on the device card
-                  </span>
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      if (
+                        !window.confirm(
+                          `Delete this managed box (srv ${m.hetznerServerId ?? "—"})? ` +
+                            `It snapshots first, then destroys the Hetzner server and stops billing. This cannot be undone.`,
+                        )
+                      )
+                        return;
+                      void post("/billing/yaver-cloud/dev-deprovision", { machineId: m._id });
+                    }}
+                    className="rounded border border-rose-400/50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
+                  >
+                    ♻ Delete box
+                  </button>
                  </div>
                   {m.errorMessage ? (
                     <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">

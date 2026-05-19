@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -279,6 +280,68 @@ func TestTodosTemplate_EndToEnd(t *testing.T) {
 	// Delete.
 	if err := adapter.Delete("todos", "t4"); err != nil {
 		t.Fatalf("delete: %v", err)
+	}
+}
+
+// Regression: an insert WITHOUT an explicit id must return the real
+// generated primary key (the uuid TEXT default), not the integer
+// rowid — callers update/delete by the returned id. And Query must
+// actually bind named args (previously silently dropped). Both were
+// found driving the phone-sandbox todos flow end-to-end.
+func TestPhoneInsertReturnsRealPK_AndQueryBindsArgs(t *testing.T) {
+	setupPhoneTestHome(t)
+
+	p, err := CreatePhoneProject(PhoneCreateSpec{Name: "PK App", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	adapter, err := PhoneAdapter(p.Slug)
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+
+	// No id supplied → todos.id has DEFAULT uuid. Returned id must be
+	// that uuid, not "4"/rowid.
+	id, err := adapter.Insert("todos", map[string]interface{}{
+		"title": "no-id-row", "done": 0, "owner_id": "alice",
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if len(id) < 16 {
+		t.Fatalf("returned id %q looks like a rowid, expected the real uuid PK", id)
+	}
+
+	// The returned id must actually address the row: update by it,
+	// then read it back.
+	if err := adapter.Update("todos", id, map[string]interface{}{"title": "by-real-pk"}); err != nil {
+		t.Fatalf("update by returned id: %v", err)
+	}
+
+	// Query with named args must bind (was dropped before the fix).
+	r, err := adapter.Query(`SELECT title FROM "todos" WHERE id = :pk`,
+		map[string]interface{}{"pk": id})
+	if err != nil {
+		t.Fatalf("query with named args: %v", err)
+	}
+	rows, ok := r.([]map[string]interface{})
+	if !ok || len(rows) != 1 {
+		t.Fatalf("named-arg query returned %T %v (expected exactly the updated row)", r, r)
+	}
+	if rows[0]["title"] != "by-real-pk" {
+		t.Errorf("title = %v, want by-real-pk (update by returned id did not hit the row)", rows[0]["title"])
+	}
+
+	// Delete by the returned id must remove exactly that row.
+	if err := adapter.Delete("todos", id); err != nil {
+		t.Fatalf("delete by returned id: %v", err)
+	}
+	r, _ = adapter.Query(`SELECT COUNT(*) c FROM "todos" WHERE id = :pk`,
+		map[string]interface{}{"pk": id})
+	if rows, ok := r.([]map[string]interface{}); ok && len(rows) == 1 {
+		if c := rows[0]["c"]; c != int64(0) && c != float64(0) && fmt.Sprintf("%v", c) != "0" {
+			t.Errorf("row still present after delete-by-returned-id: count=%v", c)
+		}
 	}
 }
 
