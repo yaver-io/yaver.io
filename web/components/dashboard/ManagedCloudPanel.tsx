@@ -22,7 +22,7 @@ import { CONVEX_URL } from "@/lib/constants";
 import { agentClient } from "@/lib/agent-client";
 
 interface ManagedMachine {
-  _id: string;
+  id: string;            // /subscription returns the machine id as `id` (NOT _id)
   machineType?: string;
   status?: string;
   origin?: "managed" | "self-hosted";
@@ -306,7 +306,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
             ) : (
               machines.map((m) => (
                 <div
-                  key={m._id}
+                  key={m.id}
                   className="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
                 >
                  <div className="flex flex-wrap items-center justify-between gap-2">
@@ -337,7 +337,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                         )
                       )
                         return;
-                      void post("/billing/yaver-cloud/dev-deprovision", { machineId: m._id });
+                      void post("/billing/yaver-cloud/dev-deprovision", { machineId: m.id });
                     }}
                     className="rounded border border-rose-400/50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
                   >
