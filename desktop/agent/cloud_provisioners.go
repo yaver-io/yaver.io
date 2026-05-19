@@ -20,6 +20,12 @@ type ProvisionResult struct {
 	Details     map[string]string `json:"details,omitempty"`
 	Notes       string            `json:"notes,omitempty"`
 	Manual      string            `json:"manual,omitempty"`
+	// OrphanSnapshots: snapshots left on the cloud account after a
+	// server delete (e.g. an opted-in "snapshot first" recovery image,
+	// or pre-resize backups). Hetzner never auto-deletes these — they
+	// bill until removed. Surfaced so the Remove flow can never
+	// SILENTLY orphan a paid image. Empty/omitted when none.
+	OrphanSnapshots []HetznerSnapshotInfo `json:"orphanSnapshots,omitempty"`
 }
 
 type provisioner func(name string, opts map[string]string) (*ProvisionResult, error)
@@ -112,7 +118,19 @@ func mcpCloudDestroy(host, id, optsJSON string) interface{} {
 	if derr := m.hetznerDeleteServer(token, id); derr != nil {
 		return map[string]interface{}{"error": derr.Error()}
 	}
-	return &ProvisionResult{OK: true, Provider: "hetzner", Resource: "server", ID: id, Notes: "snapshot taken, server deleted"}
+	// Surface (never silently leave) snapshots the delete orphaned —
+	// the opted-in recovery image above and any pre-resize backups.
+	// Best-effort: a list failure must not turn a successful delete
+	// into an error.
+	notes := "server deleted"
+	if opts["skipSnapshot"] != "true" {
+		notes = "snapshot taken, server deleted"
+	}
+	orphans, lerr := m.hetznerSnapshotsForServer(token, id)
+	if lerr == nil && len(orphans) > 0 {
+		return &ProvisionResult{OK: true, Provider: "hetzner", Resource: "server", ID: id, Notes: notes, OrphanSnapshots: orphans}
+	}
+	return &ProvisionResult{OK: true, Provider: "hetzner", Resource: "server", ID: id, Notes: notes}
 }
 
 var provisionHTTP = &http.Client{Timeout: 30 * time.Second}

@@ -96,6 +96,15 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
   const [region, setRegion] = useState("eu");
   const [phase, setPhase] = useState<Phase>("form");
   const [steps, setSteps] = useState<string[]>([]);
+  // Snapshots the delete left behind on the cloud account (the opted-in
+  // recovery image, pre-resize backups). They bill until removed —
+  // surfaced here with a one-click delete so they can never SILENTLY
+  // orphan. id → null while its delete is in flight.
+  const [orphanSnaps, setOrphanSnaps] = useState<
+    Array<{ id: string; description?: string; diskGb?: number; estMonthlyEur?: number }>
+  >([]);
+  const [snapBusy, setSnapBusy] = useState<string | null>(null);
+  const [snapDeleted, setSnapDeleted] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -469,6 +478,7 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         setError(r.error || (res as any).error || "remove failed");
         setPhase("form");
       } else {
+        setOrphanSnaps(Array.isArray(r.orphanSnapshots) ? r.orphanSnapshots : []);
         const dereg = String(r.deregisterWarning || "").trim();
         setSteps([
           `${snapshot ? "Snapshot taken, then " : ""}cloud resource ${resolvedLabel || resourceId.trim()} deleted${snapshot ? "" : " (no snapshot)"}`,
@@ -483,6 +493,23 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
       setPhase("form");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function deleteSnapshot(id: string) {
+    setSnapBusy(id);
+    setError(null);
+    try {
+      const res = await callOps("cloud_snapshot_delete", { imageId: id, confirm: true });
+      if (res.ok === false || (res.initial as any)?.error) {
+        setError((res.initial as any)?.error || (res as any).error || "snapshot delete failed");
+      } else {
+        setSnapDeleted((d) => [...d, id]);
+      }
+    } catch (e: any) {
+      setError(e?.message || "snapshot delete failed");
+    } finally {
+      setSnapBusy(null);
     }
   }
 
@@ -685,6 +712,45 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
             {steps.join("\n")}
           </pre>
         ) : null}
+
+        {phase === "done" && orphanSnaps.length > 0 ? (
+          <div className="mt-3 rounded-lg border border-amber-400/60 bg-amber-50 p-3 text-xs dark:border-amber-500/40 dark:bg-amber-500/10">
+            <p className="m-0 font-semibold text-amber-800 dark:text-amber-300">
+              ⚠ {orphanSnaps.length} snapshot{orphanSnaps.length > 1 ? "s" : ""} left
+              on your cloud account — still billing until removed
+            </p>
+            <ul className="mt-2 space-y-1.5">
+              {orphanSnaps.map((s) => {
+                const gone = snapDeleted.includes(s.id);
+                return (
+                  <li key={s.id} className="flex items-center justify-between gap-2">
+                    <span className={gone ? "text-slate-400 line-through" : "text-slate-700 dark:text-surface-300"}>
+                      {s.description || `snapshot ${s.id}`}
+                      {s.diskGb ? ` · ${s.diskGb.toFixed(1)} GB` : ""}
+                      {s.estMonthlyEur ? ` · ~€${s.estMonthlyEur.toFixed(2)}/mo` : ""}
+                    </span>
+                    {gone ? (
+                      <span className="shrink-0 text-emerald-600 dark:text-emerald-400">deleted ✓</span>
+                    ) : (
+                      <button
+                        onClick={() => void deleteSnapshot(s.id)}
+                        disabled={snapBusy === s.id}
+                        className="shrink-0 rounded-md border border-rose-500 px-2 py-1 font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
+                      >
+                        {snapBusy === s.id ? "Deleting…" : "Delete & stop billing"}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="m-0 mt-2 opacity-70">
+              Keep one only if you want a recovery point — otherwise it's a paid,
+              lingering disk image.
+            </p>
+          </div>
+        ) : null}
+
         {error ? <p className="mt-3 text-sm text-rose-600 dark:text-rose-400">{error}</p> : null}
 
         <div className="mt-4 flex justify-end gap-2.5">

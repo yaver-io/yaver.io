@@ -172,6 +172,55 @@ func init() {
 		Streaming:  false,
 		AllowGuest: false,
 	})
+	registerOpsVerb(opsVerbSpec{
+		Name:        "cloud_snapshot_delete",
+		Description: "Delete one leftover snapshot image (stop its recurring bill) via the caller's OWN vault Hetzner token. Used to clear a recovery image orphaned by a server delete. Requires imageId + confirm=true. BYO-token-only — cannot touch another user's resources.",
+		Schema: map[string]interface{}{
+			"type":     "object",
+			"required": []string{"imageId", "confirm"},
+			"properties": map[string]interface{}{
+				"imageId": map[string]interface{}{"type": "string", "description": "Provider numeric snapshot/image id (explicit — never fuzzy-matched)"},
+				"confirm": map[string]interface{}{"type": "boolean"},
+			},
+			"additionalProperties": false,
+		},
+		Handler:    opsCloudSnapshotDeleteHandler,
+		Streaming:  false,
+		AllowGuest: false,
+	})
+}
+
+// opsCloudSnapshotDeleteHandler removes one snapshot image by id using
+// the caller's own vault Hetzner token (never from the payload), so a
+// leftover recovery image surfaced by cloud_destroy can be cleared in
+// one click. Mirrors cloud_destroy's BYO-only safety: this token can
+// only ever see/delete the caller's own resources.
+func opsCloudSnapshotDeleteHandler(_ OpsContext, payload json.RawMessage) OpsResult {
+	var p struct {
+		ImageID string `json:"imageId"`
+		Confirm bool   `json:"confirm"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
+	}
+	if strings.TrimSpace(p.ImageID) == "" {
+		return OpsResult{OK: false, Code: "bad_payload", Error: "imageId required (provider numeric id — never fuzzy-matched)"}
+	}
+	if !p.Confirm {
+		return OpsResult{OK: false, Code: "unauthorized", Error: "snapshot delete requires confirm=true"}
+	}
+	token := accountField(ProviderHetzner, "token")
+	if token == "" {
+		return OpsResult{OK: false, Code: "no_account", Error: "Hetzner not connected — /accounts/connect first (BYO token)"}
+	}
+	m, err := NewCloudDeployManager(".")
+	if err != nil {
+		return OpsResult{OK: false, Code: "manager_error", Error: err.Error()}
+	}
+	if derr := m.hetznerDeleteImage(token, strings.TrimSpace(p.ImageID)); derr != nil {
+		return OpsResult{OK: false, Code: "delete_failed", Error: derr.Error()}
+	}
+	return OpsResult{OK: true, Initial: map[string]interface{}{"deleted": p.ImageID}}
 }
 
 // opsCloudListHandler returns the account's real servers so the
@@ -272,6 +321,12 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	out := map[string]interface{}{"result": res, "deregistered": deregWarn == ""}
 	if deregWarn != "" {
 		out["deregisterWarning"] = deregWarn
+	}
+	// Lift orphaned snapshots to the top level so the web dialog can
+	// surface "left behind, still billing — [delete]" without digging
+	// into the nested provider result.
+	if pr, ok := res.(*ProvisionResult); ok && pr != nil && len(pr.OrphanSnapshots) > 0 {
+		out["orphanSnapshots"] = pr.OrphanSnapshots
 	}
 	return OpsResult{OK: true, Initial: out}
 }

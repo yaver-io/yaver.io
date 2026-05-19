@@ -1066,6 +1066,138 @@ func (m *CloudDeployManager) hetznerListServers(token string) ([]HetznerServerIn
 	return out, nil
 }
 
+// HetznerSnapshotInfo identifies one snapshot image on the account.
+// CreatedFromID is the numeric id of the server the snapshot was taken
+// from (Hetzner keeps this even after that server is deleted) — the
+// authoritative way to attribute an orphaned snapshot to a box that no
+// longer exists. DiskGB is what Hetzner bills on.
+type HetznerSnapshotInfo struct {
+	ID            string  `json:"id"`
+	Description   string  `json:"description"`
+	DiskGB        float64 `json:"diskGb"`
+	Created       string  `json:"created"`
+	CreatedFromID string  `json:"createdFromId"`
+	// EstMonthlyEUR is Hetzner's published snapshot price (€0.0119 per
+	// GB/mo) × DiskGB. Shown so the user sees the running cost of a
+	// leftover image, not just its existence.
+	EstMonthlyEUR float64 `json:"estMonthlyEur"`
+}
+
+// hetznerListSnapshots enumerates every snapshot image on the account
+// (paginated), read-only, same vault Bearer token as the rest. Used to
+// detect snapshots orphaned by a server delete so they can be surfaced
+// (and one-click removed) instead of silently billing forever.
+func (m *CloudDeployManager) hetznerListSnapshots(token string) ([]HetznerSnapshotInfo, error) {
+	out := []HetznerSnapshotInfo{}
+	page := 1
+	for {
+		url := fmt.Sprintf("%s/images?type=snapshot&per_page=50&page=%d", hetznerAPIBase, page)
+		req, err := http.NewRequest("GET", url, nil) //nolint:noctx
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("hetzner snapshot list: %w", err)
+		}
+		var result struct {
+			Images []struct {
+				ID          int     `json:"id"`
+				Description string  `json:"description"`
+				ImageSize   float64 `json:"image_size"`
+				DiskSize    float64 `json:"disk_size"`
+				Created     string  `json:"created"`
+				CreatedFrom *struct {
+					ID int `json:"id"`
+				} `json:"created_from"`
+			} `json:"images"`
+			Meta struct {
+				Pagination struct {
+					NextPage *int `json:"next_page"`
+				} `json:"pagination"`
+			} `json:"meta"`
+			Error *struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if derr != nil {
+			return nil, fmt.Errorf("parse hetzner snapshot list: %w", derr)
+		}
+		if result.Error != nil {
+			return nil, fmt.Errorf("hetzner error %s: %s", result.Error.Code, result.Error.Message)
+		}
+		for _, im := range result.Images {
+			from := ""
+			if im.CreatedFrom != nil {
+				from = fmt.Sprintf("%d", im.CreatedFrom.ID)
+			}
+			// Hetzner bills snapshots on used image size, not disk
+			// size; fall back to disk size if image_size is absent.
+			gb := im.ImageSize
+			if gb <= 0 {
+				gb = im.DiskSize
+			}
+			out = append(out, HetznerSnapshotInfo{
+				ID:            fmt.Sprintf("%d", im.ID),
+				Description:   im.Description,
+				DiskGB:        gb,
+				Created:       im.Created,
+				CreatedFromID: from,
+				EstMonthlyEUR: gb * 0.0119,
+			})
+		}
+		if result.Meta.Pagination.NextPage == nil {
+			break
+		}
+		page = *result.Meta.Pagination.NextPage
+	}
+	return out, nil
+}
+
+// hetznerSnapshotsForServer returns snapshots attributable to a given
+// (now usually deleted) server id — either by Hetzner's created_from
+// linkage or by our own `yaver-predelete-<id>-<ts>` description prefix
+// (created_from is dropped on some snapshot types, the description
+// prefix is our durable fallback).
+func (m *CloudDeployManager) hetznerSnapshotsForServer(token, serverID string) ([]HetznerSnapshotInfo, error) {
+	all, err := m.hetznerListSnapshots(token)
+	if err != nil {
+		return nil, err
+	}
+	prefix := fmt.Sprintf("yaver-predelete-%s-", serverID)
+	hit := []HetznerSnapshotInfo{}
+	for _, s := range all {
+		if s.CreatedFromID == serverID || strings.HasPrefix(s.Description, prefix) {
+			hit = append(hit, s)
+		}
+	}
+	return hit, nil
+}
+
+// hetznerDeleteImage deletes one snapshot image by numeric id. Used by
+// the cloud_snapshot_delete verb so a leftover recovery image can be
+// removed (and its billing stopped) without leaving the dashboard.
+func (m *CloudDeployManager) hetznerDeleteImage(token, imageID string) error {
+	req, err := http.NewRequest("DELETE", hetznerAPIBase+"/images/"+imageID, nil) //nolint:noctx
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("hetzner image delete returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Internal: project stack detection
 // ---------------------------------------------------------------------------
