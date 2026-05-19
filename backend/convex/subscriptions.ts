@@ -37,6 +37,24 @@ export const isActive = internalQuery({
   },
 });
 
+// Cancel a subscription by its Convex _id. Called when a user
+// decommissions their managed box: billing ends AND the reconcile
+// recovery (which only acts on status==="active") will no longer
+// resurrect the box. Idempotent. project_managed_cloud_onboarding_gap.
+export const cancelById = internalMutation({
+  args: { subscriptionId: v.id("subscriptions") },
+  handler: async (ctx, { subscriptionId }) => {
+    const sub = await ctx.db.get(subscriptionId);
+    if (!sub || sub.status === "cancelled") return false;
+    await ctx.db.patch(subscriptionId, {
+      status: "cancelled",
+      cancelledAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
+
 // Active managed-cloud subscriptions (plan "yaver-cloud-*"). Used by
 // the reconcile job: a paid sub MUST have a live box, else the user
 // paid for nothing. project_managed_cloud_onboarding_gap (recovery).

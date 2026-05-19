@@ -1332,6 +1332,16 @@ export const deprovision = mutation({
     const machine = await ctx.db.get(machineId);
     if (!machine) throw new Error("Machine not found");
 
+    // User decommission ends BILLING too: cancel the linked
+    // subscription so (a) the user stops paying and (b) the hourly
+    // reconcile recovery (acts only on active subs) does NOT
+    // resurrect the box the user just removed. Idempotent.
+    if (machine.subscriptionId) {
+      await ctx.runMutation(internal.subscriptions.cancelById, {
+        subscriptionId: machine.subscriptionId,
+      });
+    }
+
     const now = Date.now();
     const plan = planDeprovision(machine.tier, force === true, now);
 
