@@ -9,7 +9,12 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
 import { getConvexSiteUrl } from "../lib/auth";
 import {
+  devTopUpManagedCloud,
+  getManagedCloudBalance,
   getManagedSubscription,
+  startManagedCloudMachine,
+  stopManagedCloudMachine,
+  type ManagedCloudBalanceSummary,
   type ManagedSubscriptionSummary,
 } from "../lib/subscription";
 
@@ -33,6 +38,7 @@ export default function ManagedCloudCard({
   token: string | null | undefined;
 }) {
   const [data, setData] = useState<ManagedSubscriptionSummary | null>(null);
+  const [balance, setBalance] = useState<ManagedCloudBalanceSummary | null>(null);
   const [owner, setOwner] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -42,6 +48,8 @@ export default function ManagedCloudCard({
     if (r) {
       setData(r);
       setOwner(r.cloudPreviewOwner === true);
+      const b = await getManagedCloudBalance(token);
+      setBalance(b ?? r.balance ?? null);
     } else {
       setOwner(false);
     }
@@ -57,9 +65,19 @@ export default function ManagedCloudCard({
   // ownership is still unknown (never flash to a non-owner).
   if (!token || owner !== true) return null;
 
-  // Hide removed/decommissioned (stopped) boxes — gone, not billing.
-  const machines = (data?.machines ?? []).filter((m) => m.status !== "stopped");
+  const machines = data?.machines ?? [];
   const sub = data?.subscription ?? null;
+  const balanceCents =
+    balance?.balanceCents ??
+    balance?.prepaidBalanceCents ??
+    data?.prepaidBalanceCents ??
+    null;
+  const currency = balance?.currency ?? data?.currency ?? "EUR";
+
+  const money = (cents: number | null | undefined) => {
+    if (typeof cents !== "number") return "—";
+    return `${currency.toUpperCase()} ${(cents / 100).toFixed(2)}`;
+  };
 
   const decommission = (id: string, resourceId?: string) => {
     Alert.alert(
@@ -83,8 +101,15 @@ export default function ManagedCloudCard({
                   },
                   body: JSON.stringify({ machineId: id }),
                 },
-              );
+              ).then(async (res) => {
+                if (!res.ok) {
+                  const data = await res.json().catch(() => ({}));
+                  throw new Error(data?.error || `HTTP ${res.status}`);
+                }
+              });
               await load();
+            } catch (e: any) {
+              Alert.alert("Decommission failed", e?.message || "Could not decommission this managed box.");
             } finally {
               setBusy(null);
             }
@@ -92,6 +117,34 @@ export default function ManagedCloudCard({
         },
       ],
     );
+  };
+
+  const lifecycle = async (id: string, action: "start" | "stop") => {
+    setBusy(`${action}:${id}`);
+    try {
+      if (action === "start") {
+        await startManagedCloudMachine(token, id);
+      } else {
+        await stopManagedCloudMachine(token, id);
+      }
+      await load();
+    } catch (e: any) {
+      Alert.alert(action === "start" ? "Start failed" : "Stop failed", e?.message || "Managed-cloud lifecycle route is not available yet.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const topUpDev = async () => {
+    setBusy("topup-dev");
+    try {
+      await devTopUpManagedCloud(token, 1000);
+      await load();
+    } catch (e: any) {
+      Alert.alert("Top-up failed", e?.message || "Managed-cloud top-up route is not available yet.");
+    } finally {
+      setBusy(null);
+    }
   };
 
   return (
@@ -104,6 +157,25 @@ export default function ManagedCloudCard({
           ? `Plan ${sub.plan} · ${sub.status}`
           : "No active subscription — buy from the web dashboard (Devices → Managed cloud)."}
       </Text>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
+          Balance {money(balanceCents)}
+        </Text>
+        {typeof balance?.estimatedHourlyCents === "number" ? (
+          <Text style={{ color: c.textMuted, fontSize: 11 }}>
+            ~{money(balance.estimatedHourlyCents)}/hr running
+          </Text>
+        ) : null}
+        <Pressable
+          disabled={busy !== null}
+          onPress={topUpDev}
+          style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: c.border, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
+        >
+          <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "700" }}>
+            Dev top-up
+          </Text>
+        </Pressable>
+      </View>
 
       {machines.length === 0 ? (
         <Text style={{ color: c.textMuted, fontSize: 12 }}>No managed boxes.</Text>
@@ -145,17 +217,31 @@ export default function ManagedCloudCard({
                     {m.status ?? "?"}
                   </Text>
                 </Text>
-                {m.status !== "stopped" && m.status !== "stopping" ? (
+                {m.status === "stopped" ? (
                   <Pressable
                     disabled={busy !== null}
-                    onPress={() => decommission(m.id, m.hetznerServerId)}
-                    style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#e11d48", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
+                    onPress={() => lifecycle(m.id, "start")}
+                    style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#059669", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
                   >
-                    {busy === m.id ? (
-                      <ActivityIndicator size="small" color="#e11d48" />
+                    {busy === `start:${m.id}` ? (
+                      <ActivityIndicator size="small" color="#059669" />
                     ) : (
-                      <Text style={{ color: "#e11d48", fontSize: 11, fontWeight: "700" }}>
-                        ♻ Decommission
+                      <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>
+                        Start
+                      </Text>
+                    )}
+                  </Pressable>
+                ) : m.status !== "stopping" ? (
+                  <Pressable
+                    disabled={busy !== null}
+                    onPress={() => lifecycle(m.id, "stop")}
+                    style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#b45309", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
+                  >
+                    {busy === `stop:${m.id}` ? (
+                      <ActivityIndicator size="small" color="#b45309" />
+                    ) : (
+                      <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
+                        Stop
                       </Text>
                     )}
                   </Pressable>
@@ -163,6 +249,22 @@ export default function ManagedCloudCard({
                   <Text style={{ color: c.textMuted, fontSize: 10 }}>{m.status}</Text>
                 )}
               </View>
+
+              {m.status !== "stopping" ? (
+                <Pressable
+                  disabled={busy !== null}
+                  onPress={() => decommission(m.id, m.hetznerServerId)}
+                  style={{ alignSelf: "flex-start", opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#e11d48", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
+                >
+                  {busy === m.id ? (
+                    <ActivityIndicator size="small" color="#e11d48" />
+                  ) : (
+                    <Text style={{ color: "#e11d48", fontSize: 11, fontWeight: "700" }}>
+                      Decommission
+                    </Text>
+                  )}
+                </Pressable>
+              ) : null}
 
               {initializing ? (
                 <View style={{ gap: 4 }}>

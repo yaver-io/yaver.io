@@ -48,6 +48,14 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"logs",
 	"logOutput",
 	"taskOutput",
+	// Structured command-card events (command_events.go). These flow
+	// P2P over the task SSE stream ONLY; if a future sync path tries to
+	// mirror a command card into Convex it trips here. `cwd` has the
+	// same username-leak problem as `workDir`; `command`/`chunk` carry
+	// shell + output text.
+	"cwd",
+	"command",
+	"chunk",
 	"fileContent",
 	"fileBytes",
 	"body", // often carries user input bodies (not to be confused with HTTP bodies here — this is arg key)
@@ -486,4 +494,36 @@ func assertNoUsernameLeak(t *testing.T, rec recordedMutation, marker string) {
 		}
 	}
 	walk(rec.Args)
+}
+
+// The managed-cloud prepaid wallet (backend/convex schema.ts:
+// prepaidCredits, creditUsage; owned by cloudLifecycle.ts) is
+// DELIBERATELY counter-only — same Convex-allowed class as
+// runnerUsage/dailyTaskCounts. This pins that decision: every field
+// name in those two tables must be a counter/id/timestamp and must
+// NOT collide with the forbidden-secret list. If someone adds a
+// command/path/token/output-class field to the wallet ledger this
+// fails loudly. (Wallet rows are Convex-internal — never an
+// agent→Convex payload — so the payload walker doesn't see them; this
+// static field-name pin is the guard.)
+func TestPrepaidWalletFields_AreNotConvexForbidden(t *testing.T) {
+	walletFields := []string{
+		// prepaidCredits
+		"userId", "subscriptionId", "balanceCents", "totalAddedCents",
+		"totalUsedCents", "currency", "lastTopupAt", "lastMeteredAt",
+		"createdAt", "updatedAt",
+		// creditUsage
+		"machineId", "date", "state", "seconds", "hetznerCostCents",
+		"chargedCents", "ratePerHourCents", "dryRun",
+	}
+	forbidden := map[string]bool{}
+	for _, k := range fieldsWeForbidInAnyConvexPayload {
+		forbidden[k] = true
+	}
+	for _, f := range walletFields {
+		if forbidden[f] {
+			t.Errorf("prepaid-wallet field %q is on the Convex forbidden-secret "+
+				"list — the wallet ledger must stay counter-only", f)
+		}
+	}
 }

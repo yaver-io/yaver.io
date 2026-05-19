@@ -2582,7 +2582,7 @@ func (tm *TaskManager) readRawOutput(task *Task, stdout, stderr io.Reader) {
 	// shell is in pipe mode) still gets the same treatment.
 	var ocFilter *opencodeStreamFilter
 	if normalizeRunnerID(task.runner.RunnerID) == "opencode" {
-		ocFilter = &opencodeStreamFilter{}
+		ocFilter = &opencodeStreamFilter{task: task}
 	}
 	// Other raw-mode runners — codex in particular ships its banner
 	// + sandbox status lines ANSI-coloured. Without a per-chunk strip
@@ -2708,6 +2708,40 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 	lineCount := 0
 	firstOutputLogged := false
 
+	// Structured command-card events (command_events.go). Claude's
+	// stream-json is serial — one Bash tool_use runs to its
+	// tool_use_result before the next — so a single "pending" command
+	// is enough to correlate the result back to its start. cmdSeq makes
+	// the id stable + unique per task.
+	cmdSeq := 0
+	pendingCmdID := ""
+	var pendingCmdStart time.Time
+	startCmd := func(cmd string) {
+		cmdSeq++
+		pendingCmdID = fmt.Sprintf("%s-c%d", task.ID, cmdSeq)
+		pendingCmdStart = time.Now()
+		tm.mu.RLock()
+		cwd := task.WorkDir
+		tm.mu.RUnlock()
+		emitCommandStart(task, pendingCmdID, cmd, nil, cwd, "claude")
+	}
+	endCmd := func(stdout, stderr string, interrupted bool) {
+		if pendingCmdID == "" {
+			return
+		}
+		emitCommandOutput(task, pendingCmdID, "stdout", stdout, 0)
+		emitCommandOutput(task, pendingCmdID, "stderr", stderr, 1)
+		var dur int64
+		if !pendingCmdStart.IsZero() {
+			dur = time.Since(pendingCmdStart).Milliseconds()
+		}
+		// claude-code stream-json tool_use_result carries no exit code,
+		// only an `interrupted` flag → exitKnown=false (neutral badge),
+		// truncated=interrupted.
+		emitCommandEnd(task, pendingCmdID, 0, false, dur, interrupted)
+		pendingCmdID = ""
+	}
+
 	for scanner.Scan() {
 		lineCount++
 		line := scanner.Bytes()
@@ -2794,6 +2828,7 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 						cmdText := fmt.Sprintf("\n**$ %s**\n", bi.Command)
 						tm.emit(task, &output, cmdText)
 						lastEmittedCmd = bi.Command
+						startCmd(bi.Command)
 						log.Printf("[task %s cmd] %s", task.ID, bi.Command)
 					}
 					inToolUse = false
@@ -2815,6 +2850,7 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 								cmdText := fmt.Sprintf("\n**$ %s**\n", bi.Command)
 								tm.emit(task, &output, cmdText)
 								lastEmittedCmd = bi.Command
+								startCmd(bi.Command)
 								log.Printf("[task %s cmd-fallback] %s", task.ID, bi.Command)
 							}
 						}
@@ -2833,6 +2869,9 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 				if event.ToolUseResult.Stderr != "" {
 					log.Printf("[task %s stderr-out] %s", task.ID, truncate(strings.TrimRight(event.ToolUseResult.Stderr, "\n"), 200))
 				}
+				// Close the structured command card with its captured
+				// stdout/stderr (P2P only — never Convex).
+				endCmd(event.ToolUseResult.Stdout, event.ToolUseResult.Stderr, event.ToolUseResult.Interrupted)
 			}
 
 		case "result":
@@ -2866,6 +2905,13 @@ func (tm *TaskManager) readStreamJSON(task *Task, r io.Reader) {
 				}
 			}
 		}
+	}
+
+	// Stream ended with a command still open (no tool_use_result —
+	// process crashed mid-command, or a non-result terminal). Close the
+	// card so the UI doesn't show it spinning forever.
+	if pendingCmdID != "" {
+		endCmd("", "", true)
 	}
 
 	if err := scanner.Err(); err != nil {

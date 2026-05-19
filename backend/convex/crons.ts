@@ -10,6 +10,9 @@ import { cronJobs } from "convex/server";
 //   - internal.cleanup.pruneMobileStreamLogs   (Hetzner: daily 03:05 UTC)
 //   - internal.cleanup.pruneDeveloperLogs      (Hetzner: daily 03:10 UTC)
 //   - internal.cleanup.pruneDeviceEvents       (Hetzner: daily 03:15 UTC)
+//   - internal.cloudLifecycle.meterTick        (Hetzner: hourly — POST
+//       /crons/run {name:"cloudMeter"}; managed-cloud prepaid meter,
+//       dryRun:true until the prepaid product launches)
 const crons = cronJobs();
 
 export default crons;
