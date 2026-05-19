@@ -118,6 +118,19 @@ export interface PhoneTemplate {
   description: string;
 }
 
+// Friends-preview share: a host mints `code`; a friend resolves it and
+// Hermes-loads `bundleUrl`, pointed at `hostedConvexUrl` (the host's
+// own backend). Mirrors the agent's /phone/projects/share|join.
+export interface PhoneShare {
+  code: string;
+  slug: string;
+  name: string;
+  hostedConvexUrl?: string;
+  bundleUrl: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface PhoneCreateSpec {
   slug?: string;
   name: string;
@@ -820,6 +833,32 @@ export async function listPhoneProjects(): Promise<PhoneProject[]> {
   local.forEach((project) => merged.set(project.slug, project));
   remote.forEach((project) => merged.set(project.slug, project));
   return Array.from(merged.values());
+}
+
+// sharePhoneProject mints a friends-preview join code on the connected
+// agent. ttlMinutes ≤ 0 ⇒ agent default (24h).
+export async function sharePhoneProject(
+  slug: string,
+  ttlMinutes = 0,
+): Promise<PhoneShare> {
+  const r = await post<PhoneShare>("/phone/projects/share", {
+    slug,
+    ttlMinutes,
+  });
+  if (!r) throw new Error("Not connected to a Yaver agent.");
+  return r;
+}
+
+// joinPhoneShare resolves a code → {slug, hostedConvexUrl, bundleUrl}.
+// The caller then fetches bundleUrl and Hermes-loads it against
+// hostedConvexUrl (the host's live backend).
+export async function joinPhoneShare(code: string): Promise<PhoneShare> {
+  const r = await get<PhoneShare & { error?: string }>(
+    `/phone/projects/join?code=${encodeURIComponent(code.trim())}`,
+  );
+  if (!r) throw new Error("Invalid or expired code (or not connected).");
+  if (r.error) throw new Error(r.error);
+  return r;
 }
 
 export async function listPhoneTemplates(): Promise<PhoneTemplate[]> {
