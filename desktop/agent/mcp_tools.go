@@ -1339,6 +1339,26 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "deps_list", "description": "List installed project dependencies.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory"}, "manager": map[string]interface{}{"type": "string", "description": "Package manager (auto-detected if empty)"}}}},
 		{"name": "mobile_project_status", "description": "Inspect whether a React Native / Expo project on this machine is ready for Yaver iPhone testing. Reports package manager, missing local tools, dependency-install state, Hermes compiler availability, and whether Hermes has been built before.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
 		{"name": "mobile_project_prepare", "description": "Prepare a fresh React Native / Expo clone for Yaver testing by auto-installing project dependencies when the machine has the right package manager available. Returns readiness fields after the install attempt.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}}}},
+		{
+			"name":        "mobile_hermes_doctor",
+			"description": "Agent-friendly doctor for the common React Native / Expo phone reload path. Resolves the mobile project inside a monorepo, checks local tools, dependency install state, Hermes compiler readiness, prior bundle state, and native-module compatibility, then returns the exact MCP next actions to prepare/build before reloading in Yaver mobile.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory": map[string]interface{}{"type": "string", "description": "Project or monorepo directory (default: agent work dir)"},
+					"availableModules": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "Optional native module names reported by the paired Yaver mobile runtime",
+					},
+					"availableModuleMap": map[string]interface{}{
+						"type":                 "object",
+						"additionalProperties": map[string]interface{}{"type": "string"},
+						"description":          "Optional native module name to version map from the paired Yaver mobile runtime",
+					},
+				},
+			},
+		},
 		{"name": "mobile_project_build", "description": "Start the project's dev server if needed and build the Hermes bundle that Yaver loads on the phone. This is the MCP path for a contributor on WSL/Linux/macOS to prepare a fresh Expo / React Native clone for real iPhone testing without TestFlight.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}, "framework": map[string]interface{}{"type": "string", "description": "Optional framework override (expo or react-native)"}, "platform": map[string]interface{}{"type": "string", "description": "Target platform (default: ios)"}}}},
 		// GitHub
 		{"name": "github_prs", "description": "List pull requests from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, merged, all (default: open)"}}}},

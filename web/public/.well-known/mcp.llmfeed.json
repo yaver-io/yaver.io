@@ -23,5 +23,6 @@
     "opencode": "npm install -g yaver-cli && yaver mcp setup opencode"
   },
   "first_capture_tool": "project_self_host_create",
+  "phone_reload_doctor_tool": "mobile_hermes_doctor",
   "first_capture_stack": "Convex backend + Cloudflare web + Expo React Native mobile + packages/shared"
 }

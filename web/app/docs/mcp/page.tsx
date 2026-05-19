@@ -201,7 +201,10 @@ export default function McpPage() {
                 <InlineCode>yaver_lazy_setup</InlineCode>. For a brand-new app,
                 call <InlineCode>project_self_host_create</InlineCode> after
                 sign-in; it creates the self-hosted monorepo before any managed
-                cloud upsell.
+                cloud upsell. For phone reload, call{" "}
+                <InlineCode>mobile_hermes_doctor</InlineCode> on{" "}
+                <InlineCode>apps/mobile</InlineCode> and follow its MCP next
+                actions.
               </p>
               <Terminal title="agent-terminal">
                 <Cmd>
@@ -377,7 +380,9 @@ export default function McpPage() {
                 <InlineCode>apps/mobile</InlineCode>,{" "}
                 <InlineCode>backend/convex</InlineCode>, and{" "}
                 <InlineCode>packages/shared</InlineCode>, plus Yaver local
-                service config and mobile testing next steps. Use{" "}
+                service config and mobile testing next steps. Then call{" "}
+                <InlineCode>mobile_hermes_doctor</InlineCode> to check Hermes
+                reload readiness and native-module compatibility. Use{" "}
                 <InlineCode>yaver_managed_cloud_onboarding</InlineCode> only
                 after the user explicitly wants hourly managed cloud.
               </p>

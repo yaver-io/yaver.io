@@ -7082,6 +7082,13 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			}
 		}
 		return mcpToolJSON(mobileProjectStatus(args.Directory))
+	case "mobile_hermes_doctor":
+		var args mobileHermesDoctorInput
+		json.Unmarshal(call.Arguments, &args)
+		if strings.TrimSpace(args.Directory) == "" {
+			args.Directory = s.taskMgr.workDir
+		}
+		return mcpToolJSON(mobileHermesDoctor(args))
 	case "mobile_project_build":
 		var args struct {
 			Directory string `json:"directory"`

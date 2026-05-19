@@ -83,8 +83,11 @@ This creates a complete monorepo:
 - `.yaver/config.yaml` and `.yaver/services.yaml` — local self-host wiring
 - legal, privacy, app-review, App Store, and Play Store starter files
 
-Then call `mobile_project_prepare` on `apps/mobile`, followed by
-`mobile_project_build` when the user wants to test on the Yaver phone app.
+Then call `mobile_hermes_doctor` on `apps/mobile`. Follow its
+`nextActions`: usually `mobile_project_prepare`, then `mobile_project_build`
+when the user wants to test on the Yaver phone app. The doctor resolves
+monorepo mobile apps, checks local tools, dependency install state, Hermes
+compiler readiness, prior bundle state, and native-module compatibility.
 Only mention Yaver Managed Cloud after the repo exists and the user wants
 an always-on hourly machine. Paid cloud flow must use
 `yaver_managed_cloud_onboarding` and requires explicit cost confirmation.
