@@ -1399,6 +1399,12 @@ export const destroy = internalAction({
       // data copy → a failure ABORTS the delete (status:error, box
       // kept). For byok it's disposable → best-effort, continue.
       let snapshotId = "";
+      // Snapshot ONLY when it's the user's only data copy (hosted) or
+      // they explicitly opted in. byok boxes are DISPOSABLE — taking a
+      // pre-delete snapshot of one is recurring storage cost for
+      // nothing (precisely the per-delete charge to avoid). Skip
+      // entirely for byok ⇒ no snapshot, no lingering cost.
+      if (mustSnapshot || machine.snapshotOnDelete === true) {
       try {
         const snap = await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
           method: "POST",
@@ -1431,6 +1437,7 @@ export const destroy = internalAction({
         }
         warn = `grace snapshot failed (${e instanceof Error ? e.message : String(e)}); continued with delete; `;
       }
+      } // end snapshot gate — byok skips, so no orphan/cost
       if (snapshotId) {
         await ctx.runMutation(internal.cloudMachines.setStatus, {
           machineId,
