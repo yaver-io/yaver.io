@@ -1078,6 +1078,39 @@ func (s *HTTPServer) buildNativeBundleForProject(workDir, framework, platform st
 // first build of a session or after a project change; pass false on incremental
 // rebuilds to save 30-60s and avoid blowing past Metro's heap on small boxes
 // (the cache rebuild is the heaviest memory step in a Metro bundle).
+// hostedConvexBuildEnv returns the env the RN bundle needs so the app
+// (and any friend's Hermes-loaded copy) talks to the right Convex with
+// ZERO config. Priority:
+//  1. project .yaver/config.yaml Env.EXPO_PUBLIC_CONVEX_URL (explicit)
+//  2. /etc/yaver/convex-selfhosted.json .url — present only on a
+//     hosted-tier box (Phase 1 cloud-init), so the developer never
+//     wires a backend URL: the box IS the backend.
+// Empty slice when neither applies (byok / local dev → unchanged).
+// EXPO_PUBLIC_ is Expo's convention for values baked into the JS
+// bundle, which is exactly what a Hermes-pushed guest app reads.
+func hostedConvexBuildEnv(workDir string) []string {
+	if cfg, err := LoadProjectConfig(workDir); err == nil && cfg != nil {
+		if u := strings.TrimSpace(cfg.Env["EXPO_PUBLIC_CONVEX_URL"]); u != "" {
+			return []string{"EXPO_PUBLIC_CONVEX_URL=" + u}
+		}
+	}
+	credFile := os.Getenv("CONVEX_SELFHOSTED_FILE")
+	if credFile == "" {
+		credFile = "/etc/yaver/convex-selfhosted.json"
+	}
+	if data, err := os.ReadFile(credFile); err == nil {
+		var hosted struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal(data, &hosted) == nil {
+			if u := strings.TrimSpace(hosted.URL); u != "" {
+				return []string{"EXPO_PUBLIC_CONVEX_URL=" + u}
+			}
+		}
+	}
+	return nil
+}
+
 func bundleCommand(ctx context.Context, packageManager, framework, platform, entryFile, bundlePath, assetsDir string, resetCache bool) *exec.Cmd {
 	expoArgs := []string{"expo", "export:embed", "--platform", platform, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true"}
 	rnArgs := []string{"react-native", "bundle", "--platform", platform, "--entry-file", entryFile, "--bundle-output", bundlePath, "--assets-dest", assetsDir, "--dev", "false", "--minify", "true"}
@@ -3049,6 +3082,14 @@ func (s *HTTPServer) handleBuildNativeBundle(w http.ResponseWriter, r *http.Requ
 	// Linux OOM-killer starts reaping. Without this cap, node will try
 	// to grow its heap to the full machine size and SIGKILL itself.
 	cmd.Env = append(augmentEnv(nil), "NODE_ENV=production", "NODE_OPTIONS=--max-old-space-size=5120")
+	// Hosted-tier: bake the box's own self-hosted Convex URL into the
+	// bundle so the developer's app — and every friend who Hermes-loads
+	// it inside the Yaver container — points at the right backend with
+	// no manual config. No-op on byok/local (helper returns nil).
+	if convexEnv := hostedConvexBuildEnv(workDir); len(convexEnv) > 0 {
+		cmd.Env = append(cmd.Env, convexEnv...)
+		log.Printf("[super-host] hosted Convex baked into bundle: %s", convexEnv[0])
+	}
 
 	log.Printf("[super-host] bundling with command: %v", cmd.Args)
 	logW := &devLogWriter{prefix: "[super-host]"}
