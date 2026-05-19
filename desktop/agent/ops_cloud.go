@@ -211,6 +211,18 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 		// ownership-checked path — never this raw verb.
 		Snapshot       bool `json:"snapshot"`
 		Confirm        bool `json:"confirm"`
+		// Convex device row (deviceId UUID) to deregister as part of
+		// teardown. The cloud server is about to be destroyed, so the
+		// row must be removed by whoever runs this — there is no
+		// "agent deregisters itself afterward" in the self-decommission
+		// case (the box IS the thing being deleted, and selfMode means
+		// no other control device exists to clean up). We deregister
+		// FIRST, while the box still has network, THEN delete the
+		// server. Without this the row is orphaned forever and the dead
+		// box lingers as a ghost in the device list. This is the Convex
+		// row only — independent of the self-destruct *resource* guard
+		// above, which protects the cloud resource, not the registry.
+		RemoveDeviceRow string `json:"removeDeviceRow"`
 	}
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return OpsResult{OK: false, Code: "bad_payload", Error: err.Error()}
@@ -233,6 +245,20 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 	if p.Snapshot {
 		skipSnapshot = "false"
 	}
+	// Deregister the Convex device row BEFORE deleting the server, so
+	// the box still has network to make the call. A failure here must
+	// NOT abort the destroy — a stranded, billed cloud server is worse
+	// than a ghost row (which decays once heartbeats go stale and can
+	// be cleared by hand). Surface it as a warning instead.
+	deregWarn := ""
+	if row := strings.TrimSpace(p.RemoveDeviceRow); row != "" {
+		if cfg, err := LoadConfig(); err != nil || cfg == nil ||
+			strings.TrimSpace(cfg.ConvexSiteURL) == "" || strings.TrimSpace(cfg.AuthToken) == "" {
+			deregWarn = "agent not authenticated to Convex"
+		} else if derr := RemoveDeviceShutdown(cfg.ConvexSiteURL, cfg.AuthToken, row); derr != nil {
+			deregWarn = derr.Error()
+		}
+	}
 	res := mcpCloudDestroy(string(HostHetzner), strings.TrimSpace(p.ServerID),
 		fmt.Sprintf(`{"confirm":"true","skipSnapshot":"%s"}`, skipSnapshot))
 	if m, ok := res.(map[string]interface{}); ok {
@@ -240,7 +266,14 @@ func opsCloudDestroyHandler(_ OpsContext, payload json.RawMessage) OpsResult {
 			return OpsResult{OK: false, Code: "destroy_failed", Error: fmt.Sprintf("%v", e), Initial: res}
 		}
 	}
-	return OpsResult{OK: true, Initial: res}
+	// Carry the provider result plus the deregister outcome so the web
+	// dialog can tell the user whether the row was actually removed
+	// (rather than optimistically claiming "deleted").
+	out := map[string]interface{}{"result": res, "deregistered": deregWarn == ""}
+	if deregWarn != "" {
+		out["deregisterWarning"] = deregWarn
+	}
+	return OpsResult{OK: true, Initial: out}
 }
 
 // opsCloudStatusHandler proxies GET /subscription so MCP/mobile can

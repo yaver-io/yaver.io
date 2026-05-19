@@ -451,6 +451,15 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
       // and the user has confirmed via the destructive button.
       const res = await callOps("cloud_destroy", {
         serverId: resourceId.trim(),
+        // Convex device row to deregister as part of teardown. Sent in
+        // BOTH paths: the cloud server is about to vanish, so the row
+        // must be removed by whoever runs the destroy. In selfMode the
+        // box deregisters ITSELF first (its last act with network) then
+        // deletes its own server — there's no other device to clean up
+        // after. Without this the row is orphaned forever and the dead
+        // box shows as a ghost in the device list. Distinct from the
+        // self-destruct *resource* guard (targetDeviceId) below.
+        removeDeviceRow: deviceId,
         ...(selfMode ? {} : { targetDeviceId: deviceId }),
         snapshot,
         confirm: true,
@@ -460,8 +469,12 @@ export function RecycleBoxDialog({ device, devices, primaryDeviceId, token, onCl
         setError(r.error || (res as any).error || "remove failed");
         setPhase("form");
       } else {
+        const dereg = String(r.deregisterWarning || "").trim();
         setSteps([
           `${snapshot ? "Snapshot taken, then " : ""}cloud resource ${resolvedLabel || resourceId.trim()} deleted${snapshot ? "" : " (no snapshot)"}`,
+          dereg
+            ? `⚠ device row not auto-removed (${dereg}) — it will drop off once heartbeats go stale, or remove it manually`
+            : "device deregistered — it will drop off the list now",
         ]);
         setPhase("done");
       }

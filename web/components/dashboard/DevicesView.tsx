@@ -2142,7 +2142,14 @@ export default function DevicesView({
                         devices={devices}
                         primaryDeviceId={primaryDeviceId}
                         token={token}
-                        onClose={() => setRecycleFor(null)}
+                        onClose={() => {
+                          setRecycleFor(null);
+                          // A successful remove deregisters the box's
+                          // Convex row; pull fresh so the card drops
+                          // immediately instead of lingering as a
+                          // ghost until the next poll.
+                          void onRefresh();
+                        }}
                       />
                     ) : null}
                     {!device.isGuest && token && primaryDeviceId !== device.id ? (
