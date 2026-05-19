@@ -2,7 +2,7 @@
   "feed_type": "mcp",
   "metadata": {
     "title": "Yaver",
-    "description": "Phone-first local dev MCP for Claude Code, Codex, and AI agents: install Yaver, pair mobile, run self-hosted projects, hot reload, build, deploy, and promote to managed cloud.",
+    "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
     "canonical": "https://yaver.io/.well-known/mcp.json",
     "llms_txt": "https://yaver.io/llms.txt",
     "official_registry_manifest": "https://yaver.io/.well-known/mcp/server.json"

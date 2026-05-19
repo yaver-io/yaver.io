@@ -2,7 +2,7 @@
   "schema_version": "2026-05-19",
   "name": "io.github.kivanccakmak/yaver",
   "title": "Yaver",
-  "description": "Phone-first local dev MCP for Claude Code, Codex, and AI agents: install Yaver, pair mobile, run self-hosted projects, hot reload, build, deploy, and promote to managed cloud.",
+  "description": "Phone-first local dev MCP for Claude Code and Codex: install Yaver, pair mobile, run, build, deploy.",
   "website_url": "https://yaver.io/docs/mcp",
   "repository": "https://github.com/kivanccakmak/yaver.io",
   "registry_name": "io.github.kivanccakmak/yaver",
