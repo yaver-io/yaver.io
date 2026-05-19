@@ -330,24 +330,39 @@ func (s *HTTPServer) handlePhoneQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Slug  string                 `json:"slug"`
-		Query string                 `json:"query"`
-		Args  map[string]interface{} `json:"args"`
+		Slug  string          `json:"slug"`
+		Query string          `json:"query"`
+		Args  json.RawMessage `json:"args"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		jsonError(w, http.StatusBadRequest, "invalid json")
+		jsonError(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	if body.Slug == "" || body.Query == "" {
 		jsonError(w, http.StatusBadRequest, "slug and query required")
 		return
 	}
+	// args is optional and tolerant: omitted / null / [] / {} all mean
+	// "no named params". An object binds named params. Anything else is
+	// a precise 400 — not a misleading "invalid json" (the JSON parsed
+	// fine; the shape is wrong).
+	argsMap := map[string]interface{}{}
+	if raw := strings.TrimSpace(string(body.Args)); raw != "" && raw != "null" && raw != "[]" {
+		if raw[0] != '{' {
+			jsonError(w, http.StatusBadRequest, `args must be a JSON object of named params (e.g. {"id":"abc"})`)
+			return
+		}
+		if err := json.Unmarshal(body.Args, &argsMap); err != nil {
+			jsonError(w, http.StatusBadRequest, "args must be a JSON object of named params: "+err.Error())
+			return
+		}
+	}
 	adapter, err := PhoneAdapter(body.Slug)
 	if err != nil {
 		jsonError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	result, err := adapter.Query(body.Query, body.Args)
+	result, err := adapter.Query(body.Query, argsMap)
 	if err != nil {
 		jsonError(w, http.StatusBadRequest, err.Error())
 		return
