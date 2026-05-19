@@ -1538,58 +1538,108 @@ type PhoneImportOptions struct {
 // The CLI calls it from `yaver phone push`.
 //
 // The returned project is fully loaded (schema/auth/seed/stats populated).
+// bundleFormat returns "gzip", "zip", or "" by magic bytes. The phone
+// can hand the agent either: .tgz (legacy/push) or .zip (the
+// coding-agent / OS-friendly twin). Both materialise identically.
+func bundleFormat(data []byte) string {
+	if len(data) >= 4 && data[0] == 0x50 && data[1] == 0x4b && data[2] == 0x03 && data[3] == 0x04 {
+		return "zip"
+	}
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+		return "gzip"
+	}
+	return ""
+}
+
+// addPart applies the shared traversal-safety + top-level-dir rule
+// used by both archive readers, so .tgz and .zip import identically.
+func addPart(parts map[string][]byte, topDir *string, name string, content []byte) error {
+	if strings.HasPrefix(name, "/") || strings.Contains(name, "..") {
+		return fmt.Errorf("unsafe bundle entry: %s", name)
+	}
+	idx := strings.IndexByte(name, '/')
+	if idx <= 0 {
+		parts[name] = content
+		return nil
+	}
+	if *topDir == "" {
+		*topDir = name[:idx]
+	}
+	parts[name[idx+1:]] = content
+	return nil
+}
+
+// decodeBundleParts sniffs the archive format and returns the file set
+// (keyed by path under the top-level dir) + that top dir. Format-
+// agnostic so receive accepts .tgz AND .zip from the phone.
+func decodeBundleParts(data []byte) (map[string][]byte, string, error) {
+	parts := map[string][]byte{}
+	var topDir string
+	switch bundleFormat(data) {
+	case "zip":
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return nil, "", fmt.Errorf("unzip: %w", err)
+		}
+		for _, f := range zr.File {
+			if f.FileInfo().IsDir() {
+				continue
+			}
+			rc, err := f.Open()
+			if err != nil {
+				return nil, "", fmt.Errorf("zip entry %s: %w", f.Name, err)
+			}
+			b, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				return nil, "", err
+			}
+			if err := addPart(parts, &topDir, f.Name, b); err != nil {
+				return nil, "", err
+			}
+		}
+	case "gzip":
+		gz, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return nil, "", fmt.Errorf("gunzip: %w", err)
+		}
+		defer gz.Close()
+		tr := tar.NewReader(gz)
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return nil, "", fmt.Errorf("tar: %w", err)
+			}
+			if hdr.Typeflag != tar.TypeReg {
+				continue
+			}
+			b, err := io.ReadAll(tr)
+			if err != nil {
+				return nil, "", err
+			}
+			if err := addPart(parts, &topDir, hdr.Name, b); err != nil {
+				return nil, "", err
+			}
+		}
+	default:
+		return nil, "", fmt.Errorf("unrecognised bundle format (expected .tgz or .zip)")
+	}
+	if topDir == "" {
+		return nil, "", fmt.Errorf("bundle missing top-level directory")
+	}
+	return parts, topDir, nil
+}
+
 func ImportPhoneProject(tgz []byte, opts PhoneImportOptions) (*PhoneProject, error) {
 	if len(tgz) == 0 {
 		return nil, fmt.Errorf("empty bundle")
 	}
-	gz, err := gzip.NewReader(bytes.NewReader(tgz))
+	parts, topDir, err := decodeBundleParts(tgz)
 	if err != nil {
-		return nil, fmt.Errorf("gunzip: %w", err)
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
-
-	// Files we care about, keyed by base path (stripped of the top-level dir).
-	parts := map[string][]byte{}
-	var topDir string
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("tar: %w", err)
-		}
-		// Reject absolute / traversal paths — belt-and-suspenders against a
-		// hostile bundle.
-		if strings.HasPrefix(hdr.Name, "/") || strings.Contains(hdr.Name, "..") {
-			return nil, fmt.Errorf("unsafe tar entry: %s", hdr.Name)
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		// First directory component is treated as the slug root.
-		idx := strings.IndexByte(hdr.Name, '/')
-		if idx <= 0 {
-			// Bundle without a top-level dir; treat filename as-is.
-			b, err := io.ReadAll(tr)
-			if err != nil {
-				return nil, err
-			}
-			parts[hdr.Name] = b
-			continue
-		}
-		if topDir == "" {
-			topDir = hdr.Name[:idx]
-		}
-		b, err := io.ReadAll(tr)
-		if err != nil {
-			return nil, err
-		}
-		parts[hdr.Name[idx+1:]] = b
-	}
-	if topDir == "" {
-		return nil, fmt.Errorf("bundle missing top-level directory")
+		return nil, err
 	}
 
 	// Resolve target slug.

@@ -30,6 +30,8 @@ func (s *HTTPServer) registerPhoneRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/phone/projects/export", s.auth(s.handlePhoneExport))
 	mux.HandleFunc("/phone/projects/promote", s.auth(s.handlePhonePromote))
 	mux.HandleFunc("/phone/projects/receive", s.auth(s.handlePhoneReceive))
+	mux.HandleFunc("/phone/projects/share", s.auth(s.handlePhoneShare))
+	mux.HandleFunc("/phone/projects/join", s.auth(s.handlePhoneJoin))
 	mux.HandleFunc("/phone/projects/oauth", s.auth(s.handlePhoneOAuth))
 	mux.HandleFunc("/phone/projects/cost-hint", s.auth(s.handlePhoneCostHint))
 }
@@ -476,11 +478,62 @@ func (s *HTTPServer) handlePhoneReceive(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	proj, err := ImportPhoneProject(bundle, PhoneImportOptions{
-		SlugOverride: slug,
-		OnConflict:   onConflict,
-		SkipSeed:     skipSeed,
-	})
+	importOpts := PhoneImportOptions{SlugOverride: slug, OnConflict: onConflict, SkipSeed: skipSeed}
+
+	// Streaming path: the phone sees live status (received → unpacking
+	// → materializing → [hosted backend] → ready) instead of a blocked
+	// spinner. Same import; SSE bracketing. Opt in via ?stream=1 or
+	// Accept: text/event-stream — default JSON keeps push/CLI clients
+	// byte-compatible.
+	if r.URL.Query().Get("stream") == "1" || strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			jsonError(w, http.StatusInternalServerError, "streaming unsupported")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.WriteHeader(http.StatusOK)
+		send := func(typ string, kv map[string]interface{}) {
+			if kv == nil {
+				kv = map[string]interface{}{}
+			}
+			kv["type"] = typ
+			b, _ := json.Marshal(kv)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		}
+		send("received", map[string]interface{}{"bytes": len(bundle), "format": bundleFormat(bundle)})
+		send("unpacking", nil)
+		proj, err := ImportPhoneProject(bundle, importOpts)
+		if err != nil {
+			send("error", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		tables := 0
+		if proj.Schema != nil {
+			tables = len(proj.Schema.Tables)
+		}
+		send("materialized", map[string]interface{}{"slug": proj.Slug, "tables": tables})
+		// Hosted-tier box: tell the phone which backend the app will
+		// use (auto-wired) so it can show "running on <url>".
+		if env := hostedConvexBuildEnv(proj.Dir); len(env) > 0 {
+			send("hosted", map[string]interface{}{
+				"convexUrl": strings.TrimPrefix(env[0], "EXPO_PUBLIC_CONVEX_URL="),
+				"deploy":    "yaver deploy --target=selfhosted",
+			})
+		}
+		send("ready", map[string]interface{}{
+			"project":   proj,
+			"slug":      proj.Slug,
+			"localUrl":  fmt.Sprintf("/phone/projects/get?slug=%s", proj.Slug),
+			"browseUrl": fmt.Sprintf("/phone/projects/browse?slug=%s", proj.Slug),
+		})
+		return
+	}
+
+	proj, err := ImportPhoneProject(bundle, importOpts)
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrPhoneProjectExists) {

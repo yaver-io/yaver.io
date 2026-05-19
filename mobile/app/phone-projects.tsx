@@ -39,6 +39,8 @@ import {
   generateClarifyingQuestions,
   listPhoneProjects,
   listPhoneTemplates,
+  sharePhoneProject,
+  joinPhoneShare,
 } from "../src/lib/phoneProjects";
 
 type StartMode = "this-phone" | "current-agent" | "dev-hw" | "yaver-cloud";
@@ -644,6 +646,73 @@ export default function PhoneProjectsScreen() {
     ]);
   }
 
+  async function share(p: PhoneProject) {
+    try {
+      const sh = await sharePhoneProject(p.slug);
+      const where = sh.hostedConvexUrl
+        ? `\n\nFriends see your live backend:\n${sh.hostedConvexUrl}`
+        : "";
+      Alert.alert(
+        "Share with a friend",
+        `Code: ${sh.code}\n\nThey open Yaver → "Join by code" and enter it to try "${p.name}".${where}`,
+        [{ text: "OK" }],
+      );
+    } catch (e: any) {
+      Alert.alert("Share", e?.message ?? "Could not create a share code.");
+    }
+  }
+
+  function projectActions(p: PhoneProject) {
+    Alert.alert(p.name, undefined, [
+      { text: "Share with a friend", onPress: () => void share(p) },
+      { text: "Delete", style: "destructive", onPress: () => void remove(p) },
+      { text: "Cancel", style: "cancel" },
+    ]);
+  }
+
+  function joinByCode() {
+    const go = async (code: string) => {
+      const trimmed = (code || "").trim();
+      if (!trimmed) return;
+      try {
+        const sh = await joinPhoneShare(trimmed);
+        Alert.alert(
+          "Joined",
+          `"${sh.name}" is ready.${
+            sh.hostedConvexUrl ? `\nBackend: ${sh.hostedConvexUrl}` : ""
+          }`,
+          [
+            {
+              text: "Open",
+              onPress: () =>
+                router.navigate(`/phone-project/${sh.slug}` as any),
+            },
+            { text: "Later", style: "cancel" },
+          ],
+        );
+        await load();
+      } catch (e: any) {
+        Alert.alert("Join by code", e?.message ?? "Invalid or expired code.");
+      }
+    };
+    if (Platform.OS === "ios" && (Alert as any).prompt) {
+      (Alert as any).prompt(
+        "Join by code",
+        "Enter the code a friend shared with you.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Join", onPress: (v: string) => void go(v) },
+        ],
+        "plain-text",
+      );
+    } else {
+      Alert.alert(
+        "Join by code",
+        "Code entry is available on iOS. On Android, ask the host to push the project to your device.",
+      );
+    }
+  }
+
   const header = useMemo(
     () => (
       <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
@@ -665,9 +734,18 @@ export default function PhoneProjectsScreen() {
             </Text>
             {projects.length > 0 ? (
               <Text style={[styles.muted, { color: c.textMuted, marginTop: 4 }]}>
-                Or tap one of your {projects.length === 1 ? "existing project" : `${projects.length} existing projects`} below to open it.
+                Or tap one of your {projects.length === 1 ? "existing project" : `${projects.length} existing projects`} below to open it. Long-press to share.
               </Text>
             ) : null}
+            <Pressable
+              onPress={() => joinByCode()}
+              style={[
+                styles.btn,
+                { backgroundColor: "transparent", borderWidth: 1, borderColor: c.border, marginTop: 10 },
+              ]}
+            >
+              <Text style={[styles.btnText, { color: c.textPrimary }]}>Join by code</Text>
+            </Pressable>
           </>
         ) : (
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border, marginTop: 12 }]}>
@@ -1441,7 +1519,7 @@ Example: "Browser-based checkers with a tiny lobby. Two friends paste a 4-letter
           <View style={{ paddingHorizontal: 16, paddingTop: 12 }}>
             <Pressable
               onPress={() => router.navigate(`/phone-project/${item.slug}` as any)}
-              onLongPress={() => remove(item)}
+              onLongPress={() => projectActions(item)}
               style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}
             >
               <Text style={[styles.projectName, { color: c.textPrimary }]}>{item.name}</Text>

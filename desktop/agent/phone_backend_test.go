@@ -656,3 +656,75 @@ func TestTemplatesAreJSONSerialisable(t *testing.T) {
 		}
 	}
 }
+
+func TestBundleFormatSniff(t *testing.T) {
+	if got := bundleFormat([]byte{0x50, 0x4b, 0x03, 0x04, 0x00}); got != "zip" {
+		t.Errorf("PK magic → %q, want zip", got)
+	}
+	if got := bundleFormat([]byte{0x1f, 0x8b, 0x08}); got != "gzip" {
+		t.Errorf("gzip magic → %q, want gzip", got)
+	}
+	if got := bundleFormat([]byte("not an archive")); got != "" {
+		t.Errorf("garbage → %q, want empty", got)
+	}
+	if got := bundleFormat(nil); got != "" {
+		t.Errorf("nil → %q, want empty", got)
+	}
+}
+
+// The agent must import the SAME project whether the phone sent a .tgz
+// or the new .zip — the receive layer is format-agnostic so a coding
+// agent / OS-zipped bundle "just works" on self-hosted or cloud.
+func TestImportPhoneProject_ZipAndTgzParity(t *testing.T) {
+	setupPhoneTestHome(t)
+	src, err := CreatePhoneProject(PhoneCreateSpec{Name: "Parity Src", Template: "todos"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	opts := PhoneExportOptions{IncludeData: true}
+	tgz, err := ExportPhoneProjectWithOptions(src.Slug, opts)
+	if err != nil {
+		t.Fatalf("tgz: %v", err)
+	}
+	zipb, err := ExportPhoneProjectZip(src.Slug, opts)
+	if err != nil {
+		t.Fatalf("zip: %v", err)
+	}
+
+	fromTgz, err := ImportPhoneProject(tgz, PhoneImportOptions{SlugOverride: "from-tgz"})
+	if err != nil {
+		t.Fatalf("import tgz: %v", err)
+	}
+	fromZip, err := ImportPhoneProject(zipb, PhoneImportOptions{SlugOverride: "from-zip"})
+	if err != nil {
+		t.Fatalf("import zip: %v", err)
+	}
+
+	tt, zt := 0, 0
+	if fromTgz.Schema != nil {
+		tt = len(fromTgz.Schema.Tables)
+	}
+	if fromZip.Schema != nil {
+		zt = len(fromZip.Schema.Tables)
+	}
+	if tt == 0 || tt != zt {
+		t.Fatalf("table count mismatch: tgz=%d zip=%d", tt, zt)
+	}
+	// Seeded rows must survive the zip path identically.
+	za, err := PhoneAdapter(fromZip.Slug)
+	if err != nil {
+		t.Fatalf("adapter: %v", err)
+	}
+	res, err := za.Browse("todos", "", 50)
+	if err != nil {
+		t.Fatalf("browse zip-imported todos: %v", err)
+	}
+	if len(res.Rows) < 3 {
+		t.Errorf("zip import lost seed rows: got %d todos", len(res.Rows))
+	}
+
+	// A corrupt/unknown blob is rejected, not silently empty-imported.
+	if _, err := ImportPhoneProject([]byte("garbage-not-an-archive"), PhoneImportOptions{}); err == nil {
+		t.Error("expected error importing a non-archive blob")
+	}
+}
