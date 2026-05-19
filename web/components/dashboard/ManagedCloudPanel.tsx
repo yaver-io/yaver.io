@@ -128,6 +128,122 @@ function ManagedMachineActions({ deviceId }: { deviceId?: string }) {
   );
 }
 
+// RunnerAuthCTA — #9: one-click runner OAuth for a managed box.
+// Drives the runner_auth ops verb (browser device-code flow) exactly
+// like git_connect: start → open URL → poll → on done flip Convex
+// runnersAuthorized so the UI clears Unauthorized. Subscription
+// OAuth, never API keys; tokens land on the box P2P, never Convex.
+function RunnerAuthCTA({
+  deviceId,
+  machineId,
+  token,
+  onAuthorized,
+}: {
+  deviceId?: string;
+  machineId: string;
+  token: string | null | undefined;
+  onAuthorized: () => void;
+}) {
+  const [sess, setSess] = useState<{ id: string; uri: string; code: string; runner: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (!deviceId) {
+    return (
+      <span className="text-[11px] text-slate-400">
+        Authorize unlocks once the box has registered its agent.
+      </span>
+    );
+  }
+
+  const start = async (runner: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await agentClient.callOps("runner_auth", { op: "browser_start", runner, deviceId });
+      const init = (r as any)?.initial ?? {};
+      const uri = init.verification_uri || init.verificationUri;
+      const code = init.user_code || init.userCode;
+      const id = init.sessionId || init.session_id;
+      if ((r as any)?.ok === false || !uri || !id) {
+        setMsg(`✗ ${(r as any)?.error || "could not start auth"}`);
+        return;
+      }
+      setSess({ id, uri, code: code || "", runner });
+      window.open(uri, "_blank", "noopener");
+    } catch (e: any) {
+      setMsg(`✗ ${e?.message || String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const check = async () => {
+    if (!sess) return;
+    setBusy(true);
+    try {
+      const r = await agentClient.callOps("runner_auth", { op: "browser_status", sessionId: sess.id, deviceId });
+      const st = (r as any)?.initial?.state ?? (r as any)?.initial?.status;
+      if (st === "done" || st === "authorized") {
+        setMsg(`✓ ${sess.runner} authorized`);
+        setSess(null);
+        try {
+          await fetch(`${CONVEX_URL}/billing/yaver-cloud/runners-authorized`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ machineId }),
+          });
+        } catch {
+          /* non-fatal — reconcile self-corrects */
+        }
+        onAuthorized();
+      } else {
+        setMsg(`state: ${st ?? "pending"}`);
+      }
+    } catch (e: any) {
+      setMsg(`✗ ${e?.message || String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      {!sess ? (
+        <>
+          <button
+            disabled={busy}
+            onClick={() => void start("claude")}
+            className="rounded border border-amber-500/50 px-2 py-0.5 font-semibold text-amber-700 disabled:opacity-50 dark:text-amber-300"
+          >
+            {busy ? "…" : "Authorize Claude"}
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => void start("codex")}
+            className="rounded border border-slate-300 px-2 py-0.5 font-semibold disabled:opacity-50 dark:border-surface-700"
+          >
+            Codex
+          </button>
+        </>
+      ) : (
+        <button
+          disabled={busy}
+          onClick={() => void check()}
+          className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+        >
+          ✓ I authorized {sess.runner} {sess.code ? `(${sess.code})` : ""}
+        </button>
+      )}
+      {msg ? (
+        <span className={`text-[10px] ${msg.startsWith("✗") ? "text-rose-500" : "text-slate-500 dark:text-surface-400"}`}>
+          {msg}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 export function ManagedCloudPanel({ token }: { token: string | null | undefined }) {
   const [machines, setMachines] = useState<ManagedMachine[]>([]);
   const [open, setOpen] = useState(false);
@@ -427,15 +543,14 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                             ⚠ Unauthorized
                           </span>
                           <span className="text-slate-500 dark:text-surface-400">
-                            Box is up, but your coding agents aren’t signed in yet.
+                            Box is up — sign your coding agents in:
                           </span>
-                          <button
-                            disabled
-                            title="Runner authorization is rolling out — your box is up; one-click agent sign-in lands next"
-                            className="rounded border border-slate-300 px-2 py-0.5 font-semibold opacity-50 dark:border-surface-700"
-                          >
-                            Authorize runners
-                          </button>
+                          <RunnerAuthCTA
+                            deviceId={m.deviceId}
+                            machineId={m.id}
+                            token={token}
+                            onAuthorized={() => void load()}
+                          />
                         </div>
                       );
                     }

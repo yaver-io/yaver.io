@@ -21,6 +21,22 @@
 # remote-OAuth sync (yaver + claude-code + codex + opencode) and the
 # GLM api-key setting survive container restarts / image upgrades.
 
+# ── Stage 1: build the Yaver Go agent FROM SOURCE ────────────────────
+# The image build context is desktop/agent (see
+# .github/workflows/build-yaver-cloud-image.yml) — i.e. the agent
+# source + go.mod. Building from source (not fetching a release
+# tarball) means every image — and therefore every provisioned box —
+# runs the EXACT agent on this commit, including new ops verbs
+# (e.g. runner_auth) without waiting on a cli/v* release. Also
+# permanently removes the brittle "raw asset vs .tar.gz" fetch class.
+FROM golang:1.26-bookworm AS agentbuild
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver .
+
+# ── Stage 2: runtime ─────────────────────────────────────────────────
 FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -75,20 +91,12 @@ RUN npm install -g \
       @openai/codex@latest \
       opencode-ai@latest 2>/dev/null || true
 
-# ── Yaver Go agent ───────────────────────────────────────────────────
-# Pinned-at-build to the latest published release tarball (single file
-# `yaver` inside yaver-linux-<arch>.tar.gz — raw-asset path was removed,
-# see release-cli.yml). The VM cloud-init can `docker pull` a newer
-# image tag to upgrade; we deliberately do NOT self-update inside the
-# container so the running agent version is deterministic per image.
-RUN ARCH=$(dpkg --print-architecture) \
-    && case "$ARCH" in amd64) A=amd64;; arm64) A=arm64;; *) A=amd64;; esac \
-    && curl -fsSL "https://github.com/kivanccakmak/yaver.io/releases/latest/download/yaver-linux-${A}.tar.gz" \
-         -o /tmp/yaver.tgz \
-    && tar -xzf /tmp/yaver.tgz -C /usr/local/bin yaver \
-    && chmod +x /usr/local/bin/yaver \
-    && rm -f /tmp/yaver.tgz \
-    && /usr/local/bin/yaver --version >/dev/null 2>&1
+# ── Yaver Go agent (built from source in stage 1) ────────────────────
+# Deterministic per image: this is the agent on the building commit,
+# so provisioned boxes get new ops verbs (runner_auth, …) immediately
+# on the next image build — no cli/v* release dependency.
+COPY --from=agentbuild /out/yaver /usr/local/bin/yaver
+RUN chmod +x /usr/local/bin/yaver && /usr/local/bin/yaver --version >/dev/null 2>&1
 
 # Persisted dirs (remote-OAuth + caches) — mounted as a Docker volume
 # so claude/codex/opencode/gh/glab/yaver auth + GLM api-key survive
