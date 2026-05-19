@@ -4755,10 +4755,14 @@ http.route({
   path: "/machine/phase",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const body = await request.json().catch(() => ({}));
-    const auth = await authenticateMachineRequest(ctx, request, body.machineId ?? null);
+    // Accept query params (cloud-init posts these — no JSON body, to
+    // keep the runcmd YAML list-form quote-safe) OR a JSON body.
+    const qs = new URL(request.url).searchParams;
+    const body = await request.json().catch(() => ({} as any));
+    const machineId = qs.get("machineId") ?? body.machineId ?? null;
+    const auth = await authenticateMachineRequest(ctx, request, machineId);
     if (!auth.ok) return errorResponse(auth.error, auth.status);
-    const phase = String(body.phase ?? "").trim();
+    const phase = String(qs.get("phase") ?? body.phase ?? "").trim();
     // Default progress per phase so the box only has to send a label.
     const PCT: Record<string, number> = {
       "installing-docker": 45,

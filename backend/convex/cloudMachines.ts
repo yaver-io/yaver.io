@@ -163,13 +163,16 @@ export function buildManagedCloudInitContainer(
     `-e CONVEX_SELFHOSTED_FILE=/root/.yaver/convex-selfhosted.json`;
 
   // Non-fatal onboarding-phase tick → /machine/phase (machine-token
-  // authed). Values inlined at build time (no machine.json timing
-  // dependency); `|| true` so a reporting hiccup never breaks the
-  // proven provision. Drives the web/mobile progress bar.
+  // authed). MUST be cloud-init YAML **list form** ([sh, -c, "..."]):
+  // the earlier `- 'curl ... -d '{json}' ...'` had nested single
+  // quotes → invalid YAML → cloud-init dropped the ENTIRE runcmd →
+  // boxes stuck forever (no docker, no agent). List form has zero
+  // quoting fragility. machineId/phase go as URL query params (simple
+  // hex/kebab — no escaping); token in a header; `|| true` keeps it
+  // non-fatal. machineToken/machineId/convexSite are build-time-known
+  // simple strings (no quotes), safe in the double-quoted scalar.
   const phasePost = (phase: string) =>
-    `  - 'curl -fsS -m 8 -X POST -H "X-Machine-Token: ${spec.machineToken}" -H "Content-Type: application/json" -d ${shellSingleQuote(
-      JSON.stringify({ machineId: spec.machineId, phase }),
-    )} ${spec.convexSite}/machine/phase >/dev/null 2>&1 || true'\n`;
+    `  - [ sh, -c, "curl -fsS -m 8 -X POST -H 'X-Machine-Token: ${spec.machineToken}' '${spec.convexSite}/machine/phase?machineId=${spec.machineId}&phase=${phase}' >/dev/null 2>&1 || true" ]\n`;
 
   return `#cloud-config
 package_update: true
