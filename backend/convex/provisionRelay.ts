@@ -83,7 +83,9 @@ export const provision = internalAction({
 
       // CAX11 is arm64 — pick the matching yaver release asset. If you
       // later switch to an amd64 server_type, flip the asset name here.
-      const yaverAsset = "yaver-linux-arm64";
+      // The release ships the binary inside a .tar.gz (single file
+      // named `yaver`), never as a raw asset — extract on the box.
+      const yaverAsset = "yaver-linux-arm64.tar.gz";
       const yaverReleaseUrl = `https://github.com/kivanccakmak/yaver.io/releases/latest/download/${yaverAsset}`;
 
       const cloudConfig = `#cloud-config
@@ -109,8 +111,10 @@ runcmd:
   # devops console (yaver sdk-token, yaver dns *, yaver guests *, etc.)
   # without SSHing in with extra tooling. Non-fatal on failure.
   - |
-    ( curl -fsSL "${yaverReleaseUrl}" -o /usr/local/bin/yaver \
+    ( curl -fsSL "${yaverReleaseUrl}" -o /tmp/yaver.tgz \
+      && tar -xzf /tmp/yaver.tgz -C /usr/local/bin yaver \
       && chmod +x /usr/local/bin/yaver \
+      && rm -f /tmp/yaver.tgz \
       && /usr/local/bin/yaver --version >/dev/null 2>&1 ) || echo "[cloud-init] yaver install skipped (release not yet published for arm64)"
   - mkdir -p /opt/yaver-relay
   - |
