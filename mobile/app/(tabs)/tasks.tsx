@@ -67,6 +67,12 @@ import { loadTaskVideoSummaryEnabled } from "../../src/lib/taskComposerPrefs";
 import { withAlpha } from "../../src/lib/themeUtils";
 import { lightCardShadow, monoFamily, spacing, typography } from "../../src/theme/tokens";
 import { useResponsiveLayout } from "../../src/hooks/useResponsiveLayout";
+import { CommandsPanel } from "../../src/components/CommandCard";
+import {
+  isCommandEvent,
+  reduceCommandEvent,
+  type CommandCardModel,
+} from "../../src/lib/commandEvents";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
 import { taskHaptics } from "../../src/lib/taskHaptics";
 import { MessageBubble } from "../../src/components/MessageBubble";
@@ -1497,6 +1503,13 @@ export default function TasksScreen() {
     vaultHint?: string;
   } | null>(null);
   const [agentAnswerText, setAgentAnswerText] = useState("");
+  // Structured command-card models, keyed taskId → commandId. Fed by
+  // command_* SSE events (see the onEvent handler); rendered as a
+  // foldable "Commands" section in the chat footer. Per-task so
+  // switching tasks doesn't bleed cards.
+  const [cmdCardsByTask, setCmdCardsByTask] = useState<
+    Record<string, Record<string, CommandCardModel>>
+  >({});
   // Claude-Code-style choice state: which options are checked (multi)
   // and whether the free-text "Other…" row is expanded. Reset every
   // time a new question opens (see the stream consumer + late-join).
@@ -2016,6 +2029,16 @@ export default function TasksScreen() {
         // any device on the same account answers, and
         // agent_question_cancelled on timeout / task stop.
         if (!evt || typeof evt.type !== "string") return;
+        // Structured shell-command events → fold into per-task card
+        // models for the foldable Commands section. P2P only.
+        if (isCommandEvent(evt)) {
+          const tid = selectedTask.id;
+          setCmdCardsByTask((prev) => ({
+            ...prev,
+            [tid]: reduceCommandEvent(prev[tid] || {}, evt),
+          }));
+          return;
+        }
         if (evt.type === "agent_question" && evt.question) {
           const q = evt.question as {
             id: string;
@@ -5125,6 +5148,7 @@ export default function TasksScreen() {
                           })}
                           defaultExpanded={selectedTask.status === "failed"}
                         />
+                        <CommandsPanel models={cmdCardsByTask[selectedTask.id]} />
                         <DebugSection task={selectedTask} connMode={connMode} c={c} />
                       </>
                     }

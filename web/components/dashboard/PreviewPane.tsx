@@ -3,6 +3,12 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { agentClient, type MobileWorkerPreviewSession, type Runner, type TaskStatus } from "@/lib/agent-client";
 import pkg from "../../package.json";
+import { CommandCard } from "./CommandCard";
+import {
+  isCommandEvent,
+  reduceCommandEvent,
+  type CommandCardModel,
+} from "../../lib/command-events";
 
 // Surface the running web bundle version inside the dashboard so
 // users can tell at a glance whether their browser is on the latest
@@ -191,6 +197,7 @@ export default function PreviewPane({
     title: string;
     status: TaskStatus;
     lines: string[];
+    commands: Record<string, CommandCardModel>;
   } | null>(null);
   // Runner + model surfacing: the device card already shows
   // `runner: <name>`, but during a vibing session the user is staring
@@ -985,20 +992,36 @@ export default function PreviewPane({
         title: task.title,
         status: task.status,
         lines: [],
+        commands: {},
       });
-      taskStreamStopRef.current = agentClient.streamTaskOutput(task.id, (line) => {
-        const trimmed = String(line || "").trimEnd();
-        if (!trimmed) return;
-        setActiveTaskStream((prev) => {
-          if (!prev || prev.id !== task.id) return prev;
-          const next = [...prev.lines, trimmed];
-          return {
-            ...prev,
-            status: "running",
-            lines: next.length > 200 ? next.slice(-200) : next,
-          };
-        });
-      });
+      taskStreamStopRef.current = agentClient.streamTaskOutput(
+        task.id,
+        (line) => {
+          const trimmed = String(line || "").trimEnd();
+          if (!trimmed) return;
+          setActiveTaskStream((prev) => {
+            if (!prev || prev.id !== task.id) return prev;
+            const next = [...prev.lines, trimmed];
+            return {
+              ...prev,
+              status: "running",
+              lines: next.length > 200 ? next.slice(-200) : next,
+            };
+          });
+        },
+        (evt) => {
+          // Structured shell-command events → foldable CommandCards.
+          // P2P only (task SSE stream), never Convex.
+          if (!isCommandEvent(evt)) return;
+          setActiveTaskStream((prev) => {
+            if (!prev || prev.id !== task.id) return prev;
+            return {
+              ...prev,
+              commands: reduceCommandEvent(prev.commands, evt),
+            };
+          });
+        },
+      );
       taskPollRef.current = setInterval(() => {
         void agentClient.getTask(task.id)
           .then((fresh) => {
@@ -1535,6 +1558,18 @@ export default function PreviewPane({
                       {activeTaskStream.title}
                     </span>
                   </div>
+                  {Object.keys(activeTaskStream.commands).length > 0 && (
+                    <div className="mb-2">
+                      <div className="mb-1 font-mono text-[11px] font-semibold text-surface-400">
+                        Commands ({Object.keys(activeTaskStream.commands).length})
+                      </div>
+                      {Object.values(activeTaskStream.commands)
+                        .sort((a, b) => a.startedAt - b.startedAt)
+                        .map((m) => (
+                          <CommandCard key={m.id} model={m} />
+                        ))}
+                    </div>
+                  )}
                   <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap break-all rounded border border-surface-800 bg-surface-950 px-3 py-2 font-mono text-[10px] leading-4 text-surface-300">
                     {activeTaskStream.lines.length === 0 ? (
                       <span className="text-surface-600">

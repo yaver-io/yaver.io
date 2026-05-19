@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -41,6 +42,17 @@ type opencodeStreamFilter struct {
 	// stripped only when the line completes (avoids a partial match
 	// that could leak `\x1b` into the output).
 	leftover []byte
+
+	// task + cmdSeq drive structured command_* events (command cards).
+	// opencode's raw stream gives us the command line but no captured
+	// output or exit code (that needs the opencode server event stream
+	// — the real P3). So we emit command_start + an immediate
+	// command_end with exitKnown=false: the card renders the command
+	// with a neutral "done" badge and "(no output captured — see
+	// transcript)", while the inline `**$ cmd**` pill still carries the
+	// narrative + its output below it. task may be nil in unit tests.
+	task   *Task
+	cmdSeq int
 }
 
 // opencodeShellLineRE matches a line whose only "real" content is the
@@ -117,6 +129,15 @@ func (f *opencodeStreamFilter) writeLine(out *bytes.Buffer, line []byte, hasNewl
 		out.WriteString("\n**$ ")
 		out.WriteString(m[1])
 		out.WriteString("**\n")
+		// Structured command card (P2P only — never Convex). No output
+		// or exit available from opencode's raw stream, so close it
+		// immediately with exitKnown=false (neutral "done" badge).
+		if f.task != nil {
+			f.cmdSeq++
+			id := fmt.Sprintf("%s-oc%d", f.task.ID, f.cmdSeq)
+			emitCommandStart(f.task, id, m[1], nil, "", "opencode")
+			emitCommandEnd(f.task, id, 0, false, 0, false)
+		}
 		return
 	}
 	out.WriteString(clean)

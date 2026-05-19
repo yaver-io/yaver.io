@@ -48,6 +48,14 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"logs",
 	"logOutput",
 	"taskOutput",
+	// Structured command-card events (command_events.go). These flow
+	// P2P over the task SSE stream ONLY; if a future sync path tries to
+	// mirror a command card into Convex it trips here. `cwd` has the
+	// same username-leak problem as `workDir`; `command`/`chunk` carry
+	// shell + output text.
+	"cwd",
+	"command",
+	"chunk",
 	"fileContent",
 	"fileBytes",
 	"body", // often carries user input bodies (not to be confused with HTTP bodies here — this is arg key)
