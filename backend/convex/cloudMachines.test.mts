@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildManagedCloudInit } from "./cloudMachines.js";
+import {
+  buildManagedCloudInit,
+  planDeprovision,
+  snapshotIsMandatory,
+  HOSTED_GRACE_MS,
+} from "./cloudMachines.js";
 
 test("buildManagedCloudInit writes managed agent config and service", () => {
   const cloudInit = buildManagedCloudInit({
@@ -110,4 +115,30 @@ test("buildManagedCloudInit runs self-hosted Convex only for the hosted tier", (
     assert.match(ci, /proxy_pass http:\/\/127\.0\.0\.1:3210\//);
     assert.match(ci, /location \/_convex-http\/ \{/);
   }
+});
+
+test("planDeprovision: hosted gets a grace window, byok deletes now, force overrides", () => {
+  const now = 1_000_000;
+
+  const hosted = planDeprovision("hosted", false, now);
+  assert.equal(hosted.grace, true);
+  assert.equal(hosted.deprovisionAt, now + HOSTED_GRACE_MS);
+  assert.equal(HOSTED_GRACE_MS, 7 * 24 * 60 * 60 * 1000);
+
+  // byok is disposable — immediate delete, no grace.
+  for (const tier of ["byok", undefined]) {
+    const p = planDeprovision(tier as string | undefined, false, now);
+    assert.equal(p.grace, false);
+    assert.equal(p.deprovisionAt, undefined);
+  }
+
+  // Explicit "delete now" (force) bypasses the hosted grace.
+  const forced = planDeprovision("hosted", true, now);
+  assert.equal(forced.grace, false);
+});
+
+test("snapshotIsMandatory: only hosted (the user's only data copy)", () => {
+  assert.equal(snapshotIsMandatory("hosted"), true);
+  assert.equal(snapshotIsMandatory("byok"), false);
+  assert.equal(snapshotIsMandatory(undefined), false);
 });

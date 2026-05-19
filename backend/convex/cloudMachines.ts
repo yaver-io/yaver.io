@@ -563,7 +563,23 @@ export const ensureForSubscription = mutation({
           machine.status !== "stopped" &&
           machine.status !== "error",
       );
-    if (existing) return existing._id;
+    if (existing) {
+      // Resubscribe during the hosted grace window → cancel the
+      // pending destroy and bring the box back. Their app + DB never
+      // left the box, so this is a true resume, not a rebuild.
+      if (existing.status === "grace") {
+        if (existing.scheduledDestroyId) {
+          await ctx.scheduler.cancel(existing.scheduledDestroyId);
+        }
+        await ctx.db.patch(existing._id, {
+          status: "active",
+          deprovisionAt: undefined,
+          scheduledDestroyId: undefined,
+          updatedAt: Date.now(),
+        });
+      }
+      return existing._id;
+    }
 
     return await createCloudMachine(ctx, args);
   },
@@ -599,6 +615,7 @@ export const setStatus = internalMutation({
     machineId: v.id("cloudMachines"),
     status: v.string(),
     errorMessage: v.optional(v.string()),
+    lastSnapshotId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const patch: Record<string, unknown> = {
@@ -607,6 +624,10 @@ export const setStatus = internalMutation({
     };
     if (args.errorMessage) patch.errorMessage = args.errorMessage;
     if (args.status === "active") patch.lastHealthCheck = Date.now();
+    if (args.lastSnapshotId) {
+      patch.lastSnapshotId = args.lastSnapshotId;
+      patch.lastSnapshotAt = Date.now();
+    }
     await ctx.db.patch(args.machineId, patch);
   },
 });
@@ -922,18 +943,67 @@ export const updateStatus = mutation({
   },
 });
 
-/** Stop and deprovision a machine. */
+// ─── Phase 4: hosted-tier teardown safety (pure, unit-tested) ──────
+
+/** Grace window a hosted box is kept after subscription end. */
+export const HOSTED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * planDeprovision decides whether a teardown is immediate or deferred.
+ * A hosted box holds the user's entire app + DB — deleting it the
+ * instant a subscription lapses is data loss, so keep it for a grace
+ * window (resubscribe / export). byok boxes are disposable and an
+ * explicit force (user clicked "delete now") always deletes now.
+ */
+export function planDeprovision(
+  tier: string | undefined,
+  force: boolean,
+  now: number,
+): { grace: boolean; deprovisionAt?: number } {
+  if (tier === "hosted" && !force) {
+    return { grace: true, deprovisionAt: now + HOSTED_GRACE_MS };
+  }
+  return { grace: false };
+}
+
+/**
+ * snapshotIsMandatory: for a hosted box the pre-delete snapshot is the
+ * user's only data copy — a failed snapshot must ABORT the delete (not
+ * "best-effort continue"). byok boxes are disposable.
+ */
+export function snapshotIsMandatory(tier: string | undefined): boolean {
+  return tier === "hosted";
+}
+
+/** Stop and deprovision a machine. force=true skips the hosted grace. */
 export const deprovision = mutation({
-  args: { machineId: v.id("cloudMachines") },
-  handler: async (ctx, { machineId }) => {
+  args: { machineId: v.id("cloudMachines"), force: v.optional(v.boolean()) },
+  handler: async (ctx, { machineId, force }) => {
     const machine = await ctx.db.get(machineId);
     if (!machine) throw new Error("Machine not found");
 
-    await ctx.db.patch(machineId, {
-      status: "stopping",
-      updatedAt: Date.now(),
-    });
+    const now = Date.now();
+    const plan = planDeprovision(machine.tier, force === true, now);
 
+    if (plan.grace && plan.deprovisionAt) {
+      // Defer: keep the box serving through the grace window, schedule
+      // the real destroy at the deadline, remember the job so a
+      // resubscribe can cancel it.
+      const scheduledDestroyId = await ctx.scheduler.runAt(
+        plan.deprovisionAt,
+        internal.cloudMachines.destroy,
+        { machineId },
+      );
+      await ctx.db.patch(machineId, {
+        status: "grace",
+        deprovisionAt: plan.deprovisionAt,
+        scheduledDestroyId,
+        updatedAt: now,
+      });
+      return;
+    }
+
+    await ctx.db.patch(machineId, { status: "stopping", updatedAt: now });
     // Schedule the real destroy (Hetzner API call) in an action.
     await ctx.scheduler.runAfter(0, internal.cloudMachines.destroy, { machineId });
   },
@@ -963,19 +1033,50 @@ export const destroy = internalAction({
     }
 
     let warn = "";
+    const mustSnapshot = snapshotIsMandatory(machine.tier);
     if (machine.hetznerServerId) {
-      // Grace snapshot before delete (CLAUDE.md: never delete
-      // un-snapshotted). Best-effort — a failed snapshot must not
-      // strand a paid box — but record it so it's visible.
+      // Pre-delete snapshot. For a hosted box this is the user's ONLY
+      // data copy → a failure ABORTS the delete (status:error, box
+      // kept). For byok it's disposable → best-effort, continue.
+      let snapshotId = "";
       try {
         const snap = await fetch(`https://api.hetzner.cloud/v1/servers/${machine.hetznerServerId}/actions/create_image`, {
           method: "POST",
           headers: { Authorization: `Bearer ${HCLOUD_TOKEN}`, "Content-Type": "application/json" },
           body: JSON.stringify({ type: "snapshot", description: `yaver-predelete-machine-${machineId}-${Date.now()}` }),
         });
-        if (!snap.ok) warn = `grace snapshot returned HTTP ${snap.status} (continued with delete); `;
+        if (snap.ok) {
+          try {
+            const sj = (await snap.json()) as { image?: { id?: number } };
+            if (sj.image?.id) snapshotId = String(sj.image.id);
+          } catch { /* id is best-effort metadata */ }
+        } else if (mustSnapshot) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId,
+            status: "error",
+            errorMessage: `Hosted box NOT deleted: data snapshot failed (HTTP ${snap.status}). Your app + database are still on the box. Retry decommission, or contact support — we will not delete unrecoverable data.`,
+          });
+          return;
+        } else {
+          warn = `grace snapshot returned HTTP ${snap.status} (continued with delete); `;
+        }
       } catch (e) {
+        if (mustSnapshot) {
+          await ctx.runMutation(internal.cloudMachines.setStatus, {
+            machineId,
+            status: "error",
+            errorMessage: `Hosted box NOT deleted: data snapshot failed (${e instanceof Error ? e.message : String(e)}). Your app + database are still on the box. Retry decommission.`,
+          });
+          return;
+        }
         warn = `grace snapshot failed (${e instanceof Error ? e.message : String(e)}); continued with delete; `;
+      }
+      if (snapshotId) {
+        await ctx.runMutation(internal.cloudMachines.setStatus, {
+          machineId,
+          status: machine.status ?? "stopping",
+          lastSnapshotId: snapshotId,
+        });
       }
       // Delete. Surface a real failure as status:error — do NOT fall
       // through to "stopped" while the box is still alive.

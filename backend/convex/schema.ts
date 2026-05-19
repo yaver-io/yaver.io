@@ -798,7 +798,14 @@ export default defineSchema({
     // https://<id>.cloud.yaver.io/_convex-api). Set once the hosted
     // backend is up. Plain URL — privacy-safe (no key, no path).
     hostedConvexUrl: v.optional(v.string()),
-    status: v.string(),               // "provisioning" | "active" | "stopping" | "stopped" | "error"
+    // Phase 4 — hosted-tier teardown grace. A hosted box holds the
+    // user's whole app + DB, so on subscription end we DON'T delete it
+    // immediately: status goes "grace", deprovisionAt is the deadline,
+    // scheduledDestroyId is the pending destroy job (cancelled if they
+    // resubscribe). byok boxes are disposable → none of this applies.
+    deprovisionAt: v.optional(v.number()),
+    scheduledDestroyId: v.optional(v.id("_scheduled_functions")),
+    status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "error"
     multiUser: v.optional(v.boolean()), // true for shared team machines
     // Underlying IaaS this resource lives on. The whole stack above this
     // record stays provider-agnostic ("cloud resource"); only Yaver's
