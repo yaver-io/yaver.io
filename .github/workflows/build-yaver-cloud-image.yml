@@ -16,6 +16,12 @@ on:
     branches: ["**"]
     paths:
       - "desktop/agent/Dockerfile.yaver-cloud"
+      - "desktop/agent/**/*.go"
+      - "desktop/agent/go.mod"
+      - "desktop/agent/go.sum"
+      - "relay/**/*.go"
+      - "relay/go.mod"
+      - "relay/go.sum"
       - ".github/workflows/build-yaver-cloud-image.yml"
 
 concurrency:
@@ -44,7 +50,12 @@ jobs:
       - name: Build + push (linux/amd64)
         uses: docker/build-push-action@v6
         with:
-          context: desktop/agent
+          # Context = repo root because the Dockerfile builds TWO Go
+          # modules (desktop/agent/ for yaver + relay/ for yaver-relay,
+          # bundled in one image per the Phase 2 managed-relay design).
+          # The Dockerfile uses fully-qualified COPYs (desktop/agent/...,
+          # relay/...) so cache invalidation is still scoped per-module.
+          context: .
           file: desktop/agent/Dockerfile.yaver-cloud
           platforms: linux/amd64
           push: true

@@ -1,4 +1,4 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { validateSessionInternal, randomHex } from "./auth";
 
@@ -473,6 +473,51 @@ export const seedDefaults = mutation({
       }
     }
     return { seeded, updated, total: allUsers.length };
+  },
+});
+
+/**
+ * Phase 2C — point this user's OTHER self-hosted devices at THEIR
+ * managed-cloud box as relay (instead of the shared free platform
+ * relay). Called from cloudMachines.provision once the box is up;
+ * each other device picks the new endpoint up on its next
+ * FetchUserSettings (main.go:2478) → relayUrl + relayPassword.
+ * Upserts: inserts a minimal row if absent. Privacy-safe — relayUrl
+ * is the box's public hostname (same class as the relayUrl seedDefaults
+ * already writes); relayPassword stays on the box + the managedRelays
+ * row. Pass undefined for either field to leave it untouched (e.g. on
+ * decommission, clear by passing the platform default back in).
+ * NOTE Phase 2D gap (main.go:2492-2503): the agent currently drops
+ * userSettings.RelayUrl that doesn't match a platformConfig entry —
+ * fix is to synthesize a RelayServerInfo from the URL. Until that
+ * ships in a `cli/v*` release, OTHER devices won't actually use this.
+ */
+export const setRelayForUser = internalMutation({
+  args: {
+    userId: v.id("users"),
+    relayUrl: v.optional(v.string()),
+    relayPassword: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("userSettings")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .first();
+    if (!existing) {
+      await ctx.db.insert("userSettings", {
+        userId: args.userId,
+        forceRelay: false,
+        relayUrl: args.relayUrl,
+        relayPassword: args.relayPassword,
+      });
+      return;
+    }
+    const patch: Record<string, unknown> = {};
+    if (args.relayUrl !== undefined) patch.relayUrl = args.relayUrl;
+    if (args.relayPassword !== undefined) patch.relayPassword = args.relayPassword;
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(existing._id, patch);
+    }
   },
 });
 

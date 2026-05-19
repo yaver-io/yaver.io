@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Device, hideDevice, unhideAll } from "@/lib/use-devices";
 import WebShellModal from "@/components/dashboard/WebShellModal";
 import { RecycleBoxDialog } from "@/components/dashboard/RecycleBoxDialog";
@@ -1827,6 +1827,97 @@ function useManagedDeviceIds(token: string | null | undefined) {
   return ids;
 }
 
+// Provisioning-phase → human label. MUST stay in sync with the same
+// map in ManagedCloudPanel.tsx (single source would be nicer but that
+// file is co-owned by a parallel session; a 9-entry literal is the
+// lower-risk dup). Keyed by cloudMachines.provisionPhase.
+const PROVISION_PHASE_LABEL: Record<string, string> = {
+  creating: "Reserving your box…",
+  booting: "Booting & installing Docker…",
+  "installing-docker": "Installing Docker…",
+  "pulling-image": "Pulling the Yaver image…",
+  "starting-agent": "Starting the Yaver agent…",
+  registering: "Registering your device…",
+  "authorizing-runners": "Almost there — finishing setup…",
+  ready: "Ready",
+  error: "Setup failed",
+};
+
+export interface ManagedMachineSummary {
+  id: string;
+  machineType: string;
+  status: string;
+  hostname: string | null;
+  serverIp: string | null;
+  region: string | null;
+  deviceId: string | null;
+  provisionPhase: string | null;
+  provisionProgress: number | null;
+  provisionError: string | null;
+  runnersAuthorized: boolean;
+}
+
+// Full managed-machine list — the same /subscription payload
+// useManagedDeviceIds reads, kept as a separate hook so that one stays
+// a tiny Set. Self-polls every 10s while any box is still setting up so
+// the "Setting up" cards animate without a manual Refresh, then stops.
+// project_managed_cloud_onboarding_gap.
+function useManagedMachines(token: string | null | undefined): ManagedMachineSummary[] {
+  const [machines, setMachines] = useState<ManagedMachineSummary[]>([]);
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/subscription`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          const list: ManagedMachineSummary[] = (
+            Array.isArray(data?.machines) ? data.machines : []
+          ).map((m: Record<string, unknown>) => ({
+            id: String(m?.id ?? ""),
+            machineType: typeof m?.machineType === "string" ? m.machineType : "cpu",
+            status: typeof m?.status === "string" ? m.status : "",
+            hostname: typeof m?.hostname === "string" ? m.hostname : null,
+            serverIp: typeof m?.serverIp === "string" ? m.serverIp : null,
+            region: typeof m?.region === "string" ? m.region : null,
+            deviceId: typeof m?.deviceId === "string" ? m.deviceId : null,
+            provisionPhase:
+              typeof m?.provisionPhase === "string" ? m.provisionPhase : null,
+            provisionProgress:
+              typeof m?.provisionProgress === "number" ? m.provisionProgress : null,
+            provisionError:
+              typeof m?.provisionError === "string" ? m.provisionError : null,
+            runnersAuthorized: Boolean(m?.runnersAuthorized),
+          }));
+          if (cancelled) return;
+          setMachines(list);
+          const anyPending = list.some(
+            (m) =>
+              m.status !== "removed" &&
+              m.status !== "stopped" &&
+              m.status !== "stopping" &&
+              m.provisionPhase !== "ready" &&
+              m.status !== "active",
+          );
+          if (anyPending) timer = setTimeout(tick, 10_000);
+        }
+      } catch {
+        /* non-fatal — section just stays empty */
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [token]);
+  return machines;
+}
+
 export default function DevicesView({
   devices,
   onRefresh,
@@ -1841,6 +1932,26 @@ export default function DevicesView({
   const agentConnectionState = useAgentConnectionState();
   const { primaryDeviceId, setPrimaryDevice, secondaryDeviceId, setSecondaryDevice } = usePrimaryDeviceId(token);
   const managedDeviceIds = useManagedDeviceIds(token);
+  const managedMachines = useManagedMachines(token);
+  const deviceIdSet = useMemo(() => new Set(devices.map((d) => d.id)), [devices]);
+  // Managed boxes that exist in cloudMachines but have not yet produced
+  // a real `devices` heartbeat row → render a synthetic "Setting up"
+  // card so the box is first-class the moment it's bought, not a void
+  // until it boots. Once it heartbeats, deviceIdSet contains its
+  // deviceId and the normal full card (Shell/SSH/Coding Agents) takes
+  // over — the synthetic card disappears. removed/stopped boxes are
+  // intentionally hidden (commit 4e2112bb).
+  const pendingManagedBoxes = useMemo(
+    () =>
+      managedMachines.filter(
+        (m) =>
+          m.status !== "removed" &&
+          m.status !== "stopped" &&
+          m.status !== "stopping" &&
+          !(m.deviceId && deviceIdSet.has(m.deviceId)),
+      ),
+    [managedMachines, deviceIdSet],
+  );
   const { primaryRunnerByDevice, primaryModelByDevice, primaryProviderByDevice, setPrimaryRunner } = usePrimaryRunnerByDevice(token);
   // Phase C: which device (if any) has the recycle dialog open. The
   // dialog is a fixed overlay so it can render inline next to the
@@ -1902,7 +2013,87 @@ export default function DevicesView({
         </div>
       </div>
 
-      {renderedDevices.length === 0 ? (
+      {pendingManagedBoxes.length > 0 ? (
+        <div className="mb-4 space-y-2">
+          {pendingManagedBoxes.map((m) => {
+            const failed = m.status === "error" || m.provisionPhase === "error";
+            const pct =
+              typeof m.provisionProgress === "number"
+                ? m.provisionProgress
+                : m.status === "provisioning"
+                  ? 10
+                  : 5;
+            const label = m.provisionPhase
+              ? PROVISION_PHASE_LABEL[m.provisionPhase] ?? m.provisionPhase
+              : "initializing…";
+            const name =
+              m.hostname || m.deviceId || `cloud-${m.id.slice(0, 8)}`;
+            return (
+              <div
+                key={m.id}
+                className={`card p-4 ${failed ? "border border-red-500/30" : "border border-sky-500/20"}`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
+                      Yaver Cloud
+                    </span>
+                    <span className="text-sm font-medium text-surface-100">
+                      {name}
+                    </span>
+                    <span className="text-xs text-surface-500">
+                      {m.machineType.toUpperCase()}
+                      {m.region ? ` · ${m.region}` : ""}
+                    </span>
+                  </div>
+                  <span
+                    className={`text-xs font-medium ${failed ? "text-red-300" : "text-sky-300"}`}
+                  >
+                    {failed ? "Setup failed" : "Setting up"}
+                  </span>
+                </div>
+                {failed ? (
+                  <div className="mt-2">
+                    <p className="text-xs text-red-300">
+                      {m.provisionError
+                        ? m.provisionError
+                        : "Provisioning failed before the agent came online."}
+                    </p>
+                    <p className="mt-1 text-[11px] text-surface-500">
+                      Recovery: remove this box from Billing and buy a fresh
+                      one. If it keeps failing, the operator can SSH in (the
+                      MANAGED_CLOUD_SSH_PUBKEY debug key) and read{" "}
+                      <code className="rounded bg-surface-800 px-1 py-0.5">
+                        docker logs yaver
+                      </code>
+                      .
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <div className="mb-1 text-[11px] text-surface-400">
+                      {label}
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded bg-surface-800">
+                      <div
+                        className="h-full rounded bg-sky-500 transition-all duration-700"
+                        style={{ width: `${Math.max(5, Math.min(100, pct))}%` }}
+                      />
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-surface-500">
+                      This becomes a full device card (Shell, SSH, Coding
+                      Agents) automatically once the box finishes booting and
+                      connects.
+                    </p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {renderedDevices.length === 0 && pendingManagedBoxes.length === 0 ? (
         <div className="card p-8 text-center">
           <p className="mb-2 text-sm text-surface-400">No devices registered.</p>
           {dormantDevices.length > 0 ? (

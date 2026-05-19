@@ -29,12 +29,33 @@
 # runs the EXACT agent on this commit, including new ops verbs
 # (e.g. runner_auth) without waiting on a cli/v* release. Also
 # permanently removes the brittle "raw asset vs .tar.gz" fetch class.
+#
+# Build context (per build-yaver-cloud-image.yml) is the REPO ROOT — we
+# build TWO Go binaries from two separate modules:
+#   * yaver       (desktop/agent/) — the agent
+#   * yaver-relay (relay/)         — the per-user managed relay (Phase 2);
+#                                    same binary the public yaver-relay
+#                                    image ships, bundled in-process so a
+#                                    managed box is ONE container, not
+#                                    two. Both share the box's volume +
+#                                    network namespace; supervised by a
+#                                    tiny entrypoint wrapper (no
+#                                    supervisord — the relay is best-
+#                                    effort, the agent is mission-critical
+#                                    and gets `exec`'d as PID 1).
 FROM golang:1.26-bookworm AS agentbuild
 WORKDIR /src
-COPY go.mod go.sum ./
+COPY desktop/agent/go.mod desktop/agent/go.sum ./
 RUN go mod download
-COPY . .
+COPY desktop/agent/ .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver .
+
+FROM golang:1.22-bookworm AS relaybuild
+WORKDIR /src
+COPY relay/go.mod relay/go.sum ./
+RUN go mod download
+COPY relay/ .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver-relay .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────
 FROM node:22-bookworm-slim
@@ -98,6 +119,39 @@ RUN npm install -g \
 COPY --from=agentbuild /out/yaver /usr/local/bin/yaver
 RUN chmod +x /usr/local/bin/yaver && /usr/local/bin/yaver --version >/dev/null 2>&1
 
+# ── Yaver Relay (Phase 2 — managed box doubles as user's relay) ──────
+# Bundled inside this same image so a managed box is ONE container, not
+# two: the entrypoint wrapper backgrounds `yaver-relay serve` when
+# RELAY_PASSWORD is set, then `exec yaver "$@"` so the agent stays PID 1
+# (HEALTHCHECK + docker stop signals still target the agent). When
+# RELAY_PASSWORD is unset (BYO / no managed sub) the relay simply isn't
+# started — same as before. The relay's QUIC port is 4433/UDP and admin
+# /health is 8443/TCP (relay/Dockerfile; relay/main.go:71).
+COPY --from=relaybuild /out/yaver-relay /usr/local/bin/yaver-relay
+RUN chmod +x /usr/local/bin/yaver-relay && /usr/local/bin/yaver-relay --help >/dev/null 2>&1 || true
+COPY <<'ENTRYPOINT_SH' /usr/local/bin/yaver-cloud-entrypoint.sh
+#!/bin/sh
+# Phase 2 supervisor — best-effort relay, mission-critical agent.
+# RELAY_PASSWORD is threaded from cloud-init `docker run -e ...` only on
+# managed boxes that have a subscription (cloudMachines.provision).
+# Unset ⇒ relay stays off; the agent still serves normally.
+if [ -n "${RELAY_PASSWORD:-}" ]; then
+  # CONVEX_URL is passed from cloud-init when set so the relay can
+  # per-user-validate incoming tunnel registrations against the
+  # caller's managedRelays.password hash (relay/main.go --convex-url;
+  # the platform relay always runs in this mode). Password-only mode
+  # is fine for a single-owner box, but with --convex-url an attacker
+  # who steals the relay password still can't tunnel as a different
+  # user's identity. Empty CONVEX_URL ⇒ password-only fallback (no
+  # behaviour change vs ungated relay).
+  yaver-relay serve --quic-port=4433 --http-port=8443 \
+    ${CONVEX_URL:+--convex-url="$CONVEX_URL"} \
+    >/var/log/yaver-relay.log 2>&1 &
+fi
+exec yaver "$@"
+ENTRYPOINT_SH
+RUN chmod +x /usr/local/bin/yaver-cloud-entrypoint.sh
+
 # Persisted dirs (remote-OAuth + caches) — mounted as a Docker volume
 # so claude/codex/opencode/gh/glab/yaver auth + GLM api-key survive
 # restarts and image upgrades.
@@ -108,7 +162,7 @@ RUN mkdir -p /root/.yaver /root/.claude /root/.codex \
 
 WORKDIR /srv/yaver/workspace
 
-EXPOSE 18080
+EXPOSE 18080 4433/udp 8443
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
   CMD curl -fsS http://127.0.0.1:18080/health >/dev/null || exit 1
@@ -116,6 +170,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=5 \
 # The agent reads /root/.yaver/config.json (auth_token,
 # convex_site_url, device_id) written by the VM cloud-init into the
 # mounted volume, then registers as the buyer's device and serves the
-# dev-server / Hermes / ops API on 18080.
-ENTRYPOINT ["/usr/local/bin/yaver"]
+# dev-server / Hermes / ops API on 18080. The entrypoint wrapper
+# additionally backgrounds yaver-relay when RELAY_PASSWORD is set
+# (managed-cloud Phase 2); unset ⇒ behaviour identical to pre-Phase-2.
+ENTRYPOINT ["/usr/local/bin/yaver-cloud-entrypoint.sh"]
 CMD ["serve", "--debug", "--port", "18080"]

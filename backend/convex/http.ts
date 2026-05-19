@@ -3460,6 +3460,144 @@ http.route({
   }),
 });
 
+/** GET /billing/yaver-cloud/balance — owner-only prepaid wallet read. */
+http.route({
+  path: "/billing/yaver-cloud/balance",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const wallet = await ctx.runQuery(api.cloudLifecycle.getWallet, {
+      userId: session.userDocId as any,
+    });
+    return jsonResponse({ ok: true, ...wallet });
+  }),
+});
+
+/** POST /billing/yaver-cloud/topup-dev — owner-dev prepaid credit stub.
+ *  This is deliberately owner-gated and uses the P0 ledger primitive; no
+ *  LemonSqueezy charge is created until the real prepaid checkout lands. */
+http.route({
+  path: "/billing/yaver-cloud/topup-dev",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const body = await request.json().catch(() => ({}));
+    const amountCents = Number(body.amountCents ?? 1000);
+    if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 100_000) {
+      return errorResponse("amountCents must be between 1 and 100000", 400);
+    }
+    const result = await ctx.runMutation(internal.cloudLifecycle.topUp, {
+      userId: session.userDocId as any,
+      amountCents: Math.round(amountCents),
+    });
+    return jsonResponse({ ok: true, mode: "owner-dev", ...result });
+  }),
+});
+
+/** POST /billing/yaver-cloud/stop — owner-only stop transition.
+ *  P1 owns the real Hetzner stop/snapshot verb. Until that is wired,
+ *  this route is deliberately state-only/dry-run so mobile/web can
+ *  exercise the prepaid stop/start UX without spending or destroying. */
+http.route({
+  path: "/billing/yaver-cloud/stop",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const body = await request.json().catch(() => ({}));
+    const machineId = String(body.machineId ?? "").trim();
+    if (!machineId) return errorResponse("machineId is required", 400);
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
+      machineId: machineId as any,
+    });
+    if (!machine) return errorResponse("Machine not found", 404);
+    if (String(machine.userId) !== String(session.userDocId)) {
+      return errorResponse("Not your machine", 403);
+    }
+    // Idempotent: already parked.
+    if (machine.status === "paused" || machine.status === "stopped" || machine.status === "stopping") {
+      return jsonResponse({ ok: true, machineId, status: machine.status, dryRun: true });
+    }
+    // P3: delegate to the real, Hetzner-integrated lifecycle (P2).
+    // It is FAIL-CLOSED dry-run when HCLOUD_TOKEN is unset (prod
+    // default — no real spend); real snapshot+delete only when an
+    // owner deliberately sets the platform token.
+    const r = await ctx.runAction(internal.cloudLifecycle.pauseMachine, {
+      machineId: machineId as any,
+    });
+    return jsonResponse({ machineId, ...r }, r.ok ? 200 : 409);
+  }),
+});
+
+/** POST /billing/yaver-cloud/start — owner-only start transition.
+ *  Balance-gated against the prepaid reserve. State-only/dry-run until
+ *  P1's recreate/start provider verb lands. */
+http.route({
+  path: "/billing/yaver-cloud/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const body = await request.json().catch(() => ({}));
+    const machineId = String(body.machineId ?? "").trim();
+    if (!machineId) return errorResponse("machineId is required", 400);
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
+      machineId: machineId as any,
+    });
+    if (!machine) return errorResponse("Machine not found", 404);
+    if (String(machine.userId) !== String(session.userDocId)) {
+      return errorResponse("Not your machine", 403);
+    }
+    if (machine.status === "active") {
+      return jsonResponse({ ok: true, machineId, status: "active", dryRun: true });
+    }
+    // Keep the explicit 402 balance contract mobile/web depend on.
+    const gate = await ctx.runQuery(internal.cloudLifecycle.canStart, {
+      userId: session.userDocId as any,
+      machineType: String(machine.machineType || "cpu"),
+    });
+    if (!gate.ok) {
+      return jsonResponse({
+        ok: false,
+        error: "Insufficient prepaid balance",
+        balanceCents: gate.balanceCents,
+        requiredCents: gate.requiredCents,
+      }, 402);
+    }
+    // P3: delegate to the real, Hetzner-integrated lifecycle (P2) —
+    // recreate-from-snapshot, fail-closed dry-run when HCLOUD_TOKEN
+    // is unset (prod default; no real spend).
+    const r = await ctx.runAction(internal.cloudLifecycle.resumeMachine, {
+      machineId: machineId as any,
+    });
+    if (r.ok) {
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId: machineId as any,
+        phase: machine.runnersAuthorized === false ? "authorizing-runners" : "ready",
+        progress: machine.runnersAuthorized === false ? 90 : 100,
+      });
+    }
+    return jsonResponse(
+      { machineId, balanceCents: gate.balanceCents, requiredCents: gate.requiredCents, ...r },
+      r.ok ? 200 : 409,
+    );
+  }),
+});
+
 /** GET /subscription — Get subscription and managed relay status (authenticated). */
 http.route({
   path: "/subscription",
@@ -3476,10 +3614,11 @@ http.route({
     const userDocId = await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
     if (!userDocId) return errorResponse("User not found", 404);
 
-    const [subscription, relay, machines] = await Promise.all([
+    const [subscription, relay, machines, wallet] = await Promise.all([
       ctx.runQuery(api.subscriptions.getByUser, { userId: userDocId }),
       ctx.runQuery(api.managedRelays.getByUser, { userId: userDocId }),
       ctx.runQuery(api.cloudMachines.listForUser, { userId: userDocId }),
+      ctx.runQuery(api.cloudLifecycle.getWallet, { userId: userDocId }),
     ]);
 
     return jsonResponse({
@@ -3499,6 +3638,9 @@ http.route({
         currentPeriodEnd: subscription.currentPeriodEnd,
         cancelledAt: subscription.cancelledAt,
       } : null,
+      prepaidBalanceCents: wallet.balanceCents,
+      currency: wallet.currency,
+      balance: wallet,
       relay: relay ? {
         status: relay.status,
         domain: relay.domain,
@@ -3534,6 +3676,10 @@ http.route({
               typeof machine.provisionProgress === "number"
                 ? machine.provisionProgress
                 : null,
+            // Short curated failure label the box itself beaconed
+            // (phase="error"); drives the synthetic "Setting up" card's
+            // failure state + recovery hint in web/mobile.
+            provisionError: machine.provisionError ?? null,
             runnersAuthorized: machine.runnersAuthorized ?? false,
           }))
         : [],
@@ -4770,6 +4916,19 @@ http.route({
       "starting-agent": 75,
       "registering": 85,
     };
+    // "error" is the box's own failure beacon (end-of-cloud-init health
+    // probe failed). It carries a short curated label, no progress.
+    if (phase === "error") {
+      const errLabel = String(qs.get("error") ?? body.error ?? "")
+        .trim()
+        .slice(0, 200);
+      await ctx.runMutation(internal.cloudMachines.setPhase, {
+        machineId: auth.machine._id,
+        phase: "error",
+        error: errLabel || "provisioning failed",
+      });
+      return jsonResponse({ ok: true });
+    }
     if (!phase || !(phase in PCT)) {
       return errorResponse("Unknown or missing phase", 400);
     }
@@ -4860,6 +5019,19 @@ const runCron = httpAction(async (ctx, req) => {
       break;
     case "pruneDeviceEvents":
       await ctx.scheduler.runAfter(0, internal.cleanup.pruneDeviceEvents, {});
+      break;
+    case "cloudMeter":
+      // Managed-cloud prepaid meter (P2). Same external-Hetzner-timer
+      // pattern as the prune jobs (no Convex crons.interval, per
+      // crons.ts). dryRun:true while in private preview so it never
+      // drains a real wallet pre-launch; the timer flips it to
+      // {dryRun:false} when the prepaid product goes live. The real
+      // Hetzner spend is independently gated by HCLOUD_TOKEN inside
+      // pause/resume — this only meters the wallet ledger.
+      await ctx.scheduler.runAfter(0, internal.cloudLifecycle.meterTick, {
+        intervalSeconds: 3600,
+        dryRun: true,
+      });
       break;
     case "sweepStalePendingClaims":
       // Daily sweep so unclaimed bootstrap-pending rows don't pile up
