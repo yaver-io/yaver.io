@@ -9,9 +9,19 @@ export interface ManagedCloudMachineSummary {
   region?: string;
   errorMessage?: string;
   subscriptionId?: string | null;
+  hetznerServerId?: string;
+  // First-class onboarding parity with web
+  // (project_managed_cloud_onboarding_gap).
+  provisionPhase?: string | null;
+  provisionProgress?: number | null;
+  runnersAuthorized?: boolean;
 }
 
 export interface ManagedSubscriptionSummary {
+  // Owner-allowlist flag (server isCloudPreviewUser). Mobile hides
+  // the managed-cloud card entirely for non-owners — cosmetic; the
+  // server independently 403s every action.
+  cloudPreviewOwner?: boolean;
   subscription: {
     plan: string;
     status: string;

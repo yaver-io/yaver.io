@@ -6,6 +6,7 @@ import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useAuth } from "../../src/context/AuthContext";
 import { useColors } from "../../src/context/ThemeContext";
 import { useDevice } from "../../src/context/DeviceContext";
+import ManagedCloudCard from "../../src/components/ManagedCloudCard";
 import { quicClient, type CapabilitySnapshot, type IncidentEvent, type InfraSummary } from "../../src/lib/quic";
 import { listGuests, type GuestInfo } from "../../src/lib/guests";
 import { useTabletContentStyle } from "../../src/hooks/useTabletContentStyle";
@@ -599,6 +600,8 @@ export default function InfraScreen() {
               </View>
             ) : null}
           </Section>
+
+          <ManagedCloudCard c={c} token={token} />
 
           <Section c={c} title="Services" subtitle="Managed dev services">
             {(summary.devServices || []).length === 0 ? (
