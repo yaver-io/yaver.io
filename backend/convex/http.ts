@@ -3369,6 +3369,42 @@ http.route({
 /** POST /billing/yaver-cloud/dev-deprovision — owner-only: tear down
  *  a managed machine the caller owns (snapshot+delete via the managed
  *  destroy path). The web "Decommission" button for managed boxes. */
+/** POST /billing/yaver-cloud/runners-authorized — flip a managed
+ *  box's runnersAuthorized once its coding-agent OAuth is in place
+ *  (via the existing yaver CLI/MCP runner-auth flow today; the web
+ *  one-click flow is the tracked #9). Owner-gated, scoped to a
+ *  machine the caller owns. Drives the UI Unauthorized→ready state.
+ *  project_managed_cloud_onboarding_gap. */
+http.route({
+  path: "/billing/yaver-cloud/runners-authorized",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const body = await request.json().catch(() => ({}));
+    const machineId = String(body.machineId ?? "").trim();
+    if (!machineId) return errorResponse("machineId is required", 400);
+    const machine = await ctx.runQuery(internal.cloudMachines.getInternal, {
+      machineId: machineId as any,
+    });
+    if (!machine) return errorResponse("Machine not found", 404);
+    if (machine.userId !== session.userDocId) {
+      return errorResponse("Not your machine", 403);
+    }
+    const authorized = body.authorized === false ? false : true;
+    await ctx.runMutation(internal.cloudMachines.setPhase, {
+      machineId: machineId as any,
+      phase: authorized ? "ready" : "authorizing-runners",
+      progress: authorized ? 100 : 90,
+      runnersAuthorized: authorized,
+    });
+    return jsonResponse({ ok: true, runnersAuthorized: authorized });
+  }),
+});
+
 /** POST /billing/yaver-cloud/reconcile — self-heal: "I paid but have
  *  no box". Re-provisions the caller's active managed subscription(s)
  *  if no live box exists. Idempotent (no-op when a healthy box is
