@@ -31,6 +31,11 @@ interface ManagedMachine {
   serverIp?: string;
   errorMessage?: string;
   deviceId?: string;
+  // First-class onboarding (project_managed_cloud_onboarding_gap):
+  // drives the "setting up your box" progress bar + Authorize state.
+  provisionPhase?: string | null;
+  provisionProgress?: number | null;
+  runnersAuthorized?: boolean;
 }
 
 // Per-machine actions (D3 git connect/push, D4 dev-loop, D5 deploy).
@@ -181,6 +186,33 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     const iv = setInterval(() => void load(), 8000);
     return () => clearInterval(iv);
   }, [open, load]);
+
+  // Auto-expand the moment the user has ANY managed box, so a
+  // provisioning/active/unauthorized box is never hidden in a
+  // collapsed panel (project_managed_cloud_onboarding_gap — users
+  // repeatedly "can't see" their bought box otherwise).
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    (async () => {
+      try {
+        const res = await fetch(`${CONVEX_URL}/subscription`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json().catch(() => ({}));
+        const ms = Array.isArray(data?.machines) ? data.machines : [];
+        if (alive && ms.length > 0) {
+          setMachines(ms);
+          setOpen(true);
+        }
+      } catch {
+        /* non-fatal — panel still opens manually */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [token]);
 
   const provisioning = machines.filter(
     (m) => m.status === "provisioning" || m.status === "stopping",
@@ -344,6 +376,71 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                     ♻ Delete box
                   </button>
                  </div>
+                  {(() => {
+                    const phase = m.provisionPhase ?? null;
+                    const pct =
+                      typeof m.provisionProgress === "number"
+                        ? m.provisionProgress
+                        : m.status === "active"
+                          ? 90
+                          : 10;
+                    const initializing =
+                      m.status === "provisioning" ||
+                      (!!phase &&
+                        phase !== "ready" &&
+                        m.status !== "error" &&
+                        m.status !== "stopped" &&
+                        m.status !== "active");
+                    const LABEL: Record<string, string> = {
+                      creating: "Reserving your box…",
+                      booting: "Booting & installing Docker…",
+                      "installing-docker": "Installing Docker…",
+                      "pulling-image": "Pulling the Yaver image…",
+                      "starting-agent": "Starting the Yaver agent…",
+                      registering: "Registering your device…",
+                      "authorizing-runners": "Almost there — finishing setup…",
+                      ready: "Ready",
+                      error: "Setup failed",
+                    };
+                    if (initializing) {
+                      return (
+                        <div className="mt-1.5">
+                          <div className="mb-1 text-[11px] text-slate-500 dark:text-surface-400">
+                            Setting up your box —{" "}
+                            {phase ? LABEL[phase] ?? phase : "initializing…"}
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded bg-slate-200 dark:bg-surface-800">
+                            <div
+                              className="h-full rounded bg-sky-500 transition-all duration-700"
+                              style={{
+                                width: `${Math.max(5, Math.min(100, pct))}%`,
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+                    if (m.status === "active" && !m.runnersAuthorized) {
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="rounded bg-amber-500/15 px-1.5 py-0.5 font-semibold text-amber-700 dark:text-amber-300">
+                            ⚠ Unauthorized
+                          </span>
+                          <span className="text-slate-500 dark:text-surface-400">
+                            Box is up, but your coding agents aren’t signed in yet.
+                          </span>
+                          <button
+                            disabled
+                            title="Runner authorization is rolling out — your box is up; one-click agent sign-in lands next"
+                            className="rounded border border-slate-300 px-2 py-0.5 font-semibold opacity-50 dark:border-surface-700"
+                          >
+                            Authorize runners
+                          </button>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
                   {m.errorMessage ? (
                     <p className="mt-1.5 text-[11px] text-rose-600 dark:text-rose-400">
                       {m.errorMessage}
