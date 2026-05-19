@@ -2979,16 +2979,27 @@ http.route({
           if (productType === "cpu" || productType === "gpu" || isCloudPreviewProduct) {
             // Cloud dev machine — create and provision
             const teamId = payload.meta?.custom_data?.team_id;
-            const machineId = await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
+            await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
               userId: user._id,
               machineType: productType === "gpu" ? "gpu" : machineType,
               teamId,
               region,
               subscriptionId: subId,
             });
-            if (isCloudPreviewProduct) {
-              await attachPreviewMachineToSharedServer(ctx, machineId, region);
-            }
+            // SECURITY (per-tenant isolation): do NOT attach a PAID
+            // subscription to the shared preview box.
+            // ensureForSubscription → createCloudMachine already
+            // schedules internal.cloudMachines.provision, which spins a
+            // DEDICATED per-tenant Hetzner box (its own cloud-init, its
+            // own per-user 1-year session token, behind the fail-closed
+            // canProvisionManaged gate). Repointing real buyers at one
+            // shared host let any buyer SSH / open a shell into another
+            // buyer's source tree — a code-leak that breaks Yaver's
+            // privacy contract. The shared box is retained ONLY for the
+            // owner-gated, no-Hetzner-spend /billing/yaver-cloud/
+            // dev-activate path (ensurePreviewCloudMachine). Never
+            // re-add a shared-server attach on this paid webhook path.
+            // isCloudPreviewProduct still selects the `plan` label above.
           } else {
             // Managed relay (default)
             const password = generateRelayPassword();

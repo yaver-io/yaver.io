@@ -131,10 +131,17 @@ runcmd:
     if [ -n "$missing_pkgs" ]; then
       npm install -g $missing_pkgs
     fi
-  # Yaver CLI
+  # Yaver Go agent — release-cli.yml ships the binary INSIDE
+  # yaver-linux-<arch>.tar.gz as a single file named \`yaver\`, never
+  # as a raw asset (raw-binary release paths were removed; npm-only
+  # distribution). Fetch the tarball, extract, install. If this fails
+  # the box has no agent and the health check fails loudly — never a
+  # silent half-provisioned box.
   - |
-    ( curl -fsSL "${spec.yaverReleaseUrl}" -o /usr/local/bin/yaver \
+    ( curl -fsSL "${spec.yaverReleaseUrl}" -o /tmp/yaver.tgz \
+      && tar -xzf /tmp/yaver.tgz -C /usr/local/bin yaver \
       && chmod +x /usr/local/bin/yaver \
+      && rm -f /tmp/yaver.tgz \
       && /usr/local/bin/yaver --version >/dev/null 2>&1 ) || echo "[cloud-init] yaver install skipped"
   # Basic UFW — SSH, HTTP, HTTPS, yaver HTTP, QUIC relay port.
   - ufw allow 22/tcp
@@ -626,7 +633,9 @@ export const provision = internalAction({
     const isGpu = machine.machineType === "gpu";
 
     const yaverArch = specDef.arch === "amd64" ? "amd64" : "arm64";
-    const yaverAsset = `yaver-linux-${yaverArch}`;
+    // Release asset is the gzipped tarball, not a raw binary (see the
+    // cloud-init extract step in buildManagedCloudInit).
+    const yaverAsset = `yaver-linux-${yaverArch}.tar.gz`;
     const yaverReleaseUrl = `https://github.com/kivanccakmak/yaver.io/releases/latest/download/${yaverAsset}`;
 
     // Machine-auth token — plaintext goes into /etc/yaver/machine.json on
