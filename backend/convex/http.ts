@@ -2,7 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
-import { isOwnerEmail } from "./ownerAllowlist";
+import { isOwnerEmail, isOwner } from "./ownerAllowlist";
 
 const http = httpRouter();
 
@@ -28,8 +28,13 @@ function errorMessageIncludes(err: any, code: string): boolean {
 
 // Owner / private-preview check. Delegates to the single source of
 // truth in ownerAllowlist.ts (env-var allowlist, never hardcoded).
-function isCloudPreviewUser(email?: string | null): boolean {
-  return isOwnerEmail(email);
+function isCloudPreviewUser(
+  email?: string | null,
+  userId?: string | null,
+): boolean {
+  // Email OR userId allowlist — OAuth accounts often have no email,
+  // so id-based is the reliable owner check (CLOUD_PREVIEW_OWNER_USER_IDS).
+  return isOwner(email, userId);
 }
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -3271,7 +3276,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
 
@@ -3308,7 +3313,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Yaver Cloud is private-preview only on this account", 403);
     }
 
@@ -3339,7 +3344,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
     let body: { hetznerServerId?: string; region?: string; serverIp?: string; hostname?: string; deviceId?: string } = {};
@@ -3381,7 +3386,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
     const body = await request.json().catch(() => ({}));
@@ -3415,7 +3420,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
     const r = await ctx.runAction(internal.cloudMachines.reconcileSubscriptions, {
@@ -3431,7 +3436,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const session = await authenticateRequest(ctx, request);
     if (!session) return errorResponse("Unauthorized", 401);
-    if (!isCloudPreviewUser(session.email)) {
+    if (!isCloudPreviewUser(session.email, session.userDocId)) {
       return errorResponse("Owner-only (private preview) on this account", 403);
     }
     let body: { machineId?: string } = {};
@@ -3484,7 +3489,7 @@ http.route({
       // non-owner reading this open-source code still cannot spend
       // Yaver's Hetzner. Private preview until LemonSqueezy is fully
       // integrated; owner-only purchases for now.
-      cloudPreviewOwner: isCloudPreviewUser(session.email),
+      cloudPreviewOwner: isCloudPreviewUser(session.email, session.userDocId),
       subscription: subscription ? {
         plan: subscription.plan,
         status: subscription.status,

@@ -29,3 +29,30 @@ export function isOwnerEmail(email?: string | null): boolean {
   if (allowed.length === 0) return false;
   return allowed.includes(normalized);
 }
+
+// Owner by Convex userId — same env-config principle (never a
+// hardcoded id). REQUIRED in practice because OAuth accounts
+// (Apple/GitHub/GitLab) often have NO email, so an email-only
+// allowlist can never match the owner's primary login. Set
+// CLOUD_PREVIEW_OWNER_USER_IDS to comma-separated user _id values.
+// Unset ⇒ false for everyone (stays fail-closed by default).
+export function isOwnerUserId(userId?: string | null): boolean {
+  const id = (userId ?? "").trim();
+  if (!id) return false;
+  const raw = process.env.CLOUD_PREVIEW_OWNER_USER_IDS || "";
+  const allowed = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowed.length === 0) return false;
+  return allowed.includes(id);
+}
+
+// Combined owner check — email OR userId. Use everywhere the
+// cloud-preview gate is applied so an emailless owner account works.
+export function isOwner(
+  email?: string | null,
+  userId?: string | null,
+): boolean {
+  return isOwnerEmail(email) || isOwnerUserId(userId);
+}

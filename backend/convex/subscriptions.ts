@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
-import { isOwnerEmail } from "./ownerAllowlist";
+import { isOwnerEmail, isOwnerUserId } from "./ownerAllowlist";
 
 // Get user's active subscription
 export const getByUser = query({
@@ -96,7 +96,11 @@ export const canProvisionManaged = internalQuery({
     }
     if (userId) {
       const user = await ctx.db.get(userId);
-      if (user && isOwnerEmail((user as any).email)) return true;
+      // email OR userId allowlist — OAuth owner accounts often have
+      // no email, so id-based is the reliable owner bypass.
+      if (user && (isOwnerEmail((user as any).email) || isOwnerUserId(String(user._id)))) {
+        return true;
+      }
     }
     return false;
   },
