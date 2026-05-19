@@ -57,7 +57,8 @@ export default function ManagedCloudCard({
   // ownership is still unknown (never flash to a non-owner).
   if (!token || owner !== true) return null;
 
-  const machines = data?.machines ?? [];
+  // Hide removed/decommissioned (stopped) boxes — gone, not billing.
+  const machines = (data?.machines ?? []).filter((m) => m.status !== "stopped");
   const sub = data?.subscription ?? null;
 
   const decommission = (id: string, srv?: string) => {

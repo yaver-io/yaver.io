@@ -68,7 +68,10 @@ export default function BillingView({ token }: { token: string | null | undefine
   };
 
   const sub = data.subscription;
-  const machines = data.machines ?? [];
+  const allMachines = data.machines ?? [];
+  // Hide removed/decommissioned (stopped) boxes — they're gone, not
+  // billing, and clutter the view.
+  const machines = allMachines.filter((m) => m.status !== "stopped");
   const active = machines.filter((m) => m.status === "active").length;
 
   return (

@@ -343,6 +343,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
     (m) => m.status === "provisioning" || m.status === "stopping",
   ).length;
   const active = machines.filter((m) => m.status === "active").length;
+  // A removed/decommissioned box is "stopped" — don't show dead boxes
+  // at all (they clutter the panel and confuse "is this still mine").
+  // Only live/in-flight machines are listed.
+  const liveMachines = machines.filter((m) => m.status !== "stopped");
 
   async function post(path: string, body: Record<string, unknown>) {
     setBusy(true);
@@ -462,10 +466,10 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
           ) : null}
 
           <div className="space-y-2">
-            {machines.length === 0 ? (
+            {liveMachines.length === 0 ? (
               <p className="text-xs text-slate-400">No managed machines.</p>
             ) : (
-              machines.map((m) => (
+              liveMachines.map((m) => (
                 <div
                   key={m.id}
                   className="rounded-md border border-slate-200 px-3 py-2 text-xs dark:border-surface-800"
