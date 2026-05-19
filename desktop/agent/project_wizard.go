@@ -410,6 +410,7 @@ type ProjectGenerationResult struct {
 	Directory       string                 `json:"directory"`
 	Files           []string               `json:"files"`
 	NextSteps       []string               `json:"nextSteps"`
+	YaverOnboarding map[string]interface{} `json:"yaverOnboarding,omitempty"`
 	ServicesLog     string                 `json:"servicesLog,omitempty"`
 	ServicesError   string                 `json:"servicesError,omitempty"`
 	ServicesStarted bool                   `json:"servicesStarted,omitempty"`
@@ -754,6 +755,26 @@ func GenerateProject(id, parentDir string) (*ProjectGenerationResult, error) {
 }
 
 // --- monorepo helpers ------------------------------------------------------
+
+// finishWizardWithDefaults advances a partially answered wizard session to
+// Done by accepting defaults for every remaining question. It is used by MCP
+// and CLI one-shot flows where the caller provides only the high-signal fields.
+func finishWizardWithDefaults(sess *WizardSession) {
+	if sess == nil {
+		return
+	}
+	for {
+		q := nextQuestion(sess)
+		if q == nil || q.Kind == QDone {
+			return
+		}
+		answer := q.Default
+		if q.ID == "confirm" {
+			answer = "true"
+		}
+		_, _ = AnswerWizard(sess.ID, q.ID, answer)
+	}
+}
 
 func deriveTagline(desc, appName string) string {
 	d := strings.TrimSpace(desc)
@@ -1663,8 +1684,15 @@ func manualNextSteps(a map[string]string) []string {
 	if a["include_backend"] == "true" && a["backend"] == "sqlite" {
 		steps = append(steps, "Review backend/schema.yaml, backend/auth.yaml, and backend/seed.json to shape the Yaver backend before first prompt-driven build.")
 	}
+	if a["include_backend"] == "true" && a["backend"] == "convex" {
+		steps = append(steps, "Run `cd backend && npx convex dev` for local Convex during self-hosted vibing, then `cd backend && npx convex deploy --yes` when you want the hosted Convex backend.")
+	}
 	if a["web_host"] == "cloudflare" {
-		steps = append(steps, "Add the Cloudflare zone for "+a["domain"]+" and swap nameservers at your registrar.")
+		if strings.TrimSpace(a["domain"]) != "" {
+			steps = append(steps, "Add the Cloudflare zone for "+a["domain"]+" and swap nameservers at your registrar.")
+		} else {
+			steps = append(steps, "Pick a domain later, then add a Cloudflare zone and set the route in apps/web/wrangler.toml.")
+		}
 	}
 	if a["oauth_apple"] == "true" {
 		steps = append(steps, "Create the Apple Services ID + Sign in with Apple key.")
@@ -1770,6 +1798,14 @@ body { margin: 0; color-scheme: %s; }
 }
 
 func wranglerToml(a map[string]string) string {
+	if strings.TrimSpace(a["domain"]) == "" {
+		return fmt.Sprintf(`name = "%s-web"
+main = ".open-next/worker.js"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+`, a["slug"])
+	}
 	return fmt.Sprintf(`name = "%s-web"
 main = ".open-next/worker.js"
 compatibility_date = "2024-09-23"

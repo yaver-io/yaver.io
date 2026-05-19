@@ -173,19 +173,9 @@ func runNewQuick(args []string) {
 		}
 	}
 	// Force every remaining unanswered question to its default so the wizard
-	// reaches Done. Without this loop optional-but-never-mentioned keys like
+	// reaches Done. Without this, optional-but-never-mentioned keys like
 	// apple_team_id stay pending forever.
-	for {
-		q := nextQuestion(sess)
-		if q == nil || q.Kind == QDone {
-			break
-		}
-		if q.ID == "confirm" {
-			_, _ = AnswerWizard(sess.ID, q.ID, "true")
-			continue
-		}
-		_, _ = AnswerWizard(sess.ID, q.ID, q.Default)
-	}
+	finishWizardWithDefaults(sess)
 
 	res, err := GenerateProject(sess.ID, parentDir)
 	if err != nil {
