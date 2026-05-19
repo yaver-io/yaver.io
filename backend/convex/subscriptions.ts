@@ -37,6 +37,26 @@ export const isActive = internalQuery({
   },
 });
 
+// Active managed-cloud subscriptions (plan "yaver-cloud-*"). Used by
+// the reconcile job: a paid sub MUST have a live box, else the user
+// paid for nothing. project_managed_cloud_onboarding_gap (recovery).
+export const listActiveManaged = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_status", (q) => q.eq("status", "active"))
+      .collect();
+    return rows
+      .filter((s) => typeof s.plan === "string" && s.plan.startsWith("yaver-cloud"))
+      .map((s) => ({
+        subscriptionId: s._id,
+        userId: s.userId,
+        plan: s.plan,
+      }));
+  },
+});
+
 // canProvisionManaged is the gate the managed-provision actions
 // actually call. It passes if the subscription is active OR the
 // owning user is on the owner allowlist (CLOUD_PREVIEW_OWNER_EMAIL

@@ -1216,6 +1216,55 @@ export const healthCheck = internalAction({
   },
 });
 
+// RECOVERY: "user paid but no cloud resource". A signed webhook can
+// be missed (delivery failure, transient provision error, box later
+// errored/destroyed) leaving an active subscription with no live box
+// — the user paid for nothing. This reconciler (hourly cron + manual
+// owner trigger) re-provisions any active managed subscription that
+// has no machine in a healthy/in-flight state. Idempotent:
+// ensureForSubscription returns the existing row if one is already
+// {provisioning|active}, so a healthy box is never duplicated.
+// project_managed_cloud_onboarding_gap (recovery).
+const HEALTHY_OR_INFLIGHT = new Set([
+  "provisioning", "active", "grace", "stopping",
+]);
+
+export const reconcileSubscriptions = internalAction({
+  args: { onlyUserId: v.optional(v.id("users")) },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ checked: number; repaired: number }> => {
+    const subs = await ctx.runQuery(internal.subscriptions.listActiveManaged, {});
+    let repaired = 0;
+    for (const s of subs) {
+      if (args.onlyUserId && s.userId !== args.onlyUserId) continue;
+      const machines = await ctx.runQuery(
+        internal.cloudMachines.listBySubscription,
+        { subscriptionId: s.subscriptionId },
+      );
+      const hasLive = Array.isArray(machines)
+        && machines.some((m: any) => HEALTHY_OR_INFLIGHT.has(m.status));
+      if (hasLive) continue;
+      // Paid, no live box → re-provision. machineType from the plan
+      // label ("yaver-cloud-gpu" ⇒ gpu). Tier defaults byok (a hosted
+      // sub still gets a working box; hosted Convex re-bootstraps).
+      const machineType = s.plan.includes("gpu") ? "gpu" : "cpu";
+      await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
+        userId: s.userId,
+        machineType,
+        subscriptionId: s.subscriptionId,
+        region: "eu",
+      });
+      repaired++;
+      console.log(
+        `[reconcile] re-provisioned ${machineType} for sub ${s.subscriptionId} (paid, had no live box)`,
+      );
+    }
+    return { checked: subs.length, repaired };
+  },
+});
+
 /** Update machine status (called by provisioning scripts via webhook). */
 export const updateStatus = mutation({
   args: {

@@ -3369,6 +3369,26 @@ http.route({
 /** POST /billing/yaver-cloud/dev-deprovision — owner-only: tear down
  *  a managed machine the caller owns (snapshot+delete via the managed
  *  destroy path). The web "Decommission" button for managed boxes. */
+/** POST /billing/yaver-cloud/reconcile — self-heal: "I paid but have
+ *  no box". Re-provisions the caller's active managed subscription(s)
+ *  if no live box exists. Idempotent (no-op when a healthy box is
+ *  already there). project_managed_cloud_onboarding_gap (recovery). */
+http.route({
+  path: "/billing/yaver-cloud/reconcile",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const session = await authenticateRequest(ctx, request);
+    if (!session) return errorResponse("Unauthorized", 401);
+    if (!isCloudPreviewUser(session.email)) {
+      return errorResponse("Owner-only (private preview) on this account", 403);
+    }
+    const r = await ctx.runAction(internal.cloudMachines.reconcileSubscriptions, {
+      onlyUserId: session.userDocId as any,
+    });
+    return jsonResponse({ ok: true, ...r });
+  }),
+});
+
 http.route({
   path: "/billing/yaver-cloud/dev-deprovision",
   method: "POST",
@@ -4789,6 +4809,12 @@ const runCron = httpAction(async (ctx, req) => {
       // their dashboard. 24h is enough for a real claim while still
       // bounding the table.
       await ctx.scheduler.runAfter(0, internal.pendingDeviceClaims.sweepStale, {});
+      break;
+    case "reconcileManagedSubscriptions":
+      // RECOVERY: re-provision any active managed subscription with no
+      // live box (paid → no cloud resource). Idempotent. Schedule it
+      // on the Hetzner cron timers like the others (hourly is plenty).
+      await ctx.scheduler.runAfter(0, internal.cloudMachines.reconcileSubscriptions, {});
       break;
     default:
       return new Response(`Unknown cron: ${name}`, { status: 404 });
