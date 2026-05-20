@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -55,15 +56,30 @@ func boolOrDefault(v *bool, fallback bool) bool {
 }
 
 func openVaultOptional() (*VaultStore, error) {
-	passphrase := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE"))
-	if passphrase == "" {
-		cfg, err := LoadConfig()
-		if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
-			return nil, fmt.Errorf("not authenticated")
-		}
-		passphrase = DerivePassphraseFromToken(cfg.AuthToken)
+	if pass := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE")); pass != "" {
+		// Manual override — caller picked a stable passphrase, don't
+		// silently flip them to v2 (mirrors openVaultE).
+		return NewVaultStore(pass)
 	}
-	return NewVaultStore(passphrase)
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		return nil, fmt.Errorf("not authenticated")
+	}
+	// v2 fast path; v1 legacy is the migration fallback. Mirrors
+	// openVaultE so all three call sites resolve the vault identically.
+	userID := resolveUserIDForVault(cfg)
+	if masterKey, mkErr := EnsureMasterKey(userID, cfg.DeviceID); mkErr == nil {
+		if vs, v2Err := NewVaultStoreV2(masterKey, cfg.DeviceID); v2Err == nil {
+			return vs, nil
+		} else if !errors.Is(v2Err, ErrVaultIsLegacyV1) {
+			return nil, v2Err
+		}
+	}
+	vs, err := NewVaultStoreWithDevice(DerivePassphraseFromToken(cfg.AuthToken), cfg.DeviceID)
+	if err == nil {
+		migrateVaultToV2(vs, userID, cfg.DeviceID)
+	}
+	return vs, err
 }
 
 func loadVaultEntryOptional(name string) (*VaultEntry, error) {

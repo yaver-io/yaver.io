@@ -220,9 +220,28 @@ func tryOpenAgentVault(cfg *Config, vaultPassFlag string) (*VaultStore, error) {
 	if pass := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE")); pass != "" {
 		return NewVaultStoreWithDevice(pass, cfg.DeviceID)
 	}
+
+	// v2 master-key path — same shape as openVaultE. Resolves user_id
+	// from cfg.AuthToken (cached env: YAVER_VAULT_USER_ID); offline /
+	// keychain-unavailable falls back to the legacy chain below.
+	userID := resolveUserIDForVault(cfg)
+	if masterKey, mkErr := EnsureMasterKey(userID, cfg.DeviceID); mkErr == nil {
+		if vs, v2Err := NewVaultStoreV2(masterKey, cfg.DeviceID); v2Err == nil {
+			return vs, nil
+		} else if !errors.Is(v2Err, ErrVaultIsLegacyV1) {
+			return nil, v2Err
+		}
+	} else {
+		log.Printf("[vault] boot: master-key unavailable (%v) — falling back to legacy v1 path", mkErr)
+	}
+
 	if strings.TrimSpace(cfg.AuthToken) != "" {
 		currentPass := DerivePassphraseFromToken(cfg.AuthToken)
 		if vs, err := NewVaultStoreWithDevice(currentPass, cfg.DeviceID); err == nil {
+			// v1 opened under the current token — opportunistically
+			// migrate to v2 so the agent stops touching the vault on
+			// every rotation.
+			migrateVaultToV2(vs, userID, cfg.DeviceID)
 			return vs, nil
 		} else if !strings.Contains(err.Error(), "wrong passphrase") {
 			return nil, err
@@ -233,6 +252,16 @@ func tryOpenAgentVault(cfg *Config, vaultPassFlag string) (*VaultStore, error) {
 		vsPrev, err := NewVaultStoreWithDevice(prevPass, cfg.DeviceID)
 		if err != nil {
 			return nil, err
+		}
+		// Prefer the v2 migration; fall back to the legacy v1 rekey
+		// only when keychain provisioning is impossible.
+		if migrateVaultToV2(vsPrev, userID, cfg.DeviceID) {
+			cfg.PreviousAuthToken = ""
+			if sErr := SaveConfig(cfg); sErr != nil {
+				log.Printf("Warning: clear PreviousAuthToken after v2 migration failed: %v", sErr)
+			}
+			log.Printf("Vault migrated to v2 on boot using previous auth token — rotations no longer touch the vault.")
+			return vsPrev, nil
 		}
 		currentPass := DerivePassphraseFromToken(cfg.AuthToken)
 		if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {

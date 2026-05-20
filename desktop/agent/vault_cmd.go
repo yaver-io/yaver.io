@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -132,6 +133,11 @@ func openVault() *VaultStore {
 // with the same guidance message as before so the user can supply
 // YAVER_VAULT_PASSPHRASE manually.
 func openVaultE() (*VaultStore, error) {
+	// Manual override path stays passphrase-only. Documented use: an
+	// operator who picked a stable passphrase explicitly decoupled from
+	// auth doesn't want the v2 master-key path silently re-encrypting
+	// the file under a new scheme. If they want v2, they can clear the
+	// env var and re-run.
 	if pass := os.Getenv("YAVER_VAULT_PASSPHRASE"); pass != "" {
 		vs, err := NewVaultStoreWithDevice(pass, "")
 		if err != nil {
@@ -145,9 +151,39 @@ func openVaultE() (*VaultStore, error) {
 		return nil, fmt.Errorf("Not authenticated. Run 'yaver auth' first.")
 	}
 
+	// v2 fast path — master key from ~/.yaver/master.key + macOS
+	// Keychain mirror, gated by the user_id in master.key.meta.
+	// Most calls land here once the user has migrated; the fallback
+	// chain below is the one-time migration path on first run.
+	userID := resolveUserIDForVault(cfg)
+	if masterKey, mkErr := EnsureMasterKey(userID, cfg.DeviceID); mkErr == nil {
+		vs, v2Err := NewVaultStoreV2(masterKey, cfg.DeviceID)
+		if v2Err == nil {
+			return vs, nil
+		}
+		if !errors.Is(v2Err, ErrVaultIsLegacyV1) {
+			// Wrong master key OR corruption. Don't silently retry
+			// via v1 — that would mask a real problem (e.g. someone
+			// dropped a different user's vault.enc in place).
+			return nil, fmt.Errorf("Error opening vault (v2): %v", v2Err)
+		}
+		// File is legacy v1 — fall through to the passphrase chain
+		// below. The successful unlock there triggers a one-time
+		// RekeyToMasterKey(masterKey) migration.
+	} else {
+		// Master-key provisioning failed (e.g. ~/.yaver unwritable, or
+		// another user's meta refusing us). Fall through to v1 — the
+		// vault still works under the old scheme; auto-migration just
+		// doesn't kick in until the next call.
+		fmt.Fprintf(os.Stderr, "Warning: master-key unavailable (%v) — falling back to legacy v1 vault.\n", mkErr)
+	}
+
 	currentPass := DerivePassphraseFromToken(cfg.AuthToken)
 	vs, err := NewVaultStoreWithDevice(currentPass, cfg.DeviceID)
 	if err == nil {
+		// v1 unlocked under the CURRENT token — migrate to v2 if a
+		// master key is available so future opens skip this chain.
+		migrateVaultToV2(vs, userID, cfg.DeviceID)
 		return vs, nil
 	}
 	if !strings.Contains(err.Error(), "wrong passphrase") {
@@ -157,8 +193,10 @@ func openVaultE() (*VaultStore, error) {
 	// Current token didn't decrypt — walk the previous-token chain
 	// (newest first), trying each. The single PreviousAuthToken field
 	// is tried first for back-compat with configs written before the
-	// chain existed. Auto-rekey on the first success so we only ever
-	// fall through this path once per rotation burst.
+	// chain existed. On first success we migrate to v2 (preferred —
+	// breaks the rotation-corruption loop for good) or fall back to a
+	// v1 rekey under the current token (older agents on the box
+	// without keychain support).
 	seen := map[string]bool{}
 	candidates := make([]string, 0, 1+len(cfg.PreviousAuthTokens))
 	if cfg.PreviousAuthToken != "" {
@@ -176,6 +214,17 @@ func openVaultE() (*VaultStore, error) {
 		if prevErr != nil {
 			continue
 		}
+		if migrateVaultToV2(vsPrev, userID, cfg.DeviceID) {
+			cfg.PreviousAuthToken = ""
+			cfg.PreviousAuthTokens = nil
+			if sErr := SaveConfig(cfg); sErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not clear previous-auth-token state from config: %v\n", sErr)
+			}
+			fmt.Fprintf(os.Stderr, "Vault migrated to v2 (keychain-backed) using a previous auth token — rotations no longer touch the vault.\n")
+			return vsPrev, nil
+		}
+		// Keychain unavailable — fall back to the legacy v1 rekey
+		// under the current auth token, same as before.
 		if rkErr := vsPrev.RekeyTo(currentPass); rkErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: auto-rekey failed (%v) — vault still readable; will retry next call.\n", rkErr)
 			return vsPrev, nil
@@ -190,6 +239,42 @@ func openVaultE() (*VaultStore, error) {
 	}
 
 	return nil, fmt.Errorf("Error: %v\nIf you changed your auth token before this build shipped, set YAVER_VAULT_PASSPHRASE to the previous token (or its passphrase).", err)
+}
+
+// resolveUserIDForVault returns the user_id used as the vault's access
+// guard, or "" when we can't resolve it (offline mode / Convex
+// unreachable). An override env (YAVER_VAULT_USER_ID) lets headless +
+// CI runs skip the network round-trip.
+func resolveUserIDForVault(cfg *Config) string {
+	if v := strings.TrimSpace(os.Getenv("YAVER_VAULT_USER_ID")); v != "" {
+		return v
+	}
+	if cfg == nil || cfg.ConvexSiteURL == "" || cfg.AuthToken == "" {
+		return ""
+	}
+	info, err := ValidateTokenInfo(cfg.ConvexSiteURL, cfg.AuthToken)
+	if err != nil || info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.UserID)
+}
+
+// migrateVaultToV2 flips an already-unlocked v1 vault to the v2 master-
+// key format. Returns true on success, false when keychain provisioning
+// fails (caller falls back to the legacy v1 rekey-to-current-token
+// path so the user is never worse off). Non-fatal — failure is logged
+// but doesn't abort the open.
+func migrateVaultToV2(vs *VaultStore, userID, deviceID string) bool {
+	masterKey, err := EnsureMasterKey(userID, deviceID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Note: v1→v2 vault migration skipped (master key unavailable: %v).\n", err)
+		return false
+	}
+	if rkErr := vs.RekeyToMasterKey(masterKey); rkErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: v1→v2 vault rekey failed (%v) — vault still readable as v1; will retry next call.\n", rkErr)
+		return false
+	}
+	return true
 }
 
 func readVaultPassphrase(prompt string) (string, error) {
