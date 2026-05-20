@@ -107,6 +107,10 @@ yaver vault import <file.json>
 yaver vault projects                     # distinct project names
 yaver vault env --project <p> [--no-globals]
 yaver vault exec --project <p> -- <cmd...>
+yaver vault check-passphrase             # validate a passphrase without printing secrets
+yaver vault unlock                       # re-encrypt passphrase-locked vault under current auth token
+yaver vault lock                         # re-encrypt vault under a manual passphrase
+yaver vault reset                        # archive old vault and create a fresh empty one
 yaver vault sync [--from <deviceId>]
 ```
 
@@ -124,6 +128,29 @@ Running an existing shell command with vault-injected env:
 
 ```bash
 yaver vault exec --project web -- npm run deploy
+```
+
+Recovering a passphrase-locked vault:
+
+```bash
+yaver vault check-passphrase
+yaver vault unlock
+```
+
+Starting over when the old passphrase is gone:
+
+```bash
+yaver vault reset
+```
+
+The same recovery operations are available to MCP clients through the
+`ops` tool with `verb: "secrets"`:
+
+```json
+{"verb":"secrets","payload":{"op":"check_passphrase","passphrase":"..."}}
+{"verb":"secrets","payload":{"op":"unlock","passphrase":"..."}}
+{"verb":"secrets","payload":{"op":"lock","new_passphrase":"..."}}
+{"verb":"secrets","payload":{"op":"reset","confirm":true}}
 ```
 
 Syncing secrets to another machine of yours (assume you've paired a

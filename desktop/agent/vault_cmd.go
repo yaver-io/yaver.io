@@ -10,6 +10,10 @@ package main
 //   import   — load plaintext JSON back
 //   env      — emit shell "export KEY=VAL" lines for a project (for deploys)
 //   exec     — run a command with the project env loaded
+//   check    — test a passphrase without printing secrets
+//   unlock   — rekey a passphrase-locked vault under the current auth token
+//   lock     — rekey the vault under a manual passphrase
+//   reset    — archive the current vault and create a fresh empty one
 //   projects — list distinct projects
 //   sync     — pull + push sync with a peer device (owner-auth, P2P)
 
@@ -22,10 +26,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
+
+	"golang.org/x/term"
 )
 
 func runVault(args []string) {
@@ -51,6 +58,14 @@ func runVault(args []string) {
 		runVaultEnv(args[1:])
 	case "exec":
 		runVaultExec(args[1:])
+	case "check-passphrase", "check":
+		runVaultCheckPassphrase(args[1:])
+	case "unlock":
+		runVaultUnlock(args[1:])
+	case "lock":
+		runVaultLock(args[1:])
+	case "reset":
+		runVaultReset(args[1:])
 	case "projects":
 		runVaultProjects()
 	case "sync":
@@ -74,6 +89,10 @@ func printVaultUsage() {
                                            Emit shell export KEY=VAL lines
   yaver vault exec --project <p> -- <cmd ...>
                                            Run command with env loaded
+  yaver vault check-passphrase             Test a passphrase without printing secrets
+  yaver vault unlock                       Re-encrypt vault under current auth token
+  yaver vault lock                         Re-encrypt vault under a manual passphrase
+  yaver vault reset                        Archive old vault and create a fresh one
   yaver vault projects                     List distinct projects
   yaver vault sync [--from <deviceId>]     Pull + push with peer (P2P)
 
@@ -171,6 +190,78 @@ func openVaultE() (*VaultStore, error) {
 	}
 
 	return nil, fmt.Errorf("Error: %v\nIf you changed your auth token before this build shipped, set YAVER_VAULT_PASSPHRASE to the previous token (or its passphrase).", err)
+}
+
+func readVaultPassphrase(prompt string) (string, error) {
+	if pass := strings.TrimSpace(os.Getenv("YAVER_VAULT_PASSPHRASE")); pass != "" {
+		return pass, nil
+	}
+	if prompt == "" {
+		prompt = "Vault passphrase"
+	}
+	fmt.Fprintf(os.Stderr, "%s: ", prompt)
+	b, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	pass := strings.TrimSpace(string(b))
+	if pass == "" {
+		return "", fmt.Errorf("passphrase cannot be empty")
+	}
+	return pass, nil
+}
+
+func readVaultPassphraseConfirmed(prompt string) (string, error) {
+	pass, err := readVaultPassphrase(prompt)
+	if err != nil {
+		return "", err
+	}
+	if os.Getenv("YAVER_VAULT_PASSPHRASE") != "" {
+		return pass, nil
+	}
+	again, err := readVaultPassphrase("Confirm vault passphrase")
+	if err != nil {
+		return "", err
+	}
+	if pass != again {
+		return "", fmt.Errorf("passphrases did not match")
+	}
+	return pass, nil
+}
+
+func existingVaultPath() (string, error) {
+	path, err := VaultPath()
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no vault file at %s", path)
+		}
+		return "", err
+	}
+	return path, nil
+}
+
+func loadVaultConfigForRekey() (*Config, error) {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil || strings.TrimSpace(cfg.AuthToken) == "" {
+		return nil, fmt.Errorf("not authenticated. Run 'yaver auth' first")
+	}
+	return cfg, nil
+}
+
+func archiveVaultFile(path, reason string) (string, error) {
+	if strings.TrimSpace(reason) == "" {
+		reason = "archived"
+	}
+	stamp := time.Now().Format("20060102-150405")
+	archive := filepath.Join(filepath.Dir(path), fmt.Sprintf("%s.%s.%s", filepath.Base(path), reason, stamp))
+	if err := os.Rename(path, archive); err != nil {
+		return "", err
+	}
+	return archive, nil
 }
 
 // splitArgs pulls flag-ish args to the front so flag.Parse handles them
@@ -469,6 +560,153 @@ func runVaultExec(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runVaultCheckPassphrase(args []string) {
+	fs := flag.NewFlagSet("vault check-passphrase", flag.ExitOnError)
+	passFlag := fs.String("passphrase", "", "Passphrase to test (prefer prompt/env; this can leak via shell history)")
+	fs.Parse(splitArgs(args))
+	if _, err := existingVaultPath(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	pass := strings.TrimSpace(*passFlag)
+	if pass == "" {
+		var err error
+		pass, err = readVaultPassphrase("Vault passphrase to test")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading passphrase: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	vs, err := NewVaultStore(pass)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Invalid vault passphrase.")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	entries := vs.List("*")
+	projects := vs.ListProjects()
+	if len(projects) == 0 {
+		fmt.Printf("Valid vault passphrase. Vault opens; %d entries, no project-scoped entries.\n", len(entries))
+		return
+	}
+	fmt.Printf("Valid vault passphrase. Vault opens; %d entries across projects: %s\n", len(entries), strings.Join(projects, ", "))
+}
+
+func runVaultUnlock(args []string) {
+	fs := flag.NewFlagSet("vault unlock", flag.ExitOnError)
+	passFlag := fs.String("passphrase", "", "Passphrase to unlock with (prefer prompt/env; this can leak via shell history)")
+	fs.Parse(splitArgs(args))
+	if _, err := existingVaultPath(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	cfg, err := loadVaultConfigForRekey()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	pass := strings.TrimSpace(*passFlag)
+	if pass == "" {
+		pass, err = readVaultPassphrase("Vault passphrase to unlock")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading passphrase: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	vs, err := NewVaultStoreWithDevice(pass, cfg.DeviceID)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Invalid vault passphrase; vault was not changed.")
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := vs.RekeyTo(DerivePassphraseFromToken(cfg.AuthToken)); err != nil {
+		fmt.Fprintf(os.Stderr, "Error re-encrypting vault: %v\n", err)
+		os.Exit(1)
+	}
+	cfg.PreviousAuthToken = ""
+	cfg.PreviousAuthTokens = nil
+	if err := SaveConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: vault rekeyed, but could not clear previous-token state: %v\n", err)
+	}
+	fmt.Println("Vault unlocked and re-encrypted under the current Yaver auth token.")
+}
+
+func runVaultLock(args []string) {
+	fs := flag.NewFlagSet("vault lock", flag.ExitOnError)
+	passFlag := fs.String("passphrase", "", "New manual vault passphrase (prefer prompt; this can leak via shell history)")
+	fs.Parse(splitArgs(args))
+	if _, err := existingVaultPath(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	vs := openVault()
+	pass := strings.TrimSpace(*passFlag)
+	var err error
+	if pass == "" {
+		pass, err = readVaultPassphraseConfirmed("New manual vault passphrase")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading passphrase: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	if err := vs.RekeyTo(pass); err != nil {
+		fmt.Fprintf(os.Stderr, "Error locking vault: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Vault locked under the manual passphrase.")
+	fmt.Println("Use 'yaver vault unlock' to re-encrypt it under your current Yaver auth token, or set YAVER_VAULT_PASSPHRASE for individual commands.")
+}
+
+func runVaultReset(args []string) {
+	fs := flag.NewFlagSet("vault reset", flag.ExitOnError)
+	yes := fs.Bool("yes", false, "Do not prompt for confirmation")
+	manual := fs.Bool("manual-passphrase", false, "Create the fresh vault under a prompted manual passphrase instead of the current auth token")
+	fs.Parse(splitArgs(args))
+
+	path, err := existingVaultPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if !*yes {
+		fmt.Fprintf(os.Stderr, "This will archive %s and create a fresh empty vault. Type RESET to continue: ", path)
+		scanner := bufio.NewScanner(os.Stdin)
+		if !scanner.Scan() || scanner.Text() != "RESET" {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			os.Exit(1)
+		}
+	}
+
+	var pass, deviceID string
+	if *manual {
+		pass, err = readVaultPassphraseConfirmed("New manual vault passphrase")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading passphrase: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		cfg, err := loadVaultConfigForRekey()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		pass = DerivePassphraseFromToken(cfg.AuthToken)
+		deviceID = cfg.DeviceID
+	}
+
+	archive, err := archiveVaultFile(path, "reset-bak")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error archiving vault: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := NewVaultStoreWithDevice(pass, deviceID); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating fresh vault: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Archived vault remains at %s\n", archive)
+		os.Exit(1)
+	}
+	fmt.Printf("Created a fresh empty vault. Archived previous vault at %s\n", archive)
 }
 
 func runVaultProjects() {
