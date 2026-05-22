@@ -129,7 +129,7 @@ export default function ManagedCloudCard({
       }
       await load();
     } catch (e: any) {
-      Alert.alert(action === "start" ? "Start failed" : "Stop failed", e?.message || "Managed-cloud lifecycle route is not available yet.");
+      Alert.alert(action === "start" ? "Resume failed" : "Pause failed", e?.message || "Managed-cloud lifecycle route is not available yet.");
     } finally {
       setBusy(null);
     }
@@ -194,6 +194,9 @@ export default function ManagedCloudCard({
               phase !== "ready" &&
               m.status !== "error" &&
               m.status !== "stopped" &&
+              m.status !== "paused" &&
+              m.status !== "suspended" &&
+              m.status !== "resuming" &&
               m.status !== "active");
           return (
             <View
@@ -217,7 +220,30 @@ export default function ManagedCloudCard({
                     {m.status ?? "?"}
                   </Text>
                 </Text>
-                {m.status === "stopped" ? (
+                {m.status === "active" ? (
+                  <Pressable
+                    disabled={busy !== null}
+                    onPress={() =>
+                      Alert.alert(
+                        "Pause box?",
+                        "Snapshots the disk, then deletes the cloud server so it stops billing — ~€0.50/mo paused vs ~€30/mo running. Resume recreates it from the snapshot in ~2-3 min (new IP).",
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          { text: "Pause", onPress: () => void lifecycle(m.id, "stop") },
+                        ],
+                      )
+                    }
+                    style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#b45309", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
+                  >
+                    {busy === `stop:${m.id}` ? (
+                      <ActivityIndicator size="small" color="#b45309" />
+                    ) : (
+                      <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
+                        ⏸ Pause
+                      </Text>
+                    )}
+                  </Pressable>
+                ) : m.status === "paused" || m.status === "suspended" ? (
                   <Pressable
                     disabled={busy !== null}
                     onPress={() => lifecycle(m.id, "start")}
@@ -227,21 +253,7 @@ export default function ManagedCloudCard({
                       <ActivityIndicator size="small" color="#059669" />
                     ) : (
                       <Text style={{ color: "#059669", fontSize: 11, fontWeight: "700" }}>
-                        Start
-                      </Text>
-                    )}
-                  </Pressable>
-                ) : m.status !== "stopping" ? (
-                  <Pressable
-                    disabled={busy !== null}
-                    onPress={() => lifecycle(m.id, "stop")}
-                    style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: "#b45309", borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
-                  >
-                    {busy === `stop:${m.id}` ? (
-                      <ActivityIndicator size="small" color="#b45309" />
-                    ) : (
-                      <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "700" }}>
-                        Stop
+                        ▶ Resume
                       </Text>
                     )}
                   </Pressable>
@@ -250,7 +262,7 @@ export default function ManagedCloudCard({
                 )}
               </View>
 
-              {m.status !== "stopping" ? (
+              {m.status !== "stopping" && m.status !== "resuming" ? (
                 <Pressable
                   disabled={busy !== null}
                   onPress={() => decommission(m.id, m.hetznerServerId)}
@@ -286,6 +298,14 @@ export default function ManagedCloudCard({
               ) : m.status === "active" && m.runnersAuthorized === false ? (
                 <Text style={{ color: "#b45309", fontSize: 11, fontWeight: "600" }}>
                   ⚠ Unauthorized — sign your coding agents in from the web dashboard.
+                </Text>
+              ) : m.status === "paused" || m.status === "suspended" ? (
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>
+                  ⏸ Paused — snapshot kept, ~€0.50/mo (vs ~€30/mo running). Resume recreates it in ~2-3 min.
+                </Text>
+              ) : m.status === "resuming" ? (
+                <Text style={{ color: "#0ea5e9", fontSize: 11 }}>
+                  Resuming from snapshot…
                 </Text>
               ) : null}
 

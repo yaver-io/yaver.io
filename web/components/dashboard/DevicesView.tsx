@@ -1944,6 +1944,40 @@ export default function DevicesView({
   const managedDeviceIds = useManagedDeviceIds(token);
   const managedMachines = useManagedMachines(token);
   const deviceIdSet = useMemo(() => new Set(devices.map((d) => d.id)), [devices]);
+  // deviceId → managed-machine summary, so a device card can show its
+  // cloud lifecycle state (paused/resuming) and a Pause/Resume action.
+  const managedByDeviceId = useMemo(() => {
+    const map = new Map<string, ManagedMachineSummary>();
+    for (const m of managedMachines) {
+      if (m.deviceId) map.set(m.deviceId, m);
+    }
+    return map;
+  }, [managedMachines]);
+  // Which managed box has a pause/resume call in flight (its machineId).
+  const [boxBusy, setBoxBusy] = useState<string | null>(null);
+  // Pause (snapshot + delete the server to stop billing) / Resume
+  // (recreate from the snapshot) a managed box — the same Convex
+  // billing routes mobile and the Managed Cloud panel use.
+  async function pauseResumeBox(machineId: string, action: "stop" | "start") {
+    if (!token) return;
+    setBoxBusy(machineId);
+    try {
+      const res = await fetch(`${CONVEX_URL}/billing/yaver-cloud/${action}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(j?.error || `${action === "stop" ? "Pause" : "Resume"} failed (${res.status})`);
+      }
+    } catch (e: any) {
+      alert(e?.message || String(e));
+    } finally {
+      setBoxBusy(null);
+      void onRefresh();
+    }
+  }
   // Managed boxes that exist in cloudMachines but have not yet produced
   // a real `devices` heartbeat row → render a synthetic "Setting up"
   // card so the box is first-class the moment it's bought, not a void
@@ -1958,6 +1992,8 @@ export default function DevicesView({
           m.status !== "removed" &&
           m.status !== "stopped" &&
           m.status !== "stopping" &&
+          m.status !== "paused" &&
+          m.status !== "suspended" &&
           !(m.deviceId && deviceIdSet.has(m.deviceId)),
       ),
     [managedMachines, deviceIdSet],
@@ -2150,6 +2186,7 @@ export default function DevicesView({
             const sshCommand = sshCommandForDevice(device);
             const directSSHHost = directSSHHostForDevice(device);
             const sshHref = directSSHHost ? `ssh://${directSSHHost}` : null;
+            const managedMachine = managedByDeviceId.get(device.id);
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
@@ -2205,6 +2242,21 @@ export default function DevicesView({
                           }
                         >
                           {managedDeviceIds.has(device.id) ? "Yaver Managed Cloud" : "Self-hosted"}
+                        </span>
+                      ) : null}
+                      {managedMachine &&
+                      (managedMachine.status === "paused" ||
+                        managedMachine.status === "suspended") ? (
+                        <span
+                          className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                          title="Box is paused — snapshot kept, ~€0.50/mo. Resume to bring it back."
+                        >
+                          ⏸ Paused
+                        </span>
+                      ) : null}
+                      {managedMachine && managedMachine.status === "resuming" ? (
+                        <span className="rounded border border-sky-300 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:border-sky-500/40 dark:bg-sky-500/10 dark:text-sky-300">
+                          Resuming…
                         </span>
                       ) : null}
                       {(() => {
@@ -2336,6 +2388,36 @@ export default function DevicesView({
                         title="Recycle this box: provision a fresh box, health-check, then snapshot+delete the old one (dry-run first)"
                       >
                         ♻ Recycle box
+                      </button>
+                    ) : null}
+                    {!device.isGuest && token && managedMachine && managedMachine.status === "active" ? (
+                      <button
+                        disabled={boxBusy === managedMachine.id}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              "Pause this box? It snapshots the disk, then deletes the cloud " +
+                                "server so it stops billing — ~€0.50/mo while paused vs ~€30/mo " +
+                                "running. Resume recreates it from the snapshot in ~2-3 min (new IP).",
+                            )
+                          )
+                            return;
+                          void pauseResumeBox(managedMachine!.id, "stop");
+                        }}
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-amber-700 transition-colors hover:border-amber-400 disabled:opacity-50 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300"
+                        title="Pause: snapshot + delete the server to stop billing — resumable"
+                      >
+                        {boxBusy === managedMachine.id ? "…" : "⏸ Pause box"}
+                      </button>
+                    ) : null}
+                    {!device.isGuest && token && managedMachine && (managedMachine.status === "paused" || managedMachine.status === "suspended") ? (
+                      <button
+                        disabled={boxBusy === managedMachine.id}
+                        onClick={() => void pauseResumeBox(managedMachine!.id, "start")}
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 transition-colors hover:border-emerald-400 disabled:opacity-50 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300"
+                        title="Resume: recreate the box from its pause snapshot (~2-3 min)"
+                      >
+                        {boxBusy === managedMachine.id ? "…" : "▶ Resume box"}
                       </button>
                     ) : null}
                     {recycleFor?.id === device.id && token ? (

@@ -385,9 +385,17 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
   }, [token]);
 
   const provisioning = machines.filter(
-    (m) => m.status === "provisioning" || m.status === "stopping",
+    (m) =>
+      m.status === "provisioning" ||
+      m.status === "stopping" ||
+      m.status === "resuming",
   ).length;
   const active = machines.filter((m) => m.status === "active").length;
+  // Paused = snapshotted + server deleted to cut cost; resumable.
+  // suspended = auto-paused (prepaid floor breach) — same UX.
+  const paused = machines.filter(
+    (m) => m.status === "paused" || m.status === "suspended",
+  ).length;
   // A removed/decommissioned box is "stopped" — don't show dead boxes
   // at all (they clutter the panel and confuse "is this still mine").
   // Only live/in-flight machines are listed.
@@ -505,7 +513,7 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
 
           {machines.length > 0 ? (
             <p className="text-[11px] text-slate-500 dark:text-surface-400">
-              {active} active · {provisioning} provisioning
+              {active} active · {paused} paused · {provisioning} provisioning
               {provisioning > 0 ? " — auto-refreshing every 8s, your box appears here when ready" : ""}
             </p>
           ) : null}
@@ -537,24 +545,74 @@ export function ManagedCloudPanel({ token }: { token: string | null | undefined 
                       </span>
                     </span>
                   </div>
-                  <button
-                    disabled={busy}
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `Delete this managed box (resource ${m.hetznerServerId ?? "—"})? ` +
-                            `It snapshots first, then decommissions the cloud resource and stops billing. This cannot be undone.`,
+                  <div className="flex items-center gap-1.5">
+                    {m.status === "active" ? (
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              "Pause this box? It snapshots the disk, then deletes the cloud " +
+                                "server so it stops billing — paused costs only ~€0.50/mo (snapshot " +
+                                "storage) vs ~€30/mo running. Resume recreates it from the snapshot " +
+                                "in ~2-3 min (the box gets a new IP).",
+                            )
+                          )
+                            return;
+                          void post("/billing/yaver-cloud/stop", { machineId: m.id });
+                        }}
+                        className="rounded border border-amber-400/50 px-2 py-0.5 text-[10px] font-semibold text-amber-600 disabled:opacity-50 dark:text-amber-400"
+                        title="Snapshot + delete the server to stop billing — resumable"
+                      >
+                        ⏸ Pause
+                      </button>
+                    ) : null}
+                    <button
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Delete this managed box (resource ${m.hetznerServerId ?? "—"})? ` +
+                              `It snapshots first, then decommissions the cloud resource and stops billing. This cannot be undone — use Pause instead if you just want to save cost temporarily.`,
                         )
-                      )
-                        return;
-                      void post("/billing/yaver-cloud/dev-deprovision", { machineId: m.id });
-                    }}
-                    className="rounded border border-rose-400/50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
-                  >
-                    ♻ Delete box
-                  </button>
+                        )
+                          return;
+                        void post("/billing/yaver-cloud/dev-deprovision", { machineId: m.id });
+                      }}
+                      className="rounded border border-rose-400/50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
+                    >
+                      ♻ Delete box
+                    </button>
+                  </div>
                  </div>
                   {(() => {
+                    // Paused / suspended → calm parked state + Resume.
+                    if (m.status === "paused" || m.status === "suspended") {
+                      return (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+                          <span className="rounded bg-slate-500/15 px-1.5 py-0.5 font-semibold text-slate-600 dark:text-surface-300">
+                            ⏸ {m.status === "suspended" ? "Suspended" : "Paused"}
+                          </span>
+                          <span className="text-slate-500 dark:text-surface-400">
+                            Snapshot kept · ~€0.50/mo while paused (vs ~€30/mo running)
+                          </span>
+                          <button
+                            disabled={busy}
+                            onClick={() => void post("/billing/yaver-cloud/start", { machineId: m.id })}
+                            className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+                          >
+                            ▶ Resume
+                          </button>
+                        </div>
+                      );
+                    }
+                    if (m.status === "resuming") {
+                      return (
+                        <div className="mt-1.5 text-[11px] text-sky-600 dark:text-sky-300">
+                          Resuming from snapshot — recreating the server (~2-3 min)…
+                        </div>
+                      );
+                    }
                     const phase = m.provisionPhase ?? null;
                     const pct =
                       typeof m.provisionProgress === "number"

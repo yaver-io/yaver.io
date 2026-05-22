@@ -3549,10 +3549,11 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/stop — owner-only stop transition.
- *  P1 owns the real Hetzner stop/snapshot verb. Until that is wired,
- *  this route is deliberately state-only/dry-run so mobile/web can
- *  exercise the prepaid stop/start UX without spending or destroying. */
+/** POST /billing/yaver-cloud/stop — owner-only PAUSE: snapshot the box,
+ *  then DELETE the Hetzner server (a powered-off server still bills
+ *  full price; only delete stops the charge). Status → "paused",
+ *  snapshot id kept for resume. Real Hetzner calls when HCLOUD_TOKEN is
+ *  set; fail-closed dry-run state transition otherwise. */
 http.route({
   path: "/billing/yaver-cloud/stop",
   method: "POST",
@@ -3587,9 +3588,10 @@ http.route({
   }),
 });
 
-/** POST /billing/yaver-cloud/start — owner-only start transition.
- *  Balance-gated against the prepaid reserve. State-only/dry-run until
- *  P1's recreate/start provider verb lands. */
+/** POST /billing/yaver-cloud/start — owner-only RESUME: recreate the
+ *  Hetzner server from the pause snapshot, re-point DNS, status →
+ *  "active". Balance-gated against the prepaid reserve (402 below it).
+ *  Real Hetzner calls when HCLOUD_TOKEN is set; dry-run otherwise. */
 http.route({
   path: "/billing/yaver-cloud/start",
   method: "POST",

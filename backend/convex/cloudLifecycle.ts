@@ -307,6 +307,30 @@ async function hetznerCreateFromImage(
   return { serverId: String(id), ip };
 }
 
+// Re-point (or create) the box's A record. A resumed box gets a NEW
+// Hetzner IP, so <id>.cloud.yaver.io must follow it or hostname-based
+// access breaks. Best-effort — IP-direct still works if this fails.
+async function cloudflareUpsertA(hostname: string, ip: string): Promise<void> {
+  const token = process.env.CF_API_TOKEN;
+  const zone = process.env.CF_ZONE_ID;
+  if (!token || !zone || !hostname || !ip) return;
+  const base = `https://api.cloudflare.com/client/v4/zones/${zone}/dns_records`;
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const body = JSON.stringify({ type: "A", name: hostname, content: ip, proxied: false, ttl: 60 });
+  try {
+    const list = await fetch(`${base}?type=A&name=${encodeURIComponent(hostname)}`, { headers });
+    const listJson = (await list.json()) as { result?: { id: string }[] };
+    const recordId = listJson.result?.[0]?.id;
+    if (recordId) {
+      await fetch(`${base}/${recordId}`, { method: "PUT", headers, body });
+    } else {
+      await fetch(base, { method: "POST", headers, body });
+    }
+  } catch (e) {
+    console.error(`[cloudLifecycle] DNS upsert for ${hostname} failed:`, e);
+  }
+}
+
 // Read-only enumeration of billable machines (own internalQuery over
 // the shared table — allowed; never edits cloudMachines.ts). active =>
 // live meter; paused => stopped (snapshot) meter.
@@ -461,6 +485,10 @@ export const resumeMachine = internalAction({
         machineId, hetznerServerId: serverId, serverIp: ip,
         hostname: machine.hostname || "",
       });
+      // Resumed box has a NEW IP — re-point its DNS A record so the
+      // <id>.cloud.yaver.io hostname keeps resolving (IP-direct works
+      // regardless; this keeps the hostname/tunnel path alive).
+      if (machine.hostname) await cloudflareUpsertA(machine.hostname, ip);
       await ctx.runMutation(internal.cloudMachines.setStatus, { machineId, status: "active" });
       return { ok: true, status: "active", serverId, ip, dryRun: false };
     } catch (e) {

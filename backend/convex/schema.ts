@@ -870,7 +870,7 @@ export default defineSchema({
     // resubscribe). byok boxes are disposable → none of this applies.
     deprovisionAt: v.optional(v.number()),
     scheduledDestroyId: v.optional(v.id("_scheduled_functions")),
-    status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "error"
+    status: v.string(),               // "provisioning" | "active" | "grace" | "stopping" | "stopped" | "paused" | "resuming" | "suspended" | "error"
     // First-class onboarding (project_managed_cloud_onboarding_gap).
     // Granular phase + 0-100 progress so web/mobile show a real
     // "setting up your box" bar, not a binary provisioning/active.

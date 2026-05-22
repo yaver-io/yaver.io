@@ -175,7 +175,8 @@ export default function BillingView({ token }: { token: string | null | undefine
                   >
                     {m.status ?? "?"}
                   </span>
-                  {m.provisionPhase && m.status !== "active" && m.status !== "stopped"
+                  {m.provisionPhase &&
+                  (m.status === "provisioning" || m.status === "error")
                     ? ` (${m.provisionPhase}${
                         typeof m.provisionProgress === "number"
                           ? ` ${m.provisionProgress}%`
@@ -185,29 +186,68 @@ export default function BillingView({ token }: { token: string | null | undefine
                   {m.status === "active" && m.runnersAuthorized === false
                     ? " · ⚠ runners unauthorized"
                     : ""}
+                  {m.status === "active" ? " · ~€30/mo running" : ""}
+                  {m.status === "paused" || m.status === "suspended"
+                    ? " · ~€0.50/mo paused"
+                    : ""}
                 </span>
-                {m.status !== "stopped" && m.status !== "stopping" ? (
-                  <button
-                    disabled={busy !== null}
-                    onClick={() => {
-                      if (
-                        !window.confirm(
-                          `Decommission this box (resource ${m.hetznerServerId ?? "—"})? ` +
-                            `Decommissions the cloud resource, stops billing, and cancels the subscription. Cannot be undone.`,
+                <div className="flex items-center gap-1.5">
+                  {m.status === "active" ? (
+                    <button
+                      disabled={busy !== null}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            "Pause this box? It snapshots the disk, then deletes the cloud " +
+                              "server so it stops billing — ~€0.50/mo while paused vs ~€30/mo " +
+                              "running. Resume recreates it from the snapshot in ~2-3 min (new IP).",
+                          )
                         )
-                      )
-                        return;
-                      void act("decommission", "/billing/yaver-cloud/dev-deprovision", {
-                        machineId: m.id,
-                      });
-                    }}
-                    className="rounded border border-rose-400/50 px-2 py-0.5 font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
-                  >
-                    ♻ Decommission
-                  </button>
-                ) : (
-                  <span className="text-[10px] text-slate-400">{m.status}</span>
-                )}
+                          return;
+                        void act("pause", "/billing/yaver-cloud/stop", { machineId: m.id });
+                      }}
+                      className="rounded border border-amber-400/50 px-2 py-0.5 font-semibold text-amber-600 disabled:opacity-50 dark:text-amber-400"
+                      title="Snapshot + delete the server to stop billing — resumable"
+                    >
+                      ⏸ Pause
+                    </button>
+                  ) : null}
+                  {m.status === "paused" || m.status === "suspended" ? (
+                    <button
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void act("resume", "/billing/yaver-cloud/start", { machineId: m.id })
+                      }
+                      className="rounded border border-emerald-500/50 px-2 py-0.5 font-semibold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+                    >
+                      ▶ Resume
+                    </button>
+                  ) : null}
+                  {m.status !== "stopped" &&
+                  m.status !== "stopping" &&
+                  m.status !== "resuming" ? (
+                    <button
+                      disabled={busy !== null}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Decommission this box (resource ${m.hetznerServerId ?? "—"})? ` +
+                              `Decommissions the cloud resource, stops billing, and cancels the subscription. Cannot be undone — use Pause if you only want to save cost temporarily.`,
+                          )
+                        )
+                          return;
+                        void act("decommission", "/billing/yaver-cloud/dev-deprovision", {
+                          machineId: m.id,
+                        });
+                      }}
+                      className="rounded border border-rose-400/50 px-2 py-0.5 font-semibold text-rose-600 disabled:opacity-50 dark:text-rose-400"
+                    >
+                      ♻ Decommission
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-slate-400">{m.status}</span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
