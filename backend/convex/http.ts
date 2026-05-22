@@ -1,5 +1,6 @@
 import { httpRouter } from "convex/server";
-import { httpAction } from "./_generated/server";
+import { v } from "convex/values";
+import { httpAction, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
@@ -162,6 +163,52 @@ async function createLemonSqueezyCheckout(args: {
   }
   return url;
 }
+
+// Cancel a subscription on LemonSqueezy itself (DELETE = cancel at
+// period end). Yaver-initiated decommission / reconcile orphan-sweep
+// must do this: cancelling only the Convex row stops Yaver's own
+// reconcile, but a real paying customer would keep being billed by
+// LemonSqueezy. Best-effort — a missing API key, a non-numeric
+// (e2e/test) id, a 404, or a network error is logged and swallowed;
+// the Convex row is already cancelled and is the source of truth for
+// Yaver's gates. Scheduled from subscriptions.cancelById.
+export const cancelLemonSqueezySubscription = internalAction({
+  args: { lemonSqueezyId: v.string() },
+  handler: async (_ctx, { lemonSqueezyId }) => {
+    const apiKey = lsEnv("API_KEY");
+    if (!apiKey) {
+      console.warn("[lemonsqueezy] subscription cancel skipped — API_KEY not configured");
+      return;
+    }
+    // Real LemonSqueezy subscription ids are numeric strings; e2e
+    // fixtures use "e2e-…". Calling the API for a synthetic id just 404s.
+    if (!/^[0-9]+$/.test(lemonSqueezyId)) {
+      console.log(`[lemonsqueezy] subscription cancel skipped — non-numeric id "${lemonSqueezyId}" (test/dev sub)`);
+      return;
+    }
+    try {
+      const resp = await fetch(
+        `https://api.lemonsqueezy.com/v1/subscriptions/${lemonSqueezyId}`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "application/vnd.api+json",
+          },
+        },
+      );
+      if (resp.ok || resp.status === 404) {
+        console.log(`[lemonsqueezy] subscription ${lemonSqueezyId} cancelled (HTTP ${resp.status})`);
+      } else {
+        console.error(
+          `[lemonsqueezy] subscription ${lemonSqueezyId} cancel returned HTTP ${resp.status}: ${await resp.text()}`,
+        );
+      }
+    } catch (e) {
+      console.error(`[lemonsqueezy] subscription ${lemonSqueezyId} cancel failed:`, e);
+    }
+  },
+});
 
 async function attachPreviewMachineToSharedServer(
   ctx: { runMutation: (mutation: any, args: any) => Promise<any> },

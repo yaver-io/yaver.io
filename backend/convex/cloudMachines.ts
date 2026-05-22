@@ -1450,21 +1450,54 @@ export const reconcileSubscriptions = internalAction({
   handler: async (
     ctx,
     args,
-  ): Promise<{ checked: number; repaired: number }> => {
+  ): Promise<{ checked: number; repaired: number; cancelled: number }> => {
     const subs = await ctx.runQuery(internal.subscriptions.listActiveManaged, {});
     let repaired = 0;
+    let cancelled = 0;
     for (const s of subs) {
       if (args.onlyUserId && s.userId !== args.onlyUserId) continue;
-      const machines = await ctx.runQuery(
+      const machinesRaw = await ctx.runQuery(
         internal.cloudMachines.listBySubscription,
         { subscriptionId: s.subscriptionId },
       );
-      const hasLive = Array.isArray(machines)
-        && machines.some((m: any) => HEALTHY_OR_INFLIGHT.has(m.status));
-      if (hasLive) continue;
-      // Paid, no live box → re-provision. machineType from the plan
-      // label ("yaver-cloud-gpu" ⇒ gpu). Tier defaults byok (a hosted
-      // sub still gets a working box; hosted Convex re-bootstraps).
+      const machines: Array<{ status: string }> = Array.isArray(machinesRaw)
+        ? machinesRaw
+        : [];
+
+      // A healthy/in-flight box — or one the user intentionally PAUSED
+      // — means the subscription is doing its job. Leave it alone.
+      if (
+        machines.some(
+          (m) => HEALTHY_OR_INFLIGHT.has(m.status) || m.status === "paused",
+        )
+      ) {
+        continue;
+      }
+
+      // No live box. If every machine row is "stopped", the box was
+      // deliberately torn down (decommission / destroy) and the still-
+      // active subscription is ORPHANED — cancel it (Convex row +
+      // LemonSqueezy, via cancelById) instead of resurrecting a box the
+      // user already removed. This was the re-provision money-landmine;
+      // reconcile now DISARMS it rather than arming it.
+      if (
+        machines.length > 0 &&
+        machines.every((m) => m.status === "stopped")
+      ) {
+        await ctx.runMutation(internal.subscriptions.cancelById, {
+          subscriptionId: s.subscriptionId,
+        });
+        cancelled++;
+        console.log(
+          `[reconcile] cancelled orphaned sub ${s.subscriptionId} — its box was decommissioned`,
+        );
+        continue;
+      }
+
+      // Genuinely no box (the create never ran) or a failed "error"
+      // box → recovery: re-provision. machineType from the plan label
+      // ("yaver-cloud-gpu" ⇒ gpu). Tier defaults byok (a hosted sub
+      // still gets a working box; hosted Convex re-bootstraps).
       const machineType = s.plan.includes("gpu") ? "gpu" : "cpu";
       await ctx.runMutation(api.cloudMachines.ensureForSubscription, {
         userId: s.userId,
@@ -1477,7 +1510,7 @@ export const reconcileSubscriptions = internalAction({
         `[reconcile] re-provisioned ${machineType} for sub ${s.subscriptionId} (paid, had no live box)`,
       );
     }
-    return { checked: subs.length, repaired };
+    return { checked: subs.length, repaired, cancelled };
   },
 });
 

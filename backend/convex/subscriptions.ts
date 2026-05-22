@@ -1,15 +1,28 @@
 import { v } from "convex/values";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { isOwnerEmail, isOwnerUserId } from "./ownerAllowlist";
 
-// Get user's active subscription
+// The subscription that actually governs a user's billing right now.
+// A user accumulates many subscription rows over time (renewals,
+// decommissioned boxes, e2e test subs). The old `.first()` returned
+// the OLDEST row by index order — so the Billing page could display a
+// long-dead subscription. Pick deterministically: an `active` row
+// wins; among equals, the most recently updated. null when none.
 export const getByUser = query({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
-    return await ctx.db
+    const rows = await ctx.db
       .query("subscriptions")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .first();
+      .collect();
+    if (rows.length === 0) return null;
+    return rows.sort((a, b) => {
+      const activeDelta =
+        (b.status === "active" ? 1 : 0) - (a.status === "active" ? 1 : 0);
+      if (activeDelta !== 0) return activeDelta;
+      return (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0);
+    })[0];
   },
 });
 
@@ -38,9 +51,19 @@ export const isActive = internalQuery({
 });
 
 // Cancel a subscription by its Convex _id. Called when a user
-// decommissions their managed box: billing ends AND the reconcile
-// recovery (which only acts on status==="active") will no longer
-// resurrect the box. Idempotent. project_managed_cloud_onboarding_gap.
+// decommissions their managed box, or when reconcile sweeps up an
+// orphaned paid sub: billing ends AND the reconcile recovery (which
+// only acts on status==="active") will no longer resurrect the box.
+// Idempotent. project_managed_cloud_onboarding_gap.
+//
+// This is a YAVER-INITIATED cancel, so it also cancels the
+// subscription on LemonSqueezy itself — patching only the Convex row
+// stops Yaver's reconcile but a real paying customer would keep being
+// billed by LemonSqueezy until period end. The webhook-driven `cancel`
+// path below intentionally does NOT do this (LemonSqueezy is already
+// the originator there). Because the webhook runs `cancel` before it
+// calls deprovision→cancelById, this guard short-circuits in that
+// path — no double cancel.
 export const cancelById = internalMutation({
   args: { subscriptionId: v.id("subscriptions") },
   handler: async (ctx, { subscriptionId }) => {
@@ -51,6 +74,13 @@ export const cancelById = internalMutation({
       cancelledAt: Date.now(),
       updatedAt: Date.now(),
     });
+    if (sub.lemonSqueezyId) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.http.cancelLemonSqueezySubscription,
+        { lemonSqueezyId: sub.lemonSqueezyId },
+      );
+    }
     return true;
   },
 });
