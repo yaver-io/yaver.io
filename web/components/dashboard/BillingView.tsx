@@ -73,6 +73,11 @@ export default function BillingView({ token }: { token: string | null | undefine
   // billing, and clutter the view.
   const machines = allMachines.filter((m) => m.status !== "stopped");
   const active = machines.filter((m) => m.status === "active").length;
+  // Honest billing: an "active" subscription with zero live managed
+  // boxes means the user is billed (it keeps renewing) for nothing —
+  // the box was decommissioned or never provisioned. Surface it loudly
+  // instead of a bare green "active".
+  const noBox = sub?.status === "active" && machines.length === 0;
 
   return (
     <div className="space-y-4">
@@ -91,6 +96,7 @@ export default function BillingView({ token }: { token: string | null | undefine
           Subscription
         </div>
         {sub ? (
+          <>
           <div className="flex flex-wrap items-center gap-4 text-sm">
             <span>
               Plan:{" "}
@@ -100,7 +106,7 @@ export default function BillingView({ token }: { token: string | null | undefine
               Status:{" "}
               <span
                 className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
-                  sub.status === "active"
+                  sub.status === "active" && !noBox
                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                     : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                 }`}
@@ -114,6 +120,14 @@ export default function BillingView({ token }: { token: string | null | undefine
               </span>
             ) : null}
           </div>
+          {noBox ? (
+            <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+              ⚠ This subscription is active but has no managed box — it
+              keeps renewing unused. Buy or re-provision a box from
+              Devices → Managed cloud, or decommission it to stop billing.
+            </p>
+          ) : null}
+          </>
         ) : (
           <p className="text-sm text-slate-500 dark:text-surface-400">
             No active subscription. Buy a managed box from Devices →

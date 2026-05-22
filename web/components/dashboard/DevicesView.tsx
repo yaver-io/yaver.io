@@ -108,7 +108,17 @@ function TransportBadge({ device }: { device: Device }) {
   );
 }
 
-function DeviceIcon({ platform }: { platform: string }) {
+function DeviceIcon({ platform, managed }: { platform: string; managed?: boolean }) {
+  // Yaver managed-cloud boxes get a cloud glyph regardless of the
+  // underlying OS — they're "your cloud", not hardware you rack
+  // yourself. Pairs with the "Yaver Managed Cloud" card badge.
+  if (managed) {
+    return (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
+      </svg>
+    );
+  }
   const isMobile = platform === "iOS" || platform === "Android";
   if (isMobile) {
     return (
@@ -2036,7 +2046,7 @@ export default function DevicesView({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <span className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
-                      Yaver Cloud
+                      Yaver Managed Cloud
                     </span>
                     <span className="text-sm font-medium text-surface-100">
                       {name}
@@ -2143,7 +2153,7 @@ export default function DevicesView({
             return (
             <div key={device.id} className="card flex items-start gap-4 border border-slate-200 bg-white shadow-sm dark:border-surface-700/80 dark:bg-[rgba(44,46,56,0.82)] dark:shadow-[0_18px_40px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.03)]">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500 dark:bg-[rgba(18,19,24,0.92)] dark:text-surface-300">
-                <DeviceIcon platform={device.platform} />
+                <DeviceIcon platform={device.platform} managed={managedDeviceIds.has(device.id)} />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
@@ -2194,7 +2204,7 @@ export default function DevicesView({
                               : "Your own hardware or cloud box (self-hosted)"
                           }
                         >
-                          {managedDeviceIds.has(device.id) ? "Yaver Cloud" : "Self-hosted"}
+                          {managedDeviceIds.has(device.id) ? "Yaver Managed Cloud" : "Self-hosted"}
                         </span>
                       ) : null}
                       {(() => {
