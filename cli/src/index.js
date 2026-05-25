@@ -9,6 +9,7 @@ const { reset } = require('./commands/reset');
 const { status } = require('./commands/status');
 const { feedback } = require('./commands/feedback');
 const { deploy, isLocalDeployToken } = require('./commands/deploy');
+const { run, isLocalRunToken } = require('./commands/run');
 
 const PUSH_HELP = `
 yaver push — Push existing React Native projects to the Yaver mobile host
@@ -53,6 +54,17 @@ Push-to-device commands:
   yaver push devices                Scan LAN for Yaver mobile hosts
   yaver push reset                  Clear pushed bundle on the selected device
   yaver push status                 Show project + device push status
+
+Dev-server commands (monorepo-aware; yaver.deploy.json + find/grep scan):
+  yaver run dev                     Start the web dev server (default target)
+  yaver run dev:web                 Web (Next/Astro/Vite/SvelteKit/Cloudflare etc.)
+  yaver run dev:mobile              Expo / React Native / Flutter dev launcher
+  yaver run dev:convex              Convex dev (alias: dev:backend)
+  yaver run dev:supabase            Local Supabase stack
+  yaver run dev:docker              docker compose up
+  yaver run dev:all                 Run every detected dev target in parallel
+  yaver run dev:list                Show resolved dev targets + their command
+  yaver run dev --dry-run           Resolve + print, do not execute
 
 Deploy commands (monorepo-aware; yaver.deploy.json + find/grep scan):
   yaver deploy ios                  Mobile → TestFlight (RN/Expo, Flutter, Swift)
@@ -177,6 +189,17 @@ async function runUnified(args) {
     // the Go binary can still wire up the SDK. Other subcommands (list, show,
     // fix, delete) fall through to the Go agent inside feedback() itself.
     await feedback(args.slice(1));
+    return;
+  }
+
+  if (command === 'run') {
+    // Local-handle `yaver run dev[:target]`. Anything else (future
+    // Go-agent `run` subcommands) falls through to the agent.
+    if (isLocalRunToken(args[1])) {
+      await run(args.slice(1));
+      return;
+    }
+    await runAgentCommand(args);
     return;
   }
 
