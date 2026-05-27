@@ -61,11 +61,13 @@ type Config struct {
 	Exec                          *ExecConfig      `json:"exec,omitempty"`
 	Email                         *EmailConfig     `json:"email,omitempty"`
 	ACLPeers                      []ACLPeerConfig  `json:"acl_peers,omitempty"`
-	// Speech is an inert JSON field. The voice surface was killed
-	// 2026-04-28 (project_lean_stack_2026_04_28.md). This field is
-	// preserved only so a concurrent thread / older config.json
-	// that still serializes it doesn't break parsing.
+	// Speech is the legacy voice config field. Kept parsable so older
+	// config.json files don't error out; new installs should use Voice.
 	Speech              *SpeechConfig       `json:"speech,omitempty"`
+	// Voice is the hands-free agent-loop config (revived 2026-05-27).
+	// Wake/PTT → Deepgram Flux STT → CreateTaskWithOptions(source="voice-input")
+	// → Cartesia Sonic-3 TTS back to caller.
+	Voice               *VoiceConfig        `json:"voice,omitempty"`
 	Notifications       *NotificationConfig `json:"notifications,omitempty"`
 	WebhookSecret       string              `json:"webhook_secret,omitempty"`
 	AnalyticsWebhookURL string              `json:"analytics_webhook_url,omitempty"`
@@ -175,13 +177,42 @@ type ExecConfig struct {
 	Shell          string `json:"shell,omitempty"`             // default: "sh"
 }
 
-// SpeechConfig is preserved as an inert struct after the voice
-// surface was removed 2026-04-28. No code path consumes it any
-// more. Kept only to satisfy stale references and JSON parsing.
+// SpeechConfig is the legacy struct. Kept so older config.json
+// files parse cleanly; the live voice surface uses VoiceConfig.
 type SpeechConfig struct {
 	Provider   string `json:"provider,omitempty"`
 	APIKey     string `json:"api_key,omitempty"`
 	TTSEnabled bool   `json:"tts_enabled,omitempty"`
+}
+
+// VoiceConfig holds STT + TTS provider creds and per-project bias
+// terms for the hands-free agent loop.
+//
+// Phase 1 picks (project_voice_glasses_revival_2026_05_27.md):
+//   STT = Deepgram Flux (Nova-3), model-integrated end-of-turn detection
+//   TTS = Cartesia Sonic-3, 40ms model latency
+//
+// Mobile/SDK clients hit GET /voice/status to discover readiness,
+// then open a WebSocket to /voice/stream to push 16kHz mono PCM and
+// receive transcript + agent result + TTS audio frames.
+type VoiceConfig struct {
+	Enabled         bool                `json:"enabled,omitempty"`
+	DeepgramAPIKey  string              `json:"deepgram_api_key,omitempty"`
+	CartesiaAPIKey  string              `json:"cartesia_api_key,omitempty"`
+	CartesiaVoiceID string              `json:"cartesia_voice_id,omitempty"` // empty = Cartesia default voice
+	// ProjectKeyterms biases the Deepgram session per-project so that
+	// "useState", "Convex", "Hermes", repo names, etc. don't get
+	// mangled. Key is the project slug; value is the keyterm list.
+	ProjectKeyterms map[string][]string `json:"project_keyterms,omitempty"`
+	// DefaultProject is the project slug used when the client doesn't
+	// specify one in the WS start frame. Empty = no keyterm bias.
+	DefaultProject  string              `json:"default_project,omitempty"`
+	// LaunchProjects maps a spoken slug ("sfmg" / "yaver" / "talos") to
+	// the absolute workDir of that project. Voice utterances matching
+	// "launch X" / "open X" / "start X" trigger a Hermes smoke-test +
+	// Hermes-push to paired phones instead of creating a Claude task.
+	// Example: {"sfmg": "/Users/me/Workspace/sfmg", "yaver": "/Users/me/Workspace/yaver.io/mobile"}
+	LaunchProjects  map[string]string   `json:"launch_projects,omitempty"`
 }
 
 // EmailConfig holds email provider credentials.

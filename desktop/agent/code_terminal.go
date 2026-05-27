@@ -360,9 +360,9 @@ func runnerSetupHint(r MachineRunnerCapability) string {
 	if !r.AuthConfigured || strings.TrimSpace(r.Error) != "" {
 		switch id {
 		case "codex":
-			return "Codex on that machine is not authenticated. Run `yaver runner-auth setup codex --target <deviceId> --openai-api-key $OPENAI_API_KEY`."
+			return "Codex on that machine is not authenticated. Open Yaver mobile → Runner Auth → Mirror Codex to this device (ChatGPT Plus subscription OAuth — never API keys)."
 		case "claude":
-			return "Claude Code on that machine is not authenticated. Run `yaver runner-auth setup claude --target <deviceId> --anthropic-api-key $ANTHROPIC_API_KEY`."
+			return "Claude Code on that machine is not authenticated. Open Yaver mobile → Runner Auth → Mirror Claude Code to this device (Max Pro subscription OAuth — never API keys)."
 		case "opencode":
 			return "OpenCode on that machine is not ready. Run `yaver runner-auth setup opencode --target <deviceId>` and verify its provider config."
 		}

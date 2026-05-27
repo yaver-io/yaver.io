@@ -706,6 +706,28 @@ type TaskVerbosity struct {
 	Verbosity *int `json:"verbosity"` // 0-10: response detail level (nil = default 10)
 }
 
+// TaskViewport describes the display surface the user is consuming this
+// task's output on. The agent's prompt wrapper injects a hint based on
+// this so Claude tunes the response length / format to the screen —
+// terse headline for a glasses HUD, full markdown for a desktop window,
+// columns-aware output for a tmux-style split.
+//
+// Surfaces in use 2026-05:
+//   "mobile-phone" | "mobile-tablet" | "web-desktop"
+//   "web-spatial-hud" | "web-spatial-vr"
+//   "glasses-mentra-live" | "glasses-mentra-display" | "glasses-ray-ban"
+//   "cli" | "" (no hint)
+//
+// All fields optional. nil = no viewport hint, default behavior.
+type TaskViewport struct {
+	Surface   string `json:"surface,omitempty"`
+	PaneCount int    `json:"paneCount,omitempty"` // parallel Claude sessions visible
+	PaneCols  int    `json:"paneCols,omitempty"`  // approx pane width in mono chars
+	PaneRows  int    `json:"paneRows,omitempty"`  // approx pane height in rows
+	Voice     bool   `json:"voice,omitempty"`     // task originated from voice; TTS will read this
+	TTSBudget int    `json:"ttsBudget,omitempty"` // max chars in TTS readback (0 = 280 default)
+}
+
 // ImageAttachment represents a base64-encoded image sent from mobile.
 type ImageAttachment struct {
 	Base64   string `json:"base64"`
@@ -814,6 +836,11 @@ type Task struct {
 
 	// Speech context from mobile — passed through to the AI runner prompt
 	TaskVerbosity *TaskVerbosity `json:"-"`
+
+	// Viewport — surface + pane geometry hints. Prompt wrapper uses
+	// this to add a one-line display-context note for Claude so
+	// response shape matches the screen.
+	TaskViewport *TaskViewport `json:"viewport,omitempty"`
 
 	// Image paths saved to disk for this task (not persisted in tasks.json)
 	ImagePaths []string `json:"-"`
@@ -2014,6 +2041,14 @@ func (tm *TaskManager) startProcess(task *Task) error {
 	// runner output, not the Hermes / Metro / dev-server scaffold.
 	if task.Source == "mobile" {
 		prompt += yaverDevServerContext(contextDir)
+	}
+
+	// Viewport hint — tells Claude what surface this output will be
+	// read on (HUD vs desktop vs tmux split vs voice readback) so the
+	// response shape matches. Built from the Voice/mobile/web/spatial
+	// /MentraOS caller's runtime context.
+	if vp := task.TaskViewport; vp != nil {
+		prompt += formatViewportHint(vp)
 	}
 
 	// Verbosity level (0-10)

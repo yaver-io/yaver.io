@@ -1,6 +1,6 @@
 {
   "name": "yaver-web",
-  "version": "1.1.137",
+  "version": "1.1.138",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
@@ -10,6 +10,9 @@
     "start": "next start"
   },
   "dependencies": {
+    "@react-three/fiber": "^9.0.0",
+    "@react-three/uikit": "^0.8.0",
+    "@react-three/xr": "^6.6.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@tailwindcss/typography": "^0.5.19",
     "@xterm/addon-fit": "^0.11.0",
@@ -19,13 +22,15 @@
     "next": "^16.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "three": "^0.169.0"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.18.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/three": "^0.169.0",
     "autoprefixer": "^10.4.27",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.0",

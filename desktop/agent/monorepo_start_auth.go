@@ -251,19 +251,19 @@ func readRunnerCredentialRequest(r *bufio.Reader, runner string) (runnerAuthSetu
 			req.AnthropicAuthToken = token
 		}
 	case "codex":
-		token, ok := readSecret("Paste your OPENAI_API_KEY")
-		if !ok {
-			return req, false
-		}
-		req.OpenAIAPIKey = token
+		// API-key prompt removed 2026-05-27 per
+		// feedback_no_api_keys_subscription_only. Direct the user to
+		// ChatGPT Plus subscription OAuth via Yaver mobile.
+		fmt.Println("Codex requires ChatGPT Plus subscription OAuth — never API keys.")
+		fmt.Println("Open Yaver mobile → Runner Auth → Codex, or run:")
+		fmt.Println("    yaver runner-auth browser-start codex")
+		fmt.Println("Then re-run `yaver monorepo start` once auth is in place.")
+		return req, false
 	case "opencode":
-		token, ok := readSecret("Paste your ANTHROPIC_API_KEY (default OpenCode backend)")
-		if !ok {
-			return req, false
-		}
-		// OpenCode reads ANTHROPIC_API_KEY too — buildRunnerAuthEntries
-		// handles it via the Anthropic field.
-		req.AnthropicAPIKey = token
+		// OpenCode wraps Claude / Codex auth; their credentials cover it.
+		fmt.Println("OpenCode reuses Claude / Codex subscription OAuth.")
+		fmt.Println("Authorize Claude Code or Codex first via Yaver mobile, then re-run `yaver monorepo start`.")
+		return req, false
 	default:
 		return req, false
 	}

@@ -1,0 +1,459 @@
+"use client";
+
+/**
+ * /spatial — unified glass / HUD / VR React UI.
+ *
+ * Surfaces this serves:
+ *   - Meta Quest 3 / 3S in Quest Browser (WebXR-ready, immersive-vr later)
+ *   - Apple Vision Pro Safari (visionOS 26 — Liquid Glass via backdrop-filter)
+ *   - Meta Ray-Ban Display "Web Apps" (600×600 viewport, monocular)
+ *   - In-mobile WebView preview (RN host renders this inside a tab)
+ *
+ * NOT served: Mentra Live / Even G1·G2 / Vuzix Z100 — those use
+ * vendor text primitives via the mentra-miniapp Bun server.
+ *
+ * Open with: https://yaver.io/spatial?agent=<https://host:18080>&token=<sdk>
+ * The desktop app's "Open in headset" button generates this URL.
+ *
+ * Layout adapts by viewport class:
+ *   - SMALL  (<= 800w):  HUD mode — session strip + 1 active pane + orb
+ *   - MEDIUM (<= 1600w): 2 panes side by side
+ *   - LARGE  (>= 1600w): 3-pane tmux-like grid + ambient strip
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
+import { readBridgeFromURL, useTasks, useVoiceBridge, type Task, type BridgeConfig } from "./useAgentBridge";
+import { useSurface } from "./lib/surfaceDetect";
+
+// VR scene is a client-only WebGL bundle (Three.js + R3F + XR). Load
+// it dynamically so the 2D /spatial route doesn't ship ~600KB of
+// three.js to users who only want the flat view.
+const VRScene = dynamic(() => import("./vr/VRScene").then((m) => m.VRScene), { ssr: false });
+const EnterVRButton = dynamic(() => import("./vr/EnterVRButton").then((m) => m.EnterVRButton), { ssr: false });
+
+type ViewportClass = "small" | "medium" | "large";
+
+function useViewportClass(): ViewportClass {
+  const [cls, setCls] = useState<ViewportClass>("large");
+  useEffect(() => {
+    const compute = () => {
+      const w = window.innerWidth;
+      setCls(w <= 800 ? "small" : w <= 1600 ? "medium" : "large");
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, []);
+  return cls;
+}
+
+export default function SpatialPage() {
+  const cfg = useMemo(readBridgeFromURL, []);
+  const viewport = useViewportClass();
+  const surface = useSurface();
+  const { tasks, error: tasksErr } = useTasks(cfg);
+  const voice = useVoiceBridge(cfg);
+
+  if (!cfg) {
+    return <ConnectGuide />;
+  }
+
+  // Surface-specific tuning of the 2D layout. Quest Browser + Vision
+  // Pro Safari default to 3 panes (large viewport assumed); Ray-Ban
+  // Display always 1 pane (HUD constraint); mobile WebView preview
+  // matches viewport. Desktop falls through to the viewport class.
+  const paneCount =
+    surface.surface === "quest" || surface.surface === "vision-pro" ? 3 :
+    surface.surface === "ray-ban-display" ? 1 :
+    viewport === "small" ? 1 : viewport === "medium" ? 2 : 3;
+  const activeTasks = tasks
+    .filter((t) => t.status === "running" || t.status === "review" || t.status === "queued")
+    .slice(0, paneCount);
+  // Pad with completed tasks if there are fewer active sessions than panes
+  while (activeTasks.length < paneCount) {
+    const next = tasks.find((t) => !activeTasks.includes(t));
+    if (!next) break;
+    activeTasks.push(next);
+  }
+
+  return (
+    <div style={containerStyle}>
+      {/* Surface badge — top-left, shows what we detected so users
+          can confirm at a glance and switch via ?surface= override. */}
+      <SurfaceBadge surface={surface} />
+
+      {/* WebGL VR layer — mounted always but only visible inside an
+          immersive-vr XR session (the Canvas renders nothing visible
+          on the 2D page since R3F's default behavior keeps the GL
+          context invisible until enterVR fires). The Enter VR button
+          appears top-right when the browser supports it. */}
+      <VRScene cfg={cfg} tasks={tasks} voice={voice} />
+      <EnterVRButton />
+
+      <SessionStrip tasks={tasks} />
+      <div style={paneGridStyle(paneCount)}>
+        {activeTasks.map((t) => (
+          <TerminalPane key={t.id} task={t} cfg={cfg} />
+        ))}
+        {activeTasks.length === 0 && <EmptyState />}
+      </div>
+      <FloatingOrb
+        status={voice.state.status}
+        transcript={voice.state.transcript}
+        errorMsg={voice.state.errorMsg}
+        onTap={() => {
+          if (voice.state.status === "idle" || voice.state.status === "error") void voice.start();
+          else if (voice.state.status === "recording") void voice.stop();
+          else voice.cancel();
+        }}
+      />
+      {tasksErr && <ErrorBanner msg={`tasks: ${tasksErr}`} />}
+    </div>
+  );
+}
+
+// ───────────────────────────── Components ─────────────────────────────
+
+function SurfaceBadge({ surface }: { surface: ReturnType<typeof useSurface> }) {
+  const [open, setOpen] = useState(false);
+  const tones: Record<string, string> = {
+    quest: "#1d4ed8",
+    "vision-pro": "#a78bfa",
+    "ray-ban-display": "#f97316",
+    "mobile-webview": "#10b981",
+    desktop: "#6b7280",
+    unknown: "#374151",
+  };
+  return (
+    <div style={{ position: "fixed", top: 12, left: 12, zIndex: 100002 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          padding: "5px 10px", borderRadius: 6,
+          background: `${tones[surface.surface] ?? "#374151"}33`,
+          border: `1px solid ${tones[surface.surface] ?? "#374151"}66`,
+          color: "#e5e7eb", fontSize: 11, fontFamily: "ui-monospace, Menlo, monospace",
+          cursor: "pointer",
+        }}
+        title="Click to override surface"
+      >
+        {surface.label}{surface.forced ? " (forced)" : ""} {surface.webxrAvailable ? "· WebXR ✓" : ""}
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, padding: 8, background: "rgba(0,0,0,0.85)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, fontSize: 10, minWidth: 220 }}>
+          <div style={{ color: "#9ca3af", marginBottom: 6 }}>Force surface for testing:</div>
+          {(["quest", "vision-pro", "ray-ban-display", "mobile-webview", "desktop"] as const).map((s) => (
+            <a key={s} href={updateQuery(s)} style={{ display: "block", padding: "3px 6px", color: "#e5e7eb", textDecoration: "none", borderRadius: 3 }}>
+              ?surface={s}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function updateQuery(s: string): string {
+  if (typeof window === "undefined") return `?surface=${s}`;
+  const u = new URL(window.location.href);
+  u.searchParams.set("surface", s);
+  return u.pathname + "?" + u.searchParams.toString();
+}
+
+function ConnectGuide() {
+  return (
+    <div style={{ ...containerStyle, alignItems: "center", justifyContent: "center" }}>
+      <div style={{ ...cardStyle, maxWidth: 480, padding: 32 }}>
+        <h1 style={{ fontSize: 20, margin: 0, marginBottom: 12 }}>Yaver Spatial</h1>
+        <p style={{ fontSize: 13, lineHeight: 1.5, color: "#9ca3af", marginBottom: 16 }}>
+          Open this page with a connection URL from your desktop:
+        </p>
+        <pre style={preStyle}>https://yaver.io/spatial?agent=&lt;url&gt;&amp;token=&lt;sdk&gt;</pre>
+        <p style={{ fontSize: 11, color: "#6b7280", marginTop: 16 }}>
+          Generate one via{" "}
+          <code style={codeStyle}>yaver sdk token --scope feedback,voice</code>
+          {" "}then paste the URL into Quest Browser, Vision Pro Safari, or any modern browser.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SessionStrip({ tasks }: { tasks: Task[] }) {
+  return (
+    <div style={stripStyle}>
+      {tasks.slice(0, 12).map((t) => (
+        <div key={t.id} style={chipStyle}>
+          <span style={{ ...dotStyle, background: dotColor(t.status) }} />
+          <span style={{ fontSize: 11 }}>{shortTitle(t.title, 18)}</span>
+        </div>
+      ))}
+      {tasks.length === 0 && <span style={{ color: "#6b7280", fontSize: 11 }}>no active sessions</span>}
+    </div>
+  );
+}
+
+function TerminalPane({ task, cfg }: { task: Task; cfg: BridgeConfig }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const termRef = useRef<any>(null);
+  const writtenLinesRef = useRef<number>(0);
+
+  useEffect(() => {
+    let term: any;
+    let resizeObserver: ResizeObserver | null = null;
+    (async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      if (!ref.current) return;
+      term = new Terminal({
+        fontFamily: "ui-monospace, 'JetBrains Mono', Menlo, monospace",
+        fontSize: 12,
+        theme: { background: "rgba(0,0,0,0.0)", foreground: "#e5e7eb" },
+        allowTransparency: true,
+        cursorBlink: false,
+        disableStdin: true,
+        convertEol: true,
+        scrollback: 2000,
+      });
+      termRef.current = term;
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(ref.current);
+      fit.fit();
+      resizeObserver = new ResizeObserver(() => { try { fit.fit(); } catch {} });
+      resizeObserver.observe(ref.current);
+    })();
+    return () => {
+      try { term?.dispose(); } catch {}
+      resizeObserver?.disconnect();
+    };
+  }, []);
+
+  // Poll the task and write new output lines to the terminal.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`${cfg.agentUrl}/tasks/${encodeURIComponent(task.id)}`, {
+          headers: { Authorization: `Bearer ${cfg.token}` },
+        });
+        if (!res.ok) return;
+        const t = (await res.json()) as Task;
+        if (cancelled || !termRef.current) return;
+        const lines = Array.isArray(t.output) ? t.output : [];
+        for (let i = writtenLinesRef.current; i < lines.length; i++) {
+          termRef.current.writeln(lines[i]);
+        }
+        writtenLinesRef.current = lines.length;
+      } catch { /* swallow polling errors */ }
+    };
+    void tick();
+    const i = window.setInterval(tick, 1500);
+    return () => { cancelled = true; window.clearInterval(i); };
+  }, [cfg, task.id]);
+
+  return (
+    <div style={{ ...paneStyle, position: "relative" }}>
+      <div style={paneHeaderStyle}>
+        <span style={{ ...dotStyle, background: dotColor(task.status), marginRight: 8 }} />
+        <span style={{ fontSize: 11, fontWeight: 600 }} title={task.title}>{shortTitle(task.title, 38)}</span>
+        <span style={{ fontSize: 10, color: "#6b7280", marginLeft: "auto" }}>
+          {task.status}
+          {task.outputTokens ? ` · ${formatTokens((task.inputTokens ?? 0) + task.outputTokens)} tok` : ""}
+        </span>
+      </div>
+      <div ref={ref} style={{ flex: 1, minHeight: 0 }} />
+    </div>
+  );
+}
+
+function FloatingOrb({
+  status, transcript, errorMsg, onTap,
+}: {
+  status: string; transcript: string; errorMsg: string; onTap: () => void;
+}) {
+  const color = orbColor(status);
+  const label = orbLabel(status);
+  return (
+    <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 100000, textAlign: "center" }}>
+      <button
+        onClick={onTap}
+        style={{
+          width: 72, height: 72, borderRadius: "50%",
+          background: color, border: `4px solid ${color}55`,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+          color: "#fff", fontSize: 24, cursor: "pointer",
+          transition: "transform 120ms ease",
+        }}
+        aria-label={label}
+      >
+        {status === "recording" ? "■" : "🎙"}
+      </button>
+      <div style={{ marginTop: 8, fontSize: 11, color: errorMsg ? "#ef4444" : "#9ca3af", maxWidth: 280, textAlign: "center" }}>
+        {errorMsg || (transcript ? `"${transcript}"` : label)}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div style={{ ...paneStyle, alignItems: "center", justifyContent: "center", color: "#6b7280", fontSize: 13 }}>
+      No active sessions. Tap the orb and ask Yaver to start one.
+    </div>
+  );
+}
+
+function ErrorBanner({ msg }: { msg: string }) {
+  return (
+    <div style={{ position: "fixed", top: 12, left: 12, padding: "6px 10px", background: "#ef444422", border: "1px solid #ef444466", borderRadius: 6, fontSize: 11, color: "#fca5a5" }}>
+      {msg}
+    </div>
+  );
+}
+
+// ───────────────────────────── Helpers ─────────────────────────────
+
+function shortTitle(s: string, max: number): string {
+  const t = (s ?? "").trim();
+  if (t.length <= max) return t || "(untitled)";
+  return t.slice(0, max - 1) + "…";
+}
+
+function dotColor(status: string): string {
+  switch (status) {
+    case "running": return "#10b981";
+    case "queued": return "#94a3b8";
+    case "review": return "#f59e0b";
+    case "completed": return "#3b82f6";
+    case "failed": return "#ef4444";
+    case "stopped": return "#6b7280";
+    default: return "#6b7280";
+  }
+}
+
+function orbColor(status: string): string {
+  switch (status) {
+    case "idle": return "#10b981";
+    case "recording": return "#ef4444";
+    case "uploading":
+    case "connecting": return "#3b82f6";
+    case "thinking": return "#8b5cf6";
+    case "speaking": return "#f59e0b";
+    case "error": return "#6b7280";
+    default: return "#10b981";
+  }
+}
+
+function orbLabel(status: string): string {
+  switch (status) {
+    case "idle": return "Tap to speak";
+    case "recording": return "Listening…";
+    case "connecting": return "Connecting…";
+    case "uploading": return "Sending…";
+    case "thinking": return "Thinking…";
+    case "speaking": return "Reading back…";
+    case "error": return "Try again";
+    default: return "Tap to speak";
+  }
+}
+
+function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 1000000) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1000000).toFixed(1)}m`;
+}
+
+// ───────────────────────────── Styles ─────────────────────────────
+
+const containerStyle: React.CSSProperties = {
+  position: "fixed",
+  inset: 0,
+  zIndex: 9999,
+  display: "flex",
+  flexDirection: "column",
+  background: "rgba(8,12,20,0.6)",
+  backdropFilter: "blur(8px) saturate(120%)",
+  WebkitBackdropFilter: "blur(8px) saturate(120%)",
+  color: "#e5e7eb",
+};
+
+const stripStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "row",
+  gap: 8,
+  overflowX: "auto",
+  padding: "8px 12px",
+  borderBottom: "1px solid rgba(255,255,255,0.08)",
+  flexShrink: 0,
+};
+
+const chipStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 10px",
+  borderRadius: 999,
+  background: "rgba(255,255,255,0.05)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  whiteSpace: "nowrap",
+};
+
+const dotStyle: React.CSSProperties = {
+  width: 8,
+  height: 8,
+  borderRadius: 4,
+  display: "inline-block",
+};
+
+const paneGridStyle = (n: number): React.CSSProperties => ({
+  flex: 1,
+  display: "grid",
+  gridTemplateColumns: `repeat(${n}, 1fr)`,
+  gap: 8,
+  padding: 8,
+  minHeight: 0,
+});
+
+const paneStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  background: "rgba(0,0,0,0.4)",
+  border: "1px solid rgba(255,255,255,0.08)",
+  borderRadius: 8,
+  overflow: "hidden",
+};
+
+const paneHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  padding: "6px 10px",
+  borderBottom: "1px solid rgba(255,255,255,0.05)",
+  background: "rgba(0,0,0,0.25)",
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 10,
+};
+
+const preStyle: React.CSSProperties = {
+  background: "rgba(0,0,0,0.4)",
+  padding: "8px 10px",
+  borderRadius: 6,
+  fontSize: 11,
+  margin: 0,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
+};
+
+const codeStyle: React.CSSProperties = {
+  background: "rgba(0,0,0,0.4)",
+  padding: "1px 5px",
+  borderRadius: 3,
+  fontSize: 11,
+};

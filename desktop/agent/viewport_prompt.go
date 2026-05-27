@@ -1,0 +1,85 @@
+package main
+
+// viewport_prompt.go — turns a TaskViewport into a one-line prompt
+// hint that Claude can act on.
+//
+// Design principle: ONE line, MAX two sentences. Claude treats every
+// extra token of system prompt as noise; we want to nudge response
+// shape, not lecture. Bad: "You are talking to a user with a small
+// screen who is also using voice. Please ensure your responses..." 50
+// tokens wasted before the user's prompt even starts. Good: "[Display:
+// glasses HUD, voice readback — ≤80 chars, no markdown.]" 18 tokens.
+//
+// Tested coverage: viewport_prompt_test.go.
+
+import (
+	"fmt"
+	"strings"
+)
+
+// formatViewportHint returns a prompt-suffix string (leading \n) that
+// nudges Claude toward the right response shape for this user's
+// surface. Empty viewport → empty string.
+func formatViewportHint(vp *TaskViewport) string {
+	if vp == nil {
+		return ""
+	}
+	parts := []string{}
+
+	// Surface-driven shape.
+	if shape := surfaceShape(vp.Surface, vp.PaneCols, vp.PaneRows); shape != "" {
+		parts = append(parts, shape)
+	}
+	// Multi-pane awareness — user has N parallel sessions visible.
+	if vp.PaneCount >= 2 {
+		parts = append(parts, fmt.Sprintf("user has %d parallel Claude sessions visible — be specific about file paths so they stay legible across panes", vp.PaneCount))
+	}
+	// Voice readback budgeting.
+	if vp.Voice {
+		budget := vp.TTSBudget
+		if budget == 0 {
+			budget = 280 // Cartesia clip default
+		}
+		parts = append(parts, fmt.Sprintf("voice readback enabled — keep the spoken headline under %d chars; details may follow on screen", budget))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n[Display: " + strings.Join(parts, "; ") + ".]"
+}
+
+// surfaceShape converts the surface enum + optional pane geometry into
+// a brief shape hint. Goal: small, scannable, no jargon Claude has to
+// guess at.
+func surfaceShape(surface string, cols, rows int) string {
+	switch surface {
+	case "":
+		// No hint — fall back to pane geometry if present
+		if cols > 0 && rows > 0 {
+			return fmt.Sprintf("pane %dx%d (cols x rows) — fit output to this size", cols, rows)
+		}
+		return ""
+	case "mobile-phone":
+		return "phone-screen single column ~50 chars wide — short lines, minimal headers"
+	case "mobile-tablet":
+		return "tablet ~80 chars wide — section headers OK, keep paragraphs short"
+	case "web-desktop":
+		return "desktop browser — full markdown OK"
+	case "web-spatial-hud":
+		return "spatial HUD ~600x600 — terse glanceable text, max 4 lines per block"
+	case "web-spatial-vr":
+		return "VR headset (Quest/Vision Pro) tmux-style floating panes — moderate detail, code blocks fine"
+	case "glasses-mentra-live":
+		return "audio-only smart glasses (no display) — speak the answer in one sentence, NO code blocks"
+	case "glasses-mentra-display":
+		return "monocular glasses HUD ~40 chars wide — one-line headline plus the file path that changed; nothing else"
+	case "glasses-ray-ban":
+		return "Meta Ray-Ban Display 600x600 monocular — terse glanceable text, max 3 lines"
+	case "cli":
+		return "terminal — feel free to use ANSI colors and full detail"
+	default:
+		// Unknown surface — pass through verbatim so user can debug
+		return fmt.Sprintf("surface=%q (no specific shape hint yet)", surface)
+	}
+}

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ExpoDevice from "expo-device";
 import { Ionicons } from "@expo/vector-icons";
 import { useColors, useTheme } from "../../src/context/ThemeContext";
+import { YaverGlass } from "../../src/components/YaverGlass";
 import { useDevice } from "../../src/context/DeviceContext";
 import { quicClient } from "../../src/lib/quic";
 import { loadApp } from "../../src/lib/bundleLoader";
@@ -228,9 +229,16 @@ export default function TabLayout() {
         headerTintColor: c.textPrimary,
         headerTitleStyle: { ...typography.navTitle, color: c.textPrimary },
         tabBarPosition: useLeftRail ? "left" : "bottom",
+        // Liquid Glass tab bar — iOS 26+ gets real glass, iOS 18-25
+        // BlurView, Android Material 3 surface (per spatial_constraints
+        // memory: don't port Liquid Glass to Android). Tab bar BG is
+        // transparent so the YaverGlass underlay shows through.
+        tabBarBackground: () => (
+          <YaverGlass style={StyleSheet.absoluteFillObject as any} tint={c.bgTabBar} />
+        ),
         tabBarStyle: useLeftRail
           ? {
-              backgroundColor: c.bgTabBar,
+              backgroundColor: "transparent",
               borderRightColor: c.borderSubtle,
               borderRightWidth: 1,
               borderTopWidth: 0,
@@ -238,7 +246,7 @@ export default function TabLayout() {
               paddingTop: 16,
             }
           : {
-              backgroundColor: c.bgTabBar,
+              backgroundColor: "transparent",
               borderTopColor: c.borderSubtle,
               borderTopWidth: isDark ? StyleSheet.hairlineWidth : 0,
               height: bottomBarHeight + bottomBarPaddingBottom,

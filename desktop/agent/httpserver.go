@@ -592,6 +592,29 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/notifications/config", s.auth(s.handleNotificationsConfig))
 	mux.HandleFunc("/notifications/test", s.auth(s.handleNotificationsTest))
 
+	// Voice — hands-free agent loop (revived 2026-05-27, see
+	// project_voice_glasses_revival_2026_05_27.md). /voice/stream is a
+	// WebSocket; authSDK gates it so paired mobile + Feedback-SDK
+	// clients can drive voice without round-tripping the auth broker.
+	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
+	mux.HandleFunc("/voice/stream", s.authSDK(s.handleVoiceStream))
+
+	// Hermes runtime — bundle validation + headless execution. Gated by
+	// owner auth (NOT authSDK) because exec is privileged. Used by the
+	// voice-launch verb to smoke-test bundles before fan-out.
+	mux.HandleFunc("/hermes/validate", s.auth(s.handleHermesValidate))
+	mux.HandleFunc("/hermes/run", s.auth(s.handleHermesRun))
+	mux.HandleFunc("/hermes/smoke", s.auth(s.handleHermesSmoke))
+
+	// Runner-auth mirror — token-mirror for glass OAuth flow. See
+	// project_glass_oauth_mirror_2026_05_27 memory. All routes are
+	// owner-auth gated (NOT authSDK) because plaintext credentials
+	// travel through mirror/accept; SDK tokens cannot push runner auth.
+	mux.HandleFunc("/runner/auth/mirror/request", s.auth(s.handleRunnerAuthMirrorRequest))
+	mux.HandleFunc("/runner/auth/mirror/accept", s.auth(s.handleRunnerAuthMirrorAccept))
+	mux.HandleFunc("/runner/auth/ledger", s.auth(s.handleRunnerAuthLedger))
+	mux.HandleFunc("/runner/auth/ledger/revoke", s.auth(s.handleRunnerAuthLedgerRevoke))
+
 	// Webhooks (public — uses webhook secret instead of auth)
 	mux.HandleFunc("/webhooks/trigger", s.handleWebhookTrigger)
 
@@ -3248,6 +3271,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		// preamble + soft-question fallback so the runner may emit
 		// clarifying questions in prose. Default false.
 		AskFreely bool `json:"askFreely,omitempty"`
+		// Viewport — surface + pane geometry hints. Optional. When
+		// present, the prompt wrapper appends a one-line display
+		// context line so Claude tunes response shape (terse on HUD,
+		// markdown on desktop, voice-budgeted when TTS will read it).
+		Viewport *TaskViewport `json:"viewport,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, http.StatusBadRequest, "invalid JSON body")
@@ -3399,6 +3427,11 @@ func (s *HTTPServer) createTask(w http.ResponseWriter, r *http.Request) {
 		verbosityCtx = &TaskVerbosity{Verbosity: body.Verbosity}
 	}
 	task, err := s.taskMgr.CreateTaskWithOptions(title, body.Description, body.Model, source, body.Runner, body.CustomCommand, body.Images, taskOpts, verbosityCtx)
+	if task != nil && body.Viewport != nil {
+		s.taskMgr.mu.Lock()
+		task.TaskViewport = body.Viewport
+		s.taskMgr.mu.Unlock()
+	}
 	if err != nil {
 		// Preflight failures (workDir not writable, runner not authed,
 		// Linux sandbox kernel prereqs missing, …) come back here with

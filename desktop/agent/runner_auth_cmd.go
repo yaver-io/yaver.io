@@ -61,13 +61,19 @@ Usage:
 Examples:
   yaver runner-auth test codex
   yaver runner-auth test claude-code
+  yaver runner-auth status --target cloud-12345678
+
+  # DEPRECATED — API-key flags below still parse for back-compat but
+  # double-bill against your subscription plan. Use Yaver mobile →
+  # Runner Auth (Max Pro / ChatGPT Plus OAuth) instead.
   yaver runner-auth set codex --openai-api-key $OPENAI_API_KEY
   yaver runner-auth setup codex --target cloud-12345678 --openai-api-key $OPENAI_API_KEY
   yaver runner-auth set opencode --glm-api-key $GLM_API_KEY --target cloud-12345678
-  yaver runner-auth status --target cloud-12345678
 
 Notes:
   - <device> <runner> is the interactive remote auth shortcut: it checks local Yaver auth, checks the target machine's Yaver auth, runs remote 'yaver auth --headless' over 'yaver ssh' if needed, then starts the remote Claude/Codex browser auth flow and prints the link/code.
+  - Subscription OAuth (Max Pro / ChatGPT Plus) is the canonical path. The first-class glass / phone helper lives in the Yaver mobile app under "Runner Auth" — it mirrors credentials from a signed-in Mac to any other box via owner-authenticated QUIC, no API keys involved.
+  - --*-api-key flags are KEPT for back-compat with existing scripts but emit a deprecation warning. They will be removed in a future release. Run 'yaver runner-auth browser-start <runner>' to switch to OAuth.
   - Values are stored in the target machine's Yaver vault.
   - setup also installs the runner when missing and wires Yaver into the runner's MCP config when supported.
   - --target uses the existing Yaver remote-agent channel; it does not require SSH.
@@ -110,6 +116,21 @@ func buildRunnerAuthEntries(runner string, openAIKey string, anthropicKey string
 			entryNotes = fmt.Sprintf("Set by yaver runner-auth for %s (%s).", runner, provider)
 		}
 		return append(out, runnerAuthEntry{Name: name, Value: value, Provider: provider, Notes: entryNotes})
+	}
+
+	// Deprecation warning per feedback_no_api_keys_subscription_only:
+	// every API-key flag double-bills the user against their subscription
+	// plan. Print once so the user has a visible nudge toward OAuth.
+	// Parsing stays for back-compat with existing scripts; flags will be
+	// removed in a future release.
+	anyAPIKey := strings.TrimSpace(anthropicKey) != "" ||
+		strings.TrimSpace(openAIKey) != "" ||
+		strings.TrimSpace(glmKey) != "" ||
+		strings.TrimSpace(zaiKey) != ""
+	if anyAPIKey {
+		fmt.Fprintln(os.Stderr, "[runner-auth] DEPRECATED: --*-api-key flags bill on the per-call API tier, NOT your")
+		fmt.Fprintln(os.Stderr, "             Max Pro / ChatGPT Plus subscription. Use Yaver mobile → Runner Auth")
+		fmt.Fprintln(os.Stderr, "             (or `yaver runner-auth browser-start <runner>`) for subscription OAuth.")
 	}
 
 	var out []runnerAuthEntry

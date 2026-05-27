@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"sort"
@@ -607,8 +608,16 @@ func applyMachineOnboardingLocal(req machineOnboardingApplyRequest) (map[string]
 	applied := []string{}
 	notes := strings.TrimSpace(req.Notes)
 	if strings.TrimSpace(req.OpenAIAPIKey) != "" {
+		// Deprecation per feedback_no_api_keys_subscription_only: API-key
+		// machine-onboarding bills against the per-call OpenAI API tier,
+		// NOT the user's ChatGPT Plus subscription. We still accept the
+		// key for back-compat (existing scripts depend on it) but the
+		// next-generation path is `yaver runner-auth browser-start codex`
+		// + the mobile Runner Auth flow that mirrors subscription OAuth
+		// over P2P. Log a visible warning so users see the migration.
+		log.Printf("[machine-onboarding] DEPRECATED: applying OPENAI_API_KEY via onboarding double-bills against the API tier. Switch to ChatGPT Plus subscription OAuth via Yaver mobile or 'yaver runner-auth browser-start codex'.")
 		if notes == "" {
-			notes = "Set by yaver machine onboarding."
+			notes = "Set by yaver machine onboarding (API-key path is DEPRECATED — switch to OAuth)."
 		}
 		if err := setVaultEntry("OPENAI_API_KEY", "api-key", strings.TrimSpace(req.OpenAIAPIKey), notes); err != nil {
 			return nil, err

@@ -5,6 +5,9 @@ import { useRouter } from "expo-router";
 import { AppScreenHeader } from "../../src/components/AppScreenHeader";
 import { useColors } from "../../src/context/ThemeContext";
 import { quicClient } from "../../src/lib/quic";
+import { AgentVoiceButton } from "../../src/components/AgentVoiceButton";
+import { SessionStrip } from "../../src/components/SessionStrip";
+import { SpatialPreview } from "../../src/components/SpatialPreview";
 
 // Native mobile Home screen — AWS-console-style summary grid + recent activity.
 // Uses the agent's /overview/summary endpoint which aggregates machines,
@@ -50,6 +53,32 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={{ color: c.textPrimary, fontSize: 22, fontWeight: "700" }}>{greeting}</Text>
         <Text style={{ color: c.textMuted, fontSize: 13, marginTop: 2 }}>Your machines at a glance</Text>
+
+        {/* Active sessions strip — tmux-mirror of the desk workflow.
+            Tap a chip to jump to that task. */}
+        <View style={{ marginTop: 12, marginHorizontal: -16 }}>
+          <SessionStrip
+            onPress={(task) => router.navigate({ pathname: "/(tabs)/tasks", params: { focus: task.id } } as any)}
+          />
+        </View>
+
+        {/* Hands-free agent loop — tap the orb, speak a task, hear the
+            result. Routes through the agent's /voice/stream WS:
+            Deepgram Flux STT → CreateTaskWithOptions(source="voice-input")
+            → Cartesia Sonic-3 TTS readback. */}
+        <View style={[card(c), { marginTop: 16, alignItems: "center", paddingVertical: 18, gap: 10 }]}>
+          <Text style={{ color: c.textMuted, fontSize: 10, textTransform: "uppercase", fontWeight: "700" }}>
+            Hands-Free
+          </Text>
+          <AgentVoiceButton />
+        </View>
+
+        {/* What your glasses / VR / Ray-Ban Web App would see — the
+            same /spatial route, rendered inline so you can iterate
+            without owning the hardware. */}
+        <View style={{ marginTop: 16 }}>
+          <SpatialPreview inlineHeight={240} />
+        </View>
 
         {err ? (
           <View style={[card(c), { marginTop: 16, backgroundColor: "#ef444410", borderColor: "#ef4444" }]}>

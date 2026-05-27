@@ -208,19 +208,13 @@ func ensureRunnerInstalled(ctx context.Context, runner string) error {
 	}
 }
 
-func loginCodexWithAPIKey(ctx context.Context, apiKey string) error {
-	apiKey = strings.TrimSpace(apiKey)
-	if apiKey == "" {
-		return fmt.Errorf("OPENAI_API_KEY is required for Codex login")
-	}
-	cmd := exec.CommandContext(ctx, "codex", "login", "--with-api-key")
-	cmd.Env = append(os.Environ(), "OPENAI_API_KEY="+apiKey)
-	cmd.Stdin = strings.NewReader(apiKey + "\n")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("codex login --with-api-key: %v: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+// loginCodexWithAPIKey was removed 2026-05-27 per
+// feedback_no_api_keys_subscription_only — Yaver MUST use ChatGPT Plus
+// subscription OAuth via `codex login --device-auth`, never API keys.
+// The flow lives in runner_auth_browser_http.go; this stub exists only
+// so the build doesn't break if a stale code path still calls it.
+func loginCodexWithAPIKey(_ context.Context, _ string) error {
+	return fmt.Errorf("codex API-key login is no longer supported — use ChatGPT Plus OAuth via Yaver mobile or `codex login --device-auth`")
 }
 
 func setupRunnerMCP(runner string) ([]string, error) {
@@ -284,17 +278,12 @@ func applyRunnerAuthSetupLocal(ctx context.Context, req runnerAuthSetupRequest) 
 	}
 
 	if req.Runner == "codex" && boolOrDefault(req.CodexLogin, true) {
-		key := strings.TrimSpace(req.OpenAIAPIKey)
-		if key == "" {
-			key, _ = hostSecretValue("OPENAI_API_KEY")
-		}
-		if key != "" {
-			if err := loginCodexWithAPIKey(ctx, key); err != nil {
-				return result, err
-			}
-			result.LoginAttempt = true
-			result.Notes = append(result.Notes, "Codex CLI was logged in headlessly with the configured OpenAI API key.")
-		}
+		// Codex auth MUST use ChatGPT Plus OAuth via `codex login
+		// --device-auth` (see runner_auth_browser_http.go). The API-key
+		// path was deleted 2026-05-27 per
+		// feedback_no_api_keys_subscription_only — double-bills + breaks
+		// "all agents on same plan" promise.
+		result.Notes = append(result.Notes, "Codex requires ChatGPT Plus OAuth. Open Yaver mobile or run `codex login --device-auth`.")
 	}
 
 	if boolOrDefault(req.SetupMCP, true) {

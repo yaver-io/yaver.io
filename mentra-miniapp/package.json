@@ -1,0 +1,25 @@
+{
+  "name": "yaver-mentra-miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yaver miniapp for MentraOS smart glasses — hands-free agent loop on Mentra Live / Even G1·G2 / Vuzix Z100",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "build": "bun build src/index.ts --target=bun --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "bun": ">=1.1.0",
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@mentra/sdk": "^2.1.29"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
