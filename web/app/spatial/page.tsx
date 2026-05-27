@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { readBridgeFromURL, useTasks, useVoiceBridge, type Task, type BridgeConfig } from "./useAgentBridge";
 import { useSurface } from "./lib/surfaceDetect";
+import { useSpatialShortcuts, SHORTCUT_HELP_ROWS } from "./lib/keyboardShortcuts";
 
 // VR scene is a client-only WebGL bundle (Three.js + R3F + XR). Load
 // it dynamically so the 2D /spatial route doesn't ship ~600KB of
@@ -79,6 +80,33 @@ export default function SpatialPage() {
 
   const isRayBan = surface.surface === "ray-ban-display";
   const isVisionPro = surface.surface === "vision-pro";
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [focusedPane, setFocusedPane] = useState(0);
+
+  // Bluetooth keyboard shortcuts for the "Yaver trio" (phone +
+  // glasses + foldable BT keyboard) and desktop browsers alike.
+  useSpatialShortcuts({
+    onNextPane: () => setFocusedPane((i) => Math.min(activeTasks.length - 1, i + 1)),
+    onPrevPane: () => setFocusedPane((i) => Math.max(0, i - 1)),
+    onSelectPane: (i) => setFocusedPane(Math.max(0, Math.min(activeTasks.length - 1, i))),
+    onToggleVoice: () => {
+      if (voice.state.status === "idle" || voice.state.status === "error") void voice.start();
+      else if (voice.state.status === "recording") void voice.stop();
+      else voice.cancel();
+    },
+    onCancelVoice: () => {
+      if (helpOpen) setHelpOpen(false);
+      else if (voice.state.status !== "idle") voice.cancel();
+    },
+    onToggleHelp: () => setHelpOpen((v) => !v),
+    onEnterVR: () => {
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("yaver-enter-vr"));
+      }
+    },
+    onScrollTop: () => {/* TerminalPane3D / TerminalPane will handle this in a follow-up */},
+    onScrollBottom: () => {/* same */},
+  });
 
   return (
     <div style={containerStyle}>
@@ -118,6 +146,72 @@ export default function SpatialPage() {
         }}
       />
       {tasksErr && <ErrorBanner msg={`tasks: ${tasksErr}`} />}
+
+      {helpOpen && <ShortcutHelpOverlay onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+function ShortcutHelpOverlay({ onClose }: { onClose: () => void }) {
+  // Yaver-trio keyboard cheat sheet. Same source as the actual
+  // bindings (SHORTCUT_HELP_ROWS) so the panel can't drift.
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 100003,
+        background: "rgba(0,0,0,0.55)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(520px, 100%)",
+          background: "rgba(8,12,20,0.92)",
+          border: "1px solid rgba(255,255,255,0.12)",
+          borderRadius: 12,
+          padding: 24,
+          color: "#e5e7eb",
+          fontFamily: "ui-monospace, Menlo, monospace",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>Keyboard shortcuts</div>
+          <button
+            onClick={onClose}
+            style={{
+              padding: "3px 8px", borderRadius: 4,
+              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+              color: "#9ca3af", fontSize: 11, cursor: "pointer",
+            }}
+          >
+            close · Esc
+          </button>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <tbody>
+            {SHORTCUT_HELP_ROWS.map((row) => (
+              <tr key={row.keys}>
+                <td style={{ padding: "5px 12px 5px 0", color: "#10b981", whiteSpace: "nowrap", fontWeight: 600 }}>
+                  {row.keys}
+                </td>
+                <td style={{ padding: "5px 0", color: "#cbd5e1" }}>{row.what}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div style={{ marginTop: 16, fontSize: 10, color: "#6b7280", lineHeight: 1.5 }}>
+          Designed for the Yaver trio: phone + smart glasses (XReal Air, Mentra G2, Quest 3 Browser, Vision Pro Safari) + foldable Bluetooth keyboard. Pair the keyboard once; vibe code anywhere.
+        </div>
+      </div>
     </div>
   );
 }
