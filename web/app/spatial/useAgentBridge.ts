@@ -83,6 +83,50 @@ export function useTasks(cfg: BridgeConfig | null): { tasks: Task[]; error: stri
   return { tasks, error };
 }
 
+export interface TmuxSessionInfo {
+  name: string;
+  windows: number;
+  created: string;
+  attached: boolean;
+  relationship?: string;
+  agentType?: string;
+  mainPid?: number;
+  panePreview?: string;
+  taskId?: string;
+}
+
+/** Poll the agent's /tmux/sessions list — used by /spatial to pick
+ *  which sessions to attach to in the 3-pane layout. */
+export function useTmuxSessions(cfg: BridgeConfig | null): { sessions: TmuxSessionInfo[]; error: string } {
+  const [sessions, setSessions] = useState<TmuxSessionInfo[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!cfg) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const res = await fetch(`${cfg.agentUrl}/tmux/sessions`, {
+          headers: { Authorization: `Bearer ${cfg.token}` },
+        });
+        if (!res.ok) throw new Error(`tmux ${res.status}`);
+        const body = (await res.json()) as { sessions: TmuxSessionInfo[] };
+        if (cancelled) return;
+        setSessions(body.sessions ?? []);
+        setError("");
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message ?? "fetch failed");
+      }
+    };
+    void refresh();
+    const i = window.setInterval(refresh, 4000);
+    return () => { cancelled = true; window.clearInterval(i); };
+  }, [cfg]);
+
+  return { sessions, error };
+}
+
 export function useTaskDetail(cfg: BridgeConfig | null, taskId: string | null): { task: Task | null; error: string } {
   const [task, setTask] = useState<Task | null>(null);
   const [error, setError] = useState("");

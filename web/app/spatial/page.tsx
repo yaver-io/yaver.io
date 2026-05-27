@@ -23,9 +23,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { readBridgeFromURL, useTasks, useVoiceBridge, type Task, type BridgeConfig } from "./useAgentBridge";
+import { readBridgeFromURL, useTasks, useTmuxSessions, useVoiceBridge, type Task, type BridgeConfig, type TmuxSessionInfo } from "./useAgentBridge";
 import { useSurface } from "./lib/surfaceDetect";
 import { useSpatialShortcuts, SHORTCUT_HELP_ROWS } from "./lib/keyboardShortcuts";
+import { TmuxPane } from "./TmuxPane";
 
 // VR scene is a client-only WebGL bundle (Three.js + R3F + XR). Load
 // it dynamically so the 2D /spatial route doesn't ship ~600KB of
@@ -83,14 +84,30 @@ export default function SpatialPage() {
   const isVisionPro = surface.surface === "vision-pro";
   const isAndroidTrio = surface.surface === "android-trio";
   const [helpOpen, setHelpOpen] = useState(false);
-  const [focusedPane, setFocusedPane] = useState(0);
+  const [focusedPaneIdx, setFocusedPaneIdx] = useState<number | null>(null);
 
-  // Bluetooth keyboard shortcuts for the "Yaver trio" (phone +
-  // glasses + foldable BT keyboard) and desktop browsers alike.
+  // Pull live tmux sessions so /spatial can attach instead of polling
+  // task output. THIS is what makes the user's actual .tmux.conf
+  // (prefix Ctrl-b, splits, vi mode-keys, 1M scrollback) feel real
+  // on the trio: panes are projections of their real tmux on the
+  // remote agent, not a re-implementation.
+  const { sessions: tmuxSessions } = useTmuxSessions(cfg);
+  const visibleTmux: TmuxSessionInfo[] = tmuxSessions.slice(0, paneCount);
+
+  // Bluetooth keyboard shortcuts. ALL global nav uses Cmd-modifier
+  // so bare keys (Ctrl-b, j/k, Space) flow to the PTY uninterrupted.
   useSpatialShortcuts({
-    onNextPane: () => setFocusedPane((i) => Math.min(activeTasks.length - 1, i + 1)),
-    onPrevPane: () => setFocusedPane((i) => Math.max(0, i - 1)),
-    onSelectPane: (i) => setFocusedPane(Math.max(0, Math.min(activeTasks.length - 1, i))),
+    paneFocused: focusedPaneIdx !== null,
+    onNextPane: () => setFocusedPaneIdx((i) => {
+      const max = Math.max(visibleTmux.length, activeTasks.length) - 1;
+      if (i === null) return 0;
+      return Math.min(max, i + 1);
+    }),
+    onPrevPane: () => setFocusedPaneIdx((i) => i === null ? 0 : Math.max(0, i - 1)),
+    onSelectPane: (i) => {
+      const max = Math.max(visibleTmux.length, activeTasks.length);
+      setFocusedPaneIdx(Math.max(0, Math.min(max - 1, i)));
+    },
     onToggleVoice: () => {
       if (voice.state.status === "idle" || voice.state.status === "error") void voice.start();
       else if (voice.state.status === "recording") void voice.stop();
@@ -106,8 +123,7 @@ export default function SpatialPage() {
         window.dispatchEvent(new CustomEvent("yaver-enter-vr"));
       }
     },
-    onScrollTop: () => {/* TerminalPane3D / TerminalPane will handle this in a follow-up */},
-    onScrollBottom: () => {/* same */},
+    onUnfocusPane: () => setFocusedPaneIdx(null),
   });
 
   return (
@@ -137,10 +153,37 @@ export default function SpatialPage() {
 
       {!isRayBan && <SessionStrip tasks={tasks} />}
       <div style={paneGridStyle(paneCount, isRayBan)}>
-        {activeTasks.map((t) => (
-          <TerminalPane key={t.id} task={t} cfg={cfg} />
-        ))}
-        {activeTasks.length === 0 && <EmptyState />}
+        {visibleTmux.length > 0 ? (
+          // Real tmux attach — user's actual .tmux.conf is live.
+          visibleTmux.map((sess, i) => (
+            <TmuxPane
+              key={sess.name}
+              agentUrl={cfg.agentUrl}
+              token={cfg.token}
+              tmuxSession={sess.name}
+              focused={focusedPaneIdx === i}
+              onFocus={() => setFocusedPaneIdx(i)}
+              headerContent={
+                <div style={paneHeaderStyle}>
+                  <span style={{ ...dotStyle, background: sess.attached ? "#10b981" : "#94a3b8", marginRight: 8 }} />
+                  <span style={{ fontSize: 11, fontWeight: 600 }}>{shortTitle(sess.name, 24)}</span>
+                  <span style={{ fontSize: 10, color: "#6b7280", marginLeft: "auto" }}>
+                    {sess.windows} window{sess.windows === 1 ? "" : "s"}
+                    {sess.agentType ? ` · ${sess.agentType}` : ""}
+                  </span>
+                </div>
+              }
+            />
+          ))
+        ) : activeTasks.length > 0 ? (
+          // No tmux sessions yet — fall back to task-output panes so
+          // the layout isn't empty. User can tmux new -s … to populate.
+          activeTasks.map((t) => (
+            <TerminalPane key={t.id} task={t} cfg={cfg} />
+          ))
+        ) : (
+          <EmptyState />
+        )}
       </div>
       <FloatingOrb
         status={voice.state.status}

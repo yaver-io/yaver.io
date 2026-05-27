@@ -11,21 +11,25 @@
  * onto the glasses; the keyboard is the input device. No laptop, no
  * desk, beach-style.
  *
- * Bindings (vim-flavored — power users feel at home):
+ * Bindings — ALL global navigation uses Cmd/Meta so that bare keys
+ * (including Ctrl-b, j/k/h/l in vi mode, Space, etc.) pass straight
+ * through to the user's tmux on the other side of /ws/terminal.
+ * The user's muscle memory from their actual .tmux.conf works
+ * unmodified.
  *
- *   j / k         next / prev pane
- *   1..9          jump to pane N (1-indexed)
- *   Space         toggle voice — start/stop recording
- *   Escape        cancel voice OR exit any modal
- *   ? or h        toggle the help overlay
- *   v             enter VR (when WebXR available)
- *   gg            scroll terminal pane to top
- *   G             scroll terminal pane to bottom
+ *   Cmd-J / Cmd-K        next / prev pane
+ *   Cmd-1 .. Cmd-9       jump to pane N (1-indexed)
+ *   Cmd-Shift-Space      toggle voice — start / stop recording
+ *   Escape               unfocus current pane (return to global nav)
+ *                        OR cancel voice / close any modal
+ *   Cmd-/                toggle help overlay
+ *   Cmd-V (with no       enter VR (when WebXR available)
+ *     pane focused)
  *
- * Shortcuts are SUSPENDED when an <input>, <textarea>, or
- * contenteditable element is focused — so paste-back voice prompts
- * in the orb still work. Hold-to-record is also suspended in editable
- * targets (Space is just a space character there).
+ * When a terminal pane is focused (user clicked into xterm), ALL
+ * non-Cmd shortcuts are passed through to the PTY — including
+ * Ctrl-b prefix, vi navigation, Space, etc. Esc is the universal
+ * "I want to use global nav again" key.
  */
 
 import { useCallback, useEffect, useRef } from "react";
@@ -40,6 +44,11 @@ export interface ShortcutHandlers {
   onEnterVR?: () => void;
   onScrollTop?: () => void;
   onScrollBottom?: () => void;
+  /** Esc handler that returns "global nav" mode when a pane is focused. */
+  onUnfocusPane?: () => void;
+  /** When true, only Cmd/Meta-modified shortcuts intercept; bare keys
+   *  flow through to the focused pane's PTY. Esc still unfocuses. */
+  paneFocused?: boolean;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -57,17 +66,40 @@ export function useSpatialShortcuts(handlers: ShortcutHandlers): void {
   const handle = useCallback(
     (e: KeyboardEvent) => {
       if (isEditableTarget(e.target)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
 
-      // Numeric pane jumps (1..9)
-      if (e.key >= "1" && e.key <= "9") {
+      // Esc is universal: always returns to global nav mode. When a
+      // pane is focused this is the "I'm done typing into tmux" key.
+      if (e.key === "Escape") {
+        if (handlers.paneFocused) {
+          e.preventDefault();
+          handlers.onUnfocusPane?.();
+          return;
+        }
+        e.preventDefault();
+        handlers.onCancelVoice?.();
+        return;
+      }
+
+      // When a pane is focused (xterm has keystrokes), only Cmd-
+      // modified shortcuts intercept. Bare keys (j, k, Ctrl-b, Space,
+      // gg, etc.) flow uninterrupted to the PTY so the user's
+      // .tmux.conf works.
+      const needsMeta = !!handlers.paneFocused;
+      const hasMeta = e.metaKey;
+
+      if (needsMeta && !hasMeta) return;
+      // When NO pane is focused, both bare and Cmd-modified shortcuts
+      // work for back-compat with desktop users who came in pre-tmux.
+
+      // Cmd-1..9 (or bare 1..9 when global) — pane jumps
+      if (e.key >= "1" && e.key <= "9" && (hasMeta || !needsMeta)) {
         const idx = parseInt(e.key, 10) - 1;
         e.preventDefault();
         handlers.onSelectPane?.(idx);
         return;
       }
 
-      switch (e.key) {
+      switch (e.key.toLowerCase()) {
         case "j":
           e.preventDefault();
           handlers.onNextPane?.();
@@ -77,25 +109,33 @@ export function useSpatialShortcuts(handlers: ShortcutHandlers): void {
           handlers.onPrevPane?.();
           return;
         case " ":
-          // Space toggles voice. Use keydown so hold-to-talk is also
-          // possible in the future via keyup detection.
+          // Cmd-Space (or Cmd-Shift-Space) for voice when pane focused;
+          // bare Space when global nav.
           e.preventDefault();
           handlers.onToggleVoice?.();
           return;
-        case "Escape":
-          e.preventDefault();
-          handlers.onCancelVoice?.();
-          return;
         case "?":
+        case "/":
         case "h":
-          e.preventDefault();
-          handlers.onToggleHelp?.();
+          if (!needsMeta || hasMeta) {
+            e.preventDefault();
+            handlers.onToggleHelp?.();
+            return;
+          }
           return;
         case "v":
-          e.preventDefault();
-          handlers.onEnterVR?.();
+          if (!needsMeta || hasMeta) {
+            e.preventDefault();
+            handlers.onEnterVR?.();
+            return;
+          }
           return;
-        case "g": {
+      }
+
+      // gg / G only when global nav (no point in scrolling our local
+      // render when the PTY owns scrollback).
+      if (!needsMeta) {
+        if (e.key === "g") {
           const now = performance.now();
           if (now - lastGPressRef.current < 400) {
             e.preventDefault();
@@ -106,10 +146,11 @@ export function useSpatialShortcuts(handlers: ShortcutHandlers): void {
           lastGPressRef.current = now;
           return;
         }
-        case "G":
+        if (e.key === "G") {
           e.preventDefault();
           handlers.onScrollBottom?.();
           return;
+        }
       }
     },
     [handlers],
@@ -121,14 +162,15 @@ export function useSpatialShortcuts(handlers: ShortcutHandlers): void {
   }, [handle]);
 }
 
-/** The shortcuts to render in the help overlay. Single source of truth
- *  so the panel can't drift from the actual bindings. */
+/** Help-overlay rows. Single source of truth so the panel can't drift
+ *  from the actual handler bindings. */
 export const SHORTCUT_HELP_ROWS: { keys: string; what: string }[] = [
-  { keys: "j / k", what: "next / previous pane" },
-  { keys: "1 .. 9", what: "jump to pane N" },
-  { keys: "Space", what: "toggle voice — record / send" },
-  { keys: "Esc", what: "cancel voice or close modal" },
-  { keys: "v", what: "enter VR (Quest 3 / Vision Pro)" },
-  { keys: "gg / G", what: "scroll terminal to top / bottom" },
-  { keys: "? or h", what: "toggle this help overlay" },
+  { keys: "Esc", what: "unfocus pane (return to global nav)" },
+  { keys: "Cmd-J / Cmd-K", what: "next / previous pane" },
+  { keys: "Cmd-1..9", what: "jump to pane N" },
+  { keys: "Cmd-Space", what: "toggle voice (when pane focused)" },
+  { keys: "Cmd-/ or Cmd-H", what: "toggle this help overlay" },
+  { keys: "Cmd-V", what: "enter VR (Quest 3 / Vision Pro)" },
+  { keys: "(no pane focused)", what: "bare j/k/Space/?/v/gg also work as above" },
+  { keys: "Ctrl-b (your tmux prefix)", what: "passes through to real tmux when pane focused" },
 ];
