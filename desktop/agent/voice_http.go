@@ -65,9 +65,11 @@ type voiceCtrlFrame struct {
 	Type string `json:"type"`
 }
 
-// handleVoiceStatus returns enabled/ready flags + which providers
-// are configured. Mobile uses this on app boot to decide whether to
-// render the mic UI.
+// handleVoiceStatus returns enabled/ready flags + which providers are
+// configured. Mobile + /spatial use this on app boot to decide whether
+// to render the mic UI at all — when the user has only configured the
+// keyboard-on-glasses path (no voice keys), the mic orb hides itself
+// gracefully instead of failing mid-loop.
 func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, http.StatusMethodNotAllowed, "use GET")
@@ -75,19 +77,47 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg, _ := LoadConfig()
 	v := voiceCfgOrNil(cfg)
-	result := map[string]interface{}{
+
+	sttProvider := "openai"
+	ttsProvider := "openai"
+	sttReady := false
+	ttsReady := false
+	defaultProject := ""
+
+	if v != nil {
+		sttProvider = v.EffectiveSTTProvider()
+		ttsProvider = v.EffectiveTTSProvider()
+		defaultProject = v.DefaultProject
+
+		switch sttProvider {
+		case "openai":
+			sttReady = v.OpenAIAPIKey != ""
+		case "deepgram":
+			sttReady = v.DeepgramAPIKey != ""
+		}
+		switch ttsProvider {
+		case "openai":
+			ttsReady = v.OpenAIAPIKey != ""
+		case "cartesia":
+			ttsReady = v.CartesiaAPIKey != ""
+		}
+	}
+
+	jsonReply(w, http.StatusOK, map[string]interface{}{
 		"ok":             true,
 		"enabled":        v != nil && v.Enabled,
-		"sttProvider":    "deepgram-flux",
-		"sttReady":       v != nil && v.DeepgramAPIKey != "",
-		"ttsProvider":    "cartesia-sonic",
-		"ttsReady":       v != nil && v.CartesiaAPIKey != "",
-		"defaultProject": "",
-	}
-	if v != nil {
-		result["defaultProject"] = v.DefaultProject
-	}
-	jsonReply(w, http.StatusOK, result)
+		"sttProvider":    sttProvider,
+		"sttReady":       sttReady,
+		"ttsProvider":    ttsProvider,
+		"ttsReady":       ttsReady,
+		"defaultProject": defaultProject,
+		// availableProviders lets the mobile Settings UI render the
+		// picker even on first launch (no key set yet).
+		"availableProviders": map[string][]string{
+			"stt": {"openai", "deepgram"},
+			"tts": {"openai", "cartesia"},
+		},
+	})
 }
 
 // handleVoiceStream is the long-lived WebSocket handler.
@@ -95,11 +125,23 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := LoadConfig()
 	v := voiceCfgOrNil(cfg)
 	if v == nil || !v.Enabled {
-		jsonError(w, http.StatusServiceUnavailable, "voice not enabled in config — set voice.enabled=true and supply api keys")
+		jsonError(w, http.StatusServiceUnavailable, "voice not enabled in config — set voice.enabled=true and supply an api key (openai by default). Keyboard-on-glasses users without voice keys can ignore this and use the agent normally.")
 		return
 	}
-	if v.DeepgramAPIKey == "" {
-		jsonError(w, http.StatusServiceUnavailable, "deepgram api key not configured")
+	sttProvider := v.EffectiveSTTProvider()
+	switch sttProvider {
+	case "openai":
+		if v.OpenAIAPIKey == "" {
+			jsonError(w, http.StatusServiceUnavailable, "openai api key not configured (stt_provider=openai)")
+			return
+		}
+	case "deepgram":
+		if v.DeepgramAPIKey == "" {
+			jsonError(w, http.StatusServiceUnavailable, "deepgram api key not configured (stt_provider=deepgram)")
+			return
+		}
+	default:
+		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — set voice.stt_provider to 'openai' or 'deepgram'")
 		return
 	}
 
@@ -140,12 +182,36 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		keyterms = v.ProjectKeyterms[project]
 	}
 
-	dg, dgEvents, err := OpenDeepgramSession(ctx, v.DeepgramAPIKey, "nova-3", keyterms)
-	if err != nil {
-		voiceWriteErr(conn, "deepgram: "+err.Error())
-		return
+	// Open the configured STT provider. Each one publishes
+	// DeepgramEvent on the channel (the type name predates
+	// provider abstraction; it's effectively STTEvent now).
+	var sttClose func() error
+	var dgEvents <-chan DeepgramEvent
+	var sttSendAudio func([]byte) error
+	var sttFinalize func() error
+	switch sttProvider {
+	case "openai":
+		sess, ev, err := OpenOpenAIWhisperSession(ctx, v.OpenAIAPIKey, v.OpenAISTTModel)
+		if err != nil {
+			voiceWriteErr(conn, "openai stt: "+err.Error())
+			return
+		}
+		dgEvents = ev
+		sttSendAudio = sess.SendAudio
+		sttFinalize = sess.Finalize
+		sttClose = sess.Close
+	case "deepgram":
+		sess, ev, err := OpenDeepgramSession(ctx, v.DeepgramAPIKey, "nova-3", keyterms)
+		if err != nil {
+			voiceWriteErr(conn, "deepgram: "+err.Error())
+			return
+		}
+		dgEvents = ev
+		sttSendAudio = sess.SendAudio
+		sttFinalize = sess.Finalize
+		sttClose = sess.Close
 	}
-	defer dg.Close()
+	defer sttClose()
 
 	// Fan-in: client audio + STT events.
 	clientIn := make(chan voiceClientMsg, 16)
@@ -162,12 +228,12 @@ loop:
 				break loop
 			}
 			if msg.kind == "audio" {
-				if err := dg.SendAudio(msg.audio); err != nil {
+				if err := sttSendAudio(msg.audio); err != nil {
 					voiceWriteErr(conn, "stt audio write: "+err.Error())
 					break loop
 				}
 			} else if msg.kind == "stop" {
-				_ = dg.Finalize()
+				_ = sttFinalize()
 			} else if msg.kind == "close" {
 				break loop
 			}
@@ -219,24 +285,8 @@ loop:
 			"text":   launchRes.SpokenResponse,
 			"status": launchOKStatus(launchRes.OK),
 		})
-		if v.CartesiaAPIKey != "" && launchRes.SpokenResponse != "" {
-			ttsCh := make(chan CartesiaFrame, 8)
-			go SpeakCartesia(ctx, v.CartesiaAPIKey, v.CartesiaVoiceID, launchRes.SpokenResponse, ttsCh)
-			for fr := range ttsCh {
-				if fr.Error != "" {
-					break
-				}
-				if len(fr.PCM) > 0 {
-					voiceWriteJSON(conn, map[string]interface{}{
-						"type":       "tts-frame",
-						"pcm":        base64.StdEncoding.EncodeToString(fr.PCM),
-						"sampleRate": 22050,
-					})
-				}
-				if fr.Done {
-					break
-				}
-			}
+		if launchRes.SpokenResponse != "" {
+			streamTTS(ctx, conn, v, launchRes.SpokenResponse)
 		}
 		voiceWriteJSON(conn, map[string]interface{}{"type": "done"})
 		return
@@ -267,29 +317,57 @@ loop:
 		"status": result.Status,
 	})
 
-	// TTS readback — skip silently if Cartesia not configured.
-	if v.CartesiaAPIKey != "" && result.ResultText != "" {
-		ttsCh := make(chan CartesiaFrame, 8)
-		go SpeakCartesia(ctx, v.CartesiaAPIKey, v.CartesiaVoiceID, voiceTrimForTTS(result.ResultText), ttsCh)
-		for fr := range ttsCh {
-			if fr.Error != "" {
-				log.Printf("[voice] tts error: %s", fr.Error)
-				break
-			}
-			if len(fr.PCM) > 0 {
-				voiceWriteJSON(conn, map[string]interface{}{
-					"type":       "tts-frame",
-					"pcm":        base64.StdEncoding.EncodeToString(fr.PCM),
-					"sampleRate": 22050,
-				})
-			}
-			if fr.Done {
-				break
-			}
-		}
+	// TTS readback — skip silently if no TTS provider is configured.
+	if result.ResultText != "" {
+		streamTTS(ctx, conn, v, voiceTrimForTTS(result.ResultText))
 	}
 
 	voiceWriteJSON(conn, map[string]interface{}{"type": "done"})
+}
+
+// streamTTS picks the configured TTS provider (OpenAI default,
+// Cartesia alternate) and streams its PCM output to the WS as
+// tts-frame messages. Skips silently when no provider key is set —
+// so a keyboard-on-glasses user without voice keys gets clean text
+// results without errors.
+func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, text string) {
+	if v == nil || text == "" {
+		return
+	}
+	provider := v.EffectiveTTSProvider()
+	ttsCh := make(chan CartesiaFrame, 8)
+	sampleRate := 22050
+	switch provider {
+	case "openai":
+		if v.OpenAIAPIKey == "" {
+			return
+		}
+		sampleRate = 24000 // OpenAI TTS pcm response is 24kHz
+		go SpeakOpenAI(ctx, v.OpenAIAPIKey, v.OpenAITTSModel, v.OpenAITTSVoice, text, ttsCh)
+	case "cartesia":
+		if v.CartesiaAPIKey == "" {
+			return
+		}
+		go SpeakCartesia(ctx, v.CartesiaAPIKey, v.CartesiaVoiceID, text, ttsCh)
+	default:
+		return
+	}
+	for fr := range ttsCh {
+		if fr.Error != "" {
+			log.Printf("[voice] tts error (%s): %s", provider, fr.Error)
+			break
+		}
+		if len(fr.PCM) > 0 {
+			voiceWriteJSON(conn, map[string]interface{}{
+				"type":       "tts-frame",
+				"pcm":        base64.StdEncoding.EncodeToString(fr.PCM),
+				"sampleRate": sampleRate,
+			})
+		}
+		if fr.Done {
+			break
+		}
+	}
 }
 
 // voiceTrimForTTS keeps the audio short. Long agent monologues are

@@ -196,23 +196,82 @@ type SpeechConfig struct {
 // then open a WebSocket to /voice/stream to push 16kHz mono PCM and
 // receive transcript + agent result + TTS audio frames.
 type VoiceConfig struct {
-	Enabled         bool                `json:"enabled,omitempty"`
-	DeepgramAPIKey  string              `json:"deepgram_api_key,omitempty"`
-	CartesiaAPIKey  string              `json:"cartesia_api_key,omitempty"`
-	CartesiaVoiceID string              `json:"cartesia_voice_id,omitempty"` // empty = Cartesia default voice
+	Enabled bool `json:"enabled,omitempty"`
+
+	// Provider selection — each user picks their own. Yaver itself
+	// does NOT ship a default API key for any provider; everything
+	// here is the USER's account / billing relationship. These keys
+	// are stored locally in ~/.yaver/config.json and never sync to
+	// Convex (enforced by convex_privacy_test.go).
+	//
+	// STTProvider: "openai" (default) | "deepgram"
+	// TTSProvider: "openai" (default) | "cartesia"
+	//
+	// Empty string → defaults to "openai" since one OpenAI key covers
+	// both, lowest friction for solo users.
+	STTProvider string `json:"stt_provider,omitempty"`
+	TTSProvider string `json:"tts_provider,omitempty"`
+
+	// OpenAI — single key covers both STT (whisper-1 / gpt-4o-transcribe)
+	// and TTS (gpt-4o-mini-tts / tts-1). Cheapest setup friction: one
+	// signup at platform.openai.com.
+	OpenAIAPIKey   string `json:"openai_api_key,omitempty"`
+	OpenAISTTModel string `json:"openai_stt_model,omitempty"` // "" = whisper-1
+	OpenAITTSModel string `json:"openai_tts_model,omitempty"` // "" = gpt-4o-mini-tts
+	OpenAITTSVoice string `json:"openai_tts_voice,omitempty"` // "" = "alloy"
+
+	// Deepgram (alternate STT) — Flux Nova-3 streaming with built-in
+	// end-of-turn detection. Worth picking over OpenAI when the user
+	// values <300ms first-word latency + sub-token EOT signaling.
+	DeepgramAPIKey string `json:"deepgram_api_key,omitempty"`
+
+	// Cartesia (alternate TTS) — Sonic-3 streaming with 40ms TTFA.
+	// Worth picking over OpenAI when the user values snappy back-and-
+	// forth conversations + premium voice quality.
+	CartesiaAPIKey  string `json:"cartesia_api_key,omitempty"`
+	CartesiaVoiceID string `json:"cartesia_voice_id,omitempty"` // empty = Cartesia default voice
+
 	// ProjectKeyterms biases the Deepgram session per-project so that
 	// "useState", "Convex", "Hermes", repo names, etc. don't get
 	// mangled. Key is the project slug; value is the keyterm list.
+	// Only consumed when STTProvider == "deepgram".
 	ProjectKeyterms map[string][]string `json:"project_keyterms,omitempty"`
 	// DefaultProject is the project slug used when the client doesn't
 	// specify one in the WS start frame. Empty = no keyterm bias.
-	DefaultProject  string              `json:"default_project,omitempty"`
+	DefaultProject string `json:"default_project,omitempty"`
 	// LaunchProjects maps a spoken slug ("sfmg" / "yaver" / "talos") to
 	// the absolute workDir of that project. Voice utterances matching
 	// "launch X" / "open X" / "start X" trigger a Hermes smoke-test +
 	// Hermes-push to paired phones instead of creating a Claude task.
 	// Example: {"sfmg": "/Users/me/Workspace/sfmg", "yaver": "/Users/me/Workspace/yaver.io/mobile"}
-	LaunchProjects  map[string]string   `json:"launch_projects,omitempty"`
+	LaunchProjects map[string]string `json:"launch_projects,omitempty"`
+}
+
+// EffectiveSTTProvider returns the configured STT provider, defaulting
+// to "openai" when unset. Single source of truth so the HTTP handler
+// and status endpoint never drift.
+func (v *VoiceConfig) EffectiveSTTProvider() string {
+	if v == nil {
+		return "openai"
+	}
+	p := strings.ToLower(strings.TrimSpace(v.STTProvider))
+	if p == "" {
+		return "openai"
+	}
+	return p
+}
+
+// EffectiveTTSProvider returns the configured TTS provider, defaulting
+// to "openai" when unset.
+func (v *VoiceConfig) EffectiveTTSProvider() string {
+	if v == nil {
+		return "openai"
+	}
+	p := strings.ToLower(strings.TrimSpace(v.TTSProvider))
+	if p == "" {
+		return "openai"
+	}
+	return p
 }
 
 // EmailConfig holds email provider credentials.

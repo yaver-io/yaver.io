@@ -41,6 +41,18 @@ var fieldsWeForbidInAnyConvexPayload = []string{
 	"password",
 	"vaultValue",
 	"privateKey",
+	// Voice provider API keys — Yaver itself does NOT ship default
+	// keys; each user pastes their own into ~/.yaver/config.json.
+	// These MUST NEVER reach Convex. Defense-in-depth: VoiceConfig
+	// lives only in the host-local Config file, but the same name
+	// could be carelessly added to a sync path; this fence catches
+	// it at test time.
+	"openaiApiKey",
+	"deepgramApiKey",
+	"cartesiaApiKey",
+	"openai_api_key",
+	"deepgram_api_key",
+	"cartesia_api_key",
 	// Output / logs
 	"stdout",
 	"stderr",

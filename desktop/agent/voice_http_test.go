@@ -52,7 +52,7 @@ func TestVoiceStatus_ConfigPresent(t *testing.T) {
 	if err := os.MkdirAll(cfgDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := `{"voice":{"enabled":true,"deepgram_api_key":"dg-test","cartesia_api_key":"ct-test","default_project":"yaver"}}`
+	cfg := `{"voice":{"enabled":true,"stt_provider":"deepgram","tts_provider":"cartesia","deepgram_api_key":"dg-test","cartesia_api_key":"ct-test","default_project":"yaver"}}`
 	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfg), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +75,60 @@ func TestVoiceStatus_ConfigPresent(t *testing.T) {
 	}
 	if body["defaultProject"] != "yaver" {
 		t.Errorf("defaultProject = %v, want yaver", body["defaultProject"])
+	}
+}
+
+func TestVoiceStatus_OpenAIDefault(t *testing.T) {
+	// OpenAI is the default when no provider is explicitly set. One
+	// API key covers both STT + TTS — easiest path for first-time
+	// users + the "Yaver trio" (phone+glasses+keyboard) crowd.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, configDirName)
+	if err := os.MkdirAll(cfgDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{"voice":{"enabled":true,"openai_api_key":"sk-test"}}`
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	(&HTTPServer{}).handleVoiceStatus(rec, httptest.NewRequest(http.MethodGet, "/voice/status", nil))
+	var body map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["sttProvider"] != "openai" {
+		t.Errorf("sttProvider = %v, want openai", body["sttProvider"])
+	}
+	if body["ttsProvider"] != "openai" {
+		t.Errorf("ttsProvider = %v, want openai", body["ttsProvider"])
+	}
+	if body["sttReady"] != true || body["ttsReady"] != true {
+		t.Errorf("expected both ready with openai key set, got stt=%v tts=%v", body["sttReady"], body["ttsReady"])
+	}
+}
+
+func TestVoiceStatus_KeyboardOnlyMode(t *testing.T) {
+	// Trio = phone + glasses + Bluetooth keyboard. User types instead
+	// of speaking. Yaver MUST work cleanly with voice keys absent —
+	// status reports not-ready, mobile mic orb hides itself, no
+	// crashes on the agent side. This test locks in that contract.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cfgDir := filepath.Join(home, configDirName)
+	_ = os.MkdirAll(cfgDir, 0700)
+	cfg := `{"voice":{"enabled":false}}`
+	_ = os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(cfg), 0600)
+	rec := httptest.NewRecorder()
+	(&HTTPServer{}).handleVoiceStatus(rec, httptest.NewRequest(http.MethodGet, "/voice/status", nil))
+	var body map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["enabled"] != false {
+		t.Errorf("expected enabled=false in keyboard-only mode")
+	}
+	// availableProviders MUST still be exposed so the Settings UI
+	// can render the picker on first launch.
+	if body["availableProviders"] == nil {
+		t.Errorf("availableProviders missing — Settings picker won't render")
 	}
 }
 
