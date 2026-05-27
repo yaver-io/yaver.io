@@ -61,11 +61,12 @@ export default function SpatialPage() {
   }
 
   // Surface-specific tuning of the 2D layout. Quest Browser + Vision
-  // Pro Safari default to 3 panes (large viewport assumed); Ray-Ban
-  // Display always 1 pane (HUD constraint); mobile WebView preview
-  // matches viewport. Desktop falls through to the viewport class.
+  // Pro Safari + Android trio all default to 3 panes (large viewport
+  // assumed); Ray-Ban Display always 1 pane (HUD constraint); mobile
+  // WebView preview matches viewport. Desktop falls through to the
+  // viewport class.
   const paneCount =
-    surface.surface === "quest" || surface.surface === "vision-pro" ? 3 :
+    surface.surface === "quest" || surface.surface === "vision-pro" || surface.surface === "android-trio" ? 3 :
     surface.surface === "ray-ban-display" ? 1 :
     viewport === "small" ? 1 : viewport === "medium" ? 2 : 3;
   const activeTasks = tasks
@@ -80,6 +81,7 @@ export default function SpatialPage() {
 
   const isRayBan = surface.surface === "ray-ban-display";
   const isVisionPro = surface.surface === "vision-pro";
+  const isAndroidTrio = surface.surface === "android-trio";
   const [helpOpen, setHelpOpen] = useState(false);
   const [focusedPane, setFocusedPane] = useState(0);
 
@@ -118,6 +120,12 @@ export default function SpatialPage() {
           immersive-vr (per WebKit blog) but users don't know to look
           for the button. Show a centered card on first visit. */}
       {isVisionPro && <VisionProNudge webxrAvailable={surface.webxrAvailable} />}
+
+      {/* Android trio nudge: when Cagri-style setup is detected
+          (Android Chrome + landscape 1920x1080-ish viewport) the user
+          may not know about the BT keyboard shortcuts. Show the
+          cheat-sheet button prominently on first visit. */}
+      {isAndroidTrio && <AndroidTrioNudge />}
 
       {/* WebGL VR layer — mounted always but only visible inside an
           immersive-vr XR session (the Canvas renders nothing visible
@@ -216,6 +224,69 @@ function ShortcutHelpOverlay({ onClose }: { onClose: () => void }) {
   );
 }
 
+function AndroidTrioNudge() {
+  // Surfaces the Yaver-trio recipe + the ? help affordance the moment
+  // we detect Android + landscape (cable+XReal+keyboard setup). One-
+  // time nudge per session, dismissable.
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div style={{
+      position: "fixed",
+      top: 60,
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: 100002,
+      maxWidth: 520,
+      padding: "12px 16px",
+      background: "rgba(16, 185, 129, 0.16)",
+      border: "1px solid rgba(16, 185, 129, 0.45)",
+      borderRadius: 10,
+      backdropFilter: "blur(20px)",
+      WebkitBackdropFilter: "blur(20px)",
+      color: "#e5e7eb",
+      fontSize: 12,
+      lineHeight: 1.5,
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        🤝 Yaver trio detected · phone + glasses + keyboard
+      </div>
+      <div style={{ opacity: 0.85, fontSize: 11 }}>
+        Press <kbd style={kbdStyle}>?</kbd> for shortcuts ·
+        {" "}<kbd style={kbdStyle}>j</kbd>/<kbd style={kbdStyle}>k</kbd> swap panes ·
+        {" "}<kbd style={kbdStyle}>Space</kbd> voice (optional, configure in Settings) ·
+        {" "}<kbd style={kbdStyle}>1</kbd>–<kbd style={kbdStyle}>3</kbd> jump direct
+      </div>
+      <button
+        onClick={() => setDismissed(true)}
+        style={{
+          marginTop: 8,
+          padding: "4px 10px",
+          background: "rgba(255,255,255,0.08)",
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: 6,
+          color: "#e5e7eb",
+          fontSize: 11,
+          cursor: "pointer",
+        }}
+      >
+        Got it
+      </button>
+    </div>
+  );
+}
+
+const kbdStyle: React.CSSProperties = {
+  display: "inline-block",
+  padding: "1px 5px",
+  margin: "0 1px",
+  borderRadius: 3,
+  background: "rgba(255,255,255,0.1)",
+  border: "1px solid rgba(255,255,255,0.18)",
+  fontFamily: "ui-monospace, Menlo, monospace",
+  fontSize: 10,
+};
+
 function VisionProNudge({ webxrAvailable }: { webxrAvailable: boolean }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
@@ -292,7 +363,7 @@ function SurfaceBadge({ surface }: { surface: ReturnType<typeof useSurface> }) {
       {open && (
         <div style={{ marginTop: 6, padding: 8, background: "rgba(0,0,0,0.85)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, fontSize: 10, minWidth: 220 }}>
           <div style={{ color: "#9ca3af", marginBottom: 6 }}>Force surface for testing:</div>
-          {(["quest", "vision-pro", "ray-ban-display", "mobile-webview", "desktop"] as const).map((s) => (
+          {(["quest", "vision-pro", "ray-ban-display", "android-trio", "mobile-webview", "desktop"] as const).map((s) => (
             <a key={s} href={updateQuery(s)} style={{ display: "block", padding: "3px 6px", color: "#e5e7eb", textDecoration: "none", borderRadius: 3 }}>
               ?surface={s}
             </a>

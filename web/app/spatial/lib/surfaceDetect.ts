@@ -17,7 +17,7 @@
  *                  mobile-webview | desktop | unknown
  */
 
-export type Surface = "quest" | "vision-pro" | "ray-ban-display" | "mobile-webview" | "desktop" | "unknown";
+export type Surface = "quest" | "vision-pro" | "ray-ban-display" | "android-trio" | "mobile-webview" | "desktop" | "unknown";
 
 export interface SurfaceInfo {
   surface: Surface;
@@ -51,7 +51,7 @@ export function detectSurface(): SurfaceInfo {
 
   let surface: Surface = "unknown";
 
-  if (forced && ["quest", "vision-pro", "ray-ban-display", "mobile-webview", "desktop"].includes(forced)) {
+  if (forced && ["quest", "vision-pro", "ray-ban-display", "android-trio", "mobile-webview", "desktop"].includes(forced)) {
     surface = forced as Surface;
     return { surface, forced: true, webxrAvailable, viewport, label: labelFor(surface), taskSurface: taskSurfaceFor(surface) };
   }
@@ -83,6 +83,15 @@ export function detectSurface(): SurfaceInfo {
     // We set this UA marker in the mobile RN WebView so the same URL
     // renders a preview-tuned layout inside the SpatialPreview pane.
     surface = "mobile-webview";
+  } else if (
+    // Android-trio detection: Android Chrome at a landscape 1920×1080-
+    // ish viewport is overwhelmingly likely the cable + XReal Air +
+    // foldable BT keyboard setup. Phone in portrait would be < 800w.
+    // Wider than tall + Android UA = trio mode confirmed enough to
+    // light up the trio-specific layout + onboarding.
+    /Android/i.test(ua) && w >= 1024 && w > h
+  ) {
+    surface = "android-trio";
   } else if (w >= 1024) {
     surface = "desktop";
   } else if (w < 800) {
@@ -104,6 +113,7 @@ function labelFor(s: Surface): string {
     case "quest": return "Meta Quest";
     case "vision-pro": return "Apple Vision Pro";
     case "ray-ban-display": return "Meta Ray-Ban Display";
+    case "android-trio": return "Android Trio (phone + glasses + keyboard)";
     case "mobile-webview": return "Mobile WebView";
     case "desktop": return "Desktop Browser";
     case "unknown": return "Unknown";
@@ -115,6 +125,11 @@ function taskSurfaceFor(s: Surface): string {
     case "quest": return "web-spatial-vr";
     case "vision-pro": return "web-spatial-vr";
     case "ray-ban-display": return "glasses-ray-ban";
+    // Android trio has full 1920x1080 real estate via the glasses,
+    // but the input modality is keyboard-driven on a tethered phone.
+    // Map to "web-desktop" so Claude treats it as a full-width view
+    // and uses markdown / code blocks freely.
+    case "android-trio": return "web-desktop";
     case "mobile-webview": return "web-spatial-hud";
     case "desktop": return "web-desktop";
     case "unknown": return "";
