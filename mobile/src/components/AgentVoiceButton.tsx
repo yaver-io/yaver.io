@@ -60,6 +60,28 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
   const recordingRef = useRef<any>(null); // expo-av Audio.Recording
   const sessionRef = useRef<AgentVoiceSession | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // Auto-hide when voice not enabled or keys not configured. Keyboard-
+  // only trio users shouldn't see a non-functional mic orb.
+  const [voiceReady, setVoiceReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { quicClient } = require("../lib/quic");
+        const res = await fetch(`${quicClient.baseUrl}/voice/status`, {
+          headers: quicClient.getAuthHeaders(),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        if (cancelled) return;
+        const ready = !!body.enabled && !!body.sttReady && !!body.ttsReady;
+        setVoiceReady(ready);
+      } catch {
+        if (!cancelled) setVoiceReady(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Pulse the button while recording or speaking.
   useEffect(() => {
@@ -256,6 +278,11 @@ export function AgentVoiceButton({ project, model, runner, onTaskCreated }: Prop
 
   const ringColor = COLOR_FOR_STATUS[status];
   const subtitleColor = status === "error" ? "#dc2626" : colors.textMuted ?? "#6b7280";
+
+  // Keyboard-only trio mode: no orb at all when /voice/status reports
+  // not ready. The user gets a clean UI without a button that would
+  // just error on tap.
+  if (voiceReady === false) return <View />;
 
   return (
     <View style={styles.wrap} pointerEvents="box-none">

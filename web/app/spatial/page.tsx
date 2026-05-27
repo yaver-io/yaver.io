@@ -153,7 +153,27 @@ export default function SpatialPage() {
 
       {!isRayBan && <SessionStrip tasks={tasks} />}
       <div style={paneGridStyle(paneCount, isRayBan)}>
-        {visibleTmux.length > 0 ? (
+        {visibleTmux.length === 0 && activeTasks.length === 0 ? (
+          // No tmux sessions, no active tasks — show a single
+          // attach-anyway pane so the trio user can tmux new -s <name>
+          // and have something to type into. Without this, the layout
+          // is just an empty EmptyState which is unhelpful when the
+          // user has a BT keyboard ready to go.
+          <TmuxPane
+            key="bootstrap"
+            agentUrl={cfg.agentUrl}
+            token={cfg.token}
+            focused={focusedPaneIdx === 0}
+            onFocus={() => setFocusedPaneIdx(0)}
+            headerContent={
+              <div style={paneHeaderStyle}>
+                <span style={{ ...dotStyle, background: "#94a3b8", marginRight: 8 }} />
+                <span style={{ fontSize: 11, fontWeight: 600 }}>shell · type tmux new -s &lt;name&gt;</span>
+                <span style={{ fontSize: 10, color: "#6b7280", marginLeft: "auto" }}>fresh PTY</span>
+              </div>
+            }
+          />
+        ) : visibleTmux.length > 0 ? (
           // Real tmux attach — user's actual .tmux.conf is live.
           visibleTmux.map((sess, i) => (
             <TmuxPane

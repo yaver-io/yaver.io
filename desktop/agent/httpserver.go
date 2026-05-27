@@ -598,6 +598,10 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	// clients can drive voice without round-tripping the auth broker.
 	mux.HandleFunc("/voice/status", s.authSDK(s.handleVoiceStatus))
 	mux.HandleFunc("/voice/stream", s.authSDK(s.handleVoiceStream))
+	// /voice/config — POST to set provider + API keys from mobile
+	// Settings. Owner-auth gated (NOT authSDK) because the body
+	// carries plaintext API keys.
+	mux.HandleFunc("/voice/config", s.auth(s.handleVoiceConfigSet))
 
 	// Hermes runtime — bundle validation + headless execution. Gated by
 	// owner auth (NOT authSDK) because exec is privileged. Used by the
