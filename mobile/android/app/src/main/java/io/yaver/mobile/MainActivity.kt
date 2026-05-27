@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -76,6 +77,22 @@ class MainActivity : ReactActivity() {
    * rendering of the component.
    */
   override fun getMainComponentName(): String = "main"
+
+  /**
+   * Hand every hardware key down event to YaverKeyboardRouter BEFORE
+   * the normal RN keyboard pipeline. When the router is grabbed it
+   * forwards the event to JS as "YaverKey" and consumes the original
+   * (returns true). When ungrabbed, the event flows through unchanged.
+   */
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.action == KeyEvent.ACTION_DOWN) {
+      val mod = YaverKeyboardRouterModule.sharedRef
+      if (mod != null && mod.dispatchKey(event)) {
+        return true
+      }
+    }
+    return super.dispatchKeyEvent(event)
+  }
 
   /**
    * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]

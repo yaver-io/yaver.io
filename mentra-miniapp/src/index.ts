@@ -277,6 +277,60 @@ function handleAgentCommand(session: AppSession, frame: any): void {
         (session as any).audio?.speak?.(text);
         break;
       }
+      case "glass_terminal_tail": {
+        // PC-in-glasses HUD view: scrolling tail of a terminal /
+        // task pty. Render as a multi-line wall; no TTS — voice
+        // readback for a stream of lines would be a torture device.
+        const label = String(data.sessionLabel ?? "term");
+        const lines = Array.isArray(data.lines) ? (data.lines as string[]) : [];
+        const body = lines.slice(-6).map((l) => truncate(String(l ?? ""), 60)).join("\n");
+        try { session.layouts.showTextWall(`${label}\n${body}`); } catch {}
+        break;
+      }
+      case "glass_email_subjects": {
+        // Inbox glance — 4 × "from: subject" rows.
+        const items = Array.isArray(data.items) ? data.items : [];
+        const header = data.folder ? String(data.folder) : "inbox";
+        const rows = items.slice(0, 4).map((it: any) => {
+          const from = truncate(String(it?.from ?? ""), 22);
+          const subj = truncate(String(it?.subject ?? ""), 36);
+          return `${from} · ${subj}`;
+        });
+        const body = rows.length === 0 ? "(empty)" : rows.join("\n");
+        try { session.layouts.showTextWall(`${header}\n${body}`); } catch {}
+        break;
+      }
+      case "glass_notification": {
+        const title = truncate(String(data.title ?? ""), 60);
+        const body = truncate(String(data.body ?? ""), 60);
+        const display = body ? `${title}\n${body}` : title;
+        try { session.layouts.showTextWall(display); } catch {}
+        // Speak only the title — body is for the wearer to glance
+        // at, not have read out word-for-word.
+        if (title) {
+          (session as any).audio?.speak?.(title);
+        }
+        break;
+      }
+      case "glass_voice_overlay": {
+        // In-flight transcription. Partials repaint frequently;
+        // a non-empty `final` replaces the wall and is auto-cleared
+        // by a follow-up empty payload from the agent.
+        const final = String(data.final ?? "").trim();
+        const partial = String(data.partial ?? "").trim();
+        const text = final || partial;
+        if (!text) return;
+        try { session.layouts.showTextWall(`▸ ${truncate(text, 80)}`); } catch {}
+        break;
+      }
+      case "glass_pc_focus": {
+        // The wearer's spatial viewer reorders windows on this
+        // event. HUD glasses just acknowledge so the user knows
+        // their focus command landed.
+        const sid = String(data.sessionId ?? "");
+        try { session.layouts.showTextWall(`focused · ${truncate(sid, 50)}`); } catch {}
+        break;
+      }
     }
   } catch (err) {
     console.warn(`[mentra] handler error for ${cmd}:`, err);

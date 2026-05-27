@@ -128,6 +128,12 @@ func executionModeForFramework(framework string) ProjectExecutionMode {
 		// on Skia/Impeller in its own process. The web dashboard's
 		// RemoteRuntimeViewer streams the running emulator/simulator.
 		return ExecutionModeNativeWebRTC
+	case "browser":
+		// "PC UI in glasses" surface — a headless Chromium tab on the
+		// agent host streamed to a spatial headset / web client over
+		// the same WebRTC pipeline that ships the native simulators.
+		// The target is browser-window; capture is JPEG-DC for now.
+		return ExecutionModeNativeWebRTC
 	default:
 		return ExecutionModeUnsupported
 	}
@@ -219,6 +225,14 @@ func remoteRuntimeCapabilitiesForProject(workDir, framework string) RemoteRuntim
 				probeAndroidDeviceTarget(),
 				probeIOSSimulatorTarget(),
 				probeIOSDeviceTarget(),
+			}
+		case "browser":
+			// One target: a headless Chromium tab on the agent host.
+			// Same JPEG-DC transport as android/ios. Useful entry
+			// points (Gmail tab, docs, generic URL) are layered on
+			// top by ops_glass_pc.go verbs.
+			caps.Targets = []RemoteRuntimeTarget{
+				probeBrowserWindowTarget(),
 			}
 		}
 	}

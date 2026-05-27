@@ -17,9 +17,11 @@ import { XR, XROrigin, createXRStore } from "@react-three/xr";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { BridgeConfig, Task, VoiceController } from "../useAgentBridge";
+import { useGlassPCSessions } from "../useAgentBridge";
 import { TerminalPane3D } from "./TerminalPane3D";
 import { VoiceOrb3D } from "./VoiceOrb3D";
 import { AppScreenPlane3D } from "./AppScreenPlane3D";
+import { RemoteWindow3D } from "./RemoteWindow3D";
 
 // Single XR store shared across the page so the "Enter VR" button
 // in page.tsx can trigger session entry without prop-drilling.
@@ -74,6 +76,11 @@ export function VRScene({ cfg, tasks, voice }: Props) {
             session is active. Sits to the right of the terminal arc,
             angled back toward the user. */}
         <AppScreenPlane3D cfg={cfg} />
+
+        {/* "PC UI in glasses": one floating browser quad per active
+            glass_pc_open session. Arranged in a row above the
+            terminal arc so they don't fight for the user's gaze. */}
+        <RemoteWindowStack cfg={cfg} />
 
         <VoiceOrb3D voice={voice} />
 
@@ -145,6 +152,51 @@ function PaneArc({ cfg, tasks }: { cfg: BridgeConfig; tasks: Task[] }) {
         );
       })}
       {visible.length === 0 && <EmptyHint />}
+    </>
+  );
+}
+
+function RemoteWindowStack({ cfg }: { cfg: BridgeConfig }) {
+  const { sessions } = useGlassPCSessions(cfg);
+  const [focusId, setFocusId] = useState<string | null>(null);
+
+  // Layout: arc them above the terminal panes — 2.3m height, 1.8m
+  // radius, ±25° spread, max 3 visible. Less aggressive curvature
+  // than the terminals so the user can read text at the edges.
+  const visible = sessions.slice(0, 3);
+  const RADIUS = 1.8;
+  const Y = 2.35;
+  const PANE_W = 1.1;
+  const PANE_H = 0.7;
+  const angles = visible.length === 1
+    ? [0]
+    : visible.length === 2
+    ? [-0.25, 0.25]
+    : [-0.45, 0, 0.45];
+
+  return (
+    <>
+      {visible.map((s, i) => {
+        const a = angles[i] ?? 0;
+        const x = Math.sin(a) * RADIUS;
+        const z = -Math.cos(a) * RADIUS;
+        return (
+          <RemoteWindow3D
+            key={s.id}
+            cfg={cfg}
+            sessionId={s.id}
+            deviceId={s.deviceId}
+            url={s.url}
+            title={s.title}
+            position={[x, Y, z]}
+            rotationY={-a}
+            width={PANE_W}
+            height={PANE_H}
+            focused={focusId === s.id || (focusId === null && i === 0)}
+            onFocus={() => setFocusId(s.id)}
+          />
+        );
+      })}
     </>
   );
 }

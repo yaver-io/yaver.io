@@ -24,6 +24,8 @@
 		9F7E1A0B2C3D4E5F60A1B2C9 /* YaverFloatingTrigger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F7E1A0B2C3D4E5F60A1B2CA /* YaverFloatingTrigger.swift */; };
 		9F7E1A0B2C3D4E5F60A1B2DE /* YaverDeployPane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F7E1A0B2C3D4E5F60A1B2DF /* YaverDeployPane.swift */; };
 		A1B2C3D4E5F60001DEADBEEF /* YaverBundleValidator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */; };
+		D0E1F2A3B4C5D6E7F8A9B0C1 /* YaverKeyboardRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */; };
+		D0E1F2A3B4C5D6E7F8A9B0C2 /* YaverKeyboardRouter.m in Sources */ = {isa = PBXBuildFile; fileRef = D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
 		C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02B1D3AE60FAC95D8F162620 /* ExpoModulesProvider.swift */; };
 		DB1FFFA1C35434307CD5FD2C /* sdk-manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = 3A027291C28B8C619D5DCBBC /* sdk-manifest.json */; };
@@ -50,6 +52,8 @@
 		9F7E1A0B2C3D4E5F60A1B2CA /* YaverFloatingTrigger.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverFloatingTrigger.swift; sourceTree = "<group>"; };
 		9F7E1A0B2C3D4E5F60A1B2DF /* YaverDeployPane.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverDeployPane.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F60002DEADBEEF /* YaverBundleValidator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverBundleValidator.swift; sourceTree = "<group>"; };
+		D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverKeyboardRouter.swift; sourceTree = "<group>"; };
+		D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = Yaver/YaverKeyboardRouter.m; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Yaver/SplashScreen.storyboard; sourceTree = "<group>"; };
 		AC887EE616ACA6170AEBCC9F /* libPods-Yaver.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Yaver.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		BA98858350D5EC9E2187C1EE /* YaverHTTPServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Yaver/YaverHTTPServer.swift; sourceTree = "<group>"; };
@@ -95,6 +99,8 @@
 				7A0D5E2B0001000200020002 /* YaverSSEReader.swift */,
 				7A0D5E2B0003000200030004 /* YaverFeedbackTranscript.swift */,
 				0164C4E1814C83FA4EA7EE66 /* YaverInfo.m */,
+				D0E1F2A3B4C5D6E7F8A9B0C3 /* YaverKeyboardRouter.swift */,
+				D0E1F2A3B4C5D6E7F8A9B0C4 /* YaverKeyboardRouter.m */,
 				3A027291C28B8C619D5DCBBC /* sdk-manifest.json */,
 			);
 			name = Yaver;
@@ -471,6 +477,8 @@
 				C3F40E7C2219114E034B128C /* ExpoModulesProvider.swift in Sources */,
 				75096125B674AB0D29AE02AC /* YaverBundleLoader.swift in Sources */,
 				A1B2C3D4E5F60001DEADBEEF /* YaverBundleValidator.swift in Sources */,
+				D0E1F2A3B4C5D6E7F8A9B0C1 /* YaverKeyboardRouter.swift in Sources */,
+				D0E1F2A3B4C5D6E7F8A9B0C2 /* YaverKeyboardRouter.m in Sources */,
 				F07CE48FD595B0ACD2F8B805 /* YaverBundleLoader.m in Sources */,
 				6D1B73A5432ABE301C3BD5FC /* YaverHTTPServer.swift in Sources */,
 				70A18B45D1C24F9BB4A10001 /* YaverGuestCrashReporter.swift in Sources */,

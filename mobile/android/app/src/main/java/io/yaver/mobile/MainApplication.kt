@@ -29,6 +29,11 @@ class MainApplication : Application(), ReactApplication {
               add(YaverInfoPackage())
               add(YaverBundleLoaderPackage())
               add(YaverShakeDetectorPackage())
+              // PC-in-glasses: BT-keyboard sink router. Native module
+              // forwards hardware key events to JS; the host activity
+              // hands the event to dispatchKey(...) BEFORE the normal
+              // RN keyboard pipeline so a grabbed sink can intercept.
+              add(YaverKeyboardRouterPackage())
             }
 
           override fun getJSMainModuleName(): String = ".expo/.virtual-metro-entry"

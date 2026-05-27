@@ -68,6 +68,8 @@ func runtimeTargetFor(targetID string) (runtimeTarget, error) {
 		return androidDeviceTarget{}, nil
 	case "ios-device":
 		return iosDeviceTarget{}, nil
+	case "browser-window":
+		return browserWindowTarget{}, nil
 	}
 	return nil, fmt.Errorf("unknown remote runtime target %q", targetID)
 }

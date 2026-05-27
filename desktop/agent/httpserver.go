@@ -685,6 +685,19 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/blackbox/subscribe", s.authSDK(s.handleBlackBoxSubscribe))
 	mux.HandleFunc("/blackbox/context", s.authSDK(s.handleBlackBoxContext))
 
+	// Glass HUD push surface — POST /glass/hud emits typed views on
+	// the existing /blackbox/command-stream so MentraOS clients can
+	// render terminal_tail, email_subjects, notification, voice_overlay
+	// without polling. Owner-only — same posture as the rest of the
+	// agent's broadcast channels.
+	mux.HandleFunc("/glass/hud", s.auth(s.handleGlassHUDPush))
+
+	// IMAP summary surface — HUD-sized inbox snapshot. Read-only; the
+	// HUD wall renders 4×{from, subject} lines and an "as of" stamp.
+	// Compose goes through the spatial /glass_pc browser quad, not
+	// this endpoint.
+	mux.HandleFunc("/imap/inbox", s.auth(s.handleIMAPInbox))
+
 	// Mobile-app session enumeration + remote-trigger control plane.
 	// Owner-only — guests must not be able to push apps onto a phone.
 	mux.HandleFunc("/mobile/sessions", s.auth(s.handleMobileSessions))

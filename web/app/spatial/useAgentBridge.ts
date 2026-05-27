@@ -127,6 +127,69 @@ export function useTmuxSessions(cfg: BridgeConfig | null): { sessions: TmuxSessi
   return { sessions, error };
 }
 
+// One row from /remote-runtime/sessions filtered to browser-window
+// runs. Each row maps to one floating RemoteWindow3D quad in the VR
+// scene. The agent's session object carries more fields (transport,
+// dims, …); we project only what the viewer needs to render.
+export interface GlassPCSession {
+  id: string;
+  deviceId: string;
+  framework: string;
+  targetId: string;
+  status: string;
+  url?: string;
+  title?: string;
+}
+
+/** Poll /remote-runtime/sessions and surface browser-window rows so
+ *  the VR scene can render them as floating browser quads. */
+export function useGlassPCSessions(cfg: BridgeConfig | null): {
+  sessions: GlassPCSession[];
+  error: string;
+} {
+  const [sessions, setSessions] = useState<GlassPCSession[]>([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!cfg) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const res = await fetch(`${cfg.agentUrl}/remote-runtime/sessions`, {
+          headers: { Authorization: `Bearer ${cfg.token}` },
+        });
+        if (!res.ok) throw new Error(`remote-runtime ${res.status}`);
+        const body = (await res.json()) as { sessions: any[] };
+        if (cancelled) return;
+        const list = (body.sessions ?? [])
+          .filter((s) => s?.framework === "browser" && s?.targetId === "browser-window")
+          .map((s) => ({
+            id: String(s.id),
+            deviceId: String(s.deviceId ?? ""),
+            framework: String(s.framework),
+            targetId: String(s.targetId),
+            status: String(s.status ?? ""),
+            url: typeof s.note === "string" && s.note.startsWith("navigated to ") ? s.note.slice(13) : undefined,
+            title: undefined,
+          }));
+        setSessions(list);
+        setError("");
+      } catch (e: any) {
+        if (cancelled) return;
+        setError(e?.message ?? "fetch failed");
+      }
+    };
+    void refresh();
+    const i = window.setInterval(refresh, 5000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(i);
+    };
+  }, [cfg]);
+
+  return { sessions, error };
+}
+
 export function useTaskDetail(cfg: BridgeConfig | null, taskId: string | null): { task: Task | null; error: string } {
   const [task, setTask] = useState<Task | null>(null);
   const [error, setError] = useState("");
