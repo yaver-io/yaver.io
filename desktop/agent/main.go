@@ -2778,13 +2778,24 @@ func runServe(args []string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Initialize tmux manager if tmux is available
+	// Initialize tmux manager if tmux is available. Make first-launch
+	// seamless: bootstrap a default `yaver` session when none exist,
+	// so the /spatial 3-pane layout has something to attach to on the
+	// trio user's first connection. If tmux ISN'T installed, log the
+	// platform-specific install command so they don't have to google it.
 	taskMgr.TmuxMgr = NewTmuxManager(taskMgr)
 	if taskMgr.TmuxMgr != nil {
 		log.Println("Tmux: available — session adoption enabled")
 		taskMgr.TmuxMgr.ReAdoptOnStartup()
+		if err := taskMgr.TmuxMgr.BootstrapDefaultSession(); err != nil {
+			log.Printf("Tmux: bootstrap default session failed (non-fatal): %v", err)
+		} else if sessions, _ := taskMgr.TmuxMgr.ListTmuxSessions(); len(sessions) == 1 && sessions[0].Name == "yaver" {
+			log.Println("Tmux: bootstrapped fresh 'yaver' session — /spatial will attach to it")
+		}
 	} else {
-		log.Println("Tmux: not available — session adoption disabled")
+		log.Printf("Tmux: not installed — /spatial and the Terminal tab will be empty until you install it.")
+		log.Printf("       One-liner for your platform: %s", TmuxInstallHint())
+		log.Printf("       OR: yaver install tmux  (uses the same recipe)")
 	}
 
 	// heartbeatLoop is started after httpServer is created (needs authExpired flag)

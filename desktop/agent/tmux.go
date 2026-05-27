@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -63,6 +65,66 @@ func NewTmuxManager(taskMgr *TaskManager) *TmuxManager {
 func tmuxAvailable() bool {
 	_, err := exec.LookPath("tmux")
 	return err == nil
+}
+
+// TmuxInstallHint returns a platform-specific one-line install command
+// to print when the user hits `yaver serve` without tmux installed.
+// Mirrors the per-platform recipes in install_cmd.go (single source of
+// truth would be ideal; this duplicate is small enough to be safe).
+func TmuxInstallHint() string {
+	switch runtime.GOOS {
+	case "darwin":
+		return "brew install tmux"
+	case "linux":
+		// Detect package manager. apt-get is most common (Debian, Ubuntu);
+		// dnf is Fedora / RHEL; pacman is Arch. Fall back to apt-get.
+		for _, candidate := range []struct {
+			bin, cmd string
+		}{
+			{"apt-get", "sudo apt-get install -y tmux"},
+			{"dnf", "sudo dnf install -y tmux"},
+			{"pacman", "sudo pacman -S --noconfirm tmux"},
+			{"apk", "sudo apk add tmux"},
+			{"zypper", "sudo zypper install -y tmux"},
+		} {
+			if _, err := exec.LookPath(candidate.bin); err == nil {
+				return candidate.cmd
+			}
+		}
+		return "sudo apt-get install -y tmux  # or your distro's equivalent"
+	case "windows":
+		return "tmux on Windows runs via WSL2 — `wsl --install` first, then `sudo apt install tmux` inside"
+	}
+	return "install tmux for your platform (https://github.com/tmux/tmux/wiki/Installing)"
+}
+
+// BootstrapDefaultSession creates a detached `yaver` tmux session if no
+// sessions currently exist. Lets a fresh `yaver serve` produce a working
+// /spatial layout immediately — the trio user shouldn't have to ssh in
+// and type `tmux new -s yaver` before their first vibe attempt.
+//
+// No-ops if any session already exists. cwd is the user's home dir so
+// the session starts in a sensible place.
+func (m *TmuxManager) BootstrapDefaultSession() error {
+	sessions, err := m.ListTmuxSessions()
+	if err != nil {
+		return fmt.Errorf("list sessions to check bootstrap: %w", err)
+	}
+	if len(sessions) > 0 {
+		// User already has tmux sessions running; don't auto-create.
+		return nil
+	}
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = "/tmp"
+	}
+	// tmux new-session -d (detached) -s yaver -c $HOME
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", "yaver", "-c", home)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tmux new-session: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // ListTmuxSessions returns all tmux sessions with metadata about their

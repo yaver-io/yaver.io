@@ -141,18 +141,25 @@ function ensureLinuxRunnerSandboxPackages() {
     const missing = [];
     if (!commandExists("bwrap")) missing.push("bubblewrap");
     if (!commandExists("newuidmap")) missing.push("uidmap");
+    // tmux is a core Yaver dependency — /spatial 3-pane terminal layout
+    // attaches to it via /ws/terminal, and the mobile Terminal tab uses
+    // it the same way. Without tmux, the trio user (Cagri-style: Linux
+    // remote dev + phone + glasses + keyboard) sees empty panes until
+    // they ssh in and `apt install tmux`. Bundling tmux into the same
+    // auto-install pass as the runner sandbox deps closes that gap.
+    if (!commandExists("tmux")) missing.push("tmux");
     if (missing.length === 0) return;
     if (!commandExists("apt-get")) {
-      log(`Runner sandbox packages missing (${missing.join(", ")}) and no apt-get is available for auto-install.`);
+      log(`Linux packages missing (${missing.join(", ")}) and no apt-get is available for auto-install. Run: \`yaver install tmux\` (or your distro's equivalent for the rest).`);
       return;
     }
     execSync("apt-get update -y", { stdio: ["ignore", "ignore", "ignore"] });
     execSync(`DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${missing.join(" ")}`, {
       stdio: "inherit",
     });
-    log(`Installed Linux runner sandbox packages: ${missing.join(", ")}.`);
+    log(`Installed Linux packages: ${missing.join(", ")}.`);
   } catch (error) {
-    log(`Skipping Linux runner sandbox package bootstrap: ${error.message}`);
+    log(`Skipping Linux package bootstrap: ${error.message}`);
   }
 }
 
