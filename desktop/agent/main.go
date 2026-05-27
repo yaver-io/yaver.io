@@ -2116,6 +2116,11 @@ func runServe(args []string) {
 		return
 	}
 
+	// Footgun guard: warn (don't refuse) if `yaver serve` was invoked
+	// as root. The no-root contract is documented in NO_ROOT.md +
+	// enforced visibly here. See no_root_check.go for full rationale.
+	warnIfRunningAsRoot()
+
 	// Builder role advertisement is process-local — set once here,
 	// read on every /info request. SetBuilderPlatforms lives in
 	// remote_builder.go (parallel session, not yet on main). Re-enable
