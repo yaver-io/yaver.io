@@ -437,13 +437,13 @@ func (s *HTTPServer) handleRepoClone(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Default directory: ~/Projects/{repoName}
+	// Default directory: $HOME/Workspace/{repoName} — matches
+	// kivanc's macOS layout (~/Workspace/talos) + the existing
+	// project-discovery scanner. ResolveWorkspaceParent handles
+	// managed-cloud cases (/root/Workspace, /home/yaver/Workspace)
+	// and falls back to cwd if HOME resolution dies.
 	repoName := repoNameFromURL(req.URL)
-	targetDir := req.Dir
-	if targetDir == "" {
-		home, _ := os.UserHomeDir()
-		targetDir = filepath.Join(home, "Projects")
-	}
+	targetDir := ResolveWorkspaceParent(req.Dir)
 
 	// Ensure parent directory exists
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
