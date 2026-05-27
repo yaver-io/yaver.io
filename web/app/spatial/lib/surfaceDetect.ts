@@ -84,18 +84,28 @@ export function detectSurface(): SurfaceInfo {
     // renders a preview-tuned layout inside the SpatialPreview pane.
     surface = "mobile-webview";
   } else if (
-    // Android-trio detection: Android Chrome at a landscape 1920×1080-
-    // ish viewport is overwhelmingly likely the cable + XReal Air +
-    // foldable BT keyboard setup. Phone in portrait would be < 800w.
-    // Wider than tall + Android UA = trio mode confirmed enough to
-    // light up the trio-specific layout + onboarding.
+    // Android-trio auto-detect: Android Chrome at landscape 1920x1080-
+    // ish (DeX / Nebula extended-display mode + XReal Air mirror).
+    // Phone in portrait or mirror-only mode would be < 1024w.
     /Android/i.test(ua) && w >= 1024 && w > h
   ) {
     surface = "android-trio";
   } else if (w >= 1024) {
     surface = "desktop";
-  } else if (w < 800) {
-    surface = "mobile-webview"; // catch-all small viewport
+  } else {
+    // EVERYTHING under 1024 is mobile-class viewport. This includes:
+    //   - iPhone landscape (~932w on iPhone 15) — used to fall in
+    //     an 800-1024 gap that left surface="unknown" (bug fixed
+    //     2026-05-27).
+    //   - Android phone mirror-mode (no Nebula/DeX) at native res
+    //   - iPad portrait (~810w) — narrow tablet pass-through
+    //   - Foldables in cover-screen mode
+    // iOS / Android trio users in mirror mode get this layout
+    // (1 large pane on the virtual glass). Force ?surface=android-
+    // trio if you want 3 panes crammed into the mirrored phone
+    // viewport — the virtual glass size compensates for the
+    // tight per-pane width.
+    surface = "mobile-webview";
   }
 
   return {
