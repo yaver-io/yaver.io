@@ -1,0 +1,32 @@
+{
+  "name": "Yaver — Spatial",
+  "short_name": "Yaver VR",
+  "description": "Hands-free Claude Code on Meta Quest, Apple Vision Pro, and AR glasses. Three floating terminal panes + voice. Subscription OAuth only — never API keys.",
+  "start_url": "/spatial",
+  "scope": "/spatial",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#06080d",
+  "theme_color": "#06080d",
+  "categories": ["developer", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Force Quest layout",
+      "short_name": "Quest",
+      "description": "Render the /spatial route with Quest defaults",
+      "url": "/spatial?surface=quest"
+    },
+    {
+      "name": "Force Vision Pro layout",
+      "short_name": "Vision Pro",
+      "description": "Render the /spatial route with Vision Pro defaults",
+      "url": "/spatial?surface=vision-pro"
+    }
+  ]
+}

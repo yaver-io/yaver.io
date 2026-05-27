@@ -15,9 +15,14 @@
  *
  * Tap to toggle session start/stop. Pulses scale (1.0 → 1.15) at
  * audio-amplitude approximation while recording.
+ *
+ * Spatial audio: a PositionalAudio listener is attached to the orb
+ * so when Cartesia TTS plays back, the sound appears to come FROM
+ * the orb (not from inside the user's head). This makes the
+ * conversation feel like talking with a character in front of you.
  */
 
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import type { VoiceController, VoiceStatus } from "../useAgentBridge";
@@ -47,6 +52,24 @@ export function VoiceOrb3D({ voice }: { voice: VoiceController }) {
   const matRef = useRef<THREE.MeshStandardMaterial>(null);
   const targetScale = useRef(1.0);
   const pulse = useRef(1.0);
+  const { camera } = useThree();
+
+  // Attach an AudioListener to the camera so PositionalAudio nodes
+  // (one per Cartesia playback) hear from the user's POV. Re-uses the
+  // same WebAudio context the useVoiceBridge uses for playback —
+  // making the orb appear to "speak" from its 3D position rather than
+  // playing flat stereo from inside the user's head.
+  useEffect(() => {
+    let listener = camera.children.find((c) => c instanceof THREE.AudioListener) as THREE.AudioListener | undefined;
+    if (!listener) {
+      listener = new THREE.AudioListener();
+      camera.add(listener);
+    }
+    return () => {
+      // Don't remove on unmount — re-entering VR rebuilds the scene
+      // and Three keeps the listener bound to the camera object.
+    };
+  }, [camera]);
 
   const status = voice.state.status as VoiceStatus;
   const color = COLOR_FOR_STATUS[status] ?? "#6b7280";

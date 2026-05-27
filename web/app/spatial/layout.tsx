@@ -13,6 +13,11 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Yaver — Spatial",
   description: "Hands-free Claude Code on smart glasses, VR, and AR headsets",
+  // Quest Browser + Vision Pro Safari read this on first visit and offer
+  // "Add to Home" → one-tap launch into immersive content. Separate from
+  // the root /manifest.webmanifest so the install action lands on /spatial
+  // instead of the marketing homepage.
+  manifest: "/spatial-manifest.webmanifest",
 };
 
 export default function SpatialLayout({ children }: { children: React.ReactNode }) {

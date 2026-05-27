@@ -140,10 +140,19 @@ export function TerminalPane3D({ task, cfg, position, rotationY, width, height, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [textureKey]);
 
-  // Tick texture.needsUpdate so xterm cursor blink + cursor moves
-  // make it onto the headset within a frame or two.
+  // Tick texture.needsUpdate at ~15Hz instead of every frame. Quest 3
+  // gives us 11.1ms/frame at 90Hz; uploading a 640x400 canvas to the
+  // GPU every frame costs ~1.5ms per pane × 3 panes = 4.5ms wasted on
+  // content that only changes when the agent emits a new output line.
+  // 15Hz feels indistinguishable for a terminal (the cursor blink is
+  // 600ms anyway) and frees the budget for reprojection.
+  const lastTexUpdateRef = useRef<number>(0);
   useFrame(() => {
-    if (texture) texture.needsUpdate = true;
+    if (!texture) return;
+    const now = performance.now();
+    if (now - lastTexUpdateRef.current < 66) return; // ~15 FPS
+    lastTexUpdateRef.current = now;
+    texture.needsUpdate = true;
   });
 
   const borderColor = focused ? "#10b981" : "#1f2937";
