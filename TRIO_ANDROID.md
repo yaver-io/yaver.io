@@ -63,7 +63,7 @@ when typing is awkward (lying down, eating, walking).
 | Yaver-trio keyboard shortcuts | ✅ Shipped in `cli/v1.99.225` web bundle |
 | Voice (OpenAI default OR Deepgram+Cartesia) | ✅ Optional; configure in `~/.yaver/config.json` if wanted |
 | Liquid Glass UI | ⚠️ Falls back to Material 3 surfaces on Android — by design |
-| Hermes-push (mobile-app reload) | ❌ Android has no YaverBundleLoader; iOS-only feature |
+| Hermes-push (mobile-app reload) | ✅ Android `YaverBundleLoaderModule.kt` mirrors the iOS path — `loadApp` works identically on both platforms |
 | Yaver mobile app (Tasks tab etc.) | ✅ Works on Play Store build 240; complements `/spatial` |
 | Linux container via localdesktop.github.io | ✅ Cagrı's setup — runs alongside Yaver, doesn't conflict |
 | WebXR immersive-vr scene | ❌ XReal Air mirrors phone screen; no WebXR sessions |
