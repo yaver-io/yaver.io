@@ -101,17 +101,54 @@ That's it for glasses. The miniapp does the rest end-to-end via voice.
 
 ### 3.2 Meta Ray-Ban Display Wearables Toolkit (waitlist, slow)
 
-- [ ] Apply at https://developers.meta.com/wearables (NOT the regular Meta dev portal)
-- [ ] Approval is gated; expect 2-6 week wait
-- [ ] Until you have access, this is **deferred** in task #10 — no impact on shipping
+The Wearables Device Access Toolkit (May 2026) opens TWO paths for Yaver:
+
+**Path A — Web App on the glasses (zero native code, ready today)**
+- The `/spatial` route already auto-detects `?surface=ray-ban-display` and
+  renders a compact 600×600 layout: no badge, no session strip, 1 pane,
+  48pt voice orb, single-line transcript. Compatible with the Wearables
+  Toolkit "Web Apps" path the moment Meta accepts you.
+- [ ] Apply for the dev preview at https://developers.meta.com/wearables
+      (NOT the regular Meta dev portal — different gate)
+- [ ] Set app name: `Yaver`, package: `io.yaver.wearables`, scope: voice + mic
+- [ ] Once accepted (2-6 week wait), submit `/spatial?surface=ray-ban-display`
+      as your Web App entry URL
+- [ ] No new code needed on our side — the layout's already wired
+
+**Path B — Native iOS SDK addition (deferred, needs Path A approval first)**
+- Adds the Wearables Toolkit Swift framework as an Expo native module
+- Lets the mobile app push richer content (images, lists, video) to the
+  Ray-Ban Display, beyond what the Web App path supports
+- Blocked on RN 0.79→0.80+ + Xcode 26 (task #6) AND Meta dev-preview
+  acceptance. Don't start until both are unblocked.
 
 ### 3.3 Apple visionOS distribution
 
-- [ ] Already have an Apple Developer account (you've shipped TestFlight); same one works for visionOS
-- [ ] Xcode 26 → File → New → Project → visionOS → App
-  - Don't actually need to create a new project — task #8 handles this as an Expo visionOS target on the existing iOS bundle
-- [ ] App Store Connect → existing Yaver app → add visionOS to Platforms
-- [ ] No new registration. Just a target add.
+The `/spatial` route auto-detects Vision Pro Safari (visionOS 26+) and shows
+a purple-glass nudge banner pointing at the Enter VR button. visionOS 26
+Safari 26.2+ supports `immersive-vr` natively, so the WebGL scene I built
+for Quest 3 works ALSO on Vision Pro with zero changes.
+
+- [ ] Already have an Apple Developer account (you've shipped TestFlight);
+      same one works for visionOS
+- [ ] **Distribution today** — share the URL `yaver.io/spatial?agent=...&token=...`
+      with anyone who has Vision Pro Safari. Tap "Add to Dock" for a one-tap
+      launcher. No App Store submission required.
+- [ ] **Native visionOS app (optional polish)**:
+      - [ ] Bump RN 0.79 → 0.80+ + Xcode 26 (task #6)
+      - [ ] Add `visionOS` to `mobile/app.json` Expo plugins
+      - [ ] Xcode → Yaver project → Add visionOS as target platform
+      - [ ] App Store Connect → existing Yaver app → add visionOS to Platforms
+      - [ ] No new app registration. Just a platform add on the existing bundle.
+
+**Performance note**: visionOS Safari 26.2 supports `immersive-vr` but DOES
+NOT support `immersive-ar`. The /spatial VR scene is `immersive-vr` only —
+it works. Don't try to enable AR pass-through.
+
+**WKWebView caveat**: if you wrap the URL in a thin SwiftUI WKWebView app
+expecting WebXR to keep working, IT DOES NOT. WKWebView strips the WebXR
+permission. The immersive-vr button only works in REAL Safari. So either
+ship as a URL or build a real native visionOS SwiftUI app (not a wrapper).
 
 ---
 

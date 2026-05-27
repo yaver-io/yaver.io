@@ -56,13 +56,28 @@ export function detectSurface(): SurfaceInfo {
     return { surface, forced: true, webxrAvailable, viewport, label: labelFor(surface), taskSurface: taskSurfaceFor(surface) };
   }
 
-  // UA sniffing — order matters (Vision Pro UA contains "Mac OS X"
-  // so must come before generic mac/desktop detection).
+  // UA sniffing — order matters. Vision Pro UA contains "Mac OS X"
+  // so visionOS must come before generic mac/desktop detection.
+  // Ray-Ban Display Web Apps run in a 600x600 chrome with a UA
+  // string starting with "MetaWearables" per developers.meta.com
+  // /wearables docs (May 2026) — we accept either the UA or the
+  // viewport fingerprint.
   if (/OculusBrowser|Quest|Meta Quest/i.test(ua)) {
     surface = "quest";
-  } else if (/Vision Pro|visionOS/i.test(ua)) {
+  } else if (
+    // visionOS Safari 26.x UA shape: "Mozilla/5.0 (Vision Pro;
+    // CPU OS 26_0 like Mac OS X) AppleWebKit/... Safari/..."
+    // Pre-26 builds said "Vision Pro" in Mobile/Touch hint.
+    /Vision Pro|visionOS|Mobile.*Mac OS X.*WebKit.*RealityKit/i.test(ua)
+  ) {
     surface = "vision-pro";
-  } else if (/Ray-?Ban|Meta Wearables/i.test(ua) || (w === 600 && h === 600)) {
+  } else if (
+    // Wearables Device Access Toolkit Web App UA marker per Meta's
+    // May 2026 dev-preview docs. We also accept the 600x600
+    // viewport fingerprint since some builds strip the UA.
+    /Ray-?Ban|Meta Wearables|MetaWearables|WearablesAccess/i.test(ua) ||
+    (w === 600 && h === 600)
+  ) {
     surface = "ray-ban-display";
   } else if (/Yaver-RN-WebView/.test(ua)) {
     // We set this UA marker in the mobile RN WebView so the same URL

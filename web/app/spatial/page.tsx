@@ -77,11 +77,19 @@ export default function SpatialPage() {
     activeTasks.push(next);
   }
 
+  const isRayBan = surface.surface === "ray-ban-display";
+  const isVisionPro = surface.surface === "vision-pro";
+
   return (
     <div style={containerStyle}>
-      {/* Surface badge — top-left, shows what we detected so users
-          can confirm at a glance and switch via ?surface= override. */}
-      <SurfaceBadge surface={surface} />
+      {/* Surface badge — top-left. Hidden on Ray-Ban Display because
+          the 600x600 viewport can't afford the chrome. */}
+      {!isRayBan && <SurfaceBadge surface={surface} />}
+
+      {/* Vision Pro one-time nudge: visionOS 26 Safari DOES support
+          immersive-vr (per WebKit blog) but users don't know to look
+          for the button. Show a centered card on first visit. */}
+      {isVisionPro && <VisionProNudge webxrAvailable={surface.webxrAvailable} />}
 
       {/* WebGL VR layer — mounted always but only visible inside an
           immersive-vr XR session (the Canvas renders nothing visible
@@ -91,8 +99,8 @@ export default function SpatialPage() {
       <VRScene cfg={cfg} tasks={tasks} voice={voice} />
       <EnterVRButton />
 
-      <SessionStrip tasks={tasks} />
-      <div style={paneGridStyle(paneCount)}>
+      {!isRayBan && <SessionStrip tasks={tasks} />}
+      <div style={paneGridStyle(paneCount, isRayBan)}>
         {activeTasks.map((t) => (
           <TerminalPane key={t.id} task={t} cfg={cfg} />
         ))}
@@ -102,6 +110,7 @@ export default function SpatialPage() {
         status={voice.state.status}
         transcript={voice.state.transcript}
         errorMsg={voice.state.errorMsg}
+        compact={isRayBan}
         onTap={() => {
           if (voice.state.status === "idle" || voice.state.status === "error") void voice.start();
           else if (voice.state.status === "recording") void voice.stop();
@@ -109,6 +118,52 @@ export default function SpatialPage() {
         }}
       />
       {tasksErr && <ErrorBanner msg={`tasks: ${tasksErr}`} />}
+    </div>
+  );
+}
+
+function VisionProNudge({ webxrAvailable }: { webxrAvailable: boolean }) {
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  return (
+    <div style={{
+      position: "fixed",
+      top: 60,
+      left: "50%",
+      transform: "translateX(-50%)",
+      zIndex: 100002,
+      maxWidth: 480,
+      padding: "12px 16px",
+      background: "rgba(139, 92, 246, 0.18)",
+      border: "1px solid rgba(139, 92, 246, 0.45)",
+      borderRadius: 10,
+      backdropFilter: "blur(20px)",
+      WebkitBackdropFilter: "blur(20px)",
+      color: "#e5e7eb",
+      fontSize: 12,
+      lineHeight: 1.5,
+    }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+        Vision Pro detected · {webxrAvailable ? "Click \"Enter VR\" for immersive" : "Update to Safari 26.2 for immersive-vr"}
+      </div>
+      <div style={{ opacity: 0.85, fontSize: 11 }}>
+        Tap-pinch the orb to speak. Add this URL to your Dock for one-tap launch.
+      </div>
+      <button
+        onClick={() => setDismissed(true)}
+        style={{
+          marginTop: 8,
+          padding: "4px 10px",
+          background: "rgba(255,255,255,0.08)",
+          border: "1px solid rgba(255,255,255,0.15)",
+          borderRadius: 6,
+          color: "#e5e7eb",
+          fontSize: 11,
+          cursor: "pointer",
+        }}
+      >
+        Got it
+      </button>
     </div>
   );
 }
@@ -271,28 +326,46 @@ function TerminalPane({ task, cfg }: { task: Task; cfg: BridgeConfig }) {
 }
 
 function FloatingOrb({
-  status, transcript, errorMsg, onTap,
+  status, transcript, errorMsg, onTap, compact = false,
 }: {
   status: string; transcript: string; errorMsg: string; onTap: () => void;
+  /** Ray-Ban Display + small viewports get the compact variant — 48pt
+   *  button + 1-line transcript so the 600x600 chrome doesn't choke. */
+  compact?: boolean;
 }) {
   const color = orbColor(status);
   const label = orbLabel(status);
+  const size = compact ? 48 : 72;
+  const borderWidth = compact ? 2 : 4;
+  const fontSize = compact ? 18 : 24;
+  const bottomOffset = compact ? 12 : 24;
+  const labelMaxLines = compact ? 1 : 2;
   return (
-    <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 100000, textAlign: "center" }}>
+    <div style={{ position: "fixed", bottom: bottomOffset, left: "50%", transform: "translateX(-50%)", zIndex: 100000, textAlign: "center" }}>
       <button
         onClick={onTap}
         style={{
-          width: 72, height: 72, borderRadius: "50%",
-          background: color, border: `4px solid ${color}55`,
+          width: size, height: size, borderRadius: "50%",
+          background: color, border: `${borderWidth}px solid ${color}55`,
           boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-          color: "#fff", fontSize: 24, cursor: "pointer",
+          color: "#fff", fontSize: fontSize, cursor: "pointer",
           transition: "transform 120ms ease",
         }}
         aria-label={label}
       >
         {status === "recording" ? "■" : "🎙"}
       </button>
-      <div style={{ marginTop: 8, fontSize: 11, color: errorMsg ? "#ef4444" : "#9ca3af", maxWidth: 280, textAlign: "center" }}>
+      <div style={{
+        marginTop: compact ? 4 : 8,
+        fontSize: compact ? 10 : 11,
+        color: errorMsg ? "#ef4444" : "#9ca3af",
+        maxWidth: compact ? 240 : 280,
+        textAlign: "center",
+        display: "-webkit-box",
+        WebkitLineClamp: labelMaxLines,
+        WebkitBoxOrient: "vertical",
+        overflow: "hidden",
+      } as React.CSSProperties}>
         {errorMsg || (transcript ? `"${transcript}"` : label)}
       </div>
     </div>
@@ -409,12 +482,12 @@ const dotStyle: React.CSSProperties = {
   display: "inline-block",
 };
 
-const paneGridStyle = (n: number): React.CSSProperties => ({
+const paneGridStyle = (n: number, compact: boolean = false): React.CSSProperties => ({
   flex: 1,
   display: "grid",
   gridTemplateColumns: `repeat(${n}, 1fr)`,
-  gap: 8,
-  padding: 8,
+  gap: compact ? 4 : 8,
+  padding: compact ? 4 : 8,
   minHeight: 0,
 });
 
