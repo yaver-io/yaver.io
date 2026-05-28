@@ -3250,17 +3250,17 @@ export default function DevicesView({
 // restarts the SSE channel closes; the modal then polls /info until
 // the new version reports back.
 //
-// Limitation: today only updates the device the dashboard is
-// connected to (agentClient.baseUrl is implicit). Updating a peer
-// device would need to forward through /peer/<id>/agent/update —
-// left for a later iteration. The pre-flight in this modal at least
-// fails loudly when agentClient is bound to a different device or
-// disconnected, instead of throwing "AgentClient is not connected"
-// from deep inside triggerAgentUpdate().
+// Now cross-device capable: spins up a transient AgentClient and
+// connects directly to the target via the existing
+// relay/tunnel/LAN-fallback baseUrl ladder, same pattern
+// RunnerChipWithTest.runInstall uses for cross-device runner
+// installs. The dashboard's singleton agentClient stays pinned to
+// whatever workspace the user has open; this modal no longer cares
+// where it points.
 function AgentUpdateModal({
   device,
   latestVersion,
-  token: _token,
+  token,
   onClose,
 }: {
   device: Device;
@@ -3284,6 +3284,12 @@ function AgentUpdateModal({
     return () => clearInterval(t);
   }, [done, error]);
 
+  // Transient AgentClient bound to the target device. Lives for the
+  // lifetime of the modal; disconnected in cleanup. Holding it in a
+  // ref so the cleanup can reach it without re-triggering the
+  // useEffect on every render.
+  const clientRef = useRef<AgentClient | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     const abort = new AbortController();
@@ -3293,7 +3299,12 @@ function AgentUpdateModal({
       while (!cancelled && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2500));
         try {
-          const info = await agentClient.getInfo();
+          // Re-resolve via /info on the live transient client. After
+          // the agent restarts the QUIC/relay session may drop briefly;
+          // we just retry — getInfo throws on miss, the loop swallows.
+          const client = clientRef.current;
+          if (!client) continue;
+          const info = await client.getInfo();
           const newV = String(info?.version || "").replace(/^v/i, "");
           if (newV && (latestVersion === "" || compareSemver(newV, latestVersion) >= 0)) {
             if (!cancelled) {
@@ -3309,28 +3320,38 @@ function AgentUpdateModal({
 
     (async () => {
       try {
-        // Pre-flight: triggerAgentUpdate() asserts the singleton is
-        // connected and posts to its baseUrl — which is whichever
-        // device the user last opened, not necessarily the one shown
-        // on this card. Fail loudly here with an actionable message
-        // before assertConnected throws "AgentClient is not connected"
-        // (the symptom that originally surfaced this bug).
-        if (!agentClient.isConnected) {
+        // Connect a transient AgentClient directly to the target. Same
+        // ladder RunnerChipWithTest.runInstall uses — relay first, then
+        // tunnel URLs, then direct LAN. The dashboard's singleton
+        // agentClient stays untouched.
+        const client = new AgentClient();
+        client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
+        const tunnelUrls = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+              ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+            ]
+              .map((u) => String(u || "").trim())
+              .filter(Boolean),
+          ),
+        );
+        try {
+          await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+        } catch (err) {
           if (!cancelled) {
             setError(
-              `Open this device's workspace before running the update — the dashboard isn't currently connected to ${device.name}.`,
+              `Couldn't reach ${device.name} to start the update: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
           return;
         }
-        if (agentClient.connectedDeviceId && agentClient.connectedDeviceId !== device.id) {
-          if (!cancelled) {
-            setError(
-              `Refusing to update — the workspace is open on a different device. Close it and open ${device.name} first, otherwise this would update the wrong agent.`,
-            );
-          }
+        if (cancelled) {
+          try { client.disconnect(); } catch { /* nothing to do */ }
           return;
         }
+        clientRef.current = client;
+
         // Kick off the update on the agent. Returns started=true
         // when an update is now in flight, started=false when the
         // agent thinks it's already on the latest version. 409
@@ -3338,7 +3359,7 @@ function AgentUpdateModal({
         // we'll just attach to the existing stream.
         let started = true;
         try {
-          const triggerResp = await agentClient.triggerAgentUpdate();
+          const triggerResp = await client.triggerAgentUpdate();
           if (triggerResp && triggerResp.started === false) {
             started = false;
             // The agent's "latest" pointer (its updateRepo) may be
@@ -3362,13 +3383,13 @@ function AgentUpdateModal({
           if (!String(err).includes("409")) throw err;
         }
 
-        const streamUrl = agentClient.agentUpdateStreamUrl;
+        const streamUrl = client.agentUpdateStreamUrl;
         if (!streamUrl) {
           if (!cancelled) setError("Could not resolve agent stream URL — is the device connected?");
           return;
         }
         const streamRes = await fetch(streamUrl, {
-          headers: agentClient.getAuthHeaders(),
+          headers: client.getAuthHeaders(),
           signal: abort.signal,
         });
         if (!streamRes.ok) {
@@ -3443,8 +3464,13 @@ function AgentUpdateModal({
     return () => {
       cancelled = true;
       abort.abort();
+      const client = clientRef.current;
+      clientRef.current = null;
+      if (client) {
+        try { client.disconnect(); } catch { /* nothing useful to do */ }
+      }
     };
-  }, [device.id, latestVersion]);
+  }, [device.id, latestVersion, token, device.host, device.port, device.publicEndpoints, device.tunnelUrl, device.name]);
 
   return (
     <div

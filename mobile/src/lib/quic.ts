@@ -5777,6 +5777,151 @@ export class QuicClient {
   }
 
   /**
+   * Install a coding-agent runner (claude / codex / opencode) on
+   * the connected device (or a peer when `target` is set). Thin
+   * wrapper around installTool + streamLog so the mobile
+   * CodingAgentsSection install button can show live progress
+   * without re-implementing the SSE subscribe + result-event dance.
+   *
+   * Returns once the install:<runner> stream emits a terminal
+   * `{type:"result", status:"ok"|"error"}` event. `onProgress`
+   * receives every progress line (npm output + agent headers).
+   *
+   * Same agent endpoint as `yaver install <runner>` — /install/<runner>
+   * with the /peer/<id> proxy — so fresh boxes (Pi, ARM cloud, mac
+   * without brew) get node auto-provisioned into
+   * ~/.yaver/runtimes/node before `npm install -g`. See
+   * ensureRunnerInstalledStream in desktop/agent/install_cmd.go.
+   */
+  async installRunner(
+    runnerId: string,
+    opts?: { target?: string; onProgress?: (line: string) => void },
+  ): Promise<{ ok: boolean; runnerId: string; error?: string }> {
+    const target = opts?.target;
+    const onProgress = opts?.onProgress;
+    const started = await this.installTool(runnerId, target);
+    if (!started.ok) {
+      return { ok: false, runnerId, error: started.error || "install failed to start" };
+    }
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: { ok: boolean; runnerId: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        try { unsub(); } catch { /* ignore */ }
+        resolve(result);
+      };
+      const unsub = this.streamLog(
+        started.stream,
+        (ev: any) => {
+          if (!ev || typeof ev !== "object") return;
+          if (typeof ev.text === "string" && onProgress) {
+            onProgress(ev.text);
+          } else if (typeof ev.line === "string" && onProgress) {
+            onProgress(ev.line);
+          }
+          if (ev.type === "result") {
+            if (ev.status === "ok") {
+              finish({ ok: true, runnerId });
+            } else {
+              finish({
+                ok: false,
+                runnerId,
+                error: typeof ev.error === "string" ? ev.error : "install failed",
+              });
+            }
+          }
+        },
+        () => finish({ ok: false, runnerId, error: "install stream closed before completion" }),
+      );
+    });
+  }
+
+  /**
+   * Trigger an agent self-update on the connected device (or a peer
+   * when `target` is set). The agent fetches the matching binary
+   * from its configured GitHub release URL, codesigns it on macOS,
+   * replaces itself, and asks systemd / launchd to restart with the
+   * new binary. Returns the agent's pre-flight decision:
+   *   started=true     → update is now running (poll /info for completion)
+   *   started=false    → agent thinks it is already on the latest
+   * Reuses /agent/update and the /peer/<id> proxy that all other
+   * device-targeted helpers already go through (installTool /
+   * installRunner / runnerAuthCredentialsImport).
+   */
+  async triggerAgentUpdate(
+    target?: string,
+  ): Promise<{
+    ok?: boolean;
+    started?: boolean;
+    message?: string;
+    currentVersion?: string;
+    latestVersion?: string;
+    error?: string;
+  }> {
+    this.assertConnected();
+    const base = this.peerEndpoint(target, "/agent/update");
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { ...this.authHeaders, "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { ok: false, error: data?.error || `HTTP ${res.status}` };
+    }
+    return { ok: true, ...data };
+  }
+
+  /**
+   * Fetch agent update status + advertised latest version. Used by
+   * the device card to render a "v1.99.36 → v1.99.221" hint before
+   * the user opens the update sheet.
+   */
+  async getAgentUpdateStatus(
+    target?: string,
+  ): Promise<{
+    currentVersion?: string;
+    latestVersion?: string;
+    updateAvailable?: boolean;
+    error?: string;
+  } | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const base = this.peerEndpoint(target, "/agent/update");
+      const res = await fetch(base, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * /info on a peer (or on the connected device when target is
+   * omitted). Used by the agent-update poll loop to detect when
+   * the restarted process reports the new version.
+   */
+  async getInfoFor(
+    target?: string,
+  ): Promise<{ hostname: string; version: string; workDir: string } | null> {
+    if (!this.isConnected && !this.hasConnectionInfo) return null;
+    try {
+      const base = this.peerEndpoint(target, "/info");
+      const res = await fetch(base, { headers: this.authHeaders });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return {
+        hostname: data.hostname || "",
+        version: data.version || "",
+        workDir: data.workDir || "",
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Respond to an in-flight install that asked for a sudo password.
    * The agent wrote `{"type":"sudo_prompt", ...}` to the install
    * stream; the UI showed a secure sheet; the answer flows back

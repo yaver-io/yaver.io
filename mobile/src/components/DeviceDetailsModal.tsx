@@ -692,6 +692,29 @@ function WatchdogRecoverRow({ device }: { device: Device }) {
   );
 }
 
+// Light semver comparison — major.minor.patch numeric, ignores any
+// pre-release suffix. Returns -1 / 0 / 1. Just enough for "is the
+// device behind the latest GitHub release?" — we don't need the
+// full semver spec on mobile and didn't want to ship a dependency
+// for a 5-line helper.
+function compareSemverLite(a: string, b: string): number {
+  const parse = (s: string) =>
+    s
+      .replace(/^v/i, "")
+      .split(/[.+-]/)
+      .map((x) => Number.parseInt(x, 10))
+      .filter((n) => !Number.isNaN(n));
+  const pa = parse(a);
+  const pb = parse(b);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
 // Coding agents auth + default-runner picker. Same agent surface (claude /
 // codex / opencode) on every device, so we render the rows from a constant
 // instead of relying on whatever the agent reports — that way "agent
@@ -711,6 +734,27 @@ export function CodingAgentsSection({ device }: { device: Device }) {
   const [authModalRunner, setAuthModalRunner] = useState<string | null>(null);
   const [defaultBusy, setDefaultBusy] = useState<string | null>(null);
   const [modelBusy, setModelBusy] = useState<string | null>(null);
+  // Per-runner install state (claude / codex / opencode). Backs the
+  // Install button shown next to the "not installed on agent"
+  // subtitle. lastLine is the most recent npm progress line so a
+  // long-running install on a Pi / ARM cloud box shows something
+  // changing instead of looking frozen.
+  const [installState, setInstallState] = useState<
+    Record<string, { kind: "installing" | "ok" | "fail"; lastLine?: string; error?: string }>
+  >({});
+  // Agent-update state for THIS device. Backs the "vX.Y.Z → vA.B.C
+  // Update" row at the top of the section. Mirrors the web Devices
+  // view AgentUpdateModal in spirit; we just poll /info for restart
+  // completion rather than streaming SSE (peer SSE doesn't fan back
+  // through the relay cleanly — see project_remote_dev_via_beam_pro
+  // for the long story).
+  const [latestVersion, setLatestVersion] = useState<string>("");
+  const [updateState, setUpdateState] = useState<
+    | { kind: "idle" }
+    | { kind: "updating" }
+    | { kind: "done"; newVersion: string }
+    | { kind: "fail"; error: string }
+  >({ kind: "idle" });
 
   const isActive = Boolean(activeDevice && activeDevice.id === device.id && connectionStatus === "connected");
   // /runner-auth/status routes via /peer/<id> when target is set; pass it
@@ -733,11 +777,109 @@ export function CodingAgentsSection({ device }: { device: Device }) {
 
   useEffect(() => { void refresh(); }, [refresh]);
 
+  // Probe agent-update on mount + whenever target changes so the
+  // version chip shows the current → latest gap as soon as the
+  // sheet opens.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const st = await quicClient.getAgentUpdateStatus(target);
+      if (cancelled) return;
+      const lv = String(st?.latestVersion || "").replace(/^v/i, "");
+      setLatestVersion(lv);
+    })();
+    return () => { cancelled = true; };
+  }, [target]);
+
   const findStatus = (id: string): RunnerAuthStatusRow | undefined =>
     (statusRows || []).find((r) => {
       const rid = String(r.id || "").toLowerCase();
       return rid === id || (id === "claude" && rid === "claude-code");
     });
+
+  const currentVersion = String(device.agentVersion || "").replace(/^v/i, "");
+  const updateAvailable =
+    !!currentVersion &&
+    !!latestVersion &&
+    compareSemverLite(currentVersion, latestVersion) < 0;
+
+  const runUpdate = useCallback(async () => {
+    setUpdateState({ kind: "updating" });
+    try {
+      const r = await quicClient.triggerAgentUpdate(target);
+      if (!r.ok) {
+        setUpdateState({ kind: "fail", error: r.error || "trigger failed" });
+        return;
+      }
+      if (r.started === false) {
+        // Agent reports it's already on latest. Surface why so the
+        // user understands; this matches the web modal's behaviour.
+        setUpdateState({
+          kind: "fail",
+          error: `Agent reports it's already up to date (current ${r.currentVersion || currentVersion}).`,
+        });
+        return;
+      }
+      // Poll /info until the version flips or we time out (90 s
+      // budget — matches the web modal's restart watchdog).
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        await new Promise((res) => setTimeout(res, 2500));
+        const info = await quicClient.getInfoFor(target);
+        const newV = String(info?.version || "").replace(/^v/i, "");
+        if (newV && (latestVersion === "" || compareSemverLite(newV, latestVersion) >= 0)) {
+          setUpdateState({ kind: "done", newVersion: newV });
+          return;
+        }
+      }
+      setUpdateState({ kind: "fail", error: "Restart timed out — the box may need manual intervention." });
+    } catch (err: any) {
+      setUpdateState({ kind: "fail", error: err?.message || String(err) });
+    }
+  }, [target, latestVersion, currentVersion]);
+
+  const runInstall = useCallback(
+    async (runnerId: "claude" | "codex" | "opencode") => {
+      setInstallState((prev) => ({
+        ...prev,
+        [runnerId]: { kind: "installing", lastLine: "" },
+      }));
+      try {
+        const result = await quicClient.installRunner(runnerId, {
+          target,
+          onProgress: (line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
+            setInstallState((prev) => ({
+              ...prev,
+              [runnerId]: {
+                kind: "installing",
+                lastLine: trimmed.slice(0, 100),
+              },
+            }));
+          },
+        });
+        if (result.ok) {
+          setInstallState((prev) => ({ ...prev, [runnerId]: { kind: "ok" } }));
+          // Refresh /runner-auth/status so the row flips out of
+          // "not installed on agent" into "<version> · not signed in"
+          // and the Sign in button takes over.
+          await refresh();
+        } else {
+          setInstallState((prev) => ({
+            ...prev,
+            [runnerId]: { kind: "fail", error: result.error || "install failed" },
+          }));
+        }
+      } catch (err: any) {
+        setInstallState((prev) => ({
+          ...prev,
+          [runnerId]: { kind: "fail", error: err?.message || String(err) },
+        }));
+      }
+    },
+    [refresh, target],
+  );
 
   return (
     <View style={{
@@ -747,6 +889,57 @@ export function CodingAgentsSection({ device }: { device: Device }) {
       <Text style={{ color: c.textMuted, fontSize: 10, fontWeight: "700", letterSpacing: 1, marginBottom: 8 }}>
         CODING AGENTS
       </Text>
+
+      {/* Agent self-update row. Cross-device by virtue of
+          quicClient.triggerAgentUpdate(target) hitting
+          /peer/<id>/agent/update on the peer proxy. Shows current
+          version always; the "Update →" button only appears when
+          we've fetched a newer latestVersion. */}
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          paddingVertical: 8,
+          borderBottomWidth: 1,
+          borderBottomColor: c.border,
+          marginBottom: 8,
+          gap: 8,
+        }}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: c.textPrimary, fontSize: 13, fontWeight: "600" }}>
+            Agent
+          </Text>
+          <Text style={{ color: c.textMuted, fontSize: 11, marginTop: 2 }}>
+            {updateState.kind === "updating"
+              ? `updating v${currentVersion || "?"}${latestVersion ? ` → v${latestVersion}` : ""}…`
+              : updateState.kind === "done"
+              ? `✓ now on v${updateState.newVersion}`
+              : updateState.kind === "fail"
+              ? `update failed — ${updateState.error}`
+              : updateAvailable
+              ? `v${currentVersion} · update → v${latestVersion}`
+              : currentVersion
+              ? `v${currentVersion}${latestVersion ? " · ✓ latest" : ""}`
+              : "version unknown"}
+          </Text>
+        </View>
+        {updateState.kind === "updating" ? (
+          <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>⟳</Text>
+        ) : updateAvailable && updateState.kind !== "done" ? (
+          <Pressable
+            onPress={() => { void runUpdate(); }}
+            style={{
+              paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+              backgroundColor: "#f59e0b22", borderWidth: 1, borderColor: "#f59e0b66",
+            }}
+          >
+            <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>
+              Update →
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
 
       {/* Install + auth status + sign-in.
           Three-state subtitle:
@@ -762,11 +955,18 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         const authed = row?.authConfigured === true;
         const version = (row?.version || "").trim();
         const versionPrefix = version ? `${version} · ` : "";
+        const inst = installState[id];
         let subtitle: string;
         let tone: string;
         if (loading && !row) {
           subtitle = "checking…";
           tone = c.textMuted;
+        } else if (inst?.kind === "installing") {
+          subtitle = inst.lastLine ? `installing… ${inst.lastLine}` : "installing…";
+          tone = "#f59e0b";
+        } else if (inst?.kind === "fail") {
+          subtitle = inst.error ? `install failed — ${inst.error}` : "install failed";
+          tone = "#ef4444";
         } else if (!installed) {
           subtitle = "not installed on agent";
           tone = "#f59e0b";
@@ -779,8 +979,10 @@ export function CodingAgentsSection({ device }: { device: Device }) {
         }
         // Sign-in button only makes sense when the runner is actually on
         // the host. If it's missing, "Sign in →" is misleading — the user
-        // needs to install the CLI first.
+        // needs to install the CLI first; the Install button (below)
+        // takes that spot when the runner is missing.
         const showSignIn = installed && !authed;
+        const showInstall = !installed && !loading && inst?.kind !== "installing";
         return (
           <View
             key={id}
@@ -813,6 +1015,20 @@ export function CodingAgentsSection({ device }: { device: Device }) {
               >
                 <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>Sign in →</Text>
               </Pressable>
+            ) : null}
+            {showInstall ? (
+              <Pressable
+                onPress={() => { void runInstall(id); }}
+                style={{
+                  paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8,
+                  backgroundColor: "#0ea5e922", borderWidth: 1, borderColor: "#0ea5e966",
+                }}
+              >
+                <Text style={{ color: "#0ea5e9", fontSize: 12, fontWeight: "700" }}>Install</Text>
+              </Pressable>
+            ) : null}
+            {inst?.kind === "installing" ? (
+              <Text style={{ color: "#f59e0b", fontSize: 12, fontWeight: "700" }}>⟳</Text>
             ) : null}
           </View>
         );

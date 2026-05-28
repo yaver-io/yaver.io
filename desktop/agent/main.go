@@ -533,7 +533,7 @@ func main() {
 	// that don't exist in the committed tree. Re-add these cases when
 	// swift_cmd.go + remote_builder_cmd.go land.
 	case "update", "self-update", "upgrade":
-		runManualUpdate()
+		runManualUpdate(os.Args[2:])
 	case "self":
 		// `yaver self heal [--apply ...]` reconciles every yaver
 		// binary on the box (apt, brew, npm, ~/.yaver/bin/<v>/, manual)
