@@ -10425,6 +10425,7 @@ Connect to other MCP servers (local or remote) to extend Yaver's capabilities.
 Usage:
   yaver acl add <name> <url> [--auth <token>]     Add HTTP MCP peer
   yaver acl add <name> --stdio "<command>"         Add stdio MCP peer
+  yaver acl talos [--mode local|remote|auto]       Add or update Talos MCP peer
   yaver acl list                                    List connected peers
   yaver acl remove <id>                             Remove a peer
   yaver acl tools <id>                              List peer's available tools
@@ -10434,6 +10435,7 @@ Examples:
   yaver acl add ollama http://localhost:11434/mcp
   yaver acl add filesystem --stdio "npx -y @modelcontextprotocol/server-filesystem /home"
   yaver acl add remote-db https://db.example.com/mcp --auth mytoken123
+  yaver acl talos --license TALOS-XXXX-XXXX-XXXX-XXXX
 `)
 		return
 	}
@@ -10488,6 +10490,12 @@ Examples:
 			}
 			return peer.URL
 		}())
+
+	case "talos":
+		if err := runACLTalos(args[1:], cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Talos MCP setup failed: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "list":
 		if len(cfg.ACLPeers) == 0 {
