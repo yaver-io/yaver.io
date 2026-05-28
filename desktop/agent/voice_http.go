@@ -91,16 +91,44 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 
 		switch sttProvider {
 		case "openai":
-			sttReady = v.OpenAIAPIKey != ""
+			sttReady = HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
 		case "deepgram":
-			sttReady = v.DeepgramAPIKey != ""
+			sttReady = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
+		case "assemblyai":
+			sttReady = HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey)
+		case "on-device":
+			sttReady = true // mobile owns capture; agent has no key to set
 		}
 		switch ttsProvider {
 		case "openai":
-			ttsReady = v.OpenAIAPIKey != ""
+			ttsReady = HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
 		case "cartesia":
-			ttsReady = v.CartesiaAPIKey != ""
+			ttsReady = HasVoiceCredential("cartesia", "api-key", v.CartesiaAPIKey)
+		case "elevenlabs":
+			ttsReady = HasVoiceCredential("elevenlabs", "api-key", v.ElevenLabsAPIKey)
+		case "deepgram":
+			// Same key as Deepgram STT — one signup, one credential.
+			ttsReady = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
+		case "device":
+			ttsReady = true // mobile owns playback via AVSpeech / TextToSpeech
 		}
+	}
+
+	// Per-provider key-set booleans so the mobile picker can show the
+	// "key set ✓" badge for every provider, not only the currently
+	// selected one. Each lookup hits the credential resolver, which is
+	// fast (vault map lookup); skip when there's no VoiceConfig yet.
+	openaiSet := false
+	deepgramSet := false
+	cartesiaSet := false
+	assemblyaiSet := false
+	elevenlabsSet := false
+	if v != nil {
+		openaiSet = HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
+		deepgramSet = HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
+		cartesiaSet = HasVoiceCredential("cartesia", "api-key", v.CartesiaAPIKey)
+		assemblyaiSet = HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey)
+		elevenlabsSet = HasVoiceCredential("elevenlabs", "api-key", v.ElevenLabsAPIKey)
 	}
 
 	jsonReply(w, http.StatusOK, map[string]interface{}{
@@ -111,11 +139,16 @@ func (s *HTTPServer) handleVoiceStatus(w http.ResponseWriter, r *http.Request) {
 		"ttsProvider":    ttsProvider,
 		"ttsReady":       ttsReady,
 		"defaultProject": defaultProject,
+		"openaiSet":      openaiSet,
+		"deepgramSet":    deepgramSet,
+		"cartesiaSet":    cartesiaSet,
+		"assemblyaiSet":  assemblyaiSet,
+		"elevenlabsSet":  elevenlabsSet,
 		// availableProviders lets the mobile Settings UI render the
 		// picker even on first launch (no key set yet).
 		"availableProviders": map[string][]string{
-			"stt": {"openai", "deepgram"},
-			"tts": {"openai", "cartesia"},
+			"stt": {"openai", "deepgram", "assemblyai", "on-device"},
+			"tts": {"openai", "deepgram", "cartesia", "elevenlabs", "device"},
 		},
 	})
 }
@@ -131,17 +164,29 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 	sttProvider := v.EffectiveSTTProvider()
 	switch sttProvider {
 	case "openai":
-		if v.OpenAIAPIKey == "" {
+		if !HasVoiceCredential("openai", "api-key", v.OpenAIAPIKey) {
 			jsonError(w, http.StatusServiceUnavailable, "openai api key not configured (stt_provider=openai)")
 			return
 		}
 	case "deepgram":
-		if v.DeepgramAPIKey == "" {
+		if !HasVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey) {
 			jsonError(w, http.StatusServiceUnavailable, "deepgram api key not configured (stt_provider=deepgram)")
 			return
 		}
+	case "assemblyai":
+		if !HasVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey) {
+			jsonError(w, http.StatusServiceUnavailable, "assemblyai api key not configured (stt_provider=assemblyai)")
+			return
+		}
+	case "on-device":
+		// Mobile owns capture; the agent never opens a session for this
+		// path. Reject voice-stream attempts so the caller knows it's
+		// the wrong endpoint — the mobile transcribes locally and
+		// posts the final transcript to /tasks directly.
+		jsonError(w, http.StatusBadRequest, "stt_provider=on-device — mobile must transcribe locally and POST /tasks; do not open /voice/stream for this provider")
+		return
 	default:
-		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — set voice.stt_provider to 'openai' or 'deepgram'")
+		jsonError(w, http.StatusBadRequest, "unknown stt_provider "+sttProvider+" — supported: openai, deepgram, assemblyai, on-device")
 		return
 	}
 
@@ -191,7 +236,8 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 	var sttFinalize func() error
 	switch sttProvider {
 	case "openai":
-		sess, ev, err := OpenOpenAIWhisperSession(ctx, v.OpenAIAPIKey, v.OpenAISTTModel)
+		key := LookupVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
+		sess, ev, err := OpenOpenAIWhisperSession(ctx, key, v.OpenAISTTModel)
 		if err != nil {
 			voiceWriteErr(conn, "openai stt: "+err.Error())
 			return
@@ -201,9 +247,21 @@ func (s *HTTPServer) handleVoiceStream(w http.ResponseWriter, r *http.Request) {
 		sttFinalize = sess.Finalize
 		sttClose = sess.Close
 	case "deepgram":
-		sess, ev, err := OpenDeepgramSession(ctx, v.DeepgramAPIKey, "nova-3", keyterms)
+		key := LookupVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
+		sess, ev, err := OpenDeepgramSession(ctx, key, "nova-3", keyterms)
 		if err != nil {
 			voiceWriteErr(conn, "deepgram: "+err.Error())
+			return
+		}
+		dgEvents = ev
+		sttSendAudio = sess.SendAudio
+		sttFinalize = sess.Finalize
+		sttClose = sess.Close
+	case "assemblyai":
+		key := LookupVoiceCredential("assemblyai", "api-key", v.AssemblyAIAPIKey)
+		sess, ev, err := OpenAssemblyAISession(ctx, key, v.AssemblyAILanguage)
+		if err != nil {
+			voiceWriteErr(conn, "assemblyai: "+err.Error())
 			return
 		}
 		dgEvents = ev
@@ -339,16 +397,37 @@ func streamTTS(ctx context.Context, conn *websocket.Conn, v *VoiceConfig, text s
 	sampleRate := 22050
 	switch provider {
 	case "openai":
-		if v.OpenAIAPIKey == "" {
+		key := LookupVoiceCredential("openai", "api-key", v.OpenAIAPIKey)
+		if key == "" {
 			return
 		}
 		sampleRate = 24000 // OpenAI TTS pcm response is 24kHz
-		go SpeakOpenAI(ctx, v.OpenAIAPIKey, v.OpenAITTSModel, v.OpenAITTSVoice, text, ttsCh)
+		go SpeakOpenAI(ctx, key, v.OpenAITTSModel, v.OpenAITTSVoice, text, ttsCh)
 	case "cartesia":
-		if v.CartesiaAPIKey == "" {
+		key := LookupVoiceCredential("cartesia", "api-key", v.CartesiaAPIKey)
+		if key == "" {
 			return
 		}
-		go SpeakCartesia(ctx, v.CartesiaAPIKey, v.CartesiaVoiceID, text, ttsCh)
+		go SpeakCartesia(ctx, key, v.CartesiaVoiceID, text, ttsCh)
+	case "elevenlabs":
+		key := LookupVoiceCredential("elevenlabs", "api-key", v.ElevenLabsAPIKey)
+		if key == "" {
+			return
+		}
+		sampleRate = 16000 // ElevenLabs configured for pcm_16000
+		go SpeakElevenLabs(ctx, key, v.ElevenLabsTTSVoiceID, v.ElevenLabsTTSModel, text, ttsCh)
+	case "deepgram":
+		key := LookupVoiceCredential("deepgram", "api-key", v.DeepgramAPIKey)
+		if key == "" {
+			return
+		}
+		sampleRate = DeepgramTTSSampleRate // Aura-2 with linear16 = 24kHz PCM
+		go SpeakDeepgram(ctx, key, v.DeepgramTTSModel, text, ttsCh)
+	case "device":
+		// Mobile owns playback via AVSpeechSynthesizer / TextToSpeech.
+		// Nothing to stream from the agent — caller infers from the
+		// task-result frame and synthesizes locally.
+		return
 	default:
 		return
 	}

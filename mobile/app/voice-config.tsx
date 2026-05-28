@@ -29,8 +29,8 @@ import { useColors } from "../src/context/ThemeContext";
 import { quicClient } from "../src/lib/quic";
 import { YaverGlass } from "../src/components/YaverGlass";
 
-type SttProvider = "openai" | "deepgram";
-type TtsProvider = "openai" | "cartesia";
+type SttProvider = "openai" | "deepgram" | "assemblyai" | "on-device";
+type TtsProvider = "openai" | "cartesia" | "deepgram" | "elevenlabs" | "device";
 
 interface VoiceStatus {
   enabled?: boolean;
@@ -39,6 +39,11 @@ interface VoiceStatus {
   sttReady?: boolean;
   ttsReady?: boolean;
   defaultProject?: string;
+  openaiSet?: boolean;
+  deepgramSet?: boolean;
+  cartesiaSet?: boolean;
+  assemblyaiSet?: boolean;
+  elevenlabsSet?: boolean;
   availableProviders?: { stt?: string[]; tts?: string[] };
 }
 
@@ -57,12 +62,16 @@ export default function VoiceConfigScreen(): React.JSX.Element {
   const [openaiSet, setOpenaiSet] = useState(false);
   const [deepgramSet, setDeepgramSet] = useState(false);
   const [cartesiaSet, setCartesiaSet] = useState(false);
+  const [assemblyaiSet, setAssemblyaiSet] = useState(false);
+  const [elevenlabsSet, setElevenlabsSet] = useState(false);
   const [defaultProject, setDefaultProject] = useState("");
 
   // Local-only — typed by user, sent on Save. Empty = "leave alone".
   const [openaiKey, setOpenaiKey] = useState("");
   const [deepgramKey, setDeepgramKey] = useState("");
   const [cartesiaKey, setCartesiaKey] = useState("");
+  const [assemblyaiKey, setAssemblyaiKey] = useState("");
+  const [elevenlabsKey, setElevenlabsKey] = useState("");
 
   // Initial fetch
   useEffect(() => {
@@ -78,9 +87,20 @@ export default function VoiceConfigScreen(): React.JSX.Element {
         setEnabled(!!body.enabled);
         setSttProvider((body.sttProvider as SttProvider) ?? "openai");
         setTtsProvider((body.ttsProvider as TtsProvider) ?? "openai");
-        setOpenaiSet(body.sttProvider === "openai" ? !!body.sttReady : (body.ttsProvider === "openai" ? !!body.ttsReady : false));
-        setDeepgramSet(body.sttProvider === "deepgram" ? !!body.sttReady : false);
-        setCartesiaSet(body.ttsProvider === "cartesia" ? !!body.ttsReady : false);
+        // /voice/status returns per-provider booleans (agent v1.99.220+).
+        // Older agents only return sttReady/ttsReady — fall back to
+        // inferring from the currently-selected provider.
+        setOpenaiSet(
+          body.openaiSet ??
+          (body.sttProvider === "openai" ? !!body.sttReady : body.ttsProvider === "openai" ? !!body.ttsReady : false),
+        );
+        setDeepgramSet(
+          body.deepgramSet ??
+          ((body.sttProvider === "deepgram" && !!body.sttReady) || (body.ttsProvider === "deepgram" && !!body.ttsReady)),
+        );
+        setCartesiaSet(body.cartesiaSet ?? (body.ttsProvider === "cartesia" ? !!body.ttsReady : false));
+        setAssemblyaiSet(body.assemblyaiSet ?? (body.sttProvider === "assemblyai" ? !!body.sttReady : false));
+        setElevenlabsSet(body.elevenlabsSet ?? (body.ttsProvider === "elevenlabs" ? !!body.ttsReady : false));
         setDefaultProject(body.defaultProject ?? "");
       } catch (e: any) {
         if (!cancelled) setErrorMsg(e?.message ?? String(e));
@@ -103,6 +123,8 @@ export default function VoiceConfigScreen(): React.JSX.Element {
     if (openaiKey.trim()) body.openaiApiKey = openaiKey.trim();
     if (deepgramKey.trim()) body.deepgramApiKey = deepgramKey.trim();
     if (cartesiaKey.trim()) body.cartesiaApiKey = cartesiaKey.trim();
+    if (assemblyaiKey.trim()) body.assemblyaiApiKey = assemblyaiKey.trim();
+    if (elevenlabsKey.trim()) body.elevenlabsApiKey = elevenlabsKey.trim();
     try {
       const res = await fetch(`${quicClient.baseUrl}/voice/config`, {
         method: "POST",
@@ -118,9 +140,13 @@ export default function VoiceConfigScreen(): React.JSX.Element {
       setOpenaiSet(!!result.openaiSet);
       setDeepgramSet(!!result.deepgramSet);
       setCartesiaSet(!!result.cartesiaSet);
+      setAssemblyaiSet(!!result.assemblyaiSet);
+      setElevenlabsSet(!!result.elevenlabsSet);
       setOpenaiKey("");
       setDeepgramKey("");
       setCartesiaKey("");
+      setAssemblyaiKey("");
+      setElevenlabsKey("");
       Alert.alert("Saved", "Voice config updated. Mic orb will activate after the next agent restart.");
       router.back();
     } catch (e: any) {
@@ -128,7 +154,7 @@ export default function VoiceConfigScreen(): React.JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [sttProvider, ttsProvider, openaiKey, deepgramKey, cartesiaKey, defaultProject, router]);
+  }, [sttProvider, ttsProvider, openaiKey, deepgramKey, cartesiaKey, assemblyaiKey, elevenlabsKey, defaultProject, router]);
 
   const disableVoice = useCallback(async () => {
     setSaving(true);
@@ -198,6 +224,24 @@ export default function VoiceConfigScreen(): React.JSX.Element {
             onSelect={() => setSttProvider("deepgram")}
             c={c}
           />
+          <ProviderRow
+            current={sttProvider}
+            choice="assemblyai"
+            label="AssemblyAI Universal-Streaming"
+            sub="99+ languages, cheapest of the lot (~$0.0025/min). Server-detected end-of-turn."
+            keySet={assemblyaiSet}
+            onSelect={() => setSttProvider("assemblyai")}
+            c={c}
+          />
+          <ProviderRow
+            current={sttProvider}
+            choice="on-device"
+            label="On-device (whisper.rn)"
+            sub="$0, works offline. Tiny model bundled in the app. Phone-only — agent rejects /voice/stream for this pick."
+            keySet={true}
+            onSelect={() => setSttProvider("on-device")}
+            c={c}
+          />
         </Section>
 
         <Section title="Text-to-speech">
@@ -212,11 +256,38 @@ export default function VoiceConfigScreen(): React.JSX.Element {
           />
           <ProviderRow
             current={ttsProvider}
+            choice="deepgram"
+            label="Deepgram Aura-2"
+            sub="Same key as Deepgram STT — one signup covers the whole loop. ~$30 / M chars."
+            keySet={deepgramSet}
+            onSelect={() => setTtsProvider("deepgram")}
+            c={c}
+          />
+          <ProviderRow
+            current={ttsProvider}
             choice="cartesia"
             label="Cartesia Sonic-3"
             sub="40ms TTFA, premium voice quality, $35 / M chars."
             keySet={cartesiaSet}
             onSelect={() => setTtsProvider("cartesia")}
+            c={c}
+          />
+          <ProviderRow
+            current={ttsProvider}
+            choice="elevenlabs"
+            label="ElevenLabs Flash v2.5"
+            sub="~75ms TTFA, 32 languages, top voice character. Rachel default voice; rotate via cfg."
+            keySet={elevenlabsSet}
+            onSelect={() => setTtsProvider("elevenlabs")}
+            c={c}
+          />
+          <ProviderRow
+            current={ttsProvider}
+            choice="device"
+            label="On-device (Apple AVSpeech / Android TTS)"
+            sub="$0, no network. System voice — quality varies. Mobile plays locally; agent skips the TTS leg."
+            keySet={true}
+            onSelect={() => setTtsProvider("device")}
             c={c}
           />
         </Section>
@@ -238,7 +309,7 @@ export default function VoiceConfigScreen(): React.JSX.Element {
             onChange={setDeepgramKey}
             url="https://console.deepgram.com"
             c={c}
-            needed={sttProvider === "deepgram"}
+            needed={sttProvider === "deepgram" || ttsProvider === "deepgram"}
           />
           <KeyField
             label="Cartesia"
@@ -248,6 +319,24 @@ export default function VoiceConfigScreen(): React.JSX.Element {
             url="https://play.cartesia.ai/keys"
             c={c}
             needed={ttsProvider === "cartesia"}
+          />
+          <KeyField
+            label="AssemblyAI"
+            placeholder={assemblyaiSet ? "•••••• configured · paste to rotate" : "..."}
+            value={assemblyaiKey}
+            onChange={setAssemblyaiKey}
+            url="https://www.assemblyai.com/app/account"
+            c={c}
+            needed={sttProvider === "assemblyai"}
+          />
+          <KeyField
+            label="ElevenLabs"
+            placeholder={elevenlabsSet ? "•••••• configured · paste to rotate" : "sk_..."}
+            value={elevenlabsKey}
+            onChange={setElevenlabsKey}
+            url="https://elevenlabs.io/app/settings/api-keys"
+            c={c}
+            needed={ttsProvider === "elevenlabs"}
           />
         </Section>
 

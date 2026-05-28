@@ -220,16 +220,34 @@ type VoiceConfig struct {
 	OpenAITTSModel string `json:"openai_tts_model,omitempty"` // "" = gpt-4o-mini-tts
 	OpenAITTSVoice string `json:"openai_tts_voice,omitempty"` // "" = "alloy"
 
-	// Deepgram (alternate STT) — Flux Nova-3 streaming with built-in
-	// end-of-turn detection. Worth picking over OpenAI when the user
-	// values <300ms first-word latency + sub-token EOT signaling.
-	DeepgramAPIKey string `json:"deepgram_api_key,omitempty"`
+	// Deepgram (alternate STT + TTS) — Flux Nova-3 streaming STT with
+	// built-in end-of-turn detection AND Aura-2 streaming TTS (~$30/M
+	// chars, ~half Cartesia). One signup + one key covers both legs of
+	// the loop — the lowest-friction alt to OpenAI when the user wants
+	// snappier latency without juggling two vendors.
+	DeepgramAPIKey  string `json:"deepgram_api_key,omitempty"`
+	DeepgramTTSModel string `json:"deepgram_tts_model,omitempty"` // "" = aura-2-thalia-en
 
 	// Cartesia (alternate TTS) — Sonic-3 streaming with 40ms TTFA.
 	// Worth picking over OpenAI when the user values snappy back-and-
 	// forth conversations + premium voice quality.
 	CartesiaAPIKey  string `json:"cartesia_api_key,omitempty"`
 	CartesiaVoiceID string `json:"cartesia_voice_id,omitempty"` // empty = Cartesia default voice
+
+	// AssemblyAI (alternate STT) — Universal-Streaming v3, 99+ langs
+	// including Turkish, ~$0.0025/min (the cheapest mainstream STT).
+	// Worth picking over Deepgram for budget + language breadth.
+	// New keys are stored in the vault via LookupVoiceCredential; this
+	// field is the legacy-fallback path so existing installs don't break.
+	AssemblyAIAPIKey   string `json:"assemblyai_api_key,omitempty"`
+	AssemblyAILanguage string `json:"assemblyai_language,omitempty"` // "" = auto-detect
+
+	// ElevenLabs (alternate TTS) — Flash v2.5, 32 langs, ~75ms TTFA,
+	// top-tier voice quality. Worth picking over Cartesia when voice
+	// character matters more than per-character price.
+	ElevenLabsAPIKey     string `json:"elevenlabs_api_key,omitempty"`
+	ElevenLabsTTSVoiceID string `json:"elevenlabs_tts_voice_id,omitempty"` // empty = "Rachel"
+	ElevenLabsTTSModel   string `json:"elevenlabs_tts_model,omitempty"`    // empty = "eleven_flash_v2_5"
 
 	// ProjectKeyterms biases the Deepgram session per-project so that
 	// "useState", "Convex", "Hermes", repo names, etc. don't get
