@@ -63,6 +63,7 @@ import {
   DEFAULT_TTS_VOICE,
 } from "../src/lib/speech";
 import { loadLocalSpeechConfig } from "../src/lib/auth";
+import { callMobileHermesReload } from "../src/lib/yaverMcpDirect";
 
 type Mode = "agent" | "shell";
 
@@ -406,6 +407,44 @@ export default function GlassTerminalScreen() {
     }
   }, [vibeBusy, appendLine, devices, primaryDeviceId, selectDevice]);
 
+  // Fast path for ⟳ reload — direct MCP call, no LLM. ~500 ms vs 1.5-3 s
+  // for the LLM-narrated path. Falls back to triggerVibe(prompt) when
+  // the direct call fails (e.g. agent older than 1.99.234 without the
+  // mobile_hermes_reload tool).
+  const triggerReloadDirect = useCallback(async () => {
+    if (vibeBusy) return;
+    setVibeBusy("⟳ reload");
+    appendLine("sys", "— ⟳ reload (direct MCP) —");
+    try {
+      const res = await callMobileHermesReload({});
+      if (!res.ok) {
+        appendLine("err", `direct reload failed: ${res.error ?? "unknown"} — falling back to LLM`);
+        setVibeBusy(null);
+        void triggerVibe(
+          "⟳ reload",
+          "Trigger a Hermes/Metro fast-refresh on the mobile app currently running on this phone. Pick whichever wire/wireless/hot-reload MCP tool fits; do not rebuild — only reload the bundle. Be concise.",
+        );
+        return;
+      }
+      const r = res.result;
+      if (r?.changeClass === "native_rebuild_required") {
+        appendLine("err", "⚠ native rebuild required — JS reload accepted but native files changed");
+        if (r.nativeChanges?.length) {
+          for (const c of r.nativeChanges.slice(0, 5)) {
+            appendLine("tool", `  · ${c.Path} — ${c.Reason}`);
+          }
+        }
+      } else {
+        appendLine("tool", `⏺ mobile_hermes_reload → ${r?.changeClass ?? "ok"}`);
+      }
+      appendLine("sys", "— ⟳ reload done —");
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : "reload failed");
+    } finally {
+      setVibeBusy(null);
+    }
+  }, [vibeBusy, appendLine, triggerVibe]);
+
   // ── Submit handler ─────────────────────────────────────────────────────
   const submit = useCallback(async () => {
     const text = input.trim();
@@ -603,11 +642,16 @@ export default function GlassTerminalScreen() {
             },
           ].map(({ label, prompt }) => {
             const active = vibeBusy === label;
+            // ⟳ reload uses the direct MCP path (no LLM, ~500 ms).
+            // The other chips still go through the LLM-narrated loop.
+            const onPress = label === "⟳ reload"
+              ? () => void triggerReloadDirect()
+              : () => void triggerVibe(label, prompt);
             return (
               <Pressable
                 key={label}
                 disabled={!!vibeBusy}
-                onPress={() => void triggerVibe(label, prompt)}
+                onPress={onPress}
                 style={[
                   styles.macroKey,
                   {

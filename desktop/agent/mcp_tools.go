@@ -1360,6 +1360,23 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 			},
 		},
 		{"name": "mobile_project_build", "description": "Start the project's dev server if needed and build the Hermes bundle that Yaver loads on the phone. This is the MCP path for a contributor on WSL/Linux/macOS to prepare a fresh Expo / React Native clone for real iPhone testing without TestFlight.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}, "framework": map[string]interface{}{"type": "string", "description": "Optional framework override (expo or react-native)"}, "platform": map[string]interface{}{"type": "string", "description": "Target platform (default: ios)"}}}},
+		{
+			"name":        "mobile_hermes_reload",
+			"description": "Trigger a Hermes hot-reload of the React Native / Expo app currently under test. Thin wrapper over POST /dev/reload — computes a native-fingerprint delta against the dev-server baseline and broadcasts a `hot_reload` (or `native_rebuild_required`) command via the BlackBox SSE channel to all connected SDK devices. Use this when an MCP client (Claude Code, glass-terminal vibe chip, ChatGPT) wants the app reloaded without an LLM round-trip. Returns { ok, changeClass: \"js_only\"|\"native_rebuild_required\"|\"unknown\", nativeChanges?, nativeChangesDetected }.",
+			"inputSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"target_device_id": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional SDK device id to scope the broadcast to. Empty/omitted = broadcast to ALL subscribed devices. Used by the Path-C cross-device flow where Phone A drives a reload on Phone B.",
+					},
+					"mode": map[string]interface{}{
+						"type":        "string",
+						"description": "Reload mode: \"dev\" (Metro fast-refresh, default) or \"bundle\" (push pre-built bundle).",
+					},
+				},
+			},
+		},
 		// GitHub
 		{"name": "github_prs", "description": "List pull requests from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, merged, all (default: open)"}}}},
 		{"name": "github_issues", "description": "List issues from the current repo (requires gh CLI).", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Repo directory"}, "state": map[string]interface{}{"type": "string", "description": "Filter: open, closed, all (default: open)"}}}},

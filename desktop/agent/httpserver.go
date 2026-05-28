@@ -7157,6 +7157,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 			return mcpToolError(err.Error())
 		}
 		return mcpToolJSON(result)
+	case "mobile_hermes_reload":
+		var args mobileHermesReloadArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(mcpMobileHermesReload(args))
 
 	// --- GitHub ---
 	case "github_prs":
