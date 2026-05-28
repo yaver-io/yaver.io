@@ -969,7 +969,7 @@ func (m *SiteManager) generatePricing(style string) string {
           <li>✓ Everything in Pro</li>
           <li>✓ Dedicated support</li>
           <li>✓ SLA & compliance</li>
-          <li>✓ SSO / SAML</li>
+          <li>○ OIDC SSO (roadmap)</li>
         </ul>
         <a href="mailto:hello@example.com" class="block w-full py-3 rounded-xl bg-white/10 text-white font-semibold hover:bg-white/20 transition-colors">Contact us</a>
       </div>
@@ -1018,7 +1018,7 @@ func (m *SiteManager) generatePricing(style string) string {
           <li class="flex items-center gap-2"><span class="text-green-500">✓</span> Everything in Pro</li>
           <li class="flex items-center gap-2"><span class="text-green-500">✓</span> Dedicated support</li>
           <li class="flex items-center gap-2"><span class="text-green-500">✓</span> SLA & compliance</li>
-          <li class="flex items-center gap-2"><span class="text-green-500">✓</span> SSO / SAML</li>
+          <li class="flex items-center gap-2"><span class="text-slate-400">○</span> OIDC SSO (roadmap)</li>
         </ul>
         <a href="mailto:hello@example.com" class="block w-full text-center py-2.5 border border-slate-300 rounded-lg text-slate-700 font-medium hover:bg-slate-50 transition-colors">Contact sales</a>
       </div>
@@ -1067,7 +1067,7 @@ func (m *SiteManager) generatePricing(style string) string {
           <li>✅ Everything in Pro</li>
           <li>✅ Dedicated support</li>
           <li>✅ SLA & compliance</li>
-          <li>✅ SSO / SAML</li>
+          <li>○ OIDC SSO (roadmap)</li>
         </ul>
         <a href="mailto:hello@example.com" class="block w-full py-3 rounded-2xl bg-gray-200 text-gray-700 font-bold hover:bg-gray-300 transition-colors">Contact us</a>
       </div>
@@ -1113,7 +1113,7 @@ func (m *SiteManager) generatePricing(style string) string {
           <li>— Everything in Pro</li>
           <li>— Dedicated support</li>
           <li>— SLA & compliance</li>
-          <li>— SSO / SAML</li>
+          <li>— OIDC SSO (roadmap)</li>
         </ul>
         <a href="mailto:hello@example.com" class="block w-full text-center py-2.5 border border-gray-200 rounded-lg text-gray-700 text-sm font-medium hover:bg-gray-50 transition-colors">Contact us</a>
       </div>
