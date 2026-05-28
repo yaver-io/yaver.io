@@ -1378,7 +1378,7 @@ export class QuicClient {
     // every subsequent request fails. Surface the failure as a thrown error
     // so the caller can show the real reason and stop the reconnect chatter.
     if (this._connectionState !== "connected") {
-      throw new Error("Could not reach agent (direct, tunnel, or via relay)");
+      throw new Error(this._lastTransportError || "Could not reach agent (direct, tunnel, or via relay)");
     }
   }
 
