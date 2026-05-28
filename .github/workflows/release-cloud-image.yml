@@ -1,0 +1,264 @@
+name: Release Cloud Image
+
+# Builds a Yaver Cloud Image on a provider, captures the image id, and
+# opens a PR updating cloud-images.json so `yaver launch <provider>`
+# finds it.
+#
+# Trigger: workflow_dispatch only — the build provisions a real VM on
+# the chosen provider, runs ci/remote/bootstrap.sh, takes a snapshot,
+# and deletes the VM. Cost on Hetzner is small (~€0.10 for the build
+# minutes + ~€0.10/month for the snapshot); AWS/GCP cost similar.
+#
+# Hetzner snapshots are NOT world-public — they stay in the project that
+# the HCLOUD_TOKEN belongs to. That's still useful for the managed-cloud
+# SKU + the repo owner's own `yaver launch hetzner`. Non-customers who
+# want Hetzner without going through us either fall back to the vanilla-
+# Ubuntu cloud-init path (slower first boot, no snapshot) or run
+# scripts/build-cloud-image.sh themselves.
+#
+# AWS AMIs and GCP custom images CAN be made world-public — those arms
+# of this workflow do so, then write the resulting public id to the
+# manifest.
+#
+# Required secrets:
+#   HCLOUD_TOKEN, HCLOUD_SSH_PRIVATE_KEY   — for --provider hetzner
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SSH_PUBLIC_KEY
+#                                          — for --provider aws (NOT YET ADDED)
+#   GCP_SA_KEY                             — for --provider gcp (NOT YET ADDED)
+#
+# Output: a PR branch `release-cloud-image/<provider>-<arch>-<run-id>`
+# with cloud-images.json updated, ready for review + merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: "Cloud provider"
+        required: true
+        type: choice
+        options: [hetzner, aws, gcp]
+      arch:
+        description: "Target architecture"
+        required: true
+        type: choice
+        options: [arm64, amd64]
+      aws_region:
+        description: "AWS region (provider=aws only; ignored otherwise)"
+        required: false
+        default: "eu-central-1"
+      version:
+        description: "Image version label (defaults to versions.json#cli)"
+        required: false
+        default: ""
+
+concurrency:
+  group: release-cloud-image-${{ inputs.provider }}-${{ inputs.arch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  GO_VERSION: "1.26"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      image_id: ${{ steps.capture.outputs.image_id }}
+      version: ${{ steps.resolve_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Resolve version label
+        id: resolve_version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            CLI_VER=$(node -e "console.log(JSON.parse(require('fs').readFileSync('versions.json','utf8')).cli)")
+            echo "version=$CLI_VER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Cross-compile yaver binary
+        run: |
+          cd desktop/agent
+          GOOS=linux GOARCH=${{ inputs.arch }} CGO_ENABLED=0 \
+            go build -trimpath -ldflags="-s -w" -o /tmp/yaver-linux-${{ inputs.arch }} .
+
+      - name: Install jq + rsync + ssh client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq jq rsync openssh-client curl
+
+      # ─── Provider-specific tooling ─────────────────────────────────
+      - name: Install hcloud CLI (Hetzner)
+        if: inputs.provider == 'hetzner'
+        run: |
+          HCLOUD_VER=$(curl -fsSL https://api.github.com/repos/hetznercloud/cli/releases/latest | jq -r .tag_name | sed 's/^v//')
+          curl -fsSL "https://github.com/hetznercloud/cli/releases/download/v${HCLOUD_VER}/hcloud-linux-amd64.tar.gz" \
+            -o /tmp/hcloud.tar.gz
+          sudo tar -C /usr/local/bin -xzf /tmp/hcloud.tar.gz hcloud
+          hcloud version
+
+      - name: Setup AWS CLI + creds
+        if: inputs.provider == 'aws'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then
+            echo "AWS_ACCESS_KEY_ID secret is not set in the repo."
+            echo "Add it under Settings → Secrets → Actions before running this for --provider aws."
+            exit 1
+          fi
+          # ubuntu-latest already has aws v2; just sanity-check.
+          aws --version
+
+      - name: Setup gcloud CLI + creds
+        if: inputs.provider == 'gcp'
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          if [ -z "$GCP_SA_KEY" ]; then
+            echo "GCP_SA_KEY secret is not set in the repo."
+            echo "Add a service-account JSON under Settings → Secrets → Actions before running this for --provider gcp."
+            exit 1
+          fi
+          echo "$GCP_SA_KEY" | gcloud auth activate-service-account --key-file=-
+          gcloud config set project "$(echo "$GCP_SA_KEY" | jq -r .project_id)"
+
+      # ─── SSH key (used by all providers to bootstrap the build VM) ──
+      - name: Stage SSH key for build VM bootstrap
+        env:
+          HCLOUD_SSH_PRIVATE_KEY: ${{ secrets.HCLOUD_SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          if [ -n "$HCLOUD_SSH_PRIVATE_KEY" ]; then
+            printf '%s\n' "$HCLOUD_SSH_PRIVATE_KEY" > ~/.ssh/yaver-build-key
+            chmod 0600 ~/.ssh/yaver-build-key
+            echo "SSH_KEY=$HOME/.ssh/yaver-build-key" >> "$GITHUB_ENV"
+          fi
+
+      # ─── Run the unified build script ──────────────────────────────
+      - name: Build cloud image
+        id: build_step
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          HCLOUD_SSH_KEY: yaver-ci
+          AWS_REGION: ${{ inputs.aws_region }}
+          AWS_SSH_KEY_NAME: yaver-ci
+          VERSION: ${{ steps.resolve_version.outputs.version }}
+        run: |
+          ./scripts/build-cloud-image.sh \
+            --provider "${{ inputs.provider }}" \
+            --arch "${{ inputs.arch }}" \
+            --version "$VERSION" \
+            --yaver-binary "/tmp/yaver-linux-${{ inputs.arch }}"
+
+      - name: Capture image id
+        id: capture
+        env:
+          VERSION: ${{ steps.resolve_version.outputs.version }}
+        run: |
+          REPORT="dist/cloud-image/${{ inputs.provider }}-${VERSION}-${{ inputs.arch }}.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "Build script did not produce $REPORT"
+            ls -la dist/cloud-image/ || true
+            exit 1
+          fi
+          IMAGE_ID=$(jq -r .imageId "$REPORT")
+          echo "image_id=$IMAGE_ID" >> "$GITHUB_OUTPUT"
+          echo "Captured image id: $IMAGE_ID"
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+
+      # ─── Make AWS AMI / GCP image world-public ─────────────────────
+      - name: Make AWS AMI public
+        if: inputs.provider == 'aws'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ inputs.aws_region }}
+          IMAGE_ID: ${{ steps.capture.outputs.image_id }}
+        run: |
+          aws ec2 modify-image-attribute \
+            --region "$AWS_REGION" \
+            --image-id "$IMAGE_ID" \
+            --launch-permission "Add=[{Group=all}]"
+          echo "AMI $IMAGE_ID is now world-launchable in $AWS_REGION."
+
+      - name: Make GCP image public
+        if: inputs.provider == 'gcp'
+        env:
+          IMAGE_REF: ${{ steps.capture.outputs.image_id }}
+        run: |
+          # IMAGE_REF is `projects/<project>/global/images/<name>`; the
+          # add-iam-policy-binding wants the bare name + project.
+          IMAGE_NAME=$(echo "$IMAGE_REF" | awk -F/ '{print $NF}')
+          gcloud compute images add-iam-policy-binding "$IMAGE_NAME" \
+            --member="allAuthenticatedUsers" \
+            --role="roles/compute.imageUser"
+          echo "GCP image $IMAGE_REF is now world-launchable."
+
+      # ─── Update cloud-images.json + open a PR ──────────────────────
+      - name: Update cloud-images.json
+        env:
+          IMAGE_ID: ${{ steps.capture.outputs.image_id }}
+          VERSION: ${{ steps.resolve_version.outputs.version }}
+        run: |
+          NOW="$(date -u +%FT%TZ)"
+          case "${{ inputs.provider }}" in
+            hetzner)
+              jq --arg id "$IMAGE_ID" --arg ver "$VERSION" --arg now "$NOW" --arg arch "${{ inputs.arch }}" \
+                '.providers.hetzner.snapshots[$arch] = $id | .yaverVersion = $ver | .updatedAt = $now' \
+                cloud-images.json > cloud-images.json.new
+              ;;
+            aws)
+              jq --arg id "$IMAGE_ID" --arg ver "$VERSION" --arg now "$NOW" \
+                 --arg arch "${{ inputs.arch }}" --arg region "${{ inputs.aws_region }}" \
+                '.providers.aws.amis[$region][$arch] = $id | .yaverVersion = $ver | .updatedAt = $now' \
+                cloud-images.json > cloud-images.json.new
+              ;;
+            gcp)
+              jq --arg id "$IMAGE_ID" --arg ver "$VERSION" --arg now "$NOW" --arg arch "${{ inputs.arch }}" \
+                '.providers.gcp.images[$arch] = $id | .yaverVersion = $ver | .updatedAt = $now' \
+                cloud-images.json > cloud-images.json.new
+              ;;
+          esac
+          mv cloud-images.json.new cloud-images.json
+          jq . cloud-images.json
+
+      - name: Open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROVIDER: ${{ inputs.provider }}
+          ARCH: ${{ inputs.arch }}
+          IMAGE_ID: ${{ steps.capture.outputs.image_id }}
+          VERSION: ${{ steps.resolve_version.outputs.version }}
+        run: |
+          BRANCH="release-cloud-image/${PROVIDER}-${ARCH}-${GITHUB_RUN_ID}"
+          git config user.name  "yaver-bot"
+          git config user.email "bot@yaver.io"
+          git checkout -b "$BRANCH"
+          git add cloud-images.json
+          git commit -m "cloud-image: publish ${PROVIDER}/${ARCH} = ${IMAGE_ID}"
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "cloud-image: publish ${PROVIDER}/${ARCH} v${VERSION}" \
+            --body "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+Built and ${{ inputs.provider == 'hetzner' && 'tagged (private to project)' || 'published to world-public' }} Yaver Cloud Image for **${PROVIDER}/${ARCH}**.
+
+* Image id: \`${IMAGE_ID}\`
+* Version: \`${VERSION}\`
+
+Merging this makes \`yaver launch ${PROVIDER}\` immediately resolve to the new image.
+" \
+            --head "$BRANCH" \
+            --base main

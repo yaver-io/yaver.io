@@ -1,0 +1,15 @@
+[Unit]
+Description=Yaver Cloud First-Boot Provisioning
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/var/lib/yaver/.firstboot-complete
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/yaver/cloud-firstboot.sh
+RemainAfterExit=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

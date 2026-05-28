@@ -1,0 +1,161 @@
+# Yaver Sandbox (slim) — distroless runner image. Same role as
+# Dockerfile.sandbox, but optimized for cold-start size: distroless
+# nodejs22-debian12 base + only git + busybox + the three coding
+# runners (claude-code / codex / opencode). Target final size ~250MB
+# vs ~2GB for the fat sandbox.
+#
+# Trade-offs vs Dockerfile.sandbox:
+#   • No Java / Ruby / Rust / Go / Python toolchains. Slim is for tasks
+#     where the runner just edits text + runs the project's own scripts.
+#     Native builds (Android gradle, Cargo, etc.) still need the fat
+#     image.
+#   • No apt at runtime. Anything missing must be added in the toolbox
+#     stage below — can't `apt-get install` after the fact.
+#   • No shell except busybox. Runners that exec `bash -c …` instead of
+#     `sh -c …` will fall through to /bin/bash (symlinked to busybox).
+#
+# Build:  docker build -f Dockerfile.sandbox.slim -t yaver-sandbox-slim .
+# Or:     yaver sandbox build --slim
+#
+# Usage is automatic — `yaver serve --containerize-* --container-image
+# yaver-sandbox-slim` (or `container_image: yaver-sandbox-slim` in
+# config.json) routes tasks here.
+
+# ──────────────────────────────────────────────────────────────────
+# Stage 1: toolbox — gather everything we need to ship to distroless
+# ──────────────────────────────────────────────────────────────────
+# bookworm-slim shares glibc + libc version with distroless/nodejs22-
+# debian12 so binaries copied across stay ABI-compatible.
+FROM node:22-bookworm-slim AS toolbox
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git ca-certificates curl tini busybox-static \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the three runners under a single prefix. `npm install
+# --prefix=/opt/runners` keeps node_modules/.bin/{claude,codex,opencode}
+# under /opt/runners which we COPY whole into the final stage.
+# 2>/dev/null || true tolerates a missing latest tag for any one runner.
+RUN mkdir -p /opt/runners \
+    && npm install --prefix=/opt/runners --no-fund --no-audit \
+         @anthropic-ai/claude-code@latest \
+         @openai/codex@latest \
+         opencode-ai@latest 2>/dev/null || true
+
+# Assemble /distroless-overlay — the exact filesystem tree we want in
+# the final image. Doing this in the toolbox stage means stage 3 is a
+# single COPY (distroless has no shell, so RUN is not available).
+RUN set -e; \
+    mkdir -p /distroless-overlay/usr/bin \
+             /distroless-overlay/usr/lib/git-core \
+             /distroless-overlay/usr/share/git-core \
+             /distroless-overlay/etc/ssl/certs \
+             /distroless-overlay/opt \
+             /distroless-overlay/bin \
+             /distroless-overlay/tmp \
+             /distroless-overlay/var/tmp \
+             /distroless-overlay/workspace \
+             /distroless-overlay/usr/local/bin; \
+    chmod 1777 /distroless-overlay/tmp /distroless-overlay/var/tmp; \
+    # git + its driver scripts
+    cp /usr/bin/git /distroless-overlay/usr/bin/git; \
+    cp -a /usr/lib/git-core/. /distroless-overlay/usr/lib/git-core/; \
+    cp -a /usr/share/git-core/. /distroless-overlay/usr/share/git-core/; \
+    # tini for PID 1 (runners fork; we need a zombie reaper)
+    cp /usr/bin/tini /distroless-overlay/usr/bin/tini; \
+    # busybox — single static binary providing every POSIX tool the
+    # runners spawn via child_process.spawn. Symlink the applets we
+    # know they touch (claude-code: sh/bash/cat/grep/sed/find/ls;
+    # codex: bwrap is host-provided not here; opencode: rg from runner).
+    cp /bin/busybox /distroless-overlay/bin/busybox; \
+    for cmd in sh bash ls cat cp mv rm mkdir rmdir grep sed awk find \
+               head tail tr cut sort uniq wc xargs which env tee dirname \
+               basename touch chmod chown ln readlink realpath true false \
+               echo printf date sleep ps kill diff stat tar gzip gunzip \
+               wget less more vi; do \
+      ln -s /bin/busybox /distroless-overlay/bin/$cmd; \
+    done; \
+    # Shebangs like `#!/usr/bin/env node` are kernel-resolved literally;
+    # codex's launcher fails without an /usr/bin/env. Mirror the busybox
+    # shims under /usr/bin/ so common shebang interpreters all resolve.
+    for cmd in env sh bash; do \
+      ln -s /bin/busybox /distroless-overlay/usr/bin/$cmd; \
+    done; \
+    # CA bundle (HTTPS from git fetch / npm / runners)
+    cp -a /etc/ssl/certs/. /distroless-overlay/etc/ssl/certs/; \
+    # Resolve dynamic libs for git + busybox + tini. Distroless ships
+    # glibc + libssl + libstdc++ but NOT libpcre2 or libcurl — git needs
+    # both. ldd walks the deps; we copy whatever's not already in
+    # distroless and let the final COPY overlay them. Cheap belt-and-
+    # suspenders.
+    for bin in /usr/bin/git /bin/busybox /usr/bin/tini \
+               /usr/lib/git-core/git-remote-http \
+               /usr/lib/git-core/git-remote-https \
+               /usr/lib/git-core/git-http-fetch; do \
+      [ -e "$bin" ] || continue; \
+      ldd "$bin" 2>/dev/null \
+        | awk '{ for(i=1;i<=NF;i++) if ($i ~ "^/") print $i }' \
+        | sort -u \
+        | while read -r lib; do \
+            [ -e "$lib" ] || continue; \
+            dst="/distroless-overlay${lib}"; \
+            mkdir -p "$(dirname "$dst")"; \
+            cp -L "$lib" "$dst" 2>/dev/null || true; \
+          done; \
+    done; \
+    # Runners — installed under /opt/runners by `npm install --prefix`
+    cp -a /opt/runners /distroless-overlay/opt/; \
+    # Surface CLIs on PATH. /opt/runners/node_modules/.bin/{claude,codex,
+    # opencode} are shim scripts; symlinking is enough.
+    for cli in claude codex opencode; do \
+      if [ -e /opt/runners/node_modules/.bin/$cli ]; then \
+        ln -sf /opt/runners/node_modules/.bin/$cli \
+               /distroless-overlay/usr/local/bin/$cli; \
+      fi; \
+    done
+
+# ──────────────────────────────────────────────────────────────────
+# Stage 2: build the yaver agent (static)
+# ──────────────────────────────────────────────────────────────────
+# Build context is desktop/agent/ (matching Dockerfile.sandbox), so the
+# Go module files are at the root of the build context.
+FROM golang:1.26-bookworm AS agentbuild
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/yaver .
+
+# ──────────────────────────────────────────────────────────────────
+# Stage 3: distroless runtime
+# ──────────────────────────────────────────────────────────────────
+# Root variant (no :nonroot suffix) — matches Dockerfile.sandbox so
+# bind-mounted /workspace from the host is writable without uid
+# remapping. The distroless image is still much smaller than bookworm-
+# slim because there's no apt / dpkg metadata / locale data / man pages.
+FROM gcr.io/distroless/nodejs22-debian12
+
+# Single COPY merges our overlay onto distroless. Final filesystem:
+#   /nodejs/bin/node            from distroless (kept)
+#   /usr/bin/git, /usr/lib/git-core   from us
+#   /bin/busybox + applets       from us
+#   /opt/runners + /usr/local/bin/{claude,codex,opencode}   from us
+#   /etc/ssl/certs               merged (both stages ship them)
+COPY --from=toolbox /distroless-overlay/ /
+
+# Yaver Go agent — built static in stage 2.
+COPY --from=agentbuild /out/yaver /usr/local/bin/yaver
+
+# Distroless's node is at /nodejs/bin/node. PATH needs that, our /bin
+# busybox links, and the runners' shims under /usr/local/bin.
+ENV PATH="/nodejs/bin:/usr/local/bin:/usr/bin:/bin"
+ENV HOME=/root
+
+WORKDIR /workspace
+
+# Tini reaps zombies — node in distroless is not a proper init. Default
+# CMD is overridden by ContainerRunner with the actual task command.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/sh", "-c", "echo 'yaver-sandbox-slim ready'"]

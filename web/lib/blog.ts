@@ -10,6 +10,14 @@ export const POSTS_PER_PAGE = 10;
 
 export const blogPosts: BlogPost[] = [
   {
+    slug: "yaver-cloud-image",
+    title: "Yaver Cloud Image: One Command for a Dev Box on Any Provider",
+    date: "2026-05-28",
+    published: true,
+    description:
+      "yaver launch hetzner / aws / gcp / ssh — provision a box that's already signed in to your Yaver account and has claude-code, codex, and opencode authenticated from your existing devices. No copy-pasted tokens, no second OAuth, no AMI hunting. The architecture, the entry points (CLI, browser portal, raw artifacts), and the device-code chain that makes the whole thing zero-friction.",
+  },
+  {
     slug: "hermes-vs-webview-yaver-architecture",
     title: "Hermes Bytecode vs WebView: How Yaver Tests Native Apps Without an App Store Cycle",
     date: "2026-04-29",

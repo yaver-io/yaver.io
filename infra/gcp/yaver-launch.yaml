@@ -1,0 +1,39 @@
+# Yaver Launch — GCP Deployment Manager config wrapper.
+#
+# Pairs with yaver-launch.jinja. The Cloud Console "Create Deployment"
+# UI accepts a config URL pointing at this file; it pulls the .jinja
+# template referenced below and renders it with the inline properties
+# (which the yaver.io/launch portal pre-fills via the deep-link).
+#
+# Example portal-generated URL:
+#   https://console.cloud.google.com/dm/deployments/new
+#     ?config=https://yaver.io/infra/gcp/yaver-launch.yaml
+#
+# Reviewers / advanced users can edit the properties inline before
+# clicking "Deploy".
+
+imports:
+- path: yaver-launch.jinja
+
+resources:
+- name: yaver-launch
+  type: yaver-launch.jinja
+  properties:
+    # 6-char device code from yaver.io/launch — REPLACE with your code.
+    # The portal generates a URL with this already substituted, so
+    # end-users don't see this raw config.
+    userCode: REPLACE_WITH_YOUR_USERCODE
+
+    # GCP zone. t2a-* (arm64) availability is regional; europe-west4-a
+    # has it. For amd64 use any zone + machineType=e2-small.
+    zone: europe-west4-a
+    machineType: t2a-standard-1
+
+    # Yaver custom image. Empty string falls back to vanilla Ubuntu
+    # 24.04 + cloud-init install (slower first boot). Portal populates
+    # this from cloud-images.json when an image is published.
+    yaverCustomImage: ""
+
+    # Convex deployment URL — default is the prod deployment. Override
+    # only if running a self-hosted Yaver Convex.
+    convexSiteURL: https://perceptive-minnow-557.convex.cloud

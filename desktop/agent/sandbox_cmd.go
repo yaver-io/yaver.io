@@ -15,7 +15,7 @@ func runSandbox(args []string) {
 
 	switch args[0] {
 	case "build":
-		runSandboxBuild()
+		runSandboxBuild(args[1:])
 	case "status":
 		runSandboxStatus()
 	case "help", "--help", "-h":
@@ -27,7 +27,24 @@ func runSandbox(args []string) {
 	}
 }
 
-func runSandboxBuild() {
+func runSandboxBuild(args []string) {
+	variant := SandboxVariantFat
+	for _, a := range args {
+		switch a {
+		case "--slim":
+			variant = SandboxVariantSlim
+		case "--fat":
+			variant = SandboxVariantFat
+		case "-h", "--help":
+			printSandboxUsage()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "Unknown sandbox build flag: %s\n", a)
+			printSandboxUsage()
+			os.Exit(1)
+		}
+	}
+
 	cr := NewContainerRunner()
 	if !cr.IsAvailable() {
 		fmt.Fprintln(os.Stderr, "Docker is not installed or not running.")
@@ -35,14 +52,19 @@ func runSandboxBuild() {
 		os.Exit(1)
 	}
 
-	fmt.Println("Building yaver-sandbox image...")
-	fmt.Println("This may take a few minutes the first time (downloads Node, Go, Python, Claude Code).")
+	if variant == SandboxVariantSlim {
+		fmt.Println("Building yaver-sandbox-slim (distroless) image...")
+		fmt.Println("Smaller + faster cold-start. No Java/Ruby/Rust/Go/Python — runners + git only.")
+	} else {
+		fmt.Println("Building yaver-sandbox image...")
+		fmt.Println("This may take a few minutes the first time (downloads Node, Go, Python, Claude Code).")
+	}
 	fmt.Println()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	if err := cr.BuildImage(ctx); err != nil {
+	if err := cr.BuildImageVariant(ctx, variant); err != nil {
 		fmt.Fprintf(os.Stderr, "Build failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -50,13 +72,21 @@ func runSandboxBuild() {
 	fmt.Println()
 	fmt.Println("Sandbox image built successfully.")
 	fmt.Println()
-	fmt.Println("Enable containerization:")
-	fmt.Println("  yaver serve --containerize-guests    # Guest tasks in containers")
-	fmt.Println("  yaver serve --containerize-host      # All tasks in containers")
-	fmt.Println()
-	fmt.Println("Or set in ~/.yaver/config.json:")
-	fmt.Println(`  "containerize_guests": true`)
-	fmt.Println(`  "containerize_host": true`)
+	if variant == SandboxVariantSlim {
+		fmt.Println("Use the slim image:")
+		fmt.Println("  yaver serve --containerize-guests --container-image yaver-sandbox-slim")
+		fmt.Println()
+		fmt.Println("Or set in ~/.yaver/config.json:")
+		fmt.Println(`  "container_image": "yaver-sandbox-slim"`)
+	} else {
+		fmt.Println("Enable containerization:")
+		fmt.Println("  yaver serve --containerize-guests    # Guest tasks in containers")
+		fmt.Println("  yaver serve --containerize-host      # All tasks in containers")
+		fmt.Println()
+		fmt.Println("Or set in ~/.yaver/config.json:")
+		fmt.Println(`  "containerize_guests": true`)
+		fmt.Println(`  "containerize_host": true`)
+	}
 }
 
 func runSandboxStatus() {
@@ -74,11 +104,14 @@ func runSandboxStatus() {
 
 	fmt.Println("  Docker:    available")
 	if cr.IsImageReady() {
-		fmt.Println("  Image:     yaver-sandbox (ready)")
+		fmt.Println("  Image (fat):   yaver-sandbox (ready)")
 	} else {
-		fmt.Println("  Image:     not built")
-		fmt.Println()
-		fmt.Println("  Run 'yaver sandbox build' to build the sandbox image.")
+		fmt.Println("  Image (fat):   not built — run 'yaver sandbox build'")
+	}
+	if cr.IsImageReadyVariant(SandboxVariantSlim) {
+		fmt.Println("  Image (slim):  yaver-sandbox-slim (ready)")
+	} else {
+		fmt.Println("  Image (slim):  not built — run 'yaver sandbox build --slim'")
 	}
 
 	cfg, err := LoadConfig()
@@ -114,8 +147,9 @@ Run AI agent tasks inside Docker containers for isolation and security.
 Containerization is optional and disabled by default.
 
 Commands:
-  build       Build the yaver-sandbox Docker image (~2-3 min first time)
-  status      Show Docker and sandbox image status
+  build           Build the fat sandbox image (~2-3 min first time)
+  build --slim    Build the distroless slim image (~250MB, runners-only)
+  status          Show Docker and sandbox image status
 
 Enabling containerization:
   yaver serve --containerize-guests    # Guest tasks only (security)
@@ -125,9 +159,19 @@ Or in ~/.yaver/config.json:
   "containerize_guests": true
   "containerize_host": true
 
-The sandbox image includes: Node.js, Python, Go, Rust, Java, Ruby,
-Claude Code, Aider, Expo CLI, and common build tools. Project dirs
-are mounted as volumes — builds use your actual source code.
+Images:
+  yaver-sandbox       (fat, ~2 GB)  Node.js, Python, Go, Rust, Java,
+                                    Ruby, Claude Code, Aider, Expo CLI,
+                                    and common build tools. Use this
+                                    for native Android/Cargo/etc. builds.
+  yaver-sandbox-slim  (~250 MB)     Distroless base + Node + git + the
+                                    three coding runners (claude-code,
+                                    codex, opencode). Faster cold-start
+                                    for tasks that only edit + run the
+                                    project's own scripts. Select via
+                                    "container_image": "yaver-sandbox-slim".
+
+Project dirs are mounted as volumes — builds use your actual source code.
 
 Custom images per project: place a Dockerfile.yaver in your project
 root. The agent will build and use it instead of the default image.`)

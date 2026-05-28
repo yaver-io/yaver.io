@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "comment": "Public Yaver Cloud Image IDs per provider. Updated by release-cli.yml on each cli/v* tag after build-cloud-image.sh + release-cloud-image.sh make the snapshots/AMIs/custom-images public. `yaver launch <provider>` fetches this file via https://raw.githubusercontent.com/kivanccakmak/yaver.io/main/cloud-images.json and provisions using the user's own provider credentials. Null entries mean 'not yet published for this provider/region/arch — fall back to building from source via scripts/build-cloud-image.sh'.",
+  "updatedAt": null,
+  "yaverVersion": null,
+  "providers": {
+    "hetzner": {
+      "snapshots": {
+        "arm64": null,
+        "amd64": null
+      },
+      "defaultLocation": "hel1",
+      "defaultServerType": {
+        "arm64": "cax21",
+        "amd64": "cpx21"
+      }
+    },
+    "aws": {
+      "amis": {
+        "us-east-1":      {"amd64": null, "arm64": null},
+        "us-west-2":      {"amd64": null, "arm64": null},
+        "eu-central-1":   {"amd64": null, "arm64": null},
+        "eu-west-1":      {"amd64": null, "arm64": null},
+        "ap-southeast-1": {"amd64": null, "arm64": null},
+        "ap-northeast-1": {"amd64": null, "arm64": null}
+      },
+      "defaultInstanceType": {
+        "arm64": "t4g.small",
+        "amd64": "t3.small"
+      }
+    },
+    "gcp": {
+      "images": {
+        "amd64": null,
+        "arm64": null
+      },
+      "defaultZone": "europe-west4-a",
+      "defaultMachineType": {
+        "arm64": "t2a-standard-1",
+        "amd64": "e2-small"
+      }
+    }
+  },
+  "artifacts": {
+    "qcow2": {"amd64": null, "arm64": null},
+    "raw":   {"amd64": null, "arm64": null},
+    "iso":   {"amd64": null, "arm64": null},
+    "pi":    null
+  }
+}

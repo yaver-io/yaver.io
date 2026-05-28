@@ -38,10 +38,36 @@ var sharedSecretEnvVars = []string{
 }
 
 const (
-	sandboxImage       = "yaver-sandbox"
-	sandboxDockerfile  = "Dockerfile.sandbox"
-	containerStopGrace = 5 * time.Second
+	sandboxImage          = "yaver-sandbox"
+	sandboxDockerfile     = "Dockerfile.sandbox"
+	sandboxImageSlim      = "yaver-sandbox-slim"
+	sandboxDockerfileSlim = "Dockerfile.sandbox.slim"
+	containerStopGrace    = 5 * time.Second
 )
+
+// SandboxVariant selects which sandbox Dockerfile to build/inspect.
+// Fat (default) ships node+go+rust+java+ruby+python for native builds;
+// slim ships only node+git+the three runners on a distroless base.
+type SandboxVariant int
+
+const (
+	SandboxVariantFat SandboxVariant = iota
+	SandboxVariantSlim
+)
+
+func (v SandboxVariant) image() string {
+	if v == SandboxVariantSlim {
+		return sandboxImageSlim
+	}
+	return sandboxImage
+}
+
+func (v SandboxVariant) dockerfile() string {
+	if v == SandboxVariantSlim {
+		return sandboxDockerfileSlim
+	}
+	return sandboxDockerfile
+}
 
 // forbiddenMountSources are host paths that must never be bind-mounted
 // into a sandbox container, because doing so re-exposes the user's
@@ -166,18 +192,29 @@ func (cr *ContainerRunner) IsImageReady() bool {
 	return false
 }
 
-// BuildImage builds the sandbox Docker image. Can take a few minutes the first time.
+// BuildImage builds the fat sandbox image. Kept as the default entry
+// point so existing callers (sandbox CLI, MCP setup verbs) don't need
+// changes; new callers wanting the distroless variant call
+// BuildImageVariant(ctx, SandboxVariantSlim).
 func (cr *ContainerRunner) BuildImage(ctx context.Context) error {
-	dockerfile := filepath.Join(cr.agentDir, sandboxDockerfile)
+	return cr.BuildImageVariant(ctx, SandboxVariantFat)
+}
+
+// BuildImageVariant builds either the fat (Dockerfile.sandbox) or slim
+// (Dockerfile.sandbox.slim) image. Both share the same build context
+// (the agent dir, where the Dockerfiles live alongside go.mod).
+func (cr *ContainerRunner) BuildImageVariant(ctx context.Context, variant SandboxVariant) error {
+	dockerfile := filepath.Join(cr.agentDir, variant.dockerfile())
 	if !sandboxFileExists(dockerfile) {
 		return fmt.Errorf("sandbox Dockerfile not found at %s", dockerfile)
 	}
 
-	log.Printf("[SANDBOX] Building image %s from %s ...", sandboxImage, dockerfile)
+	image := variant.image()
+	log.Printf("[SANDBOX] Building image %s from %s ...", image, dockerfile)
 	cmd := exec.CommandContext(ctx, cr.dockerPath,
 		"build",
 		"-f", dockerfile,
-		"-t", sandboxImage,
+		"-t", image,
 		cr.agentDir,
 	)
 	cmd.Stdout = os.Stdout
@@ -186,11 +223,30 @@ func (cr *ContainerRunner) BuildImage(ctx context.Context) error {
 		return fmt.Errorf("docker build failed: %w", err)
 	}
 
-	cr.mu.Lock()
-	cr.imageReady = true
-	cr.mu.Unlock()
-	log.Printf("[SANDBOX] Image %s built successfully", sandboxImage)
+	// Only the default (fat) build flips the cached imageReady flag,
+	// because IsImageReady() still inspects the fat tag. The slim image
+	// is opt-in via container_image config; status for it is checked
+	// on demand by IsImageReadyVariant.
+	if variant == SandboxVariantFat {
+		cr.mu.Lock()
+		cr.imageReady = true
+		cr.mu.Unlock()
+	}
+	log.Printf("[SANDBOX] Image %s built successfully", image)
 	return nil
+}
+
+// IsImageReadyVariant checks whether the named variant has been built.
+// Doesn't touch the cached imageReady flag — that's reserved for the
+// default fat image (callers asking about slim are explicit).
+func (cr *ContainerRunner) IsImageReadyVariant(variant SandboxVariant) bool {
+	if cr.dockerPath == "" {
+		return false
+	}
+	cmd := exec.Command(cr.dockerPath, "image", "inspect", variant.image())
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 // RunTask runs a command inside a Docker container with the project directory mounted.

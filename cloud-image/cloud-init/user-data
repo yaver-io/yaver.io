@@ -1,0 +1,33 @@
+#cloud-config
+# Generic Yaver cloud-image cloud-init seed. Used by all cloud providers
+# (Hetzner, GCP, AWS); the image-build script provisions a fresh VM with
+# this seed, lets cloud-init drive the install, then captures a provider-
+# specific image (snapshot / custom image / AMI).
+#
+# Apt packages here MUST be a superset of what yaver-cloud-firstboot.sh
+# expects to find; the firstboot script is responsible for the agent
+# install + systemd unit wiring.
+
+package_update: true
+package_upgrade: false
+packages:
+  - ca-certificates
+  - curl
+  - ffmpeg
+  - git
+  - jq
+  - python3
+  - python3-pip
+  - python3-venv
+  - tmux
+  - unzip
+  - xz-utils
+  - docker.io
+  - docker-compose-v2
+
+runcmd:
+  - mkdir -p /var/lib/yaver /var/log/yaver
+  - chmod 0755 /var/lib/yaver /var/log/yaver
+  - systemctl daemon-reload
+  - systemctl enable yaver-cloud-firstboot.service
+  - systemctl start yaver-cloud-firstboot.service

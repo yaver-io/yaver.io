@@ -1,0 +1,22 @@
+[Unit]
+Description=Yaver Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yaver
+Group=yaver
+Environment=HOME=/home/yaver
+# /var/lib/yaver/workspaces is owned by yaver:yaver (see cloud-firstboot.sh).
+# Don't switch this back to /root or HOME=/root — repo paths leak the user's
+# homedir name into Convex device rows, and the privacy test forbids it.
+ExecStart=/usr/local/bin/yaver serve --multi-user --port 18080 --work-dir /var/lib/yaver/workspaces --debug
+Restart=always
+RestartSec=5
+WorkingDirectory=/var/lib/yaver
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

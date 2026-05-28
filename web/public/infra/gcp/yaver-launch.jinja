@@ -1,0 +1,123 @@
+{# Yaver Launch — GCP Deployment Manager template.
+
+   The yaver.io/launch portal generates a Cloud Console deep-link that
+   uploads this template with a pre-filled `userCode` property; the user
+   reviews + clicks "Deploy" and the box claims itself on first boot.
+
+   Inline equivalent of infra/cloudformation/yaver-launch.yaml. Two
+   files instead of one because GCP Deployment Manager uses Jinja and
+   AWS CloudFormation uses its own YAML syntax — neither offers a
+   useful shared schema. The cloud-init seed is identical in both.
+
+   Usage from the portal:
+     https://console.cloud.google.com/dm/deployments/new
+       ?config=https://yaver.io/infra/gcp/yaver-launch.yaml
+
+   Usage from gcloud:
+     gcloud deployment-manager deployments create yaver \
+       --template=https://yaver.io/infra/gcp/yaver-launch.jinja \
+       --properties=userCode:ABCD12,zone:europe-west4-a,machineType:t2a-standard-1
+#}
+
+resources:
+- name: yaver-firewall
+  type: compute.v1.firewall
+  properties:
+    sourceRanges: ["0.0.0.0/0"]
+    targetTags: ["yaver"]
+    allowed:
+    - IPProtocol: tcp
+      ports: ["22", "18080"]
+    - IPProtocol: udp
+      ports: ["4433"]
+
+- name: yaver-launch-instance
+  type: compute.v1.instance
+  properties:
+    zone: {{ properties.get("zone", "europe-west4-a") }}
+    machineType: zones/{{ properties.get("zone", "europe-west4-a") }}/machineTypes/{{ properties.get("machineType", "t2a-standard-1") }}
+    tags:
+      items: ["yaver"]
+    disks:
+    - boot: true
+      autoDelete: true
+      initializeParams:
+        # When YaverCustomImage is supplied (populated by the portal
+        # from cloud-images.json), use it. Otherwise fall back to the
+        # canonical Ubuntu 24.04 family and rely on cloud-init to
+        # install yaver-cli at first boot.
+        sourceImage: {{ properties.get(
+          "yaverCustomImage",
+          "projects/ubuntu-os-cloud/global/images/family/ubuntu-2404-lts-arm64"
+        ) }}
+    networkInterfaces:
+    - network: global/networks/default
+      accessConfigs:
+      - name: External NAT
+        type: ONE_TO_ONE_NAT
+    metadata:
+      items:
+      - key: user-data
+        value: |
+          #cloud-config
+          # Yaver Launch — see infra/cloudformation/yaver-launch.yaml
+          # for the canonical comment. Same seed, same flow: pre-
+          # authorized device-code is consumed on first boot, the box
+          # claims itself as one of the launching user's devices, and
+          # the runner credentials are mirrored shortly after.
+          package_update: true
+          packages:
+            - curl
+            - git
+            - jq
+            - ca-certificates
+            - tmux
+          write_files:
+            - path: /etc/yaver/pending-auth.json
+              permissions: '0600'
+              owner: root:root
+              content: |
+                {
+                  "deviceCode": "{{ properties["userCode"] }}",
+                  "userCode": "{{ properties["userCode"] }}",
+                  "url": "(authorized via GCP Deployment Manager)",
+                  "convexUrl": "{{ properties.get('convexSiteURL', 'https://perceptive-minnow-557.convex.cloud') }}",
+                  "expiresAt": 0,
+                  "createdAt": 0
+                }
+            - path: /usr/local/lib/yaver/cloud-install.sh
+              permissions: '0755'
+              owner: root:root
+              content: |
+                #!/usr/bin/env bash
+                set -euo pipefail
+                if ! id yaver >/dev/null 2>&1; then
+                  useradd --create-home --shell /bin/bash --comment "Yaver agent" yaver
+                fi
+                if ! command -v node >/dev/null 2>&1; then
+                  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+                  apt-get install -y nodejs
+                fi
+                if ! command -v yaver >/dev/null 2>&1; then
+                  npm install -g yaver-cli
+                fi
+                install -d -m 0700 -o yaver -g yaver /home/yaver/.yaver
+                install -m 0600 -o yaver -g yaver /etc/yaver/pending-auth.json \
+                  /home/yaver/.yaver/pending-auth.json
+                sudo -iu yaver bash -lc \
+                  "tmux kill-session -t yaver 2>/dev/null || true; \
+                   tmux new-session -d -s yaver \"yaver auth --headless --background-wait --convex-url '{{ properties.get('convexSiteURL', 'https://perceptive-minnow-557.convex.cloud') }}' && exec yaver serve --port 18080 --debug\""
+          runcmd:
+            - bash /usr/local/lib/yaver/cloud-install.sh
+
+outputs:
+- name: instanceName
+  value: yaver-launch-instance
+- name: externalIp
+  value: $(ref.yaver-launch-instance.networkInterfaces[0].accessConfigs[0].natIP)
+- name: whatsNext
+  value: >
+    Open the Yaver app on your phone, sign in with the same account that
+    generated userCode at yaver.io/launch. The new device row should
+    appear within ~2 min. Or run `yaver devices` from any other
+    Yaver-installed machine.
