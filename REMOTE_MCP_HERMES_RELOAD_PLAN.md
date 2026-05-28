@@ -122,10 +122,30 @@ Files:
 
 ### Phase 4 — Beam Pro / Android verification (¼ day)
 
-- [ ] Confirm Android dev-client doesn't block SSE during external-display mirroring (Beam Pro USB-C DP Alt Mode).
-- [ ] Confirm BT foldable keyboard works inside `TextInput` (KeyboardAvoidingView quirks on Android).
-- [ ] Confirm mic / RECORD_AUDIO permission flow on Android dev-client matches what's already declared.
-- [ ] Smoke test: pair → enter glass-terminal → ⟳ chip → reload fires.
+**Software-side coverage shipped in cli/v1.99.236 — see `desktop/agent/mcp_mobile_hermes_reload_test.go`:**
+
+| Test | Asserts |
+|---|---|
+| `TestSendCommandToDevice_DeliversOnlyToScopedSession` | scoped send hits ONLY the target device, sibling sessions stay silent (this is the cross-device targeting contract) |
+| `TestSendCommandToDevice_UnknownDeviceReturnsFalse` | unknown id returns false so `/dev/reload`'s fallback-to-broadcast branch fires |
+| `TestSendCommandToDevice_EmptyIDReturnsFalse` | empty id is handled defensively |
+| `TestBroadcastCommand_HitsEverySession` | legacy broadcast regression guard |
+| `TestMobileHermesReloadArgs_JSONTags` | catches drift between Go field names and the MCP `inputSchema` declared in `mcp_tools.go` |
+
+**Mobile-side BlackBox listener wiring — verified at `mobile/app/(tabs)/_layout.tsx:161`:**
+
+- `quicClient.streamBlackBoxCommands(resolved.id, …)` is registered at the tabs layout level (boots with the app).
+- Handles `command === "reload" | "reload_bundle"` by calling `loadApp(${quicClient.baseUrl}${bundlePath}, moduleName, authHeaders)` — that's the preview-worker bundle swap. Works for the "Yaver mobile app IS the app under test" case (the most relevant one for this workflow).
+- Echoes `preview_worker_bundle_loaded` / `preview_worker_bundle_load_failed` events back to the agent so the originating MCP caller can read state.
+
+**Still needs Beam Pro hardware in hand (`BEAM_PRO_DEV.md` smoke checklist):**
+
+- [ ] USB-C DP Alt Mode mirrors Android UI to Xreal One
+- [ ] Android dev-client doesn't throttle SSE during external-display mirroring
+- [ ] BT foldable keyboard works inside `TextInput` (KeyboardAvoidingView quirks)
+- [ ] Mic / `RECORD_AUDIO` permission flow on Android dev-client
+- [ ] Power: 25 000 mAh PD bank holds 4+ hours of glasses + phone
+- [ ] Pair → enter glass-terminal → ⟳ chip → reload fires within 1 s
 
 ### Phase 5 — docs + memory (½ hour)
 
@@ -216,14 +236,24 @@ Files:
 - `mobile/app/glass-terminal.tsx`: new 🎯 target chip at the front of the vibe bar. Tap → modal lists all Yaver devices (incl. a "broadcast" sentinel). Pick → sticky select, persisted via `AsyncStorage` key `@yaver/glass_terminal/reload_target/v1` so it survives relaunches. Long-press → clear target.
 - ⟳ direct path now passes `{targetDeviceId}` through `callMobileHermesReload`. Output buffer shows `→ @target-alias` on each fire.
 
-### Phase 8 — peer-to-peer (no dev-box) cross-device reload (stretch, ½ day)
+### Phase 8 — peer-to-peer (no dev-box) cross-device reload (stretch)
 
-When the user is roaming with two phones and no remote dev box (e.g., on a train: Beam Pro drives, iPhone has a stale Expo dev-client running):
-- The driver phone hosts a tiny BlackBox broker locally (extend the Yaver mobile app's existing relay-peer surface).
-- Or: hit the Yaver relay's existing peer-to-peer push endpoint (already used for `acl_call_peer_tool`).
-- Both phones must already be paired as ACL peers (existing flow).
+**Status:** mostly redundant with Phase 7 in practice.
 
-This phase is **stretch** — Phase 7 (dev-box mediated) covers 95% of real-world use. Skip unless P2P-only becomes a must.
+**Why:** for the realistic case where both phones connect to the SAME Yaver agent (managed-cloud or self-hosted), Phase 7's scoped BlackBox send already handles cross-device routing without needing any phone-to-phone peer surface. Phase 7 unit tests confirm the contract.
+
+The genuinely-new case Phase 8 would unlock is **two phones, NO shared agent** (e.g. on a train, offline-ish):
+- Driver phone (Phone A) has no path to any Yaver agent.
+- Target phone (Phone B) also has no path to any Yaver agent.
+- Both need to reach each other directly.
+
+To implement this cleanly the mobile app would have to:
+1. Expose an MCP-compatible HTTP server inside the RN runtime (currently it's only a client).
+2. Or implement a relay-mediated peer command bus (`/peer-command-push` + `/peer-command-stream` on the relay) — needs `relay/` codebase work.
+
+Neither is small. Mark as stretch for a future session when the no-agent use case becomes a real pain point.
+
+**Workaround today:** spin up a free-tier managed-cloud Yaver agent on `yaver_managed_cloud_onboarding`, point both phones at it, and Phase 7 covers the rest. Internet still required, but no source-code dev box needed if you're only reloading a pre-shipped Expo bundle.
 
 ## Open questions for follow-up
 
