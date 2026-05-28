@@ -12,19 +12,31 @@
 //                     agent is on a remote dev box you SSH'd into; works
 //                     the same whether the agent is local or remote).
 //
-// The screen toggles between the two with a single tap. No third-party SSH
-// app needed — Yaver mobile owns the whole surface.
-//
-// Why a separate route instead of extending (tabs)/terminal.tsx:
-//   - Glasses use case wants FULL-SCREEN, no tab bar / header chrome.
-//   - We render larger fonts + tmux-aware controls that would clash with
-//     the existing terminal tab's "type a command, see output" shape.
-//   - Easier to ship a focused TUI without breaking the existing tab UX.
+// Built-in extras for the AR-glasses workflow:
+//   - Device picker  — long-press the title in shell mode to switch which
+//                      machine you're driving (`useDevice().selectDevice`
+//                      changes the quicClient base URL → next reconnect
+//                      lands on the chosen box).
+//   - Auto-reconnect — shell websocket retries with 1/2/4/8/16/30 s backoff;
+//                      survives the 3-second tunnel hiccups you get when an
+//                      iPhone moves between cell towers.
+//   - Saved prompts  — agent mode persists short prompt bookmarks in
+//                      AsyncStorage; tap the ☆ chip to recall, long-press
+//                      to delete, ⊕ to save the current input.
+//   - Clear conv     — agent mode also has a ⌫ chip to reset history
+//                      between conversations without leaving the screen.
+//   - Vibe bar       — Path-C ("remote dev + on-device app under test"):
+//                      one-tap chips for Hermes reload / wireless push /
+//                      mobile-project status / Expo doctor. They run a
+//                      detached on-phone agent round-trip so the shell
+//                      websocket and tmux session stay live throughout.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -35,7 +47,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
-import { useDevice } from "../src/context/DeviceContext";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { useDevice, type Device } from "../src/context/DeviceContext";
 import { quicClient } from "../src/lib/quic";
 import {
   runYaverAgent,
@@ -51,8 +64,6 @@ type Line = {
   text: string;
 };
 
-// AR-glasses readability palette — pure dark background, high-contrast
-// foreground, plus a few semantic accents.
 const PAL = {
   bg: "#000000",
   fg: "#e5e7eb",
@@ -61,18 +72,21 @@ const PAL = {
   user: "#fbbf24",
   model: "#e5e7eb",
   tool: "#34d399",
-  toolDim: "#10b981",
   err: "#f87171",
   sys: "#94a3b8",
   border: "#1f2937",
   chip: "#111827",
   chipText: "#d1d5db",
   accent: "#a78bfa",
+  star: "#fbbf24",
 };
 
-// Bigger than the default terminal tab — readable through 50° FoV glasses.
 const FONT_SIZE = 14;
 const LINE_HEIGHT = 20;
+const SAVED_PROMPTS_KEY = "@yaver/glass_terminal/saved_prompts/v1";
+const MAX_SAVED_PROMPTS = 30;
+// Backoff steps (ms) for shell-mode auto-reconnect. Last value repeats.
+const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 
 export default function GlassTerminalScreen() {
   const router = useRouter();
@@ -81,22 +95,24 @@ export default function GlassTerminalScreen() {
 
   const [mode, setMode] = useState<Mode>("agent");
   const [lines, setLines] = useState<Line[]>([
-    { kind: "sys", text: "— glass terminal — switch with the chip top-right —" },
+    { kind: "sys", text: "— glass terminal — switch mode top-right · long-press title for devices —" },
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [shellReady, setShellReady] = useState(false);
+  const [devicePickerOpen, setDevicePickerOpen] = useState(false);
+  const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
+  const [vibeBusy, setVibeBusy] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
+  const inputRef = useRef<TextInput | null>(null);
 
-  // Persist conversation across turns in agent mode so follow-ups continue
-  // the same context.
   const historyRef = useRef<YaverAgentHistoryTurn[]>([]);
-
-  // Shell mode: WebSocket + pending output buffer (throttled paints).
   const wsRef = useRef<WebSocket | null>(null);
   const pendingShell = useRef<string>("");
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Abort signal for the in-flight agent run.
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttempts = useRef(0);
+  const shouldStayConnected = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // ── Output helpers ─────────────────────────────────────────────────────
@@ -108,43 +124,210 @@ export default function GlassTerminalScreen() {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: false }));
   }, []);
 
-  // ── Shell mode wiring ──────────────────────────────────────────────────
+  // ── Load saved prompts from AsyncStorage on mount ──────────────────────
   useEffect(() => {
-    if (mode !== "shell") {
-      wsRef.current?.close();
+    let cancelled = false;
+    AsyncStorage.getItem(SAVED_PROMPTS_KEY)
+      .then((raw) => {
+        if (cancelled || !raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setSavedPrompts(parsed.filter((x): x is string => typeof x === "string").slice(0, MAX_SAVED_PROMPTS));
+          }
+        } catch {
+          /* corrupt entry — ignore */
+        }
+      })
+      .catch(() => { /* AsyncStorage failure is non-fatal */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const persistSavedPrompts = useCallback((next: string[]) => {
+    setSavedPrompts(next);
+    AsyncStorage.setItem(SAVED_PROMPTS_KEY, JSON.stringify(next)).catch(() => {});
+  }, []);
+
+  const saveCurrentPrompt = useCallback(() => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+    if (savedPrompts.includes(trimmed)) return;
+    const next = [trimmed, ...savedPrompts].slice(0, MAX_SAVED_PROMPTS);
+    persistSavedPrompts(next);
+  }, [input, savedPrompts, persistSavedPrompts]);
+
+  const deleteSavedPrompt = useCallback((p: string) => {
+    persistSavedPrompts(savedPrompts.filter((x) => x !== p));
+  }, [savedPrompts, persistSavedPrompts]);
+
+  const clearHistory = useCallback(() => {
+    historyRef.current = [];
+    setLines([{ kind: "sys", text: "— conversation cleared —" }]);
+  }, []);
+
+  // ── Shell mode wiring with auto-reconnect ──────────────────────────────
+  const connectShell = useCallback(() => {
+    // Cancel any pending reconnect.
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current);
+      reconnectTimer.current = null;
+    }
+    // Close any existing socket without triggering a reconnect cascade.
+    if (wsRef.current) {
+      const old = wsRef.current;
       wsRef.current = null;
+      try { old.close(); } catch { /* harmless */ }
+    }
+
+    let url: string;
+    try {
+      url = buildTerminalWsUrl();
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : "shell url build failed");
       return;
     }
+
+    let ws: WebSocket;
     try {
-      const url = buildTerminalWsUrl();
-      const ws = new WebSocket(url);
+      ws = new WebSocket(url);
       ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-      ws.onopen = () => appendLine("sys", "— shell connected —");
-      ws.onmessage = (e) => {
-        const raw = typeof e.data === "string"
-          ? e.data
-          : new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer));
-        pendingShell.current += stripAnsi(raw);
-        if (!flushTimer.current) {
-          flushTimer.current = setTimeout(() => {
-            flushTimer.current = null;
-            const chunk = pendingShell.current;
-            pendingShell.current = "";
-            if (chunk.length) appendLine("model", chunk);
-          }, 80);
-        }
-      };
-      ws.onclose = () => appendLine("sys", "— shell disconnected —");
-      ws.onerror = () => appendLine("err", "shell websocket error");
     } catch (e: unknown) {
       appendLine("err", e instanceof Error ? e.message : "shell connect failed");
+      scheduleReconnect();
+      return;
     }
-    return () => {
-      wsRef.current?.close();
-      wsRef.current = null;
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      reconnectAttempts.current = 0;
+      setShellReady(true);
+      appendLine("sys", "— shell connected —");
     };
-  }, [mode, appendLine]);
+    ws.onmessage = (e) => {
+      const raw = typeof e.data === "string"
+        ? e.data
+        : new TextDecoder().decode(new Uint8Array(e.data as ArrayBuffer));
+      pendingShell.current += stripAnsi(raw);
+      if (!flushTimer.current) {
+        flushTimer.current = setTimeout(() => {
+          flushTimer.current = null;
+          const chunk = pendingShell.current;
+          pendingShell.current = "";
+          if (chunk.length) appendLine("model", chunk);
+        }, 80);
+      }
+    };
+    ws.onclose = () => {
+      setShellReady(false);
+      if (wsRef.current === ws) wsRef.current = null;
+      if (shouldStayConnected.current) {
+        appendLine("sys", "— shell disconnected · reconnecting —");
+        scheduleReconnect();
+      } else {
+        appendLine("sys", "— shell disconnected —");
+      }
+    };
+    ws.onerror = () => {
+      // onclose will fire right after — log here so the user sees both signals.
+      appendLine("err", "shell websocket error");
+    };
+  }, [appendLine]);
+
+  const scheduleReconnect = useCallback(() => {
+    if (!shouldStayConnected.current) return;
+    if (reconnectTimer.current) return;
+    const idx = Math.min(reconnectAttempts.current, RECONNECT_BACKOFF_MS.length - 1);
+    const delay = RECONNECT_BACKOFF_MS[idx];
+    reconnectAttempts.current += 1;
+    reconnectTimer.current = setTimeout(() => {
+      reconnectTimer.current = null;
+      if (shouldStayConnected.current) connectShell();
+    }, delay);
+  }, [connectShell]);
+
+  useEffect(() => {
+    if (mode !== "shell") {
+      shouldStayConnected.current = false;
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+      if (wsRef.current) { try { wsRef.current.close(); } catch {} wsRef.current = null; }
+      setShellReady(false);
+      return;
+    }
+    shouldStayConnected.current = true;
+    reconnectAttempts.current = 0;
+    connectShell();
+    return () => {
+      shouldStayConnected.current = false;
+      if (reconnectTimer.current) { clearTimeout(reconnectTimer.current); reconnectTimer.current = null; }
+      if (wsRef.current) { try { wsRef.current.close(); } catch {} wsRef.current = null; }
+    };
+  }, [mode, connectShell]);
+
+  // When the user picks a different device, force a reconnect so the
+  // websocket now points at the new quicClient.baseUrl.
+  const handleDevicePick = useCallback(async (device: Device) => {
+    setDevicePickerOpen(false);
+    try {
+      await selectDevice(device);
+      appendLine("sys", `— switched to ${device.alias || device.name} —`);
+      if (mode === "shell") {
+        reconnectAttempts.current = 0;
+        connectShell();
+      }
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : "device switch failed");
+    }
+  }, [appendLine, connectShell, mode, selectDevice]);
+
+  // ── Vibe-coding actions (Path C) ───────────────────────────────────────
+  // These spawn an independent runYaverAgent round-trip with a baked-in
+  // prompt. They do NOT share the main `busy` / `abortRef` state and they
+  // do NOT close the shell websocket — so a tmux/claude/codex session
+  // stays alive while a Hermes reload or wireless push fires in the
+  // background. The agent loop will pick the right MCP tool itself
+  // (wire_push, hotreload, wireless_push, mobile_project_status, etc.).
+  const triggerVibe = useCallback(async (label: string, prompt: string) => {
+    if (vibeBusy) return;
+    setVibeBusy(label);
+    appendLine("sys", `— ${label} —`);
+    const controller = new AbortController();
+    try {
+      const ctx: YaverAgentToolContext = {
+        devices: () => devices,
+        primaryDeviceId: () => primaryDeviceId,
+        secondaryDeviceId: () => null,
+        selectDevice: async (deviceId) => {
+          const d = devices.find((x) => x.id === deviceId);
+          if (d) await selectDevice(d);
+        },
+      };
+      const result = await runYaverAgent({
+        prompt,
+        ctx,
+        // Tight cap so a stuck reload doesn't trap the screen forever; the
+        // user can always retry by tapping the chip again.
+        maxSteps: 3,
+        signal: controller.signal,
+        onProgress: (ev: YaverAgentProgressEvent) => {
+          if (ev.kind === "tool_call") {
+            const name = ev.call.name;
+            const result = ev.call.error
+              ? `❌ ${ev.call.error}`
+              : safeStringify(ev.call.result);
+            appendLine("tool", `⏺ ${name}`);
+            if (result) appendLine("tool", `  ${result}`);
+          } else if (ev.kind === "model_text") {
+            if (ev.text.trim()) appendLine("model", ev.text);
+          }
+        },
+      });
+      appendLine("sys", `— ${label} done · ${result.steps} step(s) —`);
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : `${label} failed`);
+    } finally {
+      setVibeBusy(null);
+    }
+  }, [vibeBusy, appendLine, devices, primaryDeviceId, selectDevice]);
 
   // ── Submit handler ─────────────────────────────────────────────────────
   const submit = useCallback(async () => {
@@ -156,7 +339,7 @@ export default function GlassTerminalScreen() {
     if (mode === "shell") {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        appendLine("err", "shell not connected — switch to agent mode or reconnect");
+        appendLine("err", "shell not connected — waiting for reconnect");
         return;
       }
       appendLine("user", `$ ${text}`);
@@ -164,7 +347,6 @@ export default function GlassTerminalScreen() {
       return;
     }
 
-    // Agent mode: drive runYaverAgent with current history.
     appendLine("user", `▶ ${text}`);
     setBusy(true);
     abortRef.current = new AbortController();
@@ -205,9 +387,6 @@ export default function GlassTerminalScreen() {
         { role: "assistant", text: result.finalText },
       ];
       if (result.finalText && !lastLineMatches(lines, result.finalText)) {
-        // The progress callback already streamed `model_text` events,
-        // but some providers return the final text without intermediate
-        // streaming. Render it here as a safety net.
         appendLine("model", result.finalText);
       }
       appendLine("sys", `— done · ${result.steps} step(s)${result.outputTokens ? ` · ${result.outputTokens} out tokens` : ""} —`);
@@ -218,26 +397,40 @@ export default function GlassTerminalScreen() {
       abortRef.current = null;
       setBusy(false);
     }
-  }, [input, busy, mode, appendLine, lines]);
+  }, [input, busy, mode, appendLine, lines, devices, primaryDeviceId, selectDevice]);
 
-  const cancel = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  const cancel = useCallback(() => { abortRef.current?.abort(); }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────
+  const currentDevice = devices.find((d) => d.id === primaryDeviceId);
+  const deviceLabel = currentDevice ? (currentDevice.alias || currentDevice.name) : "no device";
+
   return (
     <View style={[styles.root, { backgroundColor: PAL.bg, paddingTop: insets.top }]}>
-      {/* Header — minimal so the glasses see content, not chrome. */}
       <View style={styles.header}>
         <Pressable hitSlop={12} onPress={() => router.back()}>
           <Text style={[styles.headerBtn, { color: PAL.muted }]}>‹</Text>
         </Pressable>
-        <Text style={[styles.headerTitle, { color: PAL.fg }]}>
-          {mode === "agent" ? "agent" : "shell"}
-          <Text style={{ color: connectionStatus === "connected" ? PAL.tool : PAL.muted, fontSize: 11 }}>
-            {"  "}{mode === "shell" ? `· ${connectionStatus}` : ""}
+        <Pressable
+          hitSlop={8}
+          onLongPress={() => mode === "shell" && setDevicePickerOpen(true)}
+          delayLongPress={350}
+          style={{ flex: 1, alignItems: "center" }}
+        >
+          <Text style={[styles.headerTitle, { color: PAL.fg }]} numberOfLines={1}>
+            {mode === "agent" ? "agent" : `shell · ${deviceLabel}`}
           </Text>
-        </Text>
+          {mode === "shell" ? (
+            <Text style={{
+              color: shellReady ? PAL.tool : (reconnectTimer.current ? PAL.accent : PAL.muted),
+              fontFamily: "Menlo",
+              fontSize: 10,
+              marginTop: 2,
+            }}>
+              {shellReady ? "● live" : (reconnectTimer.current ? "○ reconnecting" : `○ ${connectionStatus}`)}
+            </Text>
+          ) : null}
+        </Pressable>
         <Pressable
           hitSlop={12}
           onPress={() => setMode((m) => (m === "agent" ? "shell" : "agent"))}
@@ -253,7 +446,6 @@ export default function GlassTerminalScreen() {
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        {/* Output area */}
         <ScrollView
           ref={scrollRef}
           style={styles.body}
@@ -281,9 +473,111 @@ export default function GlassTerminalScreen() {
           ) : null}
         </ScrollView>
 
-        {/* Macro keys for paired BT keyboard users — quick send useful
-         *  control sequences. Hidden when on-screen keyboard is irrelevant
-         *  (foldable BT keyboard does most of this natively). */}
+        {/* Vibe-coding action bar (visible in both modes — see Path C in
+         *  BEAM_PRO_DEV.md). Each chip dispatches an independent on-phone
+         *  agent run so the shell websocket / tmux stays untouched. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={[styles.macroRow, { borderTopColor: PAL.border }]}
+          contentContainerStyle={{ paddingHorizontal: 8 }}
+        >
+          {[
+            {
+              label: "⟳ reload",
+              prompt:
+                "Trigger a Hermes/Metro fast-refresh on the mobile app currently running on this phone. Pick whichever wire/wireless/hot-reload MCP tool fits; do not rebuild — only reload the bundle. Be concise.",
+            },
+            {
+              label: "📦 push",
+              prompt:
+                "Push the latest code from the connected remote dev box to the mobile app under test on this phone using the appropriate wire/wireless push MCP tool. Use the currently-selected device as source. Be concise.",
+            },
+            {
+              label: "📊 status",
+              prompt:
+                "Run mobile_project_status (and expo_status if relevant) for the currently-selected device. Summarise the bundler state, Hermes status, and whether the dev client is reachable. One short paragraph.",
+            },
+            {
+              label: "🩺 doctor",
+              prompt:
+                "Run mobile_hermes_doctor for the currently-selected device. Summarise findings in one paragraph and list any urgent action items as bullets.",
+            },
+          ].map(({ label, prompt }) => {
+            const active = vibeBusy === label;
+            return (
+              <Pressable
+                key={label}
+                disabled={!!vibeBusy}
+                onPress={() => void triggerVibe(label, prompt)}
+                style={[
+                  styles.macroKey,
+                  {
+                    borderColor: active ? PAL.accent : PAL.border,
+                    backgroundColor: active ? "#1e1b4b" : PAL.chip,
+                    opacity: vibeBusy && !active ? 0.45 : 1,
+                  },
+                ]}
+              >
+                <Text style={{
+                  color: active ? PAL.accent : PAL.chipText,
+                  fontFamily: "Menlo",
+                  fontSize: 11,
+                }}>{active ? `${label}…` : label}</Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+
+        {/* Saved-prompt drawer (agent mode only) */}
+        {mode === "agent" && (savedPrompts.length > 0 || input.trim().length > 0) ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={[styles.macroRow, { borderTopColor: PAL.border }]}
+            contentContainerStyle={{ paddingHorizontal: 8 }}
+          >
+            {input.trim().length > 0 ? (
+              <Pressable
+                onPress={saveCurrentPrompt}
+                style={[styles.macroKey, { borderColor: PAL.border, backgroundColor: PAL.chip }]}
+              >
+                <Text style={{ color: PAL.star, fontFamily: "Menlo", fontSize: 11 }}>⊕ save</Text>
+              </Pressable>
+            ) : null}
+            {historyRef.current.length > 0 ? (
+              <Pressable
+                onPress={clearHistory}
+                style={[styles.macroKey, { borderColor: PAL.border, backgroundColor: PAL.chip }]}
+              >
+                <Text style={{ color: PAL.err, fontFamily: "Menlo", fontSize: 11 }}>⌫ reset</Text>
+              </Pressable>
+            ) : null}
+            {savedPrompts.map((p) => (
+              <Pressable
+                key={p}
+                onPress={() => { setInput(p); inputRef.current?.focus(); }}
+                onLongPress={() => {
+                  Alert.alert("Delete prompt?", p, [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Delete", style: "destructive", onPress: () => deleteSavedPrompt(p) },
+                  ]);
+                }}
+                delayLongPress={400}
+                style={[styles.macroKey, { borderColor: PAL.border, backgroundColor: PAL.chip, maxWidth: 200 }]}
+              >
+                <Text
+                  numberOfLines={1}
+                  style={{ color: PAL.chipText, fontFamily: "Menlo", fontSize: 11 }}
+                >
+                  ☆ {p.length > 24 ? p.slice(0, 24) + "…" : p}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {/* Shell macro keys */}
         {mode === "shell" ? (
           <ScrollView
             horizontal
@@ -314,12 +608,12 @@ export default function GlassTerminalScreen() {
           </ScrollView>
         ) : null}
 
-        {/* Prompt input */}
         <View style={[styles.inputRow, { borderTopColor: PAL.border, paddingBottom: insets.bottom || 8 }]}>
           <Text style={{ color: PAL.prompt, fontFamily: "Menlo", fontSize: FONT_SIZE + 1, marginRight: 6 }}>
             {mode === "agent" ? "▶" : "$"}
           </Text>
           <TextInput
+            ref={inputRef}
             value={input}
             onChangeText={setInput}
             onSubmitEditing={() => void submit()}
@@ -349,6 +643,71 @@ export default function GlassTerminalScreen() {
           ) : null}
         </View>
       </KeyboardAvoidingView>
+
+      {/* Device picker modal — only meaningful in shell mode but reachable
+       *  any time via long-press on the title. */}
+      <Modal
+        visible={devicePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDevicePickerOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setDevicePickerOpen(false)}
+        >
+          <Pressable
+            style={[styles.modalCard, { backgroundColor: "#0a0a0a", borderColor: PAL.border }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={{ color: PAL.fg, fontFamily: "Menlo", fontSize: 13, fontWeight: "600", marginBottom: 12 }}>
+              switch device
+            </Text>
+            {devices.length === 0 ? (
+              <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 12 }}>
+                no devices visible — pair one from the Devices tab
+              </Text>
+            ) : (
+              devices.map((d) => {
+                const isCurrent = d.id === primaryDeviceId;
+                return (
+                  <Pressable
+                    key={d.id}
+                    onPress={() => void handleDevicePick(d)}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 6,
+                      backgroundColor: isCurrent ? PAL.chip : "transparent",
+                      marginBottom: 4,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{
+                      color: d.online ? PAL.tool : PAL.muted,
+                      fontFamily: "Menlo",
+                      fontSize: 14,
+                      marginRight: 8,
+                    }}>{d.online ? "●" : "○"}</Text>
+                    <Text style={{
+                      color: isCurrent ? PAL.accent : PAL.fg,
+                      fontFamily: "Menlo",
+                      fontSize: 13,
+                      flex: 1,
+                    }} numberOfLines={1}>
+                      {d.alias ? `@${d.alias}` : d.name}
+                    </Text>
+                    {isCurrent ? (
+                      <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 11 }}>current</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -403,7 +762,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
@@ -428,6 +786,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minWidth: 38,
     alignItems: "center",
+    justifyContent: "center",
   },
   inputRow: {
     flexDirection: "row",
@@ -437,4 +796,18 @@ const styles = StyleSheet.create({
     backgroundColor: "#0a0a0a",
   },
   cancelBtn: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }), fontSize: 12, paddingHorizontal: 10 },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    maxWidth: 360,
+    padding: 16,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
 });

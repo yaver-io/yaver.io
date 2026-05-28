@@ -196,13 +196,69 @@ Same as Beam Pro setup but the underlying runtime is the Yaver app's embedded te
 
 ---
 
-## How the two paths combine
+## Path C — Vibe-coding hybrid (remote dev + on-device app under test)
 
-You don't have to pick one. The Yaver mobile app supports **both modes side-by-side** — same app, switchable in settings:
+When the thing you're **testing** is the Yaver mobile app itself (or another React Native / Expo app on the same phone), Path A and Path B blend. The development PC is at the **far end** of the relay, but the JS bundle being reloaded is **on the phone in your hand**.
+
+### Topology
+
+```
+  Xreal glasses (USB-C DP Alt Mode)
+        │ video out
+  ┌─────┴───────────────────────────────────┐
+  │  iPhone 15+ / Beam Pro                  │
+  │  ┌────────────────────────────┐         │
+  │  │ Yaver mobile app           │         │
+  │  │  • glass-terminal: shell   │◀────────┼───── remote dev box
+  │  │    mode → tmux+claude+codex│  relay  │      (claude code / codex /
+  │  │  • glass-terminal: vibe    │  WS     │       tmux session stays
+  │  │    bar → reload/push/dr    │         │       alive through reloads)
+  │  └────────────┬───────────────┘         │
+  │               │ Hermes/Metro fast-refresh         │
+  │  ┌────────────▼───────────────┐         │
+  │  │ Your app under test        │         │
+  │  │  (also React Native)       │         │
+  │  └────────────────────────────┘         │
+  └─────────────────────────────────────────┘
+       BT foldable keyboard ──────────┘
+```
+
+The shell websocket and tmux session never close during a reload — only the JS bundle of the app-under-test gets swapped.
+
+### What's in the Yaver app for Path C
+
+The `glass-terminal` screen has a **vibe action bar** sitting above the prompt. Each chip dispatches an *independent* on-phone agent round-trip that picks the right MCP tool (`wire_push`, `wireless_push`, `mobile_project_status`, `mobile_hermes_doctor`, etc.):
+
+| Chip | What it does |
+|---|---|
+| `⟳ reload` | Trigger a Hermes/Metro fast-refresh on the app under test on this phone. No rebuild. |
+| `📦 push` | Push the latest code from the connected remote dev box to the app under test. |
+| `📊 status` | Summarise bundler / Hermes / dev-client reachability for the selected device. |
+| `🩺 doctor` | Run `mobile_hermes_doctor` and surface action items. |
+
+These chips do NOT share the agent-mode `busy` state and do NOT close the shell websocket — so a tmux session running `claude code` on the remote dev box stays untouched while you hit `⟳ reload` between edits.
+
+### Workflow
+
+1. Glasses on. BT keyboard out. iPhone (or Beam Pro) in your pocket.
+2. Open Yaver app → `glass-terminal` route → `shell` mode → long-press the title → pick your remote dev box.
+3. `tmux a -t main` to reattach; `claude code` is already running.
+4. Edit `mobile/app/foo.tsx` via Claude Code on the remote.
+5. Save → `⟳ reload` chip on the vibe bar → Hermes hot-reloads the app under test on the phone.
+6. The shell pane on glasses still shows your tmux scrollback. Nothing was lost.
+
+This is "yaver wireless push" but with the dev PC at the far end of a relay instead of on the same LAN, and the phone playing both *driver* and *device under test* simultaneously.
+
+---
+
+## How the three paths combine
+
+You don't have to pick one. The Yaver mobile app supports **all three modes side-by-side** — same app, switchable inside `glass-terminal`:
 
 - **Today** you might use Path A from your iPhone to a Yaver managed-cloud box for a heavy refactor
 - **Tomorrow** you might use Path B on the Beam Pro during a flight for offline work
 - **The day after** you might use Path A from the Beam Pro (not just the iPhone) to that same Yaver managed-cloud box
+- **While building a feature in the mobile app itself** you slip into Path C — same shell session, vibe bar reloads the app under test without dropping tmux
 
 The glasses, keyboard, power bank don't care which path you're on.
 
