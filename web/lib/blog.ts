@@ -11,11 +11,43 @@ export const POSTS_PER_PAGE = 10;
 export const blogPosts: BlogPost[] = [
   {
     slug: "yaver-cloud-image",
-    title: "Yaver Cloud Image: One Command for a Dev Box on Any Provider",
+    title: "Yaver Cloud Image: a dev box on any provider, in 90 seconds",
     date: "2026-05-28",
     published: true,
     description:
-      "yaver launch hetzner / aws / gcp / ssh — provision a box that's already signed in to your Yaver account and has claude-code, codex, and opencode authenticated from your existing devices. No copy-pasted tokens, no second OAuth, no AMI hunting. The architecture, the entry points (CLI, browser portal, raw artifacts), and the device-code chain that makes the whole thing zero-friction.",
+      "Run one command. Get a Linux box on Hetzner, AWS, or GCP that's already signed in to your Yaver account, with claude-code, codex, and opencode authenticated from your existing devices. No tokens to copy, no second OAuth, no AMI hunting — this post is the install guide.",
+  },
+  {
+    slug: "yaver-cloud-launch-anywhere",
+    title: "Yaver cloud launch: anywhere, in five steps",
+    date: "2026-05-28",
+    published: true,
+    description:
+      "The architecture behind `yaver launch hetzner/aws/gcp/ssh` and the yaver.io/launch portal. The device-code authorize chain, why the Hetzner branch works without a public snapshot, and how SSH adoption reuses the same plumbing minus the provisioning step.",
+  },
+  {
+    slug: "yaver-sandbox-slim",
+    title: "yaver-sandbox-slim: a distroless Docker image with three coding agents",
+    date: "2026-05-28",
+    published: true,
+    description:
+      "ghcr.io/kivanccakmak/yaver-sandbox-slim — 1.3 GB, multi-arch, distroless/nodejs22 base with Node, git, busybox, Claude Code, Codex, and OpenCode pre-installed. The three-stage build, the dynamic-lib hunt, and the day we forgot /usr/bin/env.",
+  },
+  {
+    slug: "yaver-zero-reoauth",
+    title: "Zero re-OAuth: a fresh Yaver box arrives signed in to Claude Code, Codex, and OpenCode",
+    date: "2026-05-28",
+    published: true,
+    description:
+      "Spinning up a new Linux box usually means re-OAuth'ing every coding agent from scratch. Yaver mirrors the credentials your existing devices already have. Same Max Pro / ChatGPT Plus subscription, no double-billing. The two primitives — device-code pre-authorize + runner_auth_mirror — and how they chain.",
+  },
+  {
+    slug: "yaver-install-script",
+    title: "curl yaver.io/install | bash: what it actually does",
+    date: "2026-05-28",
+    published: true,
+    description:
+      "The 175-line install script that bridges from 'new machine, no Node' to 'npm install -g yaver-cli works'. Platform detection (macOS Homebrew, Debian NodeSource, RHEL dnf, nvm fallback), arch normalization, and the npm-prefix question. No telemetry, no binary tarballs, no background processes.",
   },
   {
     slug: "hermes-vs-webview-yaver-architecture",

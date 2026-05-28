@@ -18,18 +18,7 @@ export const metadata: Metadata = {
     type: "article",
     publishedTime: post.date,
     authors: ["Yaver"],
-    tags: [
-      "Yaver",
-      "Cloud",
-      "Hetzner",
-      "AWS",
-      "GCP",
-      "AI coding",
-      "Claude Code",
-      "Codex",
-      "OpenCode",
-      "Dev environments",
-    ],
+    tags: ["Yaver", "Cloud", "Hetzner", "AWS", "GCP", "Dev environments", "AI coding"],
     images: [{ url: "/og-image.png", width: 1200, height: 630 }],
   },
   twitter: {
@@ -58,13 +47,12 @@ const articleLd = {
     logo: { "@type": "ImageObject", url: "https://yaver.io/icon-512.png" },
   },
   keywords: [
-    "cloud dev environment",
-    "Hetzner cloud-init",
-    "AWS CloudFormation",
-    "GCP Deployment Manager",
-    "Claude Code OAuth mirror",
-    "device-code pre-authorize",
-    "zero-friction launch",
+    "yaver launch",
+    "Yaver cloud image",
+    "Hetzner Yaver",
+    "AWS Yaver",
+    "GCP Yaver",
+    "cloud dev environment one command",
   ],
 };
 
@@ -91,205 +79,182 @@ export default function YaverCloudImageBlogPage() {
             {post.date}
           </time>
           <h1 className="mt-3 text-3xl font-bold text-surface-50 md:text-4xl">
-            Yaver Cloud Image: One Command for a Dev Box on Any Provider
+            Yaver Cloud Image: a dev box on any provider, in 90 seconds
           </h1>
           <p className="mt-4 text-sm leading-7 text-surface-400">
-            <code>yaver launch hetzner</code> — and 90 seconds later you have a box that&apos;s
-            already signed in to your Yaver account with claude-code, codex, and opencode
-            authenticated. No copy-pasted tokens, no second OAuth on the new machine, no AMI
-            hunting. This post walks through how the chain works and the four entry points
-            we shipped: CLI, browser portal, SSH adoption, and raw artifacts.
+            Run one command. Get a Linux box on Hetzner, AWS, or GCP that&apos;s already signed
+            in to your Yaver account, with claude-code, codex, and opencode authenticated
+            from your existing devices. No tokens to copy, no second OAuth, no AMI hunting.
+            This post is the install guide.
           </p>
         </div>
 
         <div className="space-y-8 text-sm leading-7 text-surface-300">
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">The problem</h2>
-            <p>
-              Spinning up a remote dev box should be a 90-second operation. In practice it&apos;s a
-              25-minute project: pick a region, find an AMI, write cloud-init, SSH in, install
-              Node, install your runners, copy your Anthropic / OpenAI subscription tokens
-              over, fight some permissions, fight some path issues, give up, try again
-              tomorrow.
-            </p>
-            <p className="mt-4">
-              Yaver&apos;s wedge is that none of those steps should be visible to the user. We
-              already mirror Claude Code, Codex, and OpenCode credentials between your devices
-              (that&apos;s how the Yaver mobile app can drive a Mac without a second sign-in).
-              Extending the same pattern to a brand-new cloud box is mostly plumbing — and the
-              result is one command on your terminal, or one click on the browser portal.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">The chain</h2>
-            <p className="mb-3">
-              Every entry point ends up running the same five-step chain. The provider-specific
-              bit is only step 3.
-            </p>
-            <ol className="list-decimal space-y-3 pl-6 text-surface-400">
-              <li>
-                <strong>Mint a device-code.</strong> The launching device calls Convex&apos;s
-                <code> /auth/device-code</code> endpoint and gets back a fresh 6-character code
-                that&apos;s valid for 15 minutes.
-              </li>
-              <li>
-                <strong>Pre-authorize it as yourself.</strong> Same device calls{" "}
-                <code>/auth/device-code/authorize</code> with the code and its own bearer
-                token. The code is now bound to your user identity server-side — the new box
-                can redeem it without any browser interaction.
-              </li>
-              <li>
-                <strong>Provision a VM</strong> via the provider&apos;s API (
-                <code>hcloud server create</code>, <code>aws ec2 run-instances</code>,{" "}
-                <code>gcloud compute instances create</code>, or SSH for an existing Linux
-                box). The cloud-init <code>user-data</code> embeds the device-code at{" "}
-                <code>/etc/yaver/pending-auth.json</code>.
-              </li>
-              <li>
-                <strong>First-boot consumes the code.</strong> The agent&apos;s firstboot script
-                runs <code>yaver auth --headless --background-wait</code> which sees the
-                pending file, polls Convex&apos;s <code>/poll</code> endpoint, gets a real session
-                token under the same user, writes <code>config.json</code>, and starts{" "}
-                <code>yaver-agent.service</code>.
-              </li>
-              <li>
-                <strong>Mirror your runner credentials.</strong> The launching device finds
-                the new box online (its heartbeat lands in Convex), and pushes
-                <code> ~/.claude/.credentials.json</code>, the codex token store, and the
-                opencode config across the encrypted{" "}
-                <code>runner_auth_mirror</code> channel. The new box can now run{" "}
-                <code>claude</code>, <code>codex</code>, and <code>opencode</code> on your
-                existing Max Pro / ChatGPT Plus / OpenCode plan with zero re-OAuth.
-              </li>
-            </ol>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">Four entry points</h2>
-            <p className="mb-3">
-              Same five-step chain, four ways to start it. Pick the one that matches where
-              you&apos;re sitting.
-            </p>
-
-            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">
-              1. From your terminal
-            </h3>
-            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
-{`yaver launch hetzner            # uses $HCLOUD_TOKEN
-yaver launch aws --region us-east-1
-yaver launch gcp                # uses gcloud default project
-yaver launch ssh user@your-box  # adopt an existing Linux box`}
-            </pre>
-            <p className="mt-3">
-              The provider arms all use the provider&apos;s own CLI under the hood (<code>hcloud</code>,
-              <code> aws</code>, <code>gcloud</code>) and your existing credentials. Yaver
-              never sees them. The SSH variant works on anything you can <code>ssh</code>{" "}
-              into — Raspberry Pi at home, an old NAS, a Hetzner box you provisioned by
-              hand last year, your friend&apos;s spare VPS.
-            </p>
-
-            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">
-              2. Browser portal (zero CLI required)
-            </h3>
-            <p>
-              <Link className="underline hover:text-surface-100" href="/launch">
-                yaver.io/launch
-              </Link>{" "}
-              shows a button per provider. Click &ldquo;AWS&rdquo; → you&apos;re dropped into the
-              CloudFormation console with the template URL + your one-time code pre-filled.
-              Click &ldquo;GCP&rdquo; → same thing but with Deployment Manager. Click
-              &ldquo;Hetzner&rdquo; → cloud-init form deep-linked. No terminal, no
-              <code> npm install</code>, no <code>brew</code>. Useful for PMs, designers, or
-              anyone running Yaver from the mobile app and a laptop they don&apos;t want to set
-              up.
-            </p>
-
-            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">
-              3. <code>curl yaver.io/install | bash</code>
-            </h3>
-            <p>
-              The classic single-command installer. Autodetects platform (macOS, Linux,
-              WSL2), installs Node 22 if it&apos;s missing (Homebrew, NodeSource, or per-user
-              nvm fallback), then <code>npm install -g yaver-cli</code>. Once it&apos;s done you
-              can run any of the <code>yaver launch …</code> commands above.
-            </p>
-
-            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">
-              4. Raw artifacts (KVM / Proxmox / Pi)
-            </h3>
-            <p>
-              For hypervisor-based homelabs and embedded devices. The Raspberry Pi 5 image
-              has been shipping for a while (
-              <Link className="underline hover:text-surface-100" href="/blog/yaver-pi-image">
-                announcement post
-              </Link>
-              ); qcow2 and ISO artifacts for KVM/Proxmox/Unraid are next. All built from the
-              same{" "}
-              <code>scripts/build-cloud-image.sh</code> pipeline + the{" "}
-              <code>cloud-image/</code> rootfs overlay you can read in the repo.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">
-              Why the cloud-image works on Hetzner without a public snapshot
-            </h2>
-            <p>
-              AWS AMIs and GCP custom images can be flipped to world-launchable with one API
-              call. Hetzner snapshots can&apos;t — they&apos;re always scoped to the project that
-              created them. We hit that constraint and ended up with a structurally better
-              answer: when no public snapshot is published, <code>yaver launch hetzner</code>{" "}
-              provisions vanilla Ubuntu 24.04 and lets cloud-init do the install. First boot
-              is ~3 minutes slower (apt + <code>npm install -g yaver-cli</code>) but the
-              post-boot behavior is identical — same pending-auth.json consumption, same
-              registration, same runner mirror. The CI workflow still builds + tags a
-              snapshot for the maintainer&apos;s project (used by the managed-cloud SKU and
-              their own personal launches), but it&apos;s no longer the only path.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">
-              The slim sandbox image
-            </h2>
-            <p>
-              Same launch system also produces a distroless Docker sandbox image:
-              <code> ghcr.io/kivanccakmak/yaver-sandbox-slim</code> (also on Docker Hub as{" "}
-              <code>yaver/sandbox-slim</code>). Multi-arch, ~1.3 GB, built on{" "}
-              <code>gcr.io/distroless/nodejs22-debian12</code>. Ships only Node, git,
-              busybox, and the three coding runners — no Java / Ruby / Rust / Go, since
-              tasks that need those should use the fat image. Useful for the{" "}
-              <code>--containerize-guests</code> flag when the task is &ldquo;edit some code,
-              run the project&apos;s own scripts&rdquo; and you want fast cold-start instead of a
-              2 GB base.
-            </p>
-            <pre className="mt-3 overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
-{`# from your config
-{
-  "containerize_guests": true,
-  "container_image": "ghcr.io/kivanccakmak/yaver-sandbox-slim:latest"
-}`}
-            </pre>
-          </section>
-
-          <section>
-            <h2 className="mb-3 text-xl font-semibold text-surface-100">Try it</h2>
-            <p className="mb-3">From scratch on a machine that has nothing:</p>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">From zero</h2>
+            <p className="mb-3">On any Mac, Linux, or WSL2:</p>
             <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
 {`curl -fsSL https://yaver.io/install | bash
 yaver auth
-yaver launch hetzner    # or aws / gcp / ssh user@host`}
+yaver launch hetzner`}
             </pre>
             <p className="mt-4">
-              Or click your way through{" "}
+              That&apos;s the whole flow. <code>curl yaver.io/install</code> handles the Node
+              install if you don&apos;t already have it, then <code>npm install -g yaver-cli</code>.
+              <code> yaver auth</code> opens your browser once for OAuth. <code>yaver launch
+              hetzner</code> provisions a box on your Hetzner account, waits ~90 seconds for
+              first boot, and mirrors your runner credentials to it. SSH in and{" "}
+              <code>claude</code>, <code>codex</code>, <code>opencode</code> are already
+              signed in.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">Pick your provider</h2>
+            <p className="mb-4">
+              Every command below uses <em>your</em> cloud account, billed to you directly.
+              Yaver never sees your provider credentials.
+            </p>
+
+            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">Hetzner</h3>
+            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
+{`export HCLOUD_TOKEN=hcloud_xxx     # from console.hetzner.cloud → Security
+yaver launch hetzner               # cax21 (arm64, ~€4/mo) by default
+yaver launch hetzner --arch amd64  # cpx21 (amd64) if you need x86_64`}
+            </pre>
+            <p className="mt-3">
+              Cheapest by a wide margin. arm64 (cax21) is the default because Yaver runs
+              great on ARM and saves you money. The box comes up in Helsinki by default —
+              change with the Hetzner region flags or HCLOUD_LOCATION env var.
+            </p>
+
+            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">AWS</h3>
+            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
+{`# uses your default aws CLI credentials
+yaver launch aws --region us-east-1
+yaver launch aws --region eu-central-1 --arch arm64`}
+            </pre>
+            <p className="mt-3">
+              Provisions a t4g.small (arm64, Graviton) or t3.small (amd64) from the public
+              Yaver AMI in your region. If a Yaver AMI isn&apos;t published for your region
+              yet, the launcher tells you so — for now stick to us-east-1, us-west-2,
+              eu-central-1, eu-west-1, ap-southeast-1, ap-northeast-1.
+            </p>
+
+            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">Google Cloud</h3>
+            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
+{`# uses your default gcloud project + creds
+yaver launch gcp
+yaver launch gcp --arch amd64`}
+            </pre>
+            <p className="mt-3">
+              t2a-standard-1 (arm64, Ampere) or e2-small (amd64) from the public Yaver custom
+              image. Defaults to europe-west4-a; override with{" "}
+              <code>YAVER_GCP_ZONE</code>.
+            </p>
+
+            <h3 className="mt-6 mb-2 text-base font-semibold text-surface-100">
+              An existing box you already own
+            </h3>
+            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
+{`yaver launch ssh user@your-nas
+yaver launch ssh root@homelab.lan
+yaver launch ssh user@cheap-vps.example.com`}
+            </pre>
+            <p className="mt-3">
+              Works on anything you can SSH into: a Raspberry Pi at home, an old NAS, a
+              Hetzner box you set up by hand last year, your friend&apos;s spare VPS. We
+              install yaver-cli via npm, drop the same pre-authorized credentials,
+              <code> tmux new-session -d -s yaver "yaver serve"</code>, and the box appears
+              in your fleet just like a fresh provision.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">Or without a terminal</h2>
+            <p>
+              If you don&apos;t want to install anything locally, go to{" "}
               <Link className="underline hover:text-surface-100" href="/launch">
                 yaver.io/launch
               </Link>{" "}
-              and never open a terminal. If you want to read the code, everything lives in
-              the open under{" "}
-              <code>desktop/agent/launch_*.go</code>,{" "}
-              <code>cloud-image/</code>, and <code>infra/</code> on GitHub.
+              instead. Sign in, pick a provider, click the launch button. It drops you into
+              your provider&apos;s native console (CloudFormation Launch Stack, GCP Deployment
+              Manager, Hetzner Cloud Console) with our template + one-time code pre-filled.
+              Click &ldquo;Create&rdquo;, wait ~2 minutes, the box appears in your Yaver
+              fleet. Useful when you&apos;re on a borrowed laptop or driving Yaver from your
+              phone.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">What you get</h2>
+            <p className="mb-3">After <code>yaver launch …</code> returns:</p>
+            <ul className="list-disc space-y-1 pl-6 text-surface-400">
+              <li>
+                A Linux box with the Yaver agent running on port 18080, registered as your
+                device.
+              </li>
+              <li>
+                <code>claude</code>, <code>codex</code>, and <code>opencode</code> pre-
+                installed and signed in to <em>your</em> Anthropic / OpenAI / OpenRouter
+                subscription via the same OAuth tokens you already have locally — no
+                re-OAuth, no API-key fallback (
+                <Link
+                  className="underline hover:text-surface-100"
+                  href="/blog/yaver-zero-reoauth"
+                >
+                  details
+                </Link>
+                ).
+              </li>
+              <li>
+                Docker, Node, Python, Git, and the usual dev essentials. (For native Android
+                or Cargo builds, use the fat sandbox image; for everything else the slim
+                image is plenty — see the{" "}
+                <Link
+                  className="underline hover:text-surface-100"
+                  href="/blog/yaver-sandbox-slim"
+                >
+                  sandbox post
+                </Link>
+                .)
+              </li>
+              <li>
+                LAN beacon + relay-fallback networking so your phone, Mac, and the new box
+                all reach each other regardless of NAT.
+              </li>
+              <li>SSH access via the key pair you used during provision.</li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">Cleanup</h2>
+            <pre className="overflow-x-auto rounded-lg bg-surface-900 p-3 text-xs text-surface-300">
+{`yaver devices                       # list everything
+yaver ssh <box-name>                # ssh in
+yaver cloud destroy <box-name>      # provider-aware teardown
+                                    # (deletes the VM + decrements your bill)`}
+            </pre>
+            <p className="mt-3">
+              Or use your provider&apos;s native UI — the Yaver tags on the resource make it
+              easy to find. Boxes provisioned through <code>yaver launch</code> are tagged{" "}
+              <code>managed-by=yaver-launch</code>.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="mb-3 text-xl font-semibold text-surface-100">Want the deep dive?</h2>
+            <p>
+              How the box claims itself on first boot without any browser interaction, how
+              we work around Hetzner&apos;s no-public-snapshot constraint, and the device-
+              code-authorize chain — written up at{" "}
+              <Link
+                className="underline hover:text-surface-100"
+                href="/blog/yaver-cloud-launch-anywhere"
+              >
+                Yaver cloud launch: anywhere, in five steps
+              </Link>
+              .
             </p>
           </section>
         </div>
