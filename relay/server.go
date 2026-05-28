@@ -95,6 +95,12 @@ type RelayServer struct {
 	// Read from RELAY_ADMIN_TOKEN at process start. Empty disables the
 	// admin-token path; password / Convex auth still applies. C-9 + H-14.
 	adminToken string
+
+	// abuseGuard enforces coarse public-relay protections: per-IP request
+	// buckets, registration throttles, global HTTP concurrency, and
+	// per-device active stream caps. Defaults are generous and configurable
+	// with RELAY_* env vars so existing clients keep working.
+	abuseGuard *abuseGuard
 }
 
 type exposeRoute struct {
@@ -128,6 +134,7 @@ func NewRelayServer(quicPort, httpPort int, password, convexURL, exposeDomain st
 		// regardless of relay password. Empty = no admin-token path
 		// available (callers must use the relay password instead).
 		adminToken: strings.TrimSpace(os.Getenv("RELAY_ADMIN_TOKEN")),
+		abuseGuard: newAbuseGuard(abuseGuardConfigFromEnv()),
 	}
 	// Initialize bandwidth manager
 	dataDir := os.Getenv("RELAY_DATA_DIR")
@@ -406,6 +413,11 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 	remoteAddr := conn.RemoteAddr().String()
 	log.Printf("[RELAY] Agent connected from %s", remoteAddr)
 
+	if !s.abuseGuard.allowQUICRegister(remoteAddr) {
+		conn.CloseWithError(1, "registration rate limited")
+		return
+	}
+
 	// Wait for registration stream
 	stream, err := conn.AcceptStream(ctx)
 	if err != nil {
@@ -473,6 +485,10 @@ func (s *RelayServer) handleAgentConnection(ctx context.Context, conn quic.Conne
 
 	// Validate relay password (shared or per-user via Convex)
 	if !s.validatePassword(reg.Password) {
+		if !s.abuseGuard.allowInvalidAuth(remoteAddr) {
+			rejectRegistration("too many invalid relay password attempts", "invalid password rate limited")
+			return
+		}
 		rejectRegistration("invalid relay password", "invalid relay password")
 		return
 	}
@@ -644,6 +660,7 @@ func (s *RelayServer) runHTTPProxy(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	srv.Handler = s.abuseGuard.httpMiddleware(srv.Handler)
 
 	go func() {
 		<-ctx.Done()
@@ -709,11 +726,11 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 			publicURL = fmt.Sprintf("https://%s.%s", sub, s.exposeDomain)
 		}
 		exposeList = append(exposeList, map[string]interface{}{
-			"subdomain":   sub,
-			"deviceId":    deviceID,
-			"port":        route.port,
-			"publicUrl":   publicURL,
-			"createdAt":   route.createdAt.Format(time.RFC3339),
+			"subdomain": sub,
+			"deviceId":  deviceID,
+			"port":      route.port,
+			"publicUrl": publicURL,
+			"createdAt": route.createdAt.Format(time.RFC3339),
 		})
 	}
 	s.exposeMu.RUnlock()
@@ -730,8 +747,8 @@ func (s *RelayServer) handleListTunnels(w http.ResponseWriter, r *http.Request) 
 // to the relay right now?" without depending on Convex heartbeat lag (30-90 s).
 // Supports two shapes:
 //
-//   GET /presence?id=<deviceId>            -> single {deviceId, online, since}
-//   GET /presence?ids=a,b,c,...            -> map keyed by deviceId
+//	GET /presence?id=<deviceId>            -> single {deviceId, online, since}
+//	GET /presence?ids=a,b,c,...            -> map keyed by deviceId
 //
 // Unknown deviceIds return online:false (indistinguishable from "exists but
 // offline"), so an adversary can't enumerate our tunnel table.
@@ -992,8 +1009,13 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		r.Header.Set("Authorization", "Bearer "+tokenInQuery)
 	}
 
+	bytesRequested := r.ContentLength
+	if bytesRequested < 0 {
+		bytesRequested = 0
+	}
+
 	// Check bandwidth limit
-	if err := s.bandwidth.CheckAllowed(deviceID, r.ContentLength); err != nil {
+	if err := s.bandwidth.CheckAllowed(deviceID, bytesRequested); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1030,14 +1052,26 @@ func (s *RelayServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.abuseGuard.tryEnterDevice(tunnel.deviceID) {
+		s.abuseGuard.logLimited("device-concurrency", tunnel.deviceID[:min(8, len(tunnel.deviceID))])
+		writeRelayError(w, http.StatusTooManyRequests, "too many concurrent requests for device")
+		return
+	}
+	defer s.abuseGuard.leaveDevice(tunnel.deviceID)
+
 	// Read request body. 64 MiB cap is chosen to comfortably handle
 	// static web bundles (Expo's main entry chunk is ~5–15 MB; the
 	// JSON envelope is ~33 % bigger after base64). Bigger than this
-	// silently truncates today — a future protocol revision should
-	// stream large bodies through QUIC instead of buffering JSON.
+	// now returns 413 instead of silently truncating; a future protocol
+	// revision should stream large request bodies through QUIC instead
+	// of buffering JSON.
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(io.LimitReader(r.Body, 64<<20))
+		var ok bool
+		body, ok = readCappedBody(w, r, s.abuseGuard.cfg.MaxRequestBodyBytes)
+		if !ok {
+			return
+		}
 	}
 
 	// Build tunnel request
@@ -1475,10 +1509,21 @@ func (s *RelayServer) tryExposeProxy(w http.ResponseWriter, r *http.Request) boo
 }
 
 func (s *RelayServer) proxyExposeRequest(w http.ResponseWriter, r *http.Request, tunnel *agentTunnel, route *exposeRoute) {
+	if !s.abuseGuard.tryEnterDevice(tunnel.deviceID) {
+		s.abuseGuard.logLimited("device-concurrency", tunnel.deviceID[:min(8, len(tunnel.deviceID))])
+		writeRelayError(w, http.StatusTooManyRequests, "too many concurrent requests for device")
+		return
+	}
+	defer s.abuseGuard.leaveDevice(tunnel.deviceID)
+
 	// Read request body
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(io.LimitReader(r.Body, 200<<20)) // 200MB for expose (dev assets)
+		var ok bool
+		body, ok = readCappedBody(w, r, s.abuseGuard.cfg.MaxExposeBodyBytes)
+		if !ok {
+			return
+		}
 	}
 
 	// Build headers

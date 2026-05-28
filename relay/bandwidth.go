@@ -116,6 +116,9 @@ func NewBandwidthManager(config *BandwidthConfig, dataDir string) *BandwidthMana
 // CheckAllowed checks if a device is allowed to transfer bytes.
 // Returns nil if allowed, error with reason if blocked.
 func (bm *BandwidthManager) CheckAllowed(deviceID string, bytesRequested int64) error {
+	if bytesRequested < 0 {
+		bytesRequested = 0
+	}
 	bm.mu.RLock()
 	dev, exists := bm.devices[deviceID]
 	bm.mu.RUnlock()
