@@ -1762,6 +1762,21 @@ func (s *HTTPServer) handleDevServerStop(w http.ResponseWriter, r *http.Request)
 // the reload worked. We still do the JS reload; the mobile UX decides what
 // to show the user.
 func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Request) {
+	// Optional JSON body — when present and `targetDeviceId` is set, the
+	// BlackBox reload command is scoped to that one SDK session instead
+	// of broadcasting to all. Used by mobile_hermes_reload's Path-C
+	// cross-device flow (Phone A drives → only Phone B reloads).
+	// Metro's bundler-level reload still fires unscoped; only the
+	// SDK-layer command is filtered.
+	var reqBody struct {
+		TargetDeviceID string `json:"targetDeviceId,omitempty"`
+		Mode           string `json:"mode,omitempty"`
+	}
+	if r.ContentLength > 0 {
+		_ = json.NewDecoder(r.Body).Decode(&reqBody)
+	}
+	scopedDeviceID := strings.TrimSpace(reqBody.TargetDeviceID)
+
 	target := DevServerTarget{}
 	if s.devServerMgr != nil {
 		target = s.devServerMgr.PreferredTarget()
@@ -1815,9 +1830,11 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		s.taskMgr.BroadcastControlSignal(`{"yaver_control":"hot_reload"}`)
 	}
 
-	// Push reload command to all connected SDK devices (third-party apps with Feedback SDK).
-	// If we detected native changes, send the device a distinct command so the super-host
-	// can show "rebuild required" instead of pretending the JS reload fixed everything.
+	// Push reload command to connected SDK devices. By default this is a
+	// broadcast to all sessions. When the request specifies a
+	// `targetDeviceId`, the command is sent only to that one session
+	// (Path-C cross-device targeting). If no matching session is found
+	// we fall back to a broadcast so the user still gets a reload.
 	if s.blackboxMgr != nil {
 		if len(nativeChanges) > 0 {
 			paths := make([]string, 0, len(nativeChanges))
@@ -1833,7 +1850,9 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 					"changedReasons": reasons,
 				},
 			}
-			if sent := s.sendCommandToPreviewTarget(cmd); sent {
+			if scopedDeviceID != "" && s.blackboxMgr.SendCommandToDevice(scopedDeviceID, cmd) {
+				log.Printf("[dev] reload: native change detected — sent native_rebuild_required to scoped device %s", scopedDeviceID)
+			} else if sent := s.sendCommandToPreviewTarget(cmd); sent {
 				s.syncPreviewWorkerIncident(projectPath, target, true)
 				log.Printf("[dev] reload: native change detected (%d files) — sent native_rebuild_required to preview worker", len(nativeChanges))
 			} else {
@@ -1841,6 +1860,8 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 				s.blackboxMgr.BroadcastCommand(cmd)
 				log.Printf("[dev] reload: native change detected (%d files) — broadcast native_rebuild_required", len(nativeChanges))
 			}
+		} else if scopedDeviceID != "" && s.blackboxMgr.SendCommandToDevice(scopedDeviceID, BlackBoxCommand{Command: "reload"}) {
+			log.Printf("[dev] Sent reload command to scoped device %s", scopedDeviceID)
 		} else if sent := s.sendPreviewWorkerReloadCommand(); sent {
 			s.syncPreviewWorkerIncident(projectPath, target, true)
 			log.Printf("[dev] Sent targeted preview reload command to preview worker")
@@ -1908,6 +1929,9 @@ func (s *HTTPServer) handleDevServerReload(w http.ResponseWriter, r *http.Reques
 		"nativeChangesDetected": len(nativeChanges) > 0,
 		"nativeChanges":         nativeChanges,
 		"changeClass":           changeClass, // "js_only" | "native_rebuild_required" | "" (no baseline)
+	}
+	if scopedDeviceID != "" {
+		resp["targetedDeviceId"] = scopedDeviceID
 	}
 	jsonReply(w, http.StatusOK, resp)
 }

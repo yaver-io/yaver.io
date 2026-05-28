@@ -92,6 +92,7 @@ const PAL = {
 const FONT_SIZE = 14;
 const LINE_HEIGHT = 20;
 const SAVED_PROMPTS_KEY = "@yaver/glass_terminal/saved_prompts/v1";
+const RELOAD_TARGET_KEY = "@yaver/glass_terminal/reload_target/v1";
 const MAX_SAVED_PROMPTS = 30;
 // Backoff steps (ms) for shell-mode auto-reconnect. Last value repeats.
 const RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
@@ -113,6 +114,11 @@ export default function GlassTerminalScreen() {
   const [vibeBusy, setVibeBusy] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [autoTts, setAutoTts] = useState(false);
+  // Cross-device reload target (Phase 7). When set, the ⟳ chip routes
+  // the BlackBox reload command to this device id instead of the local
+  // broadcast. Persisted to AsyncStorage so it survives app re-launches.
+  const [reloadTargetId, setReloadTargetId] = useState<string | null>(null);
+  const [reloadTargetPickerOpen, setReloadTargetPickerOpen] = useState(false);
   const recorderRef = useRef<{ stop: () => Promise<string> } | null>(null);
   const speechCfgRef = useRef<{ tts?: { provider: "device" | "openai" | "openrouter"; apiKey?: string; model?: string; voice?: string } }>({});
   // submitRef avoids a circular dep between submit (uses input) and
@@ -156,6 +162,22 @@ export default function GlassTerminalScreen() {
       })
       .catch(() => { /* AsyncStorage failure is non-fatal */ });
     return () => { cancelled = true; };
+  }, []);
+
+  // ── Load persisted reload-target on mount (Phase 7). Survives app
+  //    restarts so the user doesn't have to re-pick after each launch.
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(RELOAD_TARGET_KEY).then((id) => {
+      if (!cancelled && id) setReloadTargetId(id);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const setReloadTarget = useCallback((id: string | null) => {
+    setReloadTargetId(id);
+    if (id) AsyncStorage.setItem(RELOAD_TARGET_KEY, id).catch(() => {});
+    else AsyncStorage.removeItem(RELOAD_TARGET_KEY).catch(() => {});
   }, []);
 
   // ── Load TTS config so 🔊 toggle uses the user's chosen voice provider.
@@ -414,9 +436,16 @@ export default function GlassTerminalScreen() {
   const triggerReloadDirect = useCallback(async () => {
     if (vibeBusy) return;
     setVibeBusy("⟳ reload");
-    appendLine("sys", "— ⟳ reload (direct MCP) —");
+    const targetLabel = reloadTargetId
+      ? devices.find((d) => d.id === reloadTargetId)?.alias
+        ?? devices.find((d) => d.id === reloadTargetId)?.name
+        ?? reloadTargetId.slice(0, 8)
+      : null;
+    appendLine("sys", targetLabel
+      ? `— ⟳ reload (direct MCP) → @${targetLabel} —`
+      : "— ⟳ reload (direct MCP) —");
     try {
-      const res = await callMobileHermesReload({});
+      const res = await callMobileHermesReload(reloadTargetId ? { targetDeviceId: reloadTargetId } : {});
       if (!res.ok) {
         appendLine("err", `direct reload failed: ${res.error ?? "unknown"} — falling back to LLM`);
         setVibeBusy(null);
@@ -443,7 +472,7 @@ export default function GlassTerminalScreen() {
     } finally {
       setVibeBusy(null);
     }
-  }, [vibeBusy, appendLine, triggerVibe]);
+  }, [vibeBusy, appendLine, triggerVibe, reloadTargetId, devices]);
 
   // ── Submit handler ─────────────────────────────────────────────────────
   const submit = useCallback(async () => {
@@ -619,6 +648,34 @@ export default function GlassTerminalScreen() {
           style={[styles.macroRow, { borderTopColor: PAL.border }]}
           contentContainerStyle={{ paddingHorizontal: 8 }}
         >
+          {/* Reload-target picker chip (Phase 7 cross-device). Tap to
+           *  pick which device the ⟳ chip reloads. Long-press to clear
+           *  the target (revert to broadcast). */}
+          <Pressable
+            onPress={() => setReloadTargetPickerOpen(true)}
+            onLongPress={() => setReloadTarget(null)}
+            delayLongPress={400}
+            style={[styles.macroKey, {
+              borderColor: reloadTargetId ? PAL.accent : PAL.border,
+              backgroundColor: reloadTargetId ? "#1e1b4b" : PAL.chip,
+              maxWidth: 180,
+            }]}
+          >
+            <Text
+              numberOfLines={1}
+              style={{
+                color: reloadTargetId ? PAL.accent : PAL.muted,
+                fontFamily: "Menlo",
+                fontSize: 11,
+              }}
+            >
+              {reloadTargetId
+                ? `🎯 @${(devices.find((d) => d.id === reloadTargetId)?.alias
+                  ?? devices.find((d) => d.id === reloadTargetId)?.name
+                  ?? reloadTargetId.slice(0, 8))}`
+                : "🎯 target"}
+            </Text>
+          </Pressable>
           {[
             {
               label: "⟳ reload",
@@ -858,6 +915,100 @@ export default function GlassTerminalScreen() {
                       {d.alias ? `@${d.alias}` : d.name}
                     </Text>
                     {isCurrent ? (
+                      <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 11 }}>current</Text>
+                    ) : null}
+                  </Pressable>
+                );
+              })
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Reload-target picker (Phase 7). Pick which device the ⟳ chip
+       *  reloads. Choosing the same device as the primary = same as no
+       *  target (broadcast). Other devices = scoped BlackBox send. */}
+      <Modal
+        visible={reloadTargetPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReloadTargetPickerOpen(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setReloadTargetPickerOpen(false)}
+        >
+          <Pressable
+            style={[styles.modalCard, { backgroundColor: "#0a0a0a", borderColor: PAL.border }]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <Text style={{ color: PAL.fg, fontFamily: "Menlo", fontSize: 13, fontWeight: "600", marginBottom: 4 }}>
+              reload target
+            </Text>
+            <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 10, marginBottom: 12 }}>
+              ⟳ chip will scope the reload to this device only
+            </Text>
+            <Pressable
+              onPress={() => { setReloadTarget(null); setReloadTargetPickerOpen(false); }}
+              style={{
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 6,
+                backgroundColor: !reloadTargetId ? PAL.chip : "transparent",
+                marginBottom: 8,
+                flexDirection: "row",
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 14, marginRight: 8 }}>∗</Text>
+              <Text style={{
+                color: !reloadTargetId ? PAL.accent : PAL.fg,
+                fontFamily: "Menlo",
+                fontSize: 13,
+                flex: 1,
+              }}>
+                broadcast (all SDK devices)
+              </Text>
+              {!reloadTargetId ? (
+                <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 11 }}>current</Text>
+              ) : null}
+            </Pressable>
+            {devices.length === 0 ? (
+              <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 12 }}>
+                no devices visible — pair one from the Devices tab
+              </Text>
+            ) : (
+              devices.map((d) => {
+                const isSelected = d.id === reloadTargetId;
+                return (
+                  <Pressable
+                    key={d.id}
+                    onPress={() => { setReloadTarget(d.id); setReloadTargetPickerOpen(false); }}
+                    style={{
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderRadius: 6,
+                      backgroundColor: isSelected ? PAL.chip : "transparent",
+                      marginBottom: 4,
+                      flexDirection: "row",
+                      alignItems: "center",
+                    }}
+                  >
+                    <Text style={{
+                      color: d.online ? PAL.tool : PAL.muted,
+                      fontFamily: "Menlo",
+                      fontSize: 14,
+                      marginRight: 8,
+                    }}>{d.online ? "●" : "○"}</Text>
+                    <Text style={{
+                      color: isSelected ? PAL.accent : PAL.fg,
+                      fontFamily: "Menlo",
+                      fontSize: 13,
+                      flex: 1,
+                    }} numberOfLines={1}>
+                      {d.alias ? `@${d.alias}` : d.name}
+                    </Text>
+                    {isSelected ? (
                       <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 11 }}>current</Text>
                     ) : null}
                   </Pressable>

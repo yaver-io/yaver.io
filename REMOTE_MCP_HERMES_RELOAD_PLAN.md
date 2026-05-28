@@ -199,7 +199,7 @@ phone A (Beam Pro — driver)
 | glass-terminal vibe chip | hits MCP with no target | NEW: device-picker chip in the **vibe bar** (separate from the existing shell-target picker) — lists OTHER user-owned phones the agent can see, sticky selection per session |
 | Mobile listener | already wired (Phase 1) | unchanged — same path on phone B, just filtered by id upstream |
 
-### Phase 7 — cross-device target selection (½ day)
+### Phase 7 — cross-device target selection ✅ SHIPPED 2026-05-28
 
 Files:
 - `desktop/agent/blackbox.go` — extend `BroadcastControlSignal` / `BlackBoxCommand` send loop to honour an optional `targetDeviceId` from the originating MCP call. (Field `targetCommandScope` already exists in the envelope — reuse it.)
@@ -210,6 +210,11 @@ Files:
   - Tap a device → sticky select. Vibe-bar shows `⟳ → @iphone-on-desk` until cleared.
   - Long-press → clear target (revert to broadcast-to-self default).
 - Output buffer: each chip fire prints `→ targeting @iphone-on-desk` so the user has confirmation.
+
+**Landed in cli/v1.99.235 + mobile/v1.18.130:**
+- `desktop/agent/devserver_http.go`: `/dev/reload` now accepts `{ targetDeviceId, mode }` JSON body. When `targetDeviceId` is set, calls `BlackBoxManager.SendCommandToDevice(id, BlackBoxCommand{Command: "reload"})` instead of broadcasting. Response gains `targetedDeviceId` field. Falls back to broadcast if the scoped device has no active session.
+- `mobile/app/glass-terminal.tsx`: new 🎯 target chip at the front of the vibe bar. Tap → modal lists all Yaver devices (incl. a "broadcast" sentinel). Pick → sticky select, persisted via `AsyncStorage` key `@yaver/glass_terminal/reload_target/v1` so it survives relaunches. Long-press → clear target.
+- ⟳ direct path now passes `{targetDeviceId}` through `callMobileHermesReload`. Output buffer shows `→ @target-alias` on each fire.
 
 ### Phase 8 — peer-to-peer (no dev-box) cross-device reload (stretch, ½ day)
 
