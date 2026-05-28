@@ -305,6 +305,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/code/detach", s.auth(s.handleCodeDetach))
 	mux.HandleFunc("/code/repos", s.auth(s.handleCodeRepos))
 	mux.HandleFunc("/code/repo", s.auth(s.handleCodeRepo))
+	mux.HandleFunc("/project/kind", s.auth(s.handleProjectKind))
 	mux.HandleFunc("/code/dev", s.auth(s.handleCodeDev))
 	mux.HandleFunc("/code/deploy", s.auth(s.handleCodeDeploy))
 

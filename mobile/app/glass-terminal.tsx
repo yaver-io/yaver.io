@@ -69,6 +69,11 @@ import {
   callMobileProjectStatus,
   callMobileHermesDoctor,
 } from "../src/lib/yaverMcpDirect";
+import {
+  fetchProjectKind,
+  invalidateProjectKindCache,
+  type ProjectKindResult,
+} from "../src/lib/projectKind";
 
 type Mode = "agent" | "shell";
 
@@ -119,6 +124,12 @@ export default function GlassTerminalScreen() {
   const [vibeBusy, setVibeBusy] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [autoTts, setAutoTts] = useState(false);
+  // projectKind drives the vibe-bar chip set. Defaults to mobile so the
+  // existing Hermes-reload / wire-push UX is preserved BYTE-IDENTICALLY
+  // until the agent answers /project/kind otherwise. Per memory
+  // [feedback_always_deploy_yaver] and the mobile-only-wire-push rule,
+  // we never silently replace the mobile chips for a mobile project.
+  const [projectKind, setProjectKind] = useState<ProjectKindResult | null>(null);
   // Cross-device reload target (Phase 7). When set, the ⟳ chip routes
   // the BlackBox reload command to this device id instead of the local
   // broadcast. Persisted to AsyncStorage so it survives app re-launches.
@@ -188,6 +199,22 @@ export default function GlassTerminalScreen() {
     else AsyncStorage.removeItem(RELOAD_TARGET_KEY).catch(() => {});
   }, []);
 
+  // ── Re-classify the attached agent's working dir whenever the user
+  //    picks a different device. The vibe bar swaps chips based on the
+  //    result; an older agent without /project/kind returns "generic"
+  //    via the lib's fallback path, which keeps a safe minimal chip set.
+  useEffect(() => {
+    let cancelled = false;
+    const ac = new AbortController();
+    // Invalidate first so the new device's kind is never masked by the
+    // previous device's cached result.
+    invalidateProjectKindCache();
+    fetchProjectKind({ signal: ac.signal })
+      .then((res) => { if (!cancelled) setProjectKind(res); })
+      .catch(() => { /* AbortError — device switched again, fine */ });
+    return () => { cancelled = true; ac.abort(); };
+  }, [primaryDeviceId]);
+
   // ── Load TTS config so 🔊 toggle uses the user's chosen voice provider.
   //    STT uses on-device whisper.rn via startRealtimeTranscribe — no
   //    config needed for the mic button to work.
@@ -229,7 +256,7 @@ export default function GlassTerminalScreen() {
       const finalText = await rec.stop();
       if (finalText && finalText.trim()) {
         const trimmed = finalText.trim();
-        // Voice keyword shortcut — single-word "reload" (en/tr/es/de/fr)
+        // Voice keyword shortcut — single-word "reload" (any language)
         // jumps straight to the direct-MCP reload path without an LLM
         // round-trip. Saves ~1.5-3 s on the most common voice command
         // for the AR-glasses workflow.
@@ -659,6 +686,19 @@ export default function GlassTerminalScreen() {
         </Pressable>
         <Pressable
           hitSlop={8}
+          onPress={() => router.replace("/glass-workspace")}
+          style={[styles.modeChip, {
+            backgroundColor: PAL.chip,
+            borderColor: PAL.border,
+            marginRight: 6,
+          }]}
+        >
+          <Text style={[styles.modeChipText, { color: PAL.muted }]}>
+            ▦
+          </Text>
+        </Pressable>
+        <Pressable
+          hitSlop={8}
           onPress={() => setAutoTts((v) => !v)}
           style={[styles.modeChip, {
             backgroundColor: autoTts ? "#1e1b4b" : PAL.chip,
@@ -749,28 +789,7 @@ export default function GlassTerminalScreen() {
                 : "🎯 target"}
             </Text>
           </Pressable>
-          {[
-            {
-              label: "⟳ reload",
-              prompt:
-                "Trigger a Hermes/Metro fast-refresh on the mobile app currently running on this phone. Pick whichever wire/wireless/hot-reload MCP tool fits; do not rebuild — only reload the bundle. Be concise.",
-            },
-            {
-              label: "📦 push",
-              prompt:
-                "Push the latest code from the connected remote dev box to the mobile app under test on this phone using the appropriate wire/wireless push MCP tool. Use the currently-selected device as source. Be concise.",
-            },
-            {
-              label: "📊 status",
-              prompt:
-                "Run mobile_project_status (and expo_status if relevant) for the currently-selected device. Summarise the bundler state, Hermes status, and whether the dev client is reachable. One short paragraph.",
-            },
-            {
-              label: "🩺 doctor",
-              prompt:
-                "Run mobile_hermes_doctor for the currently-selected device. Summarise findings in one paragraph and list any urgent action items as bullets.",
-            },
-          ].map(({ label, prompt }) => {
+          {vibeChipsFor(projectKind).map(({ label, prompt }) => {
             const active = vibeBusy === label;
             // Direct-MCP chips (no LLM, fast). Anything not in the map
             // routes through the LLM-narrated loop as a generic prompt.
@@ -1158,6 +1177,128 @@ function safeStringify(v: unknown): string {
     return s.length > 200 ? s.slice(0, 200) + "…" : s;
   } catch {
     return String(v);
+  }
+}
+
+// ── Vibe-bar chip sets per project kind ───────────────────────────────────
+//
+// The hardcoded mobile chips inline in the render preserve the
+// existing Hermes-reload / wire-push / project-status / hermes-doctor
+// flow byte-for-byte. The data below is kept as a reference set so a
+// future refactor can route project-kind-aware swaps through here
+// (the parallel `/glass-workspace` route already covers web + backend
+// project kinds via its own panesForKind). Per memory
+// [feedback_mobile_only_wire_push] the mobile flow is load-bearing
+// for current users and is never demoted by project detection.
+type VibeChip = { label: string; prompt: string };
+
+const MOBILE_VIBE_CHIPS: VibeChip[] = [
+  {
+    label: "⟳ reload",
+    prompt:
+      "Trigger a Hermes/Metro fast-refresh on the mobile app currently running on this phone. Pick whichever wire/wireless/hot-reload MCP tool fits; do not rebuild — only reload the bundle. Be concise.",
+  },
+  {
+    label: "📦 push",
+    prompt:
+      "Push the latest code from the connected remote dev box to the mobile app under test on this phone using the appropriate wire/wireless push MCP tool. Use the currently-selected device as source. Be concise.",
+  },
+  {
+    label: "📊 status",
+    prompt:
+      "Run mobile_project_status (and expo_status if relevant) for the currently-selected device. Summarise the bundler state, Hermes status, and whether the dev client is reachable. One short paragraph.",
+  },
+  {
+    label: "🩺 doctor",
+    prompt:
+      "Run mobile_hermes_doctor for the currently-selected device. Summarise findings in one paragraph and list any urgent action items as bullets.",
+  },
+];
+
+const WEB_VIBE_CHIPS: VibeChip[] = [
+  {
+    label: "⟳ reload",
+    prompt:
+      "Trigger a hot-reload of the running web dev server (Next.js / Vite / Nuxt / SvelteKit) for this project. Use the `web_preview` ops verb with action=reload, or call web_preview_reload, whichever is wired. Be concise.",
+  },
+  {
+    label: "📺 preview",
+    prompt:
+      "Start (or surface the URL of) the web dev server for this project so the user can open it in a browser tile. Use the `web_preview` ops verb with action=start, defaulting to the workspace's primary web app. Return the iframe URL on success.",
+  },
+  {
+    label: "🚀 deploy",
+    prompt:
+      "Run `ops deploy` for this project with the user's previously-configured target (Vercel / Netlify / Cloudflare / Fly / Railway). If no target is configured, ask which one to use. Stream output in one short paragraph.",
+  },
+  {
+    label: "🧪 test",
+    prompt:
+      "Run the testkit suite under ./yaver-tests for this project (testkit_run). If any tests failed, follow up with testkit_last_failure and summarise the first failing step. One paragraph + bullets.",
+  },
+  {
+    label: "🩺 doctor",
+    prompt:
+      "Run a fast health check: tsc_check (type errors) and eslint_check (lint errors) and testkit_last_failure (most recent failed test) for this project. Summarise the three signals in one paragraph + action bullets.",
+  },
+];
+
+const BACKEND_VIBE_CHIPS: VibeChip[] = [
+  {
+    label: "🚀 deploy",
+    prompt:
+      "Run `ops deploy` for this backend project with the previously-configured target (cloud / vercel / fly / railway / convex / cloudflare). If no target is set, ask. One short paragraph of output.",
+  },
+  {
+    label: "📋 logs",
+    prompt:
+      "Tail the most recent application logs for this backend's deployed target — pick the right cloud_logs / vercel_logs / fly_logs / convex_logs MCP tool. Show the last 50 lines, then summarise anomalies in one paragraph.",
+  },
+  {
+    label: "🗄 db",
+    prompt:
+      "Show the schema of the project's primary database (Postgres / SQLite / Convex). Use db_schema (or convex_schema / supabase_db) and summarise tables + columns in one paragraph.",
+  },
+  {
+    label: "🧪 test",
+    prompt:
+      "Run the project's tests via the best-fit MCP tool (go_test_suite / pytest_suite / cargo_test_suite / testkit_run). Summarise pass/fail counts and the first failing test if any. One paragraph + bullets.",
+  },
+  {
+    label: "🩺 doctor",
+    prompt:
+      "Run language-appropriate static checks (go_vet_check + go_vulncheck for Go; ruff + mypy_check for Python; cargo_clippy for Rust; eslint_check + tsc_check for Node) plus testkit_last_failure. Summarise.",
+  },
+];
+
+const GENERIC_VIBE_CHIPS: VibeChip[] = [
+  {
+    label: "📁 status",
+    prompt:
+      "Tell me what kind of project is in the current working directory: list the marker files you see (package.json, go.mod, Cargo.toml, pubspec.yaml, etc.), the git branch, and the most recent commit. One paragraph.",
+  },
+  {
+    label: "🚀 deploy",
+    prompt:
+      "Run `ops deploy` for this project. Ask the user for a target if none is configured. Stream output.",
+  },
+  {
+    label: "🧪 test",
+    prompt:
+      "Look for a test command in this project (testkit_run if yaver-tests/ exists; otherwise infer from package.json scripts / go test / cargo test / pytest) and run it. Summarise.",
+  },
+];
+
+function vibeChipsFor(pk: ProjectKindResult | null): VibeChip[] {
+  // null / still-loading → assume mobile so we never strip the
+  // load-bearing chips out from under a real mobile dev who pops the
+  // screen open quickly. Per memory [feedback_mobile_only_wire_push]
+  // the mobile flow is preserved byte-for-byte.
+  if (!pk || pk.kind === "mobile") return MOBILE_VIBE_CHIPS;
+  switch (pk.kind) {
+    case "web":     return WEB_VIBE_CHIPS;
+    case "backend": return BACKEND_VIBE_CHIPS;
+    default:        return GENERIC_VIBE_CHIPS;
   }
 }
 

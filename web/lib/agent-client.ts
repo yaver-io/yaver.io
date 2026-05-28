@@ -1425,6 +1425,43 @@ export class AgentClient {
     return res.json();
   }
 
+  /** Classify the connected agent's working directory into one of
+   *  mobile / web / backend / generic — used by the workspace route
+   *  to pick the right default pane set. Returns generic on any
+   *  failure (older agent that lacks the endpoint). */
+  async getProjectKind(opts: { dir?: string } = {}): Promise<{
+    kind: "mobile" | "web" | "backend" | "generic";
+    workDir: string;
+    frameworks: string[];
+    hasManifest: boolean;
+    /** True when this is the silent fallback (404 / fetch error). UI
+     *  should render a visible "older agent" indicator instead of
+     *  treating it as a real "generic" project. */
+    degraded?: boolean;
+  }> {
+    this.assertConnected();
+    try {
+      const url = new URL(`${this.baseUrl}/project/kind`);
+      if (opts.dir) url.searchParams.set("dir", opts.dir);
+      const res = await fetch(url.toString(), { headers: this.authHeaders });
+      if (!res.ok) {
+        if (res.status === 404) {
+          console.warn(`getProjectKind: agent at ${this.baseUrl} missing /project/kind — needs upgrade`);
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
+      const j = await res.json();
+      return {
+        kind: (j.kind ?? "generic") as "mobile" | "web" | "backend" | "generic",
+        workDir: j.workDir ?? "",
+        frameworks: Array.isArray(j.frameworks) ? j.frameworks : [],
+        hasManifest: !!j.hasManifest,
+      };
+    } catch {
+      return { kind: "generic", workDir: "", frameworks: [], hasManifest: false, degraded: true };
+    }
+  }
+
   /**
    * callOps invokes an agent ops verb (provision / destroy / recycle /
    * …) on the *connected* agent. The agent owns all the safety guards
@@ -1692,6 +1729,72 @@ export class AgentClient {
       return { ok: false, tool, stream: "", error: data.error || `HTTP ${res.status}` };
     }
     return { ok: true, tool: data.tool || tool, stream: data.stream || `install:${tool}` };
+  }
+
+  /**
+   * Install a coding-agent runner (claude / codex / opencode) on
+   * the connected agent (or a peer when `target` is set). Thin
+   * wrapper around installTool + streamLog so the Devices view can
+   * show live progress without each caller re-implementing the SSE
+   * subscribe + result-event dance.
+   *
+   * Returns once the install:<runner> stream emits a terminal
+   * `{type:"result", status:"ok"|"error"}` event, or on a network
+   * failure starting the request. `onProgress` receives every
+   * progress line (including npm output and the agent's own
+   * "Starting install: <runner>" header).
+   *
+   * The same agent endpoint that powers `yaver install <runner>` —
+   * /install/<runner> with /peer/<id> proxy for cross-device — so
+   * a fresh box (Pi, ARM cloud, mac without brew) gets node
+   * auto-provisioned into ~/.yaver/runtimes/node before the
+   * `npm install -g` runs. See ensureRunnerInstalledStream in
+   * desktop/agent/install_cmd.go.
+   */
+  async installRunner(
+    runnerId: string,
+    opts?: { target?: string; onProgress?: (line: string) => void },
+  ): Promise<{ ok: boolean; runnerId: string; error?: string }> {
+    const target = opts?.target;
+    const onProgress = opts?.onProgress;
+    const started = await this.installTool(runnerId, target);
+    if (!started.ok) {
+      return { ok: false, runnerId, error: started.error || "install failed to start" };
+    }
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = (result: { ok: boolean; runnerId: string; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        try { unsub(); } catch { /* ignore */ }
+        resolve(result);
+      };
+      const unsub = this.streamLog(
+        started.stream,
+        (ev: any) => {
+          if (!ev || typeof ev !== "object") return;
+          // Progress lines arrive as {type:"log", text:"…"} or as
+          // raw strings (legacy). Forward both.
+          if (typeof ev.text === "string" && onProgress) {
+            onProgress(ev.text);
+          } else if (typeof ev.line === "string" && onProgress) {
+            onProgress(ev.line);
+          }
+          if (ev.type === "result") {
+            if (ev.status === "ok") {
+              finish({ ok: true, runnerId });
+            } else {
+              finish({
+                ok: false,
+                runnerId,
+                error: typeof ev.error === "string" ? ev.error : "install failed",
+              });
+            }
+          }
+        },
+        () => finish({ ok: false, runnerId, error: "install stream closed before completion" }),
+      );
+    });
   }
 
   async runnerAuthStatus(target?: string): Promise<RunnerAuthStatusRow[]> {
@@ -2312,6 +2415,31 @@ export class AgentClient {
       h["X-Relay-Password"] = this.activeRelayPassword;
     }
     return h;
+  }
+
+  /**
+   * Fetch an arbitrary agent path with the active auth headers + base
+   * URL applied. Use this instead of `(agentClient as any).baseUrl` /
+   * `(agentClient as any).authHeaders` from external components — the
+   * cast bypasses the class's lifecycle/connection guarantees and
+   * breaks on every internal refactor.
+   *
+   * `path` must start with "/". Returns the raw Response so callers
+   * decide how to consume the body.
+   */
+  async agentFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    this.assertConnected();
+    const headers = { ...this.authHeaders, ...(init.headers ?? {}) };
+    return fetch(`${this.baseUrl}${path}`, { ...init, headers });
+  }
+
+  /** Build a URL on the active agent without exposing baseUrl. Useful
+   *  for <img src>, <video src>, anchor hrefs, etc., where the asset
+   *  is fetched by the browser and not by us — auth headers don't
+   *  apply, only the base URL does. */
+  agentAssetUrl(path: string): string {
+    this.assertConnected();
+    return `${this.baseUrl}${path}`;
   }
 
   private async issueBrowserSession(pathPrefix: string): Promise<string> {
