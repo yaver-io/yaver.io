@@ -22,6 +22,15 @@ Type=simple
 # CONVEX_URL via /etc/default/yaver-relay for staging-Convex deploys.
 Environment=YAVER_RELAY_OFFICIAL=1
 Environment=CONVEX_URL=https://perceptive-minnow-557.eu-west-1.convex.site
+# Built-in abuse guard defaults are intentionally generous for normal
+# mobile/web/Hermes reload traffic. Override these in
+# /etc/default/yaver-relay only when production telemetry says to tighten
+# or relax them:
+#   RELAY_PROXY_RATE_PER_IP_PER_MIN=240
+#   RELAY_PROXY_BURST_PER_IP=80
+#   RELAY_QUIC_REGISTER_RATE_PER_IP_PER_MIN=60
+#   RELAY_MAX_CONCURRENT_PER_DEVICE=64
+#   RELAY_MAX_REQUEST_BODY_BYTES=67108864
 # EXPOSE_DOMAIN drives the auto-provisioned per-device subdomain that
 # the relay assigns to every connected agent (e.g.
 # <deviceId>.dev.yaver.io) and publishes back as `publicUrl` in the

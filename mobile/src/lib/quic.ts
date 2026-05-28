@@ -919,6 +919,34 @@ export interface TunnelServer {
   priority: number;
 }
 
+function relayStatusHint(status: number): string {
+  if (status === 429) return "Yaver relay is rate limiting this connection. Wait a moment and try again.";
+  if (status === 413) return "This request is larger than the relay allows. Reduce the upload size or use a direct/tunnel path.";
+  if (status === 503) return "Yaver relay is temporarily overloaded. Try again shortly or switch to another transport.";
+  if (status === 401) return "Relay authentication failed. Check the relay password or sign in again.";
+  return `HTTP ${status}`;
+}
+
+async function responseErrorMessage(res: Response, fallback?: string): Promise<string> {
+  const base = fallback || relayStatusHint(res.status);
+  try {
+    const data = await res.clone().json();
+    const detail =
+      typeof data?.message === "string" ? data.message :
+      typeof data?.error === "string" ? data.error :
+      "";
+    if (detail) {
+      const hint = relayStatusHint(res.status);
+      return hint === `HTTP ${res.status}` ? detail : `${hint} ${detail}`;
+    }
+  } catch {}
+  try {
+    const text = await res.clone().text();
+    if (text.trim()) return `${base}: ${text.trim().slice(0, 240)}`;
+  } catch {}
+  return base;
+}
+
 export class QuicClient {
   private host: string | null = null;
   private port: number | null = null;
@@ -966,6 +994,7 @@ export class QuicClient {
   private _connectionPath: ConnectionPath = null;
   private _networkType: string | null = null; // "wifi" | "cellular" | etc.
   private _connectingInProgress = false; // guard against concurrent attemptConnect calls
+  private _lastTransportError: string | null = null;
   // Extra LAN/Tailscale/Ethernet IPs that the agent advertised in heartbeat.
   // Raced in parallel against the beacon IP and the primary host so the
   // session attaches via whichever address the phone can actually route to
@@ -1492,12 +1521,7 @@ export class QuicClient {
       }),
     }, 30000);
     if (!res.ok) {
-      let msg = `Failed to create task: ${res.status}`;
-      try {
-        const errData = await res.json();
-        if (errData.error) msg = errData.error;
-      } catch {}
-      throw new Error(msg);
+      throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
     const data = await res.json();
     // Agent returns { ok, taskId, status, runnerId, model }
@@ -5030,6 +5054,7 @@ export class QuicClient {
 
   private async _doAttemptConnect(): Promise<void> {
     this.setConnectionState("connecting");
+    this._lastTransportError = null;
     this.activeRelayUrl = null;
     this.activeRelayPassword = null;
     this._tunnelUrl = null;
@@ -5124,6 +5149,7 @@ export class QuicClient {
               console.log("[QUIC] Cloudflare Tunnel connection succeeded:", tunnel.label || tunnel.url);
               break;
             }
+            this._lastTransportError = await responseErrorMessage(res, `Tunnel ${tunnel.label || tunnel.url} returned HTTP ${res.status}`);
           } catch (e) {
             console.log("[QUIC] Tunnel", tunnel.label || tunnel.url, "failed:", e);
           }
@@ -5155,6 +5181,7 @@ export class QuicClient {
               console.log("[QUIC] Relay connection succeeded via", relay.id);
               break;
             }
+            this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
           } catch (e) {
             console.log("[QUIC] Relay", relay.id, "failed:", e);
           }
@@ -5162,7 +5189,7 @@ export class QuicClient {
       }
 
       if (!connected) {
-        throw new Error("Could not reach agent (direct or via relay)");
+        throw new Error(this._lastTransportError || "Could not reach agent (direct or via relay)");
       }
 
       this.setReconnectAttempt(0);
@@ -5516,6 +5543,7 @@ export class QuicClient {
           console.log("[QUIC] Relay fallback succeeded via", relay.id);
           return true;
         }
+        this._lastTransportError = await responseErrorMessage(res, `Relay ${relay.id} returned HTTP ${res.status}`);
       } catch (e) {
         console.log("[QUIC] Relay fallback", relay.id, "failed:", e);
       }
@@ -6060,6 +6088,9 @@ export class QuicClient {
         headers: { ...this.authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "bundle" }),
       });
+      if (!res.ok) {
+        console.warn("[QUIC] Hermes reload failed:", await responseErrorMessage(res, `HTTP ${res.status}`));
+      }
       return res.ok;
     } catch { return false; }
   }
@@ -8422,4 +8453,3 @@ export const quicClient: QuicClient = new Proxy({} as QuicClient, {
     return prop in (activeClientResolver() as any);
   },
 });
-

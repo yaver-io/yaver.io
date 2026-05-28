@@ -1628,18 +1628,13 @@ export type PhonePushTarget =
   | { kind: "yaver-cloud"; cloudBaseUrl?: string; cloudAuthToken?: string }
   | { kind: "custom"; baseUrl: string; authToken?: string };
 
-// Raised when the cloud target requires a paid subscription.
+// Raised when the cloud target requires an active managed cloud entitlement.
 //
-// IMPORTANT — Apple App Store compliance: the mobile app MUST NOT initiate
-// a paid transaction or auto-open a checkout URL in-app. Apple's 3.1.3(a)
-// rules treat LemonSqueezy-hosted checkout pages the same as any other
-// in-app digital purchase and take a 30% cut — or reject the app. So when
-// mobile code catches this error it should:
-//   • render a message telling the user to complete checkout on the web
-//     (e.g. "Open yaver.io/pricing on your computer to finish setup"),
-//   • NOT open `checkoutUrl` with Linking.openURL.
-// The `checkoutUrl` field is preserved so the web dashboard (where opening
-// a checkout is allowed) can use it directly.
+// IMPORTANT — App Store / Play Store compliance: the mobile app MUST NOT
+// initiate a paid transaction, auto-open a checkout URL, or present a purchase
+// CTA for managed cloud. Web and CLI may use the checkoutUrl; store mobile
+// builds should only show a neutral entitlement state and let users retry
+// after their account already has an active machine.
 export class PhonePushPaymentRequired extends Error {
   constructor(public checkoutUrl: string | null, message: string) {
     super(message);
@@ -1747,14 +1742,14 @@ export async function pushPhoneProject(
   if (!receiveRes.ok) {
     const body = await receiveRes.text().catch(() => "");
     // The cloud agent returns 402 Payment Required when a push is rejected
-    // for subscription reasons — surface the checkout URL separately so the
-    // UI can open it instead of showing a raw error string.
+    // for entitlement reasons. Preserve checkoutUrl for web/CLI callers only;
+    // mobile UI must not open or display it.
     if (receiveRes.status === 402) {
       let checkoutUrl: string | null = null;
       try { checkoutUrl = JSON.parse(body).checkoutUrl ?? null; } catch { /* ignore */ }
       throw new PhonePushPaymentRequired(
         checkoutUrl,
-        "this cloud tenant requires an active subscription — complete checkout and retry",
+        "this cloud tenant requires an active managed cloud machine on the account",
       );
     }
     if (receiveRes.status === 401 || receiveRes.status === 403) {

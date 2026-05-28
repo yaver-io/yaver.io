@@ -1,15 +1,25 @@
-# Infrastructure Service Declaration
+# Managed Cloud Companion Declaration
 
-Yaver's optional managed relay server is an infrastructure hosting service,
-not a digital good or in-app content. It provisions dedicated server hardware
-from a cloud infrastructure provider for network relay purposes.
+Yaver mobile is a free companion app for Yaver developer machines. It can
+connect to self-hosted machines or to a Yaver managed cloud machine that the
+user already has on their account.
 
-This service:
-- Provisions real server hardware (not virtual/digital content)
-- Is purchased externally via the website (not in-app)
-- Is optional — the app works fully without it (direct connections, self-hosted relay)
-- Is equivalent to cloud hosting services (AWS, DigitalOcean, Linode, Vultr)
-- Falls under Apple's "reader app" / "infrastructure service" exemption
+Store-build rules:
 
-Users can always self-host their own relay server for free using the
-open-source relay code at github.com/kivanccakmak/yaver.io/relay
+- The mobile app does not sell managed cloud.
+- The mobile app does not create, display, or open external checkout URLs.
+- The mobile app does not show prices, top-up controls, or purchase CTAs.
+- Managed cloud checkout, credits, invoices, and cancellation live outside the
+  mobile app.
+- The mobile app only consumes existing entitlements: machine status, lifecycle
+  controls, connection, Hermes builds, and runner credential setup.
+
+Apple review positioning: free stand-alone companion to a paid web-based
+web-hosting/cloud-development service under App Review Guideline 3.1.3(f).
+
+Google Play positioning: consumption-only companion. Users may sign in and use
+managed cloud machines acquired elsewhere, but cannot purchase access to the
+cloud service from inside the Play-distributed app.
+
+Yaver remains usable without managed cloud through self-hosted local or remote
+developer machines running `yaver serve`.

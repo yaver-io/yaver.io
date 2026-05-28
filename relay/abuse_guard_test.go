@@ -98,4 +98,3 @@ func TestAbuseGuardQUICRegisterThrottle(t *testing.T) {
 		t.Fatal("different IP should have an independent registration bucket")
 	}
 }
-

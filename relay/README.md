@@ -162,6 +162,25 @@ yaver relay add https://relay.example.com --password your-secret-password
 
 The relay is a pass-through proxy — it never stores, reads, or logs your data. All connections are encrypted via QUIC (TLS 1.3).
 
+## Abuse and DDoS Guardrails
+
+The relay has built-in abuse controls with conservative defaults. Operators can tune them without changing code:
+
+| Env var | Default | Purpose |
+|---|---:|---|
+| `RELAY_HTTP_RATE_PER_IP_PER_MIN` / `RELAY_HTTP_BURST_PER_IP` | `600` / `120` | General HTTP requests per source IP |
+| `RELAY_PROXY_RATE_PER_IP_PER_MIN` / `RELAY_PROXY_BURST_PER_IP` | `240` / `80` | `/d/{deviceId}/...` proxy requests per source IP |
+| `RELAY_BUS_RATE_PER_IP_PER_MIN` / `RELAY_BUS_BURST_PER_IP` | `120` / `40` | `/bus/*` event requests per source IP |
+| `RELAY_ADMIN_RATE_PER_IP_PER_MIN` / `RELAY_ADMIN_BURST_PER_IP` | `60` / `20` | `/admin/*`, `/presence`, `/tunnels` requests per source IP |
+| `RELAY_QUIC_REGISTER_RATE_PER_IP_PER_MIN` / `RELAY_QUIC_REGISTER_BURST_PER_IP` | `60` / `20` | Agent QUIC registration attempts per source IP |
+| `RELAY_INVALID_AUTH_RATE_PER_IP_PER_MIN` / `RELAY_INVALID_AUTH_BURST_PER_IP` | `12` / `6` | Invalid relay-password attempts per source IP |
+| `RELAY_MAX_CONCURRENT_HTTP` | `2048` | Global in-process HTTP concurrency cap |
+| `RELAY_MAX_CONCURRENT_PER_DEVICE` | `64` | Active proxied streams per connected device |
+| `RELAY_MAX_REQUEST_BODY_BYTES` | `67108864` | `/d/` request body cap; oversized requests return `413` |
+| `RELAY_MAX_EXPOSE_BODY_BYTES` | `209715200` | Subdomain expose request body cap |
+
+These controls are not a replacement for provider-level DDoS protection. Put public HTTP relay traffic behind Cloudflare or another edge, keep the origin IP firewalled, and protect the QUIC UDP port with your VPS/provider firewall.
+
 ## Quick Start (from source)
 
 ### Build

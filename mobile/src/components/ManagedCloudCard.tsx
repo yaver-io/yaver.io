@@ -9,7 +9,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, Pressable, Alert, ActivityIndicator } from "react-native";
 import { getConvexSiteUrl } from "../lib/auth";
 import {
-  devTopUpManagedCloud,
   getManagedCloudBalance,
   getManagedSubscription,
   startManagedCloudMachine,
@@ -135,18 +134,6 @@ export default function ManagedCloudCard({
     }
   };
 
-  const topUpDev = async () => {
-    setBusy("topup-dev");
-    try {
-      await devTopUpManagedCloud(token, 1000);
-      await load();
-    } catch (e: any) {
-      Alert.alert("Top-up failed", e?.message || "Managed-cloud top-up route is not available yet.");
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <View style={[{ borderRadius: 12, borderWidth: 1, borderColor: c.border, padding: 14, gap: 8, backgroundColor: c.surface }]}>
       <Text style={{ color: c.textPrimary, fontSize: 16, fontWeight: "700" }}>
@@ -154,8 +141,8 @@ export default function ManagedCloudCard({
       </Text>
       <Text style={{ color: c.textMuted, fontSize: 11 }}>
         {sub
-          ? `Plan ${sub.plan} · ${sub.status}`
-          : "No active subscription — buy from the web dashboard (Devices → Managed cloud)."}
+          ? `Managed cloud · ${sub.status}`
+          : "No managed cloud machine is active on this account."}
       </Text>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <Text style={{ color: c.textPrimary, fontSize: 12, fontWeight: "700" }}>
@@ -166,15 +153,6 @@ export default function ManagedCloudCard({
             ~{money(balance.estimatedHourlyCents)}/hr running
           </Text>
         ) : null}
-        <Pressable
-          disabled={busy !== null}
-          onPress={topUpDev}
-          style={{ opacity: busy ? 0.5 : 1, borderWidth: 1, borderColor: c.border, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 }}
-        >
-          <Text style={{ color: c.textPrimary, fontSize: 11, fontWeight: "700" }}>
-            Dev top-up
-          </Text>
-        </Pressable>
       </View>
 
       {machines.length === 0 ? (

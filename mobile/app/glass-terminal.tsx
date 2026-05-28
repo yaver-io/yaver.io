@@ -1020,8 +1020,7 @@ export default function GlassTerminalScreen() {
                 );
               })
             )}
-            {/* Buy a managed-cloud dev box — direct entry into the
-             *  glasses-friendly onboarding flow. */}
+            {/* Finish setup for an already-active managed-cloud dev box. */}
             <Pressable
               onPress={() => {
                 setDevicePickerOpen(false);
@@ -1040,7 +1039,7 @@ export default function GlassTerminalScreen() {
             >
               <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, marginRight: 8 }}>＋</Text>
               <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, flex: 1 }}>
-                buy a dev box
+                set up cloud box
               </Text>
             </Pressable>
           </Pressable>

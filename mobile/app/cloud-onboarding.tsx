@@ -1,12 +1,11 @@
-// Glass-friendly front door for the Yaver managed-cloud SKU.
+// Glass-friendly post-purchase setup for Yaver managed cloud.
 //
-// Drives the runManagedCloudFlow helper end-to-end so a user with only
-// an iPhone + XREAL + Bluetooth keyboard can buy a dev box and have
-// their Claude Code subscription token already loaded on it — without
-// touching a Mac.
+// Store-policy boundary: this screen does not sell managed cloud, open
+// checkout URLs, mention pricing, or call any payment route. It only finishes
+// setup for a machine already active on the user's account.
 //
-// Visible as a 5-step checklist:
-//   ☐ open checkout (LemonSqueezy)
+// Visible as a 4-step checklist:
+//   ☐ find cloud box
 //   ☐ wait for box (Convex device row appears)
 //   ☐ wait for agent (yaver serve up on the new box)
 //   ☐ mirror runner (push ~/.claude/.credentials.json verbatim)
@@ -20,7 +19,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -51,7 +49,7 @@ const PAL = {
 };
 
 const STEPS: { id: FlowStep; label: string }[] = [
-  { id: "checkout",        label: "open checkout" },
+  { id: "find_box",        label: "find cloud box" },
   { id: "wait_for_box",    label: "wait for box" },
   { id: "wait_for_agent",  label: "wait for agent" },
   { id: "mirror_runner",   label: "mirror runner token" },
@@ -83,18 +81,10 @@ export default function CloudOnboardingScreen(): React.ReactElement {
     abortRef.current = new AbortController();
     try {
       await runManagedCloudFlow({
-        machineType: "cpu",
-        region: "eu",
         runner: "claude",
         signal: abortRef.current.signal,
         onProgress: (p) => {
           setProgress((prev) => [...prev, p]);
-          if (p.checkoutUrl) {
-            // Pop the browser open immediately so the user doesn't have
-            // to tap a separate "open" button. iOS hands the URL to
-            // Safari which then renders in the glasses via mirroring.
-            Linking.openURL(p.checkoutUrl).catch(() => { /* deferred — user can tap the row */ });
-          }
           if (p.newBox) setNewBox(p.newBox);
         },
       });
@@ -122,15 +112,15 @@ export default function CloudOnboardingScreen(): React.ReactElement {
         <Pressable hitSlop={12} onPress={() => router.back()}>
           <Text style={[styles.headerBtn, { color: PAL.muted }]}>‹</Text>
         </Pressable>
-        <Text style={[styles.headerTitle, { color: PAL.fg }]}>buy a dev box</Text>
+        <Text style={[styles.headerTitle, { color: PAL.fg }]}>set up cloud box</Text>
         <View style={{ width: 30 }} />
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
         <Text style={[styles.lead, { color: PAL.muted }]}>
-          Buys a Yaver managed-cloud Linux box (Hetzner), waits for it to
-          come online, then pushes your Claude Code subscription token to
-          it. Total time: ~3–5 minutes.
+          Finds an existing Yaver managed-cloud Linux box on this account,
+          waits for it to come online, then pushes your Claude Code runner
+          token to it. Total time: ~3–5 minutes.
         </Text>
 
         <View style={{ marginTop: 16 }}>
@@ -168,19 +158,6 @@ export default function CloudOnboardingScreen(): React.ReactElement {
                       {stepProgress.message}
                     </Text>
                   ) : null}
-                  {stepProgress?.checkoutUrl ? (
-                    <Pressable onPress={() => Linking.openURL(stepProgress.checkoutUrl!)}>
-                      <Text style={{
-                        color: PAL.accent,
-                        fontFamily: Platform.select({ ios: "Menlo", android: "monospace" }),
-                        fontSize: 11,
-                        marginTop: 2,
-                        textDecorationLine: "underline",
-                      }} numberOfLines={1}>
-                        re-open checkout
-                      </Text>
-                    </Pressable>
-                  ) : null}
                   {isCurrent && running ? (
                     <View style={{ marginTop: 4 }}>
                       <ActivityIndicator size="small" color={color} />
@@ -200,7 +177,7 @@ export default function CloudOnboardingScreen(): React.ReactElement {
 
         {newBox ? (
           <View style={{ marginTop: 16, padding: 12, borderRadius: 6, backgroundColor: PAL.chip, borderColor: PAL.border, borderWidth: 1 }}>
-            <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 10 }}>NEW BOX</Text>
+            <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 10 }}>CLOUD BOX</Text>
             <Text style={{ color: PAL.fg, fontFamily: "Menlo", fontSize: 13, marginTop: 4 }}>{newBox.label}</Text>
             <Text style={{ color: PAL.muted, fontFamily: "Menlo", fontSize: 10, marginTop: 4 }}>
               deviceId: {newBox.deviceId}
@@ -216,8 +193,8 @@ export default function CloudOnboardingScreen(): React.ReactElement {
             <Pressable
               onPress={() => {
                 Alert.alert(
-                  "Buy a dev box?",
-                  "This opens LemonSqueezy in your browser. You'll be charged for the managed-cloud subscription. Provisioning typically takes 3–5 min.",
+                  "Set up cloud box?",
+                  "Yaver will look for an existing managed-cloud machine on this account and mirror your runner token to it.",
                   [
                     { text: "Cancel", style: "cancel" },
                     { text: "Continue", onPress: () => void start() },
