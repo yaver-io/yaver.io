@@ -9,6 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+
+	"golang.org/x/term"
 )
 
 func runVoice(args []string) {
@@ -18,7 +21,10 @@ func runVoice(args []string) {
 		fmt.Fprintln(os.Stderr, "yaver voice — hands-free agent loop")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  yaver voice status                 show readiness + provider state")
-		fmt.Fprintln(os.Stderr, "  yaver voice setup                  print interactive setup hints")
+		fmt.Fprintln(os.Stderr, "  yaver voice setup                  print setup hints")
+		fmt.Fprintln(os.Stderr, "  yaver voice setup cartesia         set Cartesia as TTS provider")
+		fmt.Fprintln(os.Stderr, "  yaver voice setup deepgram-cartesia --deepgram-api-key dg_... --cartesia-api-key ck_...")
+		fmt.Fprintln(os.Stderr, "  yaver voice setup openai --openai-api-key sk-...")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Voice surface lives at /voice/status + /voice/stream on the running agent.")
 		fmt.Fprintln(os.Stderr, "Mobile + Feedback-SDK clients drive it; this CLI is for inspection only.")
@@ -33,7 +39,7 @@ func runVoice(args []string) {
 	case "status":
 		voiceCLIStatus()
 	case "setup":
-		voiceCLISetup()
+		voiceCLISetupWithArgs(args[1:])
 	case "-h", "--help", "help":
 		fs.Usage()
 	default:
@@ -53,8 +59,8 @@ func voiceCLIStatus() {
 	}
 	fmt.Println("voice:")
 	fmt.Printf("  enabled:        %v\n", v.Enabled)
-	fmt.Printf("  stt provider:   deepgram-flux   ready=%v\n", v.DeepgramAPIKey != "")
-	fmt.Printf("  tts provider:   cartesia-sonic  ready=%v\n", v.CartesiaAPIKey != "")
+	fmt.Printf("  stt provider:   %s   ready=%v\n", v.EffectiveSTTProvider(), voiceSTTReady(v))
+	fmt.Printf("  tts provider:   %s   ready=%v\n", v.EffectiveTTSProvider(), voiceTTSReady(v))
 	if v.DefaultProject != "" {
 		fmt.Printf("  default project: %s\n", v.DefaultProject)
 	}
@@ -64,7 +70,79 @@ func voiceCLIStatus() {
 }
 
 func voiceCLISetup() {
+	voiceCLISetupWithArgs(nil)
+}
+
+type voiceSetupOptions struct {
+	Stack           string
+	OpenAIAPIKey    string
+	DeepgramAPIKey  string
+	CartesiaAPIKey  string
+	CartesiaVoiceID string
+	DefaultProject  string
+	Disable         bool
+	PrintOnly       bool
+}
+
+func voiceCLISetupWithArgs(args []string) {
+	fs := flag.NewFlagSet("voice setup", flag.ExitOnError)
+	fs.SetOutput(os.Stderr)
+	opt := voiceSetupOptions{}
+	fs.StringVar(&opt.Stack, "stack", "", "Provider stack: openai, cartesia, deepgram-cartesia")
+	fs.StringVar(&opt.OpenAIAPIKey, "openai-api-key", "", "OpenAI API key")
+	fs.StringVar(&opt.DeepgramAPIKey, "deepgram-api-key", "", "Deepgram API key")
+	fs.StringVar(&opt.CartesiaAPIKey, "cartesia-api-key", "", "Cartesia API key")
+	fs.StringVar(&opt.CartesiaVoiceID, "cartesia-voice-id", "", "Cartesia voice ID")
+	fs.StringVar(&opt.DefaultProject, "default-project", "", "Default voice project slug")
+	fs.BoolVar(&opt.Disable, "disable", false, "Disable voice without removing saved keys")
+	fs.BoolVar(&opt.PrintOnly, "print", false, "Print setup examples without writing config")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: yaver voice setup [openai|cartesia|deepgram-cartesia] [flags]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		os.Exit(2)
+	}
+	if fs.NArg() > 0 {
+		opt.Stack = fs.Arg(0)
+	}
+
+	if opt.PrintOnly || !voiceSetupHasWriteIntent(opt) {
+		printVoiceSetupHints()
+		return
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: load config: %v\n", err)
+		os.Exit(1)
+	}
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	if err := applyVoiceSetup(cfg, &opt, os.Stdin.Fd()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := SaveConfig(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	path, _ := ConfigPath()
+	fmt.Printf("Saved voice setup to %s\n", path)
+	voiceCLIStatus()
+	fmt.Println("Restart yaver serve if the agent is already running.")
+}
+
+func printVoiceSetupHints() {
 	fmt.Println("Voice setup — pick ONE provider stack + paste keys into ~/.yaver/config.json")
+	fmt.Println()
+	fmt.Println("Fast path:")
+	fmt.Println()
+	fmt.Println("  yaver voice setup openai --openai-api-key sk-...")
+	fmt.Println("  yaver voice setup cartesia --cartesia-api-key ck_...")
+	fmt.Println("  yaver voice setup deepgram-cartesia --deepgram-api-key dg_... --cartesia-api-key ck_...")
 	fmt.Println()
 	fmt.Println("OPTION 1 (default, simplest — one signup, one key):")
 	fmt.Println()
@@ -104,4 +182,163 @@ func voiceCLISetup() {
 	fmt.Println()
 	fmt.Println("Then restart the agent (yaver serve) and call GET /voice/status to verify.")
 	fmt.Println("Keys stay on YOUR machine — never sync to Convex (enforced by convex_privacy_test.go).")
+}
+
+func voiceSetupHasWriteIntent(opt voiceSetupOptions) bool {
+	return opt.Disable ||
+		strings.TrimSpace(opt.Stack) != "" ||
+		strings.TrimSpace(opt.OpenAIAPIKey) != "" ||
+		strings.TrimSpace(opt.DeepgramAPIKey) != "" ||
+		strings.TrimSpace(opt.CartesiaAPIKey) != "" ||
+		strings.TrimSpace(opt.CartesiaVoiceID) != "" ||
+		strings.TrimSpace(opt.DefaultProject) != ""
+}
+
+func applyVoiceSetup(cfg *Config, opt *voiceSetupOptions, stdin uintptr) error {
+	if cfg.Voice == nil {
+		cfg.Voice = &VoiceConfig{}
+	}
+	v := cfg.Voice
+	if opt.Disable {
+		v.Enabled = false
+		return nil
+	}
+
+	stack := strings.ToLower(strings.TrimSpace(opt.Stack))
+	stack = strings.ReplaceAll(stack, "_", "-")
+	switch stack {
+	case "", "existing":
+	case "openai":
+		v.STTProvider = "openai"
+		v.TTSProvider = "openai"
+	case "cartesia":
+		v.TTSProvider = "cartesia"
+	case "deepgram-cartesia", "deepgram+cartesia", "dg-cartesia":
+		v.STTProvider = "deepgram"
+		v.TTSProvider = "cartesia"
+	default:
+		return fmt.Errorf("unknown voice setup stack %q (use openai, cartesia, or deepgram-cartesia)", opt.Stack)
+	}
+
+	if key := strings.TrimSpace(opt.OpenAIAPIKey); key != "" {
+		v.OpenAIAPIKey = key
+		if stack == "" {
+			v.STTProvider = "openai"
+			v.TTSProvider = "openai"
+		}
+	}
+	if key := strings.TrimSpace(opt.DeepgramAPIKey); key != "" {
+		v.DeepgramAPIKey = key
+		if stack == "" {
+			v.STTProvider = "deepgram"
+		}
+	}
+	if key := strings.TrimSpace(opt.CartesiaAPIKey); key != "" {
+		v.CartesiaAPIKey = key
+		if stack == "" {
+			v.TTSProvider = "cartesia"
+		}
+	}
+	if voiceID := strings.TrimSpace(opt.CartesiaVoiceID); voiceID != "" {
+		v.CartesiaVoiceID = voiceID
+	}
+	if project := strings.TrimSpace(opt.DefaultProject); project != "" {
+		v.DefaultProject = project
+	}
+
+	if term.IsTerminal(int(stdin)) {
+		if v.EffectiveSTTProvider() == "openai" && v.OpenAIAPIKey == "" {
+			key, err := readVoiceSecret(stdin, "OpenAI API key")
+			if err != nil {
+				return err
+			}
+			v.OpenAIAPIKey = key
+		}
+		if v.EffectiveSTTProvider() == "deepgram" && v.DeepgramAPIKey == "" {
+			key, err := readVoiceSecret(stdin, "Deepgram API key")
+			if err != nil {
+				return err
+			}
+			v.DeepgramAPIKey = key
+		}
+		if v.EffectiveTTSProvider() == "cartesia" && v.CartesiaAPIKey == "" {
+			key, err := readVoiceSecret(stdin, "Cartesia API key")
+			if err != nil {
+				return err
+			}
+			v.CartesiaAPIKey = key
+		}
+	}
+	if err := validateVoiceSetupReady(v); err != nil {
+		return err
+	}
+
+	v.Enabled = true
+	return nil
+}
+
+func readVoiceSecret(stdin uintptr, label string) (string, error) {
+	fmt.Fprintf(os.Stderr, "%s: ", label)
+	b, err := term.ReadPassword(int(stdin))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(b))
+	if value == "" {
+		return "", fmt.Errorf("%s cannot be empty", label)
+	}
+	return value, nil
+}
+
+func voiceSTTReady(v *VoiceConfig) bool {
+	if v == nil {
+		return false
+	}
+	switch v.EffectiveSTTProvider() {
+	case "openai":
+		return strings.TrimSpace(v.OpenAIAPIKey) != ""
+	case "deepgram":
+		return strings.TrimSpace(v.DeepgramAPIKey) != ""
+	default:
+		return false
+	}
+}
+
+func voiceTTSReady(v *VoiceConfig) bool {
+	if v == nil {
+		return false
+	}
+	switch v.EffectiveTTSProvider() {
+	case "openai":
+		return strings.TrimSpace(v.OpenAIAPIKey) != ""
+	case "cartesia":
+		return strings.TrimSpace(v.CartesiaAPIKey) != ""
+	default:
+		return false
+	}
+}
+
+func validateVoiceSetupReady(v *VoiceConfig) error {
+	switch v.EffectiveSTTProvider() {
+	case "openai":
+		if strings.TrimSpace(v.OpenAIAPIKey) == "" {
+			return fmt.Errorf("missing OpenAI API key for STT; pass --openai-api-key or run setup from an interactive terminal")
+		}
+	case "deepgram":
+		if strings.TrimSpace(v.DeepgramAPIKey) == "" {
+			return fmt.Errorf("missing Deepgram API key; pass --deepgram-api-key or run setup from an interactive terminal")
+		}
+	}
+	switch v.EffectiveTTSProvider() {
+	case "openai":
+		if strings.TrimSpace(v.OpenAIAPIKey) == "" {
+			return fmt.Errorf("missing OpenAI API key for TTS; pass --openai-api-key or run setup from an interactive terminal")
+		}
+	case "cartesia":
+		if strings.TrimSpace(v.CartesiaAPIKey) == "" {
+			return fmt.Errorf("missing Cartesia API key; pass --cartesia-api-key or run setup from an interactive terminal")
+		}
+	}
+	return nil
 }
