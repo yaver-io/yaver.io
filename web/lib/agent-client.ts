@@ -3156,6 +3156,10 @@ export class AgentClient {
         if (authExpired) {
           throw new Error("Agent reached, but its Convex session is expired — run `yaver auth` on the remote device");
         }
+        const relayLimit = diagnostics.find((d) => d.status === 429 || d.status === 413 || d.status === 503);
+        if (relayLimit?.error) {
+          throw new Error(relayLimit.error);
+        }
         throw new Error("Could not reach agent (direct, tunnel, or relay)");
       }
 
@@ -4098,6 +4102,15 @@ export class AgentClient {
         expectReactDom: "^19.0.0",
       }),
     }, 240_000);
+    if (!res.ok) {
+      return {
+        ok: false,
+        bundleUrl: "",
+        size: 0,
+        fileCount: 0,
+        error: await responseErrorMessage(res, `HTTP ${res.status}`),
+      };
+    }
     const body: unknown = await res.json().catch(() => ({}));
     const obj = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
     if (!res.ok || obj.status !== "ok") {
@@ -4106,9 +4119,7 @@ export class AgentClient {
         bundleUrl: "",
         size: 0,
         fileCount: 0,
-        error: !res.ok
-          ? await responseErrorMessage(res, `HTTP ${res.status}`)
-          : typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`,
+        error: typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`,
         output: typeof obj.output === "string" ? obj.output : undefined,
       };
     }
