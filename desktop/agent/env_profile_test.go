@@ -39,7 +39,7 @@ func TestEnvironmentProfileApplyDryRunManualStepsAndSync(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := NewHTTPServer(0, "tok", "user", "device", "", "host", NewTaskManager(t.TempDir(), nil, defaultRunner))
 	profile := EnvironmentProfile{
-		Platform: "darwin",
+		Platform: "linux",
 		Binaries: []DetectedBinary{
 			{Name: "git", Path: "/usr/bin/git"},
 		},

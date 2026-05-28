@@ -134,6 +134,56 @@ var integrations = []installPlan{
 		},
 	},
 	{
+		name:        "rg",
+		description: "ripgrep — fast recursive search used by coding agents, Vim/Neovim configs, and terminal workflows",
+		macOS:       []string{"brew install ripgrep"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y ripgrep"},
+			{"dnf", "sudo dnf install -y ripgrep"},
+			{"pacman", "sudo pacman -S --noconfirm ripgrep"},
+		},
+	},
+	{
+		name:        "fd",
+		description: "fd — fast file finder commonly used with fzf and editor integrations",
+		macOS:       []string{"brew install fd"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y fd-find"},
+			{"dnf", "sudo dnf install -y fd-find"},
+			{"pacman", "sudo pacman -S --noconfirm fd"},
+		},
+	},
+	{
+		name:        "bat",
+		description: "bat — syntax-highlighted cat replacement used by fzf previews and terminal workflows",
+		macOS:       []string{"brew install bat"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y bat"},
+			{"dnf", "sudo dnf install -y bat"},
+			{"pacman", "sudo pacman -S --noconfirm bat"},
+		},
+	},
+	{
+		name:        "jq",
+		description: "jq — JSON inspection and scripting utility used by deploy and terminal workflows",
+		macOS:       []string{"brew install jq"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y jq"},
+			{"dnf", "sudo dnf install -y jq"},
+			{"pacman", "sudo pacman -S --noconfirm jq"},
+		},
+	},
+	{
+		name:        "fzf",
+		description: "fzf — fuzzy finder for shell, Vim/Neovim, and tmux workflows",
+		macOS:       []string{"brew install fzf"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y fzf"},
+			{"dnf", "sudo dnf install -y fzf"},
+			{"pacman", "sudo pacman -S --noconfirm fzf"},
+		},
+	},
+	{
 		name:        "vercel",
 		description: "Vercel CLI — deploy web apps and edge backends from the Pi dev node",
 		runFunc:     runVercelInstall,
@@ -142,6 +192,24 @@ var integrations = []installPlan{
 		name:        "convex",
 		description: "Convex CLI — managed backend workflows and local project setup from the Pi dev node",
 		runFunc:     runConvexInstall,
+	},
+	{
+		name:        "wrangler",
+		description: "Cloudflare Wrangler CLI — Workers/Pages deploys and D1/R2/Queues workflows from a remote dev node",
+		macOS:       []string{"npm install -g wrangler"},
+		linux: []linuxStep{
+			{"npm", "npm install -g wrangler"},
+		},
+	},
+	{
+		name:        "go",
+		description: "Go toolchain — build/test Go services, CLIs, and Yaver backend helpers",
+		macOS:       []string{"brew install go"},
+		linux: []linuxStep{
+			{"apt-get", "sudo apt-get install -y golang-go"},
+			{"dnf", "sudo dnf install -y golang"},
+			{"pacman", "sudo pacman -S --noconfirm go"},
+		},
 	},
 	{
 		name:        "postgresql-client",
@@ -311,13 +379,31 @@ var integrations = []installPlan{
 		description: "WebRTC remote-runtime pipeline (alias for remote-runtime + doctor probe). Run after `npm install -g yaver-cli` if you opted out of the postinstall bootstrap.",
 		runFunc:     runWebRTCInstall,
 	},
+	// Runner installs go through ensureRunnerInstalledStream so a
+	// fresh box (Pi, ARM cloud, mac without brew) provisions a
+	// sudo-free node runtime into ~/.yaver/runtimes/node before
+	// `npm install -g`. Drives the web Devices view and mobile
+	// CodingAgentsSection install buttons via /install/<runner> and
+	// /peer/<id>/install/<runner>.
+	{
+		name:        "claude",
+		description: "Claude Code — Anthropic's coding agent (subscription OAuth via Yaver). Installs @anthropic-ai/claude-code globally.",
+		runFunc: func(ctx context.Context, progress func(string)) error {
+			return ensureRunnerInstalledStream(ctx, "claude", progress)
+		},
+	},
+	{
+		name:        "codex",
+		description: "OpenAI Codex — code-execution agent (ChatGPT Plus OAuth via Yaver). Installs @openai/codex globally.",
+		runFunc: func(ctx context.Context, progress func(string)) error {
+			return ensureRunnerInstalledStream(ctx, "codex", progress)
+		},
+	},
 	{
 		name:        "opencode",
 		description: "opencode — yaver's third first-class runner. BYOK any provider (Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) via opencode.json.",
-		macOS:       []string{"brew install opencode"},
-		linux: []linuxStep{
-			{"npm", "npm install -g opencode-ai"},
-			{"curl", "curl -fsSL https://opencode.ai/install | bash"},
+		runFunc: func(ctx context.Context, progress func(string)) error {
+			return ensureRunnerInstalledStream(ctx, "opencode", progress)
 		},
 	},
 	{
@@ -508,11 +594,14 @@ func checkInstalled(name string) string {
 			return "✓"
 		}
 		return "—"
-	case "vercel", "convex", "supabase":
+	case "vercel", "convex", "supabase", "wrangler":
 		if home, err := os.UserHomeDir(); err == nil {
 			if _, err := os.Stat(filepath.Join(home, ".local", "bin", name)); err == nil {
 				return "✓"
 			}
+		}
+		if DiscoverBinary(name) != "" {
+			return "✓"
 		}
 		return "—"
 	}
@@ -525,6 +614,13 @@ func checkInstalled(name string) string {
 		"docker":            {"docker"},
 		"tailscale":         {"tailscale"},
 		"cloudflared":       {"cloudflared"},
+		"wrangler":          {"wrangler"},
+		"go":                {"go"},
+		"rg":                {"rg"},
+		"fd":                {"fd", "fdfind"},
+		"bat":               {"bat", "batcat"},
+		"jq":                {"jq"},
+		"fzf":               {"fzf"},
 		"sqlite3":           {"sqlite3"},
 		"vercel":            {"vercel"},
 		"convex":            {"convex"},
@@ -543,6 +639,8 @@ func checkInstalled(name string) string {
 		"cliclick":          {"cliclick"},
 		"appium":            {"appium"},
 		"maestro":           {"maestro"},
+		"claude":            {"claude"},
+		"codex":             {"codex"},
 		"opencode":          {"opencode"},
 		"pre-commit":        {"pre-commit"},
 		"pytest":            {"pytest"},
@@ -1214,14 +1312,28 @@ func metaInstallPlan(name string) (installPlan, bool) {
 			description: "Meta-target: everything needed to host a phone-targeted WebRTC remote runtime — Java 17, Android SDK + ARM64 emulator, Flutter, ffmpeg/GStreamer capture stack. Run once per dev box.",
 			runFunc:     runRemoteRuntimeInstall,
 		}, true
+	case "claude":
+		return installPlan{
+			name:        "claude",
+			description: "Claude Code — Anthropic's coding agent (subscription OAuth via Yaver). Installs @anthropic-ai/claude-code globally.",
+			runFunc: func(ctx context.Context, progress func(string)) error {
+				return ensureRunnerInstalledStream(ctx, "claude", progress)
+			},
+		}, true
+	case "codex":
+		return installPlan{
+			name:        "codex",
+			description: "OpenAI Codex — code-execution agent (ChatGPT Plus OAuth via Yaver). Installs @openai/codex globally.",
+			runFunc: func(ctx context.Context, progress func(string)) error {
+				return ensureRunnerInstalledStream(ctx, "codex", progress)
+			},
+		}, true
 	case "opencode":
 		return installPlan{
 			name:        "opencode",
 			description: "opencode — yaver's third first-class runner. BYOK any provider (Anthropic / OpenAI / OpenRouter / Ollama / GLM / ZAI / …) via opencode.json.",
-			macOS:       []string{"brew install opencode"},
-			linux: []linuxStep{
-				{"npm", "npm install -g opencode-ai"},
-				{"curl", "curl -fsSL https://opencode.ai/install | bash"},
+			runFunc: func(ctx context.Context, progress func(string)) error {
+				return ensureRunnerInstalledStream(ctx, "opencode", progress)
 			},
 		}, true
 	case "tdd":
@@ -1296,6 +1408,95 @@ func metaInstallPlan(name string) (installPlan, bool) {
 	default:
 		return installPlan{}, false
 	}
+}
+
+// installNodeGlobalPackageStream is the progress-streaming twin of
+// installNodeGlobalPackage in runner_auth_setup.go. The
+// terminal-driven CLI path (`yaver runner-auth setup`) is happy
+// collecting CombinedOutput() in one chunk, but the web Devices view
+// and mobile CodingAgentsSection install buttons drive
+// /install/<runner> and need line-by-line progress through the
+// install:<tool> log stream so the user sees something happen
+// during the ~30 s npm install. Node-runtime auto-provision +
+// sysctl tune + PATH augmentation match the non-streaming variant
+// 1:1 so a fresh box (Pi, ARM cloud, mac without brew) Just Works.
+func installNodeGlobalPackageStream(ctx context.Context, pkg string, progress func(string)) error {
+	if runtime.GOOS == "linux" {
+		ensureLinuxRunnerSandboxSupport()
+	}
+	nodeBin, err := installNodeRuntime(ctx, progress)
+	if err != nil {
+		return err
+	}
+	npmPath := filepath.Join(nodeBin, "npm")
+	if runtime.GOOS == "windows" {
+		npmPath += ".cmd"
+	}
+	if progress != nil {
+		progress(fmt.Sprintf("$ %s install -g %s", npmPath, pkg))
+	}
+	cmd := exec.CommandContext(ctx, npmPath, "install", "-g", pkg)
+	cmd.Env = append(os.Environ(), "PATH="+nodeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	var wg sync.WaitGroup
+	scan := func(r io.Reader) {
+		defer wg.Done()
+		s := bufio.NewScanner(r)
+		s.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for s.Scan() {
+			if progress != nil {
+				progress(s.Text())
+			}
+		}
+	}
+	wg.Add(2)
+	go scan(stdout)
+	go scan(stderr)
+	wg.Wait()
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("npm install -g %s: %v", pkg, err)
+	}
+	augmentAgentPATH()
+	return nil
+}
+
+// ensureRunnerInstalledStream mirrors ensureRunnerInstalled but
+// streams progress so the /install/<runner> SSE log carries live
+// output. Pre-check via resolveRunnerBinary avoids a no-op npm
+// reinstall on boxes where the runner is already present.
+func ensureRunnerInstalledStream(ctx context.Context, runner string, progress func(string)) error {
+	cmd := GetRunnerConfig(runner).Command
+	if strings.TrimSpace(cmd) == "" {
+		return fmt.Errorf("unsupported runner %q", runner)
+	}
+	if resolveRunnerBinary(cmd) != "" {
+		if progress != nil {
+			progress(runner + " already installed, skipping")
+		}
+		return nil
+	}
+	var pkg string
+	switch normalizeRunnerAuthName(runner) {
+	case "claude":
+		pkg = "@anthropic-ai/claude-code"
+	case "codex":
+		pkg = "@openai/codex"
+	case "opencode":
+		pkg = "opencode-ai"
+	default:
+		return fmt.Errorf("runner %q does not have an auto-install recipe yet", runner)
+	}
+	return installNodeGlobalPackageStream(ctx, pkg, progress)
 }
 
 func runVercelInstall(ctx context.Context, progress func(string)) error {

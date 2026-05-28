@@ -14003,6 +14003,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		return mcpToolResult(s.lemonMgr.Setup())
 
 	default:
+		// Dev environment clone — orchestrates toolchain sync, repo clone, and coding-agent readiness.
+		if handled, result := dispatchDevEnvironmentCloneMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
 		// Phone-first mini backend (desktop/agent/phone_backend.go)
 		if handled, result := dispatchPhoneMCP(s, call.Name, call.Arguments); handled {
 			return result

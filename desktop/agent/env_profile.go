@@ -49,6 +49,8 @@ type EnvironmentProfile struct {
 	WorkDir            string                          `json:"workDir,omitempty"`
 	DiscoveredProjects []EnvironmentProjectSummary     `json:"discoveredProjects,omitempty"`
 	Binaries           []DetectedBinary                `json:"binaries,omitempty"`
+	ToolchainTargets   []string                        `json:"toolchainTargets,omitempty"`
+	Configs            []DetectedDevConfig             `json:"configs,omitempty"`
 	Runners            []EnvironmentRunnerSummary      `json:"runners,omitempty"`
 	SyncKinds          []EnvironmentSyncSummary        `json:"syncKinds,omitempty"`
 	GitCredentials     []ToolchainGitCredentialSummary `json:"gitCredentials,omitempty"`
@@ -156,6 +158,7 @@ func buildEnvironmentProfile(s *HTTPServer) EnvironmentProfile {
 		})
 	}
 
+	binaries := DiscoverInstalledBinaries()
 	return EnvironmentProfile{
 		GeneratedAt:        time.Now().UTC().Format(time.RFC3339),
 		SourceDeviceID:     sourceDeviceID,
@@ -164,30 +167,111 @@ func buildEnvironmentProfile(s *HTTPServer) EnvironmentProfile {
 		Arch:               runtime.GOARCH,
 		WorkDir:            workDir,
 		DiscoveredProjects: projectSummaries,
-		Binaries:           DiscoverInstalledBinaries(),
+		Binaries:           binaries,
+		ToolchainTargets:   toolchainTargetsFromBinaries(binaries),
+		Configs:            discoverDevConfigs(),
 		Runners:            runners,
 		SyncKinds:          syncKinds,
 		GitCredentials:     currentGitCredentialSummaries(),
 	}
 }
 
+func toolchainTargetsFromBinaries(binaries []DetectedBinary) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(binaries))
+	for _, binary := range binaries {
+		target := strings.TrimSpace(binary.InstallTarget)
+		if target == "" {
+			if mapped, ok := profileInstallTarget(binary.Name); ok {
+				target = mapped
+			}
+		}
+		if target == "" || seen[target] {
+			continue
+		}
+		seen[target] = true
+		out = append(out, target)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return toolchainTargetPriority(out[i]) < toolchainTargetPriority(out[j])
+	})
+	return out
+}
+
+func toolchainTargetPriority(name string) int {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "yaver":
+		return 10
+	case "cloudflared", "wrangler":
+		return 20
+	case "convex":
+		return 30
+	case "vercel":
+		return 40
+	case "git", "gh", "glab":
+		return 50
+	case "node":
+		return 70
+	case "go", "python3", "python", "uv", "cargo", "rustc", "ruby", "php", "dart", "flutter", "java", "gradle":
+		return 80
+	case "docker", "tailscale", "kubectl", "terraform":
+		return 100
+	case "android-sdk", "xcodegen", "xcodebuild", "xcrun", "pod", "fastlane":
+		return 110
+	case "postgresql-client", "sqlite3", "redis-tools":
+		return 120
+	case "tmux", "ffmpeg", "rg", "fd", "bat", "jq", "fzf":
+		return 130
+	default:
+		return 500
+	}
+}
+
 func profileInstallTarget(name string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "yaver":
+		return "yaver", true
 	case "git":
 		return "git", true
 	case "gh":
 		return "gh", true
+	case "glab":
+		return "glab", true
 	case "uv":
 		return "uv", true
 	case "docker":
+		return "docker", true
+	case "docker-compose":
 		return "docker", true
 	case "tailscale":
 		return "tailscale", true
 	case "cloudflared":
 		return "cloudflared", true
+	case "wrangler":
+		return "wrangler", true
+	case "convex":
+		return "convex", true
+	case "vercel":
+		return "vercel", true
+	case "supabase":
+		return "supabase", true
 	case "sqlite3":
 		return "sqlite3", true
-	case "node", "npm", "pnpm", "yarn", "bun":
+	case "psql":
+		return "postgresql-client", true
+	case "redis-cli":
+		return "redis-tools", true
+	case "rg", "ripgrep":
+		return "rg", true
+	case "fd", "fdfind":
+		return "fd", true
+	case "bat", "batcat":
+		return "bat", true
+	case "jq":
+		return "jq", true
+	case "fzf":
+		return "fzf", true
+	case "node", "npm", "npx", "pnpm", "yarn", "bun", "deno":
 		return "node", true
 	case "opencode":
 		return "opencode", true
@@ -199,6 +283,8 @@ func profileInstallTarget(name string) (string, bool) {
 		return "firefox", true
 	case "adb", "emulator", "android-sdk":
 		return "android-sdk", true
+	case "go", "cargo", "rustc", "rustup", "python3", "python", "pip3", "pip", "pipx", "ruby", "gem", "bundle", "composer", "php", "dart", "flutter", "java", "javac", "gradle", "mvn", "kubectl", "terraform", "aws", "gcloud", "az", "netlify", "firebase", "railway", "flyctl", "xcodebuild", "xcrun", "pod", "fastlane", "make", "cmake", "ninja", "gcc", "g++", "clang", "clang++", "swift":
+		return strings.ToLower(strings.TrimSpace(name)), true
 	case "tmux":
 		return "tmux", true
 	case "ffmpeg":
@@ -437,7 +523,14 @@ func applyEnvironmentProfile(ctx context.Context, convexURL string, profile Envi
 	for target := range installTargets {
 		targets = append(targets, target)
 	}
-	sort.Strings(targets)
+	sort.SliceStable(targets, func(i, j int) bool {
+		pi := toolchainTargetPriority(targets[i])
+		pj := toolchainTargetPriority(targets[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return targets[i] < targets[j]
+	})
 	for _, target := range targets {
 		if checkInstalled(target) == "✓" {
 			result.AlreadyPresent = append(result.AlreadyPresent, target)

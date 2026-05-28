@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,9 +35,12 @@ import (
 // for ~/.cargo/bin/<tool>, and so on. When we genuinely can't tell,
 // it's left empty.
 type DetectedBinary struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	Manager string `json:"manager,omitempty"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	Manager       string `json:"manager,omitempty"`
+	Category      string `json:"category,omitempty"`
+	Priority      int    `json:"priority,omitempty"`
+	InstallTarget string `json:"installTarget,omitempty"`
 }
 
 // commonInstallPrefixes returns the directories we probe beyond $PATH.
@@ -49,15 +53,15 @@ func commonInstallPrefixes() []string {
 	switch runtime.GOOS {
 	case "darwin":
 		prefixes = append(prefixes,
-			"/opt/homebrew/bin",       // Apple Silicon brew
+			"/opt/homebrew/bin", // Apple Silicon brew
 			"/opt/homebrew/sbin",
-			"/usr/local/bin",          // Intel brew
+			"/usr/local/bin", // Intel brew
 			"/usr/local/sbin",
 		)
 	case "linux":
 		prefixes = append(prefixes,
-			"/snap/bin",                           // snap installs
-			"/var/lib/flatpak/exports/bin",        // flatpak installs (system-wide)
+			"/snap/bin",                    // snap installs
+			"/var/lib/flatpak/exports/bin", // flatpak installs (system-wide)
 			filepath.Join(home, ".local/share/flatpak/exports/bin"), // flatpak user
 			"/usr/local/bin",
 			"/usr/bin",
@@ -75,12 +79,12 @@ func commonInstallPrefixes() []string {
 
 	if home != "" {
 		prefixes = append(prefixes,
-			filepath.Join(home, ".local/bin"),     // pipx, uv, user pip
-			filepath.Join(home, ".cargo/bin"),     // rustup + cargo install
+			filepath.Join(home, ".local/bin"), // pipx, uv, user pip
+			filepath.Join(home, ".cargo/bin"), // rustup + cargo install
 			filepath.Join(home, ".npm-global/bin"),
 			filepath.Join(home, ".bun/bin"),
 			filepath.Join(home, ".deno/bin"),
-			filepath.Join(home, "go/bin"),         // GOPATH default
+			filepath.Join(home, "go/bin"), // GOPATH default
 			filepath.Join(home, ".yaver/runtimes/bin"),
 			filepath.Join(home, ".yaver/bin"),
 		)
@@ -193,17 +197,64 @@ func DiscoverBinary(name string) string {
 func knownProbeBinaries() []string {
 	return []string{
 		// AI runners
-		"claude", "codex", "opencode",
+		"claude", "codex", "opencode", "aider", "cursor-agent",
+		// Yaver + deploy/cloud CLIs. Cloudflare gets first-class coverage:
+		// `wrangler` for Workers/Pages and `cloudflared` for tunnels.
+		"yaver", "cloudflared", "wrangler", "convex", "vercel", "netlify",
+		"firebase", "railway", "flyctl", "supabase",
 		// Language runtimes
-		"node", "npm", "pnpm", "yarn", "bun",
+		"node", "npm", "npx", "pnpm", "yarn", "bun", "deno",
 		"python3", "python", "pip3", "pip", "uv", "pipx",
-		"go", "cargo", "rustc", "gem", "composer", "dart", "flutter",
+		"go", "cargo", "rustc", "rustup", "gem", "ruby", "bundle", "composer", "php",
+		"dart", "flutter", "java", "javac", "gradle", "mvn",
 		// Package managers
 		"brew", "apt-get", "dnf", "pacman", "zypper", "apk",
-		"snap", "flatpak", "winget", "choco", "scoop",
+		"snap", "flatpak", "winget", "choco", "scoop", "port", "asdf", "mise",
 		// Dev tools
-		"git", "gh", "docker", "rg", "jq", "fd", "bat", "fzf",
-		"sqlite3", "psql", "cloudflared", "tailscale",
+		"git", "gh", "glab", "docker", "docker-compose", "kubectl", "terraform",
+		"aws", "gcloud", "az", "rg", "ripgrep", "jq", "fd", "fdfind", "bat", "batcat", "fzf", "tmux", "make",
+		"cmake", "ninja", "gcc", "g++", "clang", "clang++", "swift", "xcodebuild",
+		"xcrun", "pod", "fastlane", "sqlite3", "psql", "mysql", "redis-cli",
+		"tailscale", "ffmpeg", "adb", "emulator",
+	}
+}
+
+func detectedBinaryMetadata(name, path string) (category string, priority int, installTarget string) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "yaver":
+		return "yaver", 10, ""
+	case "cloudflared", "wrangler":
+		return "cloudflare", 20, name
+	case "convex":
+		return "backend", 30, "convex"
+	case "vercel", "netlify", "firebase", "railway", "flyctl", "supabase":
+		return "deploy", 40, name
+	case "git", "gh", "glab":
+		return "git", 50, name
+	case "claude", "codex", "opencode", "aider", "cursor-agent":
+		return "ai-runner", 60, name
+	case "node", "npm", "npx", "pnpm", "yarn", "bun", "deno":
+		return "javascript", 70, "node"
+	case "go", "python3", "python", "pip3", "pip", "uv", "pipx", "cargo", "rustc", "rustup", "gem", "ruby", "bundle", "composer", "php", "dart", "flutter", "java", "javac", "gradle", "mvn":
+		return "language", 80, name
+	case "brew", "apt-get", "dnf", "pacman", "zypper", "apk", "snap", "flatpak", "winget", "choco", "scoop", "port", "asdf", "mise":
+		return "package-manager", 90, ""
+	case "docker", "docker-compose", "kubectl", "terraform", "aws", "gcloud", "az", "tailscale":
+		return "infra", 100, name
+	case "xcodebuild", "xcrun", "pod", "fastlane", "adb", "emulator":
+		return "mobile-build", 110, name
+	case "sqlite3", "psql", "mysql", "redis-cli":
+		return "database", 120, name
+	case "rg", "ripgrep":
+		return "dev-tool", 130, "rg"
+	case "fd", "fdfind":
+		return "dev-tool", 130, "fd"
+	case "bat", "batcat":
+		return "dev-tool", 130, "bat"
+	case "tmux", "ffmpeg", "jq", "fzf", "make", "cmake", "ninja", "gcc", "g++", "clang", "clang++", "swift":
+		return "dev-tool", 130, name
+	default:
+		return "binary", 999, name
 	}
 }
 
@@ -223,5 +274,14 @@ func DiscoverInstalledBinaries() []DetectedBinary {
 			Manager: guessManagerForPath(path),
 		})
 	}
+	for i := range out {
+		out[i].Category, out[i].Priority, out[i].InstallTarget = detectedBinaryMetadata(out[i].Name, out[i].Path)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
+		}
+		return out[i].Name < out[j].Name
+	})
 	return out
 }

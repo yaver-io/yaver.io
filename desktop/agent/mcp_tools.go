@@ -1956,6 +1956,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		{"name": "railway_deploy", "description": "Deploy to Railway.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string"}}}},
 	}
 	tools = append(tools, platformTools...)
+	tools = append(tools, devEnvironmentCloneMCPTools()...)
 
 	// --- Docker Extended ---
 	dockerExtTools := []map[string]interface{}{
