@@ -16,6 +16,34 @@ import webPkg from "../package.json";
 // event back to the originating client.
 const YAVER_CALLER_ID = `web-dashboard/${(webPkg as { version?: string }).version ?? "unknown"}`;
 
+function relayStatusHint(status: number): string {
+  if (status === 429) return "Yaver relay is rate limiting this connection. Wait a moment and try again.";
+  if (status === 413) return "This request is larger than the relay allows. Reduce the upload size or use a direct/tunnel path.";
+  if (status === 503) return "Yaver relay is temporarily overloaded. Try again shortly or switch to another transport.";
+  if (status === 401) return "Relay authentication failed. Check the relay password or sign in again.";
+  return `HTTP ${status}`;
+}
+
+async function responseErrorMessage(res: Response, fallback?: string): Promise<string> {
+  const base = fallback || relayStatusHint(res.status);
+  try {
+    const data = await res.clone().json();
+    const detail =
+      typeof data?.message === "string" ? data.message :
+      typeof data?.error === "string" ? data.error :
+      "";
+    if (detail) {
+      const hint = relayStatusHint(res.status);
+      return hint === `HTTP ${res.status}` ? detail : `${hint} ${detail}`;
+    }
+  } catch {}
+  try {
+    const text = await res.clone().text();
+    if (text.trim()) return `${base}: ${text.trim().slice(0, 240)}`;
+  } catch {}
+  return base;
+}
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export type TaskStatus = "queued" | "running" | "review" | "completed" | "failed" | "stopped";
@@ -1184,8 +1212,7 @@ export class AgentClient {
       body: JSON.stringify(body),
     });
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data?.error || `Failed to create task: ${res.status}`);
+      throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
     const data = await res.json();
     return {
@@ -1243,10 +1270,10 @@ export class AgentClient {
         source: "web",
       }),
     });
-    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error(data?.error || `Failed to create task: ${res.status}`);
+      throw new Error(await responseErrorMessage(res, `Failed to create task: ${res.status}`));
     }
+    const data = await res.json().catch(() => ({}));
     return this.getTask(data.taskId);
   }
 
@@ -2925,7 +2952,7 @@ export class AgentClient {
         }
       } catch {}
       if (!res.ok && !diag.error) {
-        diag.error = `HTTP ${res.status}`;
+        diag.error = await responseErrorMessage(res, `HTTP ${res.status}`);
       }
       return diag;
     } catch (e: any) {
@@ -4079,7 +4106,9 @@ export class AgentClient {
         bundleUrl: "",
         size: 0,
         fileCount: 0,
-        error: typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`,
+        error: !res.ok
+          ? await responseErrorMessage(res, `HTTP ${res.status}`)
+          : typeof obj.error === "string" ? obj.error : `HTTP ${res.status}`,
         output: typeof obj.output === "string" ? obj.output : undefined,
       };
     }
