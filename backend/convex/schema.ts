@@ -37,6 +37,11 @@ export default defineSchema({
       v.literal("gitlab"),
       v.literal("email"),
       v.literal("passkey"),
+      // "oidc" is org-configured SSO via the generic OIDC handler in
+      // http.ts (/auth/oidc/*). Distinct from individual provider
+      // OAuth so the admin can enforce "OIDC only" and tell at a
+      // glance which users came in via SSO.
+      v.literal("oidc"),
     ),
     passwordHash: v.optional(v.string()),
     surveyCompleted: v.optional(v.boolean()),
@@ -53,9 +58,15 @@ export default defineSchema({
     emailVerified: v.optional(v.boolean()),
     emailVerifiedAt: v.optional(v.number()),
     createdAt: v.number(),
+    // Org-wide admin role. The first user is bootstrapped via the
+    // env-var owner allowlist (ownerAllowlist.ts) which keeps
+    // working as a fall-back; this field is the authoritative gate
+    // for everyone promoted via the admin console afterwards.
+    platformRole: v.optional(v.union(v.literal("admin"))),
   })
     .index("by_email", ["email"])
-    .index("by_provider", ["provider", "providerId"]),
+    .index("by_provider", ["provider", "providerId"])
+    .index("by_platformRole", ["platformRole"]),
 
   authIdentities: defineTable({
     userId: v.id("users"),
@@ -67,6 +78,7 @@ export default defineSchema({
       v.literal("gitlab"),
       v.literal("email"),
       v.literal("passkey"),
+      v.literal("oidc"),
     ),
     providerId: v.string(),
     email: v.optional(v.string()),
@@ -1354,4 +1366,66 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_user_date", ["userId", "date"])
     .index("by_machine", ["machineId", "createdAt"]),
+
+  // ── Org-admin singletons ──────────────────────────────────────────
+  // Both keyed by the literal "org" so .first() always returns the
+  // one-and-only row. A new row replaces; a deleted row reverts the
+  // deployment to defaults (per-user managed config + 7-day retention
+  // + no OIDC).
+
+  orgPolicy: defineTable({
+    singletonKey: v.literal("org"),
+    enforceRelay: v.optional(v.boolean()),
+    allowedRunners: v.optional(v.array(v.string())),
+    allowedProviders: v.optional(v.array(v.string())),
+    /** Idle window in minutes. 0 or missing = disabled. Enforced in
+     *  authenticateRequest: sessions whose lastRefreshAt is older are
+     *  refused as 401. */
+    idleTimeoutMin: v.optional(v.number()),
+    /** Replaces the hard-coded 7-day default in cleanup.ts. Floors
+     *  at 1 day; missing = 7. */
+    auditRetentionDays: v.optional(v.number()),
+    /** When true, requireAdminRequest refuses admins without TOTP
+     *  enrollment. Bootstrap allowlist admins are exempt during the
+     *  first 24h after promotion so they can set up MFA. */
+    requireMfaForAdmins: v.optional(v.boolean()),
+    updatedAt: v.number(),
+    updatedBy: v.id("users"),
+  }).index("by_singleton", ["singletonKey"]),
+
+  oidcConfig: defineTable({
+    singletonKey: v.literal("org"),
+    enabled: v.boolean(),
+    issuerUrl: v.string(),
+    clientId: v.string(),
+    /** AES-GCM ciphertext of the client secret. Stored as
+     *  base64(iv || ciphertext). Decryption key comes from env
+     *  OIDC_SECRET_ENCRYPTION_KEY (32 bytes, base64). */
+    clientSecretEnc: v.string(),
+    /** Optional email-domain or tenant id; refuses sign-in from
+     *  any other tenant. Empty = no restriction. */
+    tenant: v.optional(v.string()),
+    /** Discovered from .well-known/openid-configuration. Refreshed
+     *  on every save + on every Test connection click. */
+    authorizationEndpoint: v.optional(v.string()),
+    tokenEndpoint: v.optional(v.string()),
+    userinfoEndpoint: v.optional(v.string()),
+    jwksUri: v.optional(v.string()),
+    discoveredAt: v.optional(v.number()),
+    updatedAt: v.number(),
+    updatedBy: v.id("users"),
+  }).index("by_singleton", ["singletonKey"]),
+
+  /** Ephemeral state for the OIDC authorize-code flow. PKCE verifier
+   *  + nonce + return-to URL keyed by the random `state` query param.
+   *  Pruned by cleanup.ts after the 10-min TTL. */
+  oidcAuthAttempts: defineTable({
+    state: v.string(),
+    codeVerifier: v.string(),
+    nonce: v.string(),
+    returnTo: v.optional(v.string()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  }).index("by_state", ["state"])
+    .index("by_expiresAt", ["expiresAt"]),
 });

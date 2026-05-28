@@ -4,6 +4,7 @@ import { httpAction, internalAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { sha256Hex } from "./auth";
 import { isOwnerEmail, isOwner } from "./ownerAllowlist";
+import { decryptStoredOidcSecret } from "./admin";
 
 const http = httpRouter();
 
@@ -5105,5 +5106,875 @@ const runCron = httpAction(async (ctx, req) => {
 });
 
 http.route({ path: "/crons/run", method: "POST", handler: runCron });
+
+// ── Org admin console (/admin/*) ─────────────────────────────────────
+//
+// Gate: a caller is an admin if (a) the request carries a valid Bearer
+// session, AND (b) the session user's email/userId is in the env-var
+// owner allowlist (ownerAllowlist.ts). The platformRole DB flag is the
+// future authoritative source — see admin.ts comment. Every admin route
+// goes through requireAdminRequest below so the gate lives in one place.
+
+async function requireAdminRequest(
+  ctx: { runQuery: (query: any, args: any) => Promise<any> },
+  request: Request,
+): Promise<
+  | { ok: true; user: NonNullable<Awaited<ReturnType<typeof authenticateRequest>>> }
+  | { ok: false; response: Response }
+> {
+  const user = await authenticateRequest(ctx, request);
+  if (!user) {
+    return { ok: false, response: errorResponse("Unauthorized", 401) };
+  }
+
+  // Three-source gate, evaluated in order:
+  //   1) env-var owner allowlist (solo-dev bootstrap; ALWAYS allowed).
+  //   2) users.platformRole === "admin" (post-promotion path).
+  // The env-var path is permanent — it stays as the escape hatch so
+  // the solo dev can never lock themselves out by misconfiguring a
+  // policy. Schema-promoted admins are additionally subject to the
+  // MFA gate below if org policy turns it on.
+  const isAllowlistAdmin = isOwner(user.email, user.userId);
+  let isSchemaAdmin = false;
+  if (!isAllowlistAdmin) {
+    try {
+      const userDoc = await ctx.runQuery(api.auth.getUserByDocId, {
+        userDocId: user.userDocId,
+      });
+      isSchemaAdmin = userDoc?.platformRole === "admin";
+    } catch {
+      // getUserByDocId may not exist on every deployment until the
+      // generated API regenerates — be permissive on lookup failure
+      // so the env-var allowlist still works.
+      isSchemaAdmin = false;
+    }
+  }
+  if (!isAllowlistAdmin && !isSchemaAdmin) {
+    return {
+      ok: false,
+      response: errorResponse(
+        "Forbidden — caller is not a platform admin",
+        403,
+      ),
+    };
+  }
+
+  // MFA-for-admins enforcement. Reads org policy; absence ⇒ disabled.
+  // Solo-dev safety: env-var bootstrap admins are exempt unconditionally
+  // (the policy could otherwise lock everyone out). Only schema-promoted
+  // admins fall through to this check.
+  if (!isAllowlistAdmin) {
+    try {
+      const policy = await ctx.runQuery(api.admin.getOrgPolicy, {});
+      if (policy?.requireMfaForAdmins) {
+        const userDoc = await ctx.runQuery(api.auth.getUserByDocId, {
+          userDocId: user.userDocId,
+        });
+        if (!userDoc?.totpEnabled) {
+          return {
+            ok: false,
+            response: errorResponse(
+              "MFA required for platform admins — enroll TOTP in your account settings first.",
+              403,
+            ),
+          };
+        }
+      }
+    } catch {
+      // Policy lookup failure should not lock out a schema admin who
+      // is otherwise valid.
+    }
+  }
+
+  return { ok: true, user };
+}
+
+http.route({
+  path: "/admin/overview",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const [counts, recent] = await Promise.all([
+      ctx.runQuery(api.admin.dashboardCounts, {}),
+      ctx.runQuery(api.admin.recentAuditEvents, { limit: 5 }),
+    ]);
+    return jsonResponse({ ...counts, recent });
+  }),
+});
+
+http.route({
+  path: "/admin/devices",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const rows = await ctx.runQuery(api.admin.fleetDevices, {});
+    return jsonResponse({ rows });
+  }),
+});
+
+http.route({
+  path: "/admin/sessions",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const rows = await ctx.runQuery(api.admin.activeSessionsForAdmin, {});
+    return jsonResponse({ rows });
+  }),
+});
+
+http.route({
+  path: "/admin/users",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const rows = await ctx.runQuery(api.admin.allUsersForAdmin, {});
+    return jsonResponse({ rows });
+  }),
+});
+
+http.route({
+  path: "/admin/audit",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const url = new URL(request.url);
+    const params = url.searchParams;
+    const numOrUndef = (key: string): number | undefined => {
+      const v = params.get(key);
+      if (v === null || v === "") return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const strOrUndef = (key: string): string | undefined => {
+      const v = params.get(key);
+      return v === null || v === "" ? undefined : v;
+    };
+    const result = await ctx.runQuery(api.admin.mergedAuditFeed, {
+      limit: numOrUndef("limit") ?? 50,
+      cursor: numOrUndef("cursor"),
+      actorEmail: strOrUndef("actor"),
+      eventType: strOrUndef("event"),
+      sinceMs: numOrUndef("since"),
+      untilMs: numOrUndef("until"),
+    });
+    return jsonResponse(result);
+  }),
+});
+
+// Identity check for the layout role guard. Both gates are consulted
+// — env-var allowlist (solo-dev bootstrap) and users.platformRole
+// (post-promotion). The layout uses isAdmin to decide whether to
+// render the admin chrome or redirect to /dashboard.
+http.route({
+  path: "/admin/identity",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const user = await authenticateRequest(ctx, request);
+    if (!user) return errorResponse("Unauthorized", 401);
+    let schemaAdmin = false;
+    try {
+      const doc = await ctx.runQuery(api.auth.getUserByDocId, {
+        userDocId: user.userDocId as any,
+      });
+      schemaAdmin = doc?.platformRole === "admin";
+    } catch {}
+    const allowlistAdmin = isOwner(user.email, user.userId);
+    return jsonResponse({
+      isAdmin: allowlistAdmin || schemaAdmin,
+      via: allowlistAdmin ? "allowlist" : schemaAdmin ? "platformRole" : null,
+      email: user.email,
+      userId: user.userId,
+    });
+  }),
+});
+
+// CORS preflights for every /admin/* path. The dashboard fetches from
+// CONVEX_URL with Authorization: Bearer, so the preflight has to
+// answer for that header. The user dashboard already advertises the
+// permissive header set, so we mirror it here.
+http.route({
+  pathPrefix: "/admin/",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }),
+});
+
+// ── Admin action POSTs ───────────────────────────────────────────────
+//
+// Every action POST goes through requireAdminRequest. Body is JSON;
+// the caller's userDocId is passed to mutations so audit rows record
+// who-did-what. Soft-fails (target already gone, etc.) return ok=true
+// with a flag rather than a 404, so the UI can stay congruent.
+
+async function parseJsonBody(req: Request): Promise<any> {
+  try {
+    const text = await req.text();
+    if (!text) return {};
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function getCallerDocId(
+  ctx: { runQuery: (q: any, args: any) => Promise<any> },
+  request: Request,
+): Promise<any | null> {
+  // Convex `Id<"users">` is a branded string at the type level. The
+  // generated API accepts it as-is when returned from a query, so we
+  // pass it straight through with no runtime work — the `any` here
+  // sidesteps the brand mismatch without losing safety (the mutation
+  // arg schemas re-validate at the convex boundary).
+  const authHeader = request.headers.get("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const tokenHash = await sha256Hex(authHeader.slice(7));
+  return await ctx.runQuery(api.auth.getUserDocId, { tokenHash });
+}
+
+// ── Devices ──────────────────────────────────────────────────────────
+
+http.route({
+  path: "/admin/devices/rescue",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.deviceDocId || !body?.command) {
+      return errorResponse("deviceDocId and command required", 400);
+    }
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.queueAgentRescue, {
+        deviceDocId: body.deviceDocId,
+        command: body.command,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/devices/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.deviceDocId) return errorResponse("deviceDocId required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.revokeDevice, {
+        deviceDocId: body.deviceDocId,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+// ── Sessions ─────────────────────────────────────────────────────────
+
+http.route({
+  path: "/admin/sessions/revoke",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.sessionDocId) {
+      return errorResponse("sessionDocId required", 400);
+    }
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.revokeSession, {
+        sessionDocId: body.sessionDocId,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+// ── Users ────────────────────────────────────────────────────────────
+
+http.route({
+  path: "/admin/users/promote",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.targetEmail) return errorResponse("targetEmail required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.promoteToAdmin, {
+        targetEmail: body.targetEmail,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/users/demote",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.targetDocId) return errorResponse("targetDocId required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.demoteFromAdmin, {
+        targetDocId: body.targetDocId,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/users/sign-out",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.targetDocId) return errorResponse("targetDocId required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.signOutUserAllSessions, {
+        targetDocId: body.targetDocId,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/users/export",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.targetDocId) return errorResponse("targetDocId required", 400);
+    try {
+      const bundle = await ctx.runQuery(api.admin.exportUserBundleById, {
+        targetDocId: body.targetDocId,
+      });
+      if (!bundle) return errorResponse("User not found", 404);
+      return new Response(JSON.stringify(bundle, null, 2), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Disposition": `attachment; filename=\"yaver-user-${body.targetDocId}.json\"`,
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/users/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.targetDocId) return errorResponse("targetDocId required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.deleteUserCascade, {
+        targetDocId: body.targetDocId,
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+// ── Org policy ───────────────────────────────────────────────────────
+
+http.route({
+  path: "/admin/policy",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const policy = await ctx.runQuery(api.admin.getOrgPolicy, {});
+    return jsonResponse({ policy });
+  }),
+});
+
+http.route({
+  path: "/admin/policy",
+  method: "PUT",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body) return errorResponse("JSON body required", 400);
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.setOrgPolicy, {
+        callerDocId,
+        enforceRelay: body.enforceRelay,
+        allowedRunners: body.allowedRunners,
+        allowedProviders: body.allowedProviders,
+        idleTimeoutMin: body.idleTimeoutMin,
+        auditRetentionDays: body.auditRetentionDays,
+        requireMfaForAdmins: body.requireMfaForAdmins,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+// ── OIDC config ──────────────────────────────────────────────────────
+
+// Public, no auth — used by the /auth sign-in page to decide whether
+// to render the "Sign in with company SSO" button. Returns the SAFE
+// shape (no secret, no internal endpoints), only what the button needs:
+// {enabled, issuerUrl, label}. Returns {enabled:false} for the
+// solo-dev / default case where no OIDC has been configured.
+http.route({
+  path: "/auth/oidc/info",
+  method: "GET",
+  handler: httpAction(async (ctx) => {
+    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    if (!cfg || !cfg.enabled) {
+      return jsonResponse({ enabled: false });
+    }
+    let label = cfg.issuerUrl;
+    try {
+      label = new URL(cfg.issuerUrl).host;
+    } catch {}
+    return jsonResponse({ enabled: true, label });
+  }),
+});
+
+http.route({
+  path: "/admin/sso/oidc",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    return jsonResponse({ config: cfg });
+  }),
+});
+
+/** Resolve an OIDC issuer's .well-known/openid-configuration. Returns
+ *  the four endpoints we need + a normalized status. Used by both
+ *  Test-connection and Save. */
+async function discoverOidc(issuerUrl: string): Promise<{
+  ok: boolean;
+  status: string;
+  endpoints?: {
+    authorizationEndpoint: string;
+    tokenEndpoint: string;
+    userinfoEndpoint: string;
+    jwksUri: string;
+  };
+}> {
+  try {
+    const trimmed = issuerUrl.trim().replace(/\/$/, "");
+    const wellKnownUrl = `${trimmed}/.well-known/openid-configuration`;
+    const res = await fetch(wellKnownUrl, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      return { ok: false, status: `${wellKnownUrl} returned ${res.status}` };
+    }
+    const json: any = await res.json();
+    const required = ["authorization_endpoint", "token_endpoint", "userinfo_endpoint", "jwks_uri"];
+    for (const key of required) {
+      if (!json[key] || typeof json[key] !== "string") {
+        return { ok: false, status: `${wellKnownUrl} response missing ${key}` };
+      }
+    }
+    return {
+      ok: true,
+      status: `OK — discovered ${json.issuer ?? trimmed}`,
+      endpoints: {
+        authorizationEndpoint: json.authorization_endpoint,
+        tokenEndpoint: json.token_endpoint,
+        userinfoEndpoint: json.userinfo_endpoint,
+        jwksUri: json.jwks_uri,
+      },
+    };
+  } catch (err: any) {
+    return { ok: false, status: String(err?.message || err) };
+  }
+}
+
+http.route({
+  path: "/admin/sso/oidc/test",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.issuerUrl) return errorResponse("issuerUrl required", 400);
+    const result = await discoverOidc(body.issuerUrl);
+    return jsonResponse(result);
+  }),
+});
+
+http.route({
+  path: "/admin/sso/oidc",
+  method: "PUT",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const body = await parseJsonBody(request);
+    if (!body?.issuerUrl || !body?.clientId) {
+      return errorResponse("issuerUrl and clientId required", 400);
+    }
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    // Discover endpoints inside Save so the saved config is always
+    // current. If discovery fails AND we have no prior discovery,
+    // refuse — better to surface the bad config than save a useless
+    // row.
+    const discovery = await discoverOidc(body.issuerUrl);
+    if (!discovery.ok) {
+      const existing = await ctx.runQuery(api.admin.getOidcConfig, {});
+      if (!existing || !existing.authorizationEndpoint) {
+        return errorResponse(
+          `Discovery failed: ${discovery.status}. Fix the issuer URL or test from the Test button first.`,
+          400,
+        );
+      }
+    }
+    try {
+      const result = await ctx.runMutation(api.admin.setOidcConfig, {
+        callerDocId,
+        enabled: body.enabled === true,
+        issuerUrl: body.issuerUrl,
+        clientId: body.clientId,
+        clientSecret: body.clientSecret ?? "",
+        tenant: body.tenant ?? undefined,
+        discovered: discovery.ok ? discovery.endpoints : undefined,
+      });
+      return jsonResponse({ ...result, discovered: discovery.ok });
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/admin/sso/oidc",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    const gate = await requireAdminRequest(ctx, request);
+    if (!gate.ok) return gate.response;
+    const callerDocId = await getCallerDocId(ctx, request);
+    if (!callerDocId) return errorResponse("Unauthorized", 401);
+    try {
+      const result = await ctx.runMutation(api.admin.clearOidcConfig, {
+        callerDocId,
+      });
+      return jsonResponse(result);
+    } catch (err: any) {
+      return errorResponse(String(err?.message || err), 400);
+    }
+  }),
+});
+
+// ── OIDC sign-in flow ────────────────────────────────────────────────
+//
+// The "company SSO" button on /auth → /auth/oidc/start (this server)
+// → 302 to IdP authorize endpoint with PKCE + state. After the user
+// authenticates the IdP redirects to /auth/oidc/callback (this
+// server) which verifies state, exchanges code for tokens, fetches
+// userinfo, enforces tenant restriction, upserts the user, mints a
+// Yaver session, and redirects to the web client with the session
+// token in the URL (same shape as the existing OAuth callbacks).
+
+function base64Url(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomBase64Url(byteLen: number): string {
+  const buf = new Uint8Array(byteLen);
+  crypto.getRandomValues(buf);
+  return base64Url(buf);
+}
+
+async function pkceChallenge(verifier: string): Promise<string> {
+  const hash = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(verifier),
+  );
+  return base64Url(new Uint8Array(hash));
+}
+
+/** The web base URL the OIDC callback redirects back to with the
+ *  session token. Configured via WEB_BASE_URL env; falls back to
+ *  the request origin so a self-host deployment Just Works without
+ *  setting an env var. */
+function resolveWebBaseUrl(request: Request): string {
+  const env = (process.env.WEB_BASE_URL || "").trim().replace(/\/$/, "");
+  if (env) return env;
+  try {
+    const u = new URL(request.url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+
+http.route({
+  path: "/auth/oidc/start",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const cfg = await ctx.runQuery(api.admin.getOidcConfig, {});
+    if (!cfg || !cfg.enabled || !cfg.authorizationEndpoint) {
+      return errorResponse(
+        "OIDC is not configured on this deployment.",
+        404,
+      );
+    }
+    const url = new URL(request.url);
+    const returnTo = url.searchParams.get("return_to") || undefined;
+
+    const state = randomBase64Url(24);
+    const verifier = randomBase64Url(48);
+    const challenge = await pkceChallenge(verifier);
+    const nonce = randomBase64Url(16);
+
+    await ctx.runMutation(api.admin.startOidcAttempt, {
+      state,
+      codeVerifier: verifier,
+      nonce,
+      returnTo,
+    });
+
+    const webBase = resolveWebBaseUrl(request);
+    const callbackUrl = `${webBase}/auth/oidc/callback`;
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: cfg.clientId,
+      redirect_uri: callbackUrl,
+      scope: "openid email profile",
+      state,
+      nonce,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+    });
+    const authorizeUrl = `${cfg.authorizationEndpoint}?${params.toString()}`;
+    return new Response(null, {
+      status: 302,
+      headers: { Location: authorizeUrl },
+    });
+  }),
+});
+
+http.route({
+  path: "/auth/oidc/callback",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const errParam = url.searchParams.get("error");
+    const webBase = resolveWebBaseUrl(request);
+
+    function redirectToAuth(query: Record<string, string>) {
+      const sp = new URLSearchParams(query);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `${webBase}/auth?${sp.toString()}` },
+      });
+    }
+
+    if (errParam) return redirectToAuth({ oidc_error: errParam });
+    if (!code || !state) return redirectToAuth({ oidc_error: "missing_params" });
+
+    const cfg = await ctx.runQuery(api.admin.getOidcConfigRaw, {});
+    if (!cfg || !cfg.enabled || !cfg.tokenEndpoint || !cfg.userinfoEndpoint) {
+      return redirectToAuth({ oidc_error: "config_missing" });
+    }
+
+    const attempt = await ctx.runMutation(api.admin.consumeOidcAttempt, { state });
+    if (!attempt) return redirectToAuth({ oidc_error: "invalid_state" });
+
+    // Exchange code → tokens.
+    let clientSecret = "";
+    try {
+      clientSecret = await decryptStoredOidcSecret(cfg.clientSecretEnc);
+    } catch (err: any) {
+      console.error("[oidc] secret decrypt failed:", err);
+      return redirectToAuth({ oidc_error: "secret_decrypt_failed" });
+    }
+
+    const callbackUrl = `${webBase}/auth/oidc/callback`;
+    const tokenForm = new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: callbackUrl,
+      client_id: cfg.clientId,
+      client_secret: clientSecret,
+      code_verifier: attempt.codeVerifier,
+    });
+
+    let tokens: any;
+    try {
+      const tokenRes = await fetch(cfg.tokenEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: tokenForm.toString(),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!tokenRes.ok) {
+        const detail = await tokenRes.text().catch(() => "");
+        console.error("[oidc] token endpoint", tokenRes.status, detail);
+        return redirectToAuth({ oidc_error: "token_exchange_failed" });
+      }
+      tokens = await tokenRes.json();
+    } catch (err: any) {
+      console.error("[oidc] token fetch:", err);
+      return redirectToAuth({ oidc_error: "token_fetch_error" });
+    }
+
+    if (!tokens?.access_token) {
+      return redirectToAuth({ oidc_error: "no_access_token" });
+    }
+
+    // Fetch userinfo. We rely on userinfo for identity (email, sub)
+    // rather than parsing the ID token here — keeps the implementation
+    // small and works against any compliant OIDC server. Tenant
+    // restriction is enforced after userinfo so an unfederated user
+    // never makes it to the upsert.
+    let userinfo: any;
+    try {
+      const uiRes = await fetch(cfg.userinfoEndpoint, {
+        headers: { Authorization: `Bearer ${tokens.access_token}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!uiRes.ok) {
+        return redirectToAuth({ oidc_error: "userinfo_failed" });
+      }
+      userinfo = await uiRes.json();
+    } catch (err) {
+      return redirectToAuth({ oidc_error: "userinfo_error" });
+    }
+
+    const sub = String(userinfo?.sub || "").trim();
+    const email = String(userinfo?.email || "").trim().toLowerCase();
+    const name = String(userinfo?.name || userinfo?.preferred_username || email || "").trim();
+    const picture = userinfo?.picture ? String(userinfo.picture) : undefined;
+    if (!sub) return redirectToAuth({ oidc_error: "userinfo_no_sub" });
+
+    // Tenant restriction. Empty tenant string ⇒ no restriction. Two
+    // common shapes: email-domain match (eng.example.com matches
+    // alice@eng.example.com) and exact tenant id match (Azure AD's
+    // `tid` claim or hosted-domain `hd`).
+    const tenant = (cfg.tenant ?? "").trim().toLowerCase();
+    if (tenant) {
+      const emailDomain = email.split("@")[1] || "";
+      const hd = String(userinfo?.hd || "").toLowerCase();
+      const tid = String(userinfo?.tid || "").toLowerCase();
+      const matched = emailDomain === tenant || hd === tenant || tid === tenant;
+      if (!matched) {
+        return redirectToAuth({ oidc_error: "tenant_denied" });
+      }
+    }
+
+    if (!email) return redirectToAuth({ oidc_error: "no_email" });
+
+    // Upsert + session mint.
+    const upserted = await ctx.runMutation(api.admin.upsertOidcUser, {
+      issuer: cfg.issuerUrl,
+      sub,
+      email,
+      name: name || undefined,
+      avatarUrl: picture,
+    });
+
+    // Mint a Yaver session via the existing helper. The raw token
+    // returned here is what the web client persists, mirroring the
+    // other OAuth callbacks.
+    const rawToken = randomBase64Url(32);
+    const tokenHash = await sha256Hex(rawToken);
+    const expiresAt = Date.now() + 365 * 24 * 60 * 60 * 1000;
+    await ctx.runMutation(api.auth.createSession, {
+      tokenHash,
+      userId: upserted.userDocId,
+      expiresAt,
+    });
+
+    // Hand the token back to /auth on the web client. The page already
+    // knows how to consume `token=…` in the URL fragment for its
+    // existing OAuth flows.
+    const finalParams = new URLSearchParams({
+      token: rawToken,
+      provider: "oidc",
+    });
+    const returnTo = attempt.returnTo || "";
+    if (returnTo) finalParams.set("return_to", returnTo);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: `${webBase}/auth#${finalParams.toString()}`,
+      },
+    });
+  }),
+});
 
 export default http;

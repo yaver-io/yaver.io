@@ -33,6 +33,43 @@ function AuthContent() {
     setPasskeySupported(browserSupportsWebAuthn());
   }, []);
 
+  // OIDC: render the company-SSO button only when the deployment has
+  // an OIDC config saved AND enabled. Solo-dev deployments see
+  // {enabled:false} and the button never appears.
+  const [oidcInfo, setOidcInfo] = useState<{ enabled: boolean; label?: string } | null>(null);
+  useEffect(() => {
+    fetch(`${CONVEX_URL}/auth/oidc/info`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => setOidcInfo(json ?? { enabled: false }))
+      .catch(() => setOidcInfo({ enabled: false }));
+  }, []);
+  const handleOidc = () => {
+    const sp = new URLSearchParams();
+    if (returnUrl) sp.set("return_to", returnUrl);
+    const qs = sp.toString();
+    window.location.href = `${CONVEX_URL}/auth/oidc/start${qs ? `?${qs}` : ""}`;
+  };
+
+  // OIDC callback consumer — when the IdP roundtrip lands back at
+  // /auth#token=…&provider=oidc, persist the token and follow the
+  // standard post-auth redirect. Hash-based so the token never hits
+  // server logs / browser history.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash || "";
+    if (!hash.startsWith("#")) return;
+    const fragment = new URLSearchParams(hash.slice(1));
+    const token = fragment.get("token");
+    const provider = fragment.get("provider");
+    if (!token || provider !== "oidc") return;
+    // Wipe the hash so a refresh doesn't try to re-consume.
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+    localStorage.setItem("yaver_auth_token", token);
+    document.cookie = `yaver_auth_token=${token}; path=/; max-age=${60 * 60 * 24 * 30}; secure; samesite=lax`;
+    redirectAfterAuth(token);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const redirectAfterAuth = async (token: string) => {
     if (client === "desktop") {
       window.location.href = `http://127.0.0.1:19836/callback?token=${token}`;
@@ -483,6 +520,19 @@ function AuthContent() {
                 <circle cx="12" cy="16" r="1.5" />
               </svg>
               {passkeyLoading ? "Waiting for passkey..." : "Sign up with passkey"}
+            </button>
+          )}
+
+          {oidcInfo?.enabled && (
+            <button
+              onClick={handleOidc}
+              className={`flex w-full items-center justify-center gap-3 border border-warning/40 bg-warning-soft text-sm font-semibold text-warning-softFg transition-colors hover:opacity-95 ${controlClass}`}
+            >
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+              Continue with {oidcInfo.label || "company SSO"}
             </button>
           )}
 

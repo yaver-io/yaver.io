@@ -20,7 +20,11 @@ type OAuthProvider =
   | "github"
   | "gitlab"
   | "email"
-  | "passkey";
+  | "passkey"
+  // "oidc" is org-configured SSO. PROVIDER_VERIFIES_EMAIL below treats
+  // it as verified-by-construction (the IdP attested), same as the
+  // hosted OAuth providers.
+  | "oidc";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -530,7 +534,7 @@ export async function validateSessionInternal(
     userId: string;
     email: string;
     fullName: string;
-    provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email" | "passkey";
+    provider: "google" | "microsoft" | "apple" | "github" | "gitlab" | "email" | "passkey" | "oidc";
     providerId: string;
     passwordHash?: string;
     avatarUrl?: string;
@@ -541,6 +545,7 @@ export async function validateSessionInternal(
     emailVerified?: boolean;
     emailVerifiedAt?: number;
     createdAt: number;
+    platformRole?: "admin";
   };
   sessionId: Id<"sessions">;
 } | null> {
@@ -592,6 +597,7 @@ const PROVIDER_VERIFIES_EMAIL: Record<OAuthProvider, boolean> = {
   gitlab: true,
   email: false,
   passkey: false,
+  oidc: true,
 };
 
 /**
@@ -1617,6 +1623,25 @@ export const getUserPublicProfile = query({
       userId: user.userId,
       email: user.email,
       fullName: user.fullName,
+    };
+  },
+});
+
+/**
+ * Resolve a userDocId to the fields the admin gate cares about:
+ * platformRole, totpEnabled, email. Used by requireAdminRequest in
+ * http.ts. Kept separate from getUserPublicProfile so the public
+ * profile shape stays minimal.
+ */
+export const getUserByDocId = query({
+  args: { userDocId: v.id("users") },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userDocId);
+    if (!user) return null;
+    return {
+      email: user.email,
+      totpEnabled: !!user.totpEnabled,
+      platformRole: (user as any).platformRole ?? null,
     };
   },
 });

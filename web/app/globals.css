@@ -8,6 +8,28 @@ body.dashboard-mode footer { display: none !important; }
 body.dashboard-mode .fixed.bottom-6.right-6 { display: none !important; }
 body.dashboard-mode main { flex: 1; }
 
+/* Admin mode mirrors dashboard chrome-suppression but stamps a 2px
+   amber band along the top edge so the operator always knows they
+   are out of "just me" and into org-wide territory. */
+body.admin-mode header { display: none !important; }
+body.admin-mode footer { display: none !important; }
+body.admin-mode .fixed.bottom-6.right-6 { display: none !important; }
+body.admin-mode main { flex: 1; }
+body.admin-mode::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--warning)) 0%,
+    rgb(var(--warning)) 35%,
+    rgb(var(--warning) / 0.4) 100%
+  );
+  z-index: 60;
+  pointer-events: none;
+}
+
 @layer base {
   :root {
     /* Warm neutral ramp. Position-semantic: low index = foreground
