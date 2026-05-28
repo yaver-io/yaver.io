@@ -56,6 +56,13 @@ import {
   type YaverAgentHistoryTurn,
 } from "../src/lib/yaverAgentRunner";
 import type { YaverAgentToolContext } from "../src/lib/yaverAgentTools";
+import {
+  startRealtimeTranscribe,
+  speakText,
+  DEFAULT_TTS_MODEL,
+  DEFAULT_TTS_VOICE,
+} from "../src/lib/speech";
+import { loadLocalSpeechConfig } from "../src/lib/auth";
 
 type Mode = "agent" | "shell";
 
@@ -103,6 +110,13 @@ export default function GlassTerminalScreen() {
   const [devicePickerOpen, setDevicePickerOpen] = useState(false);
   const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
   const [vibeBusy, setVibeBusy] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [autoTts, setAutoTts] = useState(false);
+  const recorderRef = useRef<{ stop: () => Promise<string> } | null>(null);
+  const speechCfgRef = useRef<{ tts?: { provider: "device" | "openai" | "openrouter"; apiKey?: string; model?: string; voice?: string } }>({});
+  // submitRef avoids a circular dep between submit (uses input) and
+  // stopRecording (calls submit). Always set to the latest submit.
+  const submitRef = useRef<(() => Promise<void>) | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
 
@@ -142,6 +156,69 @@ export default function GlassTerminalScreen() {
       .catch(() => { /* AsyncStorage failure is non-fatal */ });
     return () => { cancelled = true; };
   }, []);
+
+  // ── Load TTS config so 🔊 toggle uses the user's chosen voice provider.
+  //    STT uses on-device whisper.rn via startRealtimeTranscribe — no
+  //    config needed for the mic button to work.
+  useEffect(() => {
+    loadLocalSpeechConfig().then((cfg) => {
+      const provider = (cfg.ttsProvider ?? "device") as "device" | "openai" | "openrouter";
+      speechCfgRef.current.tts = {
+        provider,
+        apiKey: cfg.apiKey,
+        model: cfg.ttsModel || DEFAULT_TTS_MODEL,
+        voice: cfg.ttsVoice || DEFAULT_TTS_VOICE,
+      };
+    }).catch(() => { /* fall back to device TTS */ });
+  }, []);
+
+  // ── Voice: mic toggle (whisper.rn on-device STT) ───────────────────────
+  const startRecording = useCallback(async () => {
+    if (recording) return;
+    setRecording(true);
+    appendLine("sys", "— 🎤 listening — tap mic again to send —");
+    try {
+      const controller = await startRealtimeTranscribe((partial) => {
+        // Live update the input field as whisper streams partials.
+        setInput(partial);
+      });
+      recorderRef.current = controller;
+    } catch (e: unknown) {
+      setRecording(false);
+      appendLine("err", e instanceof Error ? e.message : "mic failed — check Speech permission");
+    }
+  }, [recording, appendLine]);
+
+  const stopRecording = useCallback(async (autoSubmit = true) => {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    setRecording(false);
+    if (!rec) return;
+    try {
+      const finalText = await rec.stop();
+      if (finalText && finalText.trim()) {
+        setInput(finalText.trim());
+        if (autoSubmit) {
+          // Defer one tick so the input update settles, then submit.
+          setTimeout(() => { void submitRef.current?.(); }, 0);
+        }
+      } else {
+        appendLine("sys", "— 🎤 nothing heard —");
+      }
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : "transcription failed");
+    }
+  }, [appendLine]);
+
+  // ── Voice: TTS speaker for model output ────────────────────────────────
+  const speakIfEnabled = useCallback((text: string) => {
+    if (!autoTts) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    speakText(trimmed, speechCfgRef.current.tts ?? { provider: "device" }).catch(() => {
+      // TTS failure is non-fatal — user still sees the text on screen.
+    });
+  }, [autoTts]);
 
   const persistSavedPrompts = useCallback((next: string[]) => {
     setSavedPrompts(next);
@@ -368,7 +445,10 @@ export default function GlassTerminalScreen() {
         signal: abortRef.current.signal,
         onProgress: (ev: YaverAgentProgressEvent) => {
           if (ev.kind === "model_text") {
-            if (ev.text.trim()) appendLine("model", ev.text);
+            if (ev.text.trim()) {
+              appendLine("model", ev.text);
+              speakIfEnabled(ev.text);
+            }
           } else if (ev.kind === "tool_call") {
             const name = ev.call.name;
             const args = safeStringify(ev.call.args);
@@ -388,6 +468,7 @@ export default function GlassTerminalScreen() {
       ];
       if (result.finalText && !lastLineMatches(lines, result.finalText)) {
         appendLine("model", result.finalText);
+        speakIfEnabled(result.finalText);
       }
       appendLine("sys", `— done · ${result.steps} step(s)${result.outputTokens ? ` · ${result.outputTokens} out tokens` : ""} —`);
     } catch (e: unknown) {
@@ -397,7 +478,11 @@ export default function GlassTerminalScreen() {
       abortRef.current = null;
       setBusy(false);
     }
-  }, [input, busy, mode, appendLine, lines, devices, primaryDeviceId, selectDevice]);
+  }, [input, busy, mode, appendLine, lines, devices, primaryDeviceId, selectDevice, speakIfEnabled]);
+
+  // Keep submitRef pointing at the latest submit so stopRecording can
+  // trigger it without taking a stale closure capture.
+  useEffect(() => { submitRef.current = submit; }, [submit]);
 
   const cancel = useCallback(() => { abortRef.current?.abort(); }, []);
 
@@ -430,6 +515,19 @@ export default function GlassTerminalScreen() {
               {shellReady ? "● live" : (reconnectTimer.current ? "○ reconnecting" : `○ ${connectionStatus}`)}
             </Text>
           ) : null}
+        </Pressable>
+        <Pressable
+          hitSlop={8}
+          onPress={() => setAutoTts((v) => !v)}
+          style={[styles.modeChip, {
+            backgroundColor: autoTts ? "#1e1b4b" : PAL.chip,
+            borderColor: autoTts ? PAL.accent : PAL.border,
+            marginRight: 6,
+          }]}
+        >
+          <Text style={[styles.modeChipText, { color: autoTts ? PAL.accent : PAL.muted }]}>
+            🔊
+          </Text>
         </Pressable>
         <Pressable
           hitSlop={12}
@@ -636,6 +734,23 @@ export default function GlassTerminalScreen() {
             returnKeyType="send"
             blurOnSubmit={false}
           />
+          <Pressable
+            onPress={() => recording ? void stopRecording(true) : void startRecording()}
+            hitSlop={10}
+            disabled={busy && !recording}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 999,
+              backgroundColor: recording ? "#7f1d1d" : "transparent",
+              opacity: busy && !recording ? 0.4 : 1,
+            }}
+          >
+            <Text style={{
+              fontSize: 18,
+              color: recording ? "#fecaca" : PAL.muted,
+            }}>🎤</Text>
+          </Pressable>
           {busy ? (
             <Pressable onPress={cancel} hitSlop={12}>
               <Text style={[styles.cancelBtn, { color: PAL.err }]}>stop</Text>

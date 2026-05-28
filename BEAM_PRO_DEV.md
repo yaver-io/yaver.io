@@ -225,6 +225,29 @@ When the thing you're **testing** is the Yaver mobile app itself (or another Rea
 
 The shell websocket and tmux session never close during a reload — only the JS bundle of the app-under-test gets swapped.
 
+### Voice in/out (works for all three paths)
+
+`glass-terminal` has built-in STT + TTS aimed at the AR-glasses + paired-headset workflow. The architecture rule:
+
+> **Voice happens at the edge. MCP carries text only.**
+
+Why: the mic is next to the user's face (phone in pocket, headset paired). The MCP server may be a Yaver managed-cloud box thousands of kilometres away. Round-tripping audio through MCP would be slow, fragile, and waste bandwidth. The mobile app captures + transcribes locally, sends text through the agent loop, and speaks the text result locally. The same code path is used for Path A (text → remote dev box agent), Path B (text → on-phone runner), and Path C (text → either + Hermes reload fires from chip).
+
+| Direction | Surface | Backend | Provider |
+|---|---|---|---|
+| STT (voice in) | 🎤 mic chip on the input row — tap once to start, tap again to send | `startRealtimeTranscribe()` in `mobile/src/lib/speech.ts` (streaming whisper.rn → partial-result subscriber updates the input field) | On-device whisper.cpp tiny model (~75 MB, one-time download) OR cloud (OpenAI gpt-4o-mini-transcribe, OpenRouter, Deepgram Nova-2, AssemblyAI) — user picks in Settings |
+| TTS (voice out) | 🔊 toggle in the header — when on, every `model_text` event speaks itself | `speakText()` in `mobile/src/lib/speech.ts` | Device default (iOS/Android system TTS, zero-config) OR cloud (OpenAI gpt-4o-mini-tts, OpenRouter, configurable voice) |
+
+Permissions baked into `mobile/app.json`: `NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`, Android `RECORD_AUDIO`. No additional grants needed at runtime beyond the first prompt.
+
+What this looks like in glass-terminal:
+- Glasses on, hands free, BT headset paired
+- Tap mic → "reload the app and check the bundler status"
+- Whisper streams the partial into the input as you speak
+- Tap mic again → command flies into the agent loop (local or remote MCP)
+- `🔊` is on → the response is read aloud through the headset
+- tmux on the remote box stays untouched throughout
+
 ### What's in the Yaver app for Path C
 
 The `glass-terminal` screen has a **vibe action bar** sitting above the prompt. Each chip dispatches an *independent* on-phone agent round-trip that picks the right MCP tool (`wire_push`, `wireless_push`, `mobile_project_status`, `mobile_hermes_doctor`, etc.):
