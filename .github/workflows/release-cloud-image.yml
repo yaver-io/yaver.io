@@ -249,16 +249,23 @@ jobs:
           git add cloud-images.json
           git commit -m "cloud-image: publish ${PROVIDER}/${ARCH} = ${IMAGE_ID}"
           git push origin "$BRANCH"
+          # Build the PR body in a tmpfile so the bash heredoc avoids
+          # multi-line-string-inside-YAML-run gotchas (any line that
+          # started at column 1 would have broken the `run: |` scope).
+          PUBLICITY="${{ inputs.provider == 'hetzner' && 'tagged (private to project)' || 'published to world-public' }}"
+          BODY_FILE="$(mktemp)"
+          {
+            echo "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo ""
+            echo "Built and ${PUBLICITY} Yaver Cloud Image for **${PROVIDER}/${ARCH}**."
+            echo ""
+            echo "* Image id: \`${IMAGE_ID}\`"
+            echo "* Version: \`${VERSION}\`"
+            echo ""
+            echo "Merging this makes \`yaver launch ${PROVIDER}\` immediately resolve to the new image."
+          } > "$BODY_FILE"
           gh pr create \
             --title "cloud-image: publish ${PROVIDER}/${ARCH} v${VERSION}" \
-            --body "Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
-
-Built and ${{ inputs.provider == 'hetzner' && 'tagged (private to project)' || 'published to world-public' }} Yaver Cloud Image for **${PROVIDER}/${ARCH}**.
-
-* Image id: \`${IMAGE_ID}\`
-* Version: \`${VERSION}\`
-
-Merging this makes \`yaver launch ${PROVIDER}\` immediately resolve to the new image.
-" \
+            --body-file "$BODY_FILE" \
             --head "$BRANCH" \
             --base main
