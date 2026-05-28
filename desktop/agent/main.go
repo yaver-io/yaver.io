@@ -6310,6 +6310,11 @@ func runDoctor() {
 	fmt.Println("\n── Relay Servers ──")
 	if cfg != nil && len(cfg.RelayServers) > 0 {
 		relayClient := &http.Client{Timeout: 5 * time.Second}
+		// Run the VPN-interface enumeration once for the whole section
+		// rather than per-relay; it's cheap but it's also identical for
+		// every iteration so doing it once keeps the doctor output
+		// stable when the user has multiple relays configured.
+		vpnIfaces := detectVPNInterference()
 		for _, rs := range cfg.RelayServers {
 			label := rs.Label
 			if label == "" {
@@ -6333,6 +6338,49 @@ func runDoctor() {
 					failed(fmt.Sprintf("HTTP %d", resp.StatusCode))
 				}
 			}
+
+			// Layered path probe — separates DNS health from TCP-handshake
+			// health so the user can tell at a glance whether their
+			// resolver is slow, the socket is blackholed, or the relay
+			// itself is dead. This is the split-brain detector that
+			// catches the half-stopped-VPN failure mode the plain /health
+			// check above can't see.
+			check("  Path probe")
+			probe := probeRelayPath(rs.HttpURL, 5*time.Second)
+			switch {
+			case probe.Kind == "ok":
+				pass(fmt.Sprintf("dns=%dms tcp=%dms", probe.DNSLatencyMs, probe.TCPLatencyMs))
+			case probe.IsSplitBrain():
+				detail := fmt.Sprintf("split-brain (dns ok in %dms, tcp blackholed after %dms)",
+					probe.DNSLatencyMs, probe.TCPLatencyMs)
+				if len(vpnIfaces) > 0 {
+					detail += fmt.Sprintf(" — VPN interfaces up: %s", strings.Join(vpnIfaces, ", "))
+				}
+				failed(detail)
+			case probe.Kind == "dns-fail":
+				failed(fmt.Sprintf("DNS resolution failed: %s", probe.Err))
+			case probe.Kind == "tcp-refused":
+				failed(fmt.Sprintf("TCP refused (relay listener down?): %s", probe.Err))
+			default:
+				warning(fmt.Sprintf("%s: %s", probe.Kind, probe.Err))
+			}
+		}
+
+		// Pull any cached auto-heal events from the running agent so the
+		// user can see when the relay was last forced to redial. Empty
+		// HealedAt = either never healed or no agent running.
+		if cached := loadRelayHealth(); len(cached) > 0 {
+			for _, c := range cached {
+				if c.HealedAt.IsZero() {
+					continue
+				}
+				check("  Last auto-heal: " + c.URL)
+				pass(fmt.Sprintf("%s ago (streak reset)", time.Since(c.HealedAt).Round(time.Second)))
+			}
+		}
+		if len(vpnIfaces) > 0 {
+			check("VPN / tunnel interfaces")
+			warning(fmt.Sprintf("up with non-link-local addresses: %s — investigate if any relay probe shows split-brain", strings.Join(vpnIfaces, ", ")))
 		}
 	} else {
 		check("Relay servers")
@@ -9276,6 +9324,17 @@ type RelayHealthStatus struct {
 	Version     string    `json:"version"`
 	LastChecked time.Time `json:"lastChecked"`
 	Error       string    `json:"error,omitempty"`
+
+	// Split-brain probe results. The /health round-trip above only
+	// proves "HTTP works" — these fields separately measure DNS and
+	// raw TCP so a half-stopped VPN that hijacks DNS but blackholes
+	// TCP can be distinguished from a relay that is actually down.
+	DNSLatencyMs     int64    `json:"dnsLatencyMs,omitempty"`
+	TCPLatencyMs     int64    `json:"tcpLatencyMs,omitempty"`
+	FailureKind      string   `json:"failureKind,omitempty"`
+	SplitBrainStreak int      `json:"splitBrainStreak,omitempty"`
+	VPNInterfaces    []string `json:"vpnInterfaces,omitempty"`
+	HealedAt         time.Time `json:"healedAt,omitempty"`
 }
 
 // relayHealthFile returns the path to the relay health cache file.
@@ -9299,6 +9358,16 @@ type relayManager struct {
 	healthStatus      map[string]*RelayHealthStatus // keyed by httpUrl
 	lastSettingsRelay string                        // last relayUrl from user settings (for change detection)
 	relayExposeMgr    *RelayExposeManager
+
+	// attemptCancels stores the cancel func for the currently-running
+	// relayConnectAndServe call per relay. The split-brain auto-heal
+	// path in checkRelayHealth invokes ForceReconnect, which calls
+	// this cancel — relayConnectAndServe returns with ctx.Err() and
+	// runRelayTunnel's outer loop redials. Distinct from activeTunnels,
+	// which holds the per-tunnel goroutine's cancel (cancelling that
+	// would tear the tunnel down for good rather than restart it).
+	attemptCancelsMu sync.Mutex
+	attemptCancels   map[string]context.CancelFunc // keyed by QuicAddr
 }
 
 func newRelayManager(ctx context.Context, deviceID, authToken, agentAddr, globalPassword, convexSiteURL string) *relayManager {
@@ -9312,7 +9381,54 @@ func newRelayManager(ctx context.Context, deviceID, authToken, agentAddr, global
 		activeTunnels:  make(map[string]context.CancelFunc),
 		healthStatus:   make(map[string]*RelayHealthStatus),
 		relayExposeMgr: NewRelayExposeManager(),
+		attemptCancels: make(map[string]context.CancelFunc),
 	}
+}
+
+// registerAttemptCancel records the cancel func for the in-flight
+// relayConnectAndServe call so the health loop can later force a
+// re-dial via ForceReconnect. Called by runRelayTunnel before each
+// connect attempt. Safe to call with a nil receiver — the bootstrap
+// path runs without a relayManager and must keep working.
+func (rm *relayManager) registerAttemptCancel(quicAddr string, cancel context.CancelFunc) {
+	if rm == nil {
+		return
+	}
+	rm.attemptCancelsMu.Lock()
+	rm.attemptCancels[quicAddr] = cancel
+	rm.attemptCancelsMu.Unlock()
+}
+
+// clearAttemptCancel removes the registration when an attempt ends
+// (success or failure). Pairs 1:1 with registerAttemptCancel.
+func (rm *relayManager) clearAttemptCancel(quicAddr string) {
+	if rm == nil {
+		return
+	}
+	rm.attemptCancelsMu.Lock()
+	delete(rm.attemptCancels, quicAddr)
+	rm.attemptCancelsMu.Unlock()
+}
+
+// ForceReconnect cancels the in-flight connect attempt for quicAddr
+// so runRelayTunnel's outer reconnect loop tears down the dead QUIC
+// session and dials fresh. Used by the health loop when a split-brain
+// is confirmed — the existing QUIC connection's userspace state may
+// be intact while the OS-level path it sits on is dead, and only a
+// fresh dial forces the kernel to re-resolve and rebuild the path.
+// No-op if no attempt is currently registered for quicAddr.
+func (rm *relayManager) ForceReconnect(quicAddr string) bool {
+	if rm == nil {
+		return false
+	}
+	rm.attemptCancelsMu.Lock()
+	cancel, ok := rm.attemptCancels[quicAddr]
+	rm.attemptCancelsMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
 }
 
 // applyRelayServers starts new tunnels and stops removed ones.
@@ -9344,7 +9460,7 @@ func (rm *relayManager) applyRelayServers(servers []RelayServerInfo, passwords m
 		tunnelCtx, tunnelCancel := context.WithCancel(rm.parentCtx)
 		rm.activeTunnels[addr] = tunnelCancel
 		log.Printf("[RELAY] Starting tunnel to %s...", addr)
-		go runRelayTunnel(tunnelCtx, addr, rm.agentAddr, rm.deviceID, rm.authToken, pw, rm.relayExposeMgr)
+		go runRelayTunnel(tunnelCtx, addr, rm.agentAddr, rm.deviceID, rm.authToken, pw, rm.relayExposeMgr, rm)
 	}
 }
 
@@ -9495,6 +9611,36 @@ func (rm *relayManager) checkRelayHealth(client *http.Client) {
 			}
 		}
 
+		// Split-brain probe: the /health call above goes through
+		// Go's net/http + DialContext, which is the same code path
+		// that fails silently when a userspace VPN is half-stopped
+		// (DNS hijacked, TCP blackholed). Run a layered DNS-then-TCP
+		// probe so we can distinguish "relay is down" from "our path
+		// to the relay is blackholed" and tag the failure kind.
+		probe := probeRelayPath(rs.HttpURL, 5*time.Second)
+		status.DNSLatencyMs = probe.DNSLatencyMs
+		status.TCPLatencyMs = probe.TCPLatencyMs
+		if probe.Kind != "ok" {
+			status.FailureKind = probe.Kind
+			if probe.IsSplitBrain() {
+				status.VPNInterfaces = detectVPNInterference()
+			}
+		}
+
+		streak := noteProbeOutcome(rs.HttpURL, probe)
+		status.SplitBrainStreak = streak
+		if streak >= splitBrainHealThreshold && rs.QuicAddr != "" {
+			if rm.ForceReconnect(rs.QuicAddr) {
+				log.Printf("[RELAY] auto-heal: split-brain confirmed on %s (streak=%d, kind=%s, vpn=%v) — forcing redial of %s",
+					rs.HttpURL, streak, probe.Kind, status.VPNInterfaces, rs.QuicAddr)
+				status.HealedAt = time.Now()
+				resetSplitBrainStreak(rs.HttpURL)
+			} else {
+				log.Printf("[RELAY] auto-heal: split-brain confirmed on %s (streak=%d) but no in-flight attempt to cancel for %s",
+					rs.HttpURL, streak, rs.QuicAddr)
+			}
+		}
+
 		rm.healthStatus[rs.HttpURL] = status
 	}
 
@@ -9545,7 +9691,7 @@ func loadRelayHealth() []RelayHealthStatus {
 // thundering-herd it when it comes back. Healthy reconnects (short
 // blips < 30 s total) retry aggressively from 1 s so the user sees
 // fast recovery on normal network flaps.
-func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager) {
+func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, password string, exposeMgr *RelayExposeManager, rm *relayManager) {
 	backoff := time.Second
 	unhealthySince := time.Time{}
 
@@ -9558,7 +9704,16 @@ func runRelayTunnel(ctx context.Context, relayAddr, agentAddr, deviceID, token, 
 
 		log.Printf("[RELAY] Connecting to relay %s...", relayAddr)
 		startedAt := time.Now()
-		err := relayConnectAndServe(ctx, relayAddr, agentAddr, deviceID, token, password, exposeMgr)
+		// Per-attempt context so the health loop can call ForceReconnect
+		// to tear THIS attempt down without killing the outer tunnel
+		// goroutine. cancel() on the deferred path also covers the
+		// success exit when relayConnectAndServe returns due to the
+		// remote closing the QUIC session.
+		attemptCtx, attemptCancel := context.WithCancel(ctx)
+		rm.registerAttemptCancel(relayAddr, attemptCancel)
+		err := relayConnectAndServe(attemptCtx, relayAddr, agentAddr, deviceID, token, password, exposeMgr)
+		rm.clearAttemptCancel(relayAddr)
+		attemptCancel()
 		if err != nil {
 			log.Printf("[RELAY %s] Connection lost after %s: %v", relayAddr, time.Since(startedAt).Round(time.Second), err)
 			// One-shot recovery: if the rejection looks like a stale
