@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, type CapabilitySnapshot, type ConnectionState, type ConnectAttemptDiagnostic, type IncidentEvent, type InfraSummary, type TailscaleStatus } from "@/lib/agent-client";
 import type { Device } from "@/lib/use-devices";
+import { classifyDiagnostic, summarizeFailures } from "@/lib/connection-error";
 
 type SettingsState = {
   relayUrl: string;
@@ -246,23 +247,55 @@ export default function ConnectivityView({
           </div>
         ) : null}
 
-        {connectDiagnostics.length > 0 ? (
-          <div className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/60 p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Last connect attempts</div>
-            <div className="mt-3 space-y-2">
-              {connectDiagnostics.map((diag, index) => (
-                <div key={`${diag.path}:${diag.relayId || "direct"}:${index}`} className="flex items-center gap-3 text-xs text-surface-400">
-                  <span className={`h-2 w-2 rounded-full ${diag.ok ? "bg-emerald-400" : diag.authExpired ? "bg-amber-400" : "bg-red-400"}`} />
-                  <span className="w-24 shrink-0 font-mono text-surface-300">
-                    {diag.path === "relay" ? `relay:${diag.relayId || "?"}` : "direct"}
-                  </span>
-                  <span>{diag.authExpired ? "auth expired" : diag.status ? `HTTP ${diag.status}` : diag.error || "failed"}</span>
-                  {diag.durationMs != null ? <span className="ml-auto text-surface-600">{diag.durationMs}ms</span> : null}
+        {connectDiagnostics.length > 0 ? (() => {
+          // If any attempt failed, surface the most actionable classified reason
+          // at the top — the per-attempt rows underneath are useful for the
+          // engineer but a single "this is why nothing worked" header tells
+          // the user what to do.
+          const summary = summarizeFailures(connectDiagnostics);
+          return (
+            <div className="mt-4 rounded-2xl border border-surface-800 bg-surface-950/60 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-surface-500">Last connect attempts</div>
+              {summary ? (
+                <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-3">
+                  <div className="text-sm font-semibold text-amber-200">{summary.label}</div>
+                  <div className="mt-1 text-xs text-surface-300">{summary.detail}</div>
+                  {summary.suggestedAction ? (
+                    <div className="mt-1 text-xs text-surface-500">{summary.suggestedAction}</div>
+                  ) : null}
                 </div>
-              ))}
+              ) : null}
+              <div className="mt-3 space-y-2">
+                {connectDiagnostics.map((diag, index) => {
+                  const classified = diag.ok ? null : classifyDiagnostic(diag);
+                  return (
+                    <div key={`${diag.path}:${diag.relayId || "direct"}:${index}`} className="flex items-start gap-3 text-xs text-surface-400">
+                      <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${diag.ok ? "bg-emerald-400" : diag.authExpired ? "bg-amber-400" : "bg-red-400"}`} />
+                      <span className="w-24 shrink-0 font-mono text-surface-300">
+                        {diag.path === "relay" ? `relay:${diag.relayId || "?"}` : diag.path}
+                      </span>
+                      <span className="flex-1">
+                        {diag.ok ? (
+                          <span className="text-emerald-300">ok</span>
+                        ) : classified ? (
+                          <>
+                            <span className="text-amber-200">{classified.label}</span>
+                            {classified.raw && classified.raw !== classified.label ? (
+                              <span className="ml-1 text-surface-600">({classified.raw})</span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span>{diag.status ? `HTTP ${diag.status}` : diag.error || "failed"}</span>
+                        )}
+                      </span>
+                      {diag.durationMs != null ? <span className="ml-auto text-surface-600">{diag.durationMs}ms</span> : null}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ) : null}
+          );
+        })() : null}
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">

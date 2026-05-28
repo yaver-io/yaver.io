@@ -9,6 +9,18 @@ import { ManagedCloudPanel } from "@/components/dashboard/ManagedCloudPanel";
 import { CONVEX_URL } from "@/lib/constants";
 import { agentClient, AgentClient, type AgentUpdateStatus, type RunnerBrowserAuthSession, type RunnerTestResult } from "@/lib/agent-client";
 import { classifyTransport, fetchRelayHealth, type TransportInfo } from "@/lib/transport";
+import { classifyFetchError, type ClassifiedFailure } from "@/lib/connection-error";
+import {
+  probeAllowed,
+  probeFailed,
+  probeSucceeded,
+  probeBackoffSecondsRemaining,
+  probeReset,
+  recordLastFailure,
+  clearLastFailure,
+  getLastFailure,
+  subscribeLastFailure,
+} from "@/lib/probe-backoff";
 
 function transportToneClasses(tone: TransportInfo["tone"]): string {
   switch (tone) {
@@ -514,6 +526,9 @@ function RunnerChipWithTest({
   type LocalState =
     | { kind: "idle" }
     | { kind: "running" }
+    | { kind: "installing"; lastLine: string }
+    | { kind: "install-ok" }
+    | { kind: "install-fail"; message: string }
     | { kind: "ok"; result: RunnerTestResult }
     | { kind: "fail"; result: RunnerTestResult }
     | { kind: "error"; message: string };
@@ -531,6 +546,16 @@ function RunnerChipWithTest({
     !device.isGuest &&
     (device.online || device.workspaceLive) &&
     state.health !== "not-installed";
+  // Install: same access gate as Test, but the inverse health state.
+  // Only the three first-class runners have an integrations entry on
+  // the agent (claude/codex/opencode → /install/<runner> wraps
+  // ensureRunnerInstalledStream); ollama/aider-ollama don't.
+  const canInstall =
+    !!token &&
+    !device.isGuest &&
+    (device.online || device.workspaceLive) &&
+    state.health === "not-installed" &&
+    (state.id === "claude" || state.id === "codex" || state.id === "opencode");
 
   const base = `inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${runnerChipClass(state.health)}`;
 
@@ -577,6 +602,58 @@ function RunnerChipWithTest({
     }
   }, [token, device.host, device.port, device.id, device.publicEndpoints, device.tunnelUrl, state.id, onSignIn]);
 
+  const runInstall = useCallback(async () => {
+    if (!token || inFlight.current) return;
+    inFlight.current = true;
+    setLocal({ kind: "installing", lastLine: "" });
+    const client = new AgentClient();
+    client.setRelayServers(agentClient.configuredRelayServers.map((r) => ({ ...r })));
+    try {
+      const tunnelUrls = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(device.publicEndpoints) ? device.publicEndpoints : []),
+            ...(device.tunnelUrl ? [device.tunnelUrl] : []),
+          ]
+            .map((u) => String(u || "").trim())
+            .filter(Boolean),
+        ),
+      );
+      await client.connect(device.host, device.port, token, device.id, { tunnelUrls });
+      // Connected directly → omit target; relay/tunnel/LAN baseUrl
+      // already points at this device. Same pattern runTest above
+      // uses for /agent/runners/test.
+      const result = await client.installRunner(state.id, {
+        onProgress: (line) => {
+          // Keep the last non-empty line so the chip surfaces a tiny
+          // "npm ERR! …" hint when something goes wrong without
+          // blowing up the whole device card into a log viewer.
+          if (line && line.trim()) {
+            setLocal({ kind: "installing", lastLine: line.trim().slice(0, 80) });
+          }
+        },
+      });
+      if (result.ok) {
+        setLocal({ kind: "install-ok" });
+        // Refresh the runner status badges so this row flips out of
+        // "not-installed" into "needs-auth" (the expected post-install
+        // state). The user can then click sign-in. Same broadcast path
+        // runTest uses after a successful probe.
+        broadcastPrimaryRunnerChange();
+      } else {
+        setLocal({ kind: "install-fail", message: result.error || "install failed" });
+      }
+    } catch (err) {
+      setLocal({
+        kind: "install-fail",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      inFlight.current = false;
+      try { client.disconnect(); } catch { /* nothing useful to do */ }
+    }
+  }, [token, device.host, device.port, device.id, device.publicEndpoints, device.tunnelUrl, state.id]);
+
   // Sign-in button kept as the primary CTA when the readiness probe
   // already says "needs auth" before we ever try a real generation.
   if (canTest && supportsBrowserAuth && state.health === "needs-auth") {
@@ -622,7 +699,46 @@ function RunnerChipWithTest({
             ✗ unreachable
           </span>
         ) : null}
+        {local.kind === "installing" ? (
+          <span
+            className="ml-1 text-[10px] text-amber-300"
+            title={local.lastLine || "installing…"}
+          >
+            ⟳ installing
+          </span>
+        ) : null}
+        {local.kind === "install-ok" ? (
+          <span className="ml-1 text-[10px] text-emerald-300" title="install complete — sign in next">
+            ✓ installed
+          </span>
+        ) : null}
+        {local.kind === "install-fail" ? (
+          <span className="ml-1 text-[10px] text-red-300" title={local.message}>
+            ✗ install failed
+          </span>
+        ) : null}
       </span>
+      {canInstall ? (
+        <button
+          onClick={runInstall}
+          disabled={local.kind === "installing"}
+          // Sky tint matches codex / mid-warm tone for claude. Stays
+          // visually adjacent to Test so the eye keeps the same
+          // landing zone whether the runner is installed or not.
+          className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-60 ${
+            local.kind === "install-ok"
+              ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200"
+              : local.kind === "install-fail"
+                ? "border-red-400/60 bg-red-500/10 text-red-200 hover:bg-red-500/20"
+                : local.kind === "installing"
+                  ? "border-amber-400/40 bg-amber-500/10 text-amber-200"
+                  : "border-sky-500/30 bg-sky-500/10 text-sky-200 hover:border-sky-400/60 hover:text-sky-100"
+          }`}
+          title={`Install ${state.label} on ${device.name || "this device"} via npm — node runtime auto-provisions if missing.`}
+        >
+          {local.kind === "installing" ? "…" : "Install"}
+        </button>
+      ) : null}
       {canTest ? (
         <button
           onClick={runTest}
@@ -735,6 +851,9 @@ function useDevicePing(device: Device, token: string | null | undefined) {
       setPingState({ pinging: false, ok: false, error: "not signed in" });
       return;
     }
+    // User-initiated retry clears any active backoff so the next runtime/projects
+    // probe also fires immediately without waiting out the exponential delay.
+    probeReset(device.id);
     setPingState({ pinging: true });
     const started = Date.now();
     try {
@@ -767,79 +886,196 @@ function useDevicePing(device: Device, token: string | null | undefined) {
   return { pingState, ping };
 }
 
+/**
+ * Tiny inline component that surfaces the per-device probe backoff state.
+ * Without this, when a probe enters backoff the failure-reason text just
+ * sits there with no indication that a retry is scheduled, and the user
+ * thinks the page is frozen. Re-ticks every second to count down.
+ */
+/**
+ * Subscribes to the module-level "last classified failure per device" registry
+ * so the card-list-item can downgrade its lifecycle label the moment any
+ * surface (details panel runtime probe, projects probe, future continuous
+ * health probe) detects a browser-side reachability problem. Without this,
+ * the card kept showing "Ready to Connect" even while DevTools filled up
+ * with 502s from the very probes the details panel was running.
+ */
+/**
+ * Card-list-item lifecycle dot + label. Pulled out of an inline IIFE so we
+ * can call `useLastFailure` (a hook can't live inside a non-component IIFE).
+ *
+ * Downgrade conditions, in priority order:
+ *   1. `device.probeState === "unreachable"` — set by other writers (mobile
+ *      ping, etc.) and synced via Convex; trust it over the heartbeat-derived
+ *      lifecycle.
+ *   2. Any recent (<60s) classified failure in our local registry, recorded
+ *      by useDeviceRuntimeInfo / useDeviceProjects. Catches the case where
+ *      Convex still thinks the agent is reachable but our own /info or
+ *      /projects fetches are 502'ing in the background.
+ */
+function DeviceLifecycleBadge({ device }: { device: Device }) {
+  const lastFailure = useLastFailure(device.id);
+  const lifecycle = deriveDeviceLifecycleState(device);
+  const recentBrowserFailure =
+    lastFailure && Date.now() - lastFailure.at < 60_000 ? lastFailure : null;
+  const probeContradicts =
+    (lifecycle === "ready-to-connect" || lifecycle === "connected") &&
+    (device.probeState === "unreachable" || !!recentBrowserFailure);
+  const dotClass = probeContradicts
+    ? "bg-warning"
+    : lifecycle === "connected"
+      ? "bg-success animate-live-pulse"
+      : lifecycle === "bootstrap"
+        ? "bg-info"
+        : lifecycle === "yaver-auth-expired"
+          ? "bg-warning animate-live-pulse"
+          : lifecycle === "ready-to-connect"
+            ? "bg-info/70"
+            : "bg-surface-600";
+  const baseLabel =
+    lifecycle === "connected"
+      ? "Connected"
+      : lifecycle === "bootstrap"
+        ? "Bootstrap"
+        : lifecycle === "yaver-auth-expired"
+          ? "Yaver Auth Expired"
+          : lifecycle === "ready-to-connect"
+            ? "Ready to Connect"
+            : "Offline";
+  const suffix = recentBrowserFailure
+    ? ` (${recentBrowserFailure.label})`
+    : probeContradicts
+      ? " (browser can't reach)"
+      : "";
+  const label = `${baseLabel}${suffix}`;
+  const title = recentBrowserFailure
+    ? `Heartbeat says reachable, but our last browser probe failed: ${recentBrowserFailure.detail}`
+    : probeContradicts && device.probeError
+      ? `Heartbeat says reachable, but our last probe failed: ${device.probeError}`
+      : undefined;
+  return (
+    <>
+      <span className={`inline-flex h-2 w-2 rounded-full ${dotClass}`} />
+      <span
+        className={`text-xs ${probeContradicts ? "text-amber-700 dark:text-amber-300" : "text-slate-500 dark:text-surface-500"}`}
+        title={title}
+      >
+        {label}
+      </span>
+    </>
+  );
+}
+
+function useLastFailure(deviceId: string) {
+  const [snapshot, setSnapshot] = useState(() => getLastFailure(deviceId));
+  useEffect(() => {
+    setSnapshot(getLastFailure(deviceId));
+    const unsub = subscribeLastFailure(() => setSnapshot(getLastFailure(deviceId)));
+    return unsub;
+  }, [deviceId]);
+  return snapshot;
+}
+
+function BackoffHint({ deviceId, kind }: { deviceId: string; kind: "info" | "projects" }) {
+  const [secs, setSecs] = useState(() => probeBackoffSecondsRemaining(deviceId, kind));
+  useEffect(() => {
+    const t = setInterval(() => setSecs(probeBackoffSecondsRemaining(deviceId, kind)), 1_000);
+    return () => clearInterval(t);
+  }, [deviceId, kind]);
+  if (secs <= 0) return null;
+  return (
+    <span className="text-[10px] text-surface-500">
+      Next retry in {secs}s. Click Ping above to retry now.
+    </span>
+  );
+}
+
+type RuntimeProbePath = "relay" | "tunnel" | "direct" | "subdomain";
+
+interface RuntimeProbeErrorDetails {
+  status?: number;
+  path?: RuntimeProbePath;
+  url?: string;
+  message?: string;
+}
+
 function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | null | undefined) {
   const [info, setInfo] = useState<DeviceRuntimeInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<RuntimeProbeErrorDetails | null>(null);
   const [loading, setLoading] = useState(false);
+  // Per-candidate failure counter for backoff. Resets on success.
+  const failureCountRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
+    // Honour exponential backoff so a dead URL doesn't get hammered on
+    // every parent re-render. Without this, the Convex device-list
+    // live query (which republishes on every heartbeat) was driving
+    // dozens of identical 502/404 fetches per minute against agents
+    // whose tunnel was down.
+    if (!probeAllowed(device.id, "info")) {
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
-    // Choose the BEST base URL for this probe — preferring HTTPS
-    // sources first so we don't trigger mixed-content blocks +
-    // useless 502s on every device-row expand.
-    //
-    // Order:
-    //   1. *.yaver.io publicEndpoint (relay-auto-provisioned
-    //      <id>.dev.yaver.io) — HTTPS-direct, works for browsers
-    //      behind NAT, no /d/<id>/ path noise.
-    //   2. Any other publicEndpoint (Cloudflare tunnel, etc.).
-    //   3. Active relay URL (current AgentClient session).
-    //   4. Direct LAN IP — last resort, only worth trying when
-    //      we're plausibly on the same network. From a different
-    //      LAN this is the source of the 502 + mixed-content
-    //      flood the user reported in devtools.
-    const candidates: string[] = [];
+    setErrorDetails(null);
+
+    // Build typed candidates so the classifier can tell relay 502s from
+    // stale-subdomain CORS 404s from direct-LAN mixed-content blocks.
+    type Candidate = { url: string; path: RuntimeProbePath };
+    const candidates: Candidate[] = [];
     const eps = (device.publicEndpoints || []).filter(Boolean).filter(isUsablePublicEndpoint);
     const yaverEp = eps.find((e) => /^https:\/\/[^/]+\.yaver\.io(\/|$)/i.test(e));
-    if (yaverEp) candidates.push(yaverEp);
+    if (yaverEp) {
+      const url = yaverEp.replace(/\/+$/, "");
+      const isSub = /^https?:\/\/[0-9a-f-]{36}\.yaver\.io/i.test(url);
+      candidates.push({ url, path: isSub ? "subdomain" : "tunnel" });
+    }
     for (const ep of eps) {
       if (ep === yaverEp) continue;
-      if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
+      if (/^https:\/\//i.test(ep)) {
+        const url = ep.replace(/\/+$/, "");
+        const isSub = /^https?:\/\/[0-9a-f-]{36}\.yaver\.io/i.test(url);
+        candidates.push({ url, path: isSub ? "subdomain" : "tunnel" });
+      }
     }
     if (agentClient.activeRelayUrl && device.id) {
-      candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
+      candidates.push({ url: `${agentClient.activeRelayUrl}/d/${device.id}`, path: "relay" });
     }
     if (typeof window !== "undefined" && window.location.protocol !== "https:") {
-      // Browser is on http (rare — local dev). Only then is the
-      // direct-LAN fetch even allowed; from https it's blocked
-      // anyway, so don't bother adding it as a candidate.
-      candidates.push(`http://${device.host}:${device.port}`);
+      candidates.push({ url: `http://${device.host}:${device.port}`, path: "direct" });
     }
     if (candidates.length === 0) {
       setError("no reachable URL");
+      setErrorDetails({ message: "no reachable URL" });
       setLoading(false);
       return;
     }
     (async () => {
-      // Walk candidates in order until one answers /info successfully.
-      // We use a short per-attempt timeout (2s) and only setError if
-      // ALL candidates fail — otherwise the dashboard silently shows
-      // nothing the moment any one URL is unreachable (e.g. wildcard
-      // cert not yet provisioned, relay routing not yet wired, etc.).
       let lastErr = "no candidates";
-      for (const base of candidates) {
+      let lastDetails: RuntimeProbeErrorDetails | null = null;
+      for (const cand of candidates) {
         if (cancelled) return;
         try {
-          const res = await fetch(`${base}/info`, {
+          const res = await fetch(`${cand.url}/info`, {
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(2_000),
           });
           if (!res.ok) {
             lastErr = `HTTP ${res.status}`;
+            lastDetails = { status: res.status, path: cand.path, url: cand.url, message: lastErr };
             continue;
           }
           const data = await res.json();
           if (cancelled) return;
           setInfo(data);
           setError(null);
-          // Opportunistic seed: if we can reach the device and it
-          // reports a version string, push it to Convex so the
-          // dashboard has it cached for other surfaces (mobile, other
-          // browsers, the devices list for an offline-later view).
-          // The mutation itself is 24h-gated so this is cheap to spam.
+          setErrorDetails(null);
+          failureCountRef.current = 0;
+          probeSucceeded(device.id, "info");
+          clearLastFailure(device.id);
           const seen = typeof data?.version === "string" ? data.version.trim() : "";
           if (seen && seen !== device.agentVersion && !device.isGuest && device.id) {
             fetch(`${CONVEX_URL}/devices/report-version`, {
@@ -855,18 +1091,33 @@ function useDeviceRuntimeInfo(device: Device, enabled: boolean, token: string | 
           return;
         } catch (err) {
           lastErr = err instanceof Error ? err.message : "fetch failed";
-          // try next candidate
+          lastDetails = { path: cand.path, url: cand.url, message: lastErr };
         }
       }
       if (!cancelled) {
         setError(lastErr);
+        setErrorDetails(lastDetails);
+        failureCountRef.current += 1;
+        probeFailed(device.id, "info", lastErr);
+        const classified = classifyFetchError({
+          error: lastDetails?.message ?? lastErr,
+          response: lastDetails?.status ? { status: lastDetails.status } : null,
+          path: lastDetails?.path,
+          url: lastDetails?.url,
+        });
+        recordLastFailure(device.id, {
+          reason: classified.reason,
+          label: classified.label,
+          detail: classified.detail,
+        });
         setLoading(false);
       }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive, device.agentVersion, device.isGuest]);
 
-  return { info, error, loading };
+  return { info, error, errorDetails, loading, failureCount: failureCountRef.current };
 }
 
 interface AgentWireDevice {
@@ -1073,30 +1324,49 @@ function useAgentConnectionState(): string {
 function useDeviceProjects(device: Device, enabled: boolean, token: string | null | undefined) {
   const [projects, setProjects] = useState<DeviceProjectInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<{
+    status?: number;
+    path?: "relay" | "tunnel" | "direct" | "subdomain";
+    url?: string;
+    message?: string;
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const agentConnectionState = useAgentConnectionState();
 
   useEffect(() => {
     if (!enabled || !token || (!device.online && !device.workspaceLive)) return;
+    if (!probeAllowed(device.id, "projects")) {
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setErrorDetails(null);
 
     // Same probe-ordering rules as useDeviceRuntimeInfo: prefer
     // HTTPS (relay path or *.yaver.io subdomain), only fall through
     // to direct LAN when the dashboard is on http (local dev). On
     // https://yaver.io, fetching http://<lan>/projects gets blocked
     // and we end up with a misleading "fetch failed" error.
-    const candidates: string[] = [];
+    type Candidate = { url: string; path: "relay" | "tunnel" | "direct" | "subdomain" };
+    const candidates: Candidate[] = [];
     if (agentClient.activeRelayUrl && device.id) {
-      candidates.push(`${agentClient.activeRelayUrl}/d/${device.id}`);
+      candidates.push({ url: `${agentClient.activeRelayUrl}/d/${device.id}`, path: "relay" });
     }
     const eps = (device.publicEndpoints || []).filter(Boolean).filter(isUsablePublicEndpoint);
     for (const ep of eps) {
-      if (/^https:\/\//i.test(ep)) candidates.push(ep.replace(/\/+$/, ""));
+      if (/^https:\/\//i.test(ep)) {
+        const url = ep.replace(/\/+$/, "");
+        // {deviceId}.yaver.io subdomains aren't wired to the relay yet —
+        // they 404 + CORS-block. Tag them so the classifier can produce
+        // an actionable "stale subdomain" reason instead of generic
+        // "network error".
+        const isSubdomain = /^https?:\/\/[0-9a-f-]{36}\.yaver\.io/i.test(url);
+        candidates.push({ url, path: isSubdomain ? "subdomain" : "tunnel" });
+      }
     }
     if (typeof window !== "undefined" && window.location.protocol !== "https:") {
-      candidates.push(`http://${device.host}:${device.port}`);
+      candidates.push({ url: `http://${device.host}:${device.port}`, path: "direct" });
     }
 
     // If the device is the dashboard's currently-active workspace, the
@@ -1148,21 +1418,24 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
       if (candidates.length === 0) {
         if (!cancelled) {
           setError("no reachable URL");
+          setErrorDetails({ message: "no reachable URL" });
           setLoading(false);
         }
         return;
       }
 
       let lastErr = "no candidates";
-      for (const base of candidates) {
+      let lastDetails: typeof errorDetails = null;
+      for (const cand of candidates) {
         if (cancelled) return;
         try {
-          const res = await fetch(`${base}/projects`, {
+          const res = await fetch(`${cand.url}/projects`, {
             headers: { Authorization: `Bearer ${token}` },
             signal: AbortSignal.timeout(3_000),
           });
           if (!res.ok) {
             lastErr = `HTTP ${res.status}`;
+            lastDetails = { status: res.status, path: cand.path, url: cand.url, message: lastErr };
             continue;
           }
           const data = await res.json();
@@ -1171,21 +1444,40 @@ function useDeviceProjects(device: Device, enabled: boolean, token: string | nul
           if (cancelled) return;
           setProjects(mapped);
           setError(null);
+          setErrorDetails(null);
+          probeSucceeded(device.id, "projects");
+          // Don't clearLastFailure here — /info is the primary reachability
+          // signal. If /projects works but /info still failed, the failure
+          // record should remain.
           setLoading(false);
           return;
         } catch (err) {
           lastErr = err instanceof Error ? err.message : "fetch failed";
+          lastDetails = { path: cand.path, url: cand.url, message: lastErr };
         }
       }
       if (!cancelled) {
         setError(lastErr);
+        setErrorDetails(lastDetails);
+        probeFailed(device.id, "projects", lastErr);
+        const classified = classifyFetchError({
+          error: lastDetails?.message ?? lastErr,
+          response: lastDetails?.status ? { status: lastDetails.status } : null,
+          path: lastDetails?.path,
+          url: lastDetails?.url,
+        });
+        recordLastFailure(device.id, {
+          reason: classified.reason,
+          label: classified.label,
+          detail: classified.detail,
+        });
         setLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, [enabled, token, device.id, device.host, device.port, device.online, device.workspaceLive, agentConnectionState]);
 
-  return { projects, error, loading };
+  return { projects, error, errorDetails, loading };
 }
 
 /**
@@ -2259,37 +2551,7 @@ export default function DevicesView({
                           Resuming…
                         </span>
                       ) : null}
-                      {(() => {
-                        const lifecycle = deriveDeviceLifecycleState(device);
-                        const dotClass =
-                          lifecycle === "connected"
-                            ? "bg-success animate-live-pulse"
-                            : lifecycle === "bootstrap"
-                              ? "bg-info"
-                              : lifecycle === "yaver-auth-expired"
-                                ? "bg-warning animate-live-pulse"
-                                : lifecycle === "ready-to-connect"
-                                  ? "bg-info/70"
-                                  : "bg-surface-600";
-                        const label =
-                          lifecycle === "connected"
-                            ? "Connected"
-                            : lifecycle === "bootstrap"
-                              ? "Bootstrap"
-                              : lifecycle === "yaver-auth-expired"
-                                ? "Yaver Auth Expired"
-                                : lifecycle === "ready-to-connect"
-                                  ? "Ready to Connect"
-                                  : "Offline";
-                        return (
-                          <>
-                            <span className={`inline-flex h-2 w-2 rounded-full ${dotClass}`} />
-                            <span className="text-xs text-slate-500 dark:text-surface-500">
-                              {label}
-                            </span>
-                          </>
-                        );
-                      })()}
+                      <DeviceLifecycleBadge device={device} />
                     </div>
                     <div className="mt-1"><TransportBadge device={device} /></div>
                     <div className="mt-1 text-sm text-slate-600 dark:text-surface-400">
@@ -3316,7 +3578,15 @@ function DeviceProjectsRail({
   token: string | null;
   onShowDetails?: () => void;
 }) {
-  const { projects, error, loading } = useDeviceProjects(device, !device.isGuest, token);
+  const { projects, error, errorDetails, loading } = useDeviceProjects(device, !device.isGuest, token);
+  const classifiedFailure: ClassifiedFailure | null = error
+    ? classifyFetchError({
+        error: errorDetails?.message ?? error,
+        response: errorDetails?.status ? { status: errorDetails.status } : null,
+        path: errorDetails?.path,
+        url: errorDetails?.url,
+      })
+    : null;
 
   // Three render modes — keep the disclosure visible in all of them
   // so the user always sees the affordance, even when /projects has
@@ -3350,10 +3620,29 @@ function DeviceProjectsRail({
       <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 px-3 py-2 dark:border-surface-800/60">
         {loading ? (
           <span className="text-[10px] text-slate-500 dark:text-surface-500">Loading project list from agent…</span>
-        ) : error ? (
-          <span className="text-[10px] text-slate-500 dark:text-surface-600">
-            Project list unavailable — agent transport returned: {error}.
-          </span>
+        ) : classifiedFailure ? (
+          <div className="text-[10px] text-slate-500 dark:text-surface-500">
+            <div>
+              <span className="font-semibold text-amber-700 dark:text-amber-300">
+                {classifiedFailure.label}
+              </span>
+              {" — "}
+              <span>{classifiedFailure.detail}</span>
+            </div>
+            {classifiedFailure.suggestedAction ? (
+              <div className="mt-0.5 text-slate-400 dark:text-surface-600">
+                {classifiedFailure.suggestedAction}
+              </div>
+            ) : null}
+            {classifiedFailure.raw && classifiedFailure.raw !== classifiedFailure.label ? (
+              <div className="mt-0.5 font-mono text-[9px] text-slate-400 dark:text-surface-700">
+                (raw: {classifiedFailure.raw})
+              </div>
+            ) : null}
+            <div className="mt-0.5">
+              <BackoffHint deviceId={device.id} kind="projects" />
+            </div>
+          </div>
         ) : (
           (projects || []).map((p) => {
             const stack = (p.framework || "").toUpperCase();
@@ -3645,7 +3934,15 @@ function useRelayHealth(relayUrl: string | null | undefined) {
 }
 
 function DeviceDetailsPanel({ device, token }: { device: Device; token: string | null }) {
-  const { info, error, loading } = useDeviceRuntimeInfo(device, true, token);
+  const { info, error, errorDetails: runtimeErrorDetails, loading } = useDeviceRuntimeInfo(device, true, token);
+  const runtimeFailure: ClassifiedFailure | null = error
+    ? classifyFetchError({
+        error: runtimeErrorDetails?.message ?? error,
+        response: runtimeErrorDetails?.status ? { status: runtimeErrorDetails.status } : null,
+        path: runtimeErrorDetails?.path,
+        url: runtimeErrorDetails?.url,
+      })
+    : null;
   const { status: updateStatus, error: updateError, loading: updateLoading, updating, trigger: triggerUpdate } =
     useDeviceAgentUpdate(device, true, token);
   // Phones (iOS + Android) reachable from this agent over WiFi via xcrun
@@ -3659,8 +3956,16 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
   // Guests list /projects under a host-shared-scope allowlist but we
   // never want to display raw owner workdir paths to a guest — cap it
   // to owner sessions for now.
-  const { projects: liveProjects, error: projectsError, loading: projectsLoading } =
+  const { projects: liveProjects, error: projectsError, errorDetails: projectsErrorDetails, loading: projectsLoading } =
     useDeviceProjects(device, !device.isGuest, token);
+  const liveProjectsFailure: ClassifiedFailure | null = projectsError
+    ? classifyFetchError({
+        error: projectsErrorDetails?.message ?? projectsError,
+        response: projectsErrorDetails?.status ? { status: projectsErrorDetails.status } : null,
+        path: projectsErrorDetails?.path,
+        url: projectsErrorDetails?.url,
+      })
+    : null;
   const allRunners = (device.runners || []).map((r) => r?.runnerId || "").filter(Boolean);
   const allSharedRunners = device.sharedRunners || [];
   const allGuests = (device.sharedGuests || []).map((g) => g.name || g.email || "").filter(Boolean);
@@ -3926,12 +4231,19 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
             <p className="text-[11px] text-surface-500">Loading project list from agent…</p>
           ) : liveProjects && liveProjects.length === 0 ? (
             <p className="text-[11px] text-surface-500">No projects detected on this machine.</p>
+          ) : liveProjectsFailure ? (
+            <div className="text-[11px] text-surface-600">
+              <p>
+                <span className="font-semibold text-amber-300">{liveProjectsFailure.label}</span>
+                {" — "}{liveProjectsFailure.detail}
+              </p>
+              {liveProjectsFailure.suggestedAction ? (
+                <p className="mt-0.5 text-surface-500">{liveProjectsFailure.suggestedAction}</p>
+              ) : null}
+              <div className="mt-0.5"><BackoffHint deviceId={device.id} kind="projects" /></div>
+            </div>
           ) : (
-            <p className="text-[11px] text-surface-600">
-              {projectsError
-                ? `Project list unavailable — agent unreachable (${projectsError}).`
-                : "Project list unavailable — agent offline."}
-            </p>
+            <p className="text-[11px] text-surface-600">Project list unavailable — agent offline.</p>
           )}
         </div>
       ) : null}
@@ -3991,10 +4303,20 @@ function DeviceDetailsPanel({ device, token }: { device: Device; token: string |
       {loading ? (
         <p className="mt-3 text-[11px] text-surface-500">Loading runtime info from agent…</p>
       ) : null}
-      {error ? (
-        <p className="mt-3 text-[11px] text-surface-600">
-          Runtime info unavailable from the agent transport ({error}). Showing {device.probeInfo ? "last authenticated probe + cached registry fields" : "cached registry fields only"}.
-        </p>
+      {runtimeFailure ? (
+        <div className="mt-3 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-[11px] text-surface-300">
+          <p>
+            <span className="font-semibold text-amber-300">{runtimeFailure.label}</span>
+            {" — "}{runtimeFailure.detail}
+          </p>
+          {runtimeFailure.suggestedAction ? (
+            <p className="mt-0.5 text-surface-500">{runtimeFailure.suggestedAction}</p>
+          ) : null}
+          <div className="mt-0.5"><BackoffHint deviceId={device.id} kind="info" /></div>
+          <p className="mt-1 text-surface-600">
+            Showing {device.probeInfo ? "last authenticated probe + cached registry fields" : "cached registry fields only"}.
+          </p>
+        </div>
       ) : null}
       {updateError ? (
         <p className="mt-2 text-[11px] text-surface-600">
