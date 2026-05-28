@@ -94,15 +94,14 @@ func (s *HTTPServer) handleVibePreviewClips(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// handleVibePreviewClip — GET /vibing/preview/clip/<id>
+// handleVibePreviewClip — GET /vibing/preview/clip/<id>[/poster]
+//                       POST /vibing/preview/clip/<id>/fix
 //
 // Streams the MP4 with Range support via http.ServeContent. The poster
-// suffix returns the JPEG thumbnail.
+// suffix returns the JPEG thumbnail. The /fix suffix dispatches to
+// handleVibePreviewClipFix which closes the clip → feedback → fix-task
+// loop (see vibe_preview_clip_fix.go).
 func (s *HTTPServer) handleVibePreviewClip(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
 	if s.vibePreviewMgr == nil {
 		jsonError(w, http.StatusServiceUnavailable, "vibe preview not initialised")
 		return
@@ -112,6 +111,18 @@ func (s *HTTPServer) handleVibePreviewClip(w http.ResponseWriter, r *http.Reques
 	tail = strings.Trim(tail, "/ ")
 	if tail == "" {
 		jsonError(w, http.StatusBadRequest, "clip id required")
+		return
+	}
+
+	// /fix is its own subverb with POST semantics — route early before
+	// we enforce the GET/HEAD-only check below.
+	if strings.HasSuffix(tail, "/fix") {
+		s.handleVibePreviewClipFix(w, r)
+		return
+	}
+
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		jsonError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 

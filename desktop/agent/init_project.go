@@ -134,6 +134,18 @@ func InitProject(opts InitProjectOpts) (*InitProjectResult, error) {
 	// git init (non-fatal).
 	_, _ = exec.Command("git", "-C", dir, "init", "-b", "main").CombinedOutput()
 
+	// Drop in the yaver-feedback-web SDK + init snippet for web stacks
+	// so the user gets the floating-button bug-report widget for free.
+	// Mirrors what the mobile flow does with the RN feedback SDK in
+	// scaffolded Expo / RN projects. Web stacks only — the SDK has no
+	// meaningful job in a pure backend (Hono / Go / Python) project.
+	feedbackHint := ""
+	if isWebStackForFeedback(opts.Stack) {
+		if msg, err := installWebFeedbackSDK(dir, opts); err == nil {
+			feedbackHint = msg
+		}
+	}
+
 	next := []string{
 		"cd " + dir,
 		"yaver services start  # launches: " + strings.Join(addedServices, ", "),
@@ -143,6 +155,9 @@ func InitProject(opts InitProjectOpts) (*InitProjectResult, error) {
 	}
 	if backend == BackendConvex {
 		next = append(next, "npx convex dev")
+	}
+	if feedbackHint != "" {
+		next = append(next, feedbackHint)
 	}
 
 	res := &InitProjectResult{

@@ -35,6 +35,11 @@ type Result struct {
 	// InstrumentationPath is where the console/network/perf dump
 	// was written for this run (empty when capture: is all off).
 	InstrumentationPath string
+	// VideoFramesDir is where the full screencast PNG sequence was
+	// flushed for a passing run when RunOptions.ForceVideo is on.
+	// Empty for failing runs (where individual step failures already
+	// flush their own ring into per-step directories).
+	VideoFramesDir string
 	// instr is the live state used by step handlers (save_har).
 	// Unexported so it doesn't leak into the JSON reporter.
 	instr *InstrumentationState
@@ -86,6 +91,16 @@ type RunOptions struct {
 	// default). A spec that fails the first attempt and passes a
 	// subsequent attempt is tagged "flaky" in the result.
 	FlakeRetries int
+
+	// ForceVideo overrides Spec.Artifacts.Video=false so callers
+	// (testkit_run --video, the workspace pane's "watch failures"
+	// button, CI in deep-debug mode) can flip on screencast capture
+	// for every spec in the suite without editing every YAML file.
+	// When true the runner starts a FrameRing for each spec; on
+	// success the frames are dumped under the artifacts dir alongside
+	// the spec's other outputs (so the user can scrub through a
+	// passing run too, not just failures).
+	ForceVideo bool
 }
 
 // Run executes a single spec end-to-end and returns the result. The
@@ -222,11 +237,12 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 			spec.NetworkProfile, err)
 	}
 
-	// Screencast capture — opt-in via `artifacts: {video: true}`.
-	// Holds the last ~120 frames in memory; flushed to disk next
-	// to a failing step's screenshot so the mobile
-	// FrameSequencePlayer can scrub through the failure.
-	if spec.Artifacts.Video {
+	// Screencast capture — opt-in via `artifacts: {video: true}` per
+	// spec OR via opts.ForceVideo (testkit_run --video, glasses
+	// workspace's "watch failures" button). Holds the last ~120
+	// frames in memory; flushed to disk next to a failing step's
+	// screenshot so the mobile FrameSequencePlayer can scrub.
+	if spec.Artifacts.Video || opts.ForceVideo {
 		res.frameRing = NewFrameRing(120)
 		if stop, err := StartScreencast(browserCtx, res.frameRing); err == nil {
 			defer stop()
@@ -266,6 +282,18 @@ func runWebSpec(ctx context.Context, spec *Spec, opts RunOptions, res *Result) {
 		res.Err = fmt.Errorf("captured %d console error(s) during run — see %s",
 			instr.ConsoleErrorCount(),
 			res.InstrumentationPath)
+	}
+
+	// ForceVideo runs flush even on a green path so the user can
+	// scrub the full timeline. Per-step flushes on failure already
+	// happened inside runPhase, so this is a no-op for failing runs
+	// (the ring is empty).
+	if opts.ForceVideo && res.frameRing != nil && mainOK {
+		if p, ferr := FlushFrames(artifactDir, "video-final", res.frameRing); ferr == nil {
+			res.VideoFramesDir = p
+		} else if opts.VerboseLog {
+			fmt.Fprintf(os.Stderr, "[testkit] flush forced video failed: %v\n", ferr)
+		}
 	}
 
 	_ = mainOK

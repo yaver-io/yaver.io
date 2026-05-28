@@ -4085,6 +4085,9 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 	// Monorepo detection — desktop/agent/monorepo_detect.go
 	tools = append(tools, monorepoMCPTools()...)
 
+	// DNS provisioning + Let's Encrypt — desktop/agent/dns_mcp.go
+	tools = append(tools, dnsMCPTools()...)
+
 	return map[string]interface{}{
 		"tools": tools,
 	}

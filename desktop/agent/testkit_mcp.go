@@ -48,6 +48,13 @@ func (s *HTTPServer) mcpTestkitRun(raw json.RawMessage) interface{} {
 		Concurrency int    `json:"concurrency"`
 		Retries     int    `json:"retries"`
 		Headful     bool   `json:"headful"`
+		// Video=true forces screencast capture for every spec in the
+		// suite regardless of its YAML `artifacts.video` setting, and
+		// flushes the full ring on green runs so the user can scrub the
+		// whole timeline back in the workspace clip player. Default
+		// off so per-spec settings still dominate when the caller
+		// hasn't explicitly asked for video.
+		Video bool `json:"video"`
 	}
 	_ = json.Unmarshal(raw, &args)
 	root, err := mcpResolveRoot(args.Root)
@@ -80,6 +87,7 @@ func (s *HTTPServer) mcpTestkitRun(raw json.RawMessage) interface{} {
 	opts := testkit.RunOptions{
 		Headful:      args.Headful,
 		FlakeRetries: args.Retries,
+		ForceVideo:   args.Video,
 	}
 	suite := testkit.RunSuite(ctx, specs, opts, args.Concurrency)
 

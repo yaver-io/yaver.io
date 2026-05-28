@@ -14020,6 +14020,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		if handled, result := dispatchMonorepoMCP(s, call.Name, call.Arguments); handled {
 			return result
 		}
+		// DNS / SSL provisioning — dns_mcp.go
+		if handled, result := dispatchDnsMCP(s, call.Name, call.Arguments); handled {
+			return result
+		}
 		// Try workspace tools (services, proxy, dns, storage, mock, check, perf, db, preview, oauth, cloud, migrate, remote, scale, backend, platform, domain, site, form, seo, cms, template)
 		if result := s.handleWorkspaceMCPTool(call); result != nil {
 			return result
