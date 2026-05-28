@@ -590,11 +590,11 @@ export default defineSchema({
     tunnelUrl: v.optional(v.string()),
     // Speech-to-text settings
     speechProvider: v.optional(v.string()),      // "on-device" | "openai" | "deepgram" | "assemblyai"
-    speechApiKey: v.optional(v.string()),         // API key for cloud providers
+    speechApiKey: v.optional(v.string()),         // legacy only; never returned/updated by /settings
     ttsEnabled: v.optional(v.boolean()),          // read responses aloud
-    ttsProvider: v.optional(v.string()),          // "device" | "openai"
+    ttsProvider: v.optional(v.string()),          // "device" | "openai" | "cartesia" preference only
     verbosity: v.optional(v.number()),            // 0-10: response detail level (0=summary, 10=full detail)
-    keyStorage: v.optional(v.string()),            // "local" | "cloud" — where API keys are stored
+    keyStorage: v.optional(v.string()),            // legacy preference; provider keys stay local/vault-only
     // When true, the mobile + (eventually) web tasks `+` button opens a
     // device + agent picker before the compose modal. Lets one task
     // route to a specific machine + runner instead of always using the

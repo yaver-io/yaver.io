@@ -295,7 +295,6 @@ export function FeedbackOverlay() {
       if (s.ttsProvider === "openai" || s.ttsProvider === "device") setTtsProvider(s.ttsProvider);
       const localSpeechKey = await getLocalSecret(LOCAL_KEYS.speechApiKey);
       if (localSpeechKey) setSpeechApiKey(localSpeechKey);
-      else if (s.speechApiKey) setSpeechApiKey(s.speechApiKey);
       else if (s.ttsProvider === "openai") {
         const localOpenAi = await getLocalSecret(LOCAL_KEYS.openAiApiKey);
         if (localOpenAi) setSpeechApiKey(localOpenAi);

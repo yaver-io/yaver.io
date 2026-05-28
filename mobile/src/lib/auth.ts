@@ -679,7 +679,7 @@ export async function saveKeyStoragePreference(pref: KeyStorage): Promise<void> 
 }
 
 export type SpeechProvider = "on-device" | "openai" | "openrouter" | "deepgram" | "assemblyai";
-export type TtsProvider = "device" | "openai" | "openrouter";
+export type TtsProvider = "device" | "openai" | "openrouter" | "cartesia";
 
 /**
  * Speech config is LOCAL ONLY by product decision — neither the audio,
@@ -772,10 +772,14 @@ export async function getUserSettings(token: string): Promise<UserSettings> {
 }
 
 export async function saveUserSettings(token: string, settings: Partial<UserSettings>): Promise<void> {
+  // Speech credentials are local-only. Keep API keys in SecureStore or
+  // the agent vault-backed /voice/config path; never send them to Convex.
+  const safeSettings = { ...settings };
+  delete safeSettings.speechApiKey;
   await fetch(`${getConvexSiteUrl()}/settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(settings),
+    body: JSON.stringify(safeSettings),
   }).catch(() => {});
 }
 

@@ -129,15 +129,12 @@ export default function SurveyScreen() {
       settings.speechProvider = speechProvider ?? "on-device";
       settings.ttsEnabled = ttsEnabled;
       settings.verbosity = verbosity;
-      // Handle API key storage based on preference
-      await saveKeyStoragePreference(keyStorage);
+      // Speech provider keys are local-only. Convex gets provider
+      // preferences, never raw STT/TTS API keys.
+      await saveKeyStoragePreference("local");
       const providerInfo = SPEECH_PROVIDERS.find((p) => p.id === speechProvider);
       if (providerInfo?.requiresKey && speechApiKey.trim()) {
-        if (keyStorage === "local") {
-          await saveLocalSecret(LOCAL_KEYS.speechApiKey, speechApiKey.trim());
-        } else {
-          settings.speechApiKey = speechApiKey.trim();
-        }
+        await saveLocalSecret(LOCAL_KEYS.speechApiKey, speechApiKey.trim());
       }
       await saveUserSettings(token, settings);
       // Save relay server if configured (skip if user opted out of relay)
@@ -418,18 +415,19 @@ export default function SurveyScreen() {
                 {
                   flex: 1, paddingVertical: 8, paddingHorizontal: 10,
                   borderRadius: 8, borderWidth: 1, alignItems: "center",
-                  backgroundColor: keyStorage === "cloud" ? c.accent : c.bgCard,
-                  borderColor: keyStorage === "cloud" ? c.accent : c.border,
+                  backgroundColor: c.bgCard,
+                  borderColor: c.border,
+                  opacity: 0.55,
                 },
                 pressed && { opacity: 0.7 },
               ]}
-              onPress={() => setKeyStorage("cloud")}
+              onPress={() => setKeyStorage("local")}
             >
-              <Text style={{ color: keyStorage === "cloud" ? "#fff" : c.textPrimary, fontWeight: "600", fontSize: 12 }}>
-                Sync to cloud
+              <Text style={{ color: c.textPrimary, fontWeight: "600", fontSize: 12 }}>
+                Cloud disabled
               </Text>
-              <Text style={{ color: keyStorage === "cloud" ? "rgba(255,255,255,0.7)" : c.textMuted, fontSize: 10, marginTop: 1 }}>
-                All your devices
+              <Text style={{ color: c.textMuted, fontSize: 10, marginTop: 1 }}>
+                Keys stay local
               </Text>
             </Pressable>
           </View>

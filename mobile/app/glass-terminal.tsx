@@ -136,7 +136,7 @@ export default function GlassTerminalScreen() {
   const [reloadTargetId, setReloadTargetId] = useState<string | null>(null);
   const [reloadTargetPickerOpen, setReloadTargetPickerOpen] = useState(false);
   const recorderRef = useRef<{ stop: () => Promise<string> } | null>(null);
-  const speechCfgRef = useRef<{ tts?: { provider: "device" | "openai" | "openrouter"; apiKey?: string; model?: string; voice?: string } }>({});
+  const speechCfgRef = useRef<{ tts?: { provider: "device" | "openai" | "openrouter" | "cartesia"; apiKey?: string; model?: string; voice?: string } }>({});
   // submitRef avoids a circular dep between submit (uses input) and
   // stopRecording (calls submit). Always set to the latest submit.
   const submitRef = useRef<(() => Promise<void>) | null>(null);
@@ -220,7 +220,7 @@ export default function GlassTerminalScreen() {
   //    config needed for the mic button to work.
   useEffect(() => {
     loadLocalSpeechConfig().then((cfg) => {
-      const provider = (cfg.ttsProvider ?? "device") as "device" | "openai" | "openrouter";
+      const provider = (cfg.ttsProvider ?? "device") as "device" | "openai" | "openrouter" | "cartesia";
       speechCfgRef.current.tts = {
         provider,
         apiKey: cfg.apiKey,

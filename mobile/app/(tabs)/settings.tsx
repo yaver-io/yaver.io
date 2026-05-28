@@ -2016,6 +2016,19 @@ export default function SettingsScreen() {
           <View style={[styles.card, { backgroundColor: c.bgCard, borderColor: c.border }]}>
             <Pressable
               style={styles.aboutRow}
+              onPress={() => router.navigate("/voice-config" as any)}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Agent voice loop</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11 }}>Deepgram Flux STT + Cartesia Sonic TTS, stored in the agent vault</Text>
+              </View>
+              <Text style={[styles.aboutValue, { color: c.accent }]}>Configure ›</Text>
+            </Pressable>
+
+            <View style={[styles.separator, { backgroundColor: c.borderSubtle }]} />
+
+            <Pressable
+              style={styles.aboutRow}
               onPress={() => setShowSpeechConfig(!showSpeechConfig)}
             >
               <Text style={[styles.aboutLabel, { color: c.textPrimary }]}>Speech-to-Text</Text>
@@ -2028,6 +2041,9 @@ export default function SettingsScreen() {
             {showSpeechConfig && (
               <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>
                 <Text style={[styles.sectionLabel, { color: c.textMuted, marginTop: 4, marginBottom: 8 }]}>Voice Engine</Text>
+                <Text style={{ color: c.textMuted, fontSize: 11, marginBottom: 8 }}>
+                  This section is for on-phone dictation and local readback. Use Agent voice loop above for Deepgram Flux + Cartesia on tasks and SDK sessions.
+                </Text>
                 <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
                   {([
                     { id: "local", title: "Local", sub: "Free", stt: "on-device" as SpeechProvider, tts: "device" as TtsProvider },

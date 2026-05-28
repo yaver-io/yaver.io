@@ -4,7 +4,7 @@
  * On-device: Uses whisper.rn (whisper.cpp) with the tiny model (~75MB).
  *            Downloads the model on first use. No API key needed.
  *
- * Cloud:     OpenAI (gpt-4o-mini-transcribe), Deepgram (Nova-2), AssemblyAI.
+ * Cloud:     OpenAI (gpt-4o-mini-transcribe), Deepgram (Nova-3), AssemblyAI.
  *            User provides their own API key.
  */
 
@@ -225,7 +225,7 @@ async function transcribeWithDeepgram(
   const audioBlob = await audioResponse.blob();
 
   const response = await fetch(
-    "https://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true",
+    "https://api.deepgram.com/v1/listen?model=nova-3&language=en&smart_format=true",
     {
       method: "POST",
       headers: {
@@ -390,8 +390,8 @@ export const SPEECH_PROVIDERS: SpeechProviderInfo[] = [
   },
   {
     id: "deepgram",
-    name: "Deepgram",
-    description: "Nova-2. Real-time capable, top accuracy. $0.0043/min.",
+    name: "Deepgram Flux",
+    description: "Nova-3 clip transcription here; Flux streaming is used by the agent voice loop.",
     requiresKey: true,
     keyPlaceholder: "Your Deepgram API key",
     keyHint: "Get your key at console.deepgram.com",
@@ -510,6 +510,9 @@ export async function speakText(
       config.provider === "openrouter" ? "OpenRouter" : "OpenAI",
     );
     return;
+  }
+  if (config.provider === "cartesia") {
+    throw new Error("Cartesia TTS is handled by the agent voice loop; configure it in Settings > Voice > Agent voice loop.");
   }
   const Speech = require("expo-speech");
   Speech.speak(plain, { language: "en" });

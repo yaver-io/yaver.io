@@ -105,6 +105,9 @@ export const set = mutation({
     relayPassword: v.optional(v.string()),
     tunnelUrl: v.optional(v.string()),
     speechProvider: v.optional(v.string()),
+    // Legacy only. Do not accept or persist new provider API keys here:
+    // speech credentials must stay in device SecureStore or the local
+    // agent vault/P2P vault sync path, never Convex.
     speechApiKey: v.optional(v.string()),
     ttsEnabled: v.optional(v.boolean()),
     ttsProvider: v.optional(v.string()),
@@ -169,7 +172,7 @@ export const set = mutation({
     if (args.relayPassword !== undefined) patch.relayPassword = args.relayPassword;
     if (args.tunnelUrl !== undefined) patch.tunnelUrl = args.tunnelUrl;
     if (args.speechProvider !== undefined) patch.speechProvider = args.speechProvider;
-    if (args.speechApiKey !== undefined) patch.speechApiKey = args.speechApiKey;
+    // Intentionally ignored. See speechApiKey validator comment above.
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;
@@ -254,6 +257,7 @@ export const setByToken = mutation({
     relayPassword: v.optional(v.string()),
     tunnelUrl: v.optional(v.string()),
     speechProvider: v.optional(v.string()),
+    // Legacy only; ignored on write. Provider keys stay local/vault-only.
     speechApiKey: v.optional(v.string()),
     ttsEnabled: v.optional(v.boolean()),
     ttsProvider: v.optional(v.string()),
@@ -305,7 +309,7 @@ export const setByToken = mutation({
     if (args.relayPassword !== undefined) patch.relayPassword = args.relayPassword;
     if (args.tunnelUrl !== undefined) patch.tunnelUrl = args.tunnelUrl;
     if (args.speechProvider !== undefined) patch.speechProvider = args.speechProvider;
-    if (args.speechApiKey !== undefined) patch.speechApiKey = args.speechApiKey;
+    // Intentionally ignored. Provider keys must not be written to Convex.
     if (args.ttsEnabled !== undefined) patch.ttsEnabled = args.ttsEnabled;
     if (args.ttsProvider !== undefined) patch.ttsProvider = args.ttsProvider;
     if (args.verbosity !== undefined) patch.verbosity = args.verbosity;

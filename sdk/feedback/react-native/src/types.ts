@@ -494,12 +494,20 @@ export interface TestSession {
 export interface VoiceCapability {
   /** Always true — mobile can always record and send audio. */
   voiceInputEnabled: boolean;
-  /** Speech-to-speech provider (e.g. "personaplex", "openai"), or null. */
+  /** Speech-to-speech provider (legacy), or null. */
   s2sProvider?: string;
   /** Whether the S2S provider is ready for real-time sessions. */
   s2sReady?: boolean;
-  /** Speech-to-text provider for transcription (e.g. "whisper", "openai"). */
+  /** Speech-to-text provider for transcription, e.g. "deepgram" for Deepgram Flux. */
   sttProvider?: string;
   /** Whether STT is ready (auto-transcription of voice input). */
   sttReady?: boolean;
+  /** Text-to-speech provider for readback, e.g. "cartesia". */
+  ttsProvider?: string;
+  /** Whether TTS readback is ready. */
+  ttsReady?: boolean;
+  /** Whether the agent-side hands-free task loop is enabled. */
+  enabled?: boolean;
+  /** Default project slug used by the agent voice loop. */
+  defaultProject?: string;
 }

@@ -122,7 +122,6 @@ export const importUserBundle = mutation({
       relayPassword: v.optional(v.string()),
       tunnelUrl: v.optional(v.string()),
       speechProvider: v.optional(v.string()),
-      speechApiKey: v.optional(v.string()),
       ttsEnabled: v.optional(v.boolean()),
       ttsProvider: v.optional(v.string()),
       verbosity: v.optional(v.number()),
@@ -1411,4 +1410,3 @@ export const upsertOidcUser = mutation({
     return { userDocId, userId: `oidc_${args.sub}`, email: args.email };
   },
 });
-

@@ -2592,9 +2592,10 @@ http.route({
     if (!authHeader?.startsWith("Bearer ")) return errorResponse("Unauthorized", 401);
     const tokenHash = await sha256Hex(authHeader.slice(7));
     const settings = await ctx.runQuery(api.userSettings.getByToken, { tokenHash });
+    const safeSettings = settings ? { ...settings, speechApiKey: undefined } : null;
     return jsonResponse({
       ok: true,
-      settings: settings || { forceRelay: false, runnerId: undefined, customRunnerCommand: undefined, relayUrl: undefined, relayPassword: undefined, tunnelUrl: undefined },
+      settings: safeSettings || { forceRelay: false, runnerId: undefined, customRunnerCommand: undefined, relayUrl: undefined, relayPassword: undefined, tunnelUrl: undefined },
     });
   }),
 });
@@ -2616,7 +2617,6 @@ http.route({
       relayPassword: body.relayPassword,
       tunnelUrl: body.tunnelUrl,
       speechProvider: body.speechProvider,
-      speechApiKey: body.speechApiKey,
       ttsEnabled: body.ttsEnabled,
       ttsProvider: body.ttsProvider,
       verbosity: body.verbosity,

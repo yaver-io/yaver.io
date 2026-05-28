@@ -478,6 +478,10 @@ export class P2PClient {
       s2sReady: data.s2sReady ?? false,
       sttProvider: data.sttProvider ?? undefined,
       sttReady: data.sttReady ?? false,
+      ttsProvider: data.ttsProvider ?? undefined,
+      ttsReady: data.ttsReady ?? false,
+      enabled: data.enabled ?? false,
+      defaultProject: data.defaultProject ?? undefined,
     };
   }
 
