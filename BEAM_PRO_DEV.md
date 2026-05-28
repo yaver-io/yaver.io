@@ -1,0 +1,267 @@
+# AR-glasses dev — two first-class paths
+
+Yaver supports a fully portable dev rig: AR glasses + a wireless foldable keyboard, with the Yaver mobile app as your "PC". Two equally-supported paths, both shipped via the same Yaver iOS and Android app — only the compute location differs.
+
+```
+                    ┌──────────────────────────────────────────┐
+                    │            Yaver mobile app              │
+                    │   (iOS and Android — feature parity)     │
+                    └─────────┬───────────────────────┬────────┘
+                              │                       │
+                  ╔═══════════▼═══════════╗   ╔═══════▼════════════╗
+                  ║  Path A — SSH/tmux    ║   ║  Path B — local    ║
+                  ║  terminal mode        ║   ║  mobile-headless   ║
+                  ║                       ║   ║                    ║
+                  ║  Connects to a remote ║   ║  Spawns runners on ║
+                  ║  Linux box (yours or  ║   ║  the host device   ║
+                  ║  Yaver managed cloud) ║   ║  itself (Termux on ║
+                  ║  and runs Claude Code ║   ║  Android / iSH on  ║
+                  ║  + Codex + tmux there ║   ║  iOS / native      ║
+                  ║                       ║   ║  runner pool)      ║
+                  ╚═══════════════════════╝   ╚════════════════════╝
+```
+
+Both paths run **the same** coding agents (claude-code, codex, opencode — per `feedback_runners_always_dangerous`), use **the same** subscription-token-mirror auth (per `feedback_yaver_single_user_wrapper`), and render the same way in the Xreal glasses (because both are just the Yaver app on screen).
+
+---
+
+## Hardware kit (shared between both paths)
+
+| Item | Approx | Notes |
+|---|---|---|
+| **Xreal One glasses** | $480 | 1080p × 50° FoV, plug-and-play DP Alt Mode, X1 chip anchors the virtual screen so head movement isn't fatiguing |
+| **Foldable wireless keyboard** | $60–$100 | Logitech Keys-To-Go 2 / iClever BK06 / similar. Bluetooth, fits in a jacket pocket |
+| **PD power bank** (~25 000 mAh) | $70 | DP-Alt-Mode drains host device ~2× normal; full-day operation needs top-up |
+| Host device | — | Either iPhone 15+ (already own) OR Xreal Beam Pro (~$200) |
+
+The same glasses + keyboard work with both host devices. You can buy one host now and add the other later.
+
+---
+
+## Path A — Remote dev via Yaver app's terminal mode
+
+> "I have a remote Linux box (mine or Yaver managed) and want to use my iPhone / Beam Pro as the terminal."
+
+### Topology
+
+```
+iPhone 15+ OR Beam Pro (USB-C → Xreal glasses, BT keyboard)
+  └─ Yaver mobile app — terminal mode (SSH + mosh + tmux pass-through)
+        │
+        │  mosh over LTE/Wi-Fi (Yaver relay if dev box is NAT'd)
+        ▼
+Your remote dev host
+  ├─ Option 1: self-hosted VM (any cloud — OVH/Vultr/Linode/DO/etc.)
+  ├─ Option 2: Yaver managed cloud (`yaver_managed_cloud_onboarding`)
+  └─ Option 3: home NUC + Yaver relay (`add_relay_server`)
+        │
+        Common stack:
+        ├─ tmux session "main" (systemd-managed — always alive at boot)
+        ├─ Claude Code CLI
+        ├─ OpenAI Codex CLI
+        └─ Yaver Go agent (ACL peer + relay endpoint)
+```
+
+### What's in the Yaver app for Path A
+
+- **Built-in SSH + mosh client** — no third-party app like Blink Shell needed. Reads keys from the device keychain (FaceID/Touch ID on iOS, Android KeyStore on Android)
+- **tmux integration** — auto-attaches to `main` session, surfaces tmux's window/pane state in the app chrome so you can swap windows by tap as well as `Ctrl-b 0/1/2/3`
+- **Claude Code TUI rendering** — handles ink-based terminal UIs (per `feedback_runners_always_dangerous`); cursor/key handling tuned for AR-glasses-readable text
+- **Push notifications** — long-running agents on the remote ping the same app when done, even if you're not looking at the glasses
+- **Connection helper** — when the remote box is behind NAT (home NUC), Yaver relay tunnels in transparently. User sees the same SSH UX
+
+### Hardware kits for Path A
+
+| If you have... | Buy | Total add-on |
+|---|---|---|
+| iPhone 15+ | Glasses + keyboard + power bank | ~$640 |
+| Nothing yet | Beam Pro + glasses + keyboard + power bank | ~$840 |
+
+### Remote box choice
+
+| Option | Pros | Cons |
+|---|---|---|
+| **Yaver managed cloud** | One CLI command; identity + billing already linked; zero-touch auth | Single SKU; bound to Yaver platform |
+| **Self-hosted on any cloud** (OVH, Vultr, Linode, DO, Scaleway, Azure, GCP, AWS, Oracle Free Tier) | Total control; pick region for lowest LTE latency; choose spec | You operate billing + maintenance |
+| **Home NUC + Yaver relay** | Zero monthly cost beyond electricity | Needs Yaver relay for reachability; home-internet SPOF |
+
+**Minimum spec**: 2 vCPU / 4 GB / 40 GB. Recommended for parallel Claude Code + Codex + builds: 4 vCPU / 8 GB / 80 GB. ARM and x86 both work — `scripts/setup-remote-dev.sh` auto-detects.
+
+### One-time setup
+
+```bash
+# On the remote box (any Linux)
+scp scripts/setup-remote-dev.sh user@your-dev-host:/tmp/
+ssh user@your-dev-host bash /tmp/setup-remote-dev.sh
+
+# First-run auth (inside the persistent tmux session)
+ssh user@your-dev-host
+tmux a -t main
+claude login           # device-code URL → open on phone Safari/Chrome
+codex login            # same
+yaver auth link start  # link this box as a Yaver agent identity
+```
+
+On the phone: open Yaver app → terminal mode → add SSH host → connect. From now on the glasses show your dev environment.
+
+### Beach reality check for Path A
+
+| Possible failure | Recovery |
+|---|---|
+| Lose cellular for 15 min | Mosh reconnects, tmux state preserved |
+| Phone dies | Power bank → 15 min back on |
+| Cloud box reboots | tmux-main.service auto-restarts at boot |
+| Auth token expires | Re-run `claude login` in another tmux pane |
+| Yaver platform outage | Plain-SSH falls back automatically; only the relay path breaks |
+
+---
+
+## Path B — Standalone host with Yaver mobile-headless
+
+> "Just the Beam Pro (or iPhone) and glasses. No remote box. Yaver mobile app drives everything locally."
+
+### Topology
+
+```
+Xreal Beam Pro (Android 14, $200) OR iPhone 15+ (USB-C → Xreal glasses, BT keyboard)
+  └─ Yaver mobile app — mobile-headless mode
+        ├─ Spawns coding-agent runners locally
+        │   (claude-code · codex · opencode — same set as Path A)
+        ├─ Subscription-OAuth-mirrored auth — Yaver copies your existing
+        │   desktop tokens onto this device; no re-OAuth per device
+        │   (per feedback_yaver_single_user_wrapper)
+        ├─ Underlying runtime:
+        │     Android → Termux (F-Droid build) — runners installed once
+        │                via npm, Yaver spawns them in tmux there
+        │     iOS    → iSH/embedded runner pool — Yaver provides the
+        │                terminal environment in-app
+        ├─ Built-in file browser, git verbs, agent-graph view
+        └─ Same glasses-rendering as Path A — output is the Yaver app
+```
+
+### What's in the Yaver app for Path B
+
+- **Local-runner spawn** — Yaver app starts Claude Code / Codex in the embedded terminal runtime. No SSH involved
+- **Mobile-headless mode** — per `MOBILE_HEADLESS.md`, Yaver auto-detects tmux + attaches without `YAVER_TMUX_RUNNER` gating (per `feedback_tmux_opportunistic`)
+- **Same auth model as Path A** — subscription token mirror from your existing desktop, never per-device OAuth, never API keys
+- **Offline-capable editing + git** — works without network; only Claude/Codex API calls need internet
+- **In-app file tree + commit/push/pull** — common git verbs handled in-app, Termux/iSH for advanced ops
+
+### Why pick Path B over Path A
+
+| Reason | Detail |
+|---|---|
+| No monthly cloud cost | $0/month after hardware purchase |
+| Offline-friendly | Editing + git work without network; only API calls need internet |
+| Single device | No SSH, no remote box to maintain, no port forwarding to debug |
+| Cleaner separation | "phone for calls" stays separate from "computer for work" (if you use Beam Pro) |
+| Stronger privacy | Code never leaves your device — only Claude/Codex API requests go out |
+
+### Hardware kits for Path B
+
+| If you have... | Buy | Total add-on |
+|---|---|---|
+| iPhone 15+ | Glasses + keyboard + power bank | ~$640 |
+| Nothing yet | **Beam Pro** + glasses + keyboard + power bank | ~$840 |
+
+The Beam Pro is the recommended host for Path B because:
+- Dedicated battery (~5h) leaves your real phone charged for calls
+- Hardware camera shutter, 3.5mm headphone jack, microSD slot
+- More RAM/storage to spare for local builds than a phone
+- Designed by Xreal specifically as the "computing companion" for the glasses
+
+### One-time setup (Path B, Beam Pro)
+
+1. Install **Yaver Android app** (Play Store or sideload)
+2. On a desktop with Claude Code / Codex already authenticated, run `yaver auth link start` from the Beam Pro and approve on desktop — your subscription tokens mirror over
+3. Install **Termux** from F-Droid (not Play Store — outdated). Yaver's mobile-headless mode auto-attaches to a tmux session here
+4. In Termux, install the runners once: `pkg install nodejs git && npm i -g @anthropic-ai/claude-code @openai/codex`
+5. Pair the foldable Bluetooth keyboard
+6. Plug glasses into Beam Pro's USB-C → auto-mirrors the Yaver app
+7. Open Yaver → start a task → it spawns Claude Code locally and surfaces the I/O in the glasses
+
+### One-time setup (Path B, iPhone)
+
+Same as Beam Pro setup but the underlying runtime is the Yaver app's embedded terminal pool (iOS doesn't have Termux). Yaver app provides the in-app terminal environment; runners are installed via the app's package manager UI, not a separate Termux install.
+
+### Reality check for Path B
+
+| Scenario | Result |
+|---|---|
+| Lose hotspot signal | Local editing continues. Claude API calls queue / fail until back online |
+| Heavy compile (50K-file webpack) | Slow on 6 GB Beam Pro RAM; iPhone fares similarly. Acceptable for 30-min stints |
+| Push code | Tiny SSH payload, ~1 min of LTE is enough |
+| Lose Beam Pro / phone | Worse than losing a remote box — local repos go with it. **Mitigation: push to git often; Yaver's warm-mirror to managed cloud as backup** |
+| Want voice prompts | Plug AirPods into Beam Pro's 3.5mm jack — far-field mic in the glasses is muffled |
+
+---
+
+## How the two paths combine
+
+You don't have to pick one. The Yaver mobile app supports **both modes side-by-side** — same app, switchable in settings:
+
+- **Today** you might use Path A from your iPhone to a Yaver managed-cloud box for a heavy refactor
+- **Tomorrow** you might use Path B on the Beam Pro during a flight for offline work
+- **The day after** you might use Path A from the Beam Pro (not just the iPhone) to that same Yaver managed-cloud box
+
+The glasses, keyboard, power bank don't care which path you're on.
+
+| Activity | Suggested path |
+|---|---|
+| Heavy stack work (Convex+Next+Mobile builds) | Path A — remote box has the cores |
+| Offline editing on a plane | Path B — local Termux/iSH runner pool |
+| "I want to be at the beach with the lightest kit" | Path B on Beam Pro — single device |
+| "I want to be at the beach but already own a Yaver managed-cloud box" | Path A from iPhone — minimal new hardware |
+| Quick voice-prompted asks while in glasses | Either — Yaver app handles voice the same way in both modes |
+| Push code at midnight from your couch | Either — both pull a fresh git pull just fine |
+
+---
+
+## Yaver's role across both paths
+
+| Capability | Path A | Path B |
+|---|---|---|
+| Mobile app | **Built-in terminal mode** — owns SSH + mosh + tmux pass-through, no third-party SSH client needed | **Mobile-headless driver** — spawns local runners, in-app file tree, git verbs |
+| Subscription-OAuth token mirror | Per remote box, mirrored from desktop | Per Beam Pro/iPhone, mirrored from desktop |
+| Push notifications | Long-running remote agents ping the same app | Long-running local agents ping the same app |
+| Relay (NAT traversal) | Used when home-NUC remote needs it | Not needed |
+| Coding agents | claude-code / codex / opencode in tmux on remote | Same runners, spawned in Termux (Android) or in-app pool (iOS) |
+| Glasses rendering | Same Yaver UI mirrored via USB-C DP Alt Mode | Same — only the compute location differs |
+
+This is the **same app, two modes**. iOS and Android builds keep feature parity (per `feedback_always_deploy_yaver` and `feedback_mobile_only_wire_push`).
+
+---
+
+## What ships in this repo
+
+- `scripts/setup-remote-dev.sh` — idempotent bootstrap for the remote box in **Path A**
+  - Installs tmux + mosh + Node 20 + Claude Code + Codex + base build tools
+  - Writes a glasses-friendly `~/.tmux.conf`
+  - Creates a `tmux-main.service` systemd unit so the "main" session is always alive at boot
+  - Opens UFW UDP 60000-60010 for mosh
+  - Auto-detects ARM64 vs x86_64
+  - Sets a friendly MOTD describing the first-run auth ritual
+  - **Host-agnostic** — works on Yaver managed cloud OR any self-hosted Linux VM
+
+**Path B needs no shell script** — Yaver mobile app + Termux (Android) or in-app runtime (iOS) handles everything via the app's UI.
+
+## Recovery scenarios (both paths)
+
+| Scenario | Recovery |
+|---|---|
+| Glasses break / left behind | Phone/Beam Pro screen still works as a smaller window |
+| Beam Pro or phone broken | Buy another, sign back into Yaver, re-mirror tokens, restore Termux home from git |
+| Cloud provider outage (Path A only) | Yaver relay can fail over to a backup managed-cloud box. Plain-SSH-only setups need manual standby |
+| Auth tokens stolen | `yaver_auth_factory_reset` + revoke Claude / Codex / GitHub PATs + rotate SSH keys |
+| Both phone AND glasses lost | Offline yubikey recovery → cloud provider's web console → rotate keys + spin up emergency access |
+
+## See also
+
+- `REMOTE_WORKER.md` — Yaver remote worker architecture (Path A backbone)
+- `MOBILE_HEADLESS.md` — Yaver headless mobile mode (Path B backbone)
+- `SETUP.md` — general Yaver setup
+- `feedback_yaver_single_user_wrapper` — Yaver mirrors subscription tokens, never re-OAuths per device
+- `feedback_no_api_keys_subscription_only` — never propose `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`
+- `feedback_runners_always_dangerous` — supported runners = claude-code / codex / opencode only
+- `feedback_tmux_opportunistic` — Yaver auto-attaches to existing tmux, no env-var gating
+- Yaver MCP tools (`mcp__yaver__*`) — full inventory
