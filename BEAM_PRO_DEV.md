@@ -250,16 +250,27 @@ What this looks like in glass-terminal:
 
 ### What's in the Yaver app for Path C
 
-The `glass-terminal` screen has a **vibe action bar** sitting above the prompt. Each chip dispatches an *independent* on-phone agent round-trip that picks the right MCP tool (`wire_push`, `wireless_push`, `mobile_project_status`, `mobile_hermes_doctor`, etc.):
+The `glass-terminal` screen has a **vibe action bar** sitting above the prompt:
 
-| Chip | What it does |
-|---|---|
-| `⟳ reload` | Trigger a Hermes/Metro fast-refresh on the app under test on this phone. No rebuild. |
-| `📦 push` | Push the latest code from the connected remote dev box to the app under test. |
-| `📊 status` | Summarise bundler / Hermes / dev-client reachability for the selected device. |
-| `🩺 doctor` | Run `mobile_hermes_doctor` and surface action items. |
+| Chip | What it does | Path |
+|---|---|---|
+| `🎯 target` | Pick which device the `⟳` chip reloads. Sticky select, persisted across app relaunches. Long-press to clear back to broadcast. | UI only (Phase 7) |
+| `⟳ reload` | Trigger a Hermes/Metro fast-refresh on the app under test. No rebuild. | **Direct MCP** — POSTs `tools/call mobile_hermes_reload` to the selected agent's `/mcp` endpoint over the existing bearer-auth transport. ~500 ms. Falls back to the LLM-narrated path if the agent is older than 1.99.234 or the call fails. |
+| `📦 push` | Push the latest code from the connected remote dev box to the app under test. | LLM-narrated — picks `wire_push` / `wireless_push` |
+| `📊 status` | Summarise bundler / Hermes / dev-client reachability for the selected device. | LLM-narrated — `mobile_project_status` |
+| `🩺 doctor` | Run `mobile_hermes_doctor` and surface action items. | LLM-narrated |
 
 These chips do NOT share the agent-mode `busy` state and do NOT close the shell websocket — so a tmux session running `claude code` on the remote dev box stays untouched while you hit `⟳ reload` between edits.
+
+### Cross-device targeting (Path-C extension)
+
+Beam Pro in pocket + glasses + BT keyboard drives the dev loop. **iPhone on the desk** runs the Expo dev-client of the app under test. Tap `🎯 target` → pick `@iphone-on-desk` → tap `⟳ reload` → only the iPhone reloads. The Beam Pro's own Yaver app stays put.
+
+How it works:
+1. `⟳ reload` calls `mobile_hermes_reload` with `{ target_device_id: "<iphone-id>" }`.
+2. Agent's `POST /dev/reload` receives the body, hits `BlackBoxManager.SendCommandToDevice(<iphone-id>, ...)` instead of `BroadcastCommand`.
+3. Only the iPhone's BlackBox SSE listener receives the `reload` command → `DevSettings.reload()` → Hermes swaps the JS bundle.
+4. Metro's bundler-level reload still fires unscoped (it's the bundler, not the SDK channel) — but that only affects clients connected to Metro as dev-clients, which the Beam Pro's Yaver app isn't.
 
 ### Workflow
 
@@ -334,8 +345,26 @@ This is the **same app, two modes**. iOS and Android builds keep feature parity 
 | Auth tokens stolen | `yaver_auth_factory_reset` + revoke Claude / Codex / GitHub PATs + rotate SSH keys |
 | Both phone AND glasses lost | Offline yubikey recovery → cloud provider's web console → rotate keys + spin up emergency access |
 
+## Hardware smoke checklist — first run on a Beam Pro
+
+When the Beam Pro arrives, run this checklist once. Anything that breaks here is a real bug, not a config issue.
+
+- [ ] **USB-C DP Alt Mode** — plug Xreal One into Beam Pro USB-C, glasses show the Android UI mirrored
+- [ ] **BT pairing** — foldable BT keyboard pairs in Android settings, typing into a TextInput works
+- [ ] **Mic permission** — first tap of the 🎤 chip in glass-terminal prompts for `RECORD_AUDIO`, accept, partials appear in the input
+- [ ] **TTS** — toggle `🔊` in the header on; submit a prompt; output is spoken through paired BT headset
+- [ ] **Shell mode** — long-press header title, pick the remote dev box, `tmux a -t main` works
+- [ ] **Direct-MCP reload (single device)** — vibe bar `⟳ reload` fires; output buffer shows `mobile_hermes_reload → js_only` within 1 s
+- [ ] **Cross-device reload** — pair an iPhone with the Yaver app + an Expo dev-client connected to Metro; pick the iPhone via `🎯 target`; tap `⟳`; only the iPhone reloads, Beam Pro Yaver app stays put
+- [ ] **Auto-reconnect** — pull the BT headset away to break audio; shell websocket reconnects within 16 s without manual intervention
+- [ ] **SSE survives mirroring** — confirm BlackBox SSE stream doesn't drop when the screen mirrors over USB-C DP (Android sometimes throttles background-ish HTTP). Drop tolerance for the reload chip is < 5 s.
+- [ ] **Power** — 25 000 mAh PD bank drives glasses + phone for 4+ hours of typical use
+
+If `🎯 target` shows no devices, the iPhone hasn't paired with the Yaver agent yet — use the Devices tab first.
+
 ## See also
 
+- `REMOTE_MCP_HERMES_RELOAD_PLAN.md` — full audit + phase tracker for the remote-MCP reload feature (Phases 2/3/7 shipped, Phase 4 is the smoke above)
 - `REMOTE_WORKER.md` — Yaver remote worker architecture (Path A backbone)
 - `MOBILE_HEADLESS.md` — Yaver headless mobile mode (Path B backbone)
 - `SETUP.md` — general Yaver setup
