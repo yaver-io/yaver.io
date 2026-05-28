@@ -87,7 +87,24 @@ export default function TerminalScreen() {
         title="Terminal"
         onBack={() => router.navigate("/(tabs)/more" as any)}
         style={{ backgroundColor: "#0b0d10", paddingTop: insets.top + 12 }}
-        right={<View style={{ width: 50 }} />}
+        right={
+          <Pressable
+            onPress={() => router.push("/glass-terminal" as any)}
+            hitSlop={8}
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: "#334155",
+              backgroundColor: "#111827",
+            }}
+          >
+            <Text style={{ color: "#a78bfa", fontFamily: "Menlo", fontSize: 11, fontWeight: "600" }}>
+              glass
+            </Text>
+          </Pressable>
+        }
       />
 
       {error && <Text style={{ color: "#ef4444", fontSize: 11, padding: 8 }}>{error}</Text>}
