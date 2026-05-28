@@ -138,3 +138,55 @@ export function callMobileHermesReload(
   if (opts.mode) args.mode = opts.mode;
   return callMcpDirect<MobileHermesReloadResult>("mobile_hermes_reload", args, opts.signal);
 }
+
+// Phase-8 fallback — generic BlackBox push without needing a dev-server.
+// Used when callMobileHermesReload returns "dev server not available"
+// (e.g. on a managed-cloud agent that's only there to relay between
+// two phones).
+export interface DeviceBroadcastResult {
+  ok: boolean;
+  mode?: "scoped" | "broadcast" | "no_blackbox";
+  targetDeviceId?: string;
+  reachedSession?: boolean;
+  error?: string;
+}
+
+export function callDeviceBroadcastCommand(
+  opts: {
+    command: string;
+    data?: Record<string, unknown>;
+    targetDeviceId?: string;
+    signal?: AbortSignal;
+  },
+): Promise<McpDirectResult<DeviceBroadcastResult>> {
+  const args: Record<string, unknown> = { command: opts.command };
+  if (opts.data) args.data = opts.data;
+  if (opts.targetDeviceId) args.target_device_id = opts.targetDeviceId;
+  return callMcpDirect<DeviceBroadcastResult>("device_broadcast_command", args, opts.signal);
+}
+
+// Pre-baked mobile_project_status — for the 📊 chip's direct-MCP path.
+export interface MobileProjectStatusResult {
+  ok?: boolean;
+  framework?: string;
+  workDir?: string;
+  bundlerReady?: boolean;
+  [k: string]: unknown;
+}
+
+export function callMobileProjectStatus(
+  opts: { directory?: string; signal?: AbortSignal } = {},
+): Promise<McpDirectResult<MobileProjectStatusResult>> {
+  const args: Record<string, unknown> = {};
+  if (opts.directory) args.directory = opts.directory;
+  return callMcpDirect<MobileProjectStatusResult>("mobile_project_status", args, opts.signal);
+}
+
+// Pre-baked mobile_hermes_doctor — for the 🩺 chip's direct-MCP path.
+export function callMobileHermesDoctor(
+  opts: { directory?: string; signal?: AbortSignal } = {},
+): Promise<McpDirectResult<Record<string, unknown>>> {
+  const args: Record<string, unknown> = {};
+  if (opts.directory) args.directory = opts.directory;
+  return callMcpDirect<Record<string, unknown>>("mobile_hermes_doctor", args, opts.signal);
+}

@@ -63,7 +63,12 @@ import {
   DEFAULT_TTS_VOICE,
 } from "../src/lib/speech";
 import { loadLocalSpeechConfig } from "../src/lib/auth";
-import { callMobileHermesReload } from "../src/lib/yaverMcpDirect";
+import {
+  callMobileHermesReload,
+  callDeviceBroadcastCommand,
+  callMobileProjectStatus,
+  callMobileHermesDoctor,
+} from "../src/lib/yaverMcpDirect";
 
 type Mode = "agent" | "shell";
 
@@ -124,6 +129,9 @@ export default function GlassTerminalScreen() {
   // submitRef avoids a circular dep between submit (uses input) and
   // stopRecording (calls submit). Always set to the latest submit.
   const submitRef = useRef<(() => Promise<void>) | null>(null);
+  // Same trick for triggerReloadDirect — stopRecording's voice keyword
+  // shortcut needs to call it but it's defined later in the render.
+  const triggerReloadDirectRef = useRef<(() => Promise<void>) | null>(null);
   const scrollRef = useRef<ScrollView | null>(null);
   const inputRef = useRef<TextInput | null>(null);
 
@@ -220,7 +228,18 @@ export default function GlassTerminalScreen() {
     try {
       const finalText = await rec.stop();
       if (finalText && finalText.trim()) {
-        setInput(finalText.trim());
+        const trimmed = finalText.trim();
+        // Voice keyword shortcut — single-word "reload" (en/tr/es/de/fr)
+        // jumps straight to the direct-MCP reload path without an LLM
+        // round-trip. Saves ~1.5-3 s on the most common voice command
+        // for the AR-glasses workflow.
+        if (autoSubmit && isReloadKeyword(trimmed)) {
+          setInput("");
+          appendLine("user", `🎤 ${trimmed}`);
+          setTimeout(() => { void triggerReloadDirectRef.current?.(); }, 0);
+          return;
+        }
+        setInput(trimmed);
         if (autoSubmit) {
           // Defer one tick so the input update settles, then submit.
           setTimeout(() => { void submitRef.current?.(); }, 0);
@@ -429,6 +448,35 @@ export default function GlassTerminalScreen() {
     }
   }, [vibeBusy, appendLine, devices, primaryDeviceId, selectDevice]);
 
+  // Generic direct-MCP chip runner — invokes a single tool, renders the
+  // raw payload as a JSON line, falls back to the LLM-narrated path on
+  // failure (tool missing on older agents, transport error, etc.).
+  const triggerDirectMcp = useCallback(async (
+    label: string,
+    fallbackPrompt: string,
+    call: () => Promise<{ ok: boolean; result?: unknown; error?: string }>,
+  ) => {
+    if (vibeBusy) return;
+    setVibeBusy(label);
+    appendLine("sys", `— ${label} (direct MCP) —`);
+    try {
+      const res = await call();
+      if (!res.ok) {
+        appendLine("err", `direct ${label} failed: ${res.error ?? "unknown"} — falling back to LLM`);
+        setVibeBusy(null);
+        void triggerVibe(label, fallbackPrompt);
+        return;
+      }
+      const summary = safeStringify(res.result);
+      if (summary) appendLine("tool", `⏺ ${summary}`);
+      appendLine("sys", `— ${label} done —`);
+    } catch (e: unknown) {
+      appendLine("err", e instanceof Error ? e.message : `${label} failed`);
+    } finally {
+      setVibeBusy(null);
+    }
+  }, [vibeBusy, appendLine, triggerVibe]);
+
   // Fast path for ⟳ reload — direct MCP call, no LLM. ~500 ms vs 1.5-3 s
   // for the LLM-narrated path. Falls back to triggerVibe(prompt) when
   // the direct call fails (e.g. agent older than 1.99.234 without the
@@ -447,7 +495,31 @@ export default function GlassTerminalScreen() {
     try {
       const res = await callMobileHermesReload(reloadTargetId ? { targetDeviceId: reloadTargetId } : {});
       if (!res.ok) {
-        appendLine("err", `direct reload failed: ${res.error ?? "unknown"} — falling back to LLM`);
+        // Phase-8 chain: when the agent has no dev-server (managed-cloud
+        // relay scenario), fall back to device_broadcast_command which
+        // just pushes a plain "reload" BlackBox cmd to the target. The
+        // mobile-side BlackBox listener at (tabs)/_layout.tsx handles
+        // the rest via loadApp().
+        const noDevServer = (res.error ?? "").toLowerCase().includes("dev server");
+        if (noDevServer) {
+          appendLine("sys", "— no dev-server on agent · falling back to device_broadcast_command —");
+          const fb = await callDeviceBroadcastCommand({
+            command: "reload",
+            targetDeviceId: reloadTargetId ?? undefined,
+          });
+          if (fb.ok && fb.result?.ok) {
+            appendLine(
+              "tool",
+              `⏺ device_broadcast_command → ${fb.result.mode}${fb.result.reachedSession === false ? " (no session for target)" : ""}`,
+            );
+            appendLine("sys", "— ⟳ reload done (broadcast) —");
+            setVibeBusy(null);
+            return;
+          }
+          appendLine("err", `broadcast fallback failed: ${fb.error ?? fb.result?.error ?? "unknown"} — falling back to LLM`);
+        } else {
+          appendLine("err", `direct reload failed: ${res.error ?? "unknown"} — falling back to LLM`);
+        }
         setVibeBusy(null);
         void triggerVibe(
           "⟳ reload",
@@ -551,6 +623,7 @@ export default function GlassTerminalScreen() {
   // Keep submitRef pointing at the latest submit so stopRecording can
   // trigger it without taking a stale closure capture.
   useEffect(() => { submitRef.current = submit; }, [submit]);
+  useEffect(() => { triggerReloadDirectRef.current = triggerReloadDirect; }, [triggerReloadDirect]);
 
   const cancel = useCallback(() => { abortRef.current?.abort(); }, []);
 
@@ -699,11 +772,18 @@ export default function GlassTerminalScreen() {
             },
           ].map(({ label, prompt }) => {
             const active = vibeBusy === label;
-            // ⟳ reload uses the direct MCP path (no LLM, ~500 ms).
-            // The other chips still go through the LLM-narrated loop.
-            const onPress = label === "⟳ reload"
-              ? () => void triggerReloadDirect()
-              : () => void triggerVibe(label, prompt);
+            // Direct-MCP chips (no LLM, fast). Anything not in the map
+            // routes through the LLM-narrated loop as a generic prompt.
+            let onPress: () => void;
+            if (label === "⟳ reload") {
+              onPress = () => void triggerReloadDirect();
+            } else if (label === "📊 status") {
+              onPress = () => void triggerDirectMcp(label, prompt, () => callMobileProjectStatus());
+            } else if (label === "🩺 doctor") {
+              onPress = () => void triggerDirectMcp(label, prompt, () => callMobileHermesDoctor());
+            } else {
+              onPress = () => void triggerVibe(label, prompt);
+            }
             return (
               <Pressable
                 key={label}
@@ -921,6 +1001,29 @@ export default function GlassTerminalScreen() {
                 );
               })
             )}
+            {/* Buy a managed-cloud dev box — direct entry into the
+             *  glasses-friendly onboarding flow. */}
+            <Pressable
+              onPress={() => {
+                setDevicePickerOpen(false);
+                router.push("/cloud-onboarding");
+              }}
+              style={{
+                marginTop: 10,
+                paddingVertical: 10,
+                paddingHorizontal: 12,
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: PAL.accent,
+                flexDirection: "row",
+                alignItems: "center",
+              }}
+            >
+              <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, marginRight: 8 }}>＋</Text>
+              <Text style={{ color: PAL.accent, fontFamily: "Menlo", fontSize: 13, flex: 1 }}>
+                buy a dev box
+              </Text>
+            </Pressable>
           </Pressable>
         </Pressable>
       </Modal>
@@ -1056,6 +1159,23 @@ function safeStringify(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+// Voice keyword shortcut — single-word "reload" (en/tr/es/de/fr) jumps
+// straight to the direct-MCP reload path. Tight allowlist so we don't
+// hijack real prompts. Punctuation stripped before compare.
+const RELOAD_KEYWORDS = new Set([
+  "reload", "refresh", "rerun", "rebuild",
+  "yenile", "tekrar yükle", "yeniden", "yenileme",
+  "recargar", "actualizar",
+  "neuladen", "aktualisieren",
+  "recharger", "rafraîchir", "rafraichir",
+]);
+
+function isReloadKeyword(raw: string): boolean {
+  const cleaned = raw.toLowerCase().replace(/[.!?,;:]/g, "").trim();
+  if (!cleaned) return false;
+  return RELOAD_KEYWORDS.has(cleaned);
 }
 
 function lastLineMatches(lines: Line[], text: string): boolean {

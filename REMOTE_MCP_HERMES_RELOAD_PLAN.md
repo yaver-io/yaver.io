@@ -255,6 +255,24 @@ Neither is small. Mark as stretch for a future session when the no-agent use cas
 
 **Workaround today:** spin up a free-tier managed-cloud Yaver agent on `yaver_managed_cloud_onboarding`, point both phones at it, and Phase 7 covers the rest. Internet still required, but no source-code dev box needed if you're only reloading a pre-shipped Expo bundle.
 
+### Phase 8 partial — `device_broadcast_command` MCP tool (LANDED locally, not deployed)
+
+A generic BlackBox push that does NOT need a dev-server. Drops the dev-server requirement of `mobile_hermes_reload`, so a managed-cloud agent that's only there to relay between two phones can serve the cross-device reload use case.
+
+Files:
+- `desktop/agent/mcp_device_broadcast.go` — handler. Returns `{ ok, mode: "scoped"|"broadcast"|"no_blackbox", targetDeviceId?, reachedSession? }`.
+- `desktop/agent/mcp_tools.go` — tool registered with `command` (required), optional `data`, optional `target_device_id`.
+- `desktop/agent/httpserver.go` — dispatcher case.
+- `desktop/agent/mcp_device_broadcast_test.go` — 6 tests covering scoped delivery / scoped-missing-session / broadcast / data-passthrough / missing-command / nil-manager.
+- `mobile/src/lib/yaverMcpDirect.ts` — `callDeviceBroadcastCommand({command, data?, targetDeviceId?})` + `callMobileProjectStatus` + `callMobileHermesDoctor`.
+- `mobile/app/glass-terminal.tsx`:
+  - `triggerReloadDirect` now chains: try `mobile_hermes_reload` → if "dev server not available" → fall back to `device_broadcast_command { command: "reload" }` → if that fails → LLM-narrated.
+  - 📊 status + 🩺 doctor chips moved to direct-MCP via the new generic `triggerDirectMcp` helper. Fall back to LLM on any failure.
+
+### Voice keyword shortcut (LANDED locally)
+
+Open question #3 from this plan resolved: single-word voice commands (`reload`/`refresh`/`yenile`/`recargar`/`neuladen`/`recharger`/`rafraîchir`) skip the LLM and jump straight to `triggerReloadDirect`. Allowlist in `RELOAD_KEYWORDS` set in glass-terminal.tsx; the same direct-MCP fallback chain runs (mobile_hermes_reload → device_broadcast_command → LLM).
+
 ## Open questions for follow-up
 
 1. Should `mobile_hermes_reload` also bump a feedback-SDK overlay so the user sees "reloading…" on the app-under-test side? (Phase 4 smoke will tell.)

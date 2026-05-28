@@ -294,6 +294,11 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("/agent/toolchain-sync/profile", s.auth(s.handleEnvironmentProfile))
 	mux.HandleFunc("/agent/toolchain-sync/apply", s.auth(s.handleEnvironmentProfileApply))
 	mux.HandleFunc("/agent/toolchain-sync/git-credentials", s.auth(s.handleToolchainGitCredentials))
+	mux.HandleFunc("/agent/dev-configs/bundle", s.auth(s.handleDevConfigBundle))
+	mux.HandleFunc("/agent/dev-configs/apply", s.auth(s.handleDevConfigApply))
+	mux.HandleFunc("/dev-environments/clone/plan", s.auth(s.handleDevEnvironmentClonePlan))
+	mux.HandleFunc("/dev-environments/clone/start", s.auth(s.handleDevEnvironmentCloneStart))
+	mux.HandleFunc("/dev-environments/clone/status", s.auth(s.handleDevEnvironmentCloneStatus))
 	mux.HandleFunc("/code/config", s.auth(s.handleCodeConfig))
 	mux.HandleFunc("/code/status", s.auth(s.handleCodeStatus))
 	mux.HandleFunc("/code/attach", s.auth(s.handleCodeAttach))
@@ -7161,6 +7166,10 @@ func (s *HTTPServer) handleMCPToolCallWithAddr(params json.RawMessage, clientAdd
 		var args mobileHermesReloadArgs
 		json.Unmarshal(call.Arguments, &args)
 		return mcpToolJSON(mcpMobileHermesReload(args))
+	case "device_broadcast_command":
+		var args deviceBroadcastCommandArgs
+		json.Unmarshal(call.Arguments, &args)
+		return mcpToolJSON(s.mcpDeviceBroadcastCommand(args))
 
 	// --- GitHub ---
 	case "github_prs":

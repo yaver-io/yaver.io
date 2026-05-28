@@ -1361,6 +1361,19 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 		},
 		{"name": "mobile_project_build", "description": "Start the project's dev server if needed and build the Hermes bundle that Yaver loads on the phone. This is the MCP path for a contributor on WSL/Linux/macOS to prepare a fresh Expo / React Native clone for real iPhone testing without TestFlight.", "inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"directory": map[string]interface{}{"type": "string", "description": "Project directory (default: agent work dir)"}, "framework": map[string]interface{}{"type": "string", "description": "Optional framework override (expo or react-native)"}, "platform": map[string]interface{}{"type": "string", "description": "Target platform (default: ios)"}}}},
 		{
+			"name":        "device_broadcast_command",
+			"description": "Push a BlackBox command directly to a paired SDK device (or broadcast to all) without needing an active dev-server. This is the Path-C/8 fallback for the cross-device reload workflow: Phone A drives, Phone B receives, no Metro bundler involved — both phones just share a Yaver agent (managed-cloud, self-hosted, or local). Examples of useful commands: \"reload\", \"reload_bundle\", \"open_app\". Returns { ok, mode: \"scoped\"|\"broadcast\"|\"no_blackbox\", targetDeviceId?, reachedSession? }.",
+			"inputSchema": map[string]interface{}{
+				"type":     "object",
+				"required": []string{"command"},
+				"properties": map[string]interface{}{
+					"command":          map[string]interface{}{"type": "string", "description": "BlackBox command name — what the SDK listener acts on (e.g. \"reload\", \"reload_bundle\", \"open_app\")."},
+					"data":             map[string]interface{}{"type": "object", "description": "Optional command payload passed through verbatim to the SDK listener."},
+					"target_device_id": map[string]interface{}{"type": "string", "description": "When set, scoped to that one SDK session. Empty/omitted = broadcast to all subscribed devices."},
+				},
+			},
+		},
+		{
 			"name":        "mobile_hermes_reload",
 			"description": "Trigger a Hermes hot-reload of the React Native / Expo app currently under test. Thin wrapper over POST /dev/reload — computes a native-fingerprint delta against the dev-server baseline and broadcasts a `hot_reload` (or `native_rebuild_required`) command via the BlackBox SSE channel to all connected SDK devices. Use this when an MCP client (Claude Code, glass-terminal vibe chip, ChatGPT) wants the app reloaded without an LLM round-trip. Returns { ok, changeClass: \"js_only\"|\"native_rebuild_required\"|\"unknown\", nativeChanges?, nativeChangesDetected }.",
 			"inputSchema": map[string]interface{}{
@@ -3218,6 +3231,7 @@ func (s *HTTPServer) getMCPToolsList() interface{} {
 					"concurrency": map[string]interface{}{"type": "integer", "description": "Parallel workers (default 1)"},
 					"retries":     map[string]interface{}{"type": "integer", "description": "Flake retries (default 0)"},
 					"headful":     map[string]interface{}{"type": "boolean", "description": "Show the browser visibly"},
+					"video":       map[string]interface{}{"type": "boolean", "description": "Force screencast capture for every spec (overrides per-spec artifacts.video). Frames flush to the run's artifact dir on both pass + fail so the workspace clip player can scrub the full timeline."},
 				},
 			},
 		},
