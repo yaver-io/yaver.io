@@ -337,6 +337,9 @@ func main() {
 	restoreUserCwdFromNpmWrapper()
 
 	if len(os.Args) < 2 {
+		if maybeRunYaverShell() {
+			os.Exit(0)
+		}
 		printUsage()
 		os.Exit(0)
 	}
