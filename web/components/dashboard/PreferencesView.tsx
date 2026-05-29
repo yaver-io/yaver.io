@@ -35,8 +35,9 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
 
-  // Editable fields
-  const [speechProvider, setSpeechProvider] = useState("");
+  // Editable fields. Default STT to free/offline on-device Whisper and TTS
+  // to the free local device voice — no API key, no cost out of the box.
+  const [speechProvider, setSpeechProvider] = useState("on-device");
   const [ttsEnabled, setTtsEnabled] = useState(false);
   const [ttsProvider, setTtsProvider] = useState("device");
   const [verbosity, setVerbosity] = useState(10);
@@ -54,7 +55,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
         const data = await res.json();
         const s = data.settings || {};
         setSettings(s);
-        setSpeechProvider(s.speechProvider || "");
+        setSpeechProvider(s.speechProvider || "on-device");
         setTtsEnabled(s.ttsEnabled || false);
         setTtsProvider(s.ttsProvider || "device");
         setVerbosity(s.verbosity ?? 10);
@@ -362,7 +363,7 @@ export default function PreferencesView({ token }: PreferencesViewProps) {
               onClick={() => {
                 setEditing(false);
                 // Reset to stored values
-                setSpeechProvider(settings.speechProvider || "");
+                setSpeechProvider(settings.speechProvider || "on-device");
                 setTtsEnabled(settings.ttsEnabled || false);
                 setTtsProvider(settings.ttsProvider || "device");
                 setVerbosity(settings.verbosity ?? 10);
